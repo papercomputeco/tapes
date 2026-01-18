@@ -25,6 +25,26 @@ unit-test: ## Runs unit tests via "go test"
 	$(call print-target)
 	go test -v ./...
 
+.PHONY: test-integration
+test-integration: build ## Runs integration tests against Ollama
+	$(call print-target)
+	./scripts/test-ollama.sh
+
+.PHONY: demo
+demo: build ## Runs interactive demo showcasing tamper-proof audit trails
+	$(call print-target)
+	./scripts/demo.sh
+
+.PHONY: run
+run: build ## Runs the proxy with debug logging (in-memory storage)
+	$(call print-target)
+	./build/tapesprox -debug
+
+.PHONY: run-persist
+run-persist: build ## Runs the proxy with SQLite persistence
+	$(call print-target)
+	./build/tapesprox -debug -db tapes.db
+
 .PHONY: help
 .DEFAULT_GOAL := help
 help: ## Prints this help message
