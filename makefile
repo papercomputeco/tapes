@@ -1,6 +1,8 @@
 # Based around the auto-documented Makefile:
 # http://marmelab.com/blog/2016/02/29/auto-documented-makefile.html
 
+VERSION ?= dev
+
 GO_BUILD_FLAGS = -ldflags="-s -w"
 
 .PHONY: build-dir
@@ -10,10 +12,21 @@ build-dir:
 .PHONY: build
 build: build-proxy ## Builds all artifacts
 
+.PHONY: build-containers
+build-containers: build-proxy-container ## Builds all container artifacts
+
 .PHONY: build-proxy
 build-proxy: | build-dir ## Build proxy artifact
 	$(call print-target)
 	go build -o build/tapesprox ${GO_BUILD_FLAGS} ./cmd/proxy
+
+.PHONY: build-proxy-container
+build-proxy-container: ## Build the tapesprox container artifact
+	$(call print-target)
+	docker build -f dockerfiles/tapesprox.Dockerfile \
+		-t tapes/proxy:$(VERSION) \
+		-t tapes/proxy:latest \
+		.
 
 .PHONY: clean
 clean: ## Removes the "build" directory with built artifacts
