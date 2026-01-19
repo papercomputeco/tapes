@@ -1,2 +1,5 @@
 /.direnv/
 /build/
+
+# Local Netlify folder
+.netlify
