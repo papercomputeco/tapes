@@ -40,7 +40,7 @@ clean: ## Removes the "build" directory with built artifacts
 .PHONY: unit-test
 unit-test: ## Runs unit tests via "go test"
 	$(call print-target)
-	go test -v ./...
+	dagger call test
 
 .PHONY: help
 .DEFAULT_GOAL := help
