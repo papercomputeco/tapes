@@ -5,6 +5,10 @@ VERSION ?= dev
 
 GO_BUILD_FLAGS = -ldflags="-s -w"
 
+.PHONY: format
+format:
+	find . -type f -name "*.go" -exec goimports -local github.com/papercompute/tapes -w {} \;
+
 .PHONY: build-dir
 build-dir:
 	@mkdir -p build

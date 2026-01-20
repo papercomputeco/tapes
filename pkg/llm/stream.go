@@ -3,17 +3,27 @@ package llm
 import "time"
 
 // StreamChunk represents a single chunk in a streaming response.
+// This is the internal representation used by the proxy after parsing
+// provider-specific streaming formats.
 type StreamChunk struct {
-	Model     string    `json:"model"`
-	CreatedAt time.Time `json:"created_at"`
-	Message   Message   `json:"message"`
-	Done      bool      `json:"done"`
+	// Model that generated the chunk
+	Model string `json:"model"`
 
-	// Final chunk includes metrics
-	TotalDuration      int64 `json:"total_duration,omitempty"`
-	LoadDuration       int64 `json:"load_duration,omitempty"`
-	PromptEvalCount    int   `json:"prompt_eval_count,omitempty"`
-	PromptEvalDuration int64 `json:"prompt_eval_duration,omitempty"`
-	EvalCount          int   `json:"eval_count,omitempty"`
-	EvalDuration       int64 `json:"eval_duration,omitempty"`
+	// Chunk timestamp
+	CreatedAt time.Time `json:"created_at,omitempty"`
+
+	// The content of this chunk (typically a partial message)
+	Message Message `json:"message"`
+
+	// Whether this is the final chunk
+	Done bool `json:"done"`
+
+	// Index for providers that support multiple parallel completions
+	Index int `json:"index,omitempty"`
+
+	// Stop reason (only present on final chunk)
+	StopReason string `json:"stop_reason,omitempty"`
+
+	// Usage metrics (typically only present on final chunk)
+	Usage *Usage `json:"usage,omitempty"`
 }

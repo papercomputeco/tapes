@@ -17,6 +17,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
+	"github.com/papercomputeco/tapes/pkg/llm/provider"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 )
 
@@ -29,6 +30,7 @@ type Proxy struct {
 	logger     *zap.Logger
 	httpClient *http.Client
 	server     *fiber.App
+	detector   *provider.Detector
 }
 
 // New creates a new Proxy.
@@ -55,20 +57,21 @@ func New(config Config, logger *zap.Logger) (*Proxy, error) {
 	})
 
 	p := &Proxy{
-		config: config,
-		storer: storer,
-		logger: logger,
-		server: app,
+		config:   config,
+		storer:   storer,
+		logger:   logger,
+		server:   app,
+		detector: provider.NewDetector(),
 		httpClient: &http.Client{
 			// LLM requests can be slow, especially with thinking blocks
 			Timeout: 5 * time.Minute,
 		},
 	}
 
-	// Register routes
-	app.Post("/api/chat", p.handleChat)
+	// Register transparent proxy route - forwards any path to upstream
+	app.All("/*", p.handleProxy)
 
-	// Health check
+	// Health check (takes precedence due to explicit registration)
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(map[string]string{"status": "ok"})
 	})
@@ -97,83 +100,164 @@ func (p *Proxy) Close() error {
 	return p.storer.Close()
 }
 
-// handleChat proxies chat requests to the upstream LLM and stores the conversation.
-// The proxy is transparent - it forwards requests to the upstream LLM and stores
-// the conversation in the Merkle DAG. Content-addressability means:
-// - Identical message histories automatically deduplicate (same hashes)
-// - Different responses from the LLM create branches from the common ancestor
-// - No session IDs or special headers needed - the content IS the identity
-func (p *Proxy) handleChat(c *fiber.Ctx) error {
+// handleProxy is a transparent proxy handler that forwards requests to upstream
+// and stores conversation turns in the Merkle DAG.
+func (p *Proxy) handleProxy(c *fiber.Ctx) error {
 	startTime := time.Now()
 
-	// Parse the incoming request
-	var req llm.ChatRequest
-	if err := json.Unmarshal(c.Body(), &req); err != nil {
-		p.logger.Error("failed to parse request", zap.Error(err))
-		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "invalid request body"})
+	// Get the request path and method
+	path := c.Path()
+	method := c.Method()
+
+	// Only process POST requests that look like chat/completion endpoints
+	body := c.Body()
+	isChatRequest := method == "POST" && len(body) > 0
+
+	// Detect provider and parse request if this looks like a chat request
+	var detectedProvider provider.Provider
+	var parsedReq *llm.ChatRequest
+	if isChatRequest {
+		detectedProvider = p.detector.Detect(body)
+		var err error
+		parsedReq, err = detectedProvider.ParseRequest(body)
+		if err != nil {
+			p.logger.Warn("failed to parse request",
+				zap.Error(err),
+				zap.String("provider", detectedProvider.Name()),
+			)
+		} else {
+			p.logger.Debug("detected provider",
+				zap.String("provider", detectedProvider.Name()),
+				zap.String("model", parsedReq.Model),
+				zap.Int("message_count", len(parsedReq.Messages)),
+			)
+		}
 	}
 
-	p.logger.Debug("received chat request",
-		zap.String("model", req.Model),
-		zap.Int("message_count", len(req.Messages)),
-		zap.Bool("stream", req.Stream != nil && *req.Stream),
-	)
-
-	// Determine if streaming
-	streaming := req.Stream == nil || *req.Stream // Ollama defaults to streaming
-
-	if streaming {
-		return p.handleStreamingChat(c, &req, startTime)
-	} else {
-		return p.handleNonStreamingChat(c, &req, startTime)
+	// Determine if streaming (check parsed request or raw JSON)
+	streaming := false
+	if parsedReq != nil && parsedReq.Stream != nil {
+		streaming = *parsedReq.Stream
+	} else if isChatRequest {
+		// Fallback: check raw JSON for stream field
+		var streamCheck struct {
+			Stream *bool `json:"stream"`
+		}
+		if err := json.Unmarshal(body, &streamCheck); err == nil && streamCheck.Stream != nil {
+			streaming = *streamCheck.Stream
+		}
 	}
+
+	if streaming && isChatRequest {
+		return p.handleStreamingProxy(c, path, body, detectedProvider, parsedReq, startTime)
+	}
+
+	return p.handleNonStreamingProxy(c, path, method, body, detectedProvider, parsedReq, startTime)
 }
 
-// handleNonStreamingChat handles non-streaming chat requests.
-func (p *Proxy) handleNonStreamingChat(c *fiber.Ctx, req *llm.ChatRequest, startTime time.Time) error {
-	// Forward to upstream
-	resp, err := p.forwardRequest(req)
-	if err != nil {
-		p.logger.Error("failed to forward request", zap.Error(err))
-		return c.Status(fiber.StatusBadGateway).JSON(llm.ErrorResponse{Error: "upstream request failed"})
+// handleNonStreamingProxy handles non-streaming requests.
+func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method string, body []byte, detectedProvider provider.Provider, parsedReq *llm.ChatRequest, startTime time.Time) error {
+	// Build upstream URL
+	upstreamURL := p.config.UpstreamURL + path
+
+	// Create upstream request
+	var reqBody io.Reader
+	if len(body) > 0 {
+		reqBody = bytes.NewReader(body)
 	}
 
-	p.logger.Debug("received response from upstream",
-		zap.String("model", resp.Model),
-		zap.String("role", resp.Message.Role),
-		zap.String("content_preview", truncate(resp.Message.Content, 100)),
-		zap.Duration("duration", time.Since(startTime)),
-	)
-
-	// Store in DAG - content-addressability handles deduplication automatically
-	headHash, err := p.storeConversationTurn(c.Context(), req, resp)
-	if err != nil {
-		p.logger.Error("failed to store conversation", zap.Error(err))
-		// Continue - don't fail the request just because storage failed
-	} else {
-		p.logger.Info("conversation stored", zap.String("head_hash", truncate(headHash, 16)))
-	}
-
-	// Return response to client
-	return c.JSON(resp)
-}
-
-// handleStreamingChat handles streaming chat requests.
-func (p *Proxy) handleStreamingChat(c *fiber.Ctx, req *llm.ChatRequest, startTime time.Time) error {
-	// Build upstream request
-	reqBody, err := json.Marshal(req)
-	if err != nil {
-		p.logger.Error("failed to marshal request", zap.Error(err))
-		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "internal error"})
-	}
-
-	upstreamURL := p.config.UpstreamURL + "/api/chat"
-	httpReq, err := http.NewRequestWithContext(c.Context(), "POST", upstreamURL, bytes.NewReader(reqBody))
+	httpReq, err := http.NewRequestWithContext(c.Context(), method, upstreamURL, reqBody)
 	if err != nil {
 		p.logger.Error("failed to create upstream request", zap.Error(err))
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "internal error"})
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
+
+	// Copy relevant headers
+	c.Request().Header.VisitAll(func(key, value []byte) {
+		k := string(key)
+		// Skip hop-by-hop headers
+		if k != "Connection" && k != "Host" {
+			httpReq.Header.Set(k, string(value))
+		}
+	})
+
+	p.logger.Debug("forwarding request to upstream",
+		zap.String("method", method),
+		zap.String("url", upstreamURL),
+	)
+
+	// Make the request
+	httpResp, err := p.httpClient.Do(httpReq)
+	if err != nil {
+		p.logger.Error("upstream request failed", zap.Error(err))
+		return c.Status(fiber.StatusBadGateway).JSON(llm.ErrorResponse{Error: "upstream request failed"})
+	}
+	defer httpResp.Body.Close()
+
+	// Read response body
+	respBody, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		p.logger.Error("failed to read upstream response", zap.Error(err))
+		return c.Status(fiber.StatusBadGateway).JSON(llm.ErrorResponse{Error: "failed to read upstream response"})
+	}
+
+	// Copy response headers
+	for k, v := range httpResp.Header {
+		if k != "Connection" && k != "Transfer-Encoding" {
+			c.Set(k, strings.Join(v, ", "))
+		}
+	}
+
+	// If this was a chat request and we have a provider, try to parse and store
+	if detectedProvider != nil && parsedReq != nil && httpResp.StatusCode == http.StatusOK {
+		parsedResp, err := detectedProvider.ParseResponse(respBody)
+		if err != nil {
+			p.logger.Warn("failed to parse response",
+				zap.Error(err),
+				zap.String("provider", detectedProvider.Name()),
+			)
+		} else {
+			p.logger.Debug("received response from upstream",
+				zap.String("model", parsedResp.Model),
+				zap.String("provider", detectedProvider.Name()),
+				zap.Duration("duration", time.Since(startTime)),
+			)
+
+			// Store in DAG
+			headHash, err := p.storeConversationTurn(c.Context(), detectedProvider.Name(), parsedReq, parsedResp)
+			if err != nil {
+				p.logger.Error("failed to store conversation", zap.Error(err))
+			} else {
+				p.logger.Info("conversation stored",
+					zap.String("head_hash", truncate(headHash, 16)),
+					zap.String("provider", detectedProvider.Name()),
+				)
+			}
+		}
+	}
+
+	// Return response to client
+	return c.Status(httpResp.StatusCode).Send(respBody)
+}
+
+// handleStreamingProxy handles streaming requests.
+func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path string, body []byte, detectedProvider provider.Provider, parsedReq *llm.ChatRequest, startTime time.Time) error {
+	// Build upstream URL
+	upstreamURL := p.config.UpstreamURL + path
+
+	httpReq, err := http.NewRequestWithContext(c.Context(), "POST", upstreamURL, bytes.NewReader(body))
+	if err != nil {
+		p.logger.Error("failed to create upstream request", zap.Error(err))
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "internal error"})
+	}
+
+	// Copy relevant headers
+	c.Request().Header.VisitAll(func(key, value []byte) {
+		k := string(key)
+		if k != "Connection" && k != "Host" {
+			httpReq.Header.Set(k, string(value))
+		}
+	})
 
 	p.logger.Debug("forwarding streaming request to upstream",
 		zap.String("url", upstreamURL),
@@ -188,82 +272,92 @@ func (p *Proxy) handleStreamingChat(c *fiber.Ctx, req *llm.ChatRequest, startTim
 	defer httpResp.Body.Close()
 
 	if httpResp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(httpResp.Body)
+		respBody, _ := io.ReadAll(httpResp.Body)
 		p.logger.Error("upstream returned error",
 			zap.Int("status", httpResp.StatusCode),
-			zap.String("body", string(body)),
+			zap.String("body", string(respBody)),
 		)
-		return c.Status(httpResp.StatusCode).JSON(llm.ErrorResponse{Error: "upstream error"})
+		return c.Status(httpResp.StatusCode).Send(respBody)
 	}
 
-	// Set up streaming response headers
-	c.Set("Content-Type", "application/x-ndjson")
-	c.Set("Transfer-Encoding", "chunked")
+	// Copy response headers
+	for k, v := range httpResp.Header {
+		if k != "Connection" && k != "Transfer-Encoding" {
+			c.Set(k, strings.Join(v, ", "))
+		}
+	}
 
-	// Use Fiber's streaming response with proper bufio.Writer signature
+	// Use Fiber's streaming response
 	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
-		// Stream chunks and accumulate the full response
+		// Accumulate chunks for storage
+		var allChunks [][]byte
 		var fullContent strings.Builder
-		var finalResp *llm.ChatResponse
 
 		scanner := bufio.NewScanner(httpResp.Body)
+		// Increase buffer size for large chunks
+		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+
 		for scanner.Scan() {
 			line := scanner.Bytes()
 			if len(line) == 0 {
 				continue
 			}
 
-			var chunk llm.StreamChunk
-			if err := json.Unmarshal(line, &chunk); err != nil {
-				p.logger.Warn("failed to parse chunk", zap.Error(err), zap.String("line", string(line)))
-				continue
+			// Store chunk for later parsing
+			chunkCopy := make([]byte, len(line))
+			copy(chunkCopy, line)
+			allChunks = append(allChunks, chunkCopy)
+
+			// Try to extract content incrementally for logging
+			// This is a best-effort extraction from the raw chunk
+			var chunkData map[string]any
+			if err := json.Unmarshal(line, &chunkData); err == nil {
+				// Try common content paths
+				if msg, ok := chunkData["message"].(map[string]any); ok {
+					if content, ok := msg["content"].(string); ok {
+						fullContent.WriteString(content)
+					}
+				} else if choices, ok := chunkData["choices"].([]any); ok && len(choices) > 0 {
+					if choice, ok := choices[0].(map[string]any); ok {
+						if delta, ok := choice["delta"].(map[string]any); ok {
+							if content, ok := delta["content"].(string); ok {
+								fullContent.WriteString(content)
+							}
+						}
+					}
+				}
 			}
-
-			// Accumulate content
-			fullContent.WriteString(chunk.Message.Content)
-
-			p.logger.Debug("streaming chunk",
-				zap.Bool("done", chunk.Done),
-				zap.String("content", truncate(chunk.Message.Content, 50)),
-			)
 
 			// Write chunk to client
 			w.Write(line)
 			w.Write([]byte("\n"))
 			w.Flush()
-
-			// Capture final response
-			if chunk.Done {
-				finalResp = &llm.ChatResponse{
-					Model:              chunk.Model,
-					CreatedAt:          chunk.CreatedAt,
-					Message:            llm.Message{Role: "assistant", Content: fullContent.String()},
-					Done:               true,
-					TotalDuration:      chunk.TotalDuration,
-					LoadDuration:       chunk.LoadDuration,
-					PromptEvalCount:    chunk.PromptEvalCount,
-					PromptEvalDuration: chunk.PromptEvalDuration,
-					EvalCount:          chunk.EvalCount,
-					EvalDuration:       chunk.EvalDuration,
-				}
-			}
 		}
 
 		if err := scanner.Err(); err != nil {
 			p.logger.Error("error reading stream", zap.Error(err))
 		}
 
-		// Store the complete conversation turn
-		if finalResp != nil {
+		// After streaming completes, try to reconstruct and store the full response
+		if detectedProvider != nil && parsedReq != nil && len(allChunks) > 0 {
 			p.logger.Debug("streaming complete",
-				zap.String("full_content_preview", truncate(fullContent.String(), 200)),
+				zap.String("content_preview", truncate(fullContent.String(), 200)),
+				zap.Int("chunk_count", len(allChunks)),
 				zap.Duration("duration", time.Since(startTime)),
 			)
-			headHash, err := p.storeConversationTurn(context.Background(), req, finalResp)
-			if err != nil {
-				p.logger.Error("failed to store conversation", zap.Error(err))
-			} else {
-				p.logger.Info("conversation stored", zap.String("head_hash", truncate(headHash, 16)))
+
+			// Try to parse the final chunk or reconstruct response
+			finalResp := p.reconstructStreamedResponse(detectedProvider, allChunks, fullContent.String())
+			if finalResp != nil {
+				headHash, err := p.storeConversationTurn(context.Background(), detectedProvider.Name(), parsedReq, finalResp)
+				if err != nil {
+					p.logger.Error("failed to store conversation", zap.Error(err))
+				} else {
+					p.logger.Info("conversation stored",
+						zap.String("head_hash", truncate(headHash, 16)),
+						zap.String("provider", detectedProvider.Name()),
+					)
+				}
 			}
 		}
 	}))
@@ -271,75 +365,45 @@ func (p *Proxy) handleStreamingChat(c *fiber.Ctx, req *llm.ChatRequest, startTim
 	return nil
 }
 
-// forwardRequest forwards a non-streaming request to the upstream LLM.
-func (p *Proxy) forwardRequest(req *llm.ChatRequest) (*llm.ChatResponse, error) {
-	// Ensure non-streaming
-	streaming := false
-	req.Stream = &streaming
-
-	reqBody, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
+// reconstructStreamedResponse attempts to build a ChatResponse from accumulated stream chunks.
+func (p *Proxy) reconstructStreamedResponse(prov provider.Provider, chunks [][]byte, fullContent string) *llm.ChatResponse {
+	// Try parsing the last chunk as it often contains final metadata
+	if len(chunks) > 0 {
+		lastChunk := chunks[len(chunks)-1]
+		resp, err := prov.ParseResponse(lastChunk)
+		if err == nil && resp != nil {
+			// If the last chunk has minimal content, supplement with accumulated content
+			if resp.Message.GetText() == "" && fullContent != "" {
+				resp.Message = llm.NewTextMessage("assistant", fullContent)
+			}
+			return resp
+		}
 	}
 
-	upstreamURL := p.config.UpstreamURL + "/api/chat"
-	p.logger.Debug("forwarding request to upstream",
-		zap.String("url", upstreamURL),
-		zap.Int("body_size", len(reqBody)),
-	)
-
-	httpReq, err := http.NewRequest("POST", upstreamURL, bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	httpResp, err := p.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("do request: %w", err)
-	}
-	defer httpResp.Body.Close()
-
-	body, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
+	// Fallback: construct a minimal response from accumulated content
+	if fullContent != "" {
+		return &llm.ChatResponse{
+			Message:   llm.NewTextMessage("assistant", fullContent),
+			Done:      true,
+			CreatedAt: time.Now(),
+		}
 	}
 
-	if httpResp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("upstream returned %d: %s", httpResp.StatusCode, string(body))
-	}
-
-	var resp llm.ChatResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal response: %w", err)
-	}
-
-	return &resp, nil
+	return nil
 }
 
 // storeConversationTurn stores a request-response pair in the Merkle DAG.
-// It builds nodes for each message, linking them together, and returns the
-// hash of the final (head) node. The content-addressable nature of the DAG
-// means identical conversations will deduplicate automatically, and divergent
-// conversations will branch from their common ancestor.
-//
-// Each message in the request becomes a node. The first message is a root node
-// (no parent), and subsequent messages link to the previous. If the same message
-// sequence was stored before, the hashes will match and no new nodes are created
-// (deduplication). When the LLM returns a different response, only the response
-// node differs, creating a branch from the shared conversation prefix.
-func (p *Proxy) storeConversationTurn(ctx context.Context, req *llm.ChatRequest, resp *llm.ChatResponse) (string, error) {
+func (p *Proxy) storeConversationTurn(ctx context.Context, providerName string, req *llm.ChatRequest, resp *llm.ChatResponse) (string, error) {
 	var parent *merkle.Node
 
 	// Store each message from the request as nodes
-	// These represent the conversation history - if the same history was sent before,
-	// the nodes will already exist (deduplication via content-addressing)
 	for _, msg := range req.Messages {
 		content := map[string]any{
-			"type":    "message",
-			"role":    msg.Role,
-			"content": msg.Content,
-			"model":   req.Model,
+			"type":     "message",
+			"role":     msg.Role,
+			"content":  msg.Content, // Now stores []ContentBlock
+			"model":    req.Model,
+			"provider": providerName,
 		}
 
 		node := merkle.NewNode(content, parent)
@@ -350,7 +414,7 @@ func (p *Proxy) storeConversationTurn(ctx context.Context, req *llm.ChatRequest,
 		p.logger.Debug("stored message in DAG",
 			zap.String("hash", truncate(node.Hash, 16)),
 			zap.String("role", msg.Role),
-			zap.String("content_preview", truncate(msg.Content, 50)),
+			zap.String("content_preview", truncate(msg.GetText(), 50)),
 		)
 
 		parent = node
@@ -358,17 +422,23 @@ func (p *Proxy) storeConversationTurn(ctx context.Context, req *llm.ChatRequest,
 
 	// Store the response message
 	responseContent := map[string]any{
-		"type":    "message",
-		"role":    resp.Message.Role,
-		"content": resp.Message.Content,
-		"model":   resp.Model,
-		"metrics": map[string]any{
-			"total_duration_ns":       resp.TotalDuration,
-			"prompt_eval_count":       resp.PromptEvalCount,
-			"prompt_eval_duration_ns": resp.PromptEvalDuration,
-			"eval_count":              resp.EvalCount,
-			"eval_duration_ns":        resp.EvalDuration,
-		},
+		"type":        "message",
+		"role":        resp.Message.Role,
+		"content":     resp.Message.Content, // Now stores []ContentBlock
+		"model":       resp.Model,
+		"provider":    providerName,
+		"stop_reason": resp.StopReason,
+	}
+
+	// Add usage metrics if present
+	if resp.Usage != nil {
+		responseContent["usage"] = map[string]any{
+			"prompt_tokens":      resp.Usage.PromptTokens,
+			"completion_tokens":  resp.Usage.CompletionTokens,
+			"total_tokens":       resp.Usage.TotalTokens,
+			"total_duration_ns":  resp.Usage.TotalDurationNs,
+			"prompt_duration_ns": resp.Usage.PromptDurationNs,
+		}
 	}
 
 	responseNode := merkle.NewNode(responseContent, parent)
@@ -378,7 +448,7 @@ func (p *Proxy) storeConversationTurn(ctx context.Context, req *llm.ChatRequest,
 
 	p.logger.Debug("stored response in DAG",
 		zap.String("hash", truncate(responseNode.Hash, 16)),
-		zap.String("content_preview", truncate(resp.Message.Content, 50)),
+		zap.String("content_preview", truncate(resp.Message.GetText(), 50)),
 	)
 
 	return responseNode.Hash, nil
@@ -442,23 +512,21 @@ type HistoryMessage struct {
 	Hash       string         `json:"hash"`
 	ParentHash *string        `json:"parent_hash,omitempty"`
 	Role       string         `json:"role"`
-	Content    string         `json:"content"`
+	Content    any            `json:"content"` // Can be string or []ContentBlock
 	Model      string         `json:"model,omitempty"`
+	Provider   string         `json:"provider,omitempty"`
 	Metadata   map[string]any `json:"metadata,omitempty"`
 }
 
 // handleListHistories returns all conversation histories (one per leaf node).
-// This is useful for manual testing and debugging.
 func (p *Proxy) handleListHistories(c *fiber.Ctx) error {
 	ctx := c.Context()
 
-	// Get all leaf nodes (end points of conversations)
 	leaves, err := p.storer.Leaves(ctx)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to get leaves"})
 	}
 
-	// Build history for each leaf
 	histories := make([]HistoryResponse, 0, len(leaves))
 	for _, leaf := range leaves {
 		history, err := p.buildHistory(ctx, leaf.Hash)
@@ -476,7 +544,6 @@ func (p *Proxy) handleListHistories(c *fiber.Ctx) error {
 }
 
 // handleGetHistory returns the full conversation history leading up to a given node.
-// The history is returned in chronological order (oldest first).
 func (p *Proxy) handleGetHistory(c *fiber.Ctx) error {
 	hash := c.Params("hash")
 	if hash == "" {
@@ -493,16 +560,13 @@ func (p *Proxy) handleGetHistory(c *fiber.Ctx) error {
 
 // buildHistory constructs a HistoryResponse for the given node hash.
 func (p *Proxy) buildHistory(ctx context.Context, hash string) (*HistoryResponse, error) {
-	// Get the ancestry (returns newest first, i.e., from hash back to root)
 	ancestry, err := p.storer.Ancestry(ctx, hash)
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert to HistoryMessage and reverse to chronological order
 	messages := make([]HistoryMessage, len(ancestry))
 	for i, node := range ancestry {
-		// Place in reverse order (oldest first)
 		idx := len(ancestry) - 1 - i
 
 		msg := HistoryMessage{
@@ -510,21 +574,22 @@ func (p *Proxy) buildHistory(ctx context.Context, hash string) (*HistoryResponse
 			ParentHash: node.ParentHash,
 		}
 
-		// Extract role and content from the node's content map
 		if content, ok := node.Content.(map[string]any); ok {
 			if role, ok := content["role"].(string); ok {
 				msg.Role = role
 			}
-			if contentStr, ok := content["content"].(string); ok {
-				msg.Content = contentStr
-			}
+			// Content can now be []ContentBlock or string
+			msg.Content = content["content"]
 			if model, ok := content["model"].(string); ok {
 				msg.Model = model
 			}
-			// Copy any additional metadata (excluding role, content, model, type)
+			if provider, ok := content["provider"].(string); ok {
+				msg.Provider = provider
+			}
+			// Copy additional metadata
 			metadata := make(map[string]any)
 			for k, v := range content {
-				if k != "role" && k != "content" && k != "model" && k != "type" {
+				if k != "role" && k != "content" && k != "model" && k != "type" && k != "provider" {
 					metadata[k] = v
 				}
 			}

@@ -16,6 +16,7 @@
           buildInputs = with pkgs; [
             # Go toolchain
             go_1_25
+            gotools
 
             # Build tools
             gnumake

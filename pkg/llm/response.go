@@ -1,22 +1,48 @@
 package llm
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
-// ChatResponse represents a chat completion response (Ollama-compatible).
+// ChatResponse represents a provider-agnostic chat completion response.
+// This is the internal representation used by the proxy after parsing
+// provider-specific response formats.
 type ChatResponse struct {
-	Model     string    `json:"model"`      // Model that generated the response
-	CreatedAt time.Time `json:"created_at"` // Response timestamp
-	Message   Message   `json:"message"`    // The assistant's response
-	Done      bool      `json:"done"`       // Whether generation is complete
+	// Model that generated the response
+	Model string `json:"model"`
 
-	// Metrics (only present when done=true)
-	TotalDuration      int64 `json:"total_duration,omitempty"`       // Total time in nanoseconds
-	LoadDuration       int64 `json:"load_duration,omitempty"`        // Model load time
-	PromptEvalCount    int   `json:"prompt_eval_count,omitempty"`    // Tokens in prompt
-	PromptEvalDuration int64 `json:"prompt_eval_duration,omitempty"` // Prompt processing time
-	EvalCount          int   `json:"eval_count,omitempty"`           // Generated tokens
-	EvalDuration       int64 `json:"eval_duration,omitempty"`        // Generation time
+	// Response timestamp
+	CreatedAt time.Time `json:"created_at,omitempty"`
 
-	// Context for continuation (Ollama-specific)
-	Context []int `json:"context,omitempty"` // Token context for follow-up requests
+	// The assistant's response message
+	Message Message `json:"message"`
+
+	// Whether generation is complete (for streaming)
+	Done bool `json:"done"`
+
+	// Stop reason (e.g., "stop", "length", "tool_use", "end_turn")
+	StopReason string `json:"stop_reason,omitempty"`
+
+	// Token usage and timing metrics
+	Usage *Usage `json:"usage,omitempty"`
+
+	// Provider-specific fields that don't map to common parameters
+	Extra map[string]any `json:"extra,omitempty"`
+
+	// RawResponse preserves the original response payload for cases where
+	// parsing is incomplete or for debugging. Populated by BestEffort provider.
+	RawResponse json.RawMessage `json:"raw_response,omitempty"`
+}
+
+// Usage contains token counts and timing information.
+type Usage struct {
+	// Token counts
+	PromptTokens     int `json:"prompt_tokens,omitempty"`
+	CompletionTokens int `json:"completion_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
+
+	// Timing (provider-specific, but normalized to nanoseconds where possible)
+	TotalDurationNs  int64 `json:"total_duration_ns,omitempty"`
+	PromptDurationNs int64 `json:"prompt_duration_ns,omitempty"`
 }
