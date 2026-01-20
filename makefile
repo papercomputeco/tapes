@@ -14,15 +14,25 @@ build-dir:
 	@mkdir -p build
 
 .PHONY: build
-build: build-proxy ## Builds all artifacts
+build: build-dir build-proxy build-api build-cli ## Builds all artifacts
 
 .PHONY: build-containers
 build-containers: build-proxy-container ## Builds all container artifacts
 
 .PHONY: build-proxy
-build-proxy: | build-dir ## Build proxy artifact
+build-proxy: | build-dir ## Build proxy server artifact
 	$(call print-target)
-	go build -o build/tapesprox ${GO_BUILD_FLAGS} ./cmd/proxy
+	go build -o build/tapesprox ${GO_BUILD_FLAGS} ./cli/tapesprox
+
+.PHONY: build-api
+build-api: | build-dir ## Build API server artifact
+	$(call print-target)
+	go build -o build/tapesapi ${GO_BUILD_FLAGS} ./cli/tapesapi
+
+.PHONY: build-cli
+build-cli: | build-dir ## Build CLI artifact
+	$(call print-target)
+	go build -o build/tapes ${GO_BUILD_FLAGS} ./cli/tapes
 
 .PHONY: build-proxy-container
 build-proxy-container: ## Build the tapesprox container artifact

@@ -34,21 +34,8 @@ type Proxy struct {
 }
 
 // New creates a new Proxy.
-func New(config Config, logger *zap.Logger) (*Proxy, error) {
-	var storer merkle.Storer
-	var err error
-
-	if config.DBPath != "" {
-		storer, err = merkle.NewSQLiteStorer(config.DBPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
-		}
-		logger.Info("using SQLite storage", zap.String("path", config.DBPath))
-	} else {
-		storer = merkle.NewMemoryStorer()
-		logger.Info("using in-memory storage")
-	}
-
+// The storer is injected to allow sharing with other components (e.g., the API server).
+func New(config Config, storer merkle.Storer, logger *zap.Logger) *Proxy {
 	app := fiber.New(fiber.Config{
 		// Disable startup message for cleaner logs
 		DisableStartupMessage: true,
@@ -71,18 +58,7 @@ func New(config Config, logger *zap.Logger) (*Proxy, error) {
 	// Register transparent proxy route - forwards any path to upstream
 	app.All("/*", p.handleProxy)
 
-	// Health check (takes precedence due to explicit registration)
-	app.Get("/health", func(c *fiber.Ctx) error {
-		return c.JSON(map[string]string{"status": "ok"})
-	})
-
-	// DAG inspection endpoints
-	app.Get("/dag/stats", p.handleDAGStats)
-	app.Get("/dag/node/:hash", p.handleGetNode)
-	app.Get("/dag/history", p.handleListHistories)
-	app.Get("/dag/history/:hash", p.handleGetHistory)
-
-	return p, nil
+	return p
 }
 
 // Run starts the proxy server on the given listening address
@@ -452,160 +428,6 @@ func (p *Proxy) storeConversationTurn(ctx context.Context, providerName string, 
 	)
 
 	return responseNode.Hash, nil
-}
-
-// handleDAGStats returns statistics about the DAG.
-func (p *Proxy) handleDAGStats(c *fiber.Ctx) error {
-	ctx := c.Context()
-
-	nodes, err := p.storer.List(ctx)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list nodes"})
-	}
-
-	roots, err := p.storer.Roots(ctx)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to get roots"})
-	}
-
-	leaves, err := p.storer.Leaves(ctx)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to get leaves"})
-	}
-
-	stats := map[string]any{
-		"total_nodes": len(nodes),
-		"root_count":  len(roots),
-		"leaf_count":  len(leaves),
-	}
-
-	return c.JSON(stats)
-}
-
-// handleGetNode returns a single node by its hash.
-func (p *Proxy) handleGetNode(c *fiber.Ctx) error {
-	hash := c.Params("hash")
-	if hash == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "hash parameter required"})
-	}
-
-	node, err := p.storer.Get(c.Context(), hash)
-	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "node not found"})
-	}
-
-	return c.JSON(node)
-}
-
-// HistoryResponse contains the conversation history for a given node.
-type HistoryResponse struct {
-	// Messages in chronological order (oldest first, up to and including the requested node)
-	Messages []HistoryMessage `json:"messages"`
-	// HeadHash is the hash of the node that was requested
-	HeadHash string `json:"head_hash"`
-	// Depth is the number of messages in the history
-	Depth int `json:"depth"`
-}
-
-// HistoryMessage represents a message in the conversation history.
-type HistoryMessage struct {
-	Hash       string         `json:"hash"`
-	ParentHash *string        `json:"parent_hash,omitempty"`
-	Role       string         `json:"role"`
-	Content    any            `json:"content"` // Can be string or []ContentBlock
-	Model      string         `json:"model,omitempty"`
-	Provider   string         `json:"provider,omitempty"`
-	Metadata   map[string]any `json:"metadata,omitempty"`
-}
-
-// handleListHistories returns all conversation histories (one per leaf node).
-func (p *Proxy) handleListHistories(c *fiber.Ctx) error {
-	ctx := c.Context()
-
-	leaves, err := p.storer.Leaves(ctx)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to get leaves"})
-	}
-
-	histories := make([]HistoryResponse, 0, len(leaves))
-	for _, leaf := range leaves {
-		history, err := p.buildHistory(ctx, leaf.Hash)
-		if err != nil {
-			p.logger.Warn("failed to build history for leaf", zap.String("hash", leaf.Hash), zap.Error(err))
-			continue
-		}
-		histories = append(histories, *history)
-	}
-
-	return c.JSON(map[string]any{
-		"count":     len(histories),
-		"histories": histories,
-	})
-}
-
-// handleGetHistory returns the full conversation history leading up to a given node.
-func (p *Proxy) handleGetHistory(c *fiber.Ctx) error {
-	hash := c.Params("hash")
-	if hash == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "hash parameter required"})
-	}
-
-	history, err := p.buildHistory(c.Context(), hash)
-	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "node not found"})
-	}
-
-	return c.JSON(history)
-}
-
-// buildHistory constructs a HistoryResponse for the given node hash.
-func (p *Proxy) buildHistory(ctx context.Context, hash string) (*HistoryResponse, error) {
-	ancestry, err := p.storer.Ancestry(ctx, hash)
-	if err != nil {
-		return nil, err
-	}
-
-	messages := make([]HistoryMessage, len(ancestry))
-	for i, node := range ancestry {
-		idx := len(ancestry) - 1 - i
-
-		msg := HistoryMessage{
-			Hash:       node.Hash,
-			ParentHash: node.ParentHash,
-		}
-
-		if content, ok := node.Content.(map[string]any); ok {
-			if role, ok := content["role"].(string); ok {
-				msg.Role = role
-			}
-			// Content can now be []ContentBlock or string
-			msg.Content = content["content"]
-			if model, ok := content["model"].(string); ok {
-				msg.Model = model
-			}
-			if provider, ok := content["provider"].(string); ok {
-				msg.Provider = provider
-			}
-			// Copy additional metadata
-			metadata := make(map[string]any)
-			for k, v := range content {
-				if k != "role" && k != "content" && k != "model" && k != "type" && k != "provider" {
-					metadata[k] = v
-				}
-			}
-			if len(metadata) > 0 {
-				msg.Metadata = metadata
-			}
-		}
-
-		messages[idx] = msg
-	}
-
-	return &HistoryResponse{
-		Messages: messages,
-		HeadHash: hash,
-		Depth:    len(messages),
-	}, nil
 }
 
 func truncate(s string, maxLen int) string {
