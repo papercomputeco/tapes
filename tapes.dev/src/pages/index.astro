@@ -63,6 +63,22 @@ make build</code></pre>
         <p>The proxy forwards to your upstream LLM and stores both request and response in the Merkle DAG.</p>
       </section>
 
+      <section id="architecture">
+        <h2>Architecture</h2>
+        <p>Tapes consists of two main components:</p>
+        <div class="architecture">
+          <div class="component">
+            <strong>Proxy Server</strong>
+            <span>Intercepts LLM requests, forwards to upstream provider, and stores conversation turns in the Merkle DAG</span>
+          </div>
+          <div class="component">
+            <strong>API Server</strong>
+            <span>Provides HTTP endpoints for inspecting and querying the stored conversation data</span>
+          </div>
+        </div>
+        <p>Both servers share the same storage backend (SQLite or in-memory) when run together via <code>tapes serve</code>.</p>
+      </section>
+
       <section id="inspect">
         <h2>Inspect</h2>
         <p>Query the API server to explore stored conversations:</p>
@@ -89,22 +105,6 @@ make build</code></pre>
           </div>
         </div>
         <p class="hint">API server runs on port 8081 by default when using <code>tapes serve</code></p>
-      </section>
-
-      <section id="architecture">
-        <h2>Architecture</h2>
-        <p>Tapes consists of two main components:</p>
-        <div class="architecture">
-          <div class="component">
-            <strong>Proxy Server</strong>
-            <span>Intercepts LLM requests, forwards to upstream provider, and stores conversation turns in the Merkle DAG</span>
-          </div>
-          <div class="component">
-            <strong>API Server</strong>
-            <span>Provides HTTP endpoints for inspecting and querying the stored conversation data</span>
-          </div>
-        </div>
-        <p>Both servers share the same storage backend (SQLite or in-memory) when run together via <code>tapes serve</code>.</p>
       </section>
 
       <section class="cta">
