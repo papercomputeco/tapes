@@ -3,6 +3,7 @@
 
 VERSION ?= dev
 
+GOENV = GOEXPERIMENT="jsonv2"
 GO_BUILD_FLAGS = -ldflags="-s -w"
 
 .PHONY: format
@@ -22,17 +23,17 @@ build-containers: build-proxy-container ## Builds all container artifacts
 .PHONY: build-proxy
 build-proxy: | build-dir ## Build proxy server artifact
 	$(call print-target)
-	go build -o build/tapesprox ${GO_BUILD_FLAGS} ./cli/tapesprox
+	${GOENV} go build -o build/tapesprox ${GO_BUILD_FLAGS} ./cli/tapesprox
 
 .PHONY: build-api
 build-api: | build-dir ## Build API server artifact
 	$(call print-target)
-	go build -o build/tapesapi ${GO_BUILD_FLAGS} ./cli/tapesapi
+	${GOENV} go build -o build/tapesapi ${GO_BUILD_FLAGS} ./cli/tapesapi
 
 .PHONY: build-cli
 build-cli: | build-dir ## Build CLI artifact
 	$(call print-target)
-	go build -o build/tapes ${GO_BUILD_FLAGS} ./cli/tapes
+	${GOENV} go build -o build/tapes ${GO_BUILD_FLAGS} ./cli/tapes
 
 .PHONY: build-proxy-container
 build-proxy-container: ## Build the tapesprox container artifact

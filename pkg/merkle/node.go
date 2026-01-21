@@ -4,7 +4,8 @@ package merkle
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 )
 
 // Node represents a single content-addressed node in a Merkle DAG
@@ -44,13 +45,23 @@ func (n *Node) computeHash() string {
 		i.Parent = *n.ParentHash
 	}
 
-	// Canonical JSON encoding for deterministic hashing
+	// Marshal to JSON
 	data, err := json.Marshal(i)
 	if err != nil {
 		panic("failed to marshal hash input: " + err.Error())
 	}
 
-	h := sha256.Sum256(data)
-	computed := hex.EncodeToString(h[:])
-	return computed
+	// Canonicalize the nodes content JSON according to RFC 8785.
+	// This, as of Go 1.25.x, requires "GOEXPERIMENT=jsonv2" for the new json v2
+	// and jsontext packages to properly canonicalize the payload.
+	// This effectively ensures that JSON blob hexes from one proxy run to the next
+	// are the same.
+	j := jsontext.Value(data)
+	err = j.Canonicalize()
+	if err != nil {
+		panic("failed to canonicalize JSON: " + err.Error())
+	}
+
+	h := sha256.Sum256(j)
+	return hex.EncodeToString(h[:])
 }

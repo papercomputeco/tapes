@@ -45,6 +45,7 @@ func (t *Tapes) testContainer() *dagger.Container {
 		From("golang:1.25-alpine").
 		WithExec([]string{"apk", "add", "--no-cache", "gcc", "musl-dev", "sqlite-dev"}).
 		WithEnvVariable("CGO_ENABLED", "1").
+		WithEnvVariable("GOEXPERIMENT", "jsonv2").
 		WithMountedCache("/go/pkg/mod", dag.CacheVolume("go-mod")).
 		WithMountedCache("/root/.cache/go-build", dag.CacheVolume("go-build")).
 		WithWorkdir("/src").
