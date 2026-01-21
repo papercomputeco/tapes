@@ -56,19 +56,26 @@ const { title } = Astro.props;
     </script>
   </head>
   <body>
-    <div id="toast" class="toast">Copied to clipboard</div>
-    <nav id="nav-menu" class="nav-menu">
+    <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true">Copied to clipboard</div>
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+    <nav id="nav-menu" class="nav-menu" aria-label="Main navigation">
       <div class="nav-menu-header">
-        <button id="nav-toggle" class="nav-toggle" aria-label="Toggle navigation">
-          <div class="hamburger">
+        <button
+          id="nav-toggle"
+          class="nav-toggle"
+          aria-label="Open navigation menu"
+          aria-expanded="false"
+          aria-controls="nav-menu-content"
+        >
+          <div class="hamburger" aria-hidden="true">
             <span class="hamburger-line"></span>
             <span class="hamburger-line"></span>
           </div>
         </button>
       </div>
-      <div class="nav-menu-content">
-        <div class="nav-section">
-          <span class="nav-section-title">tapes</span>
+      <div id="nav-menu-content" class="nav-menu-content" aria-hidden="true">
+        <div class="nav-section" role="group" aria-labelledby="nav-section-tapes">
+          <h2 id="nav-section-tapes" class="nav-section-title">tapes</h2>
           <ul class="nav-links">
             <li><a href="#install">Install</a></li>
             <li><a href="#run">Run</a></li>
@@ -76,8 +83,8 @@ const { title } = Astro.props;
             <li><a href="#architecture">Architecture</a></li>
           </ul>
         </div>
-        <div class="nav-section">
-          <span class="nav-section-title">tapesapi</span>
+        <div class="nav-section" role="group" aria-labelledby="nav-section-tapesapi">
+          <h2 id="nav-section-tapesapi" class="nav-section-title">tapesapi</h2>
           <ul class="nav-links">
             <li><a href="#inspect">Inspect</a></li>
           </ul>
@@ -87,8 +94,8 @@ const { title } = Astro.props;
         </div>
       </div>
     </nav>
-    <button id="theme-toggle" aria-label="Toggle theme">
-      <svg class="sun-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+    <button id="theme-toggle" aria-label="Switch to dark theme">
+      <svg class="sun-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
         <circle cx="12" cy="12" r="5"/>
         <line x1="12" y1="1" x2="12" y2="3"/>
         <line x1="12" y1="21" x2="12" y2="23"/>
@@ -99,7 +106,7 @@ const { title } = Astro.props;
         <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
         <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
       </svg>
-      <svg class="moon-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+      <svg class="moon-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
         <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
       </svg>
     </button>
@@ -112,31 +119,99 @@ const { title } = Astro.props;
         }
       });
 
-      // Toggle button
-      document.getElementById('theme-toggle')?.addEventListener('click', () => {
+      // Toggle button with dynamic aria-label
+      const themeToggle = document.getElementById('theme-toggle');
+      function updateThemeToggleLabel() {
+        const current = document.documentElement.getAttribute('data-theme');
+        themeToggle?.setAttribute('aria-label', current === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
+      }
+      updateThemeToggleLabel();
+
+      themeToggle?.addEventListener('click', () => {
         const current = document.documentElement.getAttribute('data-theme');
         const next = current === 'dark' ? 'light' : 'dark';
         document.documentElement.setAttribute('data-theme', next);
         localStorage.setItem('theme', next);
+        updateThemeToggleLabel();
       });
 
-      // Navigation menu
+      // Navigation menu with full keyboard support
       document.addEventListener('DOMContentLoaded', () => {
         const navToggle = document.getElementById('nav-toggle');
         const navMenu = document.getElementById('nav-menu');
+        const navMenuContent = document.getElementById('nav-menu-content');
         const navLinks = document.querySelectorAll('.nav-links a');
+        const focusableElements = navMenuContent?.querySelectorAll(
+          'a[href], button, textarea, input, select, [tabindex]:not([tabindex="-1"])'
+        );
+        const firstFocusable = focusableElements?.[0];
+        const lastFocusable = focusableElements?.[focusableElements.length - 1];
 
-        function toggleNav() {
-          navMenu?.classList.toggle('open');
-          document.body.style.overflow = navMenu?.classList.contains('open') ? 'hidden' : '';
+        function openNav() {
+          navMenu?.classList.add('open');
+          navToggle?.setAttribute('aria-expanded', 'true');
+          navToggle?.setAttribute('aria-label', 'Close navigation menu');
+          navMenuContent?.setAttribute('aria-hidden', 'false');
+          document.body.style.overflow = 'hidden';
+          // Move focus to first link after animation
+          setTimeout(() => {
+            firstFocusable?.focus();
+          }, 100);
         }
 
-        function closeNav() {
+        function closeNav(returnFocus = true) {
           navMenu?.classList.remove('open');
+          navToggle?.setAttribute('aria-expanded', 'false');
+          navToggle?.setAttribute('aria-label', 'Open navigation menu');
+          navMenuContent?.setAttribute('aria-hidden', 'true');
           document.body.style.overflow = '';
+          if (returnFocus) {
+            navToggle?.focus();
+          }
+        }
+
+        function toggleNav() {
+          const isOpen = navMenu?.classList.contains('open');
+          if (isOpen) {
+            closeNav();
+          } else {
+            openNav();
+          }
+        }
+
+        // Focus trap - keep focus within menu when open
+        function handleFocusTrap(e) {
+          if (!navMenu?.classList.contains('open')) return;
+
+          if (e.key === 'Tab') {
+            if (e.shiftKey) {
+              // Shift + Tab
+              if (document.activeElement === firstFocusable) {
+                e.preventDefault();
+                lastFocusable?.focus();
+              }
+            } else {
+              // Tab
+              if (document.activeElement === lastFocusable) {
+                e.preventDefault();
+                firstFocusable?.focus();
+              }
+            }
+          }
+        }
+
+        // Escape key closes menu
+        function handleEscapeKey(e) {
+          if (e.key === 'Escape' && navMenu?.classList.contains('open')) {
+            closeNav();
+          }
         }
 
         navToggle?.addEventListener('click', toggleNav);
+
+        // Keyboard event listeners
+        document.addEventListener('keydown', handleEscapeKey);
+        document.addEventListener('keydown', handleFocusTrap);
 
         navLinks.forEach(link => {
           link.addEventListener('click', (e) => {
@@ -145,9 +220,12 @@ const { title } = Astro.props;
             if (targetId) {
               const target = document.querySelector(targetId);
               if (target) {
-                closeNav();
+                closeNav(false);
                 setTimeout(() => {
                   target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  // Set focus to target section for screen readers
+                  target.setAttribute('tabindex', '-1');
+                  target.focus();
                 }, 150);
               }
             }
@@ -538,5 +616,63 @@ const { title } = Astro.props;
     .nav-logo {
       width: 120px;
     }
+  }
+
+  /* Skip link for keyboard navigation */
+  .skip-link {
+    position: absolute;
+    top: -100%;
+    left: 1rem;
+    z-index: 200;
+    padding: 0.75rem 1rem;
+    background: var(--accent);
+    color: white;
+    border-radius: 8px;
+    font-weight: 600;
+    text-decoration: none;
+    transition: top 0.2s ease;
+  }
+
+  .skip-link:focus {
+    top: 1rem;
+  }
+
+  /* Focus indicators for keyboard navigation */
+  *:focus {
+    outline: none;
+  }
+
+  *:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .nav-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  #theme-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .nav-links a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 4px;
+    border-radius: 4px;
+  }
+
+  .copy-button:focus-visible {
+    opacity: 1;
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* Ensure h2 section titles look like the original spans */
+  .nav-section-title {
+    font-size: 0.8125rem;
+    font-weight: normal;
+    margin: 0;
   }
 </style>
