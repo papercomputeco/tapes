@@ -10,43 +10,67 @@ import Layout from '../layouts/Layout.astro';
     </header>
 
     <main>
-      <section>
+      <section id="install">
         <h2>Install</h2>
-        <p>Build from source with Go 1.25+:</p>
+        <p>Build from source with Go 1.22+:</p>
         <pre><code>git clone https://github.com/papercomputeco/tapes.git
 cd tapes
-go build -o tapesprox ./cmd/proxy</code></pre>
+make build</code></pre>
+        <p class="hint">This builds <code>tapes</code>, <code>tapesprox</code>, and <code>tapesapi</code> binaries in <code>./build/</code></p>
         <p class="hint">Or use <code>nix develop</code> if you have Nix installed.</p>
       </section>
 
-      <section>
+      <section id="run">
         <h2>Run</h2>
-        <p>Start the proxy pointing to your LLM provider (defaults to Ollama):</p>
-        <pre><code>./tapesprox \
-  -listen ":8080" \
-  -upstream "http://localhost:11434" \
-  -db "./tapes.db"</code></pre>
+        <p>Start both the proxy and API server together:</p>
+        <pre><code>./build/tapes serve \
+  --proxy-listen ":8080" \
+  --api-listen ":8081" \
+  --upstream "http://localhost:11434" \
+  --sqlite "./tapes.db"</code></pre>
+        <p class="hint">Or run them separately:</p>
+        <div class="commands">
+          <div class="command">
+            <code>tapes serve proxy</code>
+            <span>Run just the proxy server</span>
+          </div>
+          <div class="command">
+            <code>tapes serve api</code>
+            <span>Run just the API server</span>
+          </div>
+        </div>
+        <h3>Proxy Flags</h3>
         <div class="flags">
-          <div class="flag"><code>-listen</code> <span>Address to listen on (default: :8080)</span></div>
-          <div class="flag"><code>-upstream</code> <span>LLM provider URL (default: localhost:11434)</span></div>
-          <div class="flag"><code>-db</code> <span>SQLite database path (empty = in-memory)</span></div>
-          <div class="flag"><code>-debug</code> <span>Enable debug logging</span></div>
+          <div class="flag"><code>-l, --listen</code> <span>Address to listen on (default: :8080)</span></div>
+          <div class="flag"><code>-u, --upstream</code> <span>LLM provider URL (default: localhost:11434)</span></div>
+          <div class="flag"><code>-s, --sqlite</code> <span>SQLite database path (empty = in-memory)</span></div>
+          <div class="flag"><code>-d, --debug</code> <span>Enable debug logging</span></div>
+        </div>
+        <h3>API Server Flags</h3>
+        <div class="flags">
+          <div class="flag"><code>-l, --listen</code> <span>Address to listen on (default: :8081)</span></div>
+          <div class="flag"><code>-s, --sqlite</code> <span>SQLite database path (empty = in-memory)</span></div>
+          <div class="flag"><code>-d, --debug</code> <span>Enable debug logging</span></div>
         </div>
       </section>
 
-      <section>
+      <section id="use">
         <h2>Use</h2>
         <p>Send chat requests to the proxy instead of directly to your LLM:</p>
         <pre><code>curl -X POST http://localhost:8080/api/chat \
   -H "Content-Type: application/json" \
   -d '{"{"}"model": "llama2", "messages": [{"{"}"role": "user", "content": "Hello!"{"}"}], "stream": false{"}"}'</code></pre>
-        <p>The proxy forwards to your upstream LLM and stores both request and response in the DAG.</p>
+        <p>The proxy forwards to your upstream LLM and stores both request and response in the Merkle DAG.</p>
       </section>
 
-      <section>
+      <section id="inspect">
         <h2>Inspect</h2>
-        <p>Query the DAG to explore stored conversations:</p>
+        <p>Query the API server to explore stored conversations:</p>
         <div class="endpoints">
+          <div class="endpoint">
+            <code>GET /health</code>
+            <span>Health check endpoint</span>
+          </div>
           <div class="endpoint">
             <code>GET /dag/stats</code>
             <span>Total nodes, roots, and leaves</span>
@@ -64,6 +88,23 @@ go build -o tapesprox ./cmd/proxy</code></pre>
             <span>Get a single node by hash</span>
           </div>
         </div>
+        <p class="hint">API server runs on port 8081 by default when using <code>tapes serve</code></p>
+      </section>
+
+      <section id="architecture">
+        <h2>Architecture</h2>
+        <p>Tapes consists of two main components:</p>
+        <div class="architecture">
+          <div class="component">
+            <strong>Proxy Server</strong>
+            <span>Intercepts LLM requests, forwards to upstream provider, and stores conversation turns in the Merkle DAG</span>
+          </div>
+          <div class="component">
+            <strong>API Server</strong>
+            <span>Provides HTTP endpoints for inspecting and querying the stored conversation data</span>
+          </div>
+        </div>
+        <p>Both servers share the same storage backend (SQLite or in-memory) when run together via <code>tapes serve</code>.</p>
       </section>
 
       <section class="cta">
@@ -117,6 +158,14 @@ go build -o tapesprox ./cmd/proxy</code></pre>
     letter-spacing: -0.01em;
   }
 
+  section h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-top: 2.5rem;
+    margin-bottom: 0.75rem;
+    color: var(--text-secondary);
+  }
+
   section p {
     color: var(--text-secondary);
     margin-bottom: 1rem;
@@ -131,27 +180,53 @@ go build -o tapesprox ./cmd/proxy</code></pre>
     margin-top: 0.75rem;
   }
 
-  .flags, .endpoints {
+  .flags, .endpoints, .commands {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
     margin-top: 1rem;
   }
 
-  .flag, .endpoint {
+  .architecture {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-top: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .flag, .endpoint, .command, .component {
     display: flex;
     gap: 1rem;
     align-items: baseline;
     font-size: 0.95rem;
   }
 
-  .flag code, .endpoint code {
+  .flag code, .endpoint code, .command code {
     flex-shrink: 0;
-    min-width: 160px;
+    min-width: 180px;
   }
 
-  .flag span, .endpoint span {
+  .flag span, .endpoint span, .command span {
     color: var(--text-secondary);
+  }
+
+  .component {
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 1rem;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+
+  .component strong {
+    font-weight: 600;
+  }
+
+  .component span {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
   }
 
   .cta {
@@ -190,12 +265,12 @@ go build -o tapesprox ./cmd/proxy</code></pre>
       padding: 2rem 1rem;
     }
 
-    .flag, .endpoint {
+    .flag, .endpoint, .command {
       flex-direction: column;
       gap: 0.25rem;
     }
 
-    .flag code, .endpoint code {
+    .flag code, .endpoint code, .command code {
       min-width: auto;
     }
   }

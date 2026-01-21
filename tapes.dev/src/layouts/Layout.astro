@@ -57,6 +57,32 @@ const { title } = Astro.props;
   </head>
   <body>
     <div id="toast" class="toast">Copied to clipboard</div>
+    <div id="nav-overlay" class="nav-overlay"></div>
+    <nav id="nav-drawer" class="nav-drawer">
+      <div class="nav-header">
+        <span>Navigation</span>
+        <button id="nav-close" aria-label="Close navigation">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <ul class="nav-links">
+        <li><a href="#install">Install</a></li>
+        <li><a href="#run">Run</a></li>
+        <li><a href="#use">Use</a></li>
+        <li><a href="#inspect">Inspect</a></li>
+        <li><a href="#architecture">Architecture</a></li>
+      </ul>
+    </nav>
+    <button id="nav-toggle" class="nav-toggle" aria-label="Open navigation">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="3" y1="6" x2="21" y2="6"/>
+        <line x1="3" y1="12" x2="21" y2="12"/>
+        <line x1="3" y1="18" x2="21" y2="18"/>
+      </svg>
+    </button>
     <button id="theme-toggle" aria-label="Toggle theme">
       <svg class="sun-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="12" cy="12" r="5"/>
@@ -74,7 +100,7 @@ const { title } = Astro.props;
       </svg>
     </button>
     <slot />
-    <script>
+    <script is:inline>
       // Listen for system preference changes
       window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
         if (!localStorage.getItem('theme')) {
@@ -88,6 +114,47 @@ const { title } = Astro.props;
         const next = current === 'dark' ? 'light' : 'dark';
         document.documentElement.setAttribute('data-theme', next);
         localStorage.setItem('theme', next);
+      });
+
+      // Navigation drawer
+      document.addEventListener('DOMContentLoaded', () => {
+        const navToggle = document.getElementById('nav-toggle');
+        const navClose = document.getElementById('nav-close');
+        const navDrawer = document.getElementById('nav-drawer');
+        const navOverlay = document.getElementById('nav-overlay');
+        const navLinks = document.querySelectorAll('.nav-links a');
+
+        function openNav() {
+          navDrawer?.classList.add('open');
+          navOverlay?.classList.add('open');
+          document.body.style.overflow = 'hidden';
+        }
+
+        function closeNav() {
+          navDrawer?.classList.remove('open');
+          navOverlay?.classList.remove('open');
+          document.body.style.overflow = '';
+        }
+
+        navToggle?.addEventListener('click', openNav);
+        navClose?.addEventListener('click', closeNav);
+        navOverlay?.addEventListener('click', closeNav);
+
+        navLinks.forEach(link => {
+          link.addEventListener('click', (e) => {
+            e.preventDefault();
+            const targetId = link.getAttribute('href');
+            if (targetId) {
+              const target = document.querySelector(targetId);
+              if (target) {
+                closeNav();
+                setTimeout(() => {
+                  target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }, 150);
+              }
+            }
+          });
+        });
       });
 
       // Add copy buttons to all code blocks
@@ -250,6 +317,7 @@ const { title } = Astro.props;
 
   .code-block {
     position: relative;
+    margin-bottom: 1.5rem;
   }
 
   .copy-button {
@@ -310,5 +378,121 @@ const { title } = Astro.props;
   .toast.show {
     transform: translateY(0);
     opacity: 1;
+  }
+
+  /* Navigation Toggle */
+  .nav-toggle {
+    position: fixed;
+    top: 1rem;
+    left: 1rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem;
+    cursor: pointer;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+    z-index: 100;
+  }
+
+  .nav-toggle:hover {
+    color: var(--text);
+    border-color: var(--text-secondary);
+  }
+
+  /* Navigation Overlay */
+  .nav-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
+    z-index: 200;
+  }
+
+  .nav-overlay.open {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  /* Navigation Drawer */
+  .nav-drawer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 280px;
+    height: 100%;
+    background: var(--bg);
+    border-right: 1px solid var(--border);
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    z-index: 300;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .nav-drawer.open {
+    transform: translateX(0);
+  }
+
+  .nav-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .nav-header span {
+    font-weight: 600;
+    font-size: 1rem;
+  }
+
+  .nav-header button {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.15s ease;
+  }
+
+  .nav-header button:hover {
+    color: var(--text);
+  }
+
+  .nav-links {
+    list-style: none;
+    padding: 1rem 0;
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  .nav-links li {
+    margin: 0;
+  }
+
+  .nav-links a {
+    display: block;
+    padding: 0.75rem 1.25rem;
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    transition: all 0.15s ease;
+  }
+
+  .nav-links a:hover {
+    color: var(--text);
+    background: var(--bg-secondary);
+    text-decoration: none;
   }
 </style>
