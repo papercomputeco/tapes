@@ -268,6 +268,12 @@ const { title } = Astro.props;
             toast.classList.add('show');
             setTimeout(() => toast.classList.remove('show'), 2000);
           }
+
+          // Track code copy event
+          posthog.capture('code_copied', {
+            code_length: code.length,
+            code_preview: code.substring(0, 50)
+          });
         });
       });
     </script>
