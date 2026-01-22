@@ -1,4 +1,6 @@
 ---
+import PostHog from '../components/posthog.astro';
+
 interface Props {
   title: string;
 }
@@ -54,6 +56,7 @@ const { title } = Astro.props;
         (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
       document.documentElement.setAttribute('data-theme', theme);
     </script>
+    <PostHog />
   </head>
   <body>
     <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true">Copied to clipboard</div>
@@ -265,6 +268,12 @@ const { title } = Astro.props;
             toast.classList.add('show');
             setTimeout(() => toast.classList.remove('show'), 2000);
           }
+
+          // Track code copy event
+          posthog.capture('code_copied', {
+            code_length: code.length,
+            code_preview: code.substring(0, 50)
+          });
         });
       });
     </script>
