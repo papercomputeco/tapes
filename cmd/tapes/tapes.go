@@ -2,9 +2,10 @@
 package tapescmder
 
 import (
+	"github.com/spf13/cobra"
+
 	servecmder "github.com/papercomputeco/tapes/cmd/tapes/serve"
 	versioncmder "github.com/papercomputeco/tapes/cmd/version"
-	"github.com/spf13/cobra"
 )
 
 const tapesLongDesc string = `Tapes is automatic telemetry for your agents.

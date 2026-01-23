@@ -4,8 +4,9 @@ package versioncmder
 import (
 	"fmt"
 
-	"github.com/papercomputeco/tapes/pkg/utils"
 	"github.com/spf13/cobra"
+
+	"github.com/papercomputeco/tapes/pkg/utils"
 )
 
 type VersionCommander struct {
