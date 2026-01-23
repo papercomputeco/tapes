@@ -3,6 +3,7 @@ package tapescmder
 
 import (
 	servecmder "github.com/papercomputeco/tapes/cmd/tapes/serve"
+	versioncmder "github.com/papercomputeco/tapes/cmd/version"
 	"github.com/spf13/cobra"
 )
 
@@ -27,6 +28,7 @@ func NewTapesCmd() *cobra.Command {
 
 	// Add subcommands
 	cmd.AddCommand(servecmder.NewServeCmd())
+	cmd.AddCommand(versioncmder.NewVersionCmd())
 
 	return cmd
 }

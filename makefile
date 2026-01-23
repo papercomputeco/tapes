@@ -1,7 +1,8 @@
 # Based around the auto-documented Makefile:
 # http://marmelab.com/blog/2016/02/29/auto-documented-makefile.html
 
-VERSION ?= dev
+VERSION ?= $(shell git describe --tags --always --dirty)
+COMMIT  := $(shell git rev-parse HEAD)
 
 GOENV = GOEXPERIMENT="jsonv2"
 GO_BUILD_FLAGS = -ldflags="-s -w"
@@ -10,30 +11,17 @@ GO_BUILD_FLAGS = -ldflags="-s -w"
 format:
 	find . -type f -name "*.go" -exec goimports -local github.com/papercompute/tapes -w {} \;
 
-.PHONY: build-dir
-build-dir:
-	@mkdir -p build
-
 .PHONY: build
-build: build-dir build-proxy build-api build-cli ## Builds all artifacts
+build: ## Builds all artifacts
+	dagger call \
+		build-release \
+			--version ${VERSION} \
+			--commit ${COMMIT} \
+		export \
+			--path ./build
 
 .PHONY: build-containers
 build-containers: build-proxy-container ## Builds all container artifacts
-
-.PHONY: build-proxy
-build-proxy: | build-dir ## Build proxy server artifact
-	$(call print-target)
-	${GOENV} go build -o build/tapesprox ${GO_BUILD_FLAGS} ./cli/tapesprox
-
-.PHONY: build-api
-build-api: | build-dir ## Build API server artifact
-	$(call print-target)
-	${GOENV} go build -o build/tapesapi ${GO_BUILD_FLAGS} ./cli/tapesapi
-
-.PHONY: build-cli
-build-cli: | build-dir ## Build CLI artifact
-	$(call print-target)
-	${GOENV} go build -o build/tapes ${GO_BUILD_FLAGS} ./cli/tapes
 
 .PHONY: build-proxy-container
 build-proxy-container: ## Build the tapesprox container artifact
