@@ -1,0 +1,100 @@
+name: Nightly Build & Release
+
+on:
+  schedule:
+    # Daily at 06:00 AM UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  DAGGER_VERSION: "0.19.7"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for new commits
+        id: check
+        run: |
+          LAST_SHA=$(
+            gh run list \
+              --workflow nightly.yaml \
+              --status success \
+              --limit 1 \
+              --json headSha -q '.[0].headSha' || echo ""
+          )
+
+          echo "Last successful build SHA: ${LAST_SHA:-none}"
+          echo "Current SHA: ${{ github.sha }}"
+
+          if [ "$LAST_SHA" = "${{ github.sha }}" ]; then
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "No new commits since last nightly!"
+          else
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    needs: check
+    if: needs.check.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Move nightly tag up to HEAD
+        run: |
+          git tag -f nightly
+          git push -f origin nightly
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build upload nightly release artifacts
+        run: |
+          dagger call \
+            nightly \
+              --commit="${{ github.sha }}" \
+              --endpoint=env://BUCKET_ENDPOINT \
+              --bucket=env://BUCKET_NAME \
+              --access-key-id=env://BUCKET_ACCESS_KEY_ID \
+              --secret-access-key=env://BUCKET_SECRET_ACCESS_KEY
+            export \
+              --path=./build
+        env:
+          BUCKET_ENDPOINT: ${{ secrets.BUCKET_ENDPOINT }}
+          BUCKET_NAME: ${{ secrets.BUCKET_NAME }}
+          BUCKET_ACCESS_KEY_ID: ${{ secrets.BUCKET_ACCESS_KEY_ID }}
+          BUCKET_SECRET_ACCESS_KEY: ${{ secrets.BUCKET_SECRET_ACCESS_KEY }}
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+
+      - name: Update nightly GitHub release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: nightly
+          name: "Nightly Build & Release"
+          body: |
+            **Automated nightly build**
+
+            This is an unstable development build.
+
+            Commit: ${{ github.sha }}
+
+            **Download:**
+            - Linux AMD64: `curl -LO https://download.tapes.dev/nightly/linux/amd64/tapes`
+            - Linux ARM64: `curl -LO https://download.tapes.dev/nightly/linux/arm64/tapes`
+            - macOS AMD64: `curl -LO https://download.tapes.dev/nightly/darwin/amd64/tapes`
+            - macOS ARM64: `curl -LO https://download.tapes.dev/nightly/darwin/arm64/tapes`
+          artifacts: "build/*"
+          prerelease: true
+          allowUpdates: true
+          replacesArtifacts: true
+          makeLatest: true
+          token: ${{ secrets.GITHUB_TOKEN }}

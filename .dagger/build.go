@@ -77,5 +77,27 @@ func (t *Tapes) BuildRelease(
 		fmt.Sprintf("-X 'github.com/papercomputeco/tapes/pkg/utils.Buildtime=%s'", buildtime),
 	}
 
-	return t.Build(ctx, strings.Join(ldflags, " "))
+	dir := t.Build(ctx, strings.Join(ldflags, " "))
+	return t.checksum(ctx, dir)
+}
+
+// checksum generates SHA256 checksums for all files in the given dagger directory
+func (t *Tapes) checksum(
+	ctx context.Context,
+
+	// Directory containing build artifacts
+	dir *dagger.Directory,
+) *dagger.Directory {
+	// Use a container to generate checksums
+	checksumContainer := dag.Container().
+		From("alpine:latest").
+		WithDirectory("/artifacts", dir).
+		WithWorkdir("/artifacts").
+		WithExec([]string{"sh", "-c", `
+			find . -type f ! -name "*.sha256" | while read file; do
+				sha256sum "$file" | sed 's|./||' > "${file}.sha256"
+			done
+		`})
+
+	return checksumContainer.Directory("/artifacts")
 }

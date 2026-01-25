@@ -20,6 +20,36 @@ build: ## Builds all artifacts
 		export \
 			--path ./build
 
+.PHONY: nightly
+nightly: ## Builds and releases nightly tapes artifacts
+	dagger call \
+		nightly \
+			--commit=${COMMIT} \
+			--endpoint=env://BUCKET_ENDPOINT \
+			--bucket=env://BUCKET_NAME \
+			--access-key-id=env://BUCKET_ACCESS_KEY_ID \
+			--secret-access-key=env://BUCKET_SECRET_ACCESS_KEY
+
+.PHONY: upload-install-script
+upload-install-script: ## Uploads the install script
+	dagger call \
+		upload-install-sh \
+			--endpoint=env://BUCKET_ENDPOINT \
+			--bucket=env://BUCKET_NAME \
+			--access-key-id=env://BUCKET_ACCESS_KEY_ID \
+			--secret-access-key=env://BUCKET_SECRET_ACCESS_KEY
+
+.PHONY: release
+release: ## Builds and releases tapes artifacts
+	dagger call \
+		release-latest \
+			--version=${VERSION} \
+			--commit=${COMMIT} \
+			--endpoint=env://BUCKET_ENDPOINT \
+			--bucket=env://BUCKET_NAME \
+			--access-key-id=env://BUCKET_ACCESS_KEY_ID \
+			--secret-access-key=env://BUCKET_SECRET_ACCESS_KEY
+
 .PHONY: build-containers
 build-containers: build-proxy-container ## Builds all container artifacts
 
