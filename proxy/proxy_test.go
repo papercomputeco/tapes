@@ -16,14 +16,17 @@ func testProxy(t *testing.T) *Proxy {
 	t.Helper()
 	logger, _ := zap.NewDevelopment()
 	storer := merkle.NewMemoryStorer()
-	return New(
+	p, err := New(
 		Config{
-			ListenAddr:  ":0",
-			UpstreamURL: "http://localhost:11434",
+			ListenAddr:   ":0",
+			UpstreamURL:  "http://localhost:11434",
+			ProviderType: "ollama",
 		},
 		storer,
 		logger,
 	)
+	require.NoError(t, err)
+	return p
 }
 
 func TestContentAddressableDeduplication(t *testing.T) {

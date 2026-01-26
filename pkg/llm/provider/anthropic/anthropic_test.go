@@ -21,68 +21,6 @@ var _ = Describe("Anthropic Provider", func() {
 		})
 	})
 
-	Describe("CanHandle", func() {
-		Context("with Claude model names", func() {
-			It("returns true for claude-3-sonnet", func() {
-				payload := []byte(`{"model": "claude-3-sonnet-20240229", "max_tokens": 1024, "messages": []}`)
-				Expect(p.CanHandle(payload)).To(BeTrue())
-			})
-
-			It("returns true for claude-3-opus", func() {
-				payload := []byte(`{"model": "claude-3-opus-20240229", "max_tokens": 1024, "messages": []}`)
-				Expect(p.CanHandle(payload)).To(BeTrue())
-			})
-
-			It("returns true for claude-3-haiku", func() {
-				payload := []byte(`{"model": "claude-3-haiku-20240307", "max_tokens": 1024, "messages": []}`)
-				Expect(p.CanHandle(payload)).To(BeTrue())
-			})
-		})
-
-		Context("with Anthropic response structure", func() {
-			It("returns true for message type with stop_reason", func() {
-				payload := []byte(`{
-					"id": "msg_123",
-					"type": "message",
-					"role": "assistant",
-					"content": [{"type": "text", "text": "Hello!"}],
-					"model": "claude-3-sonnet-20240229",
-					"stop_reason": "end_turn"
-				}`)
-				Expect(p.CanHandle(payload)).To(BeTrue())
-			})
-		})
-
-		Context("with max_tokens and system field", func() {
-			It("returns true when both are present", func() {
-				payload := []byte(`{
-					"model": "some-model",
-					"max_tokens": 1024,
-					"system": "You are a helpful assistant",
-					"messages": []
-				}`)
-				Expect(p.CanHandle(payload)).To(BeTrue())
-			})
-		})
-
-		Context("with non-Anthropic payloads", func() {
-			It("returns false for OpenAI-style request", func() {
-				payload := []byte(`{"model": "gpt-4", "messages": [{"role": "user", "content": "Hello"}]}`)
-				Expect(p.CanHandle(payload)).To(BeFalse())
-			})
-
-			It("returns false for invalid JSON", func() {
-				payload := []byte(`not valid json`)
-				Expect(p.CanHandle(payload)).To(BeFalse())
-			})
-
-			It("returns false for empty payload", func() {
-				payload := []byte(`{}`)
-				Expect(p.CanHandle(payload)).To(BeFalse())
-			})
-		})
-	})
-
 	Describe("ParseRequest", func() {
 		Context("with a simple text request", func() {
 			It("parses model and messages correctly", func() {

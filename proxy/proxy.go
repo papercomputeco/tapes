@@ -30,12 +30,18 @@ type Proxy struct {
 	logger     *zap.Logger
 	httpClient *http.Client
 	server     *fiber.App
-	detector   *provider.Detector
+	provider   provider.Provider
 }
 
 // New creates a new Proxy.
 // The storer is injected to allow sharing with other components (e.g., the API server).
-func New(config Config, storer merkle.Storer, logger *zap.Logger) *Proxy {
+// Returns an error if the configured provider type is not recognized.
+func New(config Config, storer merkle.Storer, logger *zap.Logger) (*Proxy, error) {
+	prov, err := provider.New(config.ProviderType)
+	if err != nil {
+		return nil, fmt.Errorf("could not create new provider: %w", err)
+	}
+
 	app := fiber.New(fiber.Config{
 		// Disable startup message for cleaner logs
 		DisableStartupMessage: true,
@@ -48,7 +54,7 @@ func New(config Config, storer merkle.Storer, logger *zap.Logger) *Proxy {
 		storer:   storer,
 		logger:   logger,
 		server:   app,
-		detector: provider.NewDetector(),
+		provider: prov,
 		httpClient: &http.Client{
 			// LLM requests can be slow, especially with thinking blocks
 			Timeout: 5 * time.Minute,
@@ -58,7 +64,7 @@ func New(config Config, storer merkle.Storer, logger *zap.Logger) *Proxy {
 	// Register transparent proxy route - forwards any path to upstream
 	app.All("/*", p.handleProxy)
 
-	return p
+	return p, nil
 }
 
 // Run starts the proxy server on the given listening address
@@ -89,21 +95,19 @@ func (p *Proxy) handleProxy(c *fiber.Ctx) error {
 	body := c.Body()
 	isChatRequest := method == "POST" && len(body) > 0
 
-	// Detect provider and parse request if this looks like a chat request
-	var detectedProvider provider.Provider
+	// Parse request using configured provider
 	var parsedReq *llm.ChatRequest
 	if isChatRequest {
-		detectedProvider = p.detector.Detect(body)
 		var err error
-		parsedReq, err = detectedProvider.ParseRequest(body)
+		parsedReq, err = p.provider.ParseRequest(body)
 		if err != nil {
 			p.logger.Warn("failed to parse request",
 				zap.Error(err),
-				zap.String("provider", detectedProvider.Name()),
+				zap.String("provider", p.provider.Name()),
 			)
 		} else {
-			p.logger.Debug("detected provider",
-				zap.String("provider", detectedProvider.Name()),
+			p.logger.Debug("parsed request",
+				zap.String("provider", p.provider.Name()),
 				zap.String("model", parsedReq.Model),
 				zap.Int("message_count", len(parsedReq.Messages)),
 			)
@@ -125,14 +129,14 @@ func (p *Proxy) handleProxy(c *fiber.Ctx) error {
 	}
 
 	if streaming && isChatRequest {
-		return p.handleStreamingProxy(c, path, body, detectedProvider, parsedReq, startTime)
+		return p.handleStreamingProxy(c, path, body, parsedReq, startTime)
 	}
 
-	return p.handleNonStreamingProxy(c, path, method, body, detectedProvider, parsedReq, startTime)
+	return p.handleNonStreamingProxy(c, path, method, body, parsedReq, startTime)
 }
 
 // handleNonStreamingProxy handles non-streaming requests.
-func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method string, body []byte, detectedProvider provider.Provider, parsedReq *llm.ChatRequest, startTime time.Time) error {
+func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
 	// Build upstream URL
 	upstreamURL := p.config.UpstreamURL + path
 
@@ -184,29 +188,29 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method string, body 
 		}
 	}
 
-	// If this was a chat request and we have a provider, try to parse and store
-	if detectedProvider != nil && parsedReq != nil && httpResp.StatusCode == http.StatusOK {
-		parsedResp, err := detectedProvider.ParseResponse(respBody)
+	// If this was a chat request, try to parse and store
+	if parsedReq != nil && httpResp.StatusCode == http.StatusOK {
+		parsedResp, err := p.provider.ParseResponse(respBody)
 		if err != nil {
 			p.logger.Warn("failed to parse response",
 				zap.Error(err),
-				zap.String("provider", detectedProvider.Name()),
+				zap.String("provider", p.provider.Name()),
 			)
 		} else {
 			p.logger.Debug("received response from upstream",
 				zap.String("model", parsedResp.Model),
-				zap.String("provider", detectedProvider.Name()),
+				zap.String("provider", p.provider.Name()),
 				zap.Duration("duration", time.Since(startTime)),
 			)
 
 			// Store in DAG
-			headHash, err := p.storeConversationTurn(c.Context(), detectedProvider.Name(), parsedReq, parsedResp)
+			headHash, err := p.storeConversationTurn(c.Context(), p.provider.Name(), parsedReq, parsedResp)
 			if err != nil {
 				p.logger.Error("failed to store conversation", zap.Error(err))
 			} else {
 				p.logger.Info("conversation stored",
 					zap.String("head_hash", truncate(headHash, 16)),
-					zap.String("provider", detectedProvider.Name()),
+					zap.String("provider", p.provider.Name()),
 				)
 			}
 		}
@@ -217,7 +221,7 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method string, body 
 }
 
 // handleStreamingProxy handles streaming requests.
-func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path string, body []byte, detectedProvider provider.Provider, parsedReq *llm.ChatRequest, startTime time.Time) error {
+func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
 	// Build upstream URL
 	upstreamURL := p.config.UpstreamURL + path
 
@@ -315,7 +319,7 @@ func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path string, body []byte, det
 		}
 
 		// After streaming completes, try to reconstruct and store the full response
-		if detectedProvider != nil && parsedReq != nil && len(allChunks) > 0 {
+		if parsedReq != nil && len(allChunks) > 0 {
 			p.logger.Debug("streaming complete",
 				zap.String("content_preview", truncate(fullContent.String(), 200)),
 				zap.Int("chunk_count", len(allChunks)),
@@ -323,15 +327,15 @@ func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path string, body []byte, det
 			)
 
 			// Try to parse the final chunk or reconstruct response
-			finalResp := p.reconstructStreamedResponse(detectedProvider, allChunks, fullContent.String())
+			finalResp := p.reconstructStreamedResponse(allChunks, fullContent.String())
 			if finalResp != nil {
-				headHash, err := p.storeConversationTurn(context.Background(), detectedProvider.Name(), parsedReq, finalResp)
+				headHash, err := p.storeConversationTurn(context.Background(), p.provider.Name(), parsedReq, finalResp)
 				if err != nil {
 					p.logger.Error("failed to store conversation", zap.Error(err))
 				} else {
 					p.logger.Info("conversation stored",
 						zap.String("head_hash", truncate(headHash, 16)),
-						zap.String("provider", detectedProvider.Name()),
+						zap.String("provider", p.provider.Name()),
 					)
 				}
 			}
@@ -342,11 +346,11 @@ func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path string, body []byte, det
 }
 
 // reconstructStreamedResponse attempts to build a ChatResponse from accumulated stream chunks.
-func (p *Proxy) reconstructStreamedResponse(prov provider.Provider, chunks [][]byte, fullContent string) *llm.ChatResponse {
+func (p *Proxy) reconstructStreamedResponse(chunks [][]byte, fullContent string) *llm.ChatResponse {
 	// Try parsing the last chunk as it often contains final metadata
 	if len(chunks) > 0 {
 		lastChunk := chunks[len(chunks)-1]
-		resp, err := prov.ParseResponse(lastChunk)
+		resp, err := p.provider.ParseResponse(lastChunk)
 		if err == nil && resp != nil {
 			// If the last chunk has minimal content, supplement with accumulated content
 			if resp.Message.GetText() == "" && fullContent != "" {

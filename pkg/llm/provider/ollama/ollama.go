@@ -6,41 +6,13 @@ import (
 	"github.com/papercomputeco/tapes/pkg/llm"
 )
 
-// provider implements the Provider interface for provider's API.
+// provider implements the Provider interface for Ollama's API.
 type provider struct{}
 
 func New() *provider { return &provider{} }
 
 func (o *provider) Name() string {
 	return "ollama"
-}
-
-func (o *provider) CanHandle(payload []byte) bool {
-	var probe struct {
-		KeepAlive string `json:"keep_alive"`
-		Options   any    `json:"options"`
-		Context   []int  `json:"context"`
-
-		// Ollama-specific response fields
-		TotalDuration int64 `json:"total_duration"`
-		EvalCount     int   `json:"eval_count"`
-	}
-
-	if err := json.Unmarshal(payload, &probe); err != nil {
-		return false
-	}
-
-	// Check for Ollama-specific request fields
-	if probe.KeepAlive != "" || probe.Options != nil {
-		return true
-	}
-
-	// Check for Ollama-specific response fields
-	if probe.Context != nil || probe.TotalDuration > 0 || probe.EvalCount > 0 {
-		return true
-	}
-
-	return false
 }
 
 func (o *provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {

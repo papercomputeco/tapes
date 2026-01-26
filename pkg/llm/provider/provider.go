@@ -10,17 +10,12 @@ import (
 // does not yet support streaming parsing.
 var ErrStreamingNotImplemented = errors.New("streaming not implemented for this provider")
 
-// Provider defines the interface for LLM API format detection and parsing.
-// Each provider implementation knows how to detect and parse its specific
+// Provider defines the interface for LLM API parsing.
+// Each provider implementation knows how to parse its specific
 // API format into the internal representation.
 type Provider interface {
 	// Name returns the canonical provider name (e.g., "anthropic", "openai", "ollama", "besteffort")
 	Name() string
-
-	// CanHandle returns true if the payload appears to be for this provider.
-	// Implementations should check for provider-specific markers in the JSON
-	// such as field names, model name patterns, or response structure.
-	CanHandle(payload []byte) bool
 
 	// ParseRequest converts a provider-specific request into the internal format.
 	// Returns an error if the payload cannot be parsed.

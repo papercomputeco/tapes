@@ -18,11 +18,6 @@ func (b *provider) Name() string {
 	return "besteffort"
 }
 
-// CanHandle always returns true - this is the fallback provider.
-func (b *provider) CanHandle(payload []byte) bool {
-	return true
-}
-
 // ParseRequest attempts to extract a ChatRequest from an unknown format.
 // It looks for common field names across different LLM APIs.
 func (b *provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {

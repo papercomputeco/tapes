@@ -3,7 +3,6 @@ package anthropic
 
 import (
 	"encoding/json"
-	"strings"
 	"time"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
@@ -18,43 +17,6 @@ func New() *provider { return &provider{} }
 // Name
 func (p *provider) Name() string {
 	return "anthropic"
-}
-
-func (p *provider) CanHandle(payload []byte) bool {
-	var probe struct {
-		Model     string `json:"model"`
-		MaxTokens *int   `json:"max_tokens"`
-
-		// Union type: string or []ContentBlock
-		System any `json:"system"`
-
-		// Response-specific fields
-		Type       string `json:"type"`
-		StopReason string `json:"stop_reason"`
-	}
-
-	err := json.Unmarshal(payload, &probe)
-	if err != nil {
-		return false
-	}
-
-	// Check for Claude model names
-	if strings.HasPrefix(probe.Model, "claude-") {
-		return true
-	}
-
-	// Check for Anthropic response structure
-	if probe.Type == "message" && probe.StopReason != "" {
-		return true
-	}
-
-	// max_tokens is required for Anthropic, optional for others
-	// combined with a top-level system field is a strong signal
-	if probe.MaxTokens != nil && probe.System != nil {
-		return true
-	}
-
-	return false
 }
 
 func (p *provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {

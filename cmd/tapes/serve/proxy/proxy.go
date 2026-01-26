@@ -13,17 +13,20 @@ import (
 )
 
 type proxyCommander struct {
-	listen     string
-	upstream   string
-	debug      bool
-	sqlitePath string
-	logger     *zap.Logger
+	listen       string
+	upstream     string
+	providerType string
+	debug        bool
+	sqlitePath   string
+	logger       *zap.Logger
 }
 
 const proxyLongDesc string = `Run the proxy server.
 
 The proxy intercepts all requests and transparently forwards them to the
-configured upstream URL, recording request/response conversation turns.`
+configured upstream URL, recording request/response conversation turns.
+
+Supported provider types: anthropic, openai, ollama, besteffort`
 
 const proxyShortDesc string = "Run the Tapes proxy server"
 
@@ -47,6 +50,7 @@ func NewProxyCmd() *cobra.Command {
 
 	cmd.Flags().StringVarP(&cmder.listen, "listen", "l", ":8080", "Address for proxy to listen on")
 	cmd.Flags().StringVarP(&cmder.upstream, "upstream", "u", "http://localhost:11434", "Upstream LLM provider URL")
+	cmd.Flags().StringVarP(&cmder.providerType, "provider", "p", "ollama", "LLM provider type (anthropic, openai, ollama, besteffort)")
 	cmd.Flags().StringVarP(&cmder.sqlitePath, "sqlite", "s", "", "Path to SQLite database (default: in-memory)")
 
 	return cmd
@@ -63,16 +67,21 @@ func (c *proxyCommander) run() error {
 	defer storer.Close()
 
 	config := proxy.Config{
-		ListenAddr:  c.listen,
-		UpstreamURL: c.upstream,
+		ListenAddr:   c.listen,
+		UpstreamURL:  c.upstream,
+		ProviderType: c.providerType,
 	}
 
-	p := proxy.New(config, storer, c.logger)
+	p, err := proxy.New(config, storer, c.logger)
+	if err != nil {
+		return fmt.Errorf("creating proxy: %w", err)
+	}
 	defer p.Close()
 
 	c.logger.Info("starting proxy server",
 		zap.String("listen", c.listen),
 		zap.String("upstream", c.upstream),
+		zap.String("provider", c.providerType),
 	)
 
 	return p.Run()

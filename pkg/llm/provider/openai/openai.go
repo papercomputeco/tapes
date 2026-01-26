@@ -3,7 +3,6 @@ package openai
 
 import (
 	"encoding/json"
-	"strings"
 	"time"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
@@ -16,33 +15,6 @@ func New() *provider { return &provider{} }
 
 func (o *provider) Name() string {
 	return "openai"
-}
-
-func (o *provider) CanHandle(payload []byte) bool {
-	var probe struct {
-		Model   string `json:"model"`
-		Choices []any  `json:"choices"` // Response indicator
-		Object  string `json:"object"`  // Response indicator
-	}
-
-	if err := json.Unmarshal(payload, &probe); err != nil {
-		return false
-	}
-
-	// Check for OpenAI model names
-	if strings.HasPrefix(probe.Model, "gpt-") ||
-		strings.HasPrefix(probe.Model, "o1") ||
-		strings.HasPrefix(probe.Model, "o3") ||
-		strings.HasPrefix(probe.Model, "chatgpt-") {
-		return true
-	}
-
-	// Check for OpenAI response structure
-	if probe.Object == "chat.completion" || len(probe.Choices) > 0 {
-		return true
-	}
-
-	return false
 }
 
 func (o *provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {

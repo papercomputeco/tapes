@@ -21,24 +21,6 @@ var _ = Describe("BestEffort Provider", func() {
 		})
 	})
 
-	Describe("CanHandle", func() {
-		It("always returns true for any payload", func() {
-			Expect(p.CanHandle([]byte(`{"anything": "here"}`))).To(BeTrue())
-		})
-
-		It("returns true for empty JSON", func() {
-			Expect(p.CanHandle([]byte(`{}`))).To(BeTrue())
-		})
-
-		It("returns true for invalid JSON", func() {
-			Expect(p.CanHandle([]byte(`not json`))).To(BeTrue())
-		})
-
-		It("returns true for empty payload", func() {
-			Expect(p.CanHandle([]byte(``))).To(BeTrue())
-		})
-	})
-
 	Describe("ParseRequest", func() {
 		Context("with standard messages format", func() {
 			It("extracts model and messages", func() {
