@@ -5,9 +5,6 @@
 # -----------------------------------------------------------------------------
 FROM golang:1.25-alpine AS builder
 
-# Install build dependencies (sqlite requires CGO)
-RUN apk add --no-cache gcc musl-dev sqlite-dev
-
 WORKDIR /src
 
 # Cache dependencies
@@ -18,7 +15,7 @@ RUN go mod download
 COPY . .
 
 ARG LDFLAGS="-s -w"
-RUN CGO_ENABLED=1 go build \
+RUN CGO_ENABLED=0 go build \
     -ldflags="${LDFLAGS}" \
     -o /bin/tapesprox \
     ./cmd/proxy
@@ -28,8 +25,7 @@ RUN CGO_ENABLED=1 go build \
 # -----------------------------------------------------------------------------
 FROM alpine:3.20
 
-# Install runtime dependencies
-RUN apk add --no-cache ca-certificates sqlite-libs
+RUN apk add --no-cache ca-certificates
 
 # Create non-root user
 RUN addgroup -g 1000 tapes && \

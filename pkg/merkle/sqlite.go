@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 // SQLiteStorer implements Storer using SQLite as the storage backend.
@@ -17,7 +17,7 @@ type SQLiteStorer struct {
 // NewSQLiteStorer creates a new SQLite-backed storer.
 // The dbPath can be a file path or ":memory:" for an in-memory database.
 func NewSQLiteStorer(dbPath string) (*SQLiteStorer, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}

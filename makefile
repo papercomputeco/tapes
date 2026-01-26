@@ -4,9 +4,6 @@
 VERSION ?= $(shell git describe --tags --always --dirty)
 COMMIT  := $(shell git rev-parse HEAD)
 
-GOENV = GOEXPERIMENT="jsonv2"
-GO_BUILD_FLAGS = -ldflags="-s -w"
-
 .PHONY: format
 format:
 	find . -type f -name "*.go" -exec goimports -local github.com/papercomputeco/tapes -w {} \;

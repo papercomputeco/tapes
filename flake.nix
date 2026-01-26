@@ -23,14 +23,7 @@
             # Build tools
             pkgs.gnumake
             dagger.packages.${system}.dagger
-
-            # Required for go-sqlite3 (cgo)
-            pkgs.gcc
-            pkgs.pkg-config
           ];
-
-          # Enable cgo for sqlite3 support
-          CGO_ENABLED = "1";
 
           # Enable Go's experimental JSON v2 implementation
           GOEXPERIMENT = "jsonv2";
