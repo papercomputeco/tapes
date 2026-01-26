@@ -55,7 +55,7 @@ func (s *SQLiteStorer) Put(ctx context.Context, node *Node) error {
 		return fmt.Errorf("cannot store nil node")
 	}
 
-	contentJSON, err := json.Marshal(node.Content)
+	contentJSON, err := json.Marshal(node.Bucket)
 	if err != nil {
 		return fmt.Errorf("failed to marshal content: %w", err)
 	}
@@ -93,7 +93,7 @@ func (s *SQLiteStorer) Get(ctx context.Context, hash string) (*Node, error) {
 		node.ParentHash = &parentHash.String
 	}
 
-	if err := json.Unmarshal([]byte(contentJSON), &node.Content); err != nil {
+	if err := json.Unmarshal([]byte(contentJSON), &node.Bucket); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal content: %w", err)
 	}
 
@@ -249,7 +249,7 @@ func (s *SQLiteStorer) scanNodes(rows *sql.Rows) ([]*Node, error) {
 			node.ParentHash = &parentHash.String
 		}
 
-		if err := json.Unmarshal([]byte(contentJSON), &node.Content); err != nil {
+		if err := json.Unmarshal([]byte(contentJSON), &node.Bucket); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal content: %w", err)
 		}
 

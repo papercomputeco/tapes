@@ -21,13 +21,14 @@ type HistoryResponse struct {
 
 // HistoryMessage represents a message in the conversation history.
 type HistoryMessage struct {
-	Hash       string         `json:"hash"`
-	ParentHash *string        `json:"parent_hash,omitempty"`
-	Role       string         `json:"role"`
-	Content    any            `json:"content"` // Can be string or []ContentBlock
-	Model      string         `json:"model,omitempty"`
-	Provider   string         `json:"provider,omitempty"`
-	Metadata   map[string]any `json:"metadata,omitempty"`
+	Hash       string             `json:"hash"`
+	ParentHash *string            `json:"parent_hash,omitempty"`
+	Role       string             `json:"role"`
+	Content    []llm.ContentBlock `json:"content"`
+	Model      string             `json:"model,omitempty"`
+	Provider   string             `json:"provider,omitempty"`
+	StopReason string             `json:"stop_reason,omitempty"`
+	Usage      *llm.Usage         `json:"usage,omitempty"`
 }
 
 // handlePing returns a simple health check response.
@@ -132,36 +133,16 @@ func (s *Server) buildHistory(ctx context.Context, hash string) (*HistoryRespons
 	for i, node := range ancestry {
 		idx := len(ancestry) - 1 - i
 
-		msg := HistoryMessage{
+		messages[idx] = HistoryMessage{
 			Hash:       node.Hash,
 			ParentHash: node.ParentHash,
+			Role:       node.Bucket.Role,
+			Content:    node.Bucket.Content,
+			Model:      node.Bucket.Model,
+			Provider:   node.Bucket.Provider,
+			StopReason: node.Bucket.StopReason,
+			Usage:      node.Bucket.Usage,
 		}
-
-		if content, ok := node.Content.(map[string]any); ok {
-			if role, ok := content["role"].(string); ok {
-				msg.Role = role
-			}
-			// Content can now be []ContentBlock or string
-			msg.Content = content["content"]
-			if model, ok := content["model"].(string); ok {
-				msg.Model = model
-			}
-			if provider, ok := content["provider"].(string); ok {
-				msg.Provider = provider
-			}
-			// Copy additional metadata
-			metadata := make(map[string]any)
-			for k, v := range content {
-				if k != "role" && k != "content" && k != "model" && k != "type" && k != "provider" {
-					metadata[k] = v
-				}
-			}
-			if len(metadata) > 0 {
-				msg.Metadata = metadata
-			}
-		}
-
-		messages[idx] = msg
 	}
 
 	return &HistoryResponse{

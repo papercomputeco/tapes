@@ -8,8 +8,20 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 )
+
+// sqliteTestBucket creates a simple bucket for testing with the given text content
+func sqliteTestBucket(text string) merkle.Bucket {
+	return merkle.Bucket{
+		Type:     "message",
+		Role:     "user",
+		Content:  []llm.ContentBlock{{Type: "text", Text: text}},
+		Model:    "test-model",
+		Provider: "test-provider",
+	}
+}
 
 var _ = Describe("SQLiteStorer", func() {
 	var (
@@ -51,7 +63,7 @@ var _ = Describe("SQLiteStorer", func() {
 
 	Describe("Put and Get", func() {
 		It("stores and retrieves a node", func() {
-			node := merkle.NewNode("test content", nil)
+			node := merkle.NewNode(sqliteTestBucket("test content"), nil)
 
 			err := storer.Put(ctx, node)
 			Expect(err).NotTo(HaveOccurred())
@@ -59,13 +71,13 @@ var _ = Describe("SQLiteStorer", func() {
 			retrieved, err := storer.Get(ctx, node.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(retrieved.Hash).To(Equal(node.Hash))
-			Expect(retrieved.Content).To(Equal(node.Content))
+			Expect(retrieved.Bucket).To(Equal(node.Bucket))
 			Expect(retrieved.ParentHash).To(BeNil())
 		})
 
 		It("stores and retrieves a node with parent", func() {
-			parent := merkle.NewNode("parent", nil)
-			child := merkle.NewNode("child", parent)
+			parent := merkle.NewNode(sqliteTestBucket("parent"), nil)
+			child := merkle.NewNode(sqliteTestBucket("child"), parent)
 
 			err := storer.Put(ctx, parent)
 			Expect(err).NotTo(HaveOccurred())
@@ -88,7 +100,7 @@ var _ = Describe("SQLiteStorer", func() {
 		})
 
 		It("is idempotent for duplicate puts", func() {
-			node := merkle.NewNode("test", nil)
+			node := merkle.NewNode(sqliteTestBucket("test"), nil)
 
 			err := storer.Put(ctx, node)
 			Expect(err).NotTo(HaveOccurred())
@@ -109,7 +121,7 @@ var _ = Describe("SQLiteStorer", func() {
 
 	Describe("Has", func() {
 		It("returns true for existing node", func() {
-			node := merkle.NewNode("test", nil)
+			node := merkle.NewNode(sqliteTestBucket("test"), nil)
 			storer.Put(ctx, node)
 
 			exists, err := storer.Has(ctx, node.Hash)
@@ -126,9 +138,9 @@ var _ = Describe("SQLiteStorer", func() {
 
 	Describe("GetByParent", func() {
 		It("returns children of a parent", func() {
-			parent := merkle.NewNode("parent", nil)
-			child1 := merkle.NewNode("child1", parent)
-			child2 := merkle.NewNode("child2", parent)
+			parent := merkle.NewNode(sqliteTestBucket("parent"), nil)
+			child1 := merkle.NewNode(sqliteTestBucket("child1"), parent)
+			child2 := merkle.NewNode(sqliteTestBucket("child2"), parent)
 
 			storer.Put(ctx, parent)
 			storer.Put(ctx, child1)
@@ -140,9 +152,9 @@ var _ = Describe("SQLiteStorer", func() {
 		})
 
 		It("returns root nodes when parentHash is nil", func() {
-			root1 := merkle.NewNode("root1", nil)
-			root2 := merkle.NewNode("root2", nil)
-			child := merkle.NewNode("child", root1)
+			root1 := merkle.NewNode(sqliteTestBucket("root1"), nil)
+			root2 := merkle.NewNode(sqliteTestBucket("root2"), nil)
+			child := merkle.NewNode(sqliteTestBucket("child"), root1)
 
 			storer.Put(ctx, root1)
 			storer.Put(ctx, root2)
@@ -156,9 +168,9 @@ var _ = Describe("SQLiteStorer", func() {
 
 	Describe("List", func() {
 		It("returns all nodes", func() {
-			node1 := merkle.NewNode("node1", nil)
-			node2 := merkle.NewNode("node2", node1)
-			node3 := merkle.NewNode("node3", node2)
+			node1 := merkle.NewNode(sqliteTestBucket("node1"), nil)
+			node2 := merkle.NewNode(sqliteTestBucket("node2"), node1)
+			node3 := merkle.NewNode(sqliteTestBucket("node3"), node2)
 
 			storer.Put(ctx, node1)
 			storer.Put(ctx, node2)
@@ -178,9 +190,9 @@ var _ = Describe("SQLiteStorer", func() {
 
 	Describe("Roots", func() {
 		It("returns all root nodes", func() {
-			root1 := merkle.NewNode("root1", nil)
-			root2 := merkle.NewNode("root2", nil)
-			child := merkle.NewNode("child", root1)
+			root1 := merkle.NewNode(sqliteTestBucket("root1"), nil)
+			root2 := merkle.NewNode(sqliteTestBucket("root2"), nil)
+			child := merkle.NewNode(sqliteTestBucket("child"), root1)
 
 			storer.Put(ctx, root1)
 			storer.Put(ctx, root2)
@@ -194,9 +206,9 @@ var _ = Describe("SQLiteStorer", func() {
 
 	Describe("Leaves", func() {
 		It("returns all leaf nodes", func() {
-			root := merkle.NewNode("root", nil)
-			child := merkle.NewNode("child", root)
-			leaf := merkle.NewNode("leaf", child)
+			root := merkle.NewNode(sqliteTestBucket("root"), nil)
+			child := merkle.NewNode(sqliteTestBucket("child"), root)
+			leaf := merkle.NewNode(sqliteTestBucket("leaf"), child)
 
 			storer.Put(ctx, root)
 			storer.Put(ctx, child)
@@ -211,9 +223,13 @@ var _ = Describe("SQLiteStorer", func() {
 
 	Describe("Ancestry", func() {
 		It("returns path from node to root", func() {
-			root := merkle.NewNode("root", nil)
-			child := merkle.NewNode("child", root)
-			grandchild := merkle.NewNode("grandchild", child)
+			rootBucket := sqliteTestBucket("root")
+			childBucket := sqliteTestBucket("child")
+			grandchildBucket := sqliteTestBucket("grandchild")
+
+			root := merkle.NewNode(rootBucket, nil)
+			child := merkle.NewNode(childBucket, root)
+			grandchild := merkle.NewNode(grandchildBucket, child)
 
 			storer.Put(ctx, root)
 			storer.Put(ctx, child)
@@ -222,17 +238,21 @@ var _ = Describe("SQLiteStorer", func() {
 			ancestry, err := storer.Ancestry(ctx, grandchild.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ancestry).To(HaveLen(3))
-			Expect(ancestry[0].Content).To(Equal("grandchild"))
-			Expect(ancestry[1].Content).To(Equal("child"))
-			Expect(ancestry[2].Content).To(Equal("root"))
+			Expect(ancestry[0].Bucket).To(Equal(grandchildBucket))
+			Expect(ancestry[1].Bucket).To(Equal(childBucket))
+			Expect(ancestry[2].Bucket).To(Equal(rootBucket))
 		})
 	})
 
 	Describe("Descendants", func() {
 		It("returns path from root to node", func() {
-			root := merkle.NewNode("root", nil)
-			child := merkle.NewNode("child", root)
-			grandchild := merkle.NewNode("grandchild", child)
+			rootBucket := sqliteTestBucket("root")
+			childBucket := sqliteTestBucket("child")
+			grandchildBucket := sqliteTestBucket("grandchild")
+
+			root := merkle.NewNode(rootBucket, nil)
+			child := merkle.NewNode(childBucket, root)
+			grandchild := merkle.NewNode(grandchildBucket, child)
 
 			storer.Put(ctx, root)
 			storer.Put(ctx, child)
@@ -241,15 +261,15 @@ var _ = Describe("SQLiteStorer", func() {
 			ancestry, err := storer.Descendants(ctx, grandchild.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ancestry).To(HaveLen(3))
-			Expect(ancestry[0].Content).To(Equal("root"))
-			Expect(ancestry[1].Content).To(Equal("child"))
-			Expect(ancestry[2].Content).To(Equal("grandchild"))
+			Expect(ancestry[0].Bucket).To(Equal(rootBucket))
+			Expect(ancestry[1].Bucket).To(Equal(childBucket))
+			Expect(ancestry[2].Bucket).To(Equal(grandchildBucket))
 		})
 	})
 
 	Describe("Depth", func() {
 		It("returns 0 for root node", func() {
-			root := merkle.NewNode("root", nil)
+			root := merkle.NewNode(sqliteTestBucket("root"), nil)
 			storer.Put(ctx, root)
 
 			depth, err := storer.Depth(ctx, root.Hash)
@@ -258,9 +278,9 @@ var _ = Describe("SQLiteStorer", func() {
 		})
 
 		It("returns correct depth for nested nodes", func() {
-			root := merkle.NewNode("root", nil)
-			child := merkle.NewNode("child", root)
-			grandchild := merkle.NewNode("grandchild", child)
+			root := merkle.NewNode(sqliteTestBucket("root"), nil)
+			child := merkle.NewNode(sqliteTestBucket("child"), root)
+			grandchild := merkle.NewNode(sqliteTestBucket("grandchild"), child)
 
 			storer.Put(ctx, root)
 			storer.Put(ctx, child)
@@ -273,13 +293,21 @@ var _ = Describe("SQLiteStorer", func() {
 	})
 
 	Describe("Complex content", func() {
-		It("stores and retrieves map content", func() {
-			content := map[string]any{
-				"role":    "user",
-				"content": "Hello, world!",
-				"model":   "gpt-4",
+		It("stores and retrieves bucket with usage metrics", func() {
+			bucket := merkle.Bucket{
+				Type:       "message",
+				Role:       "assistant",
+				Content:    []llm.ContentBlock{{Type: "text", Text: "Hello, world!"}},
+				Model:      "gpt-4",
+				Provider:   "openai",
+				StopReason: "stop",
+				Usage: &llm.Usage{
+					PromptTokens:     10,
+					CompletionTokens: 5,
+					TotalTokens:      15,
+				},
 			}
-			node := merkle.NewNode(content, nil)
+			node := merkle.NewNode(bucket, nil)
 
 			err := storer.Put(ctx, node)
 			Expect(err).NotTo(HaveOccurred())
@@ -287,19 +315,19 @@ var _ = Describe("SQLiteStorer", func() {
 			retrieved, err := storer.Get(ctx, node.Hash)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Content is unmarshaled as map[string]interface{}
-			retrievedContent, ok := retrieved.Content.(map[string]any)
-			Expect(ok).To(BeTrue())
-			Expect(retrievedContent["role"]).To(Equal("user"))
-			Expect(retrievedContent["content"]).To(Equal("Hello, world!"))
+			Expect(retrieved.Bucket.Role).To(Equal("assistant"))
+			Expect(retrieved.Bucket.Model).To(Equal("gpt-4"))
+			Expect(retrieved.Bucket.Usage).NotTo(BeNil())
+			Expect(retrieved.Bucket.Usage.TotalTokens).To(Equal(15))
 		})
 	})
 
 	Describe("Content-addressable deduplication", func() {
 		It("deduplicates identical nodes", func() {
 			// Same content, same parent (nil) = same hash = stored once
-			node1 := merkle.NewNode("identical", nil)
-			node2 := merkle.NewNode("identical", nil)
+			bucket := sqliteTestBucket("identical")
+			node1 := merkle.NewNode(bucket, nil)
+			node2 := merkle.NewNode(bucket, nil)
 
 			Expect(node1.Hash).To(Equal(node2.Hash))
 
@@ -311,9 +339,9 @@ var _ = Describe("SQLiteStorer", func() {
 		})
 
 		It("creates branches for different content with same parent", func() {
-			parent := merkle.NewNode("parent", nil)
-			branch1 := merkle.NewNode("branch1", parent)
-			branch2 := merkle.NewNode("branch2", parent)
+			parent := merkle.NewNode(sqliteTestBucket("parent"), nil)
+			branch1 := merkle.NewNode(sqliteTestBucket("branch1"), parent)
+			branch2 := merkle.NewNode(sqliteTestBucket("branch2"), parent)
 
 			storer.Put(ctx, parent)
 			storer.Put(ctx, branch1)

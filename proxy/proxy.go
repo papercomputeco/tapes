@@ -378,15 +378,15 @@ func (p *Proxy) storeConversationTurn(ctx context.Context, providerName string, 
 
 	// Store each message from the request as nodes
 	for _, msg := range req.Messages {
-		content := map[string]any{
-			"type":     "message",
-			"role":     msg.Role,
-			"content":  msg.Content, // Now stores []ContentBlock
-			"model":    req.Model,
-			"provider": providerName,
+		bucket := merkle.Bucket{
+			Type:     "message",
+			Role:     msg.Role,
+			Content:  msg.Content,
+			Model:    req.Model,
+			Provider: providerName,
 		}
 
-		node := merkle.NewNode(content, parent)
+		node := merkle.NewNode(bucket, parent)
 		if err := p.storer.Put(ctx, node); err != nil {
 			return "", fmt.Errorf("storing message node: %w", err)
 		}
@@ -401,27 +401,17 @@ func (p *Proxy) storeConversationTurn(ctx context.Context, providerName string, 
 	}
 
 	// Store the response message
-	responseContent := map[string]any{
-		"type":        "message",
-		"role":        resp.Message.Role,
-		"content":     resp.Message.Content, // Now stores []ContentBlock
-		"model":       resp.Model,
-		"provider":    providerName,
-		"stop_reason": resp.StopReason,
+	responseBucket := merkle.Bucket{
+		Type:       "message",
+		Role:       resp.Message.Role,
+		Content:    resp.Message.Content,
+		Model:      resp.Model,
+		Provider:   providerName,
+		StopReason: resp.StopReason,
+		Usage:      resp.Usage,
 	}
 
-	// Add usage metrics if present
-	if resp.Usage != nil {
-		responseContent["usage"] = map[string]any{
-			"prompt_tokens":      resp.Usage.PromptTokens,
-			"completion_tokens":  resp.Usage.CompletionTokens,
-			"total_tokens":       resp.Usage.TotalTokens,
-			"total_duration_ns":  resp.Usage.TotalDurationNs,
-			"prompt_duration_ns": resp.Usage.PromptDurationNs,
-		}
-	}
-
-	responseNode := merkle.NewNode(responseContent, parent)
+	responseNode := merkle.NewNode(responseBucket, parent)
 	if err := p.storer.Put(ctx, responseNode); err != nil {
 		return "", fmt.Errorf("storing response node: %w", err)
 	}

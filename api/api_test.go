@@ -7,8 +7,20 @@ import (
 	. "github.com/onsi/gomega"
 	"go.uber.org/zap"
 
+	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 )
+
+// apiTestBucket creates a simple bucket for testing with the given role and text content
+func apiTestBucket(role, text string) merkle.Bucket {
+	return merkle.Bucket{
+		Type:     "message",
+		Role:     role,
+		Content:  []llm.ContentBlock{{Type: "text", Text: text}},
+		Model:    "test-model",
+		Provider: "test-provider",
+	}
+}
 
 var _ = Describe("buildHistory", func() {
 	var (
@@ -35,12 +47,7 @@ var _ = Describe("buildHistory", func() {
 		var rootNode *merkle.Node
 
 		BeforeEach(func() {
-			rootNode = merkle.NewNode(map[string]any{
-				"type":    "message",
-				"role":    "user",
-				"content": "Hello",
-				"model":   "test-model",
-			}, nil)
+			rootNode = merkle.NewNode(apiTestBucket("user", "Hello"), nil)
 			Expect(storer.Put(ctx, rootNode)).To(Succeed())
 		})
 
@@ -56,12 +63,13 @@ var _ = Describe("buildHistory", func() {
 			Expect(history.HeadHash).To(Equal(rootNode.Hash))
 		})
 
-		It("extracts message fields from node content", func() {
+		It("extracts message fields from node bucket", func() {
 			history, err := server.buildHistory(ctx, rootNode.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(history.Messages).To(HaveLen(1))
 			Expect(history.Messages[0].Role).To(Equal("user"))
-			Expect(history.Messages[0].Content).To(Equal("Hello"))
+			Expect(history.Messages[0].Content).To(HaveLen(1))
+			Expect(history.Messages[0].Content[0].Text).To(Equal("Hello"))
 			Expect(history.Messages[0].Model).To(Equal("test-model"))
 		})
 
@@ -76,24 +84,9 @@ var _ = Describe("buildHistory", func() {
 		var node1, node2, node3 *merkle.Node
 
 		BeforeEach(func() {
-			node1 = merkle.NewNode(map[string]any{
-				"type":    "message",
-				"role":    "user",
-				"content": "Hello",
-				"model":   "test-model",
-			}, nil)
-			node2 = merkle.NewNode(map[string]any{
-				"type":    "message",
-				"role":    "assistant",
-				"content": "Hi there!",
-				"model":   "test-model",
-			}, node1)
-			node3 = merkle.NewNode(map[string]any{
-				"type":    "message",
-				"role":    "user",
-				"content": "How are you?",
-				"model":   "test-model",
-			}, node2)
+			node1 = merkle.NewNode(apiTestBucket("user", "Hello"), nil)
+			node2 = merkle.NewNode(apiTestBucket("assistant", "Hi there!"), node1)
+			node3 = merkle.NewNode(apiTestBucket("user", "How are you?"), node2)
 
 			Expect(storer.Put(ctx, node1)).To(Succeed())
 			Expect(storer.Put(ctx, node2)).To(Succeed())
@@ -110,9 +103,9 @@ var _ = Describe("buildHistory", func() {
 			history, err := server.buildHistory(ctx, node3.Hash)
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(history.Messages[0].Content).To(Equal("Hello"))
-			Expect(history.Messages[1].Content).To(Equal("Hi there!"))
-			Expect(history.Messages[2].Content).To(Equal("How are you?"))
+			Expect(history.Messages[0].Content[0].Text).To(Equal("Hello"))
+			Expect(history.Messages[1].Content[0].Text).To(Equal("Hi there!"))
+			Expect(history.Messages[2].Content[0].Text).To(Equal("How are you?"))
 		})
 
 		It("correctly links parent hashes", func() {
@@ -132,24 +125,29 @@ var _ = Describe("buildHistory", func() {
 
 			Expect(history.Depth).To(Equal(2))
 			Expect(history.HeadHash).To(Equal(node2.Hash))
-			Expect(history.Messages[0].Content).To(Equal("Hello"))
-			Expect(history.Messages[1].Content).To(Equal("Hi there!"))
+			Expect(history.Messages[0].Content[0].Text).To(Equal("Hello"))
+			Expect(history.Messages[1].Content[0].Text).To(Equal("Hi there!"))
 		})
 	})
 
-	Context("when node content has additional metadata", func() {
+	Context("when node bucket has usage metrics", func() {
 		var node *merkle.Node
 
 		BeforeEach(func() {
-			node = merkle.NewNode(map[string]any{
-				"type":       "message",
-				"role":       "assistant",
-				"content":    "Response",
-				"model":      "gpt-4",
-				"provider":   "openai",
-				"custom_key": "custom_value",
-				"tokens":     150,
-			}, nil)
+			bucket := merkle.Bucket{
+				Type:       "message",
+				Role:       "assistant",
+				Content:    []llm.ContentBlock{{Type: "text", Text: "Response"}},
+				Model:      "gpt-4",
+				Provider:   "openai",
+				StopReason: "stop",
+				Usage: &llm.Usage{
+					PromptTokens:     100,
+					CompletionTokens: 50,
+					TotalTokens:      150,
+				},
+			}
+			node = merkle.NewNode(bucket, nil)
 			Expect(storer.Put(ctx, node)).To(Succeed())
 		})
 
@@ -159,39 +157,17 @@ var _ = Describe("buildHistory", func() {
 			Expect(history.Messages[0].Provider).To(Equal("openai"))
 		})
 
-		It("captures extra fields in metadata", func() {
+		It("extracts the stop reason", func() {
 			history, err := server.buildHistory(ctx, node.Hash)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(history.Messages[0].Metadata).To(HaveKeyWithValue("custom_key", "custom_value"))
-			Expect(history.Messages[0].Metadata).To(HaveKeyWithValue("tokens", 150))
+			Expect(history.Messages[0].StopReason).To(Equal("stop"))
 		})
 
-		It("excludes standard fields from metadata", func() {
+		It("extracts usage metrics", func() {
 			history, err := server.buildHistory(ctx, node.Hash)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(history.Messages[0].Metadata).NotTo(HaveKey("role"))
-			Expect(history.Messages[0].Metadata).NotTo(HaveKey("content"))
-			Expect(history.Messages[0].Metadata).NotTo(HaveKey("model"))
-			Expect(history.Messages[0].Metadata).NotTo(HaveKey("type"))
-			Expect(history.Messages[0].Metadata).NotTo(HaveKey("provider"))
-		})
-	})
-
-	Context("when node content is not a map", func() {
-		var node *merkle.Node
-
-		BeforeEach(func() {
-			node = merkle.NewNode("plain string content", nil)
-			Expect(storer.Put(ctx, node)).To(Succeed())
-		})
-
-		It("returns a message with empty fields", func() {
-			history, err := server.buildHistory(ctx, node.Hash)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(history.Messages).To(HaveLen(1))
-			Expect(history.Messages[0].Role).To(BeEmpty())
-			Expect(history.Messages[0].Content).To(BeNil())
-			Expect(history.Messages[0].Hash).To(Equal(node.Hash))
+			Expect(history.Messages[0].Usage).NotTo(BeNil())
+			Expect(history.Messages[0].Usage.TotalTokens).To(Equal(150))
 		})
 	})
 })

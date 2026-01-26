@@ -8,8 +8,20 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
+	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 )
+
+// proxyTestBucket creates a simple bucket for testing with the given role and text content
+func proxyTestBucket(role, text string) merkle.Bucket {
+	return merkle.Bucket{
+		Type:     "message",
+		Role:     role,
+		Content:  []llm.ContentBlock{{Type: "text", Text: text}},
+		Model:    "test-model",
+		Provider: "test-provider",
+	}
+}
 
 // testProxy creates a Proxy with an in-memory storer for testing.
 func testProxy(t *testing.T) *Proxy {
@@ -34,9 +46,9 @@ func TestContentAddressableDeduplication(t *testing.T) {
 	ctx := context.Background()
 
 	// Create the same node twice - should only store once
-	content := map[string]string{"role": "user", "content": "Hello"}
-	node1 := merkle.NewNode(content, nil)
-	node2 := merkle.NewNode(content, nil)
+	bucket := proxyTestBucket("user", "Hello")
+	node1 := merkle.NewNode(bucket, nil)
+	node2 := merkle.NewNode(bucket, nil)
 
 	// Same content = same hash
 	assert.Equal(t, node1.Hash, node2.Hash)
@@ -56,21 +68,12 @@ func TestBranchingConversations(t *testing.T) {
 	ctx := context.Background()
 
 	// Common prefix
-	userMsg := merkle.NewNode(map[string]string{
-		"role":    "user",
-		"content": "What is 2+2?",
-	}, nil)
+	userMsg := merkle.NewNode(proxyTestBucket("user", "What is 2+2?"), nil)
 	require.NoError(t, p.storer.Put(ctx, userMsg))
 
 	// Two different responses (simulating different LLM outputs)
-	response1 := merkle.NewNode(map[string]string{
-		"role":    "assistant",
-		"content": "2+2 equals 4.",
-	}, userMsg)
-	response2 := merkle.NewNode(map[string]string{
-		"role":    "assistant",
-		"content": "The answer is 4!",
-	}, userMsg)
+	response1 := merkle.NewNode(proxyTestBucket("assistant", "2+2 equals 4."), userMsg)
+	response2 := merkle.NewNode(proxyTestBucket("assistant", "The answer is 4!"), userMsg)
 
 	require.NoError(t, p.storer.Put(ctx, response1))
 	require.NoError(t, p.storer.Put(ctx, response2))

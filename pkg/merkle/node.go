@@ -17,14 +17,14 @@ type Node struct {
 	// This will be nil for root nodes.
 	ParentHash *string `json:"parent_hash"`
 
-	// Content is the hashable content for the node
-	Content any `json:"content"`
+	// Bucket is the hashable content for the node
+	Bucket Bucket `json:"bucket"`
 }
 
-// NewNode creates a new node with the computed hash for the provided content
-func NewNode(content any, parent *Node) *Node {
+// NewNode creates a new node with the computed hash for the provided bucket
+func NewNode(bucket Bucket, parent *Node) *Node {
 	n := &Node{
-		Content: content,
+		Bucket: bucket,
 	}
 
 	if parent != nil {
@@ -37,16 +37,19 @@ func NewNode(content any, parent *Node) *Node {
 
 // ComputeHash calculates the content-addressed hash for a node
 func (n *Node) computeHash() string {
-	i := &input{
-		Content: n.Content,
-	}
-
+	parent := ""
 	if n.ParentHash != nil {
-		i.Parent = *n.ParentHash
+		parent = *n.ParentHash
 	}
 
-	// Marshal to JSON
-	data, err := json.Marshal(i)
+	// Marshal to JSON using an inline struct for hash computation
+	data, err := json.Marshal(struct {
+		Parent  string `json:"parent"`
+		Content Bucket `json:"content"`
+	}{
+		Parent:  parent,
+		Content: n.Bucket,
+	})
 	if err != nil {
 		panic("failed to marshal hash input: " + err.Error())
 	}
