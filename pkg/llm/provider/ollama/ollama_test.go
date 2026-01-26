@@ -351,5 +351,154 @@ var _ = Describe("Ollama Provider", func() {
 				Expect(err).To(HaveOccurred())
 			})
 		})
+
+		Context("with tool calls", func() {
+			It("parses tool calls in the response", func() {
+				payload := []byte(`{
+					"model": "ministral-3:latest",
+					"created_at": "2026-01-26T22:25:20.060831Z",
+					"message": {
+						"role": "assistant",
+						"content": "",
+						"tool_calls": [
+							{
+								"id": "call_qd4tv4px",
+								"function": {
+									"index": 0,
+									"name": "get_weather",
+									"arguments": {
+										"city": "Tokyo"
+									}
+								}
+							}
+						]
+					},
+					"done": true,
+					"done_reason": "stop",
+					"total_duration": 5461610875,
+					"prompt_eval_count": 620,
+					"eval_count": 12
+				}`)
+
+				resp, err := p.ParseResponse(payload)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.Message.Role).To(Equal("assistant"))
+				Expect(resp.Message.Content).To(HaveLen(1))
+				Expect(resp.Message.Content[0].Type).To(Equal("tool_use"))
+				Expect(resp.Message.Content[0].ToolUseID).To(Equal("call_qd4tv4px"))
+				Expect(resp.Message.Content[0].ToolName).To(Equal("get_weather"))
+				Expect(resp.Message.Content[0].ToolInput).To(HaveKeyWithValue("city", "Tokyo"))
+				Expect(resp.StopReason).To(Equal("stop"))
+			})
+
+			It("parses multiple tool calls", func() {
+				payload := []byte(`{
+					"model": "llama3",
+					"created_at": "2026-01-26T22:25:20.060831Z",
+					"message": {
+						"role": "assistant",
+						"content": "",
+						"tool_calls": [
+							{
+								"id": "call_1",
+								"function": {
+									"name": "get_weather",
+									"arguments": {"city": "Tokyo"}
+								}
+							},
+							{
+								"id": "call_2",
+								"function": {
+									"name": "get_time",
+									"arguments": {"timezone": "JST"}
+								}
+							}
+						]
+					},
+					"done": true
+				}`)
+
+				resp, err := p.ParseResponse(payload)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.Message.Content).To(HaveLen(2))
+				Expect(resp.Message.Content[0].ToolName).To(Equal("get_weather"))
+				Expect(resp.Message.Content[1].ToolName).To(Equal("get_time"))
+			})
+
+			It("handles response with both text and tool calls", func() {
+				payload := []byte(`{
+					"model": "llama3",
+					"created_at": "2026-01-26T22:25:20.060831Z",
+					"message": {
+						"role": "assistant",
+						"content": "Let me check the weather for you.",
+						"tool_calls": [
+							{
+								"id": "call_1",
+								"function": {
+									"name": "get_weather",
+									"arguments": {"city": "Tokyo"}
+								}
+							}
+						]
+					},
+					"done": true
+				}`)
+
+				resp, err := p.ParseResponse(payload)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.Message.Content).To(HaveLen(2))
+				Expect(resp.Message.Content[0].Type).To(Equal("text"))
+				Expect(resp.Message.Content[0].Text).To(Equal("Let me check the weather for you."))
+				Expect(resp.Message.Content[1].Type).To(Equal("tool_use"))
+			})
+		})
+
+		Context("with done_reason", func() {
+			It("uses done_reason when provided", func() {
+				payload := []byte(`{
+					"model": "llama2",
+					"created_at": "2024-01-15T10:30:00Z",
+					"message": {"role": "assistant", "content": "Hi"},
+					"done": true,
+					"done_reason": "length"
+				}`)
+
+				resp, err := p.ParseResponse(payload)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StopReason).To(Equal("length"))
+			})
+		})
+	})
+
+	Describe("ParseRequest with tool calls", func() {
+		It("parses tool calls in assistant messages", func() {
+			payload := []byte(`{
+				"model": "llama3",
+				"messages": [
+					{"role": "user", "content": "What's the weather in Tokyo?"},
+					{
+						"role": "assistant",
+						"content": "",
+						"tool_calls": [
+							{
+								"id": "call_1",
+								"function": {
+									"name": "get_weather",
+									"arguments": {"city": "Tokyo"}
+								}
+							}
+						]
+					}
+				]
+			}`)
+
+			req, err := p.ParseRequest(payload)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(req.Messages).To(HaveLen(2))
+			Expect(req.Messages[1].Content).To(HaveLen(1))
+			Expect(req.Messages[1].Content[0].Type).To(Equal("tool_use"))
+			Expect(req.Messages[1].Content[0].ToolName).To(Equal("get_weather"))
+		})
 	})
 })

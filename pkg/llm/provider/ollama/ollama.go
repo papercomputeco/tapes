@@ -25,7 +25,12 @@ func (o *provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 	for _, msg := range req.Messages {
 		converted := llm.Message{
 			Role:    msg.Role,
-			Content: []llm.ContentBlock{{Type: "text", Text: msg.Content}},
+			Content: []llm.ContentBlock{},
+		}
+
+		// Add text content if present
+		if msg.Content != "" {
+			converted.Content = append(converted.Content, llm.ContentBlock{Type: "text", Text: msg.Content})
 		}
 
 		// Handle images
@@ -33,6 +38,16 @@ func (o *provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 			converted.Content = append(converted.Content, llm.ContentBlock{
 				Type:        "image",
 				ImageBase64: img,
+			})
+		}
+
+		// Handle tool calls in assistant messages
+		for _, tc := range msg.ToolCalls {
+			converted.Content = append(converted.Content, llm.ContentBlock{
+				Type:      "tool_use",
+				ToolUseID: tc.ID,
+				ToolName:  tc.Function.Name,
+				ToolInput: tc.Function.Arguments,
 			})
 		}
 
@@ -92,13 +107,28 @@ func (o *provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 	}
 
 	// Convert message content
-	content := []llm.ContentBlock{{Type: "text", Text: resp.Message.Content}}
+	var content []llm.ContentBlock
+
+	// Add text content if present
+	if resp.Message.Content != "" {
+		content = append(content, llm.ContentBlock{Type: "text", Text: resp.Message.Content})
+	}
 
 	// Handle images in response (if any)
 	for _, img := range resp.Message.Images {
 		content = append(content, llm.ContentBlock{
 			Type:        "image",
 			ImageBase64: img,
+		})
+	}
+
+	// Handle tool calls
+	for _, tc := range resp.Message.ToolCalls {
+		content = append(content, llm.ContentBlock{
+			Type:      "tool_use",
+			ToolUseID: tc.ID,
+			ToolName:  tc.Function.Name,
+			ToolInput: tc.Function.Arguments,
 		})
 	}
 
@@ -114,9 +144,9 @@ func (o *provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 		}
 	}
 
-	// Determine stop reason
-	stopReason := ""
-	if resp.Done {
+	// Determine stop reason - use DoneReason if available, otherwise default to "stop" if done
+	stopReason := resp.DoneReason
+	if stopReason == "" && resp.Done {
 		stopReason = "stop"
 	}
 

@@ -19,6 +19,18 @@ type ollamaMessage struct {
 
 	// Base64-encoded images
 	Images []string `json:"images,omitempty"`
+
+	// Tool calls (assistant requesting tool execution)
+	ToolCalls []ollamaToolCall `json:"tool_calls,omitempty"`
+}
+
+type ollamaToolCall struct {
+	ID       string `json:"id"`
+	Function struct {
+		Index     int            `json:"index,omitempty"`
+		Name      string         `json:"name"`
+		Arguments map[string]any `json:"arguments"`
+	} `json:"function"`
 }
 
 type ollamaOptions struct {
@@ -39,6 +51,7 @@ type ollamaResponse struct {
 	CreatedAt          time.Time     `json:"created_at"`
 	Message            ollamaMessage `json:"message"`
 	Done               bool          `json:"done"`
+	DoneReason         string        `json:"done_reason,omitempty"`
 	Context            []int         `json:"context,omitempty"`
 	TotalDuration      int64         `json:"total_duration,omitempty"`
 	LoadDuration       int64         `json:"load_duration,omitempty"`
