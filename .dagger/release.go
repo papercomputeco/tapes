@@ -181,7 +181,7 @@ func (t *Tapes) UploadInstallSh(
 ) error {
 	installDir := dag.
 		Directory().
-		WithFile("install.sh", t.Source.File("install.sh"))
+		WithFile("install", t.Source.File("install.sh"))
 
 	return t.upload(
 		ctx,
