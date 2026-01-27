@@ -40,17 +40,17 @@ func (s *Server) handlePing(c *fiber.Ctx) error {
 func (s *Server) handleDAGStats(c *fiber.Ctx) error {
 	ctx := c.Context()
 
-	nodes, err := s.storer.List(ctx)
+	nodes, err := s.driver.List(ctx)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list nodes"})
 	}
 
-	roots, err := s.storer.Roots(ctx)
+	roots, err := s.driver.Roots(ctx)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to get roots"})
 	}
 
-	leaves, err := s.storer.Leaves(ctx)
+	leaves, err := s.driver.Leaves(ctx)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to get leaves"})
 	}
@@ -71,7 +71,7 @@ func (s *Server) handleGetNode(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "hash parameter required"})
 	}
 
-	node, err := s.storer.Get(c.Context(), hash)
+	node, err := s.driver.Get(c.Context(), hash)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "node not found"})
 	}
@@ -83,7 +83,7 @@ func (s *Server) handleGetNode(c *fiber.Ctx) error {
 func (s *Server) handleListHistories(c *fiber.Ctx) error {
 	ctx := c.Context()
 
-	leaves, err := s.storer.Leaves(ctx)
+	leaves, err := s.driver.Leaves(ctx)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to get leaves"})
 	}
@@ -124,7 +124,7 @@ func (s *Server) handleGetHistory(c *fiber.Ctx) error {
 
 // buildHistory constructs a HistoryResponse for the given node hash.
 func (s *Server) buildHistory(ctx context.Context, hash string) (*HistoryResponse, error) {
-	ancestry, err := s.storer.Ancestry(ctx, hash)
+	ancestry, err := s.driver.Ancestry(ctx, hash)
 	if err != nil {
 		return nil, err
 	}

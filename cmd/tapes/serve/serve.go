@@ -72,12 +72,12 @@ func (c *ServeCommander) run() error {
 	c.logger = logger.NewLogger(c.debug)
 	defer c.logger.Sync()
 
-	// Create shared storer
-	storer, err := c.createStorer()
+	// Create shared driver
+	driver, err := c.newStorageDriver()
 	if err != nil {
 		return err
 	}
-	defer storer.Close()
+	defer driver.Close()
 
 	// Create proxy
 	proxyConfig := proxy.Config{
@@ -85,7 +85,7 @@ func (c *ServeCommander) run() error {
 		UpstreamURL:  c.upstream,
 		ProviderType: c.providerType,
 	}
-	p, err := proxy.New(proxyConfig, storer, c.logger)
+	p, err := proxy.New(proxyConfig, driver, c.logger)
 	if err != nil {
 		return fmt.Errorf("creating proxy: %w", err)
 	}
@@ -101,7 +101,7 @@ func (c *ServeCommander) run() error {
 	apiConfig := api.Config{
 		ListenAddr: c.apiListen,
 	}
-	apiServer := api.NewServer(apiConfig, storer, c.logger)
+	apiServer := api.NewServer(apiConfig, driver, c.logger)
 
 	c.logger.Info("starting api server",
 		zap.String("api_addr", c.apiListen),
@@ -137,16 +137,16 @@ func (c *ServeCommander) run() error {
 	}
 }
 
-func (c *ServeCommander) createStorer() (storage.Driver, error) {
+func (c *ServeCommander) newStorageDriver() (storage.Driver, error) {
 	if c.sqlitePath != "" {
-		storer, err := sqlite.NewSQLiteStorer(c.sqlitePath)
+		driver, err := sqlite.NewSQLiteDriver(c.sqlitePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
 		}
 		c.logger.Info("using SQLite storage", zap.String("path", c.sqlitePath))
-		return storer, nil
+		return driver, nil
 	}
 
 	c.logger.Info("using in-memory storage")
-	return inmemory.NewInMemoryStorer(), nil
+	return inmemory.NewInMemoryDriver(), nil
 }

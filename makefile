@@ -8,6 +8,10 @@ COMMIT  := $(shell git rev-parse HEAD)
 format:
 	find . -type f -name "*.go" -exec goimports -local github.com/papercomputeco/tapes -w {} \;
 
+.PHONY: generate
+generate: ## Regenerates ent code from schema
+	go generate ./pkg/storage/ent/...
+
 .PHONY: build
 build: ## Builds all artifacts
 	dagger call \

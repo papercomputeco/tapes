@@ -27,14 +27,14 @@ func apiTestBucket(role, text string) merkle.Bucket {
 var _ = Describe("buildHistory", func() {
 	var (
 		server *Server
-		storer storage.Driver
+		driver storage.Driver
 		ctx    context.Context
 	)
 
 	BeforeEach(func() {
 		logger, _ := zap.NewDevelopment()
-		storer = inmemory.NewInMemoryStorer()
-		server = NewServer(Config{ListenAddr: ":0"}, storer, logger)
+		driver = inmemory.NewInMemoryDriver()
+		server = NewServer(Config{ListenAddr: ":0"}, driver, logger)
 		ctx = context.Background()
 	})
 
@@ -50,7 +50,7 @@ var _ = Describe("buildHistory", func() {
 
 		BeforeEach(func() {
 			rootNode = merkle.NewNode(apiTestBucket("user", "Hello"), nil)
-			Expect(storer.Put(ctx, rootNode)).To(Succeed())
+			Expect(driver.Put(ctx, rootNode)).To(Succeed())
 		})
 
 		It("returns a history with depth 1", func() {
@@ -90,9 +90,9 @@ var _ = Describe("buildHistory", func() {
 			node2 = merkle.NewNode(apiTestBucket("assistant", "Hi there!"), node1)
 			node3 = merkle.NewNode(apiTestBucket("user", "How are you?"), node2)
 
-			Expect(storer.Put(ctx, node1)).To(Succeed())
-			Expect(storer.Put(ctx, node2)).To(Succeed())
-			Expect(storer.Put(ctx, node3)).To(Succeed())
+			Expect(driver.Put(ctx, node1)).To(Succeed())
+			Expect(driver.Put(ctx, node2)).To(Succeed())
+			Expect(driver.Put(ctx, node3)).To(Succeed())
 		})
 
 		It("returns the correct depth", func() {
@@ -150,7 +150,7 @@ var _ = Describe("buildHistory", func() {
 				},
 			}
 			node = merkle.NewNode(bucket, nil)
-			Expect(storer.Put(ctx, node)).To(Succeed())
+			Expect(driver.Put(ctx, node)).To(Succeed())
 		})
 
 		It("extracts the provider field", func() {

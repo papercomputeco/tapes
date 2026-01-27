@@ -27,7 +27,7 @@ import (
 // and stores them in a content-addressable merkle.Storer.
 type Proxy struct {
 	config     Config
-	storer     storage.Driver
+	driver     storage.Driver
 	logger     *zap.Logger
 	httpClient *http.Client
 	server     *fiber.App
@@ -37,7 +37,7 @@ type Proxy struct {
 // New creates a new Proxy.
 // The storer is injected to allow sharing with other components (e.g., the API server).
 // Returns an error if the configured provider type is not recognized.
-func New(config Config, storer storage.Driver, logger *zap.Logger) (*Proxy, error) {
+func New(config Config, driver storage.Driver, logger *zap.Logger) (*Proxy, error) {
 	prov, err := provider.New(config.ProviderType)
 	if err != nil {
 		return nil, fmt.Errorf("could not create new provider: %w", err)
@@ -52,7 +52,7 @@ func New(config Config, storer storage.Driver, logger *zap.Logger) (*Proxy, erro
 
 	p := &Proxy{
 		config:   config,
-		storer:   storer,
+		driver:   driver,
 		logger:   logger,
 		server:   app,
 		provider: prov,
@@ -80,7 +80,7 @@ func (p *Proxy) Run() error {
 
 // Close shuts down the proxy and releases resources.
 func (p *Proxy) Close() error {
-	return p.storer.Close()
+	return p.driver.Close()
 }
 
 // handleProxy is a transparent proxy handler that forwards requests to upstream
@@ -388,7 +388,7 @@ func (p *Proxy) storeConversationTurn(ctx context.Context, providerName string, 
 		}
 
 		node := merkle.NewNode(bucket, parent)
-		if err := p.storer.Put(ctx, node); err != nil {
+		if err := p.driver.Put(ctx, node); err != nil {
 			return "", fmt.Errorf("storing message node: %w", err)
 		}
 
@@ -413,7 +413,7 @@ func (p *Proxy) storeConversationTurn(ctx context.Context, providerName string, 
 	}
 
 	responseNode := merkle.NewNode(responseBucket, parent)
-	if err := p.storer.Put(ctx, responseNode); err != nil {
+	if err := p.driver.Put(ctx, responseNode); err != nil {
 		return "", fmt.Errorf("storing response node: %w", err)
 	}
 

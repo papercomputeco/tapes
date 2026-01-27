@@ -25,35 +25,31 @@ func sqliteTestBucket(text string) merkle.Bucket {
 	}
 }
 
-var _ = Describe("SQLiteStorer", func() {
+var _ = Describe("SQLiteDriver", func() {
 	var (
-		storer *sqlite.SQLiteStorer
+		driver *sqlite.SQLiteDriver
 		ctx    context.Context
 	)
 
 	BeforeEach(func() {
 		ctx = context.Background()
 		var err error
-		storer, err = sqlite.NewSQLiteStorer(":memory:")
+		driver, err = sqlite.NewSQLiteDriver(":memory:")
 		Expect(err).NotTo(HaveOccurred())
 	})
 
 	AfterEach(func() {
-		if storer != nil {
-			storer.Close()
+		if driver != nil {
+			driver.Close()
 		}
 	})
 
-	Describe("NewSQLiteStorer", func() {
-		It("creates a storer with in-memory database", func() {
-			Expect(storer).NotTo(BeNil())
-		})
-
-		It("creates a storer with file database", func() {
+	Describe("NewSQLiteDriver", func() {
+		It("creates a driver with file database", func() {
 			tmpDir := GinkgoT().TempDir()
 			dbPath := filepath.Join(tmpDir, "test.db")
 
-			s, err := sqlite.NewSQLiteStorer(dbPath)
+			s, err := sqlite.NewSQLiteDriver(dbPath)
 			Expect(err).NotTo(HaveOccurred())
 			defer s.Close()
 
@@ -67,10 +63,10 @@ var _ = Describe("SQLiteStorer", func() {
 		It("stores and retrieves a node", func() {
 			node := merkle.NewNode(sqliteTestBucket("test content"), nil)
 
-			err := storer.Put(ctx, node)
+			err := driver.Put(ctx, node)
 			Expect(err).NotTo(HaveOccurred())
 
-			retrieved, err := storer.Get(ctx, node.Hash)
+			retrieved, err := driver.Get(ctx, node.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(retrieved.Hash).To(Equal(node.Hash))
 			Expect(retrieved.Bucket).To(Equal(node.Bucket))
@@ -81,20 +77,20 @@ var _ = Describe("SQLiteStorer", func() {
 			parent := merkle.NewNode(sqliteTestBucket("parent"), nil)
 			child := merkle.NewNode(sqliteTestBucket("child"), parent)
 
-			err := storer.Put(ctx, parent)
+			err := driver.Put(ctx, parent)
 			Expect(err).NotTo(HaveOccurred())
 
-			err = storer.Put(ctx, child)
+			err = driver.Put(ctx, child)
 			Expect(err).NotTo(HaveOccurred())
 
-			retrieved, err := storer.Get(ctx, child.Hash)
+			retrieved, err := driver.Get(ctx, child.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(retrieved.ParentHash).NotTo(BeNil())
 			Expect(*retrieved.ParentHash).To(Equal(parent.Hash))
 		})
 
 		It("returns ErrNotFound for non-existent hash", func() {
-			_, err := storer.Get(ctx, "nonexistent")
+			_, err := driver.Get(ctx, "nonexistent")
 			Expect(err).To(HaveOccurred())
 
 			var notFoundErr storage.ErrNotFound
@@ -104,18 +100,18 @@ var _ = Describe("SQLiteStorer", func() {
 		It("is idempotent for duplicate puts", func() {
 			node := merkle.NewNode(sqliteTestBucket("test"), nil)
 
-			err := storer.Put(ctx, node)
+			err := driver.Put(ctx, node)
 			Expect(err).NotTo(HaveOccurred())
 
-			err = storer.Put(ctx, node)
+			err = driver.Put(ctx, node)
 			Expect(err).NotTo(HaveOccurred())
 
-			nodes, _ := storer.List(ctx)
+			nodes, _ := driver.List(ctx)
 			Expect(nodes).To(HaveLen(1))
 		})
 
 		It("rejects nil nodes", func() {
-			err := storer.Put(ctx, nil)
+			err := driver.Put(ctx, nil)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("nil node"))
 		})
@@ -124,15 +120,15 @@ var _ = Describe("SQLiteStorer", func() {
 	Describe("Has", func() {
 		It("returns true for existing node", func() {
 			node := merkle.NewNode(sqliteTestBucket("test"), nil)
-			storer.Put(ctx, node)
+			driver.Put(ctx, node)
 
-			exists, err := storer.Has(ctx, node.Hash)
+			exists, err := driver.Has(ctx, node.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(exists).To(BeTrue())
 		})
 
 		It("returns false for non-existent hash", func() {
-			exists, err := storer.Has(ctx, "nonexistent")
+			exists, err := driver.Has(ctx, "nonexistent")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(exists).To(BeFalse())
 		})
@@ -144,11 +140,11 @@ var _ = Describe("SQLiteStorer", func() {
 			child1 := merkle.NewNode(sqliteTestBucket("child1"), parent)
 			child2 := merkle.NewNode(sqliteTestBucket("child2"), parent)
 
-			storer.Put(ctx, parent)
-			storer.Put(ctx, child1)
-			storer.Put(ctx, child2)
+			driver.Put(ctx, parent)
+			driver.Put(ctx, child1)
+			driver.Put(ctx, child2)
 
-			children, err := storer.GetByParent(ctx, &parent.Hash)
+			children, err := driver.GetByParent(ctx, &parent.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(children).To(HaveLen(2))
 		})
@@ -158,11 +154,11 @@ var _ = Describe("SQLiteStorer", func() {
 			root2 := merkle.NewNode(sqliteTestBucket("root2"), nil)
 			child := merkle.NewNode(sqliteTestBucket("child"), root1)
 
-			storer.Put(ctx, root1)
-			storer.Put(ctx, root2)
-			storer.Put(ctx, child)
+			driver.Put(ctx, root1)
+			driver.Put(ctx, root2)
+			driver.Put(ctx, child)
 
-			roots, err := storer.GetByParent(ctx, nil)
+			roots, err := driver.GetByParent(ctx, nil)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(roots).To(HaveLen(2))
 		})
@@ -174,17 +170,17 @@ var _ = Describe("SQLiteStorer", func() {
 			node2 := merkle.NewNode(sqliteTestBucket("node2"), node1)
 			node3 := merkle.NewNode(sqliteTestBucket("node3"), node2)
 
-			storer.Put(ctx, node1)
-			storer.Put(ctx, node2)
-			storer.Put(ctx, node3)
+			driver.Put(ctx, node1)
+			driver.Put(ctx, node2)
+			driver.Put(ctx, node3)
 
-			nodes, err := storer.List(ctx)
+			nodes, err := driver.List(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(nodes).To(HaveLen(3))
 		})
 
 		It("returns empty slice for empty store", func() {
-			nodes, err := storer.List(ctx)
+			nodes, err := driver.List(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(nodes).To(BeEmpty())
 		})
@@ -196,11 +192,11 @@ var _ = Describe("SQLiteStorer", func() {
 			root2 := merkle.NewNode(sqliteTestBucket("root2"), nil)
 			child := merkle.NewNode(sqliteTestBucket("child"), root1)
 
-			storer.Put(ctx, root1)
-			storer.Put(ctx, root2)
-			storer.Put(ctx, child)
+			driver.Put(ctx, root1)
+			driver.Put(ctx, root2)
+			driver.Put(ctx, child)
 
-			roots, err := storer.Roots(ctx)
+			roots, err := driver.Roots(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(roots).To(HaveLen(2))
 		})
@@ -212,11 +208,11 @@ var _ = Describe("SQLiteStorer", func() {
 			child := merkle.NewNode(sqliteTestBucket("child"), root)
 			leaf := merkle.NewNode(sqliteTestBucket("leaf"), child)
 
-			storer.Put(ctx, root)
-			storer.Put(ctx, child)
-			storer.Put(ctx, leaf)
+			driver.Put(ctx, root)
+			driver.Put(ctx, child)
+			driver.Put(ctx, leaf)
 
-			leaves, err := storer.Leaves(ctx)
+			leaves, err := driver.Leaves(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(leaves).To(HaveLen(1))
 			Expect(leaves[0].Hash).To(Equal(leaf.Hash))
@@ -233,11 +229,11 @@ var _ = Describe("SQLiteStorer", func() {
 			child := merkle.NewNode(childBucket, root)
 			grandchild := merkle.NewNode(grandchildBucket, child)
 
-			storer.Put(ctx, root)
-			storer.Put(ctx, child)
-			storer.Put(ctx, grandchild)
+			driver.Put(ctx, root)
+			driver.Put(ctx, child)
+			driver.Put(ctx, grandchild)
 
-			ancestry, err := storer.Ancestry(ctx, grandchild.Hash)
+			ancestry, err := driver.Ancestry(ctx, grandchild.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ancestry).To(HaveLen(3))
 			Expect(ancestry[0].Bucket).To(Equal(grandchildBucket))
@@ -256,11 +252,11 @@ var _ = Describe("SQLiteStorer", func() {
 			child := merkle.NewNode(childBucket, root)
 			grandchild := merkle.NewNode(grandchildBucket, child)
 
-			storer.Put(ctx, root)
-			storer.Put(ctx, child)
-			storer.Put(ctx, grandchild)
+			driver.Put(ctx, root)
+			driver.Put(ctx, child)
+			driver.Put(ctx, grandchild)
 
-			ancestry, err := storer.Descendants(ctx, grandchild.Hash)
+			ancestry, err := driver.Descendants(ctx, grandchild.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ancestry).To(HaveLen(3))
 			Expect(ancestry[0].Bucket).To(Equal(rootBucket))
@@ -272,9 +268,9 @@ var _ = Describe("SQLiteStorer", func() {
 	Describe("Depth", func() {
 		It("returns 0 for root node", func() {
 			root := merkle.NewNode(sqliteTestBucket("root"), nil)
-			storer.Put(ctx, root)
+			driver.Put(ctx, root)
 
-			depth, err := storer.Depth(ctx, root.Hash)
+			depth, err := driver.Depth(ctx, root.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(depth).To(Equal(0))
 		})
@@ -284,11 +280,11 @@ var _ = Describe("SQLiteStorer", func() {
 			child := merkle.NewNode(sqliteTestBucket("child"), root)
 			grandchild := merkle.NewNode(sqliteTestBucket("grandchild"), child)
 
-			storer.Put(ctx, root)
-			storer.Put(ctx, child)
-			storer.Put(ctx, grandchild)
+			driver.Put(ctx, root)
+			driver.Put(ctx, child)
+			driver.Put(ctx, grandchild)
 
-			depth, err := storer.Depth(ctx, grandchild.Hash)
+			depth, err := driver.Depth(ctx, grandchild.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(depth).To(Equal(2))
 		})
@@ -311,10 +307,10 @@ var _ = Describe("SQLiteStorer", func() {
 			}
 			node := merkle.NewNode(bucket, nil)
 
-			err := storer.Put(ctx, node)
+			err := driver.Put(ctx, node)
 			Expect(err).NotTo(HaveOccurred())
 
-			retrieved, err := storer.Get(ctx, node.Hash)
+			retrieved, err := driver.Get(ctx, node.Hash)
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(retrieved.Bucket.Role).To(Equal("assistant"))
@@ -333,10 +329,10 @@ var _ = Describe("SQLiteStorer", func() {
 
 			Expect(node1.Hash).To(Equal(node2.Hash))
 
-			storer.Put(ctx, node1)
-			storer.Put(ctx, node2)
+			driver.Put(ctx, node1)
+			driver.Put(ctx, node2)
 
-			nodes, _ := storer.List(ctx)
+			nodes, _ := driver.List(ctx)
 			Expect(nodes).To(HaveLen(1))
 		})
 
@@ -345,16 +341,16 @@ var _ = Describe("SQLiteStorer", func() {
 			branch1 := merkle.NewNode(sqliteTestBucket("branch1"), parent)
 			branch2 := merkle.NewNode(sqliteTestBucket("branch2"), parent)
 
-			storer.Put(ctx, parent)
-			storer.Put(ctx, branch1)
-			storer.Put(ctx, branch2)
+			driver.Put(ctx, parent)
+			driver.Put(ctx, branch1)
+			driver.Put(ctx, branch2)
 
 			// Parent should have 2 children (branches)
-			children, _ := storer.GetByParent(ctx, &parent.Hash)
+			children, _ := driver.GetByParent(ctx, &parent.Hash)
 			Expect(children).To(HaveLen(2))
 
 			// Both are leaves
-			leaves, _ := storer.Leaves(ctx)
+			leaves, _ := driver.Leaves(ctx)
 			Expect(leaves).To(HaveLen(2))
 		})
 	})

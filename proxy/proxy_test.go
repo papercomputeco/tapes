@@ -28,7 +28,7 @@ func proxyTestBucket(role, text string) merkle.Bucket {
 func testProxy(t *testing.T) *Proxy {
 	t.Helper()
 	logger, _ := zap.NewDevelopment()
-	storer := inmemory.NewInMemoryStorer()
+	storer := inmemory.NewInMemoryDriver()
 	p, err := New(
 		Config{
 			ListenAddr:   ":0",
@@ -55,11 +55,11 @@ func TestContentAddressableDeduplication(t *testing.T) {
 	assert.Equal(t, node1.Hash, node2.Hash)
 
 	// Store both
-	require.NoError(t, p.storer.Put(ctx, node1))
-	require.NoError(t, p.storer.Put(ctx, node2))
+	require.NoError(t, p.driver.Put(ctx, node1))
+	require.NoError(t, p.driver.Put(ctx, node2))
 
 	// Should only have one node
-	nodes, err := p.storer.List(ctx)
+	nodes, err := p.driver.List(ctx)
 	require.NoError(t, err)
 	assert.Len(t, nodes, 1)
 }
@@ -70,14 +70,14 @@ func TestBranchingConversations(t *testing.T) {
 
 	// Common prefix
 	userMsg := merkle.NewNode(proxyTestBucket("user", "What is 2+2?"), nil)
-	require.NoError(t, p.storer.Put(ctx, userMsg))
+	require.NoError(t, p.driver.Put(ctx, userMsg))
 
 	// Two different responses (simulating different LLM outputs)
 	response1 := merkle.NewNode(proxyTestBucket("assistant", "2+2 equals 4."), userMsg)
 	response2 := merkle.NewNode(proxyTestBucket("assistant", "The answer is 4!"), userMsg)
 
-	require.NoError(t, p.storer.Put(ctx, response1))
-	require.NoError(t, p.storer.Put(ctx, response2))
+	require.NoError(t, p.driver.Put(ctx, response1))
+	require.NoError(t, p.driver.Put(ctx, response2))
 
 	// Different content = different hashes
 	assert.NotEqual(t, response1.Hash, response2.Hash)
@@ -87,16 +87,16 @@ func TestBranchingConversations(t *testing.T) {
 	assert.Equal(t, userMsg.Hash, *response1.ParentHash)
 
 	// Should have 3 nodes total (1 user + 2 branches)
-	nodes, err := p.storer.List(ctx)
+	nodes, err := p.driver.List(ctx)
 	require.NoError(t, err)
 	assert.Len(t, nodes, 3)
 
 	// 1 root, 2 leaves
-	roots, err := p.storer.Roots(ctx)
+	roots, err := p.driver.Roots(ctx)
 	require.NoError(t, err)
 	assert.Len(t, roots, 1)
 
-	leaves, err := p.storer.Leaves(ctx)
+	leaves, err := p.driver.Leaves(ctx)
 	require.NoError(t, err)
 	assert.Len(t, leaves, 2)
 }

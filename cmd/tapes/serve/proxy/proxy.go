@@ -62,11 +62,11 @@ func (c *proxyCommander) run() error {
 	c.logger = logger.NewLogger(c.debug)
 	defer c.logger.Sync()
 
-	storer, err := c.createStorer()
+	driver, err := c.newStorageDriver()
 	if err != nil {
 		return err
 	}
-	defer storer.Close()
+	defer driver.Close()
 
 	config := proxy.Config{
 		ListenAddr:   c.listen,
@@ -74,7 +74,7 @@ func (c *proxyCommander) run() error {
 		ProviderType: c.providerType,
 	}
 
-	p, err := proxy.New(config, storer, c.logger)
+	p, err := proxy.New(config, driver, c.logger)
 	if err != nil {
 		return fmt.Errorf("creating proxy: %w", err)
 	}
@@ -89,16 +89,16 @@ func (c *proxyCommander) run() error {
 	return p.Run()
 }
 
-func (c *proxyCommander) createStorer() (storage.Driver, error) {
+func (c *proxyCommander) newStorageDriver() (storage.Driver, error) {
 	if c.sqlitePath != "" {
-		storer, err := sqlite.NewSQLiteStorer(c.sqlitePath)
+		driver, err := sqlite.NewSQLiteDriver(c.sqlitePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
 		}
 		c.logger.Info("using SQLite storage", zap.String("path", c.sqlitePath))
-		return storer, nil
+		return driver, nil
 	}
 
 	c.logger.Info("using in-memory storage")
-	return inmemory.NewInMemoryStorer(), nil
+	return inmemory.NewInMemoryDriver(), nil
 }

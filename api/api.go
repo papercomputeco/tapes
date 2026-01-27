@@ -10,7 +10,7 @@ import (
 // Server is the API server for managing and querying the Tapes system
 type Server struct {
 	config Config
-	storer storage.Driver
+	driver storage.Driver
 	logger *zap.Logger
 	app    *fiber.App
 }
@@ -18,14 +18,14 @@ type Server struct {
 // NewServer creates a new API server.
 // The storer is injected to allow sharing with other components
 // (e.g., the proxy when not run as a singleton).
-func NewServer(config Config, storer storage.Driver, logger *zap.Logger) *Server {
+func NewServer(config Config, driver storage.Driver, logger *zap.Logger) *Server {
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
 
 	s := &Server{
 		config: config,
-		storer: storer,
+		driver: driver,
 		logger: logger,
 		app:    app,
 	}
