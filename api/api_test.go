@@ -9,6 +9,8 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/storage"
+	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
 // apiTestBucket creates a simple bucket for testing with the given role and text content
@@ -25,13 +27,13 @@ func apiTestBucket(role, text string) merkle.Bucket {
 var _ = Describe("buildHistory", func() {
 	var (
 		server *Server
-		storer merkle.Storer
+		storer storage.Driver
 		ctx    context.Context
 	)
 
 	BeforeEach(func() {
 		logger, _ := zap.NewDevelopment()
-		storer = merkle.NewMemoryStorer()
+		storer = inmemory.NewInMemoryStorer()
 		server = NewServer(Config{ListenAddr: ":0"}, storer, logger)
 		ctx = context.Background()
 	})

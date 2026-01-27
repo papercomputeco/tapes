@@ -1,4 +1,5 @@
-package merkle
+// Package sqlite
+package sqlite
 
 import (
 	"context"
@@ -7,6 +8,9 @@ import (
 	"fmt"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
 // SQLiteStorer implements Storer using SQLite as the storage backend.
@@ -50,7 +54,7 @@ func (s *SQLiteStorer) migrate() error {
 }
 
 // Put stores a node. If the node already exists (by hash), this is a no-op.
-func (s *SQLiteStorer) Put(ctx context.Context, node *Node) error {
+func (s *SQLiteStorer) Put(ctx context.Context, node *merkle.Node) error {
 	if node == nil {
 		return fmt.Errorf("cannot store nil node")
 	}
@@ -72,18 +76,18 @@ func (s *SQLiteStorer) Put(ctx context.Context, node *Node) error {
 }
 
 // Get retrieves a node by its hash.
-func (s *SQLiteStorer) Get(ctx context.Context, hash string) (*Node, error) {
+func (s *SQLiteStorer) Get(ctx context.Context, hash string) (*merkle.Node, error) {
 	query := `SELECT hash, parent_hash, content FROM nodes WHERE hash = ?`
 
 	row := s.db.QueryRowContext(ctx, query, hash)
 
-	var node Node
+	var node merkle.Node
 	var contentJSON string
 	var parentHash sql.NullString
 
 	err := row.Scan(&node.Hash, &parentHash, &contentJSON)
 	if err == sql.ErrNoRows {
-		return nil, ErrNotFound{Hash: hash}
+		return nil, storage.ErrNotFound{Hash: hash}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan node: %w", err)
@@ -119,7 +123,7 @@ func (s *SQLiteStorer) Has(ctx context.Context, hash string) (bool, error) {
 }
 
 // GetByParent retrieves all nodes that have the given parent hash.
-func (s *SQLiteStorer) GetByParent(ctx context.Context, parentHash *string) ([]*Node, error) {
+func (s *SQLiteStorer) GetByParent(ctx context.Context, parentHash *string) ([]*merkle.Node, error) {
 	var query string
 	var args []any
 
@@ -136,11 +140,11 @@ func (s *SQLiteStorer) GetByParent(ctx context.Context, parentHash *string) ([]*
 	}
 	defer rows.Close()
 
-	return s.scanNodes(rows)
+	return s.scan(rows)
 }
 
 // List returns all nodes in the store.
-func (s *SQLiteStorer) List(ctx context.Context) ([]*Node, error) {
+func (s *SQLiteStorer) List(ctx context.Context) ([]*merkle.Node, error) {
 	query := `SELECT hash, parent_hash, content FROM nodes ORDER BY created_at`
 
 	rows, err := s.db.QueryContext(ctx, query)
@@ -149,16 +153,16 @@ func (s *SQLiteStorer) List(ctx context.Context) ([]*Node, error) {
 	}
 	defer rows.Close()
 
-	return s.scanNodes(rows)
+	return s.scan(rows)
 }
 
 // Roots returns all root nodes (nodes with no parent).
-func (s *SQLiteStorer) Roots(ctx context.Context) ([]*Node, error) {
+func (s *SQLiteStorer) Roots(ctx context.Context) ([]*merkle.Node, error) {
 	return s.GetByParent(ctx, nil)
 }
 
 // Leaves returns all leaf nodes (nodes with no children).
-func (s *SQLiteStorer) Leaves(ctx context.Context) ([]*Node, error) {
+func (s *SQLiteStorer) Leaves(ctx context.Context) ([]*merkle.Node, error) {
 	// Find nodes whose hash is not referenced as a parent by any other node
 	query := `
 		SELECT n.hash, n.parent_hash, n.content 
@@ -173,12 +177,12 @@ func (s *SQLiteStorer) Leaves(ctx context.Context) ([]*Node, error) {
 	}
 	defer rows.Close()
 
-	return s.scanNodes(rows)
+	return s.scan(rows)
 }
 
 // Ancestry returns the path from a node back to its root (node first, root last).
-func (s *SQLiteStorer) Ancestry(ctx context.Context, hash string) ([]*Node, error) {
-	var path []*Node
+func (s *SQLiteStorer) Ancestry(ctx context.Context, hash string) ([]*merkle.Node, error) {
+	var path []*merkle.Node
 	current := hash
 
 	for {
@@ -198,7 +202,7 @@ func (s *SQLiteStorer) Ancestry(ctx context.Context, hash string) ([]*Node, erro
 }
 
 // Descendants returns the path from root to node (root first, node last).
-func (s *SQLiteStorer) Descendants(ctx context.Context, hash string) ([]*Node, error) {
+func (s *SQLiteStorer) Descendants(ctx context.Context, hash string) ([]*merkle.Node, error) {
 	path, err := s.Ancestry(ctx, hash)
 	if err != nil {
 		return nil, err
@@ -232,12 +236,12 @@ func (s *SQLiteStorer) Depth(ctx context.Context, hash string) (int, error) {
 	return depth, nil
 }
 
-// scanNodes scans multiple rows into Node structs.
-func (s *SQLiteStorer) scanNodes(rows *sql.Rows) ([]*Node, error) {
-	var nodes []*Node
+// scanmerkle.Nodes scans multiple rows into merkle.Node structs.
+func (s *SQLiteStorer) scan(rows *sql.Rows) ([]*merkle.Node, error) {
+	var nodes []*merkle.Node
 
 	for rows.Next() {
-		var node Node
+		var node merkle.Node
 		var contentJSON string
 		var parentHash sql.NullString
 
@@ -267,6 +271,3 @@ func (s *SQLiteStorer) scanNodes(rows *sql.Rows) ([]*Node, error) {
 func (s *SQLiteStorer) Close() error {
 	return s.db.Close()
 }
-
-// Ensure SQLiteStorer implements Storer
-var _ Storer = (*SQLiteStorer)(nil)

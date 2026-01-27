@@ -1,30 +1,33 @@
-package merkle
+package inmemory
 
 import (
 	"context"
 	"fmt"
 	"sync"
+
+	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
-// MemoryStorer implements Storer using an in-memory map.
-type MemoryStorer struct {
+// InMemoryStorer implements Storer using an in-memory map.
+type InMemoryStorer struct {
 	// mu is a read write sync mutex for locking the mapping of nodes
 	mu sync.RWMutex
 
 	// nodes is the in memory map of nodes where the key is the content-addressed
 	// hash for the node
-	nodes map[string]*Node
+	nodes map[string]*merkle.Node
 }
 
-// NewMemoryStorer creates a new in-memory storer.
-func NewMemoryStorer() *MemoryStorer {
-	return &MemoryStorer{
-		nodes: make(map[string]*Node),
+// NewInMemoryStorer creates a new in-memory storer.
+func NewInMemoryStorer() *InMemoryStorer {
+	return &InMemoryStorer{
+		nodes: make(map[string]*merkle.Node),
 	}
 }
 
 // Put stores a node. If the node already exists (by hash), this is a no-op.
-func (s *MemoryStorer) Put(ctx context.Context, node *Node) error {
+func (s *InMemoryStorer) Put(ctx context.Context, node *merkle.Node) error {
 	if node == nil {
 		return fmt.Errorf("cannot store nil node")
 	}
@@ -42,20 +45,20 @@ func (s *MemoryStorer) Put(ctx context.Context, node *Node) error {
 }
 
 // Get retrieves a node by its hash.
-func (s *MemoryStorer) Get(ctx context.Context, hash string) (*Node, error) {
+func (s *InMemoryStorer) Get(ctx context.Context, hash string) (*merkle.Node, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	node, ok := s.nodes[hash]
 	if !ok {
-		return nil, ErrNotFound{Hash: hash}
+		return nil, storage.ErrNotFound{Hash: hash}
 	}
 
 	return node, nil
 }
 
 // Has checks if a node exists by its hash.
-func (s *MemoryStorer) Has(ctx context.Context, hash string) (bool, error) {
+func (s *InMemoryStorer) Has(ctx context.Context, hash string) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -65,11 +68,11 @@ func (s *MemoryStorer) Has(ctx context.Context, hash string) (bool, error) {
 
 // GetByParent retrieves all nodes that have the provided parent.
 // This is useful for determining where branching occurs.
-func (s *MemoryStorer) GetByParent(ctx context.Context, parentHash *string) ([]*Node, error) {
+func (s *InMemoryStorer) GetByParent(ctx context.Context, parentHash *string) ([]*merkle.Node, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var result []*Node
+	var result []*merkle.Node
 	for _, node := range s.nodes {
 		if parentHash == nil {
 			if node.ParentHash == nil {
@@ -85,11 +88,11 @@ func (s *MemoryStorer) GetByParent(ctx context.Context, parentHash *string) ([]*
 }
 
 // List returns all nodes in the store.
-func (s *MemoryStorer) List(ctx context.Context) ([]*Node, error) {
+func (s *InMemoryStorer) List(ctx context.Context) ([]*merkle.Node, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	nodes := make([]*Node, 0, len(s.nodes))
+	nodes := make([]*merkle.Node, 0, len(s.nodes))
 	for _, node := range s.nodes {
 		nodes = append(nodes, node)
 	}
@@ -98,12 +101,12 @@ func (s *MemoryStorer) List(ctx context.Context) ([]*Node, error) {
 }
 
 // Roots returns all root nodes
-func (s *MemoryStorer) Roots(ctx context.Context) ([]*Node, error) {
+func (s *InMemoryStorer) Roots(ctx context.Context) ([]*merkle.Node, error) {
 	return s.GetByParent(ctx, nil)
 }
 
 // Leaves returns all leaf nodes
-func (s *MemoryStorer) Leaves(ctx context.Context) ([]*Node, error) {
+func (s *InMemoryStorer) Leaves(ctx context.Context) ([]*merkle.Node, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -116,7 +119,7 @@ func (s *MemoryStorer) Leaves(ctx context.Context) ([]*Node, error) {
 	}
 
 	// Find nodes that are not parents of any other node
-	var leaves []*Node
+	var leaves []*merkle.Node
 	for _, node := range s.nodes {
 		if !hasChildren[node.Hash] {
 			leaves = append(leaves, node)
@@ -127,8 +130,8 @@ func (s *MemoryStorer) Leaves(ctx context.Context) ([]*Node, error) {
 }
 
 // Ancestry returns the path from a node back to its root (node first, root last).
-func (s *MemoryStorer) Ancestry(ctx context.Context, hash string) ([]*Node, error) {
-	var path []*Node
+func (s *InMemoryStorer) Ancestry(ctx context.Context, hash string) ([]*merkle.Node, error) {
+	var path []*merkle.Node
 	current := hash
 
 	for {
@@ -148,7 +151,7 @@ func (s *MemoryStorer) Ancestry(ctx context.Context, hash string) ([]*Node, erro
 }
 
 // Descendants returns the path from root to node (root first, node last).
-func (s *MemoryStorer) Descendants(ctx context.Context, hash string) ([]*Node, error) {
+func (s *InMemoryStorer) Descendants(ctx context.Context, hash string) ([]*merkle.Node, error) {
 	path, err := s.Ancestry(ctx, hash)
 	if err != nil {
 		return nil, err
@@ -163,7 +166,7 @@ func (s *MemoryStorer) Descendants(ctx context.Context, hash string) ([]*Node, e
 }
 
 // Depth returns the depth of a node (0 for roots).
-func (s *MemoryStorer) Depth(ctx context.Context, hash string) (int, error) {
+func (s *InMemoryStorer) Depth(ctx context.Context, hash string) (int, error) {
 	depth := 0
 	current := hash
 
@@ -183,13 +186,13 @@ func (s *MemoryStorer) Depth(ctx context.Context, hash string) (int, error) {
 }
 
 // Count returns the number of nodes in the in-memory store.
-func (s *MemoryStorer) Count() int {
+func (s *InMemoryStorer) Count() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.nodes)
 }
 
 // Close is a no-op for the in-memory storer.
-func (s *MemoryStorer) Close() error {
+func (s *InMemoryStorer) Close() error {
 	return nil
 }

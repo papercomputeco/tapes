@@ -1,4 +1,4 @@
-package merkle_test
+package sqlite_test
 
 import (
 	"context"
@@ -10,6 +10,8 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/storage"
+	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
 )
 
 // sqliteTestBucket creates a simple bucket for testing with the given text content
@@ -25,14 +27,14 @@ func sqliteTestBucket(text string) merkle.Bucket {
 
 var _ = Describe("SQLiteStorer", func() {
 	var (
-		storer *merkle.SQLiteStorer
+		storer *sqlite.SQLiteStorer
 		ctx    context.Context
 	)
 
 	BeforeEach(func() {
 		ctx = context.Background()
 		var err error
-		storer, err = merkle.NewSQLiteStorer(":memory:")
+		storer, err = sqlite.NewSQLiteStorer(":memory:")
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -51,7 +53,7 @@ var _ = Describe("SQLiteStorer", func() {
 			tmpDir := GinkgoT().TempDir()
 			dbPath := filepath.Join(tmpDir, "test.db")
 
-			s, err := merkle.NewSQLiteStorer(dbPath)
+			s, err := sqlite.NewSQLiteStorer(dbPath)
 			Expect(err).NotTo(HaveOccurred())
 			defer s.Close()
 
@@ -95,7 +97,7 @@ var _ = Describe("SQLiteStorer", func() {
 			_, err := storer.Get(ctx, "nonexistent")
 			Expect(err).To(HaveOccurred())
 
-			var notFoundErr merkle.ErrNotFound
+			var notFoundErr storage.ErrNotFound
 			Expect(err).To(BeAssignableToTypeOf(notFoundErr))
 		})
 

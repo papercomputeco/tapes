@@ -14,7 +14,9 @@ import (
 	apicmder "github.com/papercomputeco/tapes/cmd/tapes/serve/api"
 	proxycmder "github.com/papercomputeco/tapes/cmd/tapes/serve/proxy"
 	"github.com/papercomputeco/tapes/pkg/logger"
-	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/storage"
+	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
+	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
 	"github.com/papercomputeco/tapes/proxy"
 )
 
@@ -135,9 +137,9 @@ func (c *ServeCommander) run() error {
 	}
 }
 
-func (c *ServeCommander) createStorer() (merkle.Storer, error) {
+func (c *ServeCommander) createStorer() (storage.Driver, error) {
 	if c.sqlitePath != "" {
-		storer, err := merkle.NewSQLiteStorer(c.sqlitePath)
+		storer, err := sqlite.NewSQLiteStorer(c.sqlitePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
 		}
@@ -146,5 +148,5 @@ func (c *ServeCommander) createStorer() (merkle.Storer, error) {
 	}
 
 	c.logger.Info("using in-memory storage")
-	return merkle.NewMemoryStorer(), nil
+	return inmemory.NewInMemoryStorer(), nil
 }

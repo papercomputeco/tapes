@@ -4,13 +4,13 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
 
-	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
 // Server is the API server for managing and querying the Tapes system
 type Server struct {
 	config Config
-	storer merkle.Storer
+	storer storage.Driver
 	logger *zap.Logger
 	app    *fiber.App
 }
@@ -18,7 +18,7 @@ type Server struct {
 // NewServer creates a new API server.
 // The storer is injected to allow sharing with other components
 // (e.g., the proxy when not run as a singleton).
-func NewServer(config Config, storer merkle.Storer, logger *zap.Logger) *Server {
+func NewServer(config Config, storer storage.Driver, logger *zap.Logger) *Server {
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})

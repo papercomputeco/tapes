@@ -19,6 +19,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/llm/provider"
 	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
 // Proxy is a client, LLM inference proxy that instruments storing sessions as Merkle DAGs.
@@ -26,7 +27,7 @@ import (
 // and stores them in a content-addressable merkle.Storer.
 type Proxy struct {
 	config     Config
-	storer     merkle.Storer
+	storer     storage.Driver
 	logger     *zap.Logger
 	httpClient *http.Client
 	server     *fiber.App
@@ -36,7 +37,7 @@ type Proxy struct {
 // New creates a new Proxy.
 // The storer is injected to allow sharing with other components (e.g., the API server).
 // Returns an error if the configured provider type is not recognized.
-func New(config Config, storer merkle.Storer, logger *zap.Logger) (*Proxy, error) {
+func New(config Config, storer storage.Driver, logger *zap.Logger) (*Proxy, error) {
 	prov, err := provider.New(config.ProviderType)
 	if err != nil {
 		return nil, fmt.Errorf("could not create new provider: %w", err)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
 // proxyTestBucket creates a simple bucket for testing with the given role and text content
@@ -27,7 +28,7 @@ func proxyTestBucket(role, text string) merkle.Bucket {
 func testProxy(t *testing.T) *Proxy {
 	t.Helper()
 	logger, _ := zap.NewDevelopment()
-	storer := merkle.NewMemoryStorer()
+	storer := inmemory.NewInMemoryStorer()
 	p, err := New(
 		Config{
 			ListenAddr:   ":0",
