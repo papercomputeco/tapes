@@ -7,10 +7,12 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
+	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
+	vectorutils "github.com/papercomputeco/tapes/pkg/vector/utils"
 	"github.com/papercomputeco/tapes/proxy"
 )
 
@@ -20,7 +22,15 @@ type proxyCommander struct {
 	providerType string
 	debug        bool
 	sqlitePath   string
-	logger       *zap.Logger
+
+	vectorStoreProvider string
+	vectorStoreTarget   string
+
+	embeddingProvider string
+	embeddingTarget   string
+	embeddingModel    string
+
+	logger *zap.Logger
 }
 
 const proxyLongDesc string = `Run the proxy server.
@@ -28,7 +38,10 @@ const proxyLongDesc string = `Run the proxy server.
 The proxy intercepts all requests and transparently forwards them to the
 configured upstream URL, recording request/response conversation turns.
 
-Supported provider types: anthropic, openai, ollama, besteffort`
+Supported provider types: anthropic, openai, ollama, besteffort
+
+Optionally configure vector storage and embeddings of text content for "tapes search"
+agentic functionality.`
 
 const proxyShortDesc string = "Run the Tapes proxy server"
 
@@ -54,6 +67,11 @@ func NewProxyCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&cmder.upstream, "upstream", "u", "http://localhost:11434", "Upstream LLM provider URL")
 	cmd.Flags().StringVarP(&cmder.providerType, "provider", "p", "ollama", "LLM provider type (anthropic, openai, ollama, besteffort)")
 	cmd.Flags().StringVarP(&cmder.sqlitePath, "sqlite", "s", "", "Path to SQLite database (default: in-memory)")
+	cmd.Flags().StringVar(&cmder.vectorStoreProvider, "vector-store-provider", "", "Vector store provider type (e.g., chroma)")
+	cmd.Flags().StringVar(&cmder.vectorStoreTarget, "vector-store-target", "", "Vector store URL (e.g., http://localhost:8000)")
+	cmd.Flags().StringVar(&cmder.embeddingProvider, "embedding-provider", "", "Embedding provider type (e.g., ollama)")
+	cmd.Flags().StringVar(&cmder.embeddingTarget, "embedding-target", "", "Embedding provider URL")
+	cmd.Flags().StringVar(&cmder.embeddingModel, "embedding-model", "", "Embedding model name (e.g., nomic-embed-text)")
 
 	return cmd
 }
@@ -72,6 +90,36 @@ func (c *proxyCommander) run() error {
 		ListenAddr:   c.listen,
 		UpstreamURL:  c.upstream,
 		ProviderType: c.providerType,
+	}
+
+	if c.vectorStoreTarget != "" {
+		config.Embedder, err = embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
+			ProviderType: c.embeddingProvider,
+			TargetURL:    c.embeddingTarget,
+			Model:        c.embeddingModel,
+		})
+		if err != nil {
+			return fmt.Errorf("creating embedder: %w", err)
+		}
+		defer config.Embedder.Close()
+
+		config.VectorDriver, err = vectorutils.NewVectorDriver(&vectorutils.NewVectorDriverOpts{
+			ProviderType: c.vectorStoreProvider,
+			TargetURL:    c.vectorStoreTarget,
+			Logger:       c.logger,
+		})
+		if err != nil {
+			return fmt.Errorf("creating vector driver: %w", err)
+		}
+		defer config.VectorDriver.Close()
+
+		c.logger.Info("vector storage enabled",
+			zap.String("vector_store_provider", c.vectorStoreProvider),
+			zap.String("vector_store_target", c.vectorStoreTarget),
+			zap.String("embedding_provider", c.embeddingProvider),
+			zap.String("embedding_target", c.embeddingTarget),
+			zap.String("embedding_model", c.embeddingModel),
+		)
 	}
 
 	p, err := proxy.New(config, driver, c.logger)

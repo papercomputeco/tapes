@@ -1,5 +1,10 @@
 package proxy
 
+import (
+	"github.com/papercomputeco/tapes/pkg/embeddings"
+	"github.com/papercomputeco/tapes/pkg/vector"
+)
+
 // Config is the proxy server configuration.
 type Config struct {
 	// ListenAddr is the address to listen on (e.g., ":8080")
@@ -11,4 +16,12 @@ type Config struct {
 	// ProviderType specifies the LLM provider type (e.g., "anthropic", "openai", "ollama")
 	// This determines how requests and responses are parsed.
 	ProviderType string
+
+	// VectorDriver is an optional vector store for storing embeddings.
+	// If nil, vector storage is disabled.
+	VectorDriver vector.VectorDriver
+
+	// Embedder is an optional embedder for generating embeddings.
+	// Required if VectorDriver is set.
+	Embedder embeddings.Embedder
 }
