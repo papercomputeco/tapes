@@ -71,7 +71,7 @@ jobs:
               --endpoint=env://BUCKET_ENDPOINT \
               --bucket=env://BUCKET_NAME \
               --access-key-id=env://BUCKET_ACCESS_KEY_ID \
-              --secret-access-key=env://BUCKET_SECRET_ACCESS_KEY
+              --secret-access-key=env://BUCKET_SECRET_ACCESS_KEY \
             export \
               --path=./build
         env:
@@ -89,7 +89,7 @@ jobs:
           body: |
             **Automated nightly build**
 
-            This is an unstable development build.
+            This is an unstable development build off the tip of `main`.
 
             Commit: ${{ github.sha }}
 
@@ -98,9 +98,31 @@ jobs:
             - Linux ARM64: `curl -LO https://download.tapes.dev/nightly/linux/arm64/tapes`
             - macOS AMD64: `curl -LO https://download.tapes.dev/nightly/darwin/amd64/tapes`
             - macOS ARM64: `curl -LO https://download.tapes.dev/nightly/darwin/arm64/tapes`
-          artifacts: "build/*"
           prerelease: true
           allowUpdates: true
-          replacesArtifacts: true
+          removeArtifacts: true
           makeLatest: true
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts to release
+        run: |
+          mkdir -p dist
+          for file in $(find build -type f); do
+            rel_path="${file#build/}"
+            os=$(dirname "$rel_path" | cut -d'/' -f1)
+            arch=$(dirname "$rel_path" | cut -d'/' -f2)
+            filename=$(basename "$file")
+
+            if [[ "$filename" == *.sha256 ]]; then
+              base="${filename%.sha256}"
+              new_name="${base}-${os}-${arch}.sha256"
+            else
+              new_name="${filename}-${os}-${arch}"
+            fi
+
+            cp "$file" "dist/$new_name"
+          done
+
+          gh release upload "nightly" dist/*
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
