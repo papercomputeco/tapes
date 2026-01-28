@@ -135,3 +135,68 @@ var _ = Describe("Node", func() {
 		})
 	})
 })
+
+var _ = Describe("Bucket", func() {
+	Describe("ExtractText", func() {
+		It("extracts text from a single text content block", func() {
+			bucket := merkle.Bucket{
+				Content: []llm.ContentBlock{
+					{Type: "text", Text: "Hello, world!"},
+				},
+			}
+
+			Expect(bucket.ExtractText()).To(Equal("Hello, world!"))
+		})
+
+		It("joins multiple text blocks with newlines", func() {
+			bucket := merkle.Bucket{
+				Content: []llm.ContentBlock{
+					{Type: "text", Text: "First line"},
+					{Type: "text", Text: "Second line"},
+				},
+			}
+
+			Expect(bucket.ExtractText()).To(Equal("First line\nSecond line"))
+		})
+
+		It("extracts tool output content", func() {
+			bucket := merkle.Bucket{
+				Content: []llm.ContentBlock{
+					{Type: "tool_result", ToolOutput: "Tool returned: success"},
+				},
+			}
+
+			Expect(bucket.ExtractText()).To(Equal("Tool returned: success"))
+		})
+
+		It("combines text and tool output", func() {
+			bucket := merkle.Bucket{
+				Content: []llm.ContentBlock{
+					{Type: "text", Text: "Running tool..."},
+					{Type: "tool_result", ToolOutput: "Tool output here"},
+				},
+			}
+
+			Expect(bucket.ExtractText()).To(Equal("Running tool...\nTool output here"))
+		})
+
+		It("returns empty string for empty content", func() {
+			bucket := merkle.Bucket{
+				Content: []llm.ContentBlock{},
+			}
+
+			Expect(bucket.ExtractText()).To(Equal(""))
+		})
+
+		It("skips content blocks without text or tool output", func() {
+			bucket := merkle.Bucket{
+				Content: []llm.ContentBlock{
+					{Type: "image", ImageURL: "http://example.com/image.png"},
+					{Type: "text", Text: "Some text"},
+				},
+			}
+
+			Expect(bucket.ExtractText()).To(Equal("Some text"))
+		})
+	})
+})

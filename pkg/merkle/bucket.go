@@ -1,6 +1,10 @@
 package merkle
 
-import "github.com/papercomputeco/tapes/pkg/llm"
+import (
+	"strings"
+
+	"github.com/papercomputeco/tapes/pkg/llm"
+)
 
 // Bucket represents the hashable content stored in a Merkle DAG node.
 // This is the canonical storage format for LLM conversation turns.
@@ -26,4 +30,22 @@ type Bucket struct {
 
 	// Usage contains token counts and timing (only for responses)
 	Usage *llm.Usage `json:"usage,omitempty"`
+}
+
+// ExtractText returns the concatenated text content from the bucket's content blocks.
+// This is useful for generating embeddings for semantic search.
+// It extracts text from text blocks and tool outputs, joining them with newlines.
+func (b *Bucket) ExtractText() string {
+	var texts []string
+
+	for _, block := range b.Content {
+		switch {
+		case block.Text != "":
+			texts = append(texts, block.Text)
+		case block.ToolOutput != "":
+			texts = append(texts, block.ToolOutput)
+		}
+	}
+
+	return strings.Join(texts, "\n")
 }

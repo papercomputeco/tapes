@@ -20,6 +20,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/llm/provider"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
+	"github.com/papercomputeco/tapes/pkg/vector"
 )
 
 // Proxy is a client, LLM inference proxy that instruments storing sessions as Merkle DAGs.
@@ -374,8 +375,10 @@ func (p *Proxy) reconstructStreamedResponse(chunks [][]byte, fullContent string)
 }
 
 // storeConversationTurn stores a request-response pair in the Merkle DAG.
+// If a vector driver is configured, it also stores embeddings for semantic search.
 func (p *Proxy) storeConversationTurn(ctx context.Context, providerName string, req *llm.ChatRequest, resp *llm.ChatResponse) (string, error) {
 	var parent *merkle.Node
+	var nodesToEmbed []*merkle.Node
 
 	// Store each message from the request as nodes
 	for _, msg := range req.Messages {
@@ -398,6 +401,7 @@ func (p *Proxy) storeConversationTurn(ctx context.Context, providerName string, 
 			zap.String("content_preview", truncate(msg.GetText(), 50)),
 		)
 
+		nodesToEmbed = append(nodesToEmbed, node)
 		parent = node
 	}
 
@@ -422,7 +426,65 @@ func (p *Proxy) storeConversationTurn(ctx context.Context, providerName string, 
 		zap.String("content_preview", truncate(resp.Message.GetText(), 50)),
 	)
 
+	nodesToEmbed = append(nodesToEmbed, responseNode)
+
+	// Store embeddings if vector driver is configured
+	println(p.config.VectorDriver)
+	println(p.config.Embedder)
+	if p.config.VectorDriver != nil && p.config.Embedder != nil {
+		p.logger.Debug("storing in vector store with embedder")
+		p.storeEmbeddings(ctx, nodesToEmbed)
+	}
+
 	return responseNode.Hash, nil
+}
+
+// storeEmbeddings generates and stores embeddings for the given nodes.
+// Errors are logged but not returned to avoid failing the main storage operation.
+//
+// @jpmcb - this function needs refactoring: currently, it brute forces doing
+// all the embeddings for all nodes, regardless if their text embedding already
+// exists in the db. At this point, we haven't inserted new nodes not in the merkle dag.
+//
+// We should also do this async off the proxy, not blocking for the LLM client.
+func (p *Proxy) storeEmbeddings(ctx context.Context, nodes []*merkle.Node) {
+	for _, node := range nodes {
+		text := node.Bucket.ExtractText()
+		if text == "" {
+			p.logger.Debug("skipping embedding for node with no text content",
+				zap.String("hash", truncate(node.Hash, 16)),
+			)
+			continue
+		}
+
+		embedding, err := p.config.Embedder.Embed(ctx, text)
+		if err != nil {
+			p.logger.Warn("failed to generate embedding",
+				zap.String("hash", truncate(node.Hash, 16)),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		doc := vector.Document{
+			ID:        node.Hash,
+			Hash:      node.Hash,
+			Embedding: embedding,
+		}
+
+		if err := p.config.VectorDriver.Add(ctx, []vector.Document{doc}); err != nil {
+			p.logger.Warn("failed to store embedding",
+				zap.String("hash", truncate(node.Hash, 16)),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		p.logger.Debug("stored embedding",
+			zap.String("hash", truncate(node.Hash, 16)),
+			zap.Int("embedding_dim", len(embedding)),
+		)
+	}
 }
 
 func truncate(s string, maxLen int) string {

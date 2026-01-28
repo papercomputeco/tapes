@@ -13,21 +13,32 @@ import (
 	"github.com/papercomputeco/tapes/api"
 	apicmder "github.com/papercomputeco/tapes/cmd/tapes/serve/api"
 	proxycmder "github.com/papercomputeco/tapes/cmd/tapes/serve/proxy"
+	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
+	vectorutils "github.com/papercomputeco/tapes/pkg/vector/utils"
 	"github.com/papercomputeco/tapes/proxy"
 )
 
 type ServeCommander struct {
-	proxyListen  string
-	apiListen    string
-	upstream     string
+	proxyListen string
+	apiListen   string
+	upstream    string
+	debug       bool
+	sqlitePath  string
+
 	providerType string
-	debug        bool
-	sqlitePath   string
-	logger       *zap.Logger
+
+	vectorStoreProvider string
+	vectorStoreTarget   string
+
+	embeddingProvider string
+	embeddingTarget   string
+	embeddingModel    string
+
+	logger *zap.Logger
 }
 
 const serveLongDesc string = `Run Tapes services.
@@ -35,7 +46,10 @@ const serveLongDesc string = `Run Tapes services.
 Use subcommands to run individual services or all services together:
   tapes serve          Run both proxy and API server together
   tapes serve api      Run just the API server
-  tapes serve proxy    Run just the proxy server`
+  tapes serve proxy    Run just the proxy server
+
+Optionally configure vector storage and embeddings of text content for "tapes search"
+agentic functionality.`
 
 const serveShortDesc string = "Run Tapes services"
 
@@ -61,6 +75,11 @@ func NewServeCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&cmder.upstream, "upstream", "u", "http://localhost:11434", "Upstream LLM provider URL")
 	cmd.Flags().StringVar(&cmder.providerType, "provider", "ollama", "LLM provider type (anthropic, openai, ollama, besteffort)")
 	cmd.Flags().StringVarP(&cmder.sqlitePath, "sqlite", "s", "", "Path to SQLite database (default: in-memory)")
+	cmd.Flags().StringVar(&cmder.vectorStoreProvider, "vector-store-provider", "", "Vector store provider type (e.g., chroma)")
+	cmd.Flags().StringVar(&cmder.vectorStoreTarget, "vector-store-target", "", "Vector store URL (e.g., http://localhost:8000)")
+	cmd.Flags().StringVar(&cmder.embeddingProvider, "embedding-provider", "", "Embedding provider type (e.g., ollama)")
+	cmd.Flags().StringVar(&cmder.embeddingTarget, "embedding-target", "", "Embedding provider URL")
+	cmd.Flags().StringVar(&cmder.embeddingModel, "embedding-model", "", "Embedding model name (e.g., nomic-embed-text)")
 
 	cmd.AddCommand(apicmder.NewAPICmd())
 	cmd.AddCommand(proxycmder.NewProxyCmd())
@@ -79,12 +98,43 @@ func (c *ServeCommander) run() error {
 	}
 	defer driver.Close()
 
-	// Create proxy
 	proxyConfig := proxy.Config{
 		ListenAddr:   c.proxyListen,
 		UpstreamURL:  c.upstream,
 		ProviderType: c.providerType,
 	}
+
+	if c.vectorStoreTarget != "" {
+		proxyConfig.Embedder, err = embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
+			ProviderType: c.embeddingProvider,
+			TargetURL:    c.embeddingTarget,
+			Model:        c.embeddingModel,
+		})
+		if err != nil {
+			return fmt.Errorf("creating embedder: %w", err)
+		}
+		defer proxyConfig.Embedder.Close()
+
+		proxyConfig.VectorDriver, err = vectorutils.NewVectorDriver(&vectorutils.NewVectorDriverOpts{
+			ProviderType: c.vectorStoreProvider,
+			TargetURL:    c.vectorStoreTarget,
+			Logger:       c.logger,
+		})
+		if err != nil {
+			return fmt.Errorf("creating vector driver: %w", err)
+		}
+		defer proxyConfig.VectorDriver.Close()
+
+		c.logger.Info("vector storage enabled",
+			zap.String("vector_store_provider", c.vectorStoreProvider),
+			zap.String("vector_store_target", c.vectorStoreTarget),
+			zap.String("embedding_provider", c.embeddingProvider),
+			zap.String("embedding_target", c.embeddingTarget),
+			zap.String("embedding_model", c.embeddingModel),
+		)
+	}
+
+	// Create proxy
 	p, err := proxy.New(proxyConfig, driver, c.logger)
 	if err != nil {
 		return fmt.Errorf("creating proxy: %w", err)
