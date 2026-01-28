@@ -1,7 +1,6 @@
 services:
   ollama:
     image: ollama/ollama
-    container_name: ollama
     ports:
       - "11434:11434"
     volumes:
@@ -9,7 +8,6 @@ services:
 
   chromadb:
     image: chromadb/chroma:1.4.1
-    container_name: chromadb
     ports:
       - "8000:8000"
     environment:
@@ -21,7 +19,6 @@ services:
   tapes:
     build:
       dockerfile: dockerfiles/tapes.Dockerfile
-    container_name: tapes
     depends_on:
       - ollama
       - chromadb
