@@ -51,15 +51,35 @@ release: ## Builds and releases tapes artifacts
 			--access-key-id=env://BUCKET_ACCESS_KEY_ID \
 			--secret-access-key=env://BUCKET_SECRET_ACCESS_KEY
 
+.PHONY: up
+up:
+	docker compose up --build
+
 .PHONY: build-containers
-build-containers: build-proxy-container ## Builds all container artifacts
+build-containers: build-tapes-container build-api-container build-proxy-container ## Builds all container artifacts
+
+.PHONY: build-tapes-container
+build-tapes-container: ## Build the tapes container artifact
+	$(call print-target)
+	docker build -f dockerfiles/tapes.Dockerfile \
+		-t papercomputeco/tapes:$(VERSION) \
+		-t papercomputeco/tapes:latest \
+		.
+
+.PHONY: build-api-container
+build-api-container: ## Build the tapesapi container artifact
+	$(call print-target)
+	docker build -f dockerfiles/tapesapi.Dockerfile \
+		-t papercomputeco/api:$(VERSION) \
+		-t papercomputeco/api:latest \
+		.
 
 .PHONY: build-proxy-container
 build-proxy-container: ## Build the tapesprox container artifact
 	$(call print-target)
 	docker build -f dockerfiles/tapesprox.Dockerfile \
-		-t tapes/proxy:$(VERSION) \
-		-t tapes/proxy:latest \
+		-t papercomputeco/proxy:$(VERSION) \
+		-t papercomputeco/proxy:latest \
 		.
 
 .PHONY: clean

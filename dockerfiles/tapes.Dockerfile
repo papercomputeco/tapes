@@ -17,8 +17,8 @@ COPY . .
 ARG LDFLAGS="-s -w"
 RUN CGO_ENABLED=0 GOEXPERIMENT="jsonv2" go build \
     -ldflags="${LDFLAGS}" \
-    -o /bin/tapesprox \
-    ./cli/tapesprox
+    -o /bin/tapes \
+    ./cli/tapes
 
 # -----------------------------------------------------------------------------
 # Runtime
@@ -33,7 +33,7 @@ RUN addgroup -g 1000 tapes && \
 
 WORKDIR /app
 
-COPY --from=builder /bin/tapesprox /app/tapesprox
+COPY --from=builder /bin/tapes /app/tapes
 
 # Default data directory for SQLite
 RUN mkdir -p /data && chown tapes:tapes /data
@@ -41,4 +41,6 @@ VOLUME ["/data"]
 
 USER tapes
 
-ENTRYPOINT ["/app/tapesprox"]
+EXPOSE 8080
+
+ENTRYPOINT ["/app/tapes"]

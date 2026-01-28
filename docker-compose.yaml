@@ -1,0 +1,45 @@
+services:
+  ollama:
+    image: ollama/ollama
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ~/.ollama:/root/.ollama
+
+  chromadb:
+    image: chromadb/chroma:1.4.1
+    container_name: chromadb
+    ports:
+      - "8000:8000"
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=TRUE
+    volumes:
+      - chroma-data:/chroma/chroma
+
+  tapes:
+    build:
+      dockerfile: dockerfiles/tapes.Dockerfile
+    container_name: tapes
+    depends_on:
+      - ollama
+      - chromadb
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    command: >-
+      serve
+      --upstream http://ollama:11434
+      --sqlite /data/tapes.db
+      --vector-store-provider chroma
+      --vector-store-target http://chromadb:8000
+      --embedding-provider ollama
+      --embedding-target http://ollama:11434
+      --embedding-model nomic-embed-text
+    volumes:
+      - tapes-data:/data
+
+volumes:
+  chroma-data:
+  tapes-data:
