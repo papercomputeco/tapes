@@ -149,9 +149,14 @@ func (c *ServeCommander) run() error {
 
 	// Create API server
 	apiConfig := api.Config{
-		ListenAddr: c.apiListen,
+		ListenAddr:   c.apiListen,
+		VectorDriver: proxyConfig.VectorDriver,
+		Embedder:     proxyConfig.Embedder,
 	}
-	apiServer := api.NewServer(apiConfig, driver, c.logger)
+	apiServer, err := api.NewServer(apiConfig, driver, c.logger)
+	if err != nil {
+		return fmt.Errorf("could not build new api server: %w", err)
+	}
 
 	c.logger.Info("starting api server",
 		zap.String("api_addr", c.apiListen),

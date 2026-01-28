@@ -1,24 +1,30 @@
 package api
 
 import (
+	"fmt"
+
+	"github.com/gofiber/adaptor/v2"
 	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
 
+	"github.com/papercomputeco/tapes/api/mcp"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
 // Server is the API server for managing and querying the Tapes system
 type Server struct {
-	config Config
-	driver storage.Driver
-	logger *zap.Logger
-	app    *fiber.App
+	config    Config
+	driver    storage.Driver
+	logger    *zap.Logger
+	app       *fiber.App
+	mcpServer *mcp.Server
 }
 
 // NewServer creates a new API server.
 // The storer is injected to allow sharing with other components
 // (e.g., the proxy when not run as a singleton).
-func NewServer(config Config, driver storage.Driver, logger *zap.Logger) *Server {
+func NewServer(config Config, driver storage.Driver, logger *zap.Logger) (*Server, error) {
+	var err error
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
@@ -36,7 +42,36 @@ func NewServer(config Config, driver storage.Driver, logger *zap.Logger) *Server
 	app.Get("/dag/history", s.handleListHistories)
 	app.Get("/dag/history/:hash", s.handleGetHistory)
 
-	return s
+	// Register MCP server if vector driver and embedder are configured
+	var mcpServer *mcp.Server
+	if config.VectorDriver != nil && config.Embedder != nil {
+		s.logger.Debug("creating mcp server")
+		mcpServer, err = mcp.NewServer(mcp.Config{
+			StorageDriver: driver,
+			VectorDriver:  config.VectorDriver,
+			Embedder:      config.Embedder,
+			Logger:        logger,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create MCP server: %w", err)
+		}
+	} else {
+		s.logger.Debug("creating noop mcp server")
+		mcpServer, err = mcp.NewServer(mcp.Config{
+			Noop: true,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create noop MCP server: %w", err)
+		}
+	}
+
+	s.mcpServer = mcpServer
+
+	// Mount MCP handler using the fiber adaptor for net/http Handlers
+	// which is what the modelcontextprotocol/go-sdk uses under the hood
+	app.All("/v1/mcp", adaptor.HTTPHandler(s.mcpServer.Handler()))
+
+	return s, nil
 }
 
 // Run starts the API server on the configured address.

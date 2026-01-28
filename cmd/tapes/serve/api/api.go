@@ -63,7 +63,10 @@ func (c *apiCommander) run() error {
 		ListenAddr: c.listen,
 	}
 
-	server := api.NewServer(config, driver, c.logger)
+	server, err := api.NewServer(config, driver, c.logger)
+	if err != nil {
+		return fmt.Errorf("could not build new api server: %w", err)
+	}
 
 	c.logger.Info("starting API server",
 		zap.String("listen", c.listen),

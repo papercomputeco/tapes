@@ -32,9 +32,11 @@ var _ = Describe("buildHistory", func() {
 	)
 
 	BeforeEach(func() {
+		var err error
 		logger, _ := zap.NewDevelopment()
 		driver = inmemory.NewInMemoryDriver()
-		server = NewServer(Config{ListenAddr: ":0"}, driver, logger)
+		server, err = NewServer(Config{ListenAddr: ":0"}, driver, logger)
+		Expect(err).ToNot(HaveOccurred())
 		ctx = context.Background()
 	})
 
