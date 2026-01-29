@@ -44,6 +44,7 @@ func NewServer(config Config, driver storage.Driver, dagLoader merkle.DagLoader,
 	app.Get("/dag/node/:hash", s.handleGetNode)
 	app.Get("/dag/history", s.handleListHistories)
 	app.Get("/dag/history/:hash", s.handleGetHistory)
+	app.Get("/v1/search", s.handleSearchEndpoint)
 
 	// Register MCP server if vector driver and embedder are configured
 	var mcpServer *mcp.Server

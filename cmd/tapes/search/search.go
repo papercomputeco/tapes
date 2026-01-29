@@ -2,55 +2,44 @@
 package searchcmder
 
 import (
-	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
-	"github.com/papercomputeco/tapes/pkg/embeddings/ollama"
-	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
+	apisearch "github.com/papercomputeco/tapes/api/search"
 	"github.com/papercomputeco/tapes/pkg/logger"
-	"github.com/papercomputeco/tapes/pkg/merkle"
-	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
-	"github.com/papercomputeco/tapes/pkg/vector"
-	vectorutils "github.com/papercomputeco/tapes/pkg/vector/utils"
 )
 
 type searchCommander struct {
 	query string
 	topK  int
 
-	vectorStoreProvider string
-	vectorStoreTarget   string
+	apiTarget string
 
-	embeddingProvider string
-	embeddingTarget   string
-	embeddingModel    string
-
-	sqlitePath string
-	debug      bool
-	logger     *zap.Logger
+	debug  bool
+	logger *zap.Logger
 }
 
-const searchLongDesc string = `Search session data.
+const searchLongDesc string = `Search session data via the Tapes API.
 
 Search over stored sessions, returning the most relevant sessions based on the
-query text. Requires a configured vector store provider, embedding provider,
-and storage provider.
+query text. Requires a running Tapes API server with search configured
+(vector store and embedder).
 
 For each result, the full session branch is displayed, including all ancestors
 (from root to matched node) and all descendants (from matched node to leaves).
 
 Example:
-  tapes search "how to configure logging" \
-	--vector-store-provider chroma \
-	--vector-store-target http://localhost:8000 \
-	--embedding-provider ollama \
-	--embedding-target http://localhost:11434 \
-	--embedding-model nomic-embed-text \
-	--sqlite ./tapes.sqlite`
+  tapes search "how to configure logging"
+  tapes search "error handling patterns" --api-target http://localhost:8081
+  tapes search "how to configure logging" --top 10`
 
 const searchShortDesc string = "Search session data"
 
@@ -76,128 +65,97 @@ func NewSearchCmd() *cobra.Command {
 	}
 
 	cmd.Flags().IntVarP(&cmder.topK, "top", "k", 5, "Number of results to return")
-	cmd.Flags().StringVar(&cmder.vectorStoreProvider, "vector-store-provider", "", "Vector store provider type (e.g., chroma)")
-	cmd.Flags().StringVar(&cmder.vectorStoreTarget, "vector-store-target", "", "Vector store URL (e.g., http://localhost:8000)")
-	cmd.Flags().StringVar(&cmder.embeddingProvider, "embedding-provider", "ollama", "Embedding provider type (e.g., ollama)")
-	cmd.Flags().StringVar(&cmder.embeddingTarget, "embedding-target", ollama.DefaultBaseURL, "Embedding provider URL")
-	cmd.Flags().StringVar(&cmder.embeddingModel, "embedding-model", ollama.DefaultEmbeddingModel, "Embedding model name (e.g., nomic-embed-text)")
-	cmd.Flags().StringVarP(&cmder.sqlitePath, "sqlite", "s", "", "Path to SQLite database (required)")
-
-	cmd.MarkFlagRequired("vector-store-provider")
-	cmd.MarkFlagRequired("vector-store-target")
-	cmd.MarkFlagRequired("embedding-provider")
-	cmd.MarkFlagRequired("embedding-target")
-	cmd.MarkFlagRequired("embedding-model")
-	cmd.MarkFlagRequired("sqlite")
+	cmd.Flags().StringVar(&cmder.apiTarget, "api-target", "http://localhost:8081", "Tapes API server URL")
 
 	return cmd
 }
 
 func (c *searchCommander) run() error {
-	ctx := context.Background()
 	c.logger = logger.NewLogger(c.debug)
 	defer c.logger.Sync()
 
-	embedder, err := embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
-		ProviderType: c.embeddingProvider,
-		TargetURL:    c.embeddingTarget,
-		Model:        c.embeddingModel,
-	})
-	if err != nil {
-		return fmt.Errorf("could not create embedder: %w", err)
-	}
-	defer embedder.Close()
+	c.logger.Debug("searching via API",
+		zap.String("api_target", c.apiTarget),
+		zap.String("query", c.query),
+		zap.Int("topK", c.topK),
+	)
 
-	// Embed the query
-	c.logger.Debug("embedding query", zap.String("query", c.query))
-	queryEmbedding, err := embedder.Embed(ctx, c.query)
+	// Build the request URL
+	searchURL, err := url.Parse(c.apiTarget)
 	if err != nil {
-		return fmt.Errorf("embedding query: %w", err)
+		return fmt.Errorf("invalid API target URL: %w", err)
 	}
+	searchURL.Path = "/v1/search"
+	q := searchURL.Query()
+	q.Set("query", c.query)
+	q.Set("top_k", strconv.Itoa(c.topK))
+	searchURL.RawQuery = q.Encode()
 
-	// Create vector driver and query
-	vectorDriver, err := vectorutils.NewVectorDriver(&vectorutils.NewVectorDriverOpts{
-		ProviderType: c.vectorStoreProvider,
-		TargetURL:    c.vectorStoreTarget,
-		Logger:       c.logger,
-	})
+	c.logger.Debug("requesting search", zap.String("url", searchURL.String()))
+
+	resp, err := http.Get(searchURL.String())
 	if err != nil {
-		return fmt.Errorf("creating vector driver: %w", err)
+		return fmt.Errorf("failed to connect to Tapes API at %s: %w", c.apiTarget, err)
 	}
-	defer vectorDriver.Close()
+	defer resp.Body.Close()
 
-	c.logger.Debug("querying vector store", zap.Int("topK", c.topK))
-	results, err := vectorDriver.Query(ctx, queryEmbedding, c.topK)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("querying vector store: %w", err)
+		return fmt.Errorf("failed to read response: %w", err)
 	}
 
-	if len(results) == 0 {
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("search request failed (HTTP %d): %s", resp.StatusCode, string(body))
+	}
+
+	var output apisearch.SearchOutput
+	if err := json.Unmarshal(body, &output); err != nil {
+		return fmt.Errorf("failed to parse search response: %w", err)
+	}
+
+	if output.Count == 0 {
 		fmt.Println("No results found.")
 		return nil
 	}
 
-	// Create storage driver to look up full nodes
-	dagLoader, err := sqlite.NewSQLiteDriver(c.sqlitePath)
-	if err != nil {
-		return fmt.Errorf("opening SQLite database: %w", err)
-	}
-	defer dagLoader.Close()
-
 	// Print results header
-	fmt.Printf("\nSearch Results for: %q\n", c.query)
+	fmt.Printf("\nSearch Results for: %q\n", output.Query)
 	fmt.Println(strings.Repeat("=", 60))
 
-	// For each result, load the full branch using merkle.LoadDag and print
-	for i, result := range results {
-		dag, err := merkle.LoadDag(ctx, dagLoader, result.Hash)
-		if err != nil {
-			c.logger.Warn("failed to load branch for result",
-				zap.String("hash", result.Hash),
-				zap.Error(err),
-			)
-			continue
-		}
-
-		c.printResult(i+1, result, dag)
+	for i, result := range output.Results {
+		c.printResult(i+1, result)
 	}
 
 	return nil
 }
 
-func (c *searchCommander) printResult(rank int, result vector.QueryResult, dag *merkle.Dag) {
+func (c *searchCommander) printResult(rank int, result apisearch.SearchResult) {
 	fmt.Printf("\n[%d] Score: %.4f\n", rank, result.Score)
 	fmt.Printf("    Hash: %s\n", result.Hash)
 
-	if dag == nil || dag.Size() == 0 {
+	if result.Turns == 0 {
 		fmt.Println("    (No session found)")
 		return
 	}
 
-	// Find the matched node in the DAG to get preview info
-	matchedNode := dag.Get(result.Hash)
-	if matchedNode != nil {
-		fmt.Printf("    Role: %s\n", matchedNode.Bucket.Role)
-		fmt.Printf("    Preview: %s\n", matchedNode.Bucket.ExtractText())
-	}
+	fmt.Printf("    Role: %s\n", result.Role)
+	fmt.Printf("    Preview: %s\n", result.Preview)
 
-	fmt.Printf("\n    Session (%d turns):\n", dag.Size())
+	fmt.Printf("\n    Session (%d turns):\n", result.Turns)
 
-	// Print the full branch using Walk (depth-first from root to leaves)
-	dag.Walk(func(node *merkle.DagNode) (bool, error) {
+	for _, turn := range result.Branch {
 		prefix := "    |-- "
-		if node.Hash == result.Hash {
+		if turn.Matched {
 			prefix = "    >>> " // Mark the matched node
 		}
 
-		text := node.Bucket.ExtractText()
+		text := turn.Text
 		if text == "" {
 			text = "(no text content)"
 		}
 
-		fmt.Printf("%s[%s] %s - %s\n", prefix, node.Bucket.Role, text, node.Hash)
-		return true, nil
-	})
+		fmt.Printf("%s[%s] %s - %s\n", prefix, turn.Role, text, turn.Hash)
+	}
 
 	fmt.Println()
 }
