@@ -2,10 +2,9 @@ package proxy
 
 import (
 	"context"
-	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
@@ -25,8 +24,7 @@ func proxyTestBucket(role, text string) merkle.Bucket {
 }
 
 // testProxy creates a Proxy with an in-memory storer for testing.
-func testProxy(t *testing.T) *Proxy {
-	t.Helper()
+func testProxy() *Proxy {
 	logger, _ := zap.NewDevelopment()
 	storer := inmemory.NewInMemoryDriver()
 	p, err := New(
@@ -38,153 +36,219 @@ func testProxy(t *testing.T) *Proxy {
 		storer,
 		logger,
 	)
-	require.NoError(t, err)
+	Expect(err).NotTo(HaveOccurred())
 	return p
 }
 
-func TestContentAddressableDeduplication(t *testing.T) {
-	p := testProxy(t)
-	ctx := context.Background()
+var _ = Describe("Content Addressable Deduplication", func() {
+	var (
+		p   *Proxy
+		ctx context.Context
+	)
 
-	// Create the same node twice - should only store once
-	bucket := proxyTestBucket("user", "Hello")
-	node1 := merkle.NewNode(bucket, nil)
-	node2 := merkle.NewNode(bucket, nil)
+	BeforeEach(func() {
+		p = testProxy()
+		ctx = context.Background()
+	})
 
-	// Same content = same hash
-	assert.Equal(t, node1.Hash, node2.Hash)
+	It("produces the same hash for identical content", func() {
+		bucket := proxyTestBucket("user", "Hello")
+		node1 := merkle.NewNode(bucket, nil)
+		node2 := merkle.NewNode(bucket, nil)
 
-	// Store both
-	require.NoError(t, p.driver.Put(ctx, node1))
-	require.NoError(t, p.driver.Put(ctx, node2))
+		Expect(node1.Hash).To(Equal(node2.Hash))
+	})
 
-	// Should only have one node
-	nodes, err := p.driver.List(ctx)
-	require.NoError(t, err)
-	assert.Len(t, nodes, 1)
-}
+	It("deduplicates identical nodes in storage", func() {
+		bucket := proxyTestBucket("user", "Hello")
+		node1 := merkle.NewNode(bucket, nil)
+		node2 := merkle.NewNode(bucket, nil)
 
-func TestBranchingConversations(t *testing.T) {
-	p := testProxy(t)
-	ctx := context.Background()
+		Expect(p.driver.Put(ctx, node1)).To(Succeed())
+		Expect(p.driver.Put(ctx, node2)).To(Succeed())
 
-	// Common prefix
-	userMsg := merkle.NewNode(proxyTestBucket("user", "What is 2+2?"), nil)
-	require.NoError(t, p.driver.Put(ctx, userMsg))
+		nodes, err := p.driver.List(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(nodes).To(HaveLen(1))
+	})
+})
 
-	// Two different responses (simulating different LLM outputs)
-	response1 := merkle.NewNode(proxyTestBucket("assistant", "2+2 equals 4."), userMsg)
-	response2 := merkle.NewNode(proxyTestBucket("assistant", "The answer is 4!"), userMsg)
+var _ = Describe("Branching Conversations", func() {
+	var (
+		p   *Proxy
+		ctx context.Context
+	)
 
-	require.NoError(t, p.driver.Put(ctx, response1))
-	require.NoError(t, p.driver.Put(ctx, response2))
+	BeforeEach(func() {
+		p = testProxy()
+		ctx = context.Background()
+	})
 
-	// Different content = different hashes
-	assert.NotEqual(t, response1.Hash, response2.Hash)
+	Context("when two different responses share the same parent", func() {
+		var (
+			userMsg   *merkle.Node
+			response1 *merkle.Node
+			response2 *merkle.Node
+		)
 
-	// But same parent
-	assert.Equal(t, *response1.ParentHash, *response2.ParentHash)
-	assert.Equal(t, userMsg.Hash, *response1.ParentHash)
+		BeforeEach(func() {
+			userMsg = merkle.NewNode(proxyTestBucket("user", "What is 2+2?"), nil)
+			Expect(p.driver.Put(ctx, userMsg)).To(Succeed())
 
-	// Should have 3 nodes total (1 user + 2 branches)
-	nodes, err := p.driver.List(ctx)
-	require.NoError(t, err)
-	assert.Len(t, nodes, 3)
+			response1 = merkle.NewNode(proxyTestBucket("assistant", "2+2 equals 4."), userMsg)
+			response2 = merkle.NewNode(proxyTestBucket("assistant", "The answer is 4!"), userMsg)
 
-	// 1 root, 2 leaves
-	roots, err := p.driver.Roots(ctx)
-	require.NoError(t, err)
-	assert.Len(t, roots, 1)
+			Expect(p.driver.Put(ctx, response1)).To(Succeed())
+			Expect(p.driver.Put(ctx, response2)).To(Succeed())
+		})
 
-	leaves, err := p.driver.Leaves(ctx)
-	require.NoError(t, err)
-	assert.Len(t, leaves, 2)
-}
+		It("produces different hashes for different content", func() {
+			Expect(response1.Hash).NotTo(Equal(response2.Hash))
+		})
 
-// TestMultiTurnConversationAncestry verifies that multi-turn conversations
-// maintain proper ancestry chains when assistant responses are replayed.
+		It("links both responses to the same parent", func() {
+			Expect(*response1.ParentHash).To(Equal(*response2.ParentHash))
+			Expect(userMsg.Hash).To(Equal(*response1.ParentHash))
+		})
+
+		It("stores all 3 nodes (1 user + 2 branches)", func() {
+			nodes, err := p.driver.List(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nodes).To(HaveLen(3))
+		})
+
+		It("has 1 root", func() {
+			roots, err := p.driver.Roots(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(roots).To(HaveLen(1))
+		})
+
+		It("has 2 leaves", func() {
+			leaves, err := p.driver.Leaves(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(leaves).To(HaveLen(2))
+		})
+	})
+})
+
+// Describe block for multi-turn conversation ancestry verifies that multi-turn
+// conversations maintain proper ancestry chains when assistant responses are replayed.
 //
 // Since StopReason and Usage are stored on Node (not Bucket), they don't affect
 // the content-addressable hash. This means replaying an assistant message produces
 // the SAME hash as the original response, enabling proper DAG continuation
 // without any special matching logic.
-func TestMultiTurnConversationAncestry(t *testing.T) {
-	p := testProxy(t)
-	ctx := context.Background()
-	providerName := "test-provider"
+var _ = Describe("Multi-Turn Conversation Ancestry", func() {
+	var (
+		p            *Proxy
+		ctx          context.Context
+		providerName string
+	)
 
-	// === Turn 1: User asks a question ===
-	req1 := &llm.ChatRequest{
-		Model: "test-model",
-		Messages: []llm.Message{
-			{Role: "system", Content: []llm.ContentBlock{{Type: "text", Text: "You are a helpful assistant."}}},
-			{Role: "user", Content: []llm.ContentBlock{{Type: "text", Text: "What is 2+2?"}}},
-		},
-	}
-	resp1 := &llm.ChatResponse{
-		Model:      "test-model",
-		StopReason: "stop",
-		Usage:      &llm.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15},
-		Message: llm.Message{
-			Role:    "assistant",
-			Content: []llm.ContentBlock{{Type: "text", Text: "2+2 equals 4."}},
-		},
-	}
+	BeforeEach(func() {
+		p = testProxy()
+		ctx = context.Background()
+		providerName = "test-provider"
+	})
 
-	hash1, err := p.storeConversationTurn(ctx, providerName, req1, resp1)
-	require.NoError(t, err)
+	Context("after turn 1 (user asks a question)", func() {
+		var (
+			hash1 string
+			req1  *llm.ChatRequest
+			resp1 *llm.ChatResponse
+		)
 
-	// Verify turn 1 ancestry: system -> user -> assistant (3 nodes deep)
-	ancestry1, err := p.driver.Ancestry(ctx, hash1)
-	require.NoError(t, err)
-	assert.Len(t, ancestry1, 3, "Turn 1 should have 3 nodes in ancestry")
-	assert.Equal(t, "assistant", ancestry1[0].Bucket.Role)
-	assert.Equal(t, "user", ancestry1[1].Bucket.Role)
-	assert.Equal(t, "system", ancestry1[2].Bucket.Role)
+		BeforeEach(func() {
+			req1 = &llm.ChatRequest{
+				Model: "test-model",
+				Messages: []llm.Message{
+					{Role: "system", Content: []llm.ContentBlock{{Type: "text", Text: "You are a helpful assistant."}}},
+					{Role: "user", Content: []llm.ContentBlock{{Type: "text", Text: "What is 2+2?"}}},
+				},
+			}
+			resp1 = &llm.ChatResponse{
+				Model:      "test-model",
+				StopReason: "stop",
+				Usage:      &llm.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15},
+				Message: llm.Message{
+					Role:    "assistant",
+					Content: []llm.ContentBlock{{Type: "text", Text: "2+2 equals 4."}},
+				},
+			}
 
-	// === Turn 2: User continues the conversation ===
-	// The assistant message from turn 1 is replayed. Since metadata (StopReason/Usage)
-	// doesn't affect the hash, this produces the SAME hash as the original response.
-	req2 := &llm.ChatRequest{
-		Model: "test-model",
-		Messages: []llm.Message{
-			{Role: "system", Content: []llm.ContentBlock{{Type: "text", Text: "You are a helpful assistant."}}},
-			{Role: "user", Content: []llm.ContentBlock{{Type: "text", Text: "What is 2+2?"}}},
-			{Role: "assistant", Content: []llm.ContentBlock{{Type: "text", Text: "2+2 equals 4."}}}, // Replayed
-			{Role: "user", Content: []llm.ContentBlock{{Type: "text", Text: "And what is 3+3?"}}},   // New
-		},
-	}
-	resp2 := &llm.ChatResponse{
-		Model:      "test-model",
-		StopReason: "stop",
-		Usage:      &llm.Usage{PromptTokens: 20, CompletionTokens: 5, TotalTokens: 25},
-		Message: llm.Message{
-			Role:    "assistant",
-			Content: []llm.ContentBlock{{Type: "text", Text: "3+3 equals 6."}},
-		},
-	}
+			var err error
+			hash1, err = p.storeConversationTurn(ctx, providerName, req1, resp1)
+			Expect(err).NotTo(HaveOccurred())
+		})
 
-	hash2, err := p.storeConversationTurn(ctx, providerName, req2, resp2)
-	require.NoError(t, err)
+		It("has 3 nodes in ancestry (system -> user -> assistant)", func() {
+			ancestry, err := p.driver.Ancestry(ctx, hash1)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ancestry).To(HaveLen(3))
+		})
 
-	// Verify turn 2 ancestry: system -> user -> assistant -> user -> assistant (5 nodes deep)
-	ancestry2, err := p.driver.Ancestry(ctx, hash2)
-	require.NoError(t, err)
-	assert.Len(t, ancestry2, 5, "Turn 2 should have 5 nodes in ancestry (full conversation history)")
+		It("orders ancestry from newest to oldest", func() {
+			ancestry, err := p.driver.Ancestry(ctx, hash1)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ancestry[0].Bucket.Role).To(Equal("assistant"))
+			Expect(ancestry[1].Bucket.Role).To(Equal("user"))
+			Expect(ancestry[2].Bucket.Role).To(Equal("system"))
+		})
 
-	// Verify the chain from newest to oldest
-	assert.Equal(t, "assistant", ancestry2[0].Bucket.Role)
-	assert.Equal(t, "3+3 equals 6.", ancestry2[0].Bucket.ExtractText())
-	assert.Equal(t, "user", ancestry2[1].Bucket.Role)
-	assert.Equal(t, "And what is 3+3?", ancestry2[1].Bucket.ExtractText())
-	assert.Equal(t, "assistant", ancestry2[2].Bucket.Role)
-	assert.Equal(t, "2+2 equals 4.", ancestry2[2].Bucket.ExtractText())
-	assert.Equal(t, "user", ancestry2[3].Bucket.Role)
-	assert.Equal(t, "What is 2+2?", ancestry2[3].Bucket.ExtractText())
-	assert.Equal(t, "system", ancestry2[4].Bucket.Role)
+		Context("after turn 2 (user continues the conversation)", func() {
+			var hash2 string
 
-	// Verify that the assistant from turn 1 is reused (same hash).
-	// This works because metadata (StopReason, Usage) doesn't affect the hash.
-	// The replayed assistant message produces the same hash as the original response.
-	assert.Equal(t, hash1, ancestry2[2].Hash, "Turn 2 should link to the original assistant response from turn 1")
-}
+			BeforeEach(func() {
+				req2 := &llm.ChatRequest{
+					Model: "test-model",
+					Messages: []llm.Message{
+						{Role: "system", Content: []llm.ContentBlock{{Type: "text", Text: "You are a helpful assistant."}}},
+						{Role: "user", Content: []llm.ContentBlock{{Type: "text", Text: "What is 2+2?"}}},
+						{Role: "assistant", Content: []llm.ContentBlock{{Type: "text", Text: "2+2 equals 4."}}}, // Replayed
+						{Role: "user", Content: []llm.ContentBlock{{Type: "text", Text: "And what is 3+3?"}}},   // New
+					},
+				}
+				resp2 := &llm.ChatResponse{
+					Model:      "test-model",
+					StopReason: "stop",
+					Usage:      &llm.Usage{PromptTokens: 20, CompletionTokens: 5, TotalTokens: 25},
+					Message: llm.Message{
+						Role:    "assistant",
+						Content: []llm.ContentBlock{{Type: "text", Text: "3+3 equals 6."}},
+					},
+				}
+
+				var err error
+				hash2, err = p.storeConversationTurn(ctx, providerName, req2, resp2)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("has 5 nodes in ancestry (full conversation history)", func() {
+				ancestry, err := p.driver.Ancestry(ctx, hash2)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(ancestry).To(HaveLen(5))
+			})
+
+			It("orders the full chain from newest to oldest", func() {
+				ancestry, err := p.driver.Ancestry(ctx, hash2)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(ancestry[0].Bucket.Role).To(Equal("assistant"))
+				Expect(ancestry[0].Bucket.ExtractText()).To(Equal("3+3 equals 6."))
+				Expect(ancestry[1].Bucket.Role).To(Equal("user"))
+				Expect(ancestry[1].Bucket.ExtractText()).To(Equal("And what is 3+3?"))
+				Expect(ancestry[2].Bucket.Role).To(Equal("assistant"))
+				Expect(ancestry[2].Bucket.ExtractText()).To(Equal("2+2 equals 4."))
+				Expect(ancestry[3].Bucket.Role).To(Equal("user"))
+				Expect(ancestry[3].Bucket.ExtractText()).To(Equal("What is 2+2?"))
+				Expect(ancestry[4].Bucket.Role).To(Equal("system"))
+			})
+
+			It("reuses the original assistant response from turn 1 (same hash)", func() {
+				ancestry, err := p.driver.Ancestry(ctx, hash2)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(ancestry[2].Hash).To(Equal(hash1))
+			})
+		})
+	})
+})
