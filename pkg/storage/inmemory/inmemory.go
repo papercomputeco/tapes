@@ -150,21 +150,6 @@ func (s *InMemoryDriver) Ancestry(ctx context.Context, hash string) ([]*merkle.N
 	return path, nil
 }
 
-// Descendants returns the path from root to node (root first, node last).
-func (s *InMemoryDriver) Descendants(ctx context.Context, hash string) ([]*merkle.Node, error) {
-	path, err := s.Ancestry(ctx, hash)
-	if err != nil {
-		return nil, err
-	}
-
-	// Reverse the path
-	for i, j := 0, len(path)-1; i < j; i, j = i+1, j-1 {
-		path[i], path[j] = path[j], path[i]
-	}
-
-	return path, nil
-}
-
 // Depth returns the depth of a node (0 for roots).
 func (s *InMemoryDriver) Depth(ctx context.Context, hash string) (int, error) {
 	depth := 0

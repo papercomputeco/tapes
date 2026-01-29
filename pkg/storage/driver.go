@@ -22,10 +22,6 @@ type Driver interface {
 	// Has checks if a node exists by its hash.
 	Has(ctx context.Context, hash string) (bool, error)
 
-	// GetByParent retrieves all nodes that have the given parent hash.
-	// Pass nil to get root nodes (nodes with no parent).
-	GetByParent(ctx context.Context, parentHash *string) ([]*merkle.Node, error)
-
 	// List returns all nodes in the store.
 	List(ctx context.Context) ([]*merkle.Node, error)
 
@@ -37,9 +33,6 @@ type Driver interface {
 
 	// Ancestry returns the path from a node back to its root (node first, root last).
 	Ancestry(ctx context.Context, hash string) ([]*merkle.Node, error)
-
-	// Descendants returns the path from root to node (root first, node last).
-	Descendants(ctx context.Context, hash string) ([]*merkle.Node, error)
 
 	// Depth returns the depth of a node (0 for roots).
 	Depth(ctx context.Context, hash string) (int, error)

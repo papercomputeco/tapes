@@ -9,6 +9,7 @@ import (
 
 	"github.com/papercomputeco/tapes/api"
 	"github.com/papercomputeco/tapes/pkg/logger"
+	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
@@ -59,11 +60,17 @@ func (c *apiCommander) run() error {
 	}
 	defer driver.Close()
 
+	dagLoader, err := c.newDagLoader()
+	if err != nil {
+		return err
+	}
+	defer driver.Close()
+
 	config := api.Config{
 		ListenAddr: c.listen,
 	}
 
-	server, err := api.NewServer(config, driver, c.logger)
+	server, err := api.NewServer(config, driver, dagLoader, c.logger)
 	if err != nil {
 		return fmt.Errorf("could not build new api server: %w", err)
 	}
@@ -76,6 +83,20 @@ func (c *apiCommander) run() error {
 }
 
 func (c *apiCommander) newStorageDriver() (storage.Driver, error) {
+	if c.sqlitePath != "" {
+		driver, err := sqlite.NewSQLiteDriver(c.sqlitePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
+		}
+		c.logger.Info("using SQLite storage", zap.String("path", c.sqlitePath))
+		return driver, nil
+	}
+
+	c.logger.Info("using in-memory storage")
+	return inmemory.NewInMemoryDriver(), nil
+}
+
+func (c *apiCommander) newDagLoader() (merkle.DagLoader, error) {
 	if c.sqlitePath != "" {
 		driver, err := sqlite.NewSQLiteDriver(c.sqlitePath)
 		if err != nil {

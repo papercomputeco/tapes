@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/api/mcp"
+	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
@@ -15,6 +16,7 @@ import (
 type Server struct {
 	config    Config
 	driver    storage.Driver
+	dagLoader merkle.DagLoader
 	logger    *zap.Logger
 	app       *fiber.App
 	mcpServer *mcp.Server
@@ -23,17 +25,18 @@ type Server struct {
 // NewServer creates a new API server.
 // The storer is injected to allow sharing with other components
 // (e.g., the proxy when not run as a singleton).
-func NewServer(config Config, driver storage.Driver, logger *zap.Logger) (*Server, error) {
+func NewServer(config Config, driver storage.Driver, dagLoader merkle.DagLoader, logger *zap.Logger) (*Server, error) {
 	var err error
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
 
 	s := &Server{
-		config: config,
-		driver: driver,
-		logger: logger,
-		app:    app,
+		config:    config,
+		driver:    driver,
+		dagLoader: dagLoader,
+		logger:    logger,
+		app:       app,
 	}
 
 	app.Get("/ping", s.handlePing)
@@ -47,10 +50,10 @@ func NewServer(config Config, driver storage.Driver, logger *zap.Logger) (*Serve
 	if config.VectorDriver != nil && config.Embedder != nil {
 		s.logger.Debug("creating mcp server")
 		mcpServer, err = mcp.NewServer(mcp.Config{
-			StorageDriver: driver,
-			VectorDriver:  config.VectorDriver,
-			Embedder:      config.Embedder,
-			Logger:        logger,
+			DagLoader:    dagLoader,
+			VectorDriver: config.VectorDriver,
+			Embedder:     config.Embedder,
+			Logger:       logger,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create MCP server: %w", err)

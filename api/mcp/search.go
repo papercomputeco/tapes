@@ -14,7 +14,7 @@ import (
 
 var (
 	searchToolName    = "search"
-	searchDescription = "Search over stored LLM sessions using semantic search. Returns the most relevant sessions based on the query text, including full conversation history."
+	searchDescription = "Search over stored LLM sessions using semantic search. Returns the most relevant sessions based on the query text, including the full conversation branch (ancestors and descendants)."
 )
 
 // SearchInput represents the input arguments for the search tool.
@@ -29,15 +29,16 @@ type SearchResult struct {
 	Score   float32 `json:"score"`
 	Role    string  `json:"role"`
 	Preview string  `json:"preview"`
-	Depth   int     `json:"depth"`
-	Lineage []Turn  `json:"lineage"`
+	Turns   int     `json:"turns"`
+	Branch  []Turn  `json:"branch"`
 }
 
 // Turn represents a single turn in a conversation.
 type Turn struct {
-	Hash string `json:"hash"`
-	Role string `json:"role"`
-	Text string `json:"text"`
+	Hash    string `json:"hash"`
+	Role    string `json:"role"`
+	Text    string `json:"text"`
+	Matched bool   `json:"matched,omitempty"`
 }
 
 // SearchOutput represents the output of the search tool.
@@ -86,19 +87,19 @@ func (s *Server) handleSearch(ctx context.Context, req *mcp.CallToolRequest, inp
 		}, SearchOutput{}, nil
 	}
 
-	// Build search results with lineage
+	// Build search results with full branch using merkle.LoadDag
 	searchResults := make([]SearchResult, 0, len(results))
 	for _, result := range results {
-		lineage, err := s.config.StorageDriver.Ancestry(ctx, result.Hash)
+		dag, err := merkle.LoadDag(ctx, s.config.DagLoader, result.Hash)
 		if err != nil {
-			logger.Warn("failed to get lineage for result",
+			logger.Warn("failed to load branch for result",
 				zap.String("hash", result.Hash),
 				zap.Error(err),
 			)
 			continue
 		}
 
-		searchResult := buildSearchResult(result, lineage)
+		searchResult := buildSearchResult(result, dag)
 		searchResults = append(searchResults, searchResult)
 	}
 
@@ -129,37 +130,36 @@ func (s *Server) handleSearch(ctx context.Context, req *mcp.CallToolRequest, inp
 	}, output, nil
 }
 
-// buildSearchResult converts a vector query result and lineage into a SearchResult.
-func buildSearchResult(result vector.QueryResult, lineage []*merkle.Node) SearchResult {
-	turns := make([]Turn, len(lineage))
-
-	// Build turns from root to matched node (reverse order)
-	for i := len(lineage) - 1; i >= 0; i-- {
-		node := lineage[i]
-		idx := len(lineage) - 1 - i
-
-		turns[idx] = Turn{
-			Hash: node.Hash,
-			Role: node.Bucket.Role,
-			Text: node.Bucket.ExtractText(),
-		}
-	}
-
-	// Get preview from the matched node (first in lineage)
+// buildSearchResult converts a vector query result and DAG into a SearchResult.
+func buildSearchResult(result vector.QueryResult, dag *merkle.Dag) SearchResult {
+	turns := []Turn{}
 	preview := ""
 	role := ""
-	if len(lineage) > 0 {
-		matchedNode := lineage[0]
-		preview = matchedNode.Bucket.ExtractText()
-		role = matchedNode.Bucket.Role
-	}
+
+	// Build turns from the DAG using Walk (depth-first from root to leaves)
+	dag.Walk(func(node *merkle.DagNode) (bool, error) {
+		isMatched := node.Hash == result.Hash
+		turns = append(turns, Turn{
+			Hash:    node.Hash,
+			Role:    node.Bucket.Role,
+			Text:    node.Bucket.ExtractText(),
+			Matched: isMatched,
+		})
+
+		// Get preview from the matched node
+		if isMatched {
+			preview = node.Bucket.ExtractText()
+			role = node.Bucket.Role
+		}
+		return true, nil
+	})
 
 	return SearchResult{
 		Hash:    result.Hash,
 		Score:   result.Score,
 		Role:    role,
 		Preview: preview,
-		Depth:   len(lineage),
-		Lineage: turns,
+		Turns:   len(turns),
+		Branch:  turns,
 	}
 }

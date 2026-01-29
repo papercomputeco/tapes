@@ -108,10 +108,10 @@ var _ = Describe("MCP Server", func() {
 
 		var err error
 		server, err = NewServer(Config{
-			StorageDriver: driver,
-			VectorDriver:  vectorDriver,
-			Embedder:      embedder,
-			Logger:        logger,
+			DagLoader:    driver,
+			VectorDriver: vectorDriver,
+			Embedder:     embedder,
+			Logger:       logger,
 		})
 		Expect(err).NotTo(HaveOccurred())
 	})
@@ -131,9 +131,9 @@ var _ = Describe("MCP Server", func() {
 		It("returns an error when vector driver is nil", func() {
 			logger, _ := zap.NewDevelopment()
 			_, err := NewServer(Config{
-				StorageDriver: driver,
-				Embedder:      embedder,
-				Logger:        logger,
+				DagLoader: driver,
+				Embedder:  embedder,
+				Logger:    logger,
 			})
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("vector driver is required"))
@@ -142,9 +142,9 @@ var _ = Describe("MCP Server", func() {
 		It("returns an error when embedder is nil", func() {
 			logger, _ := zap.NewDevelopment()
 			_, err := NewServer(Config{
-				StorageDriver: driver,
-				VectorDriver:  vectorDriver,
-				Logger:        logger,
+				DagLoader:    driver,
+				VectorDriver: vectorDriver,
+				Logger:       logger,
 			})
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("embedder is required"))
@@ -152,9 +152,9 @@ var _ = Describe("MCP Server", func() {
 
 		It("returns an error when logger is nil", func() {
 			_, err := NewServer(Config{
-				StorageDriver: driver,
-				VectorDriver:  vectorDriver,
-				Embedder:      embedder,
+				DagLoader:    driver,
+				VectorDriver: vectorDriver,
+				Embedder:     embedder,
 			})
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("logger is required"))
@@ -183,15 +183,17 @@ var _ = Describe("MCP Server", func() {
 				Score: 0.95,
 			}
 
-			lineage := []*merkle.Node{node}
-			searchResult := buildSearchResult(result, lineage)
+			dag, err := merkle.LoadDag(ctx, driver, node.Hash)
+			Expect(err).NotTo(HaveOccurred())
+
+			searchResult := buildSearchResult(result, dag)
 
 			Expect(searchResult.Hash).To(Equal(node.Hash))
 			Expect(searchResult.Score).To(Equal(float32(0.95)))
 			Expect(searchResult.Role).To(Equal("user"))
 			Expect(searchResult.Preview).To(Equal("Hello world"))
-			Expect(searchResult.Depth).To(Equal(1))
-			Expect(searchResult.Lineage).To(HaveLen(1))
+			Expect(searchResult.Turns).To(Equal(1))
+			Expect(searchResult.Branch).To(HaveLen(1))
 		})
 
 		It("builds a result from a conversation chain", func() {
@@ -211,23 +213,27 @@ var _ = Describe("MCP Server", func() {
 				Score: 0.85,
 			}
 
-			// lineage is from matched node to root
-			lineage := []*merkle.Node{node3, node2, node1}
-			searchResult := buildSearchResult(result, lineage)
+			dag, err := merkle.LoadDag(ctx, driver, node3.Hash)
+			Expect(err).NotTo(HaveOccurred())
+
+			searchResult := buildSearchResult(result, dag)
 
 			Expect(searchResult.Hash).To(Equal(node3.Hash))
-			Expect(searchResult.Depth).To(Equal(3))
+			Expect(searchResult.Turns).To(Equal(3))
 			Expect(searchResult.Role).To(Equal("user"))
 			Expect(searchResult.Preview).To(Equal("How are you?"))
 
-			// Lineage should be in chronological order (root to matched)
-			Expect(searchResult.Lineage).To(HaveLen(3))
-			Expect(searchResult.Lineage[0].Text).To(Equal("Hello"))
-			Expect(searchResult.Lineage[1].Text).To(Equal("Hi there"))
-			Expect(searchResult.Lineage[2].Text).To(Equal("How are you?"))
+			// Dag branch should be in chronological order (root to leaves)
+			Expect(searchResult.Branch).To(HaveLen(3))
+			Expect(searchResult.Branch[0].Text).To(Equal("Hello"))
+			Expect(searchResult.Branch[1].Text).To(Equal("Hi there"))
+			Expect(searchResult.Branch[2].Text).To(Equal("How are you?"))
+			Expect(searchResult.Branch[2].Matched).To(BeTrue())
+			Expect(searchResult.Branch[0].Matched).To(BeFalse())
+			Expect(searchResult.Branch[1].Matched).To(BeFalse())
 		})
 
-		It("handles empty lineage gracefully", func() {
+		It("handles empty DAG gracefully", func() {
 			result := vector.QueryResult{
 				Document: vector.Document{
 					ID:   "empty-hash",
@@ -236,14 +242,14 @@ var _ = Describe("MCP Server", func() {
 				Score: 0.5,
 			}
 
-			lineage := []*merkle.Node{}
-			searchResult := buildSearchResult(result, lineage)
+			dag := merkle.NewDag()
+			searchResult := buildSearchResult(result, dag)
 
 			Expect(searchResult.Hash).To(Equal("empty-hash"))
-			Expect(searchResult.Depth).To(Equal(0))
+			Expect(searchResult.Turns).To(Equal(0))
 			Expect(searchResult.Role).To(BeEmpty())
 			Expect(searchResult.Preview).To(BeEmpty())
-			Expect(searchResult.Lineage).To(BeEmpty())
+			Expect(searchResult.Branch).To(BeEmpty())
 		})
 	})
 })

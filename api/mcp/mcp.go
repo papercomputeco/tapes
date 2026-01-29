@@ -9,14 +9,14 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/embeddings"
-	"github.com/papercomputeco/tapes/pkg/storage"
+	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/utils"
 	"github.com/papercomputeco/tapes/pkg/vector"
 )
 
 type Config struct {
-	// Storage driver for looking up full node ancestry
-	StorageDriver storage.Driver
+	// DagLoader loads full node ancestry from search results
+	DagLoader merkle.DagLoader
 
 	// VectorDriver for semantic search
 	VectorDriver vector.VectorDriver
@@ -60,7 +60,7 @@ func NewServer(c Config) (*Server, error) {
 		return s, nil
 	}
 
-	if c.StorageDriver == nil {
+	if c.DagLoader == nil {
 		return nil, fmt.Errorf("storage driver is required")
 	}
 	if c.VectorDriver == nil {
