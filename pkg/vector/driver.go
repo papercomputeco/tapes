@@ -23,8 +23,8 @@ type QueryResult struct {
 	Score float32
 }
 
-// VectorDriver handles storage and retrieval of vector embeddings.
-type VectorDriver interface {
+// Driver handles storage and retrieval of vector embeddings.
+type Driver interface {
 	// Add stores documents with their embeddings.
 	// If a document with the same ID already exists, implementers should update
 	// the document.

@@ -12,7 +12,7 @@ type Config struct {
 	ListenAddr string
 
 	// VectorDriver for semantic search (optional, enables MCP server)
-	VectorDriver vector.VectorDriver
+	VectorDriver vector.Driver
 
 	// Embedder for converting query text to vectors (optional, enables MCP server)
 	Embedder embeddings.Embedder

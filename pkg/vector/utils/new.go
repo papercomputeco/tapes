@@ -15,7 +15,7 @@ type NewVectorDriverOpts struct {
 	Logger       *zap.Logger
 }
 
-func NewVectorDriver(o *NewVectorDriverOpts) (vector.VectorDriver, error) {
+func NewVectorDriver(o *NewVectorDriverOpts) (vector.Driver, error) {
 	switch o.ProviderType {
 	case "chroma":
 		return chroma.NewChromaDriver(chroma.Config{
