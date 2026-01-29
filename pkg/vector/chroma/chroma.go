@@ -18,6 +18,16 @@ import (
 const (
 	// DefaultCollectionName is the default collection name for storing tapes embeddings.
 	DefaultCollectionName = "tapes"
+
+	// defaultMaxConnectRetries is the maximum number of retries when connecting to Chroma.
+	defaultMaxConnectRetries = 10
+
+	// defaultRetryDelay is the initial delay between retries. Each subsequent
+	// retry doubles the delay (exponential backoff), capped at maxRetryDelay.
+	defaultRetryDelay = 1 * time.Second
+
+	// defaultMaxRetryDelay is the maximum delay between retries.
+	defaultMaxRetryDelay = 15 * time.Second
 )
 
 // ChromaDriver implements vector.Driver using Chroma's REST API.
@@ -37,9 +47,22 @@ type Config struct {
 	// CollectionName is the name of the collection to use.
 	// Defaults to DefaultCollectionName if empty.
 	CollectionName string
+
+	// MaxRetries overrides the maximum number of connection retries.
+	// Defaults to maxConnectRetries if zero.
+	MaxRetries uint
+
+	// RetryDelay overrides the initial delay between retries.
+	// Defaults to initialRetryDelay if zero.
+	RetryDelay time.Duration
+
+	// MaxRetryDelay overrides the maximum delay between retries.
+	// Defaults to maxRetryDelay if zero.
+	MaxRetryDelay time.Duration
 }
 
 // NewChromaDriver creates a new Chroma vector driver.
+// It uses exponential delay retries if it cannot connect to Chroma.
 func NewChromaDriver(c Config, logger *zap.Logger) (*ChromaDriver, error) {
 	if c.URL == "" {
 		return nil, fmt.Errorf("chroma URL is required")
@@ -59,10 +82,41 @@ func NewChromaDriver(c Config, logger *zap.Logger) (*ChromaDriver, error) {
 		logger: logger,
 	}
 
-	// Get or create the collection
-	collectionID, err := d.getOrCreateCollection(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("getting or creating collection %q: %w", collectionName, err)
+	if c.MaxRetries == 0 {
+		c.MaxRetries = defaultMaxConnectRetries
+	}
+
+	if c.RetryDelay <= 0 {
+		c.RetryDelay = defaultRetryDelay
+	}
+
+	if c.MaxRetryDelay <= 0 {
+		c.MaxRetryDelay = defaultMaxRetryDelay
+	}
+
+	var err error
+	collectionID := ""
+	for attempt := range c.MaxRetries {
+		collectionID, err = d.getOrCreateCollection(context.Background())
+		if err == nil {
+			break
+		}
+
+		if attempt == c.MaxRetries-1 {
+			return nil, fmt.Errorf("getting or creating collection %q after %d attempts: %w", collectionName, c.MaxRetries, err)
+		}
+
+		logger.Warn("failed to connect to Chroma, retrying...",
+			zap.Uint("attempt", attempt+1),
+			zap.Duration("delay", c.RetryDelay),
+			zap.Error(err),
+		)
+
+		time.Sleep(c.RetryDelay)
+		c.RetryDelay *= 2
+		if c.RetryDelay > c.MaxRetryDelay {
+			c.RetryDelay = c.MaxRetryDelay
+		}
 	}
 	d.collectionID = collectionID
 

@@ -34,6 +34,7 @@ services:
       --embedding-provider ollama
       --embedding-target http://ollama:11434
       --embedding-model nomic-embed-text
+      --debug
     volumes:
       - tapes-data:/data
 
