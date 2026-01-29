@@ -43,7 +43,7 @@ func (ed *EntDriver) Put(ctx context.Context, n *merkle.Node) error {
 		SetRole(n.Bucket.Role).
 		SetModel(n.Bucket.Model).
 		SetProvider(n.Bucket.Provider).
-		SetStopReason(n.Bucket.StopReason)
+		SetStopReason(n.StopReason)
 
 	// Marshal bucket to JSON for storage
 	bucketJSON, err := json.Marshal(n.Bucket)
@@ -68,21 +68,21 @@ func (ed *EntDriver) Put(ctx context.Context, n *merkle.Node) error {
 	create.SetContent(contentSlice)
 
 	// Set usage fields if available
-	if n.Bucket.Usage != nil {
-		if n.Bucket.Usage.PromptTokens > 0 {
-			create.SetPromptTokens(n.Bucket.Usage.PromptTokens)
+	if n.Usage != nil {
+		if n.Usage.PromptTokens > 0 {
+			create.SetPromptTokens(n.Usage.PromptTokens)
 		}
-		if n.Bucket.Usage.CompletionTokens > 0 {
-			create.SetCompletionTokens(n.Bucket.Usage.CompletionTokens)
+		if n.Usage.CompletionTokens > 0 {
+			create.SetCompletionTokens(n.Usage.CompletionTokens)
 		}
-		if n.Bucket.Usage.TotalTokens > 0 {
-			create.SetTotalTokens(n.Bucket.Usage.TotalTokens)
+		if n.Usage.TotalTokens > 0 {
+			create.SetTotalTokens(n.Usage.TotalTokens)
 		}
-		if n.Bucket.Usage.TotalDurationNs > 0 {
-			create.SetTotalDurationNs(n.Bucket.Usage.TotalDurationNs)
+		if n.Usage.TotalDurationNs > 0 {
+			create.SetTotalDurationNs(n.Usage.TotalDurationNs)
 		}
-		if n.Bucket.Usage.PromptDurationNs > 0 {
-			create.SetPromptDurationNs(n.Bucket.Usage.PromptDurationNs)
+		if n.Usage.PromptDurationNs > 0 {
+			create.SetPromptDurationNs(n.Usage.PromptDurationNs)
 		}
 	}
 
@@ -195,21 +195,6 @@ func (ed *EntDriver) Ancestry(ctx context.Context, hash string) ([]*merkle.Node,
 	return path, nil
 }
 
-// Descendants returns the path from root to node (root first, node last).
-func (ed *EntDriver) Descendants(ctx context.Context, hash string) ([]*merkle.Node, error) {
-	path, err := ed.Ancestry(ctx, hash)
-	if err != nil {
-		return nil, err
-	}
-
-	// Reverse the path
-	for i, j := 0, len(path)-1; i < j; i, j = i+1, j-1 {
-		path[i], path[j] = path[j], path[i]
-	}
-
-	return path, nil
-}
-
 // Depth returns the depth of a node (0 for roots).
 func (ed *EntDriver) Depth(ctx context.Context, hash string) (int, error) {
 	path, err := ed.Ancestry(ctx, hash)
@@ -224,7 +209,7 @@ func (ed *EntDriver) Close() error {
 	return ed.Client.Close()
 }
 
-// Conversion helpers (unchanged from your original)
+// Conversion helpers
 func (ed *EntDriver) entNodeToMerkleNode(entNode *ent.Node) (*merkle.Node, error) {
 	// Unmarshal the bucket JSON back to merkle.Bucket
 	bucketJSON, err := json.Marshal(entNode.Bucket)
@@ -237,32 +222,44 @@ func (ed *EntDriver) entNodeToMerkleNode(entNode *ent.Node) (*merkle.Node, error
 		return nil, fmt.Errorf("failed to unmarshal bucket: %w", err)
 	}
 
-	// Reconstruct usage from individual fields if not in bucket
-	if bucket.Usage == nil && (entNode.PromptTokens != nil || entNode.CompletionTokens != nil ||
-		entNode.TotalTokens != nil || entNode.TotalDurationNs != nil || entNode.PromptDurationNs != nil) {
-		bucket.Usage = &llm.Usage{}
-		if entNode.PromptTokens != nil {
-			bucket.Usage.PromptTokens = *entNode.PromptTokens
-		}
-		if entNode.CompletionTokens != nil {
-			bucket.Usage.CompletionTokens = *entNode.CompletionTokens
-		}
-		if entNode.TotalTokens != nil {
-			bucket.Usage.TotalTokens = *entNode.TotalTokens
-		}
-		if entNode.TotalDurationNs != nil {
-			bucket.Usage.TotalDurationNs = *entNode.TotalDurationNs
-		}
-		if entNode.PromptDurationNs != nil {
-			bucket.Usage.PromptDurationNs = *entNode.PromptDurationNs
-		}
-	}
-
-	return &merkle.Node{
+	node := &merkle.Node{
 		Hash:       entNode.ID,
 		ParentHash: entNode.ParentHash,
 		Bucket:     bucket,
-	}, nil
+		StopReason: entNode.StopReason,
+	}
+
+	// Rebuild usage metrics if they exist.
+	if entNode.PromptTokens != nil ||
+		entNode.CompletionTokens != nil ||
+		entNode.TotalTokens != nil ||
+		entNode.TotalDurationNs != nil ||
+		entNode.PromptDurationNs != nil {
+		node.Usage = &llm.Usage{}
+
+		if entNode.PromptTokens != nil {
+			node.Usage.PromptTokens = *entNode.PromptTokens
+		}
+
+		if entNode.CompletionTokens != nil {
+			node.Usage.CompletionTokens = *entNode.CompletionTokens
+		}
+
+		if entNode.TotalTokens != nil {
+			node.Usage.TotalTokens = *entNode.TotalTokens
+		}
+
+		if entNode.TotalDurationNs != nil {
+			node.Usage.TotalDurationNs = *entNode.TotalDurationNs
+		}
+
+		if entNode.PromptDurationNs != nil {
+			node.Usage.PromptDurationNs = *entNode.PromptDurationNs
+
+		}
+	}
+
+	return node, nil
 }
 
 func (ed *EntDriver) entNodesToMerkleNodes(entNodes []*ent.Node) ([]*merkle.Node, error) {

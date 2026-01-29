@@ -242,8 +242,9 @@ var _ = Describe("SQLiteDriver", func() {
 		})
 	})
 
-	Describe("Descendants", func() {
-		It("returns path from root to node", func() {
+	Describe("LoadDag (merkle.LoadDag with driver as BranchLoader)", func() {
+		It("returns full branch for a leaf node", func() {
+			// Linear chain: root -> child -> grandchild (leaf)
 			rootBucket := sqliteTestBucket("root")
 			childBucket := sqliteTestBucket("child")
 			grandchildBucket := sqliteTestBucket("grandchild")
@@ -256,12 +257,130 @@ var _ = Describe("SQLiteDriver", func() {
 			driver.Put(ctx, child)
 			driver.Put(ctx, grandchild)
 
-			ancestry, err := driver.Descendants(ctx, grandchild.Hash)
+			// Query branch from the leaf - should get all 3 nodes
+			dag, err := merkle.LoadDag(ctx, driver, grandchild.Hash)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(ancestry).To(HaveLen(3))
-			Expect(ancestry[0].Bucket).To(Equal(rootBucket))
-			Expect(ancestry[1].Bucket).To(Equal(childBucket))
-			Expect(ancestry[2].Bucket).To(Equal(grandchildBucket))
+			Expect(dag.Size()).To(Equal(3))
+
+			// Verify structure using Get
+			Expect(dag.Root.Bucket).To(Equal(rootBucket))
+			Expect(dag.Get(child.Hash).Bucket).To(Equal(childBucket))
+			Expect(dag.Get(grandchild.Hash).Bucket).To(Equal(grandchildBucket))
+		})
+
+		It("returns full branch for a root node with descendants", func() {
+			// Linear chain: root -> child -> grandchild
+			rootBucket := sqliteTestBucket("root")
+			childBucket := sqliteTestBucket("child")
+			grandchildBucket := sqliteTestBucket("grandchild")
+
+			root := merkle.NewNode(rootBucket, nil)
+			child := merkle.NewNode(childBucket, root)
+			grandchild := merkle.NewNode(grandchildBucket, child)
+
+			driver.Put(ctx, root)
+			driver.Put(ctx, child)
+			driver.Put(ctx, grandchild)
+
+			// Query branch from the root - should get all 3 nodes
+			dag, err := merkle.LoadDag(ctx, driver, root.Hash)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dag.Size()).To(Equal(3))
+
+			// Verify structure using Get
+			Expect(dag.Root.Bucket).To(Equal(rootBucket))
+			Expect(dag.Get(child.Hash).Bucket).To(Equal(childBucket))
+			Expect(dag.Get(grandchild.Hash).Bucket).To(Equal(grandchildBucket))
+		})
+
+		It("returns full branch for a middle node", func() {
+			// Linear chain: root -> child -> grandchild
+			rootBucket := sqliteTestBucket("root")
+			childBucket := sqliteTestBucket("child")
+			grandchildBucket := sqliteTestBucket("grandchild")
+
+			root := merkle.NewNode(rootBucket, nil)
+			child := merkle.NewNode(childBucket, root)
+			grandchild := merkle.NewNode(grandchildBucket, child)
+
+			driver.Put(ctx, root)
+			driver.Put(ctx, child)
+			driver.Put(ctx, grandchild)
+
+			// Query branch from the middle node - should get all 3 nodes
+			dag, err := merkle.LoadDag(ctx, driver, child.Hash)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dag.Size()).To(Equal(3))
+
+			// Verify structure using Get
+			Expect(dag.Root.Bucket).To(Equal(rootBucket))
+			Expect(dag.Get(child.Hash).Bucket).To(Equal(childBucket))
+			Expect(dag.Get(grandchild.Hash).Bucket).To(Equal(grandchildBucket))
+		})
+
+		It("returns all branches when there are multiple children", func() {
+			// Tree structure:
+			//       root
+			//      /    \
+			//   child1  child2
+			//     |
+			//  grandchild
+			rootBucket := sqliteTestBucket("root")
+			child1Bucket := sqliteTestBucket("child1")
+			child2Bucket := sqliteTestBucket("child2")
+			grandchildBucket := sqliteTestBucket("grandchild")
+
+			root := merkle.NewNode(rootBucket, nil)
+			child1 := merkle.NewNode(child1Bucket, root)
+			child2 := merkle.NewNode(child2Bucket, root)
+			grandchild := merkle.NewNode(grandchildBucket, child1)
+
+			driver.Put(ctx, root)
+			driver.Put(ctx, child1)
+			driver.Put(ctx, child2)
+			driver.Put(ctx, grandchild)
+
+			// Query branch from root - should get all 4 nodes (both branches)
+			dag, err := merkle.LoadDag(ctx, driver, root.Hash)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dag.Size()).To(Equal(4))
+
+			// Root should be the DAG root
+			Expect(dag.Root.Bucket).To(Equal(rootBucket))
+
+			// All nodes should be present
+			Expect(dag.Get(root.Hash)).NotTo(BeNil())
+			Expect(dag.Get(child1.Hash)).NotTo(BeNil())
+			Expect(dag.Get(child2.Hash)).NotTo(BeNil())
+			Expect(dag.Get(grandchild.Hash)).NotTo(BeNil())
+		})
+
+		It("returns only ancestors and one branch when queried from a leaf", func() {
+			// Tree structure:
+			//       root
+			//      /    \
+			//   child1  child2
+			rootBucket := sqliteTestBucket("root")
+			child1Bucket := sqliteTestBucket("child1")
+			child2Bucket := sqliteTestBucket("child2")
+
+			root := merkle.NewNode(rootBucket, nil)
+			child1 := merkle.NewNode(child1Bucket, root)
+			child2 := merkle.NewNode(child2Bucket, root)
+
+			driver.Put(ctx, root)
+			driver.Put(ctx, child1)
+			driver.Put(ctx, child2)
+
+			// Query branch from child1 - should only get root + child1 (not child2)
+			dag, err := merkle.LoadDag(ctx, driver, child1.Hash)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dag.Size()).To(Equal(2))
+
+			// Verify structure using Get
+			Expect(dag.Root.Bucket).To(Equal(rootBucket))
+			Expect(dag.Get(child1.Hash).Bucket).To(Equal(child1Bucket))
+			Expect(dag.Get(child2.Hash)).To(BeNil()) // child2 should not be in the DAG
 		})
 	})
 
@@ -291,21 +410,23 @@ var _ = Describe("SQLiteDriver", func() {
 	})
 
 	Describe("Complex content", func() {
-		It("stores and retrieves bucket with usage metrics", func() {
+		It("stores and retrieves node with usage metadata", func() {
 			bucket := merkle.Bucket{
-				Type:       "message",
-				Role:       "assistant",
-				Content:    []llm.ContentBlock{{Type: "text", Text: "Hello, world!"}},
-				Model:      "gpt-4",
-				Provider:   "openai",
+				Type:     "message",
+				Role:     "assistant",
+				Content:  []llm.ContentBlock{{Type: "text", Text: "Hello, world!"}},
+				Model:    "gpt-4",
+				Provider: "openai",
+			}
+			// StopReason and Usage are now on Node, not Bucket
+			node := merkle.NewNode(bucket, nil, merkle.NodeMeta{
 				StopReason: "stop",
 				Usage: &llm.Usage{
 					PromptTokens:     10,
 					CompletionTokens: 5,
 					TotalTokens:      15,
 				},
-			}
-			node := merkle.NewNode(bucket, nil)
+			})
 
 			err := driver.Put(ctx, node)
 			Expect(err).NotTo(HaveOccurred())
@@ -315,8 +436,9 @@ var _ = Describe("SQLiteDriver", func() {
 
 			Expect(retrieved.Bucket.Role).To(Equal("assistant"))
 			Expect(retrieved.Bucket.Model).To(Equal("gpt-4"))
-			Expect(retrieved.Bucket.Usage).NotTo(BeNil())
-			Expect(retrieved.Bucket.Usage.TotalTokens).To(Equal(15))
+			Expect(retrieved.StopReason).To(Equal("stop"))
+			Expect(retrieved.Usage).NotTo(BeNil())
+			Expect(retrieved.Usage.TotalTokens).To(Equal(15))
 		})
 	})
 

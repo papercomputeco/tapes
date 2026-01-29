@@ -140,8 +140,8 @@ func (s *Server) buildHistory(ctx context.Context, hash string) (*HistoryRespons
 			Content:    node.Bucket.Content,
 			Model:      node.Bucket.Model,
 			Provider:   node.Bucket.Provider,
-			StopReason: node.Bucket.StopReason,
-			Usage:      node.Bucket.Usage,
+			StopReason: node.StopReason,
+			Usage:      node.Usage,
 		}
 	}
 

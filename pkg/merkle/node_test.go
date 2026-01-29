@@ -56,24 +56,54 @@ var _ = Describe("Node", func() {
 				Expect(node1.Hash).NotTo(Equal(node2.Hash))
 			})
 
-			It("handles buckets with usage metrics", func() {
+			It("handles nodes with usage metadata", func() {
 				bucket := merkle.Bucket{
-					Type:       "message",
-					Role:       "assistant",
-					Content:    []llm.ContentBlock{{Type: "text", Text: "response"}},
-					Model:      "gpt-4",
-					Provider:   "openai",
+					Type:     "message",
+					Role:     "assistant",
+					Content:  []llm.ContentBlock{{Type: "text", Text: "response"}},
+					Model:    "gpt-4",
+					Provider: "openai",
+				}
+				// StopReason and Usage are now on Node via NodeOptions, not Bucket
+				node := merkle.NewNode(bucket, nil, merkle.NodeMeta{
 					StopReason: "stop",
 					Usage: &llm.Usage{
 						PromptTokens:     10,
 						CompletionTokens: 20,
 						TotalTokens:      30,
 					},
-				}
-				node := merkle.NewNode(bucket, nil)
+				})
 
 				Expect(node.Hash).NotTo(BeEmpty())
 				Expect(node.Bucket).To(Equal(bucket))
+				Expect(node.StopReason).To(Equal("stop"))
+				Expect(node.Usage).NotTo(BeNil())
+				Expect(node.Usage.TotalTokens).To(Equal(30))
+			})
+
+			It("produces same hash regardless of metadata", func() {
+				bucket := merkle.Bucket{
+					Type:     "message",
+					Role:     "assistant",
+					Content:  []llm.ContentBlock{{Type: "text", Text: "response"}},
+					Model:    "gpt-4",
+					Provider: "openai",
+				}
+
+				// Node without metadata
+				node1 := merkle.NewNode(bucket, nil)
+
+				// Node with metadata - should have SAME hash since metadata doesn't affect hash
+				node2 := merkle.NewNode(bucket, nil, merkle.NodeMeta{
+					StopReason: "stop",
+					Usage: &llm.Usage{
+						PromptTokens:     10,
+						CompletionTokens: 20,
+						TotalTokens:      30,
+					},
+				})
+
+				Expect(node1.Hash).To(Equal(node2.Hash))
 			})
 		})
 
@@ -197,6 +227,74 @@ var _ = Describe("Bucket", func() {
 			}
 
 			Expect(bucket.ExtractText()).To(Equal("Some text"))
+		})
+
+		It("extracts tool_use content blocks", func() {
+			bucket := merkle.Bucket{
+				Content: []llm.ContentBlock{
+					{
+						Type:      "tool_use",
+						ToolName:  "get_weather",
+						ToolInput: map[string]any{"city": "Tokyo"},
+					},
+				},
+			}
+
+			text := bucket.ExtractText()
+			Expect(text).To(ContainSubstring("Tool call: get_weather"))
+			Expect(text).To(ContainSubstring("city"))
+			Expect(text).To(ContainSubstring("Tokyo"))
+		})
+
+		It("extracts tool_use with multiple parameters", func() {
+			bucket := merkle.Bucket{
+				Content: []llm.ContentBlock{
+					{
+						Type:     "tool_use",
+						ToolName: "search",
+						ToolInput: map[string]any{
+							"query": "golang testing",
+							"limit": 10,
+						},
+					},
+				},
+			}
+
+			text := bucket.ExtractText()
+			Expect(text).To(ContainSubstring("Tool call: search"))
+			Expect(text).To(ContainSubstring("query"))
+			Expect(text).To(ContainSubstring("golang testing"))
+		})
+
+		It("extracts tool_use without parameters", func() {
+			bucket := merkle.Bucket{
+				Content: []llm.ContentBlock{
+					{
+						Type:     "tool_use",
+						ToolName: "get_time",
+					},
+				},
+			}
+
+			Expect(bucket.ExtractText()).To(Equal("Tool call: get_time"))
+		})
+
+		It("combines text and tool_use content", func() {
+			bucket := merkle.Bucket{
+				Content: []llm.ContentBlock{
+					{Type: "text", Text: "Let me check the weather"},
+					{
+						Type:      "tool_use",
+						ToolName:  "get_weather",
+						ToolInput: map[string]any{"city": "Paris"},
+					},
+				},
+			}
+
+			text := bucket.ExtractText()
+			Expect(text).To(ContainSubstring("Let me check the weather"))
+			Expect(text).To(ContainSubstring("Tool call: get_weather"))
+			Expect(text).To(ContainSubstring("Paris"))
 		})
 	})
 })

@@ -26,16 +26,19 @@ func apiTestBucket(role, text string) merkle.Bucket {
 
 var _ = Describe("buildHistory", func() {
 	var (
-		server *Server
-		driver storage.Driver
-		ctx    context.Context
+		server    *Server
+		driver    storage.Driver
+		dagLoader merkle.DagLoader
+		ctx       context.Context
 	)
 
 	BeforeEach(func() {
 		var err error
 		logger, _ := zap.NewDevelopment()
-		driver = inmemory.NewInMemoryDriver()
-		server, err = NewServer(Config{ListenAddr: ":0"}, driver, logger)
+		inMem := inmemory.NewInMemoryDriver()
+		driver = inMem
+		dagLoader = inMem
+		server, err = NewServer(Config{ListenAddr: ":0"}, driver, dagLoader, logger)
 		Expect(err).ToNot(HaveOccurred())
 		ctx = context.Background()
 	})
@@ -139,19 +142,20 @@ var _ = Describe("buildHistory", func() {
 
 		BeforeEach(func() {
 			bucket := merkle.Bucket{
-				Type:       "message",
-				Role:       "assistant",
-				Content:    []llm.ContentBlock{{Type: "text", Text: "Response"}},
-				Model:      "gpt-4",
-				Provider:   "openai",
+				Type:     "message",
+				Role:     "assistant",
+				Content:  []llm.ContentBlock{{Type: "text", Text: "Response"}},
+				Model:    "gpt-4",
+				Provider: "openai",
+			}
+			node = merkle.NewNode(bucket, nil, merkle.NodeMeta{
 				StopReason: "stop",
 				Usage: &llm.Usage{
 					PromptTokens:     100,
 					CompletionTokens: 50,
 					TotalTokens:      150,
 				},
-			}
-			node = merkle.NewNode(bucket, nil)
+			})
 			Expect(driver.Put(ctx, node)).To(Succeed())
 		})
 

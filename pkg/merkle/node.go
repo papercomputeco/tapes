@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+
+	"github.com/papercomputeco/tapes/pkg/llm"
 )
 
 // Node represents a single content-addressed node in a Merkle DAG
@@ -17,18 +19,40 @@ type Node struct {
 	// This will be nil for root nodes.
 	ParentHash *string `json:"parent_hash"`
 
-	// Bucket is the hashable content for the node
+	// Bucket is the hashable content for the node.
 	Bucket Bucket `json:"bucket"`
+
+	// StopReason indicates why generation stopped (only for responses)
+	// Values: "stop", "length", "tool_use", "end_turn", etc.
+	StopReason string `json:"stop_reason,omitempty"`
+
+	// Usage contains token counts and timing (only for responses)
+	Usage *llm.Usage `json:"usage,omitempty"`
 }
 
-// NewNode creates a new node with the computed hash for the provided bucket
-func NewNode(bucket Bucket, parent *Node) *Node {
+// NodeMeta contains optional metadata for a node that is stored
+// but does not affect the content-addressable hash.
+type NodeMeta struct {
+	StopReason string
+	Usage      *llm.Usage
+}
+
+// NewNode creates a new node with the computed hash for the provided bucket.
+// The optional NodeOptions parameter allows for setting metadata (StopReason, Usage, etc.)
+// outside of the content addressable Bucket
+func NewNode(bucket Bucket, parent *Node, metas ...NodeMeta) *Node {
 	n := &Node{
 		Bucket: bucket,
 	}
 
 	if parent != nil {
 		n.ParentHash = &parent.Hash
+	}
+
+	// Apply optional metadata if provided
+	if len(metas) > 0 {
+		n.StopReason = metas[0].StopReason
+		n.Usage = metas[0].Usage
 	}
 
 	n.Hash = n.computeHash()

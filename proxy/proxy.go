@@ -380,7 +380,7 @@ func (p *Proxy) storeConversationTurn(ctx context.Context, providerName string, 
 	var parent *merkle.Node
 	var nodesToEmbed []*merkle.Node
 
-	// Store each message from the request as nodes
+	// Store each message from the request as nodes.
 	for _, msg := range req.Messages {
 		bucket := merkle.Bucket{
 			Type:     "message",
@@ -391,6 +391,7 @@ func (p *Proxy) storeConversationTurn(ctx context.Context, providerName string, 
 		}
 
 		node := merkle.NewNode(bucket, parent)
+
 		if err := p.driver.Put(ctx, node); err != nil {
 			return "", fmt.Errorf("storing message node: %w", err)
 		}
@@ -405,18 +406,21 @@ func (p *Proxy) storeConversationTurn(ctx context.Context, providerName string, 
 		parent = node
 	}
 
-	// Store the response message
+	// Store the response message with metadata.
+	// Note: StopReason and Usage are passed via NodeOptions and stored on the Node,
+	// but they do NOT affect the content-addressable hash.
 	responseBucket := merkle.Bucket{
-		Type:       "message",
-		Role:       resp.Message.Role,
-		Content:    resp.Message.Content,
-		Model:      resp.Model,
-		Provider:   providerName,
-		StopReason: resp.StopReason,
-		Usage:      resp.Usage,
+		Type:     "message",
+		Role:     resp.Message.Role,
+		Content:  resp.Message.Content,
+		Model:    resp.Model,
+		Provider: providerName,
 	}
 
-	responseNode := merkle.NewNode(responseBucket, parent)
+	responseNode := merkle.NewNode(responseBucket, parent, merkle.NodeMeta{
+		StopReason: resp.StopReason,
+		Usage:      resp.Usage,
+	})
 	if err := p.driver.Put(ctx, responseNode); err != nil {
 		return "", fmt.Errorf("storing response node: %w", err)
 	}

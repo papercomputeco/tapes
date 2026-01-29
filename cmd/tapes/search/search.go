@@ -40,7 +40,8 @@ Search over stored sessions, returning the most relevant sessions based on the
 query text. Requires a configured vector store provider, embedding provider,
 and storage provider.
 
-For each result, the full session ancestry (from matched node to root) is displayed.
+For each result, the full session branch is displayed, including all ancestors
+(from root to matched node) and all descendants (from matched node to leaves).
 
 Example:
   tapes search "how to configure logging" \
@@ -137,55 +138,56 @@ func (c *searchCommander) run() error {
 	}
 
 	// Create storage driver to look up full nodes
-	storageDriver, err := sqlite.NewSQLiteDriver(c.sqlitePath)
+	dagLoader, err := sqlite.NewSQLiteDriver(c.sqlitePath)
 	if err != nil {
 		return fmt.Errorf("opening SQLite database: %w", err)
 	}
-	defer storageDriver.Close()
+	defer dagLoader.Close()
 
 	// Print results header
 	fmt.Printf("\nSearch Results for: %q\n", c.query)
 	fmt.Println(strings.Repeat("=", 60))
 
-	// For each result, get the full ancestry and print
+	// For each result, load the full branch using merkle.LoadDag and print
 	for i, result := range results {
-		ancestry, err := storageDriver.Ancestry(ctx, result.Hash)
+		dag, err := merkle.LoadDag(ctx, dagLoader, result.Hash)
 		if err != nil {
-			c.logger.Warn("failed to get ancestry for result",
+			c.logger.Warn("failed to load branch for result",
 				zap.String("hash", result.Hash),
 				zap.Error(err),
 			)
 			continue
 		}
 
-		c.printResult(i+1, result, ancestry)
+		c.printResult(i+1, result, dag)
 	}
 
 	return nil
 }
 
-func (c *searchCommander) printResult(rank int, result vector.QueryResult, ancestry []*merkle.Node) {
+func (c *searchCommander) printResult(rank int, result vector.QueryResult, dag *merkle.Dag) {
 	fmt.Printf("\n[%d] Score: %.4f\n", rank, result.Score)
 	fmt.Printf("    Hash: %s\n", result.Hash)
 
-	if len(ancestry) == 0 {
-		fmt.Println("    (No ancestry found)")
+	if dag == nil || dag.Size() == 0 {
+		fmt.Println("    (No session found)")
 		return
 	}
 
-	// The first node is the matched node itself
-	matchedNode := ancestry[0]
-	fmt.Printf("    Role: %s\n", matchedNode.Bucket.Role)
-	fmt.Printf("    Preview: %s\n", matchedNode.Bucket.ExtractText())
+	// Find the matched node in the DAG to get preview info
+	matchedNode := dag.Get(result.Hash)
+	if matchedNode != nil {
+		fmt.Printf("    Role: %s\n", matchedNode.Bucket.Role)
+		fmt.Printf("    Preview: %s\n", matchedNode.Bucket.ExtractText())
+	}
 
-	fmt.Printf("\n    Session (%d turns):\n", len(ancestry))
+	fmt.Printf("\n    Session (%d turns):\n", dag.Size())
 
-	// Print ancestry from root to matched node (reverse order)
-	for i := len(ancestry) - 1; i >= 0; i-- {
-		node := ancestry[i]
+	// Print the full branch using Walk (depth-first from root to leaves)
+	dag.Walk(func(node *merkle.DagNode) (bool, error) {
 		prefix := "    |-- "
-		if i == 0 {
-			prefix = "    `-> " // Mark the matched node
+		if node.Hash == result.Hash {
+			prefix = "    >>> " // Mark the matched node
 		}
 
 		text := node.Bucket.ExtractText()
@@ -193,8 +195,9 @@ func (c *searchCommander) printResult(rank int, result vector.QueryResult, ances
 			text = "(no text content)"
 		}
 
-		fmt.Printf("%s[%s] %s\n", prefix, node.Bucket.Role, text)
-	}
+		fmt.Printf("%s[%s] %s - %s\n", prefix, node.Bucket.Role, text, node.Hash)
+		return true, nil
+	})
 
 	fmt.Println()
 }
