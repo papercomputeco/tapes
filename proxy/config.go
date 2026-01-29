@@ -19,7 +19,7 @@ type Config struct {
 
 	// VectorDriver is an optional vector store for storing embeddings.
 	// If nil, vector storage is disabled.
-	VectorDriver vector.VectorDriver
+	VectorDriver vector.Driver
 
 	// Embedder is an optional embedder for generating embeddings.
 	// Required if VectorDriver is set.

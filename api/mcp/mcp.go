@@ -19,7 +19,7 @@ type Config struct {
 	DagLoader merkle.DagLoader
 
 	// VectorDriver for semantic search
-	VectorDriver vector.VectorDriver
+	VectorDriver vector.Driver
 
 	// Embedder for converting query text to vectors for semantic search with
 	// configured VectorDriver

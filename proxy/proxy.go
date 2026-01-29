@@ -433,8 +433,6 @@ func (p *Proxy) storeConversationTurn(ctx context.Context, providerName string, 
 	nodesToEmbed = append(nodesToEmbed, responseNode)
 
 	// Store embeddings if vector driver is configured
-	println(p.config.VectorDriver)
-	println(p.config.Embedder)
 	if p.config.VectorDriver != nil && p.config.Embedder != nil {
 		p.logger.Debug("storing in vector store with embedder")
 		p.storeEmbeddings(ctx, nodesToEmbed)

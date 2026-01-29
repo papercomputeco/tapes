@@ -20,7 +20,7 @@ const (
 	DefaultCollectionName = "tapes"
 )
 
-// ChromaDriver implements vector.VectorDriver using Chroma's REST API.
+// ChromaDriver implements vector.Driver using Chroma's REST API.
 type ChromaDriver struct {
 	baseURL        string
 	collectionName string

@@ -31,9 +31,9 @@ var _ = Describe("ChromaDriver", func() {
 	})
 
 	Describe("Interface compliance", func() {
-		It("should implement vector.VectorDriver interface", func() {
-			// Compile-time check that ChromaDriver implements VectorDriver
-			var _ vector.VectorDriver = (*chroma.ChromaDriver)(nil)
+		It("should implement vector.Driver interface", func() {
+			// Compile-time check that ChromaDriver implements vector.Driver
+			var _ vector.Driver = (*chroma.ChromaDriver)(nil)
 		})
 	})
 })
