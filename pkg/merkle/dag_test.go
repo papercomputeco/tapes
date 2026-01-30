@@ -29,7 +29,7 @@ func dagTestBucket(role, text string) merkle.Bucket {
 func buildTestDag(ctx context.Context, nodes []*merkle.Node, loadFromHash string) (*merkle.Dag, error) {
 	driver := inmemory.NewInMemoryDriver()
 	for _, node := range nodes {
-		if err := driver.Put(ctx, node); err != nil {
+		if _, err := driver.Put(ctx, node); err != nil {
 			return nil, err
 		}
 	}
@@ -373,7 +373,8 @@ var _ = Describe("Dag", func() {
 
 		It("loads a single node", func() {
 			root := merkle.NewNode(dagTestBucket("user", "Hello"), nil)
-			Expect(driver.Put(ctx, root)).To(Succeed())
+			_, err := driver.Put(ctx, root)
+			Expect(err).NotTo(HaveOccurred())
 
 			dag, err := merkle.LoadDag(ctx, driver, root.Hash)
 			Expect(err).NotTo(HaveOccurred())
@@ -386,9 +387,12 @@ var _ = Describe("Dag", func() {
 			child := merkle.NewNode(dagTestBucket("assistant", "2"), root)
 			grandchild := merkle.NewNode(dagTestBucket("user", "3"), child)
 
-			Expect(driver.Put(ctx, root)).To(Succeed())
-			Expect(driver.Put(ctx, child)).To(Succeed())
-			Expect(driver.Put(ctx, grandchild)).To(Succeed())
+			_, err := driver.Put(ctx, root)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = driver.Put(ctx, child)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = driver.Put(ctx, grandchild)
+			Expect(err).NotTo(HaveOccurred())
 
 			// Load from the middle node
 			dag, err := merkle.LoadDag(ctx, driver, child.Hash)
@@ -413,10 +417,14 @@ var _ = Describe("Dag", func() {
 			child2 := merkle.NewNode(dagTestBucket("assistant", "child2"), root)
 			grandchild := merkle.NewNode(dagTestBucket("user", "grandchild"), child1)
 
-			Expect(driver.Put(ctx, root)).To(Succeed())
-			Expect(driver.Put(ctx, child1)).To(Succeed())
-			Expect(driver.Put(ctx, child2)).To(Succeed())
-			Expect(driver.Put(ctx, grandchild)).To(Succeed())
+			_, err := driver.Put(ctx, root)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = driver.Put(ctx, child1)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = driver.Put(ctx, child2)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = driver.Put(ctx, grandchild)
+			Expect(err).NotTo(HaveOccurred())
 
 			// Load from root - should get all 4 nodes
 			dag, err := merkle.LoadDag(ctx, driver, root.Hash)
@@ -433,9 +441,12 @@ var _ = Describe("Dag", func() {
 			child1 := merkle.NewNode(dagTestBucket("assistant", "child1"), root)
 			child2 := merkle.NewNode(dagTestBucket("assistant", "child2"), root)
 
-			Expect(driver.Put(ctx, root)).To(Succeed())
-			Expect(driver.Put(ctx, child1)).To(Succeed())
-			Expect(driver.Put(ctx, child2)).To(Succeed())
+			_, err := driver.Put(ctx, root)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = driver.Put(ctx, child1)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = driver.Put(ctx, child2)
+			Expect(err).NotTo(HaveOccurred())
 
 			// Load from child1 - should get root + child1, but NOT child2
 			// (child2 is not an ancestor or descendant of child1)

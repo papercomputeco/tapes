@@ -11,10 +11,10 @@ import (
 // The Driver is the primary interface for working with pkg/merkle - it handles
 // storage, retrieval, and traversal of nodes per the storage implementor.
 type Driver interface {
-	// Put stores a node.
-	// If the node already exists (by hash), this should be a no-op.
-	// This provides automatic deduplication via content-addressing in the dag
-	Put(ctx context.Context, node *merkle.Node) error
+	// Put stores a node. Returns true if the node was newly inserted,
+	// false if it already exists. If the node already exists, this should be
+	// a no-op. Put provides automatic deduplication via content-addressing in the dag.
+	Put(ctx context.Context, node *merkle.Node) (bool, error)
 
 	// Get retrieves a node by its hash.
 	Get(ctx context.Context, hash string) (*merkle.Node, error)

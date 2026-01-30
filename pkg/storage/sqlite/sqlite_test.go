@@ -63,7 +63,7 @@ var _ = Describe("SQLiteDriver", func() {
 		It("stores and retrieves a node", func() {
 			node := merkle.NewNode(sqliteTestBucket("test content"), nil)
 
-			err := driver.Put(ctx, node)
+			_, err := driver.Put(ctx, node)
 			Expect(err).NotTo(HaveOccurred())
 
 			retrieved, err := driver.Get(ctx, node.Hash)
@@ -77,10 +77,10 @@ var _ = Describe("SQLiteDriver", func() {
 			parent := merkle.NewNode(sqliteTestBucket("parent"), nil)
 			child := merkle.NewNode(sqliteTestBucket("child"), parent)
 
-			err := driver.Put(ctx, parent)
+			_, err := driver.Put(ctx, parent)
 			Expect(err).NotTo(HaveOccurred())
 
-			err = driver.Put(ctx, child)
+			_, err = driver.Put(ctx, child)
 			Expect(err).NotTo(HaveOccurred())
 
 			retrieved, err := driver.Get(ctx, child.Hash)
@@ -100,18 +100,20 @@ var _ = Describe("SQLiteDriver", func() {
 		It("is idempotent for duplicate puts", func() {
 			node := merkle.NewNode(sqliteTestBucket("test"), nil)
 
-			err := driver.Put(ctx, node)
+			isNew, err := driver.Put(ctx, node)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(isNew).To(BeTrue())
 
-			err = driver.Put(ctx, node)
+			isNew, err = driver.Put(ctx, node)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(isNew).To(BeFalse())
 
 			nodes, _ := driver.List(ctx)
 			Expect(nodes).To(HaveLen(1))
 		})
 
 		It("rejects nil nodes", func() {
-			err := driver.Put(ctx, nil)
+			_, err := driver.Put(ctx, nil)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("nil node"))
 		})
@@ -428,7 +430,7 @@ var _ = Describe("SQLiteDriver", func() {
 				},
 			})
 
-			err := driver.Put(ctx, node)
+			_, err := driver.Put(ctx, node)
 			Expect(err).NotTo(HaveOccurred())
 
 			retrieved, err := driver.Get(ctx, node.Hash)

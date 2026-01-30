@@ -26,10 +26,11 @@ func NewInMemoryDriver() *InMemoryDriver {
 	}
 }
 
-// Put stores a node. If the node already exists (by hash), this is a no-op.
-func (s *InMemoryDriver) Put(ctx context.Context, node *merkle.Node) error {
+// Put stores a node. Returns true if the node was newly inserted,
+// false if it already existed (no-op due to content-addressing).
+func (s *InMemoryDriver) Put(ctx context.Context, node *merkle.Node) (bool, error) {
 	if node == nil {
-		return fmt.Errorf("cannot store nil node")
+		return false, fmt.Errorf("cannot store nil node")
 	}
 
 	s.mu.Lock()
@@ -37,11 +38,12 @@ func (s *InMemoryDriver) Put(ctx context.Context, node *merkle.Node) error {
 
 	// Idempotent insert - deduplication via content-addressing
 	_, ok := s.nodes[node.Hash]
-	if !ok {
-		s.nodes[node.Hash] = node
+	if ok {
+		return false, nil
 	}
 
-	return nil
+	s.nodes[node.Hash] = node
+	return true, nil
 }
 
 // Get retrieves a node by its hash.

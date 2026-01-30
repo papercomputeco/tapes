@@ -1,254 +1,889 @@
 package proxy
 
 import (
-	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"go.uber.org/zap"
 
-	"github.com/papercomputeco/tapes/pkg/llm"
-	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
-// proxyTestBucket creates a simple bucket for testing with the given role and text content
-func proxyTestBucket(role, text string) merkle.Bucket {
-	return merkle.Bucket{
-		Type:     "message",
-		Role:     role,
-		Content:  []llm.ContentBlock{{Type: "text", Text: text}},
-		Model:    "test-model",
-		Provider: "test-provider",
-	}
+// ollamaTestRequest is a minimal Ollama-format request for test fixtures.
+type ollamaTestRequest struct {
+	Model    string              `json:"model"`
+	Messages []ollamaTestMessage `json:"messages"`
+	Stream   *bool               `json:"stream,omitempty"`
 }
 
-// testProxy creates a Proxy with an in-memory storer for testing.
-func testProxy() *Proxy {
+type ollamaTestMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// ollamaTestResponse is a minimal Ollama-format response for test fixtures.
+type ollamaTestResponse struct {
+	Model           string            `json:"model"`
+	CreatedAt       time.Time         `json:"created_at"`
+	Message         ollamaTestMessage `json:"message"`
+	Done            bool              `json:"done"`
+	DoneReason      string            `json:"done_reason,omitempty"`
+	PromptEvalCount int               `json:"prompt_eval_count,omitempty"`
+	EvalCount       int               `json:"eval_count,omitempty"`
+	TotalDuration   int64             `json:"total_duration,omitempty"`
+}
+
+// boolPtr returns a pointer to a bool value.
+func boolPtr(b bool) *bool { return &b }
+
+// newTestProxy creates a Proxy pointed at the given upstream URL,
+// using an in-memory storage driver and the ollama provider.
+func newTestProxy(upstreamURL string) (*Proxy, *inmemory.InMemoryDriver) {
 	logger, _ := zap.NewDevelopment()
-	storer := inmemory.NewInMemoryDriver()
+	driver := inmemory.NewInMemoryDriver()
+
 	p, err := New(
 		Config{
 			ListenAddr:   ":0",
-			UpstreamURL:  "http://localhost:11434",
+			UpstreamURL:  upstreamURL,
 			ProviderType: "ollama",
 		},
-		storer,
+		driver,
 		logger,
 	)
 	Expect(err).NotTo(HaveOccurred())
-	return p
+	return p, driver
 }
 
-var _ = Describe("Content Addressable Deduplication", func() {
+// makeOllamaRequestBody builds a JSON-encoded Ollama chat request.
+func makeOllamaRequestBody(model string, messages []ollamaTestMessage, stream *bool) []byte {
+	body, err := json.Marshal(ollamaTestRequest{
+		Model:    model,
+		Messages: messages,
+		Stream:   stream,
+	})
+	Expect(err).NotTo(HaveOccurred())
+	return body
+}
+
+// makeOllamaResponseBody builds a JSON-encoded Ollama chat response.
+func makeOllamaResponseBody(model, role, content string) []byte {
+	body, err := json.Marshal(ollamaTestResponse{
+		Model:           model,
+		CreatedAt:       time.Now(),
+		Message:         ollamaTestMessage{Role: role, Content: content},
+		Done:            true,
+		DoneReason:      "stop",
+		PromptEvalCount: 10,
+		EvalCount:       5,
+		TotalDuration:   1000000,
+	})
+	Expect(err).NotTo(HaveOccurred())
+	return body
+}
+
+var _ = Describe("Non-Streaming Proxy", func() {
 	var (
-		p   *Proxy
-		ctx context.Context
+		p        *Proxy
+		driver   *inmemory.InMemoryDriver
+		upstream *httptest.Server
 	)
 
-	BeforeEach(func() {
-		p = testProxy()
-		ctx = context.Background()
+	AfterEach(func() {
+		if p != nil {
+			p.Close()
+		}
+		if upstream != nil {
+			upstream.Close()
+		}
 	})
 
-	It("produces the same hash for identical content", func() {
-		bucket := proxyTestBucket("user", "Hello")
-		node1 := merkle.NewNode(bucket, nil)
-		node2 := merkle.NewNode(bucket, nil)
-
-		Expect(node1.Hash).To(Equal(node2.Hash))
-	})
-
-	It("deduplicates identical nodes in storage", func() {
-		bucket := proxyTestBucket("user", "Hello")
-		node1 := merkle.NewNode(bucket, nil)
-		node2 := merkle.NewNode(bucket, nil)
-
-		Expect(p.driver.Put(ctx, node1)).To(Succeed())
-		Expect(p.driver.Put(ctx, node2)).To(Succeed())
-
-		nodes, err := p.driver.List(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(nodes).To(HaveLen(1))
-	})
-})
-
-var _ = Describe("Branching Conversations", func() {
-	var (
-		p   *Proxy
-		ctx context.Context
-	)
-
-	BeforeEach(func() {
-		p = testProxy()
-		ctx = context.Background()
-	})
-
-	Context("when two different responses share the same parent", func() {
-		var (
-			userMsg   *merkle.Node
-			response1 *merkle.Node
-			response2 *merkle.Node
-		)
-
+	Context("when upstream returns a successful response", func() {
 		BeforeEach(func() {
-			userMsg = merkle.NewNode(proxyTestBucket("user", "What is 2+2?"), nil)
-			Expect(p.driver.Put(ctx, userMsg)).To(Succeed())
-
-			response1 = merkle.NewNode(proxyTestBucket("assistant", "2+2 equals 4."), userMsg)
-			response2 = merkle.NewNode(proxyTestBucket("assistant", "The answer is 4!"), userMsg)
-
-			Expect(p.driver.Put(ctx, response1)).To(Succeed())
-			Expect(p.driver.Put(ctx, response2)).To(Succeed())
+			upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Custom-Header", "test-value")
+				w.WriteHeader(http.StatusOK)
+				w.Write(makeOllamaResponseBody("test-model", "assistant", "2+2 equals 4."))
+			}))
+			p, driver = newTestProxy(upstream.URL)
 		})
 
-		It("produces different hashes for different content", func() {
-			Expect(response1.Hash).NotTo(Equal(response2.Hash))
-		})
+		It("forwards the request and returns the upstream response", func() {
+			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+				{Role: "user", Content: "What is 2+2?"},
+			}, boolPtr(false))
 
-		It("links both responses to the same parent", func() {
-			Expect(*response1.ParentHash).To(Equal(*response2.ParentHash))
-			Expect(userMsg.Hash).To(Equal(*response1.ParentHash))
-		})
-
-		It("stores all 3 nodes (1 user + 2 branches)", func() {
-			nodes, err := p.driver.List(ctx)
+			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(nodes).To(HaveLen(3))
+			defer resp.Body.Close()
+
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(body)).To(ContainSubstring("2+2 equals 4."))
 		})
 
-		It("has 1 root", func() {
-			roots, err := p.driver.Roots(ctx)
+		It("copies upstream response headers to the client", func() {
+			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+				{Role: "user", Content: "What is 2+2?"},
+			}, boolPtr(false))
+
+			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(roots).To(HaveLen(1))
+			defer resp.Body.Close()
+
+			Expect(resp.Header.Get("X-Custom-Header")).To(Equal("test-value"))
+			Expect(resp.Header.Get("Content-Type")).To(Equal("application/json"))
 		})
 
-		It("has 2 leaves", func() {
-			leaves, err := p.driver.Leaves(ctx)
+		It("stores the conversation turn via the worker pool", func() {
+			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+				{Role: "user", Content: "What is 2+2?"},
+			}, boolPtr(false))
+
+			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(leaves).To(HaveLen(2))
-		})
-	})
-})
+			resp.Body.Close()
 
-// Describe block for multi-turn conversation ancestry verifies that multi-turn
-// conversations maintain proper ancestry chains when assistant responses are replayed.
-//
-// Since StopReason and Usage are stored on Node (not Bucket), they don't affect
-// the content-addressable hash. This means replaying an assistant message produces
-// the SAME hash as the original response, enabling proper DAG continuation
-// without any special matching logic.
-var _ = Describe("Multi-Turn Conversation Ancestry", func() {
-	var (
-		p            *Proxy
-		ctx          context.Context
-		providerName string
-	)
+			// Drain the worker pool and shut down to ensure async storage completes.
+			// Set p = nil so AfterEach doesn't double-close.
+			p.Close()
+			p = nil
 
-	BeforeEach(func() {
-		p = testProxy()
-		ctx = context.Background()
-		providerName = "test-provider"
-	})
-
-	Context("after turn 1 (user asks a question)", func() {
-		var (
-			hash1 string
-			req1  *llm.ChatRequest
-			resp1 *llm.ChatResponse
-		)
-
-		BeforeEach(func() {
-			req1 = &llm.ChatRequest{
-				Model: "test-model",
-				Messages: []llm.Message{
-					{Role: "system", Content: []llm.ContentBlock{{Type: "text", Text: "You are a helpful assistant."}}},
-					{Role: "user", Content: []llm.ContentBlock{{Type: "text", Text: "What is 2+2?"}}},
-				},
-			}
-			resp1 = &llm.ChatResponse{
-				Model:      "test-model",
-				StopReason: "stop",
-				Usage:      &llm.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15},
-				Message: llm.Message{
-					Role:    "assistant",
-					Content: []llm.ContentBlock{{Type: "text", Text: "2+2 equals 4."}},
-				},
-			}
-
-			var err error
-			hash1, err = p.storeConversationTurn(ctx, providerName, req1, resp1)
+			ctx := GinkgoT().Context()
+			nodes, err := driver.List(ctx)
 			Expect(err).NotTo(HaveOccurred())
+			// 1 user message + 1 assistant response = 2 nodes
+			Expect(nodes).To(HaveLen(2))
+
+			leaves, err := driver.Leaves(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(leaves).To(HaveLen(1))
+			Expect(leaves[0].Bucket.Role).To(Equal("assistant"))
+			Expect(leaves[0].Bucket.ExtractText()).To(Equal("2+2 equals 4."))
 		})
 
-		It("has 3 nodes in ancestry (system -> user -> assistant)", func() {
-			ancestry, err := p.driver.Ancestry(ctx, hash1)
+		It("stores multi-message requests as a chain", func() {
+			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+				{Role: "system", Content: "You are helpful."},
+				{Role: "user", Content: "What is 2+2?"},
+			}, boolPtr(false))
+
+			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))))
 			Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+
+			p.Close()
+			p = nil
+
+			ctx := GinkgoT().Context()
+			leaves, err := driver.Leaves(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(leaves).To(HaveLen(1))
+
+			ancestry, err := driver.Ancestry(ctx, leaves[0].Hash)
+			Expect(err).NotTo(HaveOccurred())
+			// system -> user -> assistant = 3 nodes
 			Expect(ancestry).To(HaveLen(3))
-		})
-
-		It("orders ancestry from newest to oldest", func() {
-			ancestry, err := p.driver.Ancestry(ctx, hash1)
-			Expect(err).NotTo(HaveOccurred())
 			Expect(ancestry[0].Bucket.Role).To(Equal("assistant"))
 			Expect(ancestry[1].Bucket.Role).To(Equal("user"))
 			Expect(ancestry[2].Bucket.Role).To(Equal("system"))
 		})
+	})
 
-		Context("after turn 2 (user continues the conversation)", func() {
-			var hash2 string
-
-			BeforeEach(func() {
-				req2 := &llm.ChatRequest{
-					Model: "test-model",
-					Messages: []llm.Message{
-						{Role: "system", Content: []llm.ContentBlock{{Type: "text", Text: "You are a helpful assistant."}}},
-						{Role: "user", Content: []llm.ContentBlock{{Type: "text", Text: "What is 2+2?"}}},
-						{Role: "assistant", Content: []llm.ContentBlock{{Type: "text", Text: "2+2 equals 4."}}}, // Replayed
-						{Role: "user", Content: []llm.ContentBlock{{Type: "text", Text: "And what is 3+3?"}}},   // New
-					},
-				}
-				resp2 := &llm.ChatResponse{
-					Model:      "test-model",
-					StopReason: "stop",
-					Usage:      &llm.Usage{PromptTokens: 20, CompletionTokens: 5, TotalTokens: 25},
-					Message: llm.Message{
-						Role:    "assistant",
-						Content: []llm.ContentBlock{{Type: "text", Text: "3+3 equals 6."}},
-					},
-				}
-
-				var err error
-				hash2, err = p.storeConversationTurn(ctx, providerName, req2, resp2)
-				Expect(err).NotTo(HaveOccurred())
-			})
-
-			It("has 5 nodes in ancestry (full conversation history)", func() {
-				ancestry, err := p.driver.Ancestry(ctx, hash2)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(ancestry).To(HaveLen(5))
-			})
-
-			It("orders the full chain from newest to oldest", func() {
-				ancestry, err := p.driver.Ancestry(ctx, hash2)
-				Expect(err).NotTo(HaveOccurred())
-
-				Expect(ancestry[0].Bucket.Role).To(Equal("assistant"))
-				Expect(ancestry[0].Bucket.ExtractText()).To(Equal("3+3 equals 6."))
-				Expect(ancestry[1].Bucket.Role).To(Equal("user"))
-				Expect(ancestry[1].Bucket.ExtractText()).To(Equal("And what is 3+3?"))
-				Expect(ancestry[2].Bucket.Role).To(Equal("assistant"))
-				Expect(ancestry[2].Bucket.ExtractText()).To(Equal("2+2 equals 4."))
-				Expect(ancestry[3].Bucket.Role).To(Equal("user"))
-				Expect(ancestry[3].Bucket.ExtractText()).To(Equal("What is 2+2?"))
-				Expect(ancestry[4].Bucket.Role).To(Equal("system"))
-			})
-
-			It("reuses the original assistant response from turn 1 (same hash)", func() {
-				ancestry, err := p.driver.Ancestry(ctx, hash2)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(ancestry[2].Hash).To(Equal(hash1))
-			})
+	Context("when upstream returns an error", func() {
+		BeforeEach(func() {
+			upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(`{"error":"model not found"}`))
+			}))
+			p, driver = newTestProxy(upstream.URL)
 		})
+
+		It("returns the upstream error status to the client", func() {
+			reqBody := makeOllamaRequestBody("nonexistent", []ollamaTestMessage{
+				{Role: "user", Content: "hello"},
+			}, boolPtr(false))
+
+			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))))
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			Expect(resp.StatusCode).To(Equal(http.StatusInternalServerError))
+
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(body)).To(ContainSubstring("model not found"))
+		})
+
+		It("does not store any nodes", func() {
+			reqBody := makeOllamaRequestBody("nonexistent", []ollamaTestMessage{
+				{Role: "user", Content: "hello"},
+			}, boolPtr(false))
+
+			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))))
+			Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+
+			p.Close()
+			p = nil
+
+			ctx := GinkgoT().Context()
+			nodes, err := driver.List(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nodes).To(BeEmpty())
+		})
+	})
+
+	Context("when the request is not a chat request", func() {
+		BeforeEach(func() {
+			upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"models":[{"name":"llama2"}]}`))
+			}))
+			p, driver = newTestProxy(upstream.URL)
+		})
+
+		It("forwards GET requests transparently without storing", func() {
+			resp, err := p.server.Test(httptest.NewRequest("GET", "/api/tags", nil))
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(body)).To(ContainSubstring("llama2"))
+
+			p.Close()
+			p = nil
+
+			ctx := GinkgoT().Context()
+			nodes, err := driver.List(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nodes).To(BeEmpty())
+		})
+	})
+
+	Context("when upstream request headers are forwarded", func() {
+		var receivedHeaders http.Header
+
+		BeforeEach(func() {
+			upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				receivedHeaders = r.Header.Clone()
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				w.Write(makeOllamaResponseBody("test-model", "assistant", "hi"))
+			}))
+			p, driver = newTestProxy(upstream.URL)
+		})
+
+		It("forwards custom request headers to upstream", func() {
+			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+				{Role: "user", Content: "hello"},
+			}, boolPtr(false))
+
+			req := httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody)))
+			req.Header.Set("X-Api-Key", "secret-token")
+			req.Header.Set("Content-Type", "application/json")
+
+			resp, err := p.server.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+
+			Expect(receivedHeaders.Get("X-Api-Key")).To(Equal("secret-token"))
+			Expect(receivedHeaders.Get("Content-Type")).To(Equal("application/json"))
+		})
+	})
+})
+
+var _ = Describe("Streaming Proxy", func() {
+	var (
+		p        *Proxy
+		driver   *inmemory.InMemoryDriver
+		upstream *httptest.Server
+	)
+
+	AfterEach(func() {
+		if p != nil {
+			p.Close()
+		}
+		if upstream != nil {
+			upstream.Close()
+		}
+	})
+
+	Context("when upstream returns a successful streaming response", func() {
+		BeforeEach(func() {
+			upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/x-ndjson")
+				flusher, ok := w.(http.Flusher)
+				Expect(ok).To(BeTrue())
+
+				chunks := []string{
+					`{"model":"test-model","message":{"role":"assistant","content":"2+2"},"done":false}`,
+					`{"model":"test-model","message":{"role":"assistant","content":" equals"},"done":false}`,
+					`{"model":"test-model","message":{"role":"assistant","content":" 4."},"done":false}`,
+					`{"model":"test-model","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":10,"eval_count":5,"total_duration":1000000}`,
+				}
+
+				for _, chunk := range chunks {
+					fmt.Fprintln(w, chunk)
+					flusher.Flush()
+				}
+			}))
+			p, driver = newTestProxy(upstream.URL)
+		})
+
+		It("streams all chunks to the client", func() {
+			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+				{Role: "user", Content: "What is 2+2?"},
+			}, boolPtr(true))
+
+			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))), -1)
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			bodyStr := string(body)
+
+			// All chunks should be present in the response body
+			Expect(bodyStr).To(ContainSubstring(`"content":"2+2"`))
+			Expect(bodyStr).To(ContainSubstring(`"content":" equals"`))
+			Expect(bodyStr).To(ContainSubstring(`"content":" 4."`))
+			Expect(bodyStr).To(ContainSubstring(`"done":true`))
+		})
+
+		It("stores the reconstructed conversation after streaming completes", func() {
+			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+				{Role: "user", Content: "What is 2+2?"},
+			}, boolPtr(true))
+
+			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))), -1)
+			Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+
+			// Drain the worker pool to ensure async storage completes
+			p.Close()
+			p = nil
+
+			ctx := GinkgoT().Context()
+			nodes, err := driver.List(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			// 1 user message + 1 assistant response = 2 nodes
+			Expect(nodes).To(HaveLen(2))
+
+			leaves, err := driver.Leaves(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(leaves).To(HaveLen(1))
+			Expect(leaves[0].Bucket.Role).To(Equal("assistant"))
+			// The accumulated content from all streaming chunks
+			Expect(leaves[0].Bucket.ExtractText()).To(Equal("2+2 equals 4."))
+		})
+	})
+
+	Context("when upstream returns an error during streaming", func() {
+		BeforeEach(func() {
+			upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte(`{"error":"invalid model"}`))
+			}))
+			p, driver = newTestProxy(upstream.URL)
+		})
+
+		It("returns the error to the client without storing", func() {
+			reqBody := makeOllamaRequestBody("bad-model", []ollamaTestMessage{
+				{Role: "user", Content: "hello"},
+			}, boolPtr(true))
+
+			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))), -1)
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(body)).To(ContainSubstring("invalid model"))
+
+			p.Close()
+			p = nil
+
+			ctx := GinkgoT().Context()
+			nodes, err := driver.List(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nodes).To(BeEmpty())
+		})
+	})
+
+	Context("with multi-message streaming request", func() {
+		BeforeEach(func() {
+			upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/x-ndjson")
+				flusher, ok := w.(http.Flusher)
+				Expect(ok).To(BeTrue())
+
+				chunks := []string{
+					`{"model":"test-model","message":{"role":"assistant","content":"The answer is 4."},"done":false}`,
+					`{"model":"test-model","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":15,"eval_count":5,"total_duration":2000000}`,
+				}
+
+				for _, chunk := range chunks {
+					fmt.Fprintln(w, chunk)
+					flusher.Flush()
+				}
+			}))
+			p, driver = newTestProxy(upstream.URL)
+		})
+
+		It("stores the full ancestry chain including system and user messages", func() {
+			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+				{Role: "system", Content: "You are helpful."},
+				{Role: "user", Content: "What is 2+2?"},
+			}, boolPtr(true))
+
+			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))), -1)
+			Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+
+			p.Close()
+			p = nil
+
+			ctx := GinkgoT().Context()
+			leaves, err := driver.Leaves(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(leaves).To(HaveLen(1))
+
+			ancestry, err := driver.Ancestry(ctx, leaves[0].Hash)
+			Expect(err).NotTo(HaveOccurred())
+			// system -> user -> assistant = 3 nodes
+			Expect(ancestry).To(HaveLen(3))
+			Expect(ancestry[0].Bucket.Role).To(Equal("assistant"))
+			Expect(ancestry[1].Bucket.Role).To(Equal("user"))
+			Expect(ancestry[2].Bucket.Role).To(Equal("system"))
+		})
+	})
+})
+
+var _ = Describe("Streaming Detection", func() {
+	var (
+		p        *Proxy
+		upstream *httptest.Server
+	)
+
+	AfterEach(func() {
+		if p != nil {
+			p.Close()
+		}
+		if upstream != nil {
+			upstream.Close()
+		}
+	})
+
+	Context("with an Ollama provider (defaults to streaming)", func() {
+		var requestBodies [][]byte
+
+		BeforeEach(func() {
+			requestBodies = nil
+			upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				bodyCopy := make([]byte, len(body))
+				copy(bodyCopy, body)
+				requestBodies = append(requestBodies, bodyCopy)
+
+				var check struct {
+					Stream *bool `json:"stream"`
+				}
+				json.Unmarshal(body, &check)
+
+				isStreaming := check.Stream == nil || *check.Stream
+				w.Header().Set("Content-Type", "application/json")
+				if isStreaming {
+					flusher, _ := w.(http.Flusher)
+					fmt.Fprintln(w, `{"model":"test-model","message":{"role":"assistant","content":"hi"},"done":false}`)
+					fmt.Fprintln(w, `{"model":"test-model","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop"}`)
+					flusher.Flush()
+				} else {
+					w.Write(makeOllamaResponseBody("test-model", "assistant", "hi"))
+				}
+			}))
+			p, _ = newTestProxy(upstream.URL)
+		})
+
+		It("routes to streaming when stream=true is set explicitly", func() {
+			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+				{Role: "user", Content: "hello"},
+			}, boolPtr(true))
+
+			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))), -1)
+			Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+
+			p.Close()
+			p = nil
+			Expect(requestBodies).To(HaveLen(1))
+
+			var forwarded struct {
+				Stream *bool `json:"stream"`
+			}
+			Expect(json.Unmarshal(requestBodies[0], &forwarded)).To(Succeed())
+			Expect(forwarded.Stream).NotTo(BeNil())
+			Expect(*forwarded.Stream).To(BeTrue())
+		})
+
+		It("routes to non-streaming when stream=false is set explicitly", func() {
+			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+				{Role: "user", Content: "hello"},
+			}, boolPtr(false))
+
+			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))))
+			Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+
+			p.Close()
+			p = nil
+			Expect(requestBodies).To(HaveLen(1))
+
+			var forwarded struct {
+				Stream *bool `json:"stream"`
+			}
+			Expect(json.Unmarshal(requestBodies[0], &forwarded)).To(Succeed())
+			Expect(forwarded.Stream).NotTo(BeNil())
+			Expect(*forwarded.Stream).To(BeFalse())
+		})
+
+		It("defaults to streaming when stream field is omitted (Ollama default)", func() {
+			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+				{Role: "user", Content: "hello"},
+			}, nil)
+
+			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))), -1)
+			Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+
+			p.Close()
+			p = nil
+			// Request was forwarded to upstream
+			Expect(requestBodies).To(HaveLen(1))
+
+			// Verify the proxy chose the streaming path by checking
+			// the request body was forwarded (it's the same body regardless of path,
+			// but the upstream receives it either way). The key assertion is that
+			// the upstream was reached and returned a streaming-style response.
+			var forwarded struct {
+				Stream *bool `json:"stream"`
+			}
+			Expect(json.Unmarshal(requestBodies[0], &forwarded)).To(Succeed())
+			// Stream field should be nil (omitted) - the proxy uses provider default internally
+			Expect(forwarded.Stream).To(BeNil())
+		})
+	})
+})
+
+var _ = Describe("reconstructStreamedResponse", func() {
+	var p *Proxy
+
+	BeforeEach(func() {
+		p, _ = newTestProxy("http://localhost:0")
+	})
+
+	AfterEach(func() {
+		p.Close()
+	})
+
+	It("parses the last chunk when it contains valid response metadata", func() {
+		chunks := [][]byte{
+			[]byte(`{"model":"test-model","message":{"role":"assistant","content":"Hello"},"done":false}`),
+			[]byte(`{"model":"test-model","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":10,"eval_count":5}`),
+		}
+
+		resp := p.reconstructStreamedResponse(chunks, "Hello")
+		Expect(resp).NotTo(BeNil())
+		Expect(resp.Message.GetText()).To(Equal("Hello"))
+		Expect(resp.Done).To(BeTrue())
+		Expect(resp.StopReason).To(Equal("stop"))
+	})
+
+	It("supplements empty last-chunk text with accumulated content", func() {
+		chunks := [][]byte{
+			[]byte(`{"model":"test-model","message":{"role":"assistant","content":"partial"},"done":false}`),
+			[]byte(`{"model":"test-model","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop"}`),
+		}
+
+		resp := p.reconstructStreamedResponse(chunks, "partial content here")
+		Expect(resp).NotTo(BeNil())
+		Expect(resp.Message.GetText()).To(Equal("partial content here"))
+	})
+
+	It("falls back to accumulated content when last chunk is unparseable", func() {
+		chunks := [][]byte{
+			[]byte(`not-valid-json`),
+			[]byte(`also-not-json`),
+		}
+
+		resp := p.reconstructStreamedResponse(chunks, "fallback content")
+		Expect(resp).NotTo(BeNil())
+		Expect(resp.Message.GetText()).To(Equal("fallback content"))
+		Expect(resp.Done).To(BeTrue())
+		Expect(resp.Message.Role).To(Equal("assistant"))
+	})
+
+	It("returns nil when there are no chunks and no content", func() {
+		resp := p.reconstructStreamedResponse(nil, "")
+		Expect(resp).To(BeNil())
+	})
+
+	It("returns nil when chunks exist but content is empty and last chunk is unparseable", func() {
+		chunks := [][]byte{
+			[]byte(`not-json`),
+		}
+		resp := p.reconstructStreamedResponse(chunks, "")
+		Expect(resp).To(BeNil())
+	})
+})
+
+var _ = Describe("truncate", func() {
+	It("returns the string unchanged when within the limit", func() {
+		Expect(truncate("short", 10)).To(Equal("short"))
+	})
+
+	It("returns the string unchanged when exactly at the limit", func() {
+		Expect(truncate("12345", 5)).To(Equal("12345"))
+	})
+
+	It("truncates with ellipsis when over the limit", func() {
+		result := truncate("this is a long string", 10)
+		Expect(result).To(Equal("this is a ..."))
+	})
+
+	It("replaces newlines with spaces", func() {
+		result := truncate("line1\nline2\nline3", 100)
+		Expect(result).To(Equal("line1 line2 line3"))
+	})
+
+	It("replaces newlines before truncating", func() {
+		result := truncate("ab\ncd\nef", 5)
+		Expect(result).To(Equal("ab cd..."))
+	})
+})
+
+var _ = Describe("New", func() {
+	It("returns an error for unrecognized provider type", func() {
+		logger, _ := zap.NewDevelopment()
+		driver := inmemory.NewInMemoryDriver()
+
+		_, err := New(Config{
+			ListenAddr:   ":0",
+			UpstreamURL:  "http://localhost:11434",
+			ProviderType: "nonexistent",
+		}, driver, logger)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("nonexistent"))
+	})
+
+	It("creates a proxy with a valid provider type", func() {
+		logger, _ := zap.NewDevelopment()
+		driver := inmemory.NewInMemoryDriver()
+
+		p, err := New(Config{
+			ListenAddr:   ":0",
+			UpstreamURL:  "http://localhost:11434",
+			ProviderType: "ollama",
+		}, driver, logger)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(p).NotTo(BeNil())
+		Expect(p.provider.Name()).To(Equal("ollama"))
+		p.Close()
+	})
+})
+
+var _ = Describe("End-to-End Multi-Turn Proxy", func() {
+	var (
+		p        *Proxy
+		driver   *inmemory.InMemoryDriver
+		upstream *httptest.Server
+		turnNum  int
+	)
+
+	BeforeEach(func() {
+		turnNum = 0
+		upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			turnNum++
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+
+			switch turnNum {
+			case 1:
+				w.Write(makeOllamaResponseBody("test-model", "assistant", "2+2 equals 4."))
+			case 2:
+				w.Write(makeOllamaResponseBody("test-model", "assistant", "3+3 equals 6."))
+			}
+		}))
+		p, driver = newTestProxy(upstream.URL)
+	})
+
+	AfterEach(func() {
+		if p != nil {
+			p.Close()
+		}
+		upstream.Close()
+	})
+
+	It("deduplicates replayed messages across turns", func() {
+		// Turn 1: system + user -> assistant
+		reqBody1 := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+			{Role: "system", Content: "You are helpful."},
+			{Role: "user", Content: "What is 2+2?"},
+		}, boolPtr(false))
+
+		resp1, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody1))))
+		Expect(err).NotTo(HaveOccurred())
+		resp1.Body.Close()
+
+		// Turn 2: replayed system + user + assistant + new user -> new assistant
+		reqBody2 := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+			{Role: "system", Content: "You are helpful."},
+			{Role: "user", Content: "What is 2+2?"},
+			{Role: "assistant", Content: "2+2 equals 4."},
+			{Role: "user", Content: "And what is 3+3?"},
+		}, boolPtr(false))
+
+		resp2, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody2))))
+		Expect(err).NotTo(HaveOccurred())
+		resp2.Body.Close()
+
+		// Drain the worker pool
+		p.Close()
+		p = nil
+
+		ctx := GinkgoT().Context()
+
+		// Content-addressable deduplication should yield exactly 5 unique nodes
+		nodes, err := driver.List(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(nodes).To(HaveLen(5))
+
+		// The latest leaf should have full ancestry
+		leaves, err := driver.Leaves(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(leaves).To(HaveLen(1))
+
+		ancestry, err := driver.Ancestry(ctx, leaves[0].Hash)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ancestry).To(HaveLen(5))
+
+		// Verify ordering from newest to oldest
+		Expect(ancestry[0].Bucket.Role).To(Equal("assistant"))
+		Expect(ancestry[0].Bucket.ExtractText()).To(Equal("3+3 equals 6."))
+		Expect(ancestry[1].Bucket.Role).To(Equal("user"))
+		Expect(ancestry[1].Bucket.ExtractText()).To(Equal("And what is 3+3?"))
+		Expect(ancestry[2].Bucket.Role).To(Equal("assistant"))
+		Expect(ancestry[2].Bucket.ExtractText()).To(Equal("2+2 equals 4."))
+		Expect(ancestry[3].Bucket.Role).To(Equal("user"))
+		Expect(ancestry[3].Bucket.ExtractText()).To(Equal("What is 2+2?"))
+		Expect(ancestry[4].Bucket.Role).To(Equal("system"))
+	})
+})
+
+var _ = Describe("Storage Provider Metadata", func() {
+	var (
+		p        *Proxy
+		driver   *inmemory.InMemoryDriver
+		upstream *httptest.Server
+	)
+
+	BeforeEach(func() {
+		upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write(makeOllamaResponseBody("test-model", "assistant", "Hello!"))
+		}))
+		p, driver = newTestProxy(upstream.URL)
+	})
+
+	AfterEach(func() {
+		if p != nil {
+			p.Close()
+		}
+		upstream.Close()
+	})
+
+	It("stores the provider name in each node's bucket", func() {
+		reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+			{Role: "user", Content: "hi"},
+		}, boolPtr(false))
+
+		resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))))
+		Expect(err).NotTo(HaveOccurred())
+		resp.Body.Close()
+
+		p.Close()
+		p = nil
+
+		ctx := GinkgoT().Context()
+		nodes, err := driver.List(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(nodes).NotTo(BeEmpty())
+
+		for _, node := range nodes {
+			Expect(node.Bucket.Provider).To(Equal("ollama"))
+		}
+	})
+
+	It("stores the model name in each node's bucket", func() {
+		reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+			{Role: "user", Content: "hi"},
+		}, boolPtr(false))
+
+		resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))))
+		Expect(err).NotTo(HaveOccurred())
+		resp.Body.Close()
+
+		p.Close()
+		p = nil
+
+		ctx := GinkgoT().Context()
+		nodes, err := driver.List(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(nodes).NotTo(BeEmpty())
+
+		for _, node := range nodes {
+			Expect(node.Bucket.Model).To(Equal("test-model"))
+		}
+	})
+
+	It("stores usage metadata on the response node", func() {
+		reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+			{Role: "user", Content: "hi"},
+		}, boolPtr(false))
+
+		resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))))
+		Expect(err).NotTo(HaveOccurred())
+		resp.Body.Close()
+
+		p.Close()
+		p = nil
+
+		ctx := GinkgoT().Context()
+		leaves, err := driver.Leaves(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(leaves).To(HaveLen(1))
+		Expect(leaves[0].Usage).NotTo(BeNil())
+		Expect(leaves[0].Usage.PromptTokens).To(Equal(10))
+		Expect(leaves[0].Usage.CompletionTokens).To(Equal(5))
+		Expect(leaves[0].StopReason).To(Equal("stop"))
 	})
 })

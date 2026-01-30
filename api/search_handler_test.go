@@ -152,8 +152,10 @@ var _ = Describe("handleSearchEndpoint", func() {
 			node1 := merkle.NewNode(testutils.NewTestBucket("user", "Hello"), nil)
 			node2 := merkle.NewNode(testutils.NewTestBucket("assistant", "Hi there"), node1)
 
-			Expect(inMem.Put(ctx, node1)).To(Succeed())
-			Expect(inMem.Put(ctx, node2)).To(Succeed())
+			_, err := inMem.Put(ctx, node1)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = inMem.Put(ctx, node2)
+			Expect(err).NotTo(HaveOccurred())
 
 			vectorDriver.Results = []vector.QueryResult{
 				{

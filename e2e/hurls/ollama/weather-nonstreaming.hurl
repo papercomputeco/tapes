@@ -1,4 +1,5 @@
-# Ollama multi-turn conversation simulating arbitrary too calling capabilities.
+# Ollama multi-turn conversation simulating arbitrary too calling Capabilities
+# with "stream: false" explicitly set
 
 POST http://localhost:8080/api/chat
 {
@@ -56,5 +57,6 @@ POST http://localhost:8080/api/chat
         }
       }
     }
-  ]
+  ],
+  "stream": false
 }

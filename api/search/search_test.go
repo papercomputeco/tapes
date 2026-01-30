@@ -50,8 +50,10 @@ var _ = Describe("Search", func() {
 			node1 := merkle.NewNode(testutils.NewTestBucket("user", "Hello"), nil)
 			node2 := merkle.NewNode(testutils.NewTestBucket("assistant", "Hi there"), node1)
 
-			Expect(driver.Put(ctx, node1)).To(Succeed())
-			Expect(driver.Put(ctx, node2)).To(Succeed())
+			_, err := driver.Put(ctx, node1)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = driver.Put(ctx, node2)
+			Expect(err).NotTo(HaveOccurred())
 
 			vectorDriver.Results = []vector.QueryResult{
 				{
@@ -114,7 +116,8 @@ var _ = Describe("Search", func() {
 	Describe("BuildSearchResult", func() {
 		It("builds a result from a single node", func() {
 			node := merkle.NewNode(testutils.NewTestBucket("user", "Hello world"), nil)
-			Expect(driver.Put(ctx, node)).To(Succeed())
+			_, err := driver.Put(ctx, node)
+			Expect(err).NotTo(HaveOccurred())
 
 			result := vector.QueryResult{
 				Document: vector.Document{
@@ -142,9 +145,12 @@ var _ = Describe("Search", func() {
 			node2 := merkle.NewNode(testutils.NewTestBucket("assistant", "Hi there"), node1)
 			node3 := merkle.NewNode(testutils.NewTestBucket("user", "How are you?"), node2)
 
-			Expect(driver.Put(ctx, node1)).To(Succeed())
-			Expect(driver.Put(ctx, node2)).To(Succeed())
-			Expect(driver.Put(ctx, node3)).To(Succeed())
+			_, err := driver.Put(ctx, node1)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = driver.Put(ctx, node2)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = driver.Put(ctx, node3)
+			Expect(err).NotTo(HaveOccurred())
 
 			result := vector.QueryResult{
 				Document: vector.Document{

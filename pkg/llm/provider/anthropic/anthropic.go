@@ -19,6 +19,11 @@ func (p *provider) Name() string {
 	return "anthropic"
 }
 
+// DefaultStreaming is false - Anthropic requires explicit "stream": true.
+func (p *provider) DefaultStreaming() bool {
+	return false
+}
+
 func (p *provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 	var req anthropicRequest
 	if err := json.Unmarshal(payload, &req); err != nil {

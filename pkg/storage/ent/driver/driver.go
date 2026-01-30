@@ -19,10 +19,11 @@ type EntDriver struct {
 	Client *ent.Client
 }
 
-// Put stores a node. If the node already exists (by hash), this is a no-op.
-func (ed *EntDriver) Put(ctx context.Context, n *merkle.Node) error {
+// Put stores a node. Returns true if the node was newly inserted,
+// false if it already existed. This is a no-op due to content-addressing.
+func (ed *EntDriver) Put(ctx context.Context, n *merkle.Node) (bool, error) {
 	if n == nil {
-		return fmt.Errorf("cannot store nil node")
+		return false, fmt.Errorf("cannot store nil node")
 	}
 
 	// Check if node already exists (idempotent insert)
@@ -30,10 +31,10 @@ func (ed *EntDriver) Put(ctx context.Context, n *merkle.Node) error {
 		Where(node.ID(n.Hash)).
 		Exist(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to check existence: %w", err)
+		return false, fmt.Errorf("failed to check existence: %w", err)
 	}
 	if exists {
-		return nil
+		return false, nil
 	}
 
 	create := ed.Client.Node.Create().
@@ -48,22 +49,22 @@ func (ed *EntDriver) Put(ctx context.Context, n *merkle.Node) error {
 	// Marshal bucket to JSON for storage
 	bucketJSON, err := json.Marshal(n.Bucket)
 	if err != nil {
-		return fmt.Errorf("failed to marshal bucket: %w", err)
+		return false, fmt.Errorf("failed to marshal bucket: %w", err)
 	}
 	var bucketMap map[string]any
 	if err := json.Unmarshal(bucketJSON, &bucketMap); err != nil {
-		return fmt.Errorf("failed to unmarshal bucket to map: %w", err)
+		return false, fmt.Errorf("failed to unmarshal bucket to map: %w", err)
 	}
 	create.SetBucket(bucketMap)
 
 	// Marshal content blocks
 	contentJSON, err := json.Marshal(n.Bucket.Content)
 	if err != nil {
-		return fmt.Errorf("failed to marshal content: %w", err)
+		return false, fmt.Errorf("failed to marshal content: %w", err)
 	}
 	var contentSlice []map[string]any
 	if err := json.Unmarshal(contentJSON, &contentSlice); err != nil {
-		return fmt.Errorf("failed to unmarshal content to slice: %w", err)
+		return false, fmt.Errorf("failed to unmarshal content to slice: %w", err)
 	}
 	create.SetContent(contentSlice)
 
@@ -86,7 +87,12 @@ func (ed *EntDriver) Put(ctx context.Context, n *merkle.Node) error {
 		}
 	}
 
-	return create.Exec(ctx)
+	err = create.Exec(ctx)
+	if err != nil {
+		return false, fmt.Errorf("could not execute node creation: %w", err)
+	}
+
+	return true, nil
 }
 
 // Get retrieves a node by its hash.

@@ -15,6 +15,11 @@ func (o *provider) Name() string {
 	return "ollama"
 }
 
+// DefaultStreaming is true - Ollama streams by default
+func (o *provider) DefaultStreaming() bool {
+	return true
+}
+
 func (o *provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 	var req ollamaRequest
 	if err := json.Unmarshal(payload, &req); err != nil {

@@ -13,22 +13,21 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/valyala/fasthttp"
 	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/llm/provider"
-	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
-	"github.com/papercomputeco/tapes/pkg/vector"
+	"github.com/papercomputeco/tapes/proxy/worker"
 )
 
 // Proxy is a client, LLM inference proxy that instruments storing sessions as Merkle DAGs.
-// The proxy is designed to be stateless as it builds nodes from incoming messages
-// and stores them in a content-addressable merkle.Storer.
+// The proxy is transparent: it forwards requests to the upstream LLM provider and
+// enqueues conversation turns for async storage via its worker pool.
 type Proxy struct {
 	config     Config
 	driver     storage.Driver
+	workerPool *worker.Pool
 	logger     *zap.Logger
 	httpClient *http.Client
 	server     *fiber.App
@@ -36,7 +35,7 @@ type Proxy struct {
 }
 
 // New creates a new Proxy.
-// The storer is injected to allow sharing with other components (e.g., the API server).
+// The storer is injected to handle async persistence of conversation turns.
 // Returns an error if the configured provider type is not recognized.
 func New(config Config, driver storage.Driver, logger *zap.Logger) (*Proxy, error) {
 	prov, err := provider.New(config.ProviderType)
@@ -51,12 +50,20 @@ func New(config Config, driver storage.Driver, logger *zap.Logger) (*Proxy, erro
 		StreamRequestBody: true,
 	})
 
+	wp := worker.NewPool(&worker.Config{
+		Driver:       driver,
+		VectorDriver: config.VectorDriver,
+		Embedder:     config.Embedder,
+		Logger:       logger,
+	})
+
 	p := &Proxy{
-		config:   config,
-		driver:   driver,
-		logger:   logger,
-		server:   app,
-		provider: prov,
+		config:     config,
+		driver:     driver,
+		workerPool: wp,
+		logger:     logger,
+		server:     app,
+		provider:   prov,
 		httpClient: &http.Client{
 			// LLM requests can be slow, especially with thinking blocks
 			Timeout: 5 * time.Minute,
@@ -79,9 +86,10 @@ func (p *Proxy) Run() error {
 	return p.server.Listen(p.config.ListenAddr)
 }
 
-// Close shuts down the proxy and releases resources.
+// Close gracefully shuts down the proxy and waits for the worker pool to drain
 func (p *Proxy) Close() error {
-	return p.driver.Close()
+	p.workerPool.Close()
+	return p.server.Shutdown()
 }
 
 // handleProxy is a transparent proxy handler that forwards requests to upstream
@@ -116,7 +124,9 @@ func (p *Proxy) handleProxy(c *fiber.Ctx) error {
 		}
 	}
 
-	// Determine if streaming (check parsed request or raw JSON)
+	// Determine if streaming: check the parsed request's explicit Stream field,
+	// fall back to raw JSON, and finally consult the provider's default.
+	// Some providers (e.g. Ollama) stream by default when "stream" is omitted.
 	streaming := false
 	if parsedReq != nil && parsedReq.Stream != nil {
 		streaming = *parsedReq.Stream
@@ -127,6 +137,8 @@ func (p *Proxy) handleProxy(c *fiber.Ctx) error {
 		}
 		if err := json.Unmarshal(body, &streamCheck); err == nil && streamCheck.Stream != nil {
 			streaming = *streamCheck.Stream
+		} else {
+			streaming = p.provider.DefaultStreaming()
 		}
 	}
 
@@ -190,7 +202,7 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method string, body 
 		}
 	}
 
-	// If this was a chat request, try to parse and store
+	// If this was a chat request, enqueue for async storage
 	if parsedReq != nil && httpResp.StatusCode == http.StatusOK {
 		parsedResp, err := p.provider.ParseResponse(respBody)
 		if err != nil {
@@ -205,20 +217,16 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method string, body 
 				zap.Duration("duration", time.Since(startTime)),
 			)
 
-			// Store in DAG
-			headHash, err := p.storeConversationTurn(c.Context(), p.provider.Name(), parsedReq, parsedResp)
-			if err != nil {
-				p.logger.Error("failed to store conversation", zap.Error(err))
-			} else {
-				p.logger.Info("conversation stored",
-					zap.String("head_hash", truncate(headHash, 16)),
-					zap.String("provider", p.provider.Name()),
-				)
-			}
+			// Non-blocking enqueue for async storage
+			p.workerPool.Enqueue(worker.Job{
+				Provider: p.provider.Name(),
+				Req:      parsedReq,
+				Resp:     parsedResp,
+			})
 		}
 	}
 
-	// Return response to client
+	// Return response to client immediately
 	return c.Status(httpResp.StatusCode).Send(respBody)
 }
 
@@ -227,7 +235,11 @@ func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path string, body []byte, par
 	// Build upstream URL
 	upstreamURL := p.config.UpstreamURL + path
 
-	httpReq, err := http.NewRequestWithContext(c.Context(), "POST", upstreamURL, bytes.NewReader(body))
+	// Use context.Background() instead of c.Context() because fasthttp recycles
+	// its RequestCtx after the handler returns, but the streaming callback runs
+	// asynchronously in a separate goroutine and needs the upstream connection
+	// to remain open.
+	httpReq, err := http.NewRequestWithContext(context.Background(), "POST", upstreamURL, bytes.NewReader(body))
 	if err != nil {
 		p.logger.Error("failed to create upstream request", zap.Error(err))
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "internal error"})
@@ -251,10 +263,9 @@ func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path string, body []byte, par
 		p.logger.Error("upstream request failed", zap.Error(err))
 		return c.Status(fiber.StatusBadGateway).JSON(llm.ErrorResponse{Error: "upstream request failed"})
 	}
-	defer httpResp.Body.Close()
-
 	if httpResp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(httpResp.Body)
+		httpResp.Body.Close()
 		p.logger.Error("upstream returned error",
 			zap.Int("status", httpResp.StatusCode),
 			zap.String("body", string(respBody)),
@@ -269,82 +280,106 @@ func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path string, body []byte, par
 		}
 	}
 
-	// Use Fiber's streaming response
-	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
-		// Accumulate chunks for storage
-		var allChunks [][]byte
-		var fullContent strings.Builder
+	// Use io.Pipe + SetBodyStream instead of SetBodyStreamWriter.
+	// SetBodyStreamWriter uses an internal PipeConns with a buffered channel
+	// (capacity 4) and two bufio.Writers, which means Flush() in the callback
+	// only pushes data into the pipe — NOT to the TCP socket. This causes all
+	// chunks to buffer in memory before being sent to the client.
+	//
+	// With io.Pipe, pw.Write blocks until the reader consumes the data, and
+	// the reader is fasthttp's writeBodyChunked which flushes to TCP after
+	// every chunk. This gives direct backpressure and true per-chunk streaming
+	// for LLM based.
+	pr, pw := io.Pipe()
+	go p.handleHTTPRespToPipeWriter(httpResp, pw, parsedReq, startTime)
 
-		scanner := bufio.NewScanner(httpResp.Body)
-		// Increase buffer size for large chunks
-		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	// Set the pipe reader as the body stream with unknown size (-1),
+	// which triggers chunked transfer encoding in fasthttp.
+	c.Context().Response.SetBodyStream(pr, -1)
 
-		for scanner.Scan() {
-			line := scanner.Bytes()
-			if len(line) == 0 {
-				continue
-			}
+	return nil
+}
 
-			// Store chunk for later parsing
-			chunkCopy := make([]byte, len(line))
-			copy(chunkCopy, line)
-			allChunks = append(allChunks, chunkCopy)
+func (p *Proxy) handleHTTPRespToPipeWriter(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, startTime time.Time) {
+	// Close the upstream response body once streaming is complete.
+	defer httpResp.Body.Close()
+	defer pw.Close()
 
-			// Try to extract content incrementally for logging
-			// This is a best-effort extraction from the raw chunk
-			var chunkData map[string]any
-			if err := json.Unmarshal(line, &chunkData); err == nil {
-				// Try common content paths
-				if msg, ok := chunkData["message"].(map[string]any); ok {
-					if content, ok := msg["content"].(string); ok {
-						fullContent.WriteString(content)
-					}
-				} else if choices, ok := chunkData["choices"].([]any); ok && len(choices) > 0 {
-					if choice, ok := choices[0].(map[string]any); ok {
-						if delta, ok := choice["delta"].(map[string]any); ok {
-							if content, ok := delta["content"].(string); ok {
-								fullContent.WriteString(content)
-							}
+	// Accumulate chunks for storage
+	var allChunks [][]byte
+	var fullContent strings.Builder
+
+	scanner := bufio.NewScanner(httpResp.Body)
+	// Increase buffer size for large chunks
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+
+		// Store chunk for later parsing
+		chunkCopy := make([]byte, len(line))
+		copy(chunkCopy, line)
+		allChunks = append(allChunks, chunkCopy)
+
+		// Try to extract content incrementally for logging
+		// This is a best-effort extraction from the raw chunk
+		var chunkData map[string]any
+		if err := json.Unmarshal(line, &chunkData); err == nil {
+			// Try common content paths
+			if msg, ok := chunkData["message"].(map[string]any); ok {
+				if content, ok := msg["content"].(string); ok {
+					fullContent.WriteString(content)
+				}
+			} else if choices, ok := chunkData["choices"].([]any); ok && len(choices) > 0 {
+				if choice, ok := choices[0].(map[string]any); ok {
+					if delta, ok := choice["delta"].(map[string]any); ok {
+						if content, ok := delta["content"].(string); ok {
+							fullContent.WriteString(content)
 						}
 					}
 				}
 			}
-
-			// Write chunk to client
-			w.Write(line)
-			w.Write([]byte("\n"))
-			w.Flush()
 		}
 
-		if err := scanner.Err(); err != nil {
-			p.logger.Error("error reading stream", zap.Error(err))
+		// Write chunk to client — pw.Write blocks until fasthttp reads
+		// from the pipe reader and flushes to the TCP socket.
+		// This ensures transparent streaming of chunks.
+		if _, err := pw.Write(line); err != nil {
+			p.logger.Error("error writing chunk to pipe", zap.Error(err))
+			return
 		}
-
-		// After streaming completes, try to reconstruct and store the full response
-		if parsedReq != nil && len(allChunks) > 0 {
-			p.logger.Debug("streaming complete",
-				zap.String("content_preview", truncate(fullContent.String(), 200)),
-				zap.Int("chunk_count", len(allChunks)),
-				zap.Duration("duration", time.Since(startTime)),
-			)
-
-			// Try to parse the final chunk or reconstruct response
-			finalResp := p.reconstructStreamedResponse(allChunks, fullContent.String())
-			if finalResp != nil {
-				headHash, err := p.storeConversationTurn(context.Background(), p.provider.Name(), parsedReq, finalResp)
-				if err != nil {
-					p.logger.Error("failed to store conversation", zap.Error(err))
-				} else {
-					p.logger.Info("conversation stored",
-						zap.String("head_hash", truncate(headHash, 16)),
-						zap.String("provider", p.provider.Name()),
-					)
-				}
-			}
+		if _, err := pw.Write([]byte("\n")); err != nil {
+			p.logger.Error("error writing newline to pipe", zap.Error(err))
+			return
 		}
-	}))
+	}
 
-	return nil
+	if err := scanner.Err(); err != nil {
+		p.logger.Error("error reading stream", zap.Error(err))
+	}
+
+	// After streaming completes, enqueue for async storage
+	if parsedReq != nil && len(allChunks) > 0 {
+		p.logger.Debug("streaming complete",
+			zap.String("content_preview", truncate(fullContent.String(), 200)),
+			zap.Int("chunk_count", len(allChunks)),
+			zap.Duration("duration", time.Since(startTime)),
+		)
+
+		// Try to parse the final chunk or reconstruct response
+		finalResp := p.reconstructStreamedResponse(allChunks, fullContent.String())
+		if finalResp != nil {
+			// Non-blocking enqueue for async storage
+			p.workerPool.Enqueue(worker.Job{
+				Provider: p.provider.Name(),
+				Req:      parsedReq,
+				Resp:     finalResp,
+			})
+		}
+	}
 }
 
 // reconstructStreamedResponse attempts to build a ChatResponse from accumulated stream chunks.
@@ -372,121 +407,6 @@ func (p *Proxy) reconstructStreamedResponse(chunks [][]byte, fullContent string)
 	}
 
 	return nil
-}
-
-// storeConversationTurn stores a request-response pair in the Merkle DAG.
-// If a vector driver is configured, it also stores embeddings for semantic search.
-func (p *Proxy) storeConversationTurn(ctx context.Context, providerName string, req *llm.ChatRequest, resp *llm.ChatResponse) (string, error) {
-	var parent *merkle.Node
-	var nodesToEmbed []*merkle.Node
-
-	// Store each message from the request as nodes.
-	for _, msg := range req.Messages {
-		bucket := merkle.Bucket{
-			Type:     "message",
-			Role:     msg.Role,
-			Content:  msg.Content,
-			Model:    req.Model,
-			Provider: providerName,
-		}
-
-		node := merkle.NewNode(bucket, parent)
-
-		if err := p.driver.Put(ctx, node); err != nil {
-			return "", fmt.Errorf("storing message node: %w", err)
-		}
-
-		p.logger.Debug("stored message in DAG",
-			zap.String("hash", truncate(node.Hash, 16)),
-			zap.String("role", msg.Role),
-			zap.String("content_preview", truncate(msg.GetText(), 50)),
-		)
-
-		nodesToEmbed = append(nodesToEmbed, node)
-		parent = node
-	}
-
-	// Store the response message with metadata.
-	// Note: StopReason and Usage are passed via NodeOptions and stored on the Node,
-	// but they do NOT affect the content-addressable hash.
-	responseBucket := merkle.Bucket{
-		Type:     "message",
-		Role:     resp.Message.Role,
-		Content:  resp.Message.Content,
-		Model:    resp.Model,
-		Provider: providerName,
-	}
-
-	responseNode := merkle.NewNode(responseBucket, parent, merkle.NodeMeta{
-		StopReason: resp.StopReason,
-		Usage:      resp.Usage,
-	})
-	if err := p.driver.Put(ctx, responseNode); err != nil {
-		return "", fmt.Errorf("storing response node: %w", err)
-	}
-
-	p.logger.Debug("stored response in DAG",
-		zap.String("hash", truncate(responseNode.Hash, 16)),
-		zap.String("content_preview", truncate(resp.Message.GetText(), 50)),
-	)
-
-	nodesToEmbed = append(nodesToEmbed, responseNode)
-
-	// Store embeddings if vector driver is configured
-	if p.config.VectorDriver != nil && p.config.Embedder != nil {
-		p.logger.Debug("storing in vector store with embedder")
-		p.storeEmbeddings(ctx, nodesToEmbed)
-	}
-
-	return responseNode.Hash, nil
-}
-
-// storeEmbeddings generates and stores embeddings for the given nodes.
-// Errors are logged but not returned to avoid failing the main storage operation.
-//
-// @jpmcb - this function needs refactoring: currently, it brute forces doing
-// all the embeddings for all nodes, regardless if their text embedding already
-// exists in the db. At this point, we haven't inserted new nodes not in the merkle dag.
-//
-// We should also do this async off the proxy, not blocking for the LLM client.
-func (p *Proxy) storeEmbeddings(ctx context.Context, nodes []*merkle.Node) {
-	for _, node := range nodes {
-		text := node.Bucket.ExtractText()
-		if text == "" {
-			p.logger.Debug("skipping embedding for node with no text content",
-				zap.String("hash", truncate(node.Hash, 16)),
-			)
-			continue
-		}
-
-		embedding, err := p.config.Embedder.Embed(ctx, text)
-		if err != nil {
-			p.logger.Warn("failed to generate embedding",
-				zap.String("hash", truncate(node.Hash, 16)),
-				zap.Error(err),
-			)
-			continue
-		}
-
-		doc := vector.Document{
-			ID:        node.Hash,
-			Hash:      node.Hash,
-			Embedding: embedding,
-		}
-
-		if err := p.config.VectorDriver.Add(ctx, []vector.Document{doc}); err != nil {
-			p.logger.Warn("failed to store embedding",
-				zap.String("hash", truncate(node.Hash, 16)),
-				zap.Error(err),
-			)
-			continue
-		}
-
-		p.logger.Debug("stored embedding",
-			zap.String("hash", truncate(node.Hash, 16)),
-			zap.Int("embedding_dim", len(embedding)),
-		)
-	}
 }
 
 func truncate(s string, maxLen int) string {

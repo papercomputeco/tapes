@@ -18,6 +18,11 @@ func (b *provider) Name() string {
 	return "besteffort"
 }
 
+// DefaultStreaming is false - best-effort provider cannot assume streaming behavior.
+func (b *provider) DefaultStreaming() bool {
+	return false
+}
+
 // ParseRequest attempts to extract a ChatRequest from an unknown format.
 // It looks for common field names across different LLM APIs.
 func (b *provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {

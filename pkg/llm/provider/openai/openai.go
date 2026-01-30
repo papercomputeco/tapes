@@ -17,6 +17,11 @@ func (o *provider) Name() string {
 	return "openai"
 }
 
+// DefaultStreaming is false - OpenAI requires explicit "stream": true.
+func (o *provider) DefaultStreaming() bool {
+	return false
+}
+
 func (o *provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 	var req openaiRequest
 	if err := json.Unmarshal(payload, &req); err != nil {

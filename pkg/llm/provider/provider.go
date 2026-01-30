@@ -17,6 +17,11 @@ type Provider interface {
 	// Name returns the canonical provider name (e.g., "anthropic", "openai", "ollama", "besteffort")
 	Name() string
 
+	// DefaultStreaming reports whether this provider streams responses by default
+	// when the "stream" field is omitted from the request. For example, Ollama
+	// defaults to streaming when "stream" is not present in the request body.
+	DefaultStreaming() bool
+
 	// ParseRequest converts a provider-specific request into the internal format.
 	// Returns an error if the payload cannot be parsed.
 	ParseRequest(payload []byte) (*llm.ChatRequest, error)
