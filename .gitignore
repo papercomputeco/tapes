@@ -1,3 +1,6 @@
+# Tapes development
+/.tapes/
+
 /.direnv/
 /build/
 .DS_Store

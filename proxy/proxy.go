@@ -364,7 +364,7 @@ func (p *Proxy) handleHTTPRespToPipeWriter(httpResp *http.Response, pw *io.PipeW
 	// After streaming completes, enqueue for async storage
 	if parsedReq != nil && len(allChunks) > 0 {
 		p.logger.Debug("streaming complete",
-			zap.String("content_preview", truncate(fullContent.String(), 200)),
+			zap.String("content_preview", fullContent.String()),
 			zap.Int("chunk_count", len(allChunks)),
 			zap.Duration("duration", time.Since(startTime)),
 		)
@@ -407,12 +407,4 @@ func (p *Proxy) reconstructStreamedResponse(chunks [][]byte, fullContent string)
 	}
 
 	return nil
-}
-
-func truncate(s string, maxLen int) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
 }

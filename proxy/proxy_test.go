@@ -655,31 +655,6 @@ var _ = Describe("reconstructStreamedResponse", func() {
 	})
 })
 
-var _ = Describe("truncate", func() {
-	It("returns the string unchanged when within the limit", func() {
-		Expect(truncate("short", 10)).To(Equal("short"))
-	})
-
-	It("returns the string unchanged when exactly at the limit", func() {
-		Expect(truncate("12345", 5)).To(Equal("12345"))
-	})
-
-	It("truncates with ellipsis when over the limit", func() {
-		result := truncate("this is a long string", 10)
-		Expect(result).To(Equal("this is a ..."))
-	})
-
-	It("replaces newlines with spaces", func() {
-		result := truncate("line1\nline2\nline3", 100)
-		Expect(result).To(Equal("line1 line2 line3"))
-	})
-
-	It("replaces newlines before truncating", func() {
-		result := truncate("ab\ncd\nef", 5)
-		Expect(result).To(Equal("ab cd..."))
-	})
-})
-
 var _ = Describe("New", func() {
 	It("returns an error for unrecognized provider type", func() {
 		logger, _ := zap.NewDevelopment()
