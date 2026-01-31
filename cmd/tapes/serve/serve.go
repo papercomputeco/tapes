@@ -84,7 +84,7 @@ func NewServeCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&cmder.proxyListen, "proxy-listen", "p", ":8080", "Address for proxy to listen on")
 	cmd.Flags().StringVarP(&cmder.apiListen, "api-listen", "a", ":8081", "Address for API server to listen on")
 	cmd.Flags().StringVarP(&cmder.upstream, "upstream", "u", "http://localhost:11434", "Upstream LLM provider URL")
-	cmd.Flags().StringVar(&cmder.providerType, "provider", "ollama", "LLM provider type (anthropic, openai, ollama, besteffort)")
+	cmd.Flags().StringVar(&cmder.providerType, "provider", "ollama", "LLM provider type (anthropic, openai, ollama)")
 	cmd.Flags().StringVarP(&cmder.sqlitePath, "sqlite", "s", defaultTargetSqliteFile, "Path to SQLite database (e.g., ./tapes.sqlite, in-memory)")
 	cmd.Flags().StringVar(&cmder.vectorStoreProvider, "vector-store-provider", "sqlite", "Vector store provider type (e.g., chroma, sqlite)")
 	cmd.Flags().StringVar(&cmder.vectorStoreTarget, "vector-store-target", defaultTargetSqliteFile, "Vector store target fielpath for sqlite or URL for vector store service (e.g., http://localhost:8000, ./db.sqlite)")

@@ -30,6 +30,6 @@ type ChatRequest struct {
 	Extra map[string]any `json:"extra,omitempty"`
 
 	// RawRequest preserves the original request payload for cases where
-	// parsing is incomplete or for debugging. Populated by BestEffort provider.
+	// parsing is incomplete or for debugging.
 	RawRequest json.RawMessage `json:"raw_request,omitempty"`
 }

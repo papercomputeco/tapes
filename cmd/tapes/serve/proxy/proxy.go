@@ -38,7 +38,7 @@ const proxyLongDesc string = `Run the proxy server.
 The proxy intercepts all requests and transparently forwards them to the
 configured upstream URL, recording request/response conversation turns.
 
-Supported provider types: anthropic, openai, ollama, besteffort
+Supported provider types: anthropic, openai, ollama
 
 Optionally configure vector storage and embeddings of text content for "tapes search"
 agentic functionality.`
@@ -65,7 +65,7 @@ func NewProxyCmd() *cobra.Command {
 
 	cmd.Flags().StringVarP(&cmder.listen, "listen", "l", ":8080", "Address for proxy to listen on")
 	cmd.Flags().StringVarP(&cmder.upstream, "upstream", "u", "http://localhost:11434", "Upstream LLM provider URL")
-	cmd.Flags().StringVarP(&cmder.providerType, "provider", "p", "ollama", "LLM provider type (anthropic, openai, ollama, besteffort)")
+	cmd.Flags().StringVarP(&cmder.providerType, "provider", "p", "ollama", "LLM provider type (anthropic, openai, ollama)")
 	cmd.Flags().StringVarP(&cmder.sqlitePath, "sqlite", "s", "", "Path to SQLite database (default: in-memory)")
 	cmd.Flags().StringVar(&cmder.vectorStoreProvider, "vector-store-provider", "sqlite", "Vector store provider type (e.g., chroma, sqlite)")
 	cmd.Flags().StringVar(&cmder.vectorStoreTarget, "vector-store-target", "", "Vector store URL (e.g., http://localhost:8000)")

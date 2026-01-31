@@ -14,7 +14,7 @@ var ErrStreamingNotImplemented = errors.New("streaming not implemented for this 
 // Each provider implementation knows how to parse its specific
 // API format into the internal representation.
 type Provider interface {
-	// Name returns the canonical provider name (e.g., "anthropic", "openai", "ollama", "besteffort")
+	// Name returns the canonical provider name (e.g., "anthropic", "openai", "ollama")
 	Name() string
 
 	// DefaultStreaming reports whether this provider streams responses by default
