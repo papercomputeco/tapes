@@ -17,16 +17,17 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
+	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/dotdir"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/utils"
 )
 
 type chatCommander struct {
-	proxy string
-	api   string
-	model string
-	debug bool
+	proxyTarget string
+	apiTarget   string
+	model       string
+	debug       bool
 
 	logger *zap.Logger
 }
@@ -73,7 +74,7 @@ or "tapes checkout" (no hash provided) to clear the checkout and start fresh.
 
 Examples:
   tapes chat --model llama3.2
-  tapes chat --model llama3.2 --proxy http://localhost:8080`
+  tapes chat --model llama3.2 --proxy-target http://localhost:8080`
 
 const chatShortDesc string = "Experimental: Interactive LLM chat through the tapes proxy"
 
@@ -84,6 +85,27 @@ func NewChatCmd() *cobra.Command {
 		Use:   "chat",
 		Short: chatShortDesc,
 		Long:  chatLongDesc,
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			configDir, _ := cmd.Flags().GetString("config-dir")
+			cfger, err := config.NewConfiger(configDir)
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+
+			cfg, err := cfger.LoadConfig()
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+
+			if !cmd.Flags().Changed("api-target") {
+				cmder.apiTarget = cfg.Client.APITarget
+			}
+
+			if !cmd.Flags().Changed("proxy-target") {
+				cmder.proxyTarget = cfg.Client.ProxyTarget
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			var err error
 			cmder.debug, err = cmd.Flags().GetBool("debug")
@@ -95,9 +117,9 @@ func NewChatCmd() *cobra.Command {
 		},
 	}
 
-	cmd.PersistentFlags().StringVarP(&cmder.api, "api", "a", "http://localhost:8081", "Tapes API server address")
-
-	cmd.Flags().StringVarP(&cmder.proxy, "proxy", "p", "http://localhost:8080", "Tapes proxy address")
+	defaults := config.NewDefaultConfig()
+	cmd.Flags().StringVarP(&cmder.apiTarget, "api-target", "a", defaults.Client.APITarget, "Tapes API server URL")
+	cmd.Flags().StringVarP(&cmder.proxyTarget, "proxy-target", "p", defaults.Client.ProxyTarget, "Tapes proxy URL")
 	cmd.Flags().StringVarP(&cmder.model, "model", "m", "gemma3:latest", "Model name (e.g., gemma3:1b, ministral-3:latest)")
 
 	return cmd
@@ -199,13 +221,13 @@ func (c *chatCommander) sendAndStream(messages []ollamaMessage) (string, error) 
 	}
 
 	c.logger.Debug("sending chat request",
-		zap.String("proxy", c.proxy),
+		zap.String("proxy_target", c.proxyTarget),
 		zap.String("model", c.model),
 		zap.Int("message_count", len(messages)),
 	)
 
 	// POST to the proxy's Ollama-compatible chat endpoint
-	url := c.proxy + "/api/chat"
+	url := c.proxyTarget + "/api/chat"
 	httpReq, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("creating request: %w", err)

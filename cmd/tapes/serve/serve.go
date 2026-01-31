@@ -15,6 +15,7 @@ import (
 	"github.com/papercomputeco/tapes/api"
 	apicmder "github.com/papercomputeco/tapes/cmd/tapes/serve/api"
 	proxycmder "github.com/papercomputeco/tapes/cmd/tapes/serve/proxy"
+	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/dotdir"
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/logger"
@@ -65,6 +66,69 @@ func NewServeCmd() *cobra.Command {
 		Use:   "serve",
 		Short: serveShortDesc,
 		Long:  serveLongDesc,
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			configDir, _ := cmd.Flags().GetString("config-dir")
+			cfger, err := config.NewConfiger(configDir)
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+
+			cfg, err := cfger.LoadConfig()
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+
+			// Resolve default sqlite path from dotdir target.
+			dotdirManager := dotdir.NewManager()
+			defaultTargetDir, err := dotdirManager.Target(configDir)
+			if err != nil {
+				return fmt.Errorf("resolving target dir: %w", err)
+			}
+			defaultTargetSqliteFile := filepath.Join(defaultTargetDir, "tapes.sqlite")
+
+			if !cmd.Flags().Changed("proxy-listen") {
+				cmder.proxyListen = cfg.Proxy.Listen
+			}
+			if !cmd.Flags().Changed("api-listen") {
+				cmder.apiListen = cfg.API.Listen
+			}
+			if !cmd.Flags().Changed("upstream") {
+				cmder.upstream = cfg.Proxy.Upstream
+			}
+			if !cmd.Flags().Changed("provider") {
+				cmder.providerType = cfg.Proxy.Provider
+			}
+			if !cmd.Flags().Changed("sqlite") {
+				if cfg.Storage.SQLitePath != "" {
+					cmder.sqlitePath = cfg.Storage.SQLitePath
+				} else {
+					cmder.sqlitePath = defaultTargetSqliteFile
+				}
+			}
+			if !cmd.Flags().Changed("vector-store-provider") {
+				cmder.vectorStoreProvider = cfg.VectorStore.Provider
+			}
+			if !cmd.Flags().Changed("vector-store-target") {
+				if cfg.VectorStore.Target != "" {
+					cmder.vectorStoreTarget = cfg.VectorStore.Target
+				} else {
+					cmder.vectorStoreTarget = defaultTargetSqliteFile
+				}
+			}
+			if !cmd.Flags().Changed("embedding-provider") {
+				cmder.embeddingProvider = cfg.Embedding.Provider
+			}
+			if !cmd.Flags().Changed("embedding-target") {
+				cmder.embeddingTarget = cfg.Embedding.Target
+			}
+			if !cmd.Flags().Changed("embedding-model") {
+				cmder.embeddingModel = cfg.Embedding.Model
+			}
+			if !cmd.Flags().Changed("embedding-dimensions") {
+				cmder.embeddingDimensions = cfg.Embedding.Dimensions
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			var err error
 			cmder.debug, err = cmd.Flags().GetBool("debug")
@@ -75,24 +139,18 @@ func NewServeCmd() *cobra.Command {
 		},
 	}
 
-	dotdirManger := dotdir.NewManager()
-	defaultTargetDir, err := dotdirManger.Target("")
-	if err != nil {
-		panic(err)
-	}
-	defaultTargetSqliteFile := filepath.Join(defaultTargetDir, "tapes.sqlite")
-
-	cmd.Flags().StringVarP(&cmder.proxyListen, "proxy-listen", "p", ":8080", "Address for proxy to listen on")
-	cmd.Flags().StringVarP(&cmder.apiListen, "api-listen", "a", ":8081", "Address for API server to listen on")
-	cmd.Flags().StringVarP(&cmder.upstream, "upstream", "u", "http://localhost:11434", "Upstream LLM provider URL")
-	cmd.Flags().StringVar(&cmder.providerType, "provider", "ollama", "LLM provider type (anthropic, openai, ollama)")
-	cmd.Flags().StringVarP(&cmder.sqlitePath, "sqlite", "s", defaultTargetSqliteFile, "Path to SQLite database (e.g., ./tapes.sqlite, in-memory)")
-	cmd.Flags().StringVar(&cmder.vectorStoreProvider, "vector-store-provider", "sqlite", "Vector store provider type (e.g., chroma, sqlite)")
-	cmd.Flags().StringVar(&cmder.vectorStoreTarget, "vector-store-target", defaultTargetSqliteFile, "Vector store target fielpath for sqlite or URL for vector store service (e.g., http://localhost:8000, ./db.sqlite)")
-	cmd.Flags().StringVar(&cmder.embeddingProvider, "embedding-provider", "ollama", "Embedding provider type (e.g., ollama)")
-	cmd.Flags().StringVar(&cmder.embeddingTarget, "embedding-target", "http://localhost:11434", "Embedding provider URL")
-	cmd.Flags().StringVar(&cmder.embeddingModel, "embedding-model", "embeddinggemma:latest", "Embedding model name (e.g., embeddinggemma:300m, nomic-embed-text)")
-	cmd.Flags().UintVar(&cmder.embeddingDimensions, "embedding-dimensions", 768, "Embedding dimensionality.")
+	defaults := config.NewDefaultConfig()
+	cmd.Flags().StringVarP(&cmder.proxyListen, "proxy-listen", "p", defaults.Proxy.Listen, "Address for proxy to listen on")
+	cmd.Flags().StringVarP(&cmder.apiListen, "api-listen", "a", defaults.API.Listen, "Address for API server to listen on")
+	cmd.Flags().StringVarP(&cmder.upstream, "upstream", "u", defaults.Proxy.Upstream, "Upstream LLM provider URL")
+	cmd.Flags().StringVar(&cmder.providerType, "provider", defaults.Proxy.Provider, "LLM provider type (anthropic, openai, ollama)")
+	cmd.Flags().StringVarP(&cmder.sqlitePath, "sqlite", "s", "", "Path to SQLite database (e.g., ./tapes.sqlite, in-memory)")
+	cmd.Flags().StringVar(&cmder.vectorStoreProvider, "vector-store-provider", defaults.VectorStore.Provider, "Vector store provider type (e.g., chroma, sqlite)")
+	cmd.Flags().StringVar(&cmder.vectorStoreTarget, "vector-store-target", defaults.VectorStore.Target, "Vector store target filepath for sqlite or URL for vector store service (e.g., http://localhost:8000, ./db.sqlite)")
+	cmd.Flags().StringVar(&cmder.embeddingProvider, "embedding-provider", defaults.Embedding.Provider, "Embedding provider type (e.g., ollama)")
+	cmd.Flags().StringVar(&cmder.embeddingTarget, "embedding-target", defaults.Embedding.Target, "Embedding provider URL")
+	cmd.Flags().StringVar(&cmder.embeddingModel, "embedding-model", defaults.Embedding.Model, "Embedding model name (e.g., nomic-embed-text)")
+	cmd.Flags().UintVar(&cmder.embeddingDimensions, "embedding-dimensions", defaults.Embedding.Dimensions, "Embedding dimensionality.")
 
 	cmd.AddCommand(apicmder.NewAPICmd())
 	cmd.AddCommand(proxycmder.NewProxyCmd())

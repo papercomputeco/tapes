@@ -88,7 +88,7 @@ var _ = Describe("dotdir", func() {
 			Expect(result).To(Equal(localTapes))
 		})
 
-		It("falls back to the home dir when no local .tapes dir exists and no override is provided", func() {
+		It("returns empty string when no local .tapes dir exists, no home .tapes dir exists, and no override is provided", func() {
 			// Ensure we're in a directory without a .tapes subdir
 			emptyDir := filepath.Join(tmpDir, "empty")
 			Expect(os.Mkdir(emptyDir, 0o755)).To(Succeed())
@@ -98,12 +98,14 @@ var _ = Describe("dotdir", func() {
 			Expect(os.Chdir(emptyDir)).To(Succeed())
 			DeferCleanup(func() { os.Chdir(origDir) })
 
-			home, err := os.UserHomeDir()
-			Expect(err).NotTo(HaveOccurred())
+			// Override HOME so that ~/.tapes from the real home dir is not found.
+			origHome := os.Getenv("HOME")
+			Expect(os.Setenv("HOME", emptyDir)).To(Succeed())
+			DeferCleanup(func() { os.Setenv("HOME", origHome) })
 
 			result, err := m.Target("")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(Equal(filepath.Join(home, ".tapes")))
+			Expect(result).To(BeEmpty())
 		})
 	})
 })

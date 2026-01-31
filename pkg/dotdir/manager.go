@@ -27,31 +27,33 @@ func NewManager() *Manager {
 //  1. Provided override
 //  2. Local ./.tapes/ dir
 //  3. Home ~/.tapes/ dir
-//  4. If none found, attempt to create ~/.tapes/ dir
+//  4. If none found, returns "", nil (i.e., the empty state)
 func (m *Manager) Target(overrideDir string) (string, error) {
 	var dir string
 
 	switch {
 	case overrideDir != "":
 		dir = overrideDir
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return "", fmt.Errorf("error creating tapes directory %s: %w", dir, err)
+		}
 
 	case m.localDirExists():
 		cwd, err := os.Getwd()
 		if err != nil {
-			return "", fmt.Errorf("getting current directory: %w", err)
+			return "", fmt.Errorf("error getting current directory: %w", err)
 		}
 		dir = filepath.Join(cwd, dirName)
 
-	default:
+	case m.homeDirExists():
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "", fmt.Errorf("getting home directory: %w", err)
+			return "", fmt.Errorf("error getting home directory: %w", err)
 		}
 		dir = filepath.Join(home, dirName)
-	}
 
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("creating tapes directory %s: %w", dir, err)
+	default:
+		return "", nil
 	}
 
 	return filepath.Abs(dir)
@@ -66,5 +68,16 @@ func (m *Manager) localDirExists() bool {
 	}
 
 	info, err := os.Stat(filepath.Join(cwd, dirName))
+	return err == nil && info.IsDir()
+}
+
+// homeDirExists checks whether a ~/.tapes/ directory exists on the system.
+func (m *Manager) homeDirExists() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+
+	info, err := os.Stat(filepath.Join(home, dirName))
 	return err == nil && info.IsDir()
 }

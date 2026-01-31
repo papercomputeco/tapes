@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	apisearch "github.com/papercomputeco/tapes/api/search"
+	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/logger"
 )
 
@@ -52,6 +53,23 @@ func NewSearchCmd() *cobra.Command {
 		Short: searchShortDesc,
 		Long:  searchLongDesc,
 		Args:  cobra.ExactArgs(1),
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			configDir, _ := cmd.Flags().GetString("config-dir")
+			cfger, err := config.NewConfiger(configDir)
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+
+			cfg, err := cfger.LoadConfig()
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+
+			if !cmd.Flags().Changed("api-target") {
+				cmder.apiTarget = cfg.Client.APITarget
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmder.query = args[0]
 
@@ -65,8 +83,9 @@ func NewSearchCmd() *cobra.Command {
 		},
 	}
 
+	defaults := config.NewDefaultConfig()
 	cmd.Flags().IntVarP(&cmder.topK, "top", "k", 5, "Number of results to return")
-	cmd.Flags().StringVar(&cmder.apiTarget, "api-target", "http://localhost:8081", "Tapes API server URL")
+	cmd.Flags().StringVar(&cmder.apiTarget, "api-target", defaults.Client.APITarget, "Tapes API server URL")
 
 	return cmd
 }

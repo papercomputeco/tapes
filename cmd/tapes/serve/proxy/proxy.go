@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
+	"github.com/papercomputeco/tapes/pkg/config"
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/storage"
@@ -53,6 +54,47 @@ func NewProxyCmd() *cobra.Command {
 		Use:   "proxy",
 		Short: proxyShortDesc,
 		Long:  proxyLongDesc,
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			configDir, _ := cmd.Flags().GetString("config-dir")
+			cfger, err := config.NewConfiger(configDir)
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+
+			cfg, err := cfger.LoadConfig()
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+
+			if !cmd.Flags().Changed("listen") {
+				cmder.listen = cfg.Proxy.Listen
+			}
+			if !cmd.Flags().Changed("upstream") {
+				cmder.upstream = cfg.Proxy.Upstream
+			}
+			if !cmd.Flags().Changed("provider") {
+				cmder.providerType = cfg.Proxy.Provider
+			}
+			if !cmd.Flags().Changed("sqlite") {
+				cmder.sqlitePath = cfg.Storage.SQLitePath
+			}
+			if !cmd.Flags().Changed("vector-store-provider") {
+				cmder.vectorStoreProvider = cfg.VectorStore.Provider
+			}
+			if !cmd.Flags().Changed("vector-store-target") {
+				cmder.vectorStoreTarget = cfg.VectorStore.Target
+			}
+			if !cmd.Flags().Changed("embedding-provider") {
+				cmder.embeddingProvider = cfg.Embedding.Provider
+			}
+			if !cmd.Flags().Changed("embedding-target") {
+				cmder.embeddingTarget = cfg.Embedding.Target
+			}
+			if !cmd.Flags().Changed("embedding-model") {
+				cmder.embeddingModel = cfg.Embedding.Model
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			var err error
 			cmder.debug, err = cmd.Flags().GetBool("debug")
@@ -64,15 +106,16 @@ func NewProxyCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&cmder.listen, "listen", "l", ":8080", "Address for proxy to listen on")
-	cmd.Flags().StringVarP(&cmder.upstream, "upstream", "u", "http://localhost:11434", "Upstream LLM provider URL")
-	cmd.Flags().StringVarP(&cmder.providerType, "provider", "p", "ollama", "LLM provider type (anthropic, openai, ollama)")
+	defaults := config.NewDefaultConfig()
+	cmd.Flags().StringVarP(&cmder.listen, "listen", "l", defaults.Proxy.Listen, "Address for proxy to listen on")
+	cmd.Flags().StringVarP(&cmder.upstream, "upstream", "u", defaults.Proxy.Upstream, "Upstream LLM provider URL")
+	cmd.Flags().StringVarP(&cmder.providerType, "provider", "p", defaults.Proxy.Provider, "LLM provider type (anthropic, openai, ollama)")
 	cmd.Flags().StringVarP(&cmder.sqlitePath, "sqlite", "s", "", "Path to SQLite database (default: in-memory)")
-	cmd.Flags().StringVar(&cmder.vectorStoreProvider, "vector-store-provider", "sqlite", "Vector store provider type (e.g., chroma, sqlite)")
-	cmd.Flags().StringVar(&cmder.vectorStoreTarget, "vector-store-target", "", "Vector store URL (e.g., http://localhost:8000)")
-	cmd.Flags().StringVar(&cmder.embeddingProvider, "embedding-provider", "", "Embedding provider type (e.g., ollama)")
-	cmd.Flags().StringVar(&cmder.embeddingTarget, "embedding-target", "", "Embedding provider URL")
-	cmd.Flags().StringVar(&cmder.embeddingModel, "embedding-model", "", "Embedding model name (e.g., nomic-embed-text)")
+	cmd.Flags().StringVar(&cmder.vectorStoreProvider, "vector-store-provider", defaults.VectorStore.Provider, "Vector store provider type (e.g., chroma, sqlite)")
+	cmd.Flags().StringVar(&cmder.vectorStoreTarget, "vector-store-target", defaults.VectorStore.Target, "Vector store URL (e.g., http://localhost:8000)")
+	cmd.Flags().StringVar(&cmder.embeddingProvider, "embedding-provider", defaults.Embedding.Provider, "Embedding provider type (e.g., ollama)")
+	cmd.Flags().StringVar(&cmder.embeddingTarget, "embedding-target", defaults.Embedding.Target, "Embedding provider URL")
+	cmd.Flags().StringVar(&cmder.embeddingModel, "embedding-model", defaults.Embedding.Model, "Embedding model name (e.g., nomic-embed-text)")
 
 	return cmd
 }

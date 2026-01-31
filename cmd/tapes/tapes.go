@@ -6,6 +6,7 @@ import (
 
 	chatcmder "github.com/papercomputeco/tapes/cmd/tapes/chat"
 	checkoutcmder "github.com/papercomputeco/tapes/cmd/tapes/checkout"
+	configcmder "github.com/papercomputeco/tapes/cmd/tapes/config"
 	deckcmder "github.com/papercomputeco/tapes/cmd/tapes/deck"
 	initcmder "github.com/papercomputeco/tapes/cmd/tapes/init"
 	searchcmder "github.com/papercomputeco/tapes/cmd/tapes/search"
@@ -26,14 +27,20 @@ Experimental: Chat through the proxy:
   tapes checkout <hash>    Checkout a conversation point
   tapes checkout           Clear checkout state, start fresh
   tapes status             Show current checkout state
-  tapes init               Initialize a local .tapes directory
+  tapes init                         Initialize a local .tapes directory
+  tapes init --preset <preset|url>   Initialize with a provider preset or remote config
 
 Search sessions:
   tapes search         Search sessions using semantic similarity
 
 Deck sessions:
   tapes deck           ROI dashboard for sessions
-  tapes deck --web     Local web dashboard`
+  tapes deck --web     Local web dashboard
+
+Configuration:
+  tapes config set <key> <value>    Set a configuration value
+  tapes config get <key>            Get a configuration value
+  tapes config list                 List all configuration values`
 
 const tapesShortDesc string = "Tapes - Agent Telemetry"
 
@@ -46,10 +53,12 @@ func NewTapesCmd() *cobra.Command {
 
 	// Global flags
 	cmd.PersistentFlags().BoolP("debug", "d", false, "Enable debug logging")
+	cmd.PersistentFlags().String("config-dir", "", "Override path to .tapes/ config directory")
 
 	// Add subcommands
 	cmd.AddCommand(chatcmder.NewChatCmd())
 	cmd.AddCommand(checkoutcmder.NewCheckoutCmd())
+	cmd.AddCommand(configcmder.NewConfigCmd())
 	cmd.AddCommand(deckcmder.NewDeckCmd())
 	cmd.AddCommand(initcmder.NewInitCmd())
 	cmd.AddCommand(searchcmder.NewSearchCmd())

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	proxycmder "github.com/papercomputeco/tapes/cmd/tapes/serve/proxy"
@@ -8,10 +9,14 @@ import (
 
 func main() {
 	cmd := proxycmder.NewProxyCmd()
+
 	cmd.Use = "tapesproxy"
 	cmd.PersistentFlags().BoolP("debug", "d", false, "Enable debug logging")
+	cmd.PersistentFlags().String("config-dir", "", "Override path to .tapes/ config directory")
 
-	if err := cmd.Execute(); err != nil {
+	err := cmd.Execute()
+	if err != nil {
+		fmt.Printf("Error executing root command: %v", err)
 		os.Exit(1)
 	}
 }

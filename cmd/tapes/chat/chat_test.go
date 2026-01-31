@@ -27,18 +27,16 @@ var _ = Describe("NewChatCmd", func() {
 		Expect(flag.Shorthand).To(Equal("m"))
 	})
 
-	It("has --proxy flag with default value", func() {
+	It("has --proxy-target flag", func() {
 		cmd := chatcmder.NewChatCmd()
-		flag := cmd.Flags().Lookup("proxy")
+		flag := cmd.Flags().Lookup("proxy-target")
 		Expect(flag).NotTo(BeNil())
-		Expect(flag.DefValue).To(Equal("http://localhost:8080"))
 	})
 
-	It("has persistent --api flag with default value", func() {
+	It("has --api-target flag", func() {
 		cmd := chatcmder.NewChatCmd()
-		flag := cmd.PersistentFlags().Lookup("api")
+		flag := cmd.Flags().Lookup("api-target")
 		Expect(flag).NotTo(BeNil())
-		Expect(flag.DefValue).To(Equal("http://localhost:8081"))
 	})
 })
 

@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/api"
+	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
@@ -34,6 +35,26 @@ func NewAPICmd() *cobra.Command {
 		Use:   "api",
 		Short: apiShortDesc,
 		Long:  apiLongDesc,
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			configDir, _ := cmd.Flags().GetString("config-dir")
+			cfger, err := config.NewConfiger(configDir)
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+
+			cfg, err := cfger.LoadConfig()
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+
+			if !cmd.Flags().Changed("listen") {
+				cmder.listen = cfg.API.Listen
+			}
+			if !cmd.Flags().Changed("sqlite") {
+				cmder.sqlitePath = cfg.Storage.SQLitePath
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			var err error
 			cmder.debug, err = cmd.Flags().GetBool("debug")
@@ -45,7 +66,8 @@ func NewAPICmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&cmder.listen, "listen", "l", ":8081", "Address for API server to listen on")
+	defaults := config.NewDefaultConfig()
+	cmd.Flags().StringVarP(&cmder.listen, "listen", "l", defaults.API.Listen, "Address for API server to listen on")
 	cmd.Flags().StringVarP(&cmder.sqlitePath, "sqlite", "s", "", "Path to SQLite database (default: in-memory)")
 
 	return cmd

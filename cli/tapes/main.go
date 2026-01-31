@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	tapescmder "github.com/papercomputeco/tapes/cmd/tapes"
@@ -8,7 +9,9 @@ import (
 
 func main() {
 	cmd := tapescmder.NewTapesCmd()
-	if err := cmd.Execute(); err != nil {
+	err := cmd.Execute()
+	if err != nil {
+		fmt.Printf("Error executing root command: %v", err)
 		os.Exit(1)
 	}
 }

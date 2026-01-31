@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
+	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/dotdir"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/logger"
@@ -21,9 +22,9 @@ import (
 )
 
 type checkoutCommander struct {
-	hash  string
-	api   string
-	debug bool
+	hash      string
+	apiTarget string
+	debug     bool
 
 	logger *zap.Logger
 }
@@ -69,6 +70,23 @@ func NewCheckoutCmd() *cobra.Command {
 		Short: checkoutShortDesc,
 		Long:  checkoutLongDesc,
 		Args:  cobra.MaximumNArgs(1),
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			configDir, _ := cmd.Flags().GetString("config-dir")
+			cfger, err := config.NewConfiger(configDir)
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+
+			cfg, err := cfger.LoadConfig()
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+
+			if !cmd.Flags().Changed("api-target") {
+				cmder.apiTarget = cfg.Client.APITarget
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
 				cmder.hash = args[0]
@@ -80,16 +98,12 @@ func NewCheckoutCmd() *cobra.Command {
 				return fmt.Errorf("could not get debug flag: %w", err)
 			}
 
-			cmder.api, err = cmd.Flags().GetString("api")
-			if err != nil {
-				return fmt.Errorf("could not get api flag: %w", err)
-			}
-
 			return cmder.run()
 		},
 	}
 
-	cmd.PersistentFlags().StringVarP(&cmder.api, "api", "a", "http://localhost:8081", "Tapes API server address")
+	defaults := config.NewDefaultConfig()
+	cmd.Flags().StringVarP(&cmder.apiTarget, "api-target", "a", defaults.Client.APITarget, "Tapes API server URL")
 
 	return cmd
 }
@@ -110,7 +124,7 @@ func (c *checkoutCommander) run() error {
 
 	c.logger.Debug("checking out conversation",
 		zap.String("hash", c.hash),
-		zap.String("api", c.api),
+		zap.String("api_target", c.apiTarget),
 	)
 
 	// Fetch the conversation history from the API
@@ -149,7 +163,7 @@ func (c *checkoutCommander) run() error {
 
 // fetchHistory calls the API to get the conversation history for a given hash.
 func (c *checkoutCommander) fetchHistory(hash string) (*historyResponse, error) {
-	url := fmt.Sprintf("%s/dag/history/%s", c.api, hash)
+	url := fmt.Sprintf("%s/dag/history/%s", c.apiTarget, hash)
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
