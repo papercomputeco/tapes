@@ -39,10 +39,14 @@ func (t *Tapes) Test(ctx context.Context) (string, error) {
 }
 
 // testContainer returns a container configured for running tests
+// with a local gcc toolchain for CGO and sqlite dependencies.
 func (t *Tapes) testContainer() *dagger.Container {
 	return dag.Container().
-		From("golang:1.25-alpine").
-		WithEnvVariable("CGO_ENABLED", "0").
+		From("golang:1.25-bookworm").
+		WithExec([]string{"apt-get", "update"}).
+		WithExec([]string{"apt-get", "install", "-y", "gcc"}).
+		WithExec([]string{"apt-get", "install", "-y", "libsqlite3-dev"}).
+		WithEnvVariable("CGO_ENABLED", "1").
 		WithEnvVariable("GOEXPERIMENT", "jsonv2").
 		WithMountedCache("/go/pkg/mod", dag.CacheVolume("go-mod")).
 		WithMountedCache("/root/.cache/go-build", dag.CacheVolume("go-build")).

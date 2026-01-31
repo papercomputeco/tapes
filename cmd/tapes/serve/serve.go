@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -13,6 +14,7 @@ import (
 	"github.com/papercomputeco/tapes/api"
 	apicmder "github.com/papercomputeco/tapes/cmd/tapes/serve/api"
 	proxycmder "github.com/papercomputeco/tapes/cmd/tapes/serve/proxy"
+	"github.com/papercomputeco/tapes/pkg/dotdir"
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/merkle"
@@ -35,9 +37,10 @@ type ServeCommander struct {
 	vectorStoreProvider string
 	vectorStoreTarget   string
 
-	embeddingProvider string
-	embeddingTarget   string
-	embeddingModel    string
+	embeddingProvider   string
+	embeddingTarget     string
+	embeddingModel      string
+	embeddingDimensions uint
 
 	logger *zap.Logger
 }
@@ -71,16 +74,24 @@ func NewServeCmd() *cobra.Command {
 		},
 	}
 
+	dotdirManger := dotdir.NewManager()
+	defaultTargetDir, err := dotdirManger.Target("")
+	if err != nil {
+		panic(err)
+	}
+	defaultTargetSqliteFile := filepath.Join(defaultTargetDir, "tapes.sqlite")
+
 	cmd.Flags().StringVarP(&cmder.proxyListen, "proxy-listen", "p", ":8080", "Address for proxy to listen on")
 	cmd.Flags().StringVarP(&cmder.apiListen, "api-listen", "a", ":8081", "Address for API server to listen on")
 	cmd.Flags().StringVarP(&cmder.upstream, "upstream", "u", "http://localhost:11434", "Upstream LLM provider URL")
 	cmd.Flags().StringVar(&cmder.providerType, "provider", "ollama", "LLM provider type (anthropic, openai, ollama, besteffort)")
-	cmd.Flags().StringVarP(&cmder.sqlitePath, "sqlite", "s", "", "Path to SQLite database (default: in-memory)")
-	cmd.Flags().StringVar(&cmder.vectorStoreProvider, "vector-store-provider", "", "Vector store provider type (e.g., chroma)")
-	cmd.Flags().StringVar(&cmder.vectorStoreTarget, "vector-store-target", "", "Vector store URL (e.g., http://localhost:8000)")
-	cmd.Flags().StringVar(&cmder.embeddingProvider, "embedding-provider", "", "Embedding provider type (e.g., ollama)")
-	cmd.Flags().StringVar(&cmder.embeddingTarget, "embedding-target", "", "Embedding provider URL")
-	cmd.Flags().StringVar(&cmder.embeddingModel, "embedding-model", "", "Embedding model name (e.g., nomic-embed-text)")
+	cmd.Flags().StringVarP(&cmder.sqlitePath, "sqlite", "s", defaultTargetSqliteFile, "Path to SQLite database (e.g., ./tapes.sqlite, in-memory)")
+	cmd.Flags().StringVar(&cmder.vectorStoreProvider, "vector-store-provider", "sqlite", "Vector store provider type (e.g., chroma, sqlite)")
+	cmd.Flags().StringVar(&cmder.vectorStoreTarget, "vector-store-target", defaultTargetSqliteFile, "Vector store target fielpath for sqlite or URL for vector store service (e.g., http://localhost:8000, ./db.sqlite)")
+	cmd.Flags().StringVar(&cmder.embeddingProvider, "embedding-provider", "ollama", "Embedding provider type (e.g., ollama)")
+	cmd.Flags().StringVar(&cmder.embeddingTarget, "embedding-target", "http://localhost:11434", "Embedding provider URL")
+	cmd.Flags().StringVar(&cmder.embeddingModel, "embedding-model", "embeddinggemma", "Embedding model name (e.g., embeddinggemma, nomic-embed-text)")
+	cmd.Flags().UintVar(&cmder.embeddingDimensions, "embedding-dimensions", 768, "Embedding dimensionality.")
 
 	cmd.AddCommand(apicmder.NewAPICmd())
 	cmd.AddCommand(proxycmder.NewProxyCmd())
@@ -111,35 +122,34 @@ func (c *ServeCommander) run() error {
 		ProviderType: c.providerType,
 	}
 
-	if c.vectorStoreTarget != "" {
-		proxyConfig.Embedder, err = embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
-			ProviderType: c.embeddingProvider,
-			TargetURL:    c.embeddingTarget,
-			Model:        c.embeddingModel,
-		})
-		if err != nil {
-			return fmt.Errorf("creating embedder: %w", err)
-		}
-		defer proxyConfig.Embedder.Close()
-
-		proxyConfig.VectorDriver, err = vectorutils.NewVectorDriver(&vectorutils.NewVectorDriverOpts{
-			ProviderType: c.vectorStoreProvider,
-			TargetURL:    c.vectorStoreTarget,
-			Logger:       c.logger,
-		})
-		if err != nil {
-			return fmt.Errorf("creating vector driver: %w", err)
-		}
-		defer proxyConfig.VectorDriver.Close()
-
-		c.logger.Info("vector storage enabled",
-			zap.String("vector_store_provider", c.vectorStoreProvider),
-			zap.String("vector_store_target", c.vectorStoreTarget),
-			zap.String("embedding_provider", c.embeddingProvider),
-			zap.String("embedding_target", c.embeddingTarget),
-			zap.String("embedding_model", c.embeddingModel),
-		)
+	proxyConfig.VectorDriver, err = vectorutils.NewVectorDriver(&vectorutils.NewVectorDriverOpts{
+		ProviderType: c.vectorStoreProvider,
+		Target:       c.vectorStoreTarget,
+		Dimensions:   c.embeddingDimensions,
+		Logger:       c.logger,
+	})
+	if err != nil {
+		return fmt.Errorf("creating vector driver: %w", err)
 	}
+	defer proxyConfig.VectorDriver.Close()
+
+	proxyConfig.Embedder, err = embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
+		ProviderType: c.embeddingProvider,
+		TargetURL:    c.embeddingTarget,
+		Model:        c.embeddingModel,
+	})
+	if err != nil {
+		return fmt.Errorf("creating embedder: %w", err)
+	}
+	defer proxyConfig.Embedder.Close()
+
+	c.logger.Info("vector storage enabled",
+		zap.String("vector_store_provider", c.vectorStoreProvider),
+		zap.String("vector_store_target", c.vectorStoreTarget),
+		zap.String("embedding_provider", c.embeddingProvider),
+		zap.String("embedding_target", c.embeddingTarget),
+		zap.String("embedding_model", c.embeddingModel),
+	)
 
 	// Create proxy
 	p, err := proxy.New(proxyConfig, driver, c.logger)

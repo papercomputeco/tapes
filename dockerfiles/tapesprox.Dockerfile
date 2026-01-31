@@ -3,7 +3,12 @@
 # -----------------------------------------------------------------------------
 # Build stage
 # -----------------------------------------------------------------------------
-FROM golang:1.25-alpine AS builder
+FROM golang:1.25-bookworm AS builder
+
+# CGO and sqlite dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libsqlite3-dev
 
 WORKDIR /src
 
@@ -15,8 +20,8 @@ RUN go mod download
 COPY . .
 
 ARG LDFLAGS="-s -w"
-RUN CGO_ENABLED=0 GOEXPERIMENT="jsonv2" go build \
-    -ldflags="${LDFLAGS}" \
+RUN CGO_ENABLED=1 GOEXPERIMENT="jsonv2" go build \
+    -ldflags="${LDFLAGS} -linkmode external -extldflags '-static'" \
     -o /bin/tapesprox \
     ./cli/tapesprox
 

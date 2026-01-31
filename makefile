@@ -3,6 +3,12 @@
 
 VERSION ?= $(shell git describe --tags --always --dirty)
 COMMIT  := $(shell git rev-parse HEAD)
+BUILDTIME ?= $(shell date -u '+%Y-%m-%d %H:%M:%S')
+
+LDFLAGS := -s -w \
+	-X 'github.com/papercomputeco/tapes/pkg/utils.Version=$(VERSION)' \
+	-X 'github.com/papercomputeco/tapes/pkg/utils.Sha=$(COMMIT)' \
+	-X 'github.com/papercomputeco/tapes/pkg/utils.Buildtime=$(BUILDTIME)'
 
 .PHONY: format
 format:
@@ -12,8 +18,23 @@ format:
 generate: ## Regenerates ent code from schema
 	go generate ./pkg/storage/ent/...
 
+.PHONY: build-local
+build-local: ## Builds local artifacts with local toolchain
+	$(call print-target)
+	@mkdir -p ./build
+	CGO_ENABLED=1 GOEXPERIMENT=jsonv2 go build -ldflags "$(LDFLAGS)" -o ./build/ ./cli/tapes
+	CGO_ENABLED=1 GOEXPERIMENT=jsonv2 go build -ldflags "$(LDFLAGS)" -o ./build/ ./cli/tapesprox
+	CGO_ENABLED=1 GOEXPERIMENT=jsonv2 go build -ldflags "$(LDFLAGS)" -o ./build/ ./cli/tapesapi
+
+.PHONY: install
+install: build-local ## Builds local artifacts and installs to configured $GOPATH
+	$(call print-target)
+	cp ./build/tapes $(shell go env GOBIN)
+	cp ./build/tapesprox $(shell go env GOBIN)
+	cp ./build/tapesapi $(shell go env GOBIN)
+
 .PHONY: build
-build: ## Builds all artifacts
+build: ## Builds all cross-platform artifacts - Warning! MacOS may fail cross compiling toolchain dependency
 	dagger call \
 		build-release \
 			--version ${VERSION} \

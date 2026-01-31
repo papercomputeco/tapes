@@ -23,10 +23,16 @@
             # Build tools
             pkgs.gnumake
             dagger.packages.${system}.dagger
+
+            # SQLite development headers (needed by sqlite-vec CGO bindings)
+            pkgs.sqlite.dev
           ];
 
           # Enable Go's experimental JSON v2 implementation
           GOEXPERIMENT = "jsonv2";
+
+          # CGO for embedded sqlite
+          CGO_ENABLED = 1;
 
           shellHook = ''
             echo "Tapes development environment"

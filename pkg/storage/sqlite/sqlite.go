@@ -8,7 +8,7 @@ import (
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/papercomputeco/tapes/pkg/storage/ent"
 	entdriver "github.com/papercomputeco/tapes/pkg/storage/ent/driver"
@@ -22,8 +22,8 @@ type SQLiteDriver struct {
 // NewSQLiteDriver creates a new SQLite-backed storer.
 // The dbPath can be a file path or ":memory:" for an in-memory database.
 func NewSQLiteDriver(dbPath string) (*SQLiteDriver, error) {
-	// Open the database using the modernc.org/sqlite driver (registered as "sqlite")
-	db, err := sql.Open("sqlite", dbPath)
+	// Open the database using the github.com/mattn/go-sqlite3 driver (registered as "sqlite3")
+	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}

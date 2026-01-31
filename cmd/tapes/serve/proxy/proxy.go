@@ -67,7 +67,7 @@ func NewProxyCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&cmder.upstream, "upstream", "u", "http://localhost:11434", "Upstream LLM provider URL")
 	cmd.Flags().StringVarP(&cmder.providerType, "provider", "p", "ollama", "LLM provider type (anthropic, openai, ollama, besteffort)")
 	cmd.Flags().StringVarP(&cmder.sqlitePath, "sqlite", "s", "", "Path to SQLite database (default: in-memory)")
-	cmd.Flags().StringVar(&cmder.vectorStoreProvider, "vector-store-provider", "", "Vector store provider type (e.g., chroma)")
+	cmd.Flags().StringVar(&cmder.vectorStoreProvider, "vector-store-provider", "sqlite", "Vector store provider type (e.g., chroma, sqlite)")
 	cmd.Flags().StringVar(&cmder.vectorStoreTarget, "vector-store-target", "", "Vector store URL (e.g., http://localhost:8000)")
 	cmd.Flags().StringVar(&cmder.embeddingProvider, "embedding-provider", "", "Embedding provider type (e.g., ollama)")
 	cmd.Flags().StringVar(&cmder.embeddingTarget, "embedding-target", "", "Embedding provider URL")
@@ -105,8 +105,11 @@ func (c *proxyCommander) run() error {
 
 		config.VectorDriver, err = vectorutils.NewVectorDriver(&vectorutils.NewVectorDriverOpts{
 			ProviderType: c.vectorStoreProvider,
-			TargetURL:    c.vectorStoreTarget,
+			Target:       c.vectorStoreTarget,
 			Logger:       c.logger,
+
+			// TODO - need to make this actually configurable
+			Dimensions: 1024,
 		})
 		if err != nil {
 			return fmt.Errorf("creating vector driver: %w", err)
