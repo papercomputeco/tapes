@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
@@ -9,6 +10,28 @@ import (
 
 	"dagger/tapes/internal/dagger"
 )
+
+const (
+	zigVersion string = "0.15.2"
+)
+
+type buildTarget struct {
+	goos   string
+	goarch string
+	cc     string
+	cxx    string
+}
+
+func zigArch() string {
+	switch runtime.GOARCH {
+	case "arm64":
+		return "aarch64"
+	case "amd64":
+		return "x86_64"
+	default:
+		return runtime.GOARCH
+	}
+}
 
 // Build and return directory of go binaries
 func (t *Tapes) Build(
@@ -19,38 +42,47 @@ func (t *Tapes) Build(
 	// +default="-s -w"
 	ldflags string,
 ) *dagger.Directory {
-	// define build matrix
-	gooses := []string{"linux", "darwin"}
-	goarches := []string{"amd64", "arm64"}
+	targets := []buildTarget{
+		{"linux", "amd64", "zig cc -target x86_64-linux-gnu", "zig c++ -target x86_64-linux-gnu"},
+		{"linux", "arm64", "zig cc -target aarch64-linux-gnu", "zig c++ -target aarch64-linux-gnu"},
+		{"darwin", "amd64", "zig cc -target x86_64-macos", "zig c++ -target x86_64-macos"},
+		{"darwin", "arm64", "zig cc -target aarch64-macos", "zig c++ -target aarch64-macos"},
+	}
 
 	// create empty directory to put build artifacts
 	outputs := dag.Directory()
 
+	// Build zig download URL based on host architecture
+	zigArch := zigArch()
+	zigDownloadURL := fmt.Sprintf("https://ziglang.org/download/%s/zig-%s-linux-%s.tar.xz", zigVersion, zigArch, zigVersion)
+	zigDir := fmt.Sprintf("zig-%s-linux-%s", zigArch, zigVersion)
+
 	golang := dag.Container().
-		From("golang:1.25-alpine").
-		WithEnvVariable("CGO_ENABLED", "0").
+		From("golang:1.25-bookworm").
+		WithExec([]string{"apt-get", "update"}).
+		WithExec([]string{"apt-get", "install", "-y", "xz-utils"}).
+		WithExec([]string{"sh", "-c", fmt.Sprintf("curl -L %s | tar -xJ -C /usr/local", zigDownloadURL)}).
+		WithEnvVariable("PATH", fmt.Sprintf("/usr/local/%s:$PATH", zigDir), dagger.ContainerWithEnvVariableOpts{Expand: true}).
+		WithEnvVariable("CGO_ENABLED", "1").
 		WithEnvVariable("GOEXPERIMENT", "jsonv2").
 		WithMountedCache("/go/pkg/mod", dag.CacheVolume("go-mod")).
 		WithMountedCache("/root/.cache/go-build", dag.CacheVolume("go-build")).
 		WithDirectory("/src", t.Source).
 		WithWorkdir("/src")
 
-	for _, goos := range gooses {
-		for _, goarch := range goarches {
-			// create directory for each OS and architecture
-			path := fmt.Sprintf("%s/%s/", goos, goarch)
+	for _, target := range targets {
+		path := fmt.Sprintf("%s/%s/", target.goos, target.goarch)
 
-			// build artifact
-			build := golang.
-				WithEnvVariable("GOOS", goos).
-				WithEnvVariable("GOARCH", goarch).
-				WithExec([]string{"go", "build", "-ldflags", ldflags, "-o", path, "./cli/tapes"}).
-				WithExec([]string{"go", "build", "-ldflags", ldflags, "-o", path, "./cli/tapesprox"}).
-				WithExec([]string{"go", "build", "-ldflags", ldflags, "-o", path, "./cli/tapesapi"})
+		build := golang.
+			WithEnvVariable("GOOS", target.goos).
+			WithEnvVariable("GOARCH", target.goarch).
+			WithEnvVariable("CC", target.cc).
+			WithEnvVariable("CXX", target.cxx).
+			WithExec([]string{"go", "build", "-ldflags", ldflags, "-o", path, "./cli/tapes"}).
+			WithExec([]string{"go", "build", "-ldflags", ldflags, "-o", path, "./cli/tapesprox"}).
+			WithExec([]string{"go", "build", "-ldflags", ldflags, "-o", path, "./cli/tapesapi"})
 
-			// add build to outputs
-			outputs = outputs.WithDirectory(path, build.Directory(path))
-		}
+		outputs = outputs.WithDirectory(path, build.Directory(path))
 	}
 
 	// return build directory
