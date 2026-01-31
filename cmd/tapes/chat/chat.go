@@ -97,8 +97,7 @@ func NewChatCmd() *cobra.Command {
 	cmd.PersistentFlags().StringVarP(&cmder.api, "api", "a", "http://localhost:8081", "Tapes API server address")
 
 	cmd.Flags().StringVarP(&cmder.proxy, "proxy", "p", "http://localhost:8080", "Tapes proxy address")
-	cmd.Flags().StringVarP(&cmder.model, "model", "m", "", "Model name (e.g., llama3.2)")
-	cmd.MarkFlagRequired("model")
+	cmd.Flags().StringVarP(&cmder.model, "model", "m", "gemma3:latest", "Model name (e.g., gemma3:1b, ministral-3:latest)")
 
 	return cmd
 }

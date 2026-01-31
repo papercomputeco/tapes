@@ -90,7 +90,7 @@ func NewServeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cmder.vectorStoreTarget, "vector-store-target", defaultTargetSqliteFile, "Vector store target fielpath for sqlite or URL for vector store service (e.g., http://localhost:8000, ./db.sqlite)")
 	cmd.Flags().StringVar(&cmder.embeddingProvider, "embedding-provider", "ollama", "Embedding provider type (e.g., ollama)")
 	cmd.Flags().StringVar(&cmder.embeddingTarget, "embedding-target", "http://localhost:11434", "Embedding provider URL")
-	cmd.Flags().StringVar(&cmder.embeddingModel, "embedding-model", "embeddinggemma", "Embedding model name (e.g., embeddinggemma, nomic-embed-text)")
+	cmd.Flags().StringVar(&cmder.embeddingModel, "embedding-model", "embeddinggemma:latest", "Embedding model name (e.g., embeddinggemma:300m, nomic-embed-text)")
 	cmd.Flags().UintVar(&cmder.embeddingDimensions, "embedding-dimensions", 768, "Embedding dimensionality.")
 
 	cmd.AddCommand(apicmder.NewAPICmd())

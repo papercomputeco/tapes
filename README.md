@@ -38,3 +38,42 @@
 `tapes` is an Agentic telemetry system for content-addressable LLM interactions.
 It provides durable storage of agent sessions, plug-and-play OpenTelemetry instrumentation,
 and deterministic replay of past agent messages.
+
+---
+
+# 📼 Quickstart
+
+Install `tapes`:
+
+```bash
+curl -fsSL https://download.tapes.dev/install | bash
+```
+
+Run Ollama and the `tapes` services. By default, `tapes` targets embeddings on Ollama 
+with the `embeddinggema:latest` model - pull this model with `ollama pull embeddinggema`:
+
+```bash
+ollama serve
+```
+```bash
+tapes serve
+```
+
+Start a chat session:
+
+```bash
+tapes chat --model gemma3
+```
+
+Search conversation turns:
+
+```bash
+tapes search "What's the weather like in New York?"
+```
+
+Checkout a previous conversation state for context check-pointing and retry:
+
+```bash
+tapes checkout abc123xyz987
+tapes chat
+```
