@@ -101,7 +101,7 @@ jobs:
           prerelease: true
           allowUpdates: true
           removeArtifacts: true
-          makeLatest: true
+          makeLatest: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload artifacts to release
