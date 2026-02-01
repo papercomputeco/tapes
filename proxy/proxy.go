@@ -19,6 +19,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/llm/provider"
 	"github.com/papercomputeco/tapes/pkg/storage"
+	"github.com/papercomputeco/tapes/proxy/header"
 	"github.com/papercomputeco/tapes/proxy/worker"
 )
 
@@ -26,13 +27,14 @@ import (
 // The proxy is transparent: it forwards requests to the upstream LLM provider and
 // enqueues conversation turns for async storage via its worker pool.
 type Proxy struct {
-	config     Config
-	driver     storage.Driver
-	workerPool *worker.Pool
-	logger     *zap.Logger
-	httpClient *http.Client
-	server     *fiber.App
-	provider   provider.Provider
+	config        Config
+	driver        storage.Driver
+	workerPool    *worker.Pool
+	logger        *zap.Logger
+	httpClient    *http.Client
+	server        *fiber.App
+	provider      provider.Provider
+	headerHandler *header.Handler
 }
 
 // New creates a new Proxy.
@@ -62,12 +64,13 @@ func New(config Config, driver storage.Driver, logger *zap.Logger) (*Proxy, erro
 	})
 
 	p := &Proxy{
-		config:     config,
-		driver:     driver,
-		workerPool: wp,
-		logger:     logger,
-		server:     app,
-		provider:   prov,
+		config:        config,
+		driver:        driver,
+		workerPool:    wp,
+		logger:        logger,
+		server:        app,
+		provider:      prov,
+		headerHandler: header.NewHandler(),
 		httpClient: &http.Client{
 			// LLM requests can be slow, especially with thinking blocks
 			Timeout: 5 * time.Minute,
@@ -170,14 +173,7 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method string, body 
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "internal error"})
 	}
 
-	// Copy relevant headers
-	c.Request().Header.VisitAll(func(key, value []byte) {
-		k := string(key)
-		// Skip hop-by-hop headers and Accept-Encoding (let Go handle compression)
-		if k != "Connection" && k != "Host" && k != "Accept-Encoding" {
-			httpReq.Header.Set(k, string(value))
-		}
-	})
+	p.headerHandler.SetUpstreamRequestHeaders(c, httpReq)
 
 	p.logger.Debug("forwarding request to upstream",
 		zap.String("method", method),
@@ -199,12 +195,7 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method string, body 
 		return c.Status(fiber.StatusBadGateway).JSON(llm.ErrorResponse{Error: "failed to read upstream response"})
 	}
 
-	// Copy response headers
-	for k, v := range httpResp.Header {
-		if k != "Connection" && k != "Transfer-Encoding" {
-			c.Set(k, strings.Join(v, ", "))
-		}
-	}
+	p.headerHandler.SetClientResponseHeaders(c, httpResp)
 
 	// If this was a chat request, enqueue for async storage
 	if parsedReq != nil && httpResp.StatusCode == http.StatusOK {
@@ -249,14 +240,7 @@ func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path string, body []byte, par
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "internal error"})
 	}
 
-	// Copy relevant headers
-	c.Request().Header.VisitAll(func(key, value []byte) {
-		k := string(key)
-		// Skip hop-by-hop headers and Accept-Encoding (let Go handle compression)
-		if k != "Connection" && k != "Host" && k != "Accept-Encoding" {
-			httpReq.Header.Set(k, string(value))
-		}
-	})
+	p.headerHandler.SetUpstreamRequestHeaders(c, httpReq)
 
 	p.logger.Debug("forwarding streaming request to upstream",
 		zap.String("url", upstreamURL),
@@ -278,12 +262,7 @@ func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path string, body []byte, par
 		return c.Status(httpResp.StatusCode).Send(respBody)
 	}
 
-	// Copy response headers
-	for k, v := range httpResp.Header {
-		if k != "Connection" && k != "Transfer-Encoding" {
-			c.Set(k, strings.Join(v, ", "))
-		}
-	}
+	p.headerHandler.SetClientResponseHeaders(c, httpResp)
 
 	// Use io.Pipe + SetBodyStream instead of SetBodyStreamWriter.
 	// SetBodyStreamWriter uses an internal PipeConns with a buffered channel
