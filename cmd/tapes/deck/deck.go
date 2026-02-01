@@ -159,6 +159,13 @@ func resolveSQLitePath(override string) (string, error) {
 		return override, nil
 	}
 
+	if envPath := strings.TrimSpace(os.Getenv("TAPES_SQLITE")); envPath != "" {
+		return envPath, nil
+	}
+	if envPath := strings.TrimSpace(os.Getenv("TAPES_DB")); envPath != "" {
+		return envPath, nil
+	}
+
 	candidates := []string{
 		"tapes.db",
 		"tapes.sqlite",
@@ -168,10 +175,17 @@ func resolveSQLitePath(override string) (string, error) {
 
 	home, err := os.UserHomeDir()
 	if err == nil {
-		candidates = append(candidates,
+		candidates = append([]string{
 			filepath.Join(home, ".tapes", "tapes.db"),
 			filepath.Join(home, ".tapes", "tapes.sqlite"),
-		)
+		}, candidates...)
+	}
+
+	if xdgHome := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); xdgHome != "" {
+		candidates = append([]string{
+			filepath.Join(xdgHome, "tapes", "tapes.db"),
+			filepath.Join(xdgHome, "tapes", "tapes.sqlite"),
+		}, candidates...)
 	}
 
 	for _, candidate := range candidates {
