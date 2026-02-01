@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/compress"
 	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
@@ -49,6 +50,9 @@ func New(config Config, driver storage.Driver, logger *zap.Logger) (*Proxy, erro
 		// Enable streaming
 		StreamRequestBody: true,
 	})
+
+	// Add compression middleware to handle responses
+	app.Use(compress.New())
 
 	wp := worker.NewPool(&worker.Config{
 		Driver:       driver,
@@ -169,8 +173,8 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method string, body 
 	// Copy relevant headers
 	c.Request().Header.VisitAll(func(key, value []byte) {
 		k := string(key)
-		// Skip hop-by-hop headers
-		if k != "Connection" && k != "Host" {
+		// Skip hop-by-hop headers and Accept-Encoding (let Go handle compression)
+		if k != "Connection" && k != "Host" && k != "Accept-Encoding" {
 			httpReq.Header.Set(k, string(value))
 		}
 	})
@@ -248,7 +252,8 @@ func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path string, body []byte, par
 	// Copy relevant headers
 	c.Request().Header.VisitAll(func(key, value []byte) {
 		k := string(key)
-		if k != "Connection" && k != "Host" {
+		// Skip hop-by-hop headers and Accept-Encoding (let Go handle compression)
+		if k != "Connection" && k != "Host" && k != "Accept-Encoding" {
 			httpReq.Header.Set(k, string(value))
 		}
 	})

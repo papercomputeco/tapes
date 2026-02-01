@@ -304,6 +304,32 @@ var _ = Describe("Non-Streaming Proxy", func() {
 			Expect(receivedHeaders.Get("X-Api-Key")).To(Equal("secret-token"))
 			Expect(receivedHeaders.Get("Content-Type")).To(Equal("application/json"))
 		})
+
+		It("filters Accept-Encoding header to let Go handle compression", func() {
+			// Reset receivedHeaders to ensure we're checking fresh data
+			receivedHeaders = make(http.Header)
+
+			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+				{Role: "user", Content: "hello"},
+			}, boolPtr(false))
+
+			req := httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody)))
+			req.Header.Set("Accept-Encoding", "gzip, deflate, br")
+			req.Header.Set("Authorization", "Bearer token123")
+
+			resp, err := p.server.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+
+			// Original client Accept-Encoding values should be filtered out
+			// Go's http.Client will add its own Accept-Encoding and handle decompression
+			acceptEncoding := receivedHeaders.Get("Accept-Encoding")
+			Expect(acceptEncoding).NotTo(Equal("gzip, deflate, br"))
+			Expect(acceptEncoding).NotTo(ContainSubstring("deflate"))
+			Expect(acceptEncoding).NotTo(ContainSubstring("br"))
+			// Other headers should still be forwarded
+			Expect(receivedHeaders.Get("Authorization")).To(Equal("Bearer token123"))
+		})
 	})
 })
 

@@ -3,6 +3,7 @@ package anthropic
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
@@ -30,6 +31,7 @@ func (p *provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 		return nil, err
 	}
 
+	system := parseAnthropicSystem(req.System)
 	messages := make([]llm.Message, 0, len(req.Messages))
 	for _, msg := range req.Messages {
 		converted := llm.Message{Role: msg.Role}
@@ -78,7 +80,7 @@ func (p *provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 	result := &llm.ChatRequest{
 		Model:       req.Model,
 		Messages:    messages,
-		System:      req.System,
+		System:      system,
 		MaxTokens:   &req.MaxTokens,
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
@@ -89,6 +91,36 @@ func (p *provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 	}
 
 	return result, nil
+}
+
+func parseAnthropicSystem(system any) string {
+	if system == nil {
+		return ""
+	}
+
+	switch value := system.(type) {
+	case string:
+		return value
+	case []any:
+		var builder strings.Builder
+		for _, item := range value {
+			block, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			blockType, _ := block["type"].(string)
+			text, _ := block["text"].(string)
+			if blockType == "text" && text != "" {
+				if builder.Len() > 0 {
+					builder.WriteString("\n")
+				}
+				builder.WriteString(text)
+			}
+		}
+		return builder.String()
+	default:
+		return ""
+	}
 }
 
 func (p *provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {

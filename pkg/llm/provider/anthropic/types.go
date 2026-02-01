@@ -4,7 +4,7 @@ package anthropic
 type anthropicRequest struct {
 	Model       string             `json:"model"`
 	Messages    []anthropicMessage `json:"messages"`
-	System      string             `json:"system,omitempty"`
+	System      any                `json:"system,omitempty"`
 	MaxTokens   int                `json:"max_tokens"`
 	Temperature *float64           `json:"temperature,omitempty"`
 	TopP        *float64           `json:"top_p,omitempty"`
