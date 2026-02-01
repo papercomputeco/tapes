@@ -1,0 +1,246 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b0b0b;
+  --panel: #121212;
+  --panel-border: #1f1f1f;
+  --text: #f5efe3;
+  --muted: #9e9a92;
+  --accent: #e38b55;
+  --accent-2: #f3b87a;
+  --good: #6cc48a;
+  --bad: #e26d5a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", ui-monospace, monospace;
+  background: radial-gradient(circle at top, #1c120a, var(--bg));
+  color: var(--text);
+}
+
+.app {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 32px 24px 64px;
+}
+
+.app__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--panel-border);
+  padding-bottom: 16px;
+  margin-bottom: 24px;
+}
+
+.app__title {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--accent);
+}
+
+.app__subtitle {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.app__badge {
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  padding: 6px 12px;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.metric {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  padding: 16px;
+  border-radius: 12px;
+}
+
+.metric__label {
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.metric__value {
+  font-size: 20px;
+  font-weight: 600;
+  margin-top: 10px;
+}
+
+.metric__sub {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.panel__title {
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: var(--muted);
+  margin-bottom: 16px;
+}
+
+.model-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.model-row__name {
+  font-size: 13px;
+}
+
+.model-row__bar {
+  height: 8px;
+  border-radius: 999px;
+  background: #1f1b16;
+  overflow: hidden;
+  position: relative;
+  margin-top: 6px;
+}
+
+.model-row__fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+}
+
+.table {
+  display: grid;
+  gap: 8px;
+}
+
+.table__row {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr 1fr auto;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.table__row:hover {
+  border-color: var(--accent);
+  background: rgba(227, 139, 85, 0.08);
+}
+
+.table__header {
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.status {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.status--completed {
+  color: var(--good);
+}
+
+.status--failed {
+  color: var(--bad);
+}
+
+.status--abandoned {
+  color: var(--muted);
+}
+
+.detail {
+  min-height: 220px;
+}
+
+.detail__empty {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.detail__meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.detail__meta-item {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.detail__meta-item span {
+  color: var(--text);
+  display: block;
+  margin-top: 6px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.timeline {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.timeline__row {
+  display: grid;
+  grid-template-columns: 80px 1fr 120px 120px;
+  gap: 12px;
+  font-size: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #111;
+}
+
+.timeline__row span {
+  color: var(--muted);
+}
+
+@media (max-width: 900px) {
+  .table__row {
+    grid-template-columns: 1fr 1fr;
+    grid-auto-rows: auto;
+  }
+  .timeline__row {
+    grid-template-columns: 1fr 1fr;
+  }
+}

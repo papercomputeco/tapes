@@ -1,0 +1,497 @@
+package deck
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/papercomputeco/tapes/pkg/llm"
+	"github.com/papercomputeco/tapes/pkg/storage/ent"
+	"github.com/papercomputeco/tapes/pkg/storage/ent/node"
+	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
+)
+
+type Query struct {
+	client  *ent.Client
+	pricing PricingTable
+}
+
+func NewQuery(dbPath string, pricing PricingTable) (*Query, func() error, error) {
+	driver, err := sqlite.NewSQLiteDriver(dbPath)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	closeFn := func() error {
+		return driver.Close()
+	}
+
+	return &Query{client: driver.Client, pricing: pricing}, closeFn, nil
+}
+
+func (q *Query) Overview(ctx context.Context, filters Filters) (*DeckOverview, error) {
+	leaves, err := q.client.Node.Query().Where(node.Not(node.HasChildren())).All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list leaves: %w", err)
+	}
+
+	overview := &DeckOverview{
+		Sessions:    make([]SessionSummary, 0, len(leaves)),
+		CostByModel: map[string]ModelCost{},
+	}
+
+	for _, leaf := range leaves {
+		summary, modelCosts, status, err := q.buildSessionSummary(ctx, leaf)
+		if err != nil {
+			return nil, err
+		}
+
+		if !matchesFilters(summary, filters) {
+			continue
+		}
+
+		overview.Sessions = append(overview.Sessions, summary)
+
+		overview.TotalCost += summary.TotalCost
+		overview.InputTokens += summary.InputTokens
+		overview.OutputTokens += summary.OutputTokens
+		overview.TotalTokens += summary.InputTokens + summary.OutputTokens
+		overview.TotalDuration += summary.Duration
+		overview.TotalToolCalls += summary.ToolCalls
+
+		switch status {
+		case StatusCompleted:
+			overview.Completed++
+		case StatusFailed:
+			overview.Failed++
+		case StatusAbandoned:
+			overview.Abandoned++
+		}
+
+		for model, cost := range modelCosts {
+			aggregate := overview.CostByModel[model]
+			aggregate.Model = model
+			aggregate.InputTokens += cost.InputTokens
+			aggregate.OutputTokens += cost.OutputTokens
+			aggregate.InputCost += cost.InputCost
+			aggregate.OutputCost += cost.OutputCost
+			aggregate.TotalCost += cost.TotalCost
+			aggregate.SessionCount += cost.SessionCount
+			overview.CostByModel[model] = aggregate
+		}
+	}
+
+	if total := len(overview.Sessions); total > 0 {
+		overview.SuccessRate = float64(overview.Completed) / float64(total)
+	}
+
+	sortSessions(overview.Sessions, filters.Sort)
+
+	return overview, nil
+}
+
+func (q *Query) SessionDetail(ctx context.Context, sessionID string) (*SessionDetail, error) {
+	leaf, err := q.client.Node.Get(ctx, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("get session: %w", err)
+	}
+
+	nodes, err := q.loadAncestry(ctx, leaf)
+	if err != nil {
+		return nil, err
+	}
+
+	summary, _, _, err := q.buildSessionSummaryFromNodes(nodes)
+	if err != nil {
+		return nil, err
+	}
+
+	detail := &SessionDetail{
+		Summary:       summary,
+		Messages:      make([]SessionMessage, 0, len(nodes)),
+		ToolFrequency: map[string]int{},
+	}
+
+	var lastTime time.Time
+	for i, node := range nodes {
+		blocks, _ := parseContentBlocks(node.Content)
+		inputTokens, outputTokens, totalTokens := tokenCounts(node)
+		inputCost, outputCost, totalCost := q.costForNode(node, inputTokens, outputTokens)
+
+		toolCalls := extractToolCalls(blocks)
+		for _, tool := range toolCalls {
+			detail.ToolFrequency[tool]++
+		}
+
+		text := extractText(blocks)
+		delta := time.Duration(0)
+		if i > 0 {
+			delta = node.CreatedAt.Sub(lastTime)
+		}
+		lastTime = node.CreatedAt
+
+		detail.Messages = append(detail.Messages, SessionMessage{
+			Hash:         node.ID,
+			Role:         node.Role,
+			Model:        node.Model,
+			Timestamp:    node.CreatedAt,
+			Delta:        delta,
+			InputTokens:  inputTokens,
+			OutputTokens: outputTokens,
+			TotalTokens:  totalTokens,
+			InputCost:    inputCost,
+			OutputCost:   outputCost,
+			TotalCost:    totalCost,
+			ToolCalls:    toolCalls,
+			Text:         text,
+		})
+	}
+
+	return detail, nil
+}
+
+func (q *Query) buildSessionSummary(ctx context.Context, leaf *ent.Node) (SessionSummary, map[string]ModelCost, string, error) {
+	nodes, err := q.loadAncestry(ctx, leaf)
+	if err != nil {
+		return SessionSummary{}, nil, "", err
+	}
+
+	summary, modelCosts, status, err := q.buildSessionSummaryFromNodes(nodes)
+	if err != nil {
+		return SessionSummary{}, nil, "", err
+	}
+
+	return summary, modelCosts, status, nil
+}
+
+func (q *Query) buildSessionSummaryFromNodes(nodes []*ent.Node) (SessionSummary, map[string]ModelCost, string, error) {
+	if len(nodes) == 0 {
+		return SessionSummary{}, nil, "", fmt.Errorf("empty session nodes")
+	}
+
+	start := nodes[0].CreatedAt
+	end := nodes[len(nodes)-1].CreatedAt
+	duration := end.Sub(start)
+	if duration < 0 {
+		duration = 0
+	}
+
+	label := buildLabel(nodes)
+	toolCalls := 0
+	modelCosts := map[string]ModelCost{}
+	inputTokens := int64(0)
+	outputTokens := int64(0)
+
+	hasToolError := false
+	for _, node := range nodes {
+		blocks, _ := parseContentBlocks(node.Content)
+		toolCalls += countToolCalls(blocks)
+		if blocksHaveToolError(blocks) {
+			hasToolError = true
+		}
+
+		nodeInput, nodeOutput, _ := tokenCounts(node)
+		inputTokens += nodeInput
+		outputTokens += nodeOutput
+
+		model := normalizeModel(node.Model)
+		if model == "" {
+			continue
+		}
+
+		pricing, ok := PricingForModel(q.pricing, model)
+		if !ok {
+			continue
+		}
+
+		inputCost, outputCost, totalCost := CostForTokens(pricing, nodeInput, nodeOutput)
+		current := modelCosts[model]
+		current.Model = model
+		current.InputTokens += nodeInput
+		current.OutputTokens += nodeOutput
+		current.InputCost += inputCost
+		current.OutputCost += outputCost
+		current.TotalCost += totalCost
+		current.SessionCount = 1
+		modelCosts[model] = current
+	}
+
+	model := dominantModel(modelCosts)
+	if model == "" {
+		model = firstModel(nodes)
+	}
+	inputCost, outputCost, totalCost := sumModelCosts(modelCosts)
+
+	status := determineStatus(nodes[len(nodes)-1], hasToolError)
+
+	summary := SessionSummary{
+		ID:           nodes[len(nodes)-1].ID,
+		Label:        label,
+		Model:        model,
+		Status:       status,
+		StartTime:    start,
+		EndTime:      end,
+		Duration:     duration,
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		InputCost:    inputCost,
+		OutputCost:   outputCost,
+		TotalCost:    totalCost,
+		ToolCalls:    toolCalls,
+		MessageCount: len(nodes),
+	}
+
+	return summary, modelCosts, status, nil
+}
+
+func (q *Query) loadAncestry(ctx context.Context, leaf *ent.Node) ([]*ent.Node, error) {
+	nodes := []*ent.Node{}
+	current := leaf
+	for current != nil {
+		nodes = append(nodes, current)
+		parent, err := current.QueryParent().Only(ctx)
+		if ent.IsNotFound(err) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("query parent: %w", err)
+		}
+		current = parent
+	}
+
+	for i, j := 0, len(nodes)-1; i < j; i, j = i+1, j-1 {
+		nodes[i], nodes[j] = nodes[j], nodes[i]
+	}
+
+	return nodes, nil
+}
+
+func (q *Query) costForNode(node *ent.Node, inputTokens, outputTokens int64) (float64, float64, float64) {
+	model := normalizeModel(node.Model)
+	if model == "" {
+		return 0, 0, 0
+	}
+
+	pricing, ok := PricingForModel(q.pricing, model)
+	if !ok {
+		return 0, 0, 0
+	}
+
+	return CostForTokens(pricing, inputTokens, outputTokens)
+}
+
+func tokenCounts(node *ent.Node) (int64, int64, int64) {
+	inputTokens := int64(0)
+	outputTokens := int64(0)
+	totalTokens := int64(0)
+	if node.PromptTokens != nil {
+		inputTokens = int64(*node.PromptTokens)
+	}
+	if node.CompletionTokens != nil {
+		outputTokens = int64(*node.CompletionTokens)
+	}
+	if node.TotalTokens != nil {
+		totalTokens = int64(*node.TotalTokens)
+	} else {
+		totalTokens = inputTokens + outputTokens
+	}
+
+	return inputTokens, outputTokens, totalTokens
+}
+
+func parseContentBlocks(raw []map[string]any) ([]llm.ContentBlock, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil, err
+	}
+
+	var blocks []llm.ContentBlock
+	if err := json.Unmarshal(data, &blocks); err != nil {
+		return nil, err
+	}
+
+	return blocks, nil
+}
+
+func extractToolCalls(blocks []llm.ContentBlock) []string {
+	tools := []string{}
+	for _, block := range blocks {
+		if block.Type == "tool_use" && block.ToolName != "" {
+			tools = append(tools, block.ToolName)
+		}
+	}
+	return tools
+}
+
+func countToolCalls(blocks []llm.ContentBlock) int {
+	count := 0
+	for _, block := range blocks {
+		if block.Type == "tool_use" {
+			count++
+		}
+	}
+	return count
+}
+
+func blocksHaveToolError(blocks []llm.ContentBlock) bool {
+	for _, block := range blocks {
+		if block.Type == "tool_result" && block.IsError {
+			return true
+		}
+	}
+	return false
+}
+
+func extractText(blocks []llm.ContentBlock) string {
+	texts := []string{}
+	for _, block := range blocks {
+		switch {
+		case block.Text != "":
+			texts = append(texts, block.Text)
+		case block.ToolOutput != "":
+			texts = append(texts, block.ToolOutput)
+		case block.ToolName != "":
+			texts = append(texts, fmt.Sprintf("tool call: %s", block.ToolName))
+		}
+	}
+	return strings.Join(texts, "\n")
+}
+
+func buildLabel(nodes []*ent.Node) string {
+	for _, node := range nodes {
+		if node.Role != "user" {
+			continue
+		}
+		blocks, _ := parseContentBlocks(node.Content)
+		text := strings.TrimSpace(extractText(blocks))
+		if text == "" {
+			continue
+		}
+		text = strings.Split(text, "\n")[0]
+		return truncate(text, 24)
+	}
+
+	return truncate(nodes[len(nodes)-1].ID, 12)
+}
+
+func truncate(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	if limit <= 3 {
+		return value[:limit]
+	}
+	return value[:limit-3] + "..."
+}
+
+func dominantModel(costs map[string]ModelCost) string {
+	var model string
+	maxCost := float64(0)
+	for name, cost := range costs {
+		if cost.TotalCost > maxCost {
+			maxCost = cost.TotalCost
+			model = name
+		}
+	}
+	return model
+}
+
+func firstModel(nodes []*ent.Node) string {
+	for _, node := range nodes {
+		if node.Model != "" {
+			return normalizeModel(node.Model)
+		}
+	}
+	return ""
+}
+
+func sumModelCosts(costs map[string]ModelCost) (float64, float64, float64) {
+	inputCost := 0.0
+	outputCost := 0.0
+	totalCost := 0.0
+	for _, cost := range costs {
+		inputCost += cost.InputCost
+		outputCost += cost.OutputCost
+		totalCost += cost.TotalCost
+	}
+	return inputCost, outputCost, totalCost
+}
+
+func matchesFilters(summary SessionSummary, filters Filters) bool {
+	if filters.Model != "" {
+		if normalizeModel(summary.Model) != normalizeModel(filters.Model) {
+			return false
+		}
+	}
+	if filters.Status != "" && summary.Status != filters.Status {
+		return false
+	}
+	if filters.From != nil && summary.EndTime.Before(*filters.From) {
+		return false
+	}
+	if filters.To != nil && summary.StartTime.After(*filters.To) {
+		return false
+	}
+	if filters.Since > 0 {
+		cutoff := time.Now().Add(-filters.Since)
+		if summary.EndTime.Before(cutoff) {
+			return false
+		}
+	}
+	return true
+}
+
+func sortSessions(sessions []SessionSummary, sortKey string) {
+	switch sortKey {
+	case "time":
+		sort.Slice(sessions, func(i, j int) bool {
+			return sessions[i].EndTime.After(sessions[j].EndTime)
+		})
+	case "tokens":
+		sort.Slice(sessions, func(i, j int) bool {
+			return sessions[i].InputTokens+sessions[i].OutputTokens > sessions[j].InputTokens+sessions[j].OutputTokens
+		})
+	case "duration":
+		sort.Slice(sessions, func(i, j int) bool {
+			return sessions[i].Duration > sessions[j].Duration
+		})
+	default:
+		sort.Slice(sessions, func(i, j int) bool {
+			return sessions[i].TotalCost > sessions[j].TotalCost
+		})
+	}
+}
+
+func determineStatus(leaf *ent.Node, hasToolError bool) string {
+	if hasToolError {
+		return StatusFailed
+	}
+
+	role := strings.ToLower(leaf.Role)
+	if role != "assistant" {
+		return StatusAbandoned
+	}
+
+	reason := strings.ToLower(strings.TrimSpace(leaf.StopReason))
+	switch reason {
+	case "stop", "end_turn", "end-turn", "eos":
+		return StatusCompleted
+	case "length", "max_tokens", "content_filter", "tool_use", "tool_use_response":
+		return StatusFailed
+	case "":
+		return StatusUnknown
+	default:
+		if strings.Contains(reason, "error") {
+			return StatusFailed
+		}
+	}
+
+	return StatusUnknown
+}

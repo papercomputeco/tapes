@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>tapes deck</title>
+    <link rel="stylesheet" href="/deck.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="app__header">
+        <div>
+          <div class="app__title">tapes deck</div>
+          <div class="app__subtitle" id="session-count">loading sessions...</div>
+        </div>
+        <div class="app__badge">local only</div>
+      </header>
+
+      <section class="metrics" id="metrics"></section>
+
+      <section class="grid">
+        <div class="panel">
+          <div class="panel__title">cost by model</div>
+          <div id="models"></div>
+        </div>
+        <div class="panel">
+          <div class="panel__title">sessions</div>
+          <div class="table" id="sessions"></div>
+        </div>
+      </section>
+
+      <section class="panel detail" id="detail">
+        <div class="panel__title">session detail</div>
+        <div class="detail__empty">select a session to drill down</div>
+      </section>
+    </div>
+
+    <script src="/deck.js"></script>
+  </body>
+</html>

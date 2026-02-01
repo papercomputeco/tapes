@@ -308,7 +308,6 @@ var _ = Describe("Non-Streaming Proxy", func() {
 		It("filters Accept-Encoding header to let Go handle compression", func() {
 			// Reset receivedHeaders to ensure we're checking fresh data
 			receivedHeaders = make(http.Header)
-
 			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 				{Role: "user", Content: "hello"},
 			}, boolPtr(false))

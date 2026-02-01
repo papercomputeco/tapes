@@ -3,6 +3,8 @@
 
 /.direnv/
 /build/
+/tmp/
+/tapes
 .DS_Store
 
 # JetBrains IDEs
