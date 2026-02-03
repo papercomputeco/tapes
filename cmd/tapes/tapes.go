@@ -6,6 +6,7 @@ import (
 
 	chatcmder "github.com/papercomputeco/tapes/cmd/tapes/chat"
 	checkoutcmder "github.com/papercomputeco/tapes/cmd/tapes/checkout"
+	deckcmder "github.com/papercomputeco/tapes/cmd/tapes/deck"
 	initcmder "github.com/papercomputeco/tapes/cmd/tapes/init"
 	searchcmder "github.com/papercomputeco/tapes/cmd/tapes/search"
 	servecmder "github.com/papercomputeco/tapes/cmd/tapes/serve"
@@ -28,7 +29,11 @@ Experimental: Chat through the proxy:
   tapes init               Initialize a local .tapes directory
 
 Search sessions:
-  tapes search         Search sessions using semantic similarity`
+  tapes search         Search sessions using semantic similarity
+
+Deck sessions:
+  tapes deck           ROI dashboard for sessions
+  tapes deck --web     Local web dashboard`
 
 const tapesShortDesc string = "Tapes - Agent Telemetry"
 
@@ -45,6 +50,7 @@ func NewTapesCmd() *cobra.Command {
 	// Add subcommands
 	cmd.AddCommand(chatcmder.NewChatCmd())
 	cmd.AddCommand(checkoutcmder.NewCheckoutCmd())
+	cmd.AddCommand(deckcmder.NewDeckCmd())
 	cmd.AddCommand(initcmder.NewInitCmd())
 	cmd.AddCommand(searchcmder.NewSearchCmd())
 	cmd.AddCommand(servecmder.NewServeCmd())
