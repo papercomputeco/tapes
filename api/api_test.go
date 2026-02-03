@@ -35,7 +35,7 @@ var _ = Describe("buildHistory", func() {
 	BeforeEach(func() {
 		var err error
 		logger, _ := zap.NewDevelopment()
-		inMem := inmemory.NewInMemoryDriver()
+		inMem := inmemory.NewDriver()
 		driver = inMem
 		dagLoader = inMem
 		server, err = NewServer(Config{ListenAddr: ":0"}, driver, dagLoader, logger)

@@ -9,23 +9,23 @@ import (
 	"github.com/papercomputeco/tapes/pkg/llm"
 )
 
-// provider implements the Provider interface for Anthropic's Claude API.
-type provider struct{}
+// Provider implements the Provider interface for Anthropic's Claude API.
+type Provider struct{}
 
 // New
-func New() *provider { return &provider{} }
+func New() *Provider { return &Provider{} }
 
 // Name
-func (p *provider) Name() string {
+func (p *Provider) Name() string {
 	return "anthropic"
 }
 
 // DefaultStreaming is false - Anthropic requires explicit "stream": true.
-func (p *provider) DefaultStreaming() bool {
+func (p *Provider) DefaultStreaming() bool {
 	return false
 }
 
-func (p *provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
+func (p *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 	var req anthropicRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
 		return nil, err
@@ -123,7 +123,7 @@ func parseAnthropicSystem(system any) string {
 	}
 }
 
-func (p *provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
+func (p *Provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 	var resp anthropicResponse
 	if err := json.Unmarshal(payload, &resp); err != nil {
 		return nil, err
@@ -173,6 +173,6 @@ func (p *provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 	return result, nil
 }
 
-func (p *provider) ParseStreamChunk(payload []byte) (*llm.StreamChunk, error) {
+func (p *Provider) ParseStreamChunk(_ []byte) (*llm.StreamChunk, error) {
 	panic("not implemented")
 }

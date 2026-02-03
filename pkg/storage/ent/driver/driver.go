@@ -4,6 +4,7 @@ package entdriver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
@@ -23,7 +24,7 @@ type EntDriver struct {
 // false if it already existed. This is a no-op due to content-addressing.
 func (ed *EntDriver) Put(ctx context.Context, n *merkle.Node) (bool, error) {
 	if n == nil {
-		return false, fmt.Errorf("cannot store nil node")
+		return false, errors.New("cannot store nil node")
 	}
 
 	// Check if node already exists (idempotent insert)
@@ -100,7 +101,7 @@ func (ed *EntDriver) Get(ctx context.Context, hash string) (*merkle.Node, error)
 	entNode, err := ed.Client.Node.Get(ctx, hash)
 	if err != nil {
 		if ent.IsNotFound(err) {
-			return nil, storage.ErrNotFound{Hash: hash}
+			return nil, storage.NotFoundError{Hash: hash}
 		}
 		return nil, fmt.Errorf("failed to get node: %w", err)
 	}
@@ -175,7 +176,7 @@ func (ed *EntDriver) Ancestry(ctx context.Context, hash string) ([]*merkle.Node,
 	current, err := ed.Client.Node.Get(ctx, hash)
 	if err != nil {
 		if ent.IsNotFound(err) {
-			return nil, storage.ErrNotFound{Hash: hash}
+			return nil, storage.NotFoundError{Hash: hash}
 		}
 		return nil, fmt.Errorf("failed to get node: %w", err)
 	}
@@ -261,7 +262,6 @@ func (ed *EntDriver) entNodeToMerkleNode(entNode *ent.Node) (*merkle.Node, error
 
 		if entNode.PromptDurationNs != nil {
 			node.Usage.PromptDurationNs = *entNode.PromptDurationNs
-
 		}
 	}
 

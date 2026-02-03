@@ -2,6 +2,7 @@ package inmemory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -9,8 +10,8 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
-// InMemoryDriver implements Storer using an in-memory map.
-type InMemoryDriver struct {
+// Driver implements Storer using an in-memory map.
+type Driver struct {
 	// mu is a read write sync mutex for locking the mapping of nodes
 	mu sync.RWMutex
 
@@ -19,18 +20,18 @@ type InMemoryDriver struct {
 	nodes map[string]*merkle.Node
 }
 
-// NewInMemoryDriver creates a new in-memory storer.
-func NewInMemoryDriver() *InMemoryDriver {
-	return &InMemoryDriver{
+// NewDriver creates a new in-memory storer.
+func NewDriver() *Driver {
+	return &Driver{
 		nodes: make(map[string]*merkle.Node),
 	}
 }
 
 // Put stores a node. Returns true if the node was newly inserted,
 // false if it already existed (no-op due to content-addressing).
-func (s *InMemoryDriver) Put(ctx context.Context, node *merkle.Node) (bool, error) {
+func (s *Driver) Put(_ context.Context, node *merkle.Node) (bool, error) {
 	if node == nil {
-		return false, fmt.Errorf("cannot store nil node")
+		return false, errors.New("cannot store nil node")
 	}
 
 	s.mu.Lock()
@@ -47,20 +48,20 @@ func (s *InMemoryDriver) Put(ctx context.Context, node *merkle.Node) (bool, erro
 }
 
 // Get retrieves a node by its hash.
-func (s *InMemoryDriver) Get(ctx context.Context, hash string) (*merkle.Node, error) {
+func (s *Driver) Get(_ context.Context, hash string) (*merkle.Node, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	node, ok := s.nodes[hash]
 	if !ok {
-		return nil, storage.ErrNotFound{Hash: hash}
+		return nil, storage.NotFoundError{Hash: hash}
 	}
 
 	return node, nil
 }
 
 // Has checks if a node exists by its hash.
-func (s *InMemoryDriver) Has(ctx context.Context, hash string) (bool, error) {
+func (s *Driver) Has(_ context.Context, hash string) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -70,7 +71,7 @@ func (s *InMemoryDriver) Has(ctx context.Context, hash string) (bool, error) {
 
 // GetByParent retrieves all nodes that have the provided parent.
 // This is useful for determining where branching occurs.
-func (s *InMemoryDriver) GetByParent(ctx context.Context, parentHash *string) ([]*merkle.Node, error) {
+func (s *Driver) GetByParent(_ context.Context, parentHash *string) ([]*merkle.Node, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -90,7 +91,7 @@ func (s *InMemoryDriver) GetByParent(ctx context.Context, parentHash *string) ([
 }
 
 // List returns all nodes in the store.
-func (s *InMemoryDriver) List(ctx context.Context) ([]*merkle.Node, error) {
+func (s *Driver) List(_ context.Context) ([]*merkle.Node, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -103,12 +104,12 @@ func (s *InMemoryDriver) List(ctx context.Context) ([]*merkle.Node, error) {
 }
 
 // Roots returns all root nodes
-func (s *InMemoryDriver) Roots(ctx context.Context) ([]*merkle.Node, error) {
+func (s *Driver) Roots(ctx context.Context) ([]*merkle.Node, error) {
 	return s.GetByParent(ctx, nil)
 }
 
 // Leaves returns all leaf nodes
-func (s *InMemoryDriver) Leaves(ctx context.Context) ([]*merkle.Node, error) {
+func (s *Driver) Leaves(_ context.Context) ([]*merkle.Node, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -132,7 +133,7 @@ func (s *InMemoryDriver) Leaves(ctx context.Context) ([]*merkle.Node, error) {
 }
 
 // Ancestry returns the path from a node back to its root (node first, root last).
-func (s *InMemoryDriver) Ancestry(ctx context.Context, hash string) ([]*merkle.Node, error) {
+func (s *Driver) Ancestry(ctx context.Context, hash string) ([]*merkle.Node, error) {
 	var path []*merkle.Node
 	current := hash
 
@@ -153,7 +154,7 @@ func (s *InMemoryDriver) Ancestry(ctx context.Context, hash string) ([]*merkle.N
 }
 
 // Depth returns the depth of a node (0 for roots).
-func (s *InMemoryDriver) Depth(ctx context.Context, hash string) (int, error) {
+func (s *Driver) Depth(ctx context.Context, hash string) (int, error) {
 	depth := 0
 	current := hash
 
@@ -173,13 +174,13 @@ func (s *InMemoryDriver) Depth(ctx context.Context, hash string) (int, error) {
 }
 
 // Count returns the number of nodes in the in-memory store.
-func (s *InMemoryDriver) Count() int {
+func (s *Driver) Count() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.nodes)
 }
 
 // Close is a no-op for the in-memory storer.
-func (s *InMemoryDriver) Close() error {
+func (s *Driver) Close() error {
 	return nil
 }

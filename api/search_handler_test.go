@@ -21,7 +21,7 @@ import (
 var _ = Describe("handleSearchEndpoint", func() {
 	var (
 		server       *Server
-		inMem        *inmemory.InMemoryDriver
+		inMem        *inmemory.Driver
 		vectorDriver *testutils.MockVectorDriver
 		embedder     *testutils.MockEmbedder
 		ctx          context.Context
@@ -29,7 +29,7 @@ var _ = Describe("handleSearchEndpoint", func() {
 
 	BeforeEach(func() {
 		logger, _ := zap.NewDevelopment()
-		inMem = inmemory.NewInMemoryDriver()
+		inMem = inmemory.NewDriver()
 		vectorDriver = testutils.NewMockVectorDriver()
 		embedder = testutils.NewMockEmbedder()
 		ctx = context.Background()
@@ -59,7 +59,7 @@ var _ = Describe("handleSearchEndpoint", func() {
 			)
 			Expect(err).NotTo(HaveOccurred())
 
-			req, err := http.NewRequest("GET", "/v1/search?query=test", nil)
+			req, err := http.NewRequest(http.MethodGet, "/v1/search?query=test", nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			resp, err := noSearchServer.app.Test(req)
@@ -70,7 +70,7 @@ var _ = Describe("handleSearchEndpoint", func() {
 
 	Context("when query parameter is missing", func() {
 		It("returns 400", func() {
-			req, err := http.NewRequest("GET", "/v1/search", nil)
+			req, err := http.NewRequest(http.MethodGet, "/v1/search", nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			resp, err := server.app.Test(req)
@@ -85,7 +85,7 @@ var _ = Describe("handleSearchEndpoint", func() {
 
 	Context("when query parameter is empty", func() {
 		It("returns 400", func() {
-			req, err := http.NewRequest("GET", "/v1/search?query=", nil)
+			req, err := http.NewRequest(http.MethodGet, "/v1/search?query=", nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			resp, err := server.app.Test(req)
@@ -96,7 +96,7 @@ var _ = Describe("handleSearchEndpoint", func() {
 
 	Context("when top_k is invalid", func() {
 		It("returns 400 for non-integer top_k", func() {
-			req, err := http.NewRequest("GET", "/v1/search?query=test&top_k=abc", nil)
+			req, err := http.NewRequest(http.MethodGet, "/v1/search?query=test&top_k=abc", nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			resp, err := server.app.Test(req)
@@ -109,7 +109,7 @@ var _ = Describe("handleSearchEndpoint", func() {
 		})
 
 		It("returns 400 for zero top_k", func() {
-			req, err := http.NewRequest("GET", "/v1/search?query=test&top_k=0", nil)
+			req, err := http.NewRequest(http.MethodGet, "/v1/search?query=test&top_k=0", nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			resp, err := server.app.Test(req)
@@ -118,7 +118,7 @@ var _ = Describe("handleSearchEndpoint", func() {
 		})
 
 		It("returns 400 for negative top_k", func() {
-			req, err := http.NewRequest("GET", "/v1/search?query=test&top_k=-1", nil)
+			req, err := http.NewRequest(http.MethodGet, "/v1/search?query=test&top_k=-1", nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			resp, err := server.app.Test(req)
@@ -129,14 +129,14 @@ var _ = Describe("handleSearchEndpoint", func() {
 
 	Context("when search succeeds with no results", func() {
 		It("returns 200 with empty results", func() {
-			req, err := http.NewRequest("GET", "/v1/search?query=hello", nil)
+			req, err := http.NewRequest(http.MethodGet, "/v1/search?query=hello", nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			resp, err := server.app.Test(req)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(fiber.StatusOK))
 
-			var output apisearch.SearchOutput
+			var output apisearch.Output
 			body, err := io.ReadAll(resp.Body)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(json.Unmarshal(body, &output)).To(Succeed())
@@ -167,14 +167,14 @@ var _ = Describe("handleSearchEndpoint", func() {
 				},
 			}
 
-			req, err := http.NewRequest("GET", "/v1/search?query=greeting&top_k=3", nil)
+			req, err := http.NewRequest(http.MethodGet, "/v1/search?query=greeting&top_k=3", nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			resp, err := server.app.Test(req)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(fiber.StatusOK))
 
-			var output apisearch.SearchOutput
+			var output apisearch.Output
 			body, err := io.ReadAll(resp.Body)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(json.Unmarshal(body, &output)).To(Succeed())
@@ -197,7 +197,7 @@ var _ = Describe("handleSearchEndpoint", func() {
 		It("returns 500", func() {
 			vectorDriver.FailQuery = true
 
-			req, err := http.NewRequest("GET", "/v1/search?query=test", nil)
+			req, err := http.NewRequest(http.MethodGet, "/v1/search?query=test", nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			resp, err := server.app.Test(req)

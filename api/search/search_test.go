@@ -22,7 +22,7 @@ func TestSearch(t *testing.T) {
 
 var _ = Describe("Search", func() {
 	var (
-		driver       *inmemory.InMemoryDriver
+		driver       *inmemory.Driver
 		vectorDriver *testutils.MockVectorDriver
 		embedder     *testutils.MockEmbedder
 		logger       *zap.Logger
@@ -31,7 +31,7 @@ var _ = Describe("Search", func() {
 
 	BeforeEach(func() {
 		logger, _ = zap.NewDevelopment()
-		driver = inmemory.NewInMemoryDriver()
+		driver = inmemory.NewDriver()
 		vectorDriver = testutils.NewMockVectorDriver()
 		embedder = testutils.NewMockEmbedder()
 		ctx = context.Background()
@@ -113,7 +113,7 @@ var _ = Describe("Search", func() {
 		})
 	})
 
-	Describe("BuildSearchResult", func() {
+	Describe("BuildResult", func() {
 		It("builds a result from a single node", func() {
 			node := merkle.NewNode(testutils.NewTestBucket("user", "Hello world"), nil)
 			_, err := driver.Put(ctx, node)
@@ -130,7 +130,7 @@ var _ = Describe("Search", func() {
 			dag, err := merkle.LoadDag(ctx, driver, node.Hash)
 			Expect(err).NotTo(HaveOccurred())
 
-			searchResult := search.BuildSearchResult(result, dag)
+			searchResult := search.BuildResult(result, dag)
 
 			Expect(searchResult.Hash).To(Equal(node.Hash))
 			Expect(searchResult.Score).To(Equal(float32(0.95)))
@@ -163,7 +163,7 @@ var _ = Describe("Search", func() {
 			dag, err := merkle.LoadDag(ctx, driver, node3.Hash)
 			Expect(err).NotTo(HaveOccurred())
 
-			searchResult := search.BuildSearchResult(result, dag)
+			searchResult := search.BuildResult(result, dag)
 
 			Expect(searchResult.Hash).To(Equal(node3.Hash))
 			Expect(searchResult.Turns).To(Equal(3))
@@ -190,7 +190,7 @@ var _ = Describe("Search", func() {
 			}
 
 			dag := merkle.NewDag()
-			searchResult := search.BuildSearchResult(result, dag)
+			searchResult := search.BuildResult(result, dag)
 
 			Expect(searchResult.Hash).To(Equal("empty-hash"))
 			Expect(searchResult.Turns).To(Equal(0))

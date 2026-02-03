@@ -8,21 +8,21 @@ import (
 	"github.com/papercomputeco/tapes/pkg/llm"
 )
 
-// provider implements the Provider interface for OpenAI's Chat Completions API.
-type provider struct{}
+// Provider implements the Provider interface for OpenAI's Chat Completions API.
+type Provider struct{}
 
-func New() *provider { return &provider{} }
+func New() *Provider { return &Provider{} }
 
-func (o *provider) Name() string {
+func (o *Provider) Name() string {
 	return "openai"
 }
 
 // DefaultStreaming is false - OpenAI requires explicit "stream": true.
-func (o *provider) DefaultStreaming() bool {
+func (o *Provider) DefaultStreaming() bool {
 	return false
 }
 
-func (o *provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
+func (o *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 	var req openaiRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
 		return nil, err
@@ -63,13 +63,14 @@ func (o *provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 		// Handle tool calls in assistant messages
 		for _, tc := range msg.ToolCalls {
 			var input map[string]any
-			json.Unmarshal([]byte(tc.Function.Arguments), &input)
-			converted.Content = append(converted.Content, llm.ContentBlock{
-				Type:      "tool_use",
-				ToolUseID: tc.ID,
-				ToolName:  tc.Function.Name,
-				ToolInput: input,
-			})
+			if err := json.Unmarshal([]byte(tc.Function.Arguments), &input); err == nil {
+				converted.Content = append(converted.Content, llm.ContentBlock{
+					Type:      "tool_use",
+					ToolUseID: tc.ID,
+					ToolName:  tc.Function.Name,
+					ToolInput: input,
+				})
+			}
 		}
 
 		// Handle tool results
@@ -130,7 +131,7 @@ func (o *provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 	return result, nil
 }
 
-func (o *provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
+func (o *Provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 	var resp openaiResponse
 	if err := json.Unmarshal(payload, &resp); err != nil {
 		return nil, err
@@ -173,13 +174,14 @@ func (o *provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 	// Handle tool calls
 	for _, tc := range msg.ToolCalls {
 		var input map[string]any
-		json.Unmarshal([]byte(tc.Function.Arguments), &input)
-		content = append(content, llm.ContentBlock{
-			Type:      "tool_use",
-			ToolUseID: tc.ID,
-			ToolName:  tc.Function.Name,
-			ToolInput: input,
-		})
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &input); err == nil {
+			content = append(content, llm.ContentBlock{
+				Type:      "tool_use",
+				ToolUseID: tc.ID,
+				ToolName:  tc.Function.Name,
+				ToolInput: input,
+			})
+		}
 	}
 
 	var usage *llm.Usage
@@ -211,6 +213,6 @@ func (o *provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 	return result, nil
 }
 
-func (o *provider) ParseStreamChunk(payload []byte) (*llm.StreamChunk, error) {
+func (o *Provider) ParseStreamChunk(_ []byte) (*llm.StreamChunk, error) {
 	panic("Not yet implemented")
 }

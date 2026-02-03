@@ -13,7 +13,7 @@ type ChatResponse struct {
 	Model string `json:"model"`
 
 	// Response timestamp
-	CreatedAt time.Time `json:"created_at,omitempty"`
+	CreatedAt time.Time `json:"created_at,omitzero"`
 
 	// The assistant's response message
 	Message Message `json:"message"`

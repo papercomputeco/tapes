@@ -14,14 +14,14 @@ import (
 	"github.com/papercomputeco/tapes/pkg/vector"
 )
 
-// SearchInput represents the input arguments for a search request.
-type SearchInput struct {
+// Input represents the input arguments for a search request.
+type Input struct {
 	Query string `json:"query"`
 	TopK  int    `json:"top_k,omitempty"`
 }
 
-// SearchResult represents a single search result.
-type SearchResult struct {
+// Result represents a single search result.
+type Result struct {
 	Hash    string  `json:"hash"`
 	Score   float32 `json:"score"`
 	Role    string  `json:"role"`
@@ -38,11 +38,11 @@ type Turn struct {
 	Matched bool   `json:"matched,omitempty"`
 }
 
-// SearchOutput represents the output of a search operation.
-type SearchOutput struct {
-	Query   string         `json:"query"`
-	Results []SearchResult `json:"results"`
-	Count   int            `json:"count"`
+// Output represents the output of a search operation.
+type Output struct {
+	Query   string   `json:"query"`
+	Results []Result `json:"results"`
+	Count   int      `json:"count"`
 }
 
 // Search performs a semantic search over stored LLM sessions.
@@ -56,7 +56,7 @@ func Search(
 	vectorDriver vector.Driver,
 	dagLoader merkle.DagLoader,
 	logger *zap.Logger,
-) (*SearchOutput, error) {
+) (*Output, error) {
 	if topK <= 0 {
 		topK = 5
 	}
@@ -79,7 +79,7 @@ func Search(
 	}
 
 	// Build search results with full branch using merkle.LoadDag
-	searchResults := make([]SearchResult, 0, len(results))
+	searchResults := make([]Result, 0, len(results))
 	for _, result := range results {
 		dag, err := merkle.LoadDag(ctx, dagLoader, result.Hash)
 		if err != nil {
@@ -90,25 +90,25 @@ func Search(
 			continue
 		}
 
-		searchResult := BuildSearchResult(result, dag)
+		searchResult := BuildResult(result, dag)
 		searchResults = append(searchResults, searchResult)
 	}
 
-	return &SearchOutput{
+	return &Output{
 		Query:   query,
 		Results: searchResults,
 		Count:   len(searchResults),
 	}, nil
 }
 
-// BuildSearchResult converts a vector query result and DAG into a SearchResult.
-func BuildSearchResult(result vector.QueryResult, dag *merkle.Dag) SearchResult {
+// BuildResult converts a vector query result and DAG into a Result.
+func BuildResult(result vector.QueryResult, dag *merkle.Dag) Result {
 	turns := []Turn{}
 	preview := ""
 	role := ""
 
 	// Build turns from the DAG using Walk (depth-first from root to leaves)
-	dag.Walk(func(node *merkle.DagNode) (bool, error) {
+	_ = dag.Walk(func(node *merkle.DagNode) (bool, error) {
 		isMatched := node.Hash == result.Hash
 		turns = append(turns, Turn{
 			Hash:    node.Hash,
@@ -125,7 +125,7 @@ func BuildSearchResult(result vector.QueryResult, dag *merkle.Dag) SearchResult 
 		return true, nil
 	})
 
-	return SearchResult{
+	return Result{
 		Hash:    result.Hash,
 		Score:   result.Score,
 		Role:    role,

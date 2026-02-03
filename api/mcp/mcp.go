@@ -2,7 +2,7 @@
 package mcp
 
 import (
-	"fmt"
+	"errors"
 	"net/http"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -61,16 +61,16 @@ func NewServer(c Config) (*Server, error) {
 	}
 
 	if c.DagLoader == nil {
-		return nil, fmt.Errorf("storage driver is required")
+		return nil, errors.New("storage driver is required")
 	}
 	if c.VectorDriver == nil {
-		return nil, fmt.Errorf("vector driver is required")
+		return nil, errors.New("vector driver is required")
 	}
 	if c.Embedder == nil {
-		return nil, fmt.Errorf("embedder is required")
+		return nil, errors.New("embedder is required")
 	}
 	if c.Logger == nil {
-		return nil, fmt.Errorf("logger is required")
+		return nil, errors.New("logger is required")
 	}
 
 	// Add tools
@@ -83,7 +83,7 @@ func NewServer(c Config) (*Server, error) {
 
 	// Create a streamable HTTP net/http handler for stateless operations
 	s.handler = mcp.NewStreamableHTTPHandler(
-		func(r *http.Request) *mcp.Server {
+		func(_ *http.Request) *mcp.Server {
 			return mcpServer
 		},
 		&mcp.StreamableHTTPOptions{

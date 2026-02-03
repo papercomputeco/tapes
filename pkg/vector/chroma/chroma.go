@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,8 +31,8 @@ const (
 	defaultMaxRetryDelay = 15 * time.Second
 )
 
-// ChromaDriver implements vector.Driver using Chroma's REST API.
-type ChromaDriver struct {
+// Driver implements vector.Driver using Chroma's REST API.
+type Driver struct {
 	baseURL        string
 	collectionName string
 	collectionID   string
@@ -61,11 +62,11 @@ type Config struct {
 	MaxRetryDelay time.Duration
 }
 
-// NewChromaDriver creates a new Chroma vector driver.
+// NewDriver creates a new Chroma vector driver.
 // It uses exponential delay retries if it cannot connect to Chroma.
-func NewChromaDriver(c Config, logger *zap.Logger) (*ChromaDriver, error) {
+func NewDriver(c Config, logger *zap.Logger) (*Driver, error) {
 	if c.URL == "" {
-		return nil, fmt.Errorf("chroma URL is required")
+		return nil, errors.New("chroma URL is required")
 	}
 
 	collectionName := c.CollectionName
@@ -73,7 +74,7 @@ func NewChromaDriver(c Config, logger *zap.Logger) (*ChromaDriver, error) {
 		collectionName = DefaultCollectionName
 	}
 
-	d := &ChromaDriver{
+	d := &Driver{
 		baseURL:        c.URL,
 		collectionName: collectionName,
 		httpClient: &http.Client{
@@ -130,11 +131,11 @@ func NewChromaDriver(c Config, logger *zap.Logger) (*ChromaDriver, error) {
 }
 
 // getOrCreateCollection gets an existing collection or creates a new one.
-func (d *ChromaDriver) getOrCreateCollection(ctx context.Context) (string, error) {
+func (d *Driver) getOrCreateCollection(ctx context.Context) (string, error) {
 	// Try to get existing collection first
 	url := fmt.Sprintf("%s/api/v2/tenants/default_tenant/databases/default_database/collections/%s", d.baseURL, d.collectionName)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", fmt.Errorf("creating get request: %w", err)
 	}
@@ -154,14 +155,14 @@ func (d *ChromaDriver) getOrCreateCollection(ctx context.Context) (string, error
 	}
 
 	// Collection doesn't exist, create it
-	createURL := fmt.Sprintf("%s/api/v2/tenants/default_tenant/databases/default_database/collections", d.baseURL)
+	createURL := d.baseURL + "/api/v2/tenants/default_tenant/databases/default_database/collections"
 	createBody := map[string]string{"name": d.collectionName}
 	jsonBody, err := json.Marshal(createBody)
 	if err != nil {
 		return "", fmt.Errorf("marshaling create request: %w", err)
 	}
 
-	req, err = http.NewRequestWithContext(ctx, "POST", createURL, bytes.NewReader(jsonBody))
+	req, err = http.NewRequestWithContext(ctx, http.MethodPost, createURL, bytes.NewReader(jsonBody))
 	if err != nil {
 		return "", fmt.Errorf("creating create request: %w", err)
 	}
@@ -187,7 +188,7 @@ func (d *ChromaDriver) getOrCreateCollection(ctx context.Context) (string, error
 }
 
 // Add stores documents with their embeddings.
-func (d *ChromaDriver) Add(ctx context.Context, docs []vector.Document) error {
+func (d *Driver) Add(ctx context.Context, docs []vector.Document) error {
 	if len(docs) == 0 {
 		return nil
 	}
@@ -214,7 +215,7 @@ func (d *ChromaDriver) Add(ctx context.Context, docs []vector.Document) error {
 	}
 
 	url := fmt.Sprintf("%s/api/v2/tenants/default_tenant/databases/default_database/collections/%s/add", d.baseURL, d.collectionID)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
 	if err != nil {
 		return fmt.Errorf("creating add request: %w", err)
 	}
@@ -239,7 +240,7 @@ func (d *ChromaDriver) Add(ctx context.Context, docs []vector.Document) error {
 }
 
 // Query finds the topK most similar documents to the given embedding.
-func (d *ChromaDriver) Query(ctx context.Context, embedding []float32, topK int) ([]vector.QueryResult, error) {
+func (d *Driver) Query(ctx context.Context, embedding []float32, topK int) ([]vector.QueryResult, error) {
 	if topK <= 0 {
 		topK = 10
 	}
@@ -256,7 +257,7 @@ func (d *ChromaDriver) Query(ctx context.Context, embedding []float32, topK int)
 	}
 
 	url := fmt.Sprintf("%s/api/v2/tenants/default_tenant/databases/default_database/collections/%s/query", d.baseURL, d.collectionID)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, fmt.Errorf("creating query request: %w", err)
 	}
@@ -335,7 +336,7 @@ func (d *ChromaDriver) Query(ctx context.Context, embedding []float32, topK int)
 }
 
 // Get retrieves documents by their IDs.
-func (d *ChromaDriver) Get(ctx context.Context, ids []string) ([]vector.Document, error) {
+func (d *Driver) Get(ctx context.Context, ids []string) ([]vector.Document, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -351,7 +352,7 @@ func (d *ChromaDriver) Get(ctx context.Context, ids []string) ([]vector.Document
 	}
 
 	url := fmt.Sprintf("%s/api/v2/tenants/default_tenant/databases/default_database/collections/%s/get", d.baseURL, d.collectionID)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, fmt.Errorf("creating get request: %w", err)
 	}
@@ -397,7 +398,7 @@ func (d *ChromaDriver) Get(ctx context.Context, ids []string) ([]vector.Document
 }
 
 // Delete removes documents by their IDs.
-func (d *ChromaDriver) Delete(ctx context.Context, ids []string) error {
+func (d *Driver) Delete(ctx context.Context, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -412,7 +413,7 @@ func (d *ChromaDriver) Delete(ctx context.Context, ids []string) error {
 	}
 
 	url := fmt.Sprintf("%s/api/v2/tenants/default_tenant/databases/default_database/collections/%s/delete", d.baseURL, d.collectionID)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
 	if err != nil {
 		return fmt.Errorf("creating delete request: %w", err)
 	}
@@ -437,7 +438,7 @@ func (d *ChromaDriver) Delete(ctx context.Context, ids []string) error {
 }
 
 // Close releases resources held by the driver.
-func (d *ChromaDriver) Close() error {
+func (d *Driver) Close() error {
 	// HTTP client doesn't require explicit cleanup
 	return nil
 }

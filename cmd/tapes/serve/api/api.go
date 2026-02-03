@@ -37,7 +37,7 @@ func NewAPICmd() *cobra.Command {
 			var err error
 			cmder.debug, err = cmd.Flags().GetBool("debug")
 			if err != nil {
-				return fmt.Errorf("could not get debug flag: %v", err)
+				return fmt.Errorf("could not get debug flag: %w", err)
 			}
 
 			return cmder.run()
@@ -52,7 +52,7 @@ func NewAPICmd() *cobra.Command {
 
 func (c *apiCommander) run() error {
 	c.logger = logger.NewLogger(c.debug)
-	defer c.logger.Sync()
+	defer func() { _ = c.logger.Sync() }()
 
 	driver, err := c.newStorageDriver()
 	if err != nil {
@@ -84,7 +84,7 @@ func (c *apiCommander) run() error {
 
 func (c *apiCommander) newStorageDriver() (storage.Driver, error) {
 	if c.sqlitePath != "" {
-		driver, err := sqlite.NewSQLiteDriver(c.sqlitePath)
+		driver, err := sqlite.NewDriver(c.sqlitePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
 		}
@@ -93,12 +93,12 @@ func (c *apiCommander) newStorageDriver() (storage.Driver, error) {
 	}
 
 	c.logger.Info("using in-memory storage")
-	return inmemory.NewInMemoryDriver(), nil
+	return inmemory.NewDriver(), nil
 }
 
 func (c *apiCommander) newDagLoader() (merkle.DagLoader, error) {
 	if c.sqlitePath != "" {
-		driver, err := sqlite.NewSQLiteDriver(c.sqlitePath)
+		driver, err := sqlite.NewDriver(c.sqlitePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
 		}
@@ -107,5 +107,5 @@ func (c *apiCommander) newDagLoader() (merkle.DagLoader, error) {
 	}
 
 	c.logger.Info("using in-memory storage")
-	return inmemory.NewInMemoryDriver(), nil
+	return inmemory.NewDriver(), nil
 }

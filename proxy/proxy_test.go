@@ -45,9 +45,9 @@ func boolPtr(b bool) *bool { return &b }
 
 // newTestProxy creates a Proxy pointed at the given upstream URL,
 // using an in-memory storage driver and the ollama provider.
-func newTestProxy(upstreamURL string) (*Proxy, *inmemory.InMemoryDriver) {
+func newTestProxy(upstreamURL string) (*Proxy, *inmemory.Driver) {
 	logger, _ := zap.NewDevelopment()
-	driver := inmemory.NewInMemoryDriver()
+	driver := inmemory.NewDriver()
 
 	p, err := New(
 		Config{
@@ -92,7 +92,7 @@ func makeOllamaResponseBody(model, role, content string) []byte {
 var _ = Describe("Non-Streaming Proxy", func() {
 	var (
 		p        *Proxy
-		driver   *inmemory.InMemoryDriver
+		driver   *inmemory.Driver
 		upstream *httptest.Server
 	)
 
@@ -121,7 +121,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 				{Role: "user", Content: "What is 2+2?"},
 			}, boolPtr(false))
 
-			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))))
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 
@@ -137,7 +137,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 				{Role: "user", Content: "What is 2+2?"},
 			}, boolPtr(false))
 
-			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))))
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 
@@ -150,7 +150,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 				{Role: "user", Content: "What is 2+2?"},
 			}, boolPtr(false))
 
-			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))))
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
 			Expect(err).NotTo(HaveOccurred())
 			resp.Body.Close()
 
@@ -178,7 +178,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 				{Role: "user", Content: "What is 2+2?"},
 			}, boolPtr(false))
 
-			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))))
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
 			Expect(err).NotTo(HaveOccurred())
 			resp.Body.Close()
 
@@ -214,7 +214,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 				{Role: "user", Content: "hello"},
 			}, boolPtr(false))
 
-			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))))
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 
@@ -230,7 +230,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 				{Role: "user", Content: "hello"},
 			}, boolPtr(false))
 
-			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))))
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
 			Expect(err).NotTo(HaveOccurred())
 			resp.Body.Close()
 
@@ -255,7 +255,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 		})
 
 		It("forwards GET requests transparently without storing", func() {
-			resp, err := p.server.Test(httptest.NewRequest("GET", "/api/tags", nil))
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodGet, "/api/tags", nil))
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 
@@ -293,7 +293,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 				{Role: "user", Content: "hello"},
 			}, boolPtr(false))
 
-			req := httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody)))
+			req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody)))
 			req.Header.Set("X-Api-Key", "secret-token")
 			req.Header.Set("Content-Type", "application/json")
 
@@ -312,7 +312,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 				{Role: "user", Content: "hello"},
 			}, boolPtr(false))
 
-			req := httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody)))
+			req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody)))
 			req.Header.Set("Accept-Encoding", "gzip, deflate, br")
 			req.Header.Set("Authorization", "Bearer token123")
 
@@ -335,7 +335,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 var _ = Describe("Streaming Proxy", func() {
 	var (
 		p        *Proxy
-		driver   *inmemory.InMemoryDriver
+		driver   *inmemory.Driver
 		upstream *httptest.Server
 	)
 
@@ -375,7 +375,7 @@ var _ = Describe("Streaming Proxy", func() {
 				{Role: "user", Content: "What is 2+2?"},
 			}, boolPtr(true))
 
-			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))), -1)
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), -1)
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 
@@ -397,7 +397,7 @@ var _ = Describe("Streaming Proxy", func() {
 				{Role: "user", Content: "What is 2+2?"},
 			}, boolPtr(true))
 
-			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))), -1)
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), -1)
 			Expect(err).NotTo(HaveOccurred())
 			resp.Body.Close()
 
@@ -434,7 +434,7 @@ var _ = Describe("Streaming Proxy", func() {
 				{Role: "user", Content: "hello"},
 			}, boolPtr(true))
 
-			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))), -1)
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), -1)
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 
@@ -480,7 +480,7 @@ var _ = Describe("Streaming Proxy", func() {
 				{Role: "user", Content: "What is 2+2?"},
 			}, boolPtr(true))
 
-			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))), -1)
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), -1)
 			Expect(err).NotTo(HaveOccurred())
 			resp.Body.Close()
 
@@ -553,7 +553,7 @@ var _ = Describe("Streaming Detection", func() {
 				{Role: "user", Content: "hello"},
 			}, boolPtr(true))
 
-			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))), -1)
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), -1)
 			Expect(err).NotTo(HaveOccurred())
 			resp.Body.Close()
 
@@ -574,7 +574,7 @@ var _ = Describe("Streaming Detection", func() {
 				{Role: "user", Content: "hello"},
 			}, boolPtr(false))
 
-			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))))
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
 			Expect(err).NotTo(HaveOccurred())
 			resp.Body.Close()
 
@@ -595,7 +595,7 @@ var _ = Describe("Streaming Detection", func() {
 				{Role: "user", Content: "hello"},
 			}, nil)
 
-			resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))), -1)
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), -1)
 			Expect(err).NotTo(HaveOccurred())
 			resp.Body.Close()
 
@@ -683,7 +683,7 @@ var _ = Describe("reconstructStreamedResponse", func() {
 var _ = Describe("New", func() {
 	It("returns an error for unrecognized provider type", func() {
 		logger, _ := zap.NewDevelopment()
-		driver := inmemory.NewInMemoryDriver()
+		driver := inmemory.NewDriver()
 
 		_, err := New(Config{
 			ListenAddr:   ":0",
@@ -696,7 +696,7 @@ var _ = Describe("New", func() {
 
 	It("creates a proxy with a valid provider type", func() {
 		logger, _ := zap.NewDevelopment()
-		driver := inmemory.NewInMemoryDriver()
+		driver := inmemory.NewDriver()
 
 		p, err := New(Config{
 			ListenAddr:   ":0",
@@ -713,7 +713,7 @@ var _ = Describe("New", func() {
 var _ = Describe("End-to-End Multi-Turn Proxy", func() {
 	var (
 		p        *Proxy
-		driver   *inmemory.InMemoryDriver
+		driver   *inmemory.Driver
 		upstream *httptest.Server
 		turnNum  int
 	)
@@ -749,7 +749,7 @@ var _ = Describe("End-to-End Multi-Turn Proxy", func() {
 			{Role: "user", Content: "What is 2+2?"},
 		}, boolPtr(false))
 
-		resp1, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody1))))
+		resp1, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody1))))
 		Expect(err).NotTo(HaveOccurred())
 		resp1.Body.Close()
 
@@ -761,7 +761,7 @@ var _ = Describe("End-to-End Multi-Turn Proxy", func() {
 			{Role: "user", Content: "And what is 3+3?"},
 		}, boolPtr(false))
 
-		resp2, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody2))))
+		resp2, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody2))))
 		Expect(err).NotTo(HaveOccurred())
 		resp2.Body.Close()
 
@@ -801,7 +801,7 @@ var _ = Describe("End-to-End Multi-Turn Proxy", func() {
 var _ = Describe("Storage Provider Metadata", func() {
 	var (
 		p        *Proxy
-		driver   *inmemory.InMemoryDriver
+		driver   *inmemory.Driver
 		upstream *httptest.Server
 	)
 
@@ -826,7 +826,7 @@ var _ = Describe("Storage Provider Metadata", func() {
 			{Role: "user", Content: "hi"},
 		}, boolPtr(false))
 
-		resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))))
+		resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
 		Expect(err).NotTo(HaveOccurred())
 		resp.Body.Close()
 
@@ -848,7 +848,7 @@ var _ = Describe("Storage Provider Metadata", func() {
 			{Role: "user", Content: "hi"},
 		}, boolPtr(false))
 
-		resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))))
+		resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
 		Expect(err).NotTo(HaveOccurred())
 		resp.Body.Close()
 
@@ -870,7 +870,7 @@ var _ = Describe("Storage Provider Metadata", func() {
 			{Role: "user", Content: "hi"},
 		}, boolPtr(false))
 
-		resp, err := p.server.Test(httptest.NewRequest("POST", "/api/chat", strings.NewReader(string(reqBody))))
+		resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
 		Expect(err).NotTo(HaveOccurred())
 		resp.Body.Close()
 

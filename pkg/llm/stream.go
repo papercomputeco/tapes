@@ -10,7 +10,7 @@ type StreamChunk struct {
 	Model string `json:"model"`
 
 	// Chunk timestamp
-	CreatedAt time.Time `json:"created_at,omitempty"`
+	CreatedAt time.Time `json:"created_at,omitzero"`
 
 	// The content of this chunk (typically a partial message)
 	Message Message `json:"message"`

@@ -14,6 +14,16 @@ LDFLAGS := -s -w \
 format:
 	find . -type f -name "*.go" -exec goimports -local github.com/papercomputeco/tapes -w {} \;
 
+.PHONY: check-lint
+check-lint: ## Runs golangci-lint check. Auto-fixes are not automatically applied.
+	$(call print-target)
+	dagger call check-lint
+
+.PHONY: fix-lint
+fix-lint: ## Runs golangci-lint lint with auto-fixes applied.
+	$(call print-target)
+	dagger call fix-lint export --path .
+
 .PHONY: generate
 generate: ## Regenerates ent code from schema
 	go generate ./pkg/storage/ent/...

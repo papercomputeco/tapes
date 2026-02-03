@@ -59,7 +59,7 @@ func (m *Manager) LoadCheckoutState(overrideDir string) (*CheckoutState, error) 
 // SaveCheckout persists the checkout state to a target .tapes/checkout.json.
 func (m *Manager) SaveCheckout(state *CheckoutState, overrideDir string) error {
 	if state == nil {
-		return fmt.Errorf("cannot save nil checkout state")
+		return errors.New("cannot save nil checkout state")
 	}
 
 	dir, err := m.Target(overrideDir)
@@ -73,7 +73,7 @@ func (m *Manager) SaveCheckout(state *CheckoutState, overrideDir string) error {
 	}
 
 	path := filepath.Join(dir, checkoutFile)
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o644); err != nil { //nolint:gosec // @jpmcb - TODO: refactor file permissions
 		return fmt.Errorf("writing checkout state: %w", err)
 	}
 

@@ -5,19 +5,20 @@ import (
 	"context"
 	"database/sql"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
 
 	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3" // Register sqlite3 driver
 	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/vector"
 )
 
-// SQLiteVecDriver implements vector.Driver using SQLite with sqlite-vec.
-type SQLiteVecDriver struct {
+// Driver implements vector.Driver using SQLite with sqlite-vec.
+type Driver struct {
 	db     *sql.DB
 	logger *zap.Logger
 }
@@ -33,18 +34,18 @@ type Config struct {
 	Dimensions uint
 }
 
-// NewSQLiteVecDriver creates a new SQLite vector driver backed by sqlite-vec.
-func NewSQLiteVecDriver(c Config, logger *zap.Logger) (*SQLiteVecDriver, error) {
+// NewDriver creates a new SQLite vector driver backed by sqlite-vec.
+func NewDriver(c Config, logger *zap.Logger) (*Driver, error) {
 	// enable connection to have sqlite-vec extension
 	sqlite_vec.Auto()
 
 	if c.DBPath == "" {
-		return nil, fmt.Errorf("database path is required")
+		return nil, errors.New("database path is required")
 	}
 
 	dimensions := c.Dimensions
 	if dimensions == 0 {
-		return nil, fmt.Errorf("sqlite-vec embedding dimensions cannot be 0, must be configured")
+		return nil, errors.New("sqlite-vec embedding dimensions cannot be 0, must be configured")
 	}
 
 	db, err := sql.Open("sqlite3", c.DBPath)
@@ -54,7 +55,7 @@ func NewSQLiteVecDriver(c Config, logger *zap.Logger) (*SQLiteVecDriver, error) 
 
 	// Verify sqlite-vec is loaded
 	var vecVersion string
-	if err := db.QueryRow("SELECT vec_version()").Scan(&vecVersion); err != nil {
+	if err := db.QueryRowContext(context.Background(), "SELECT vec_version()").Scan(&vecVersion); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("sqlite-vec not available: %w", err)
 	}
@@ -62,7 +63,7 @@ func NewSQLiteVecDriver(c Config, logger *zap.Logger) (*SQLiteVecDriver, error) 
 	// Create the document ID mapping table.
 	// vec0 virtual tables use integer rowids, so we need a mapping from
 	// string document IDs to integer rowids.
-	_, err = db.Exec(`
+	_, err = db.ExecContext(context.Background(), `
 		CREATE TABLE IF NOT EXISTS vec_documents (
 			rowid INTEGER PRIMARY KEY AUTOINCREMENT,
 			doc_id TEXT NOT NULL UNIQUE,
@@ -79,7 +80,7 @@ func NewSQLiteVecDriver(c Config, logger *zap.Logger) (*SQLiteVecDriver, error) 
 		`CREATE VIRTUAL TABLE IF NOT EXISTS vec_embeddings USING vec0(embedding float[%d])`,
 		dimensions,
 	)
-	if _, err := db.Exec(createVec); err != nil {
+	if _, err := db.ExecContext(context.Background(), createVec); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("creating vec0 table: %w", err)
 	}
@@ -90,7 +91,7 @@ func NewSQLiteVecDriver(c Config, logger *zap.Logger) (*SQLiteVecDriver, error) 
 		zap.String("vec_version", vecVersion),
 	)
 
-	return &SQLiteVecDriver{
+	return &Driver{
 		db:     db,
 		logger: logger,
 	}, nil
@@ -98,12 +99,12 @@ func NewSQLiteVecDriver(c Config, logger *zap.Logger) (*SQLiteVecDriver, error) 
 
 // serializeFloat32 converts a float32 slice to a little-endian byte slice
 // suitable for sqlite-vec BLOB format.
-func serializeFloat32(v []float32) ([]byte, error) {
+func serializeFloat32(v []float32) []byte {
 	buf := make([]byte, len(v)*4)
 	for i, f := range v {
 		binary.LittleEndian.PutUint32(buf[i*4:], math.Float32bits(f))
 	}
-	return buf, nil
+	return buf
 }
 
 // deserializeFloat32 converts a little-endian byte slice back to a float32 slice.
@@ -120,7 +121,7 @@ func deserializeFloat32(b []byte) ([]float32, error) {
 
 // Add stores documents with their embeddings.
 // If a document with the same ID already exists, it is updated.
-func (d *SQLiteVecDriver) Add(ctx context.Context, docs []vector.Document) error {
+func (d *Driver) Add(ctx context.Context, docs []vector.Document) error {
 	if len(docs) == 0 {
 		return nil
 	}
@@ -129,13 +130,10 @@ func (d *SQLiteVecDriver) Add(ctx context.Context, docs []vector.Document) error
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	for _, doc := range docs {
-		embBlob, err := serializeFloat32(doc.Embedding)
-		if err != nil {
-			return fmt.Errorf("serializing embedding for doc %s: %w", doc.ID, err)
-		}
+		embBlob := serializeFloat32(doc.Embedding)
 
 		// Check if document already exists
 		var existingRowID int64
@@ -143,50 +141,27 @@ func (d *SQLiteVecDriver) Add(ctx context.Context, docs []vector.Document) error
 			`SELECT rowid FROM vec_documents WHERE doc_id = ?`, doc.ID,
 		).Scan(&existingRowID)
 
-		switch err {
-		case nil:
-			// Document exists — update hash and embedding
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE vec_documents SET hash = ? WHERE rowid = ?`,
-				doc.Hash, existingRowID,
-			); err != nil {
+		switch {
+		case err == nil:
+			if _, err := tx.ExecContext(ctx, `UPDATE vec_documents SET hash = ? WHERE rowid = ?`, doc.Hash, existingRowID); err != nil {
 				return fmt.Errorf("updating document %s: %w", doc.ID, err)
 			}
-
-			// Update embedding in vec0 table via DELETE + INSERT
-			// (vec0 does not support UPDATE)
-			if _, err := tx.ExecContext(ctx,
-				`DELETE FROM vec_embeddings WHERE rowid = ?`, existingRowID,
-			); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM vec_embeddings WHERE rowid = ?`, existingRowID); err != nil {
 				return fmt.Errorf("deleting old embedding for doc %s: %w", doc.ID, err)
 			}
-
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO vec_embeddings(rowid, embedding) VALUES (?, ?)`,
-				existingRowID, embBlob,
-			); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO vec_embeddings(rowid, embedding) VALUES (?, ?)`, existingRowID, embBlob); err != nil {
 				return fmt.Errorf("re-inserting embedding for doc %s: %w", doc.ID, err)
 			}
-		case sql.ErrNoRows:
-			// New document — insert into mapping table first to get the rowid
-			result, err := tx.ExecContext(ctx,
-				`INSERT INTO vec_documents(doc_id, hash) VALUES (?, ?)`,
-				doc.ID, doc.Hash,
-			)
+		case errors.Is(err, sql.ErrNoRows):
+			result, err := tx.ExecContext(ctx, `INSERT INTO vec_documents(doc_id, hash) VALUES (?, ?)`, doc.ID, doc.Hash)
 			if err != nil {
 				return fmt.Errorf("inserting document %s: %w", doc.ID, err)
 			}
-
 			rowID, err := result.LastInsertId()
 			if err != nil {
 				return fmt.Errorf("getting rowid for doc %s: %w", doc.ID, err)
 			}
-
-			// Insert embedding into vec0 table with matching rowid
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO vec_embeddings(rowid, embedding) VALUES (?, ?)`,
-				rowID, embBlob,
-			); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO vec_embeddings(rowid, embedding) VALUES (?, ?)`, rowID, embBlob); err != nil {
 				return fmt.Errorf("inserting embedding for doc %s: %w", doc.ID, err)
 			}
 		default:
@@ -206,15 +181,12 @@ func (d *SQLiteVecDriver) Add(ctx context.Context, docs []vector.Document) error
 }
 
 // Query finds the topK most similar documents to the given embedding.
-func (d *SQLiteVecDriver) Query(ctx context.Context, embedding []float32, topK int) ([]vector.QueryResult, error) {
+func (d *Driver) Query(ctx context.Context, embedding []float32, topK int) ([]vector.QueryResult, error) {
 	if topK <= 0 {
 		topK = 10
 	}
 
-	queryBlob, err := serializeFloat32(embedding)
-	if err != nil {
-		return nil, fmt.Errorf("serializing query embedding: %w", err)
-	}
+	queryBlob := serializeFloat32(embedding)
 
 	// Use KNN query via vec0 MATCH, then JOIN back to get doc_id and hash.
 	rows, err := d.db.QueryContext(ctx, `
@@ -263,7 +235,7 @@ func (d *SQLiteVecDriver) Query(ctx context.Context, embedding []float32, topK i
 }
 
 // Get retrieves documents by their IDs.
-func (d *SQLiteVecDriver) Get(ctx context.Context, ids []string) ([]vector.Document, error) {
+func (d *Driver) Get(ctx context.Context, ids []string) ([]vector.Document, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -276,6 +248,7 @@ func (d *SQLiteVecDriver) Get(ctx context.Context, ids []string) ([]vector.Docum
 		args[i] = id
 	}
 
+	//nolint:gosec // @jpmcb - TODO: refactor to avoid SQL string formatting; placeholders are safe ?-marks
 	query := fmt.Sprintf(`
 		SELECT d.doc_id, d.hash, d.rowid
 		FROM vec_documents d
@@ -333,7 +306,7 @@ func (d *SQLiteVecDriver) Get(ctx context.Context, ids []string) ([]vector.Docum
 }
 
 // Delete removes documents by their IDs.
-func (d *SQLiteVecDriver) Delete(ctx context.Context, ids []string) error {
+func (d *Driver) Delete(ctx context.Context, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -342,7 +315,7 @@ func (d *SQLiteVecDriver) Delete(ctx context.Context, ids []string) error {
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Build placeholders for IN clause
 	placeholders := make([]string, len(ids))
@@ -354,6 +327,7 @@ func (d *SQLiteVecDriver) Delete(ctx context.Context, ids []string) error {
 	inClause := strings.Join(placeholders, ",")
 
 	// First, get the rowids for the documents to delete from vec0
+	//nolint:gosec // @jpmcb - TODO: refactor to avoid SQL string formatting; placeholders are safe ?-marks
 	query := fmt.Sprintf(
 		`SELECT rowid FROM vec_documents WHERE doc_id IN (%s)`, inClause,
 	)
@@ -386,6 +360,7 @@ func (d *SQLiteVecDriver) Delete(ctx context.Context, ids []string) error {
 	}
 
 	// Delete from mapping table
+	//nolint:gosec // @jpmcb - TODO: refactor to avoid SQL string formatting; placeholders are safe ?-marks
 	deleteQuery := fmt.Sprintf(
 		`DELETE FROM vec_documents WHERE doc_id IN (%s)`, inClause,
 	)
@@ -405,6 +380,6 @@ func (d *SQLiteVecDriver) Delete(ctx context.Context, ids []string) error {
 }
 
 // Close releases resources held by the driver.
-func (d *SQLiteVecDriver) Close() error {
+func (d *Driver) Close() error {
 	return d.db.Close()
 }

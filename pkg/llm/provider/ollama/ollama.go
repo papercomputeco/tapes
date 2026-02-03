@@ -6,21 +6,21 @@ import (
 	"github.com/papercomputeco/tapes/pkg/llm"
 )
 
-// provider implements the Provider interface for Ollama's API.
-type provider struct{}
+// Provider implements the Provider interface for Ollama's API.
+type Provider struct{}
 
-func New() *provider { return &provider{} }
+func New() *Provider { return &Provider{} }
 
-func (o *provider) Name() string {
+func (o *Provider) Name() string {
 	return "ollama"
 }
 
 // DefaultStreaming is true - Ollama streams by default
-func (o *provider) DefaultStreaming() bool {
+func (o *Provider) DefaultStreaming() bool {
 	return true
 }
 
-func (o *provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
+func (o *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 	var req ollamaRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
 		return nil, err
@@ -105,7 +105,7 @@ func (o *provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 	return result, nil
 }
 
-func (o *provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
+func (o *Provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 	var resp ollamaResponse
 	if err := json.Unmarshal(payload, &resp); err != nil {
 		return nil, err
@@ -180,6 +180,6 @@ func (o *provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 	return result, nil
 }
 
-func (o *provider) ParseStreamChunk(payload []byte) (*llm.StreamChunk, error) {
+func (o *Provider) ParseStreamChunk(_ []byte) (*llm.StreamChunk, error) {
 	panic("Not yet implemented")
 }

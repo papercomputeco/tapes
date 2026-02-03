@@ -15,16 +15,16 @@ import (
 	"github.com/papercomputeco/tapes/pkg/vector/chroma"
 )
 
-var _ = Describe("ChromaDriver", func() {
+var _ = Describe("Driver", func() {
 	var logger *zap.Logger
 
 	BeforeEach(func() {
 		logger = zap.NewNop()
 	})
 
-	Describe("NewChromaDriver", func() {
+	Describe("NewDriver", func() {
 		It("should return an error when URL is empty", func() {
-			_, err := chroma.NewChromaDriver(chroma.Config{URL: ""}, logger)
+			_, err := chroma.NewDriver(chroma.Config{URL: ""}, logger)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("chroma URL is required"))
 		})
@@ -61,7 +61,7 @@ var _ = Describe("ChromaDriver", func() {
 			}))
 			defer server.Close()
 
-			driver, err := chroma.NewChromaDriver(chroma.Config{
+			driver, err := chroma.NewDriver(chroma.Config{
 				URL:           server.URL,
 				MaxRetries:    5,
 				RetryDelay:    10 * time.Millisecond,
@@ -78,7 +78,7 @@ var _ = Describe("ChromaDriver", func() {
 			}))
 			defer server.Close()
 
-			_, err := chroma.NewChromaDriver(chroma.Config{
+			_, err := chroma.NewDriver(chroma.Config{
 				URL:           server.URL,
 				MaxRetries:    3,
 				RetryDelay:    10 * time.Millisecond,
@@ -91,8 +91,8 @@ var _ = Describe("ChromaDriver", func() {
 
 	Describe("Interface compliance", func() {
 		It("should implement vector.Driver interface", func() {
-			// Compile-time check that ChromaDriver implements vector.Driver
-			var _ vector.Driver = (*chroma.ChromaDriver)(nil)
+			// Compile-time check that Driver implements vector.Driver
+			var _ vector.Driver = (*chroma.Driver)(nil)
 		})
 	})
 })

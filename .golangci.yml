@@ -1,0 +1,117 @@
+# yaml-language-server: $schema=https://golangci-lint.run/jsonschema/golangci.jsonschema.json
+#
+# Paper Compute Co. — opinionated golangci-lint defaults
+# https://golangci-lint.run/docs/configuration/file/
+
+version: "2"
+
+linters:
+  enable:
+    # --- Bugs ---
+    - bodyclose          # Report unclosed HTTP response bodies.
+    - contextcheck       # Non-inherited context usage.
+    - durationcheck      # Accidental time.duration * time.duration.
+    - errcheck           # Raises unchecked errors.
+    - errchkjson         # Unchecked JSON marshal/unmarshal errors.
+    - errorlint          # Go 1.13+ error wrapping best practices.
+    - exhaustive         # Check exhaustiveness of enum switch statements.
+    - fatcontext         # Nested contexts in loops / closures.
+    - govet              # Examines and reports suspicious constructs.
+    - ineffassign        # Reports when assignments to existing vars are not used.
+    - makezero           # Slices with non-zero len that are later appended to.
+    - musttag            # Missing struct tags for (un)marshaling.
+    - nilerr             # Returning nil when err != nil.
+    - nilnesserr         # Reports returning a different nil error after err check.
+    - noctx              # Reports HTTP requests without context.
+    - unused             # Checks Go code for unused consts, vars, funcs, types.
+
+    # --- Code quality ---
+    - copyloopvar        # loop variable copy issues
+    - dupword            # duplicate words in comments / strings
+    - goconst            # repeated strings that could be constants
+    - gocritic           # broad set of style & performance diagnostics
+    - gosec              # security-oriented checks
+    - misspell           # common English typos
+    - nakedret           # naked returns in long functions
+    - prealloc           # slice pre-allocation hints
+    - predeclared        # shadowing predeclared identifiers
+    - reassign           # package-variable reassignment
+    - revive             # golint successor — style & correctness
+    - unconvert          # unnecessary type conversions
+    - unparam            # unused function parameters
+    - wastedassign       # wasted assignments
+    - whitespace         # unnecessary blank lines
+
+    # --- Modernization ---
+    - exptostd           # x/exp -> stdlib replacements
+    - intrange           # use integer ranges in for loops
+    - modernize          # modern Go idioms
+    - usestdlibvars      # use stdlib constants/variables
+    - usetesting         # prefer testing package helpers
+    - perfsprint         # faster fmt.Sprintf alternatives
+
+    # --- Style ---
+    - errname            # error/sentinel naming conventions
+    - nolintlint         # well-formed nolint directives
+    - recvcheck          # consistent receiver types
+    - nosprintfhostport  # host:port via net.JoinHostPort
+
+  disable:
+    - gochecknoglobals   # forbid all globals
+    - gochecknoinits     # forbid all init()
+
+  exclusions:
+    presets:
+      - comments
+      - std-error-handling
+      - common-false-positives
+      - legacy
+    generated: lax
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+          - dupl
+          - goconst
+          - gocritic
+          - revive
+          - unparam
+      # @jpmcb - TODO: rename these packages to avoid "meaningless" names
+      - path: api/
+        text: "var-naming: avoid meaningless package names"
+        linters:
+          - revive
+      - path: pkg/utils/
+        text: "var-naming: avoid meaningless package names"
+        linters:
+          - revive
+
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - goimports
+    - gofumpt
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/papercomputeco/tapes)
+    goimports:
+      local-prefixes:
+        - github.com/papercomputeco/tapes
+  exclusions:
+    generated: lax
+    paths:
+      - .dagger/internal
+      - .dagger/dagger.gen.go
+
+issues:
+  # Show all issues
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+run:
+  timeout: 5m

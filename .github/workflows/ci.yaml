@@ -33,6 +33,23 @@ jobs:
           args: test
           version: ${{ env.DAGGER_VERSION }}
 
+  lint-check:
+    name: GolangCI Lint Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Daggerverse golangcilint
+        uses: dagger/dagger-for-github@v8.2.0
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+        with:
+          verb: call
+          args: "-m github.com/papercomputeco/daggerverse/golangcilint check"
+          version: ${{ env.DAGGER_VERSION }}
+
   build:
     name: Build
     runs-on: ubuntu-latest

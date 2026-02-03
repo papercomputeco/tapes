@@ -28,13 +28,13 @@ var _ = Describe("SetUpstreamRequestHeaders", func() {
 		var got http.Header
 
 		app.Post("/test", func(c *fiber.Ctx) error {
-			req, _ := http.NewRequest("POST", "http://upstream/test", nil)
+			req, _ := http.NewRequest(http.MethodPost, "http://upstream/test", nil)
 			hh.SetUpstreamRequestHeaders(c, req)
 			got = req.Header
 			return c.SendStatus(fiber.StatusOK)
 		})
 
-		req := httptest.NewRequest("POST", "/test", nil)
+		req := httptest.NewRequest(http.MethodPost, "/test", nil)
 		req.Header.Set("Authorization", "Bearer token123")
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Api-Key", "secret")
@@ -52,13 +52,13 @@ var _ = Describe("SetUpstreamRequestHeaders", func() {
 		var got http.Header
 
 		app.Post("/test", func(c *fiber.Ctx) error {
-			req, _ := http.NewRequest("POST", "http://upstream/test", nil)
+			req, _ := http.NewRequest(http.MethodPost, "http://upstream/test", nil)
 			hh.SetUpstreamRequestHeaders(c, req)
 			got = req.Header
 			return c.SendStatus(fiber.StatusOK)
 		})
 
-		req := httptest.NewRequest("POST", "/test", nil)
+		req := httptest.NewRequest(http.MethodPost, "/test", nil)
 		req.Header.Set("Connection", "keep-alive")
 
 		resp, err := app.Test(req)
@@ -72,13 +72,13 @@ var _ = Describe("SetUpstreamRequestHeaders", func() {
 		var got http.Header
 
 		app.Post("/test", func(c *fiber.Ctx) error {
-			req, _ := http.NewRequest("POST", "http://upstream/test", nil)
+			req, _ := http.NewRequest(http.MethodPost, "http://upstream/test", nil)
 			hh.SetUpstreamRequestHeaders(c, req)
 			got = req.Header
 			return c.SendStatus(fiber.StatusOK)
 		})
 
-		req := httptest.NewRequest("POST", "/test", nil)
+		req := httptest.NewRequest(http.MethodPost, "/test", nil)
 		req.Header.Set("Host", "client.example.com")
 
 		resp, err := app.Test(req)
@@ -92,13 +92,13 @@ var _ = Describe("SetUpstreamRequestHeaders", func() {
 		var got http.Header
 
 		app.Post("/test", func(c *fiber.Ctx) error {
-			req, _ := http.NewRequest("POST", "http://upstream/test", nil)
+			req, _ := http.NewRequest(http.MethodPost, "http://upstream/test", nil)
 			hh.SetUpstreamRequestHeaders(c, req)
 			got = req.Header
 			return c.SendStatus(fiber.StatusOK)
 		})
 
-		req := httptest.NewRequest("POST", "/test", nil)
+		req := httptest.NewRequest(http.MethodPost, "/test", nil)
 		req.Header.Set("Accept-Encoding", "gzip, deflate, br")
 		req.Header.Set("Authorization", "Bearer token123")
 
@@ -140,7 +140,7 @@ var _ = Describe("SetClientResponseHeaders", func() {
 			return c.SendStatus(fiber.StatusOK)
 		})
 
-		req := httptest.NewRequest("GET", "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
 		resp, err := app.Test(req)
 		Expect(err).NotTo(HaveOccurred())
 		resp.Body.Close()
@@ -161,7 +161,7 @@ var _ = Describe("SetClientResponseHeaders", func() {
 			return c.SendStatus(fiber.StatusOK)
 		})
 
-		req := httptest.NewRequest("GET", "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
 		resp, err := app.Test(req)
 		Expect(err).NotTo(HaveOccurred())
 		resp.Body.Close()
@@ -180,7 +180,7 @@ var _ = Describe("SetClientResponseHeaders", func() {
 			return c.SendStatus(fiber.StatusOK)
 		})
 
-		req := httptest.NewRequest("GET", "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
 		resp, err := app.Test(req)
 		Expect(err).NotTo(HaveOccurred())
 		resp.Body.Close()
@@ -200,7 +200,7 @@ var _ = Describe("SetClientResponseHeaders", func() {
 			return c.SendStatus(fiber.StatusOK)
 		})
 
-		req := httptest.NewRequest("GET", "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
 		resp, err := app.Test(req)
 		Expect(err).NotTo(HaveOccurred())
 		resp.Body.Close()
@@ -222,7 +222,7 @@ var _ = Describe("SetClientResponseHeaders", func() {
 			return c.SendStatus(fiber.StatusOK)
 		})
 
-		req := httptest.NewRequest("GET", "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
 		resp, err := app.Test(req)
 		Expect(err).NotTo(HaveOccurred())
 		resp.Body.Close()
@@ -245,7 +245,7 @@ var _ = Describe("SetClientResponseHeaders", func() {
 			return c.SendStatus(fiber.StatusOK)
 		})
 
-		req := httptest.NewRequest("GET", "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
 		resp, err := app.Test(req)
 		Expect(err).NotTo(HaveOccurred())
 		resp.Body.Close()

@@ -13,14 +13,15 @@ import (
 
 // newTestPool creates a worker pool backed by an in-memory driver.
 // Callers should "wp.Close()" to drain enqueued jobs before asserting storage state.
-func newTestPool() (*Pool, *inmemory.InMemoryDriver) {
+func newTestPool() (*Pool, *inmemory.Driver) {
 	logger, _ := zap.NewDevelopment()
-	driver := inmemory.NewInMemoryDriver()
+	driver := inmemory.NewDriver()
 
-	wp := NewPool(&Config{
+	wp, err := NewPool(&Config{
 		Driver: driver,
 		Logger: logger,
 	})
+	Expect(err).NotTo(HaveOccurred())
 
 	return wp, driver
 }
@@ -28,7 +29,7 @@ func newTestPool() (*Pool, *inmemory.InMemoryDriver) {
 var _ = Describe("Worker Pool", func() {
 	var (
 		wp     *Pool
-		driver *inmemory.InMemoryDriver
+		driver *inmemory.Driver
 		ctx    context.Context
 	)
 

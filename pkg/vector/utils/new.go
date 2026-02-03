@@ -1,6 +1,7 @@
 package vectorutils
 
 import (
+	"errors"
 	"fmt"
 
 	"go.uber.org/zap"
@@ -30,16 +31,16 @@ func NewVectorDriver(o *NewVectorDriverOpts) (vector.Driver, error) {
 
 func newChromaDriver(o *NewVectorDriverOpts) (vector.Driver, error) {
 	if o.Target == "" {
-		return nil, fmt.Errorf("chroma target URL must be provided")
+		return nil, errors.New("chroma target URL must be provided")
 	}
 
-	return chroma.NewChromaDriver(chroma.Config{
+	return chroma.NewDriver(chroma.Config{
 		URL: o.Target,
 	}, o.Logger)
 }
 
 func newSqliteVecDriver(o *NewVectorDriverOpts) (vector.Driver, error) {
-	return sqlitevec.NewSQLiteVecDriver(sqlitevec.Config{
+	return sqlitevec.NewDriver(sqlitevec.Config{
 		DBPath:     o.Target,
 		Dimensions: o.Dimensions,
 	}, o.Logger)

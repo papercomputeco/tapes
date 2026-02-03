@@ -31,25 +31,27 @@ func New(
 	}
 }
 
-// Test runs the tapes unit tests via "go test"
-func (t *Tapes) Test(ctx context.Context) (string, error) {
-	return t.testContainer().
-		WithExec([]string{"go", "test", "-v", "./..."}).
-		Stdout(ctx)
-}
-
-// testContainer returns a container configured for running tests
-// with a local gcc toolchain for CGO and sqlite dependencies.
-func (t *Tapes) testContainer() *dagger.Container {
+// goContainer returns a Debian Bookworm-based Go container with gcc,
+// libsqlite3-dev, CGO enabled, and the project source mounted.
+//
+// It is the shared foundation for tests, builds, and linting.
+func (t *Tapes) goContainer() *dagger.Container {
 	return dag.Container().
 		From("golang:1.25-bookworm").
 		WithExec([]string{"apt-get", "update"}).
-		WithExec([]string{"apt-get", "install", "-y", "gcc"}).
-		WithExec([]string{"apt-get", "install", "-y", "libsqlite3-dev"}).
+		WithExec([]string{"apt-get", "install", "-y", "gcc", "libsqlite3-dev"}).
 		WithEnvVariable("CGO_ENABLED", "1").
 		WithEnvVariable("GOEXPERIMENT", "jsonv2").
+		WithEnvVariable("PATH", "/go/bin:$PATH", dagger.ContainerWithEnvVariableOpts{Expand: true}).
 		WithMountedCache("/go/pkg/mod", dag.CacheVolume("go-mod")).
 		WithMountedCache("/root/.cache/go-build", dag.CacheVolume("go-build")).
 		WithWorkdir("/src").
 		WithDirectory("/src", t.Source)
+}
+
+// Test runs the tapes unit tests via "go test"
+func (t *Tapes) Test(ctx context.Context) (string, error) {
+	return t.goContainer().
+		WithExec([]string{"go", "test", "-v", "./..."}).
+		Stdout(ctx)
 }

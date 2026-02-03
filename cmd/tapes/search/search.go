@@ -2,6 +2,7 @@
 package searchcmder
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -57,7 +58,7 @@ func NewSearchCmd() *cobra.Command {
 			var err error
 			cmder.debug, err = cmd.Flags().GetBool("debug")
 			if err != nil {
-				return fmt.Errorf("could not get debug flag: %v", err)
+				return fmt.Errorf("could not get debug flag: %w", err)
 			}
 
 			return cmder.run()
@@ -72,7 +73,7 @@ func NewSearchCmd() *cobra.Command {
 
 func (c *searchCommander) run() error {
 	c.logger = logger.NewLogger(c.debug)
-	defer c.logger.Sync()
+	defer func() { _ = c.logger.Sync() }()
 
 	c.logger.Debug("searching via API",
 		zap.String("api_target", c.apiTarget),
@@ -93,7 +94,11 @@ func (c *searchCommander) run() error {
 
 	c.logger.Debug("requesting search", zap.String("url", searchURL.String()))
 
-	resp, err := http.Get(searchURL.String())
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, searchURL.String(), nil)
+	if err != nil {
+		return fmt.Errorf("creating search request: %w", err)
+	}
+	resp, err := (&http.Client{}).Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to connect to Tapes API at %s: %w", c.apiTarget, err)
 	}
@@ -108,7 +113,7 @@ func (c *searchCommander) run() error {
 		return fmt.Errorf("search request failed (HTTP %d): %s", resp.StatusCode, string(body))
 	}
 
-	var output apisearch.SearchOutput
+	var output apisearch.Output
 	if err := json.Unmarshal(body, &output); err != nil {
 		return fmt.Errorf("failed to parse search response: %w", err)
 	}
@@ -129,7 +134,7 @@ func (c *searchCommander) run() error {
 	return nil
 }
 
-func (c *searchCommander) printResult(rank int, result apisearch.SearchResult) {
+func (c *searchCommander) printResult(rank int, result apisearch.Result) {
 	fmt.Printf("\n[%d] Score: %.4f\n", rank, result.Score)
 	fmt.Printf("    Hash: %s\n", result.Hash)
 

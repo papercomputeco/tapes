@@ -1,5 +1,7 @@
 package llm
 
+import "strings"
+
 // Message represents a single message in a conversation.
 // Content is stored as an array of ContentBlocks to support multimodal content
 // (text, images, tool use, etc.) in a provider-agnostic way.
@@ -45,11 +47,11 @@ func NewTextMessage(role, text string) Message {
 // GetText returns the concatenated text content from all text blocks in the message.
 // This is a convenience method for simple text-only messages.
 func (m *Message) GetText() string {
-	var result string
+	var b strings.Builder
 	for _, block := range m.Content {
 		if block.Type == "text" {
-			result += block.Text
+			b.WriteString(block.Text)
 		}
 	}
-	return result
+	return b.String()
 }

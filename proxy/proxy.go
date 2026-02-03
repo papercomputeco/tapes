@@ -56,12 +56,15 @@ func New(config Config, driver storage.Driver, logger *zap.Logger) (*Proxy, erro
 	// Add compression middleware to handle responses
 	app.Use(compress.New())
 
-	wp := worker.NewPool(&worker.Config{
+	wp, err := worker.NewPool(&worker.Config{
 		Driver:       driver,
 		VectorDriver: config.VectorDriver,
 		Embedder:     config.Embedder,
 		Logger:       logger,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("could not create worker pool: %w", err)
+	}
 
 	p := &Proxy{
 		config:        config,
@@ -234,7 +237,7 @@ func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path string, body []byte, par
 	// its RequestCtx after the handler returns, but the streaming callback runs
 	// asynchronously in a separate goroutine and needs the upstream connection
 	// to remain open.
-	httpReq, err := http.NewRequestWithContext(context.Background(), "POST", upstreamURL, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(context.Background(), http.MethodPost, upstreamURL, bytes.NewReader(body))
 	if err != nil {
 		p.logger.Error("failed to create upstream request", zap.Error(err))
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "internal error"})

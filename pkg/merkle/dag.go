@@ -2,6 +2,7 @@ package merkle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -113,12 +114,13 @@ func (d *Dag) Leaves() []*DagNode {
 // Walk traverses the DAG depth-first from root, calling fn for each node.
 // If the provided function returns false, traversal stops.
 // If the provided function errors, traversal stops and the error is propagated.
-func (d *Dag) Walk(f func(*DagNode) (bool, error)) {
+func (d *Dag) Walk(f func(*DagNode) (bool, error)) error {
 	if d.Root == nil {
-		return
+		return nil
 	}
 
-	d.walkNode(d.Root, f)
+	_, err := d.walkNode(d.Root, f)
+	return err
 }
 
 // walkNode recursively, depth first, traverses the given node with the provided
@@ -168,7 +170,7 @@ func (d *Dag) Descendants(hash string) []*DagNode {
 	}
 
 	descendants := []*DagNode{}
-	d.Walk(func(n *DagNode) (bool, error) {
+	_ = d.Walk(func(n *DagNode) (bool, error) {
 		descendants = append(descendants, n.Children...)
 		return true, nil
 	})
@@ -211,7 +213,7 @@ func (d *Dag) BranchPoints() []*DagNode {
 //   - The node already exists in the DAG
 func (d *Dag) addNode(node *Node) (*DagNode, error) {
 	if node == nil {
-		return nil, fmt.Errorf("cannot add nil node to dag")
+		return nil, errors.New("cannot add nil node to dag")
 	}
 
 	dagNode, ok := d.index[node.Hash]
@@ -227,7 +229,7 @@ func (d *Dag) addNode(node *Node) (*DagNode, error) {
 	if node.ParentHash == nil {
 		// This is a root node
 		if d.Root != nil {
-			return nil, fmt.Errorf("DAG already has a root node")
+			return nil, errors.New("DAG already has a root node")
 		}
 
 		d.Root = dagNode

@@ -8,20 +8,20 @@ import (
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3" // Register sqlite3 driver
 
 	"github.com/papercomputeco/tapes/pkg/storage/ent"
 	entdriver "github.com/papercomputeco/tapes/pkg/storage/ent/driver"
 )
 
-// SQLiteDriver implements storage.Driver using SQLite via the ent driver
-type SQLiteDriver struct {
+// Driver implements storage.Driver using SQLite via the ent driver
+type Driver struct {
 	*entdriver.EntDriver
 }
 
-// NewSQLiteDriver creates a new SQLite-backed storer.
+// NewDriver creates a new SQLite-backed storer.
 // The dbPath can be a file path or ":memory:" for an in-memory database.
-func NewSQLiteDriver(dbPath string) (*SQLiteDriver, error) {
+func NewDriver(dbPath string) (*Driver, error) {
 	// Open the database using the github.com/mattn/go-sqlite3 driver (registered as "sqlite3")
 	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
@@ -29,7 +29,7 @@ func NewSQLiteDriver(dbPath string) (*SQLiteDriver, error) {
 	}
 
 	// SQLite-specific pragmas
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+	if _, err := db.ExecContext(context.Background(), "PRAGMA foreign_keys = ON"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
 	}
@@ -45,7 +45,7 @@ func NewSQLiteDriver(dbPath string) (*SQLiteDriver, error) {
 		return nil, fmt.Errorf("failed to create schema: %w", err)
 	}
 
-	return &SQLiteDriver{
+	return &Driver{
 		EntDriver: &entdriver.EntDriver{
 			Client: client,
 		},

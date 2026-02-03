@@ -27,7 +27,7 @@ func dagTestBucket(role, text string) merkle.Bucket {
 // the DAG from the specified node hash. If loadFromHash is empty, it loads from
 // the last node in the slice.
 func buildTestDag(ctx context.Context, nodes []*merkle.Node, loadFromHash string) (*merkle.Dag, error) {
-	driver := inmemory.NewInMemoryDriver()
+	driver := inmemory.NewDriver()
 	for _, node := range nodes {
 		if _, err := driver.Put(ctx, node); err != nil {
 			return nil, err
@@ -156,10 +156,11 @@ var _ = Describe("Dag", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			var visited []string
-			dag.Walk(func(node *merkle.DagNode) (bool, error) {
+			err = dag.Walk(func(node *merkle.DagNode) (bool, error) {
 				visited = append(visited, node.Bucket.ExtractText())
 				return true, nil
 			})
+			Expect(err).NotTo(HaveOccurred())
 
 			Expect(visited).To(Equal([]string{"1", "2", "3"}))
 		})
@@ -173,12 +174,13 @@ var _ = Describe("Dag", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			var visited []string
-			dag.Walk(func(node *merkle.DagNode) (bool, error) {
+			err = dag.Walk(func(node *merkle.DagNode) (bool, error) {
 				visited = append(visited, node.Bucket.ExtractText())
 
 				// Stop after we hit "2"
 				return node.Bucket.ExtractText() != "2", nil
 			})
+			Expect(err).NotTo(HaveOccurred())
 
 			Expect(visited).To(Equal([]string{"1", "2"}))
 		})
@@ -193,13 +195,14 @@ var _ = Describe("Dag", func() {
 
 			testErr := errors.New("test error")
 			var visited []string
-			dag.Walk(func(node *merkle.DagNode) (bool, error) {
+			walkErr := dag.Walk(func(node *merkle.DagNode) (bool, error) {
 				visited = append(visited, node.Bucket.ExtractText())
 				if node.Bucket.ExtractText() == "2" {
 					return false, testErr
 				}
 				return true, nil
 			})
+			Expect(walkErr).To(MatchError(testErr))
 
 			// Should have stopped at node "2"
 			Expect(visited).To(Equal([]string{"1", "2"}))
@@ -209,10 +212,11 @@ var _ = Describe("Dag", func() {
 			dag := merkle.NewDag()
 
 			var visited []string
-			dag.Walk(func(node *merkle.DagNode) (bool, error) {
+			err := dag.Walk(func(node *merkle.DagNode) (bool, error) {
 				visited = append(visited, node.Bucket.ExtractText())
 				return true, nil
 			})
+			Expect(err).NotTo(HaveOccurred())
 
 			Expect(visited).To(BeEmpty())
 		})
@@ -365,10 +369,10 @@ var _ = Describe("Dag", func() {
 	})
 
 	Describe("LoadDag", func() {
-		var driver *inmemory.InMemoryDriver
+		var driver *inmemory.Driver
 
 		BeforeEach(func() {
-			driver = inmemory.NewInMemoryDriver()
+			driver = inmemory.NewDriver()
 		})
 
 		It("loads a single node", func() {

@@ -13,14 +13,14 @@ import (
 var _ = Describe("MCP Server", func() {
 	var (
 		server       *mcp.Server
-		driver       *inmemory.InMemoryDriver
+		driver       *inmemory.Driver
 		vectorDriver *testutils.MockVectorDriver
 		embedder     *testutils.MockEmbedder
 	)
 
 	BeforeEach(func() {
 		logger, _ := zap.NewDevelopment()
-		driver = inmemory.NewInMemoryDriver()
+		driver = inmemory.NewDriver()
 		vectorDriver = testutils.NewMockVectorDriver()
 		embedder = testutils.NewMockEmbedder()
 

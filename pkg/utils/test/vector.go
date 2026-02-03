@@ -2,7 +2,7 @@ package testutils
 
 import (
 	"context"
-	"fmt"
+	"errors"
 
 	"github.com/papercomputeco/tapes/pkg/vector"
 )
@@ -30,7 +30,7 @@ func (m *MockVectorDriver) Add(_ context.Context, docs []vector.Document) error 
 
 func (m *MockVectorDriver) Query(_ context.Context, _ []float32, topK int) ([]vector.QueryResult, error) {
 	if m.FailQuery {
-		return nil, fmt.Errorf("mock vector query failure")
+		return nil, errors.New("mock vector query failure")
 	}
 
 	if len(m.Results) < topK {

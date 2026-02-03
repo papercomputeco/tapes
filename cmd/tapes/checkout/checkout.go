@@ -3,10 +3,12 @@
 package checkoutcmder
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -75,12 +77,12 @@ func NewCheckoutCmd() *cobra.Command {
 			var err error
 			cmder.debug, err = cmd.Flags().GetBool("debug")
 			if err != nil {
-				return fmt.Errorf("could not get debug flag: %v", err)
+				return fmt.Errorf("could not get debug flag: %w", err)
 			}
 
 			cmder.api, err = cmd.Flags().GetString("api")
 			if err != nil {
-				return fmt.Errorf("could not get api flag: %v", err)
+				return fmt.Errorf("could not get api flag: %w", err)
 			}
 
 			return cmder.run()
@@ -95,7 +97,7 @@ func NewCheckoutCmd() *cobra.Command {
 func (c *checkoutCommander) run() error {
 	dotdirManager := dotdir.NewManager()
 	c.logger = logger.NewLogger(c.debug)
-	defer c.logger.Sync()
+	defer func() { _ = c.logger.Sync() }()
 
 	// If no hash provided, clear checkout state
 	if c.hash == "" {
@@ -150,7 +152,11 @@ func (c *checkoutCommander) fetchHistory(hash string) (*historyResponse, error) 
 	url := fmt.Sprintf("%s/dag/history/%s", c.api, hash)
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("requesting history from API: %w", err)
 	}
@@ -176,11 +182,11 @@ func (c *checkoutCommander) fetchHistory(hash string) (*historyResponse, error) 
 
 // extractText concatenates all text content blocks from a message.
 func extractText(content []llm.ContentBlock) string {
-	var text string
+	var b strings.Builder
 	for _, block := range content {
 		if block.Type == "text" {
-			text += block.Text
+			b.WriteString(block.Text)
 		}
 	}
-	return text
+	return b.String()
 }

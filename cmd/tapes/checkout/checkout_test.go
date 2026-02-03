@@ -2,9 +2,9 @@ package checkoutcmder_test
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -100,13 +100,13 @@ var _ = Describe("History API response parsing", func() {
 		Expect(parsed.Messages[1].Role).To(Equal("assistant"))
 
 		// Extract text from content blocks
-		var text string
+		var b strings.Builder
 		for _, block := range parsed.Messages[1].Content {
 			if block.Type == "text" {
-				text += block.Text
+				b.WriteString(block.Text)
 			}
 		}
-		Expect(text).To(Equal("Hi there!"))
+		Expect(b.String()).To(Equal("Hi there!"))
 	})
 
 	It("correctly handles a mock API server returning history", func() {
@@ -141,7 +141,7 @@ var _ = Describe("History API response parsing", func() {
 		defer server.Close()
 
 		// Fetch from mock server
-		url := fmt.Sprintf("%s/dag/history/abc123", server.URL)
+		url := server.URL + "/dag/history/abc123"
 		resp, err := http.Get(url)
 		Expect(err).NotTo(HaveOccurred())
 		defer resp.Body.Close()
@@ -164,7 +164,7 @@ var _ = Describe("History API response parsing", func() {
 		}))
 		defer server.Close()
 
-		resp, err := http.Get(fmt.Sprintf("%s/dag/history/unknown", server.URL))
+		resp, err := http.Get(server.URL + "/dag/history/unknown")
 		Expect(err).NotTo(HaveOccurred())
 		defer resp.Body.Close()
 

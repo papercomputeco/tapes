@@ -15,16 +15,16 @@ var (
 	searchDescription = "Search over stored LLM sessions using semantic search. Returns the most relevant sessions based on the query text, including the full conversation branch (ancestors and descendants)."
 )
 
-// MCPSearchInput represents the input arguments for the MCP search tool.
+// SearchInput represents the input arguments for the MCP search tool.
 // It uses jsonschema tags specific to the MCP protocol.
-type MCPSearchInput struct {
+type SearchInput struct {
 	Query string `json:"query" jsonschema:"the search query text to find relevant sessions"`
 	TopK  int    `json:"top_k,omitempty" jsonschema:"number of results to return (default: 5)"`
 }
 
 // handleSearch processes a search request via MCP.
 // It delegates to the shared search package for the core search logic.
-func (s *Server) handleSearch(ctx context.Context, req *mcp.CallToolRequest, input MCPSearchInput) (*mcp.CallToolResult, apisearch.SearchOutput, error) {
+func (s *Server) handleSearch(ctx context.Context, _ *mcp.CallToolRequest, input SearchInput) (*mcp.CallToolResult, apisearch.Output, error) {
 	output, err := apisearch.Search(
 		ctx,
 		input.Query,
@@ -40,7 +40,7 @@ func (s *Server) handleSearch(ctx context.Context, req *mcp.CallToolRequest, inp
 			Content: []mcp.Content{
 				&mcp.TextContent{Text: fmt.Sprintf("Search failed: %v", err)},
 			},
-		}, apisearch.SearchOutput{}, nil
+		}, apisearch.Output{}, nil
 	}
 
 	// Serialize the structured output as JSON for the text field
@@ -53,7 +53,7 @@ func (s *Server) handleSearch(ctx context.Context, req *mcp.CallToolRequest, inp
 			Content: []mcp.Content{
 				&mcp.TextContent{Text: fmt.Sprintf("Failed to serialize results: %v", err)},
 			},
-		}, apisearch.SearchOutput{}, nil
+		}, apisearch.Output{}, nil
 	}
 
 	return &mcp.CallToolResult{

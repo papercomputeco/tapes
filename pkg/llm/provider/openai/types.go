@@ -32,16 +32,6 @@ type openaiMessage struct {
 	} `json:"tool_calls,omitempty"`
 }
 
-// openaiContentPart represents a content part for multimodal messages.
-type openaiContentPart struct {
-	Type     string `json:"type"`
-	Text     string `json:"text,omitempty"`
-	ImageURL *struct {
-		URL    string `json:"url"`
-		Detail string `json:"detail,omitempty"`
-	} `json:"image_url,omitempty"`
-}
-
 // openaiResponse represents OpenAI's response format.
 type openaiResponse struct {
 	ID      string `json:"id"`

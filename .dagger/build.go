@@ -72,19 +72,13 @@ func (t *Tapes) buildLinux(outputs *dagger.Directory, ldflags string) *dagger.Di
 	zigDownloadURL := fmt.Sprintf("https://ziglang.org/download/%s/zig-%s-linux-%s.tar.xz", zigVersion, zigArch, zigVersion)
 	zigDir := fmt.Sprintf("zig-%s-linux-%s", zigArch, zigVersion)
 
-	golang := dag.Container().
-		From("golang:1.25-bookworm").
-		WithExec([]string{"apt-get", "update"}).
-		WithExec([]string{"apt-get", "install", "-y", "libsqlite3-dev", "xz-utils"}).
+	golang := t.goContainer().
+		WithExec([]string{"apt-get", "install", "-y", "xz-utils"}).
 		WithExec([]string{"mkdir", "-p", "/opt/sqlite"}).
 		WithExec([]string{"cp", "/usr/include/sqlite3.h", "/opt/sqlite/"}).
 		WithExec([]string{"cp", "/usr/include/sqlite3ext.h", "/opt/sqlite/"}).
 		WithExec([]string{"sh", "-c", fmt.Sprintf("curl -L %s | tar -xJ -C /usr/local", zigDownloadURL)}).
-		WithEnvVariable("PATH", fmt.Sprintf("/usr/local/%s:$PATH", zigDir), dagger.ContainerWithEnvVariableOpts{Expand: true}).
-		WithMountedCache("/go/pkg/mod", dag.CacheVolume("go-mod")).
-		WithMountedCache("/root/.cache/go-build", dag.CacheVolume("go-build")).
-		WithDirectory("/src", t.Source).
-		WithWorkdir("/src")
+		WithEnvVariable("PATH", fmt.Sprintf("/usr/local/%s:$PATH", zigDir), dagger.ContainerWithEnvVariableOpts{Expand: true})
 
 	for _, target := range targets {
 		path := fmt.Sprintf("%s/%s/", target.goos, target.goarch)
@@ -129,6 +123,7 @@ func (t *Tapes) buildDarwin(outputs *dagger.Directory, ldflags string) *dagger.D
 
 	// Use Debian Trixie as the base for darwin builds because the osxcross
 	// toolchain binaries require GLIBC 2.38+ (Bookworm only has 2.36).
+	// NOTE: this cannot reuse goContainer() since it needs Trixie, not Bookworm.
 	golang := dag.Container().
 		From("golang:1.25-trixie").
 		WithExec([]string{"apt-get", "update"}).
@@ -139,6 +134,8 @@ func (t *Tapes) buildDarwin(outputs *dagger.Directory, ldflags string) *dagger.D
 		WithDirectory("/osxcross", osxcross).
 		WithEnvVariable("PATH", "/osxcross/bin:$PATH", dagger.ContainerWithEnvVariableOpts{Expand: true}).
 		WithEnvVariable("LD_LIBRARY_PATH", "/osxcross/lib:$LD_LIBRARY_PATH", dagger.ContainerWithEnvVariableOpts{Expand: true}).
+		WithEnvVariable("CGO_ENABLED", "1").
+		WithEnvVariable("GOEXPERIMENT", "jsonv2").
 		WithMountedCache("/go/pkg/mod", dag.CacheVolume("go-mod")).
 		WithMountedCache("/root/.cache/go-build", dag.CacheVolume("go-build")).
 		WithDirectory("/src", t.Source).

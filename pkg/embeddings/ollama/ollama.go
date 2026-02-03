@@ -81,18 +81,18 @@ func (e *Embedder) Embed(ctx context.Context, text string) ([]float32, error) {
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("%w: marshaling request: %v", vector.ErrEmbedding, err)
+		return nil, fmt.Errorf("%w: marshaling request: %w", vector.ErrEmbedding, err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", e.baseURL+"/api/embed", bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.baseURL+"/api/embed", bytes.NewReader(jsonBody))
 	if err != nil {
-		return nil, fmt.Errorf("%w: creating request: %v", vector.ErrEmbedding, err)
+		return nil, fmt.Errorf("%w: creating request: %w", vector.ErrEmbedding, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := e.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: sending request: %v", vector.ErrEmbedding, err)
+		return nil, fmt.Errorf("%w: sending request: %w", vector.ErrEmbedding, err)
 	}
 	defer resp.Body.Close()
 
@@ -103,7 +103,7 @@ func (e *Embedder) Embed(ctx context.Context, text string) ([]float32, error) {
 
 	var embedResp embedResponse
 	if err := json.NewDecoder(resp.Body).Decode(&embedResp); err != nil {
-		return nil, fmt.Errorf("%w: decoding response: %v", vector.ErrEmbedding, err)
+		return nil, fmt.Errorf("%w: decoding response: %w", vector.ErrEmbedding, err)
 	}
 
 	if len(embedResp.Embeddings) == 0 {

@@ -5,6 +5,7 @@ package chatcmder
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -87,7 +88,7 @@ func NewChatCmd() *cobra.Command {
 			var err error
 			cmder.debug, err = cmd.Flags().GetBool("debug")
 			if err != nil {
-				return fmt.Errorf("could not get debug flag: %v", err)
+				return fmt.Errorf("could not get debug flag: %w", err)
 			}
 
 			return cmder.run()
@@ -104,7 +105,7 @@ func NewChatCmd() *cobra.Command {
 
 func (c *chatCommander) run() error {
 	c.logger = logger.NewLogger(c.debug)
-	defer c.logger.Sync()
+	defer func() { _ = c.logger.Sync() }()
 
 	// Load checkout state
 	dotdirManager := dotdir.NewManager()
@@ -205,7 +206,7 @@ func (c *chatCommander) sendAndStream(messages []ollamaMessage) (string, error) 
 
 	// POST to the proxy's Ollama-compatible chat endpoint
 	url := c.proxy + "/api/chat"
-	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("creating request: %w", err)
 	}

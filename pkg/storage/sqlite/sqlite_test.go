@@ -25,16 +25,16 @@ func sqliteTestBucket(text string) merkle.Bucket {
 	}
 }
 
-var _ = Describe("SQLiteDriver", func() {
+var _ = Describe("Driver", func() {
 	var (
-		driver *sqlite.SQLiteDriver
+		driver *sqlite.Driver
 		ctx    context.Context
 	)
 
 	BeforeEach(func() {
 		ctx = context.Background()
 		var err error
-		driver, err = sqlite.NewSQLiteDriver(":memory:")
+		driver, err = sqlite.NewDriver(":memory:")
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -44,12 +44,12 @@ var _ = Describe("SQLiteDriver", func() {
 		}
 	})
 
-	Describe("NewSQLiteDriver", func() {
+	Describe("NewDriver", func() {
 		It("creates a driver with file database", func() {
 			tmpDir := GinkgoT().TempDir()
 			dbPath := filepath.Join(tmpDir, "test.db")
 
-			s, err := sqlite.NewSQLiteDriver(dbPath)
+			s, err := sqlite.NewDriver(dbPath)
 			Expect(err).NotTo(HaveOccurred())
 			defer s.Close()
 
@@ -89,11 +89,11 @@ var _ = Describe("SQLiteDriver", func() {
 			Expect(*retrieved.ParentHash).To(Equal(parent.Hash))
 		})
 
-		It("returns ErrNotFound for non-existent hash", func() {
+		It("returns NotFoundError for non-existent hash", func() {
 			_, err := driver.Get(ctx, "nonexistent")
 			Expect(err).To(HaveOccurred())
 
-			var notFoundErr storage.ErrNotFound
+			var notFoundErr storage.NotFoundError
 			Expect(err).To(BeAssignableToTypeOf(notFoundErr))
 		})
 

@@ -9,6 +9,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 
 	"go.uber.org/zap"
@@ -63,13 +64,17 @@ type Pool struct {
 }
 
 // NewPool creates a new Storer and starts its worker goroutines.
-func NewPool(c *Config) *Pool {
+func NewPool(c *Config) (*Pool, error) {
 	if c.NumWorkers == 0 {
 		c.NumWorkers = defaultNumWorkers
 	}
 
 	if c.QueueSize == 0 {
 		c.QueueSize = defaultJobQueueSize
+	}
+
+	if c.NumWorkers > uint(math.MaxInt) {
+		return nil, fmt.Errorf("NumWorkers %d exceeds max int", c.NumWorkers)
 	}
 
 	wp := &Pool{
@@ -83,7 +88,7 @@ func NewPool(c *Config) *Pool {
 		go wp.worker(i)
 	}
 
-	return wp
+	return wp, nil
 }
 
 // Enqueue submits a job for processing by the worker pool.

@@ -9,10 +9,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/utils"
 )
 
-type VersionCommander struct {
-	semVer string
-	commit string
-}
+type VersionCommander struct{}
 
 func NewVersionCmd() *cobra.Command {
 	cmder := &VersionCommander{}
@@ -21,7 +18,7 @@ func NewVersionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "displays version",
 		Long:  "displays the version of this CLI",
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			return cmder.run()
 		},
 	}

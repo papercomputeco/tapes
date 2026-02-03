@@ -11,22 +11,22 @@ import (
 	"github.com/papercomputeco/tapes/pkg/vector/sqlitevec"
 )
 
-var _ = Describe("SQLiteVecDriver", func() {
+var _ = Describe("Driver", func() {
 	var logger *zap.Logger
 
 	BeforeEach(func() {
 		logger = zap.NewNop()
 	})
 
-	Describe("NewSQLiteVecDriver", func() {
+	Describe("NewDriver", func() {
 		It("should return an error when DBPath is empty", func() {
-			_, err := sqlitevec.NewSQLiteVecDriver(sqlitevec.Config{DBPath: ""}, logger)
+			_, err := sqlitevec.NewDriver(sqlitevec.Config{DBPath: ""}, logger)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("database path is required"))
 		})
 
 		It("should create a driver with an in-memory database", func() {
-			driver, err := sqlitevec.NewSQLiteVecDriver(sqlitevec.Config{
+			driver, err := sqlitevec.NewDriver(sqlitevec.Config{
 				DBPath:     ":memory:",
 				Dimensions: 4,
 			}, logger)
@@ -36,7 +36,7 @@ var _ = Describe("SQLiteVecDriver", func() {
 		})
 
 		It("should error when dimension not specified", func() {
-			_, err := sqlitevec.NewSQLiteVecDriver(sqlitevec.Config{
+			_, err := sqlitevec.NewDriver(sqlitevec.Config{
 				DBPath: ":memory:",
 			}, logger)
 			Expect(err).To(HaveOccurred())
@@ -45,16 +45,16 @@ var _ = Describe("SQLiteVecDriver", func() {
 
 	Describe("Interface compliance", func() {
 		It("should implement vector.Driver interface", func() {
-			var _ vector.Driver = (*sqlitevec.SQLiteVecDriver)(nil)
+			var _ vector.Driver = (*sqlitevec.Driver)(nil)
 		})
 	})
 
 	Describe("Add", func() {
-		var driver *sqlitevec.SQLiteVecDriver
+		var driver *sqlitevec.Driver
 
 		BeforeEach(func() {
 			var err error
-			driver, err = sqlitevec.NewSQLiteVecDriver(sqlitevec.Config{
+			driver, err = sqlitevec.NewDriver(sqlitevec.Config{
 				DBPath:     ":memory:",
 				Dimensions: 4,
 			}, logger)
@@ -127,11 +127,11 @@ var _ = Describe("SQLiteVecDriver", func() {
 	})
 
 	Describe("Query", func() {
-		var driver *sqlitevec.SQLiteVecDriver
+		var driver *sqlitevec.Driver
 
 		BeforeEach(func() {
 			var err error
-			driver, err = sqlitevec.NewSQLiteVecDriver(sqlitevec.Config{
+			driver, err = sqlitevec.NewDriver(sqlitevec.Config{
 				DBPath:     ":memory:",
 				Dimensions: 4,
 			}, logger)
@@ -193,11 +193,11 @@ var _ = Describe("SQLiteVecDriver", func() {
 	})
 
 	Describe("Get", func() {
-		var driver *sqlitevec.SQLiteVecDriver
+		var driver *sqlitevec.Driver
 
 		BeforeEach(func() {
 			var err error
-			driver, err = sqlitevec.NewSQLiteVecDriver(sqlitevec.Config{
+			driver, err = sqlitevec.NewDriver(sqlitevec.Config{
 				DBPath:     ":memory:",
 				Dimensions: 4,
 			}, logger)
@@ -247,11 +247,11 @@ var _ = Describe("SQLiteVecDriver", func() {
 	})
 
 	Describe("Delete", func() {
-		var driver *sqlitevec.SQLiteVecDriver
+		var driver *sqlitevec.Driver
 
 		BeforeEach(func() {
 			var err error
-			driver, err = sqlitevec.NewSQLiteVecDriver(sqlitevec.Config{
+			driver, err = sqlitevec.NewDriver(sqlitevec.Config{
 				DBPath:     ":memory:",
 				Dimensions: 4,
 			}, logger)
@@ -321,7 +321,7 @@ var _ = Describe("SQLiteVecDriver", func() {
 
 	Describe("Close", func() {
 		It("should close the database connection", func() {
-			driver, err := sqlitevec.NewSQLiteVecDriver(sqlitevec.Config{
+			driver, err := sqlitevec.NewDriver(sqlitevec.Config{
 				DBPath:     ":memory:",
 				Dimensions: 4,
 			}, logger)
