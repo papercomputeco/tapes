@@ -39,15 +39,14 @@ func (s *Server) handleSearchEndpoint(c *fiber.Ctx) error {
 		topK = parsed
 	}
 
-	output, err := apisearch.Search(
+	searcher := apisearch.NewSearcher(
 		c.Context(),
-		query,
-		topK,
 		s.config.Embedder,
 		s.config.VectorDriver,
 		s.dagLoader,
 		s.logger,
 	)
+	output, err := searcher.Search(query, topK)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{
 			Error: err.Error(),

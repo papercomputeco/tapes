@@ -34,7 +34,7 @@ var _ = Describe("Driver", func() {
 	BeforeEach(func() {
 		ctx = context.Background()
 		var err error
-		driver, err = sqlite.NewDriver(":memory:")
+		driver, err = sqlite.NewDriver(ctx, ":memory:")
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -49,7 +49,7 @@ var _ = Describe("Driver", func() {
 			tmpDir := GinkgoT().TempDir()
 			dbPath := filepath.Join(tmpDir, "test.db")
 
-			s, err := sqlite.NewDriver(dbPath)
+			s, err := sqlite.NewDriver(context.Background(), dbPath)
 			Expect(err).NotTo(HaveOccurred())
 			defer s.Close()
 

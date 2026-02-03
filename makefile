@@ -10,17 +10,13 @@ LDFLAGS := -s -w \
 	-X 'github.com/papercomputeco/tapes/pkg/utils.Sha=$(COMMIT)' \
 	-X 'github.com/papercomputeco/tapes/pkg/utils.Buildtime=$(BUILDTIME)'
 
-.PHONY: format
-format:
-	find . -type f -name "*.go" -exec goimports -local github.com/papercomputeco/tapes -w {} \;
-
-.PHONY: check-lint
-check-lint: ## Runs golangci-lint check. Auto-fixes are not automatically applied.
+.PHONY: check
+check: ## Runs golangci-lint check. Auto-fixes are not automatically applied.
 	$(call print-target)
 	dagger call check-lint
 
-.PHONY: fix-lint
-fix-lint: ## Runs golangci-lint lint with auto-fixes applied.
+.PHONY: format
+format: ## Runs golangci-lint linters and formatters with auto-fixes applied.
 	$(call print-target)
 	dagger call fix-lint export --path .
 

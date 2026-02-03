@@ -27,6 +27,7 @@ var _ = Describe("Search", func() {
 		embedder     *testutils.MockEmbedder
 		logger       *zap.Logger
 		ctx          context.Context
+		searcher     *search.Searcher
 	)
 
 	BeforeEach(func() {
@@ -35,11 +36,12 @@ var _ = Describe("Search", func() {
 		vectorDriver = testutils.NewMockVectorDriver()
 		embedder = testutils.NewMockEmbedder()
 		ctx = context.Background()
+		searcher = search.NewSearcher(ctx, embedder, vectorDriver, driver, logger)
 	})
 
 	Describe("Search function", func() {
 		It("returns empty results when vector store has no matches", func() {
-			output, err := search.Search(ctx, "hello", 5, embedder, vectorDriver, driver, logger)
+			output, err := searcher.Search("hello", 5)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(output.Query).To(Equal("hello"))
 			Expect(output.Count).To(Equal(0))
@@ -65,7 +67,7 @@ var _ = Describe("Search", func() {
 				},
 			}
 
-			output, err := search.Search(ctx, "greeting", 5, embedder, vectorDriver, driver, logger)
+			output, err := searcher.Search("greeting", 5)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(output.Query).To(Equal("greeting"))
 			Expect(output.Count).To(Equal(1))
@@ -76,21 +78,21 @@ var _ = Describe("Search", func() {
 		})
 
 		It("defaults topK to 5 when zero", func() {
-			output, err := search.Search(ctx, "test", 0, embedder, vectorDriver, driver, logger)
+			output, err := searcher.Search("test", 0)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(output).NotTo(BeNil())
 		})
 
 		It("returns an error when embedding fails", func() {
 			embedder.FailOn = "fail-query"
-			_, err := search.Search(ctx, "fail-query", 5, embedder, vectorDriver, driver, logger)
+			_, err := searcher.Search("fail-query", 5)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("failed to embed query"))
 		})
 
 		It("returns an error when vector query fails", func() {
 			vectorDriver.FailQuery = true
-			_, err := search.Search(ctx, "test", 5, embedder, vectorDriver, driver, logger)
+			_, err := searcher.Search("test", 5)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("failed to query vector store"))
 		})
@@ -107,7 +109,7 @@ var _ = Describe("Search", func() {
 				},
 			}
 
-			output, err := search.Search(ctx, "test", 5, embedder, vectorDriver, driver, logger)
+			output, err := searcher.Search("test", 5)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(output.Count).To(Equal(0))
 		})
@@ -130,7 +132,7 @@ var _ = Describe("Search", func() {
 			dag, err := merkle.LoadDag(ctx, driver, node.Hash)
 			Expect(err).NotTo(HaveOccurred())
 
-			searchResult := search.BuildResult(result, dag)
+			searchResult := searcher.BuildResult(result, dag)
 
 			Expect(searchResult.Hash).To(Equal(node.Hash))
 			Expect(searchResult.Score).To(Equal(float32(0.95)))
@@ -163,7 +165,7 @@ var _ = Describe("Search", func() {
 			dag, err := merkle.LoadDag(ctx, driver, node3.Hash)
 			Expect(err).NotTo(HaveOccurred())
 
-			searchResult := search.BuildResult(result, dag)
+			searchResult := searcher.BuildResult(result, dag)
 
 			Expect(searchResult.Hash).To(Equal(node3.Hash))
 			Expect(searchResult.Turns).To(Equal(3))
@@ -190,7 +192,7 @@ var _ = Describe("Search", func() {
 			}
 
 			dag := merkle.NewDag()
-			searchResult := search.BuildResult(result, dag)
+			searchResult := searcher.BuildResult(result, dag)
 
 			Expect(searchResult.Hash).To(Equal("empty-hash"))
 			Expect(searchResult.Turns).To(Equal(0))

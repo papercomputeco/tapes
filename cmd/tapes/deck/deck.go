@@ -3,6 +3,7 @@ package deckcmder
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -84,11 +85,11 @@ func (c *deckCommander) run(ctx context.Context) error {
 		return err
 	}
 
-	query, closeFn, err := deck.NewQuery(sqlitePath, pricing)
+	query, closeFn, err := deck.NewQuery(ctx, sqlitePath, pricing)
 	if err != nil {
 		return err
 	}
-	defer closeFn()
+	defer func() { _ = closeFn() }()
 
 	filters, err := c.parseFilters()
 	if err != nil {
@@ -140,7 +141,7 @@ func (c *deckCommander) parseFilters() (deck.Filters, error) {
 func parseTime(value string) (time.Time, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return time.Time{}, fmt.Errorf("empty time")
+		return time.Time{}, errors.New("empty time")
 	}
 
 	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
@@ -151,7 +152,7 @@ func parseTime(value string) (time.Time, error) {
 		return parsed, nil
 	}
 
-	return time.Time{}, fmt.Errorf("expected RFC3339 or YYYY-MM-DD")
+	return time.Time{}, errors.New("expected RFC3339 or YYYY-MM-DD")
 }
 
 func resolveSQLitePath(override string) (string, error) {
@@ -194,5 +195,5 @@ func resolveSQLitePath(override string) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("could not find tapes SQLite database; pass --sqlite")
+	return "", errors.New("could not find tapes SQLite database; pass --sqlite")
 }

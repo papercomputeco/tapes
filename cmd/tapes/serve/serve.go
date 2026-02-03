@@ -2,6 +2,7 @@
 package servecmder
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -211,7 +212,7 @@ func (c *ServeCommander) run() error {
 
 func (c *ServeCommander) newStorageDriver() (storage.Driver, error) {
 	if c.sqlitePath != "" {
-		driver, err := sqlite.NewDriver(c.sqlitePath)
+		driver, err := sqlite.NewDriver(context.Background(), c.sqlitePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
 		}
@@ -225,7 +226,7 @@ func (c *ServeCommander) newStorageDriver() (storage.Driver, error) {
 
 func (c *ServeCommander) newDagLoader() (merkle.DagLoader, error) {
 	if c.sqlitePath != "" {
-		driver, err := sqlite.NewDriver(c.sqlitePath)
+		driver, err := sqlite.NewDriver(context.Background(), c.sqlitePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
 		}

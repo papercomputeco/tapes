@@ -50,7 +50,8 @@ func runDeckWeb(ctx context.Context, query *deck.Query, filters deck.Filters, po
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	listener, err := net.Listen("tcp", address)
+	lc := net.ListenConfig{}
+	listener, err := lc.Listen(ctx, "tcp", address)
 	if err != nil {
 		return err
 	}
@@ -59,7 +60,9 @@ func runDeckWeb(ctx context.Context, query *deck.Query, filters deck.Filters, po
 
 	go func() {
 		<-ctx.Done()
-		_ = server.Shutdown(context.Background())
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
 	}()
 
 	return server.Serve(listener)
@@ -67,10 +70,15 @@ func runDeckWeb(ctx context.Context, query *deck.Query, filters deck.Filters, po
 
 func writeJSON(w http.ResponseWriter, payload any) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(payload)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 func writeJSONError(w http.ResponseWriter, err error) {
 	w.WriteHeader(http.StatusInternalServerError)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+	resp := map[string]string{"error": err.Error()}
+	if encErr := json.NewEncoder(w).Encode(resp); encErr != nil {
+		http.Error(w, encErr.Error(), http.StatusInternalServerError)
+	}
 }

@@ -8,7 +8,7 @@ import (
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
-	_ "github.com/mattn/go-sqlite3" // Register sqlite3 driver
+	_ "github.com/mattn/go-sqlite3" // load up the sqlite3 CGO libs
 
 	"github.com/papercomputeco/tapes/pkg/storage/ent"
 	entdriver "github.com/papercomputeco/tapes/pkg/storage/ent/driver"
@@ -21,7 +21,7 @@ type Driver struct {
 
 // NewDriver creates a new SQLite-backed storer.
 // The dbPath can be a file path or ":memory:" for an in-memory database.
-func NewDriver(dbPath string) (*Driver, error) {
+func NewDriver(ctx context.Context, dbPath string) (*Driver, error) {
 	// Open the database using the github.com/mattn/go-sqlite3 driver (registered as "sqlite3")
 	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
@@ -29,7 +29,7 @@ func NewDriver(dbPath string) (*Driver, error) {
 	}
 
 	// SQLite-specific pragmas
-	if _, err := db.ExecContext(context.Background(), "PRAGMA foreign_keys = ON"); err != nil {
+	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
 	}
@@ -40,7 +40,7 @@ func NewDriver(dbPath string) (*Driver, error) {
 
 	// Run ent's auto-migration to create/update the schema
 	// This handles append-only schema changes (new tables, columns, indexes)
-	if err := client.Schema.Create(context.Background()); err != nil {
+	if err := client.Schema.Create(ctx); err != nil {
 		client.Close()
 		return nil, fmt.Errorf("failed to create schema: %w", err)
 	}

@@ -2,6 +2,7 @@
 package proxycmder
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -142,7 +143,7 @@ func (c *proxyCommander) run() error {
 
 func (c *proxyCommander) newStorageDriver() (storage.Driver, error) {
 	if c.sqlitePath != "" {
-		driver, err := sqlite.NewDriver(c.sqlitePath)
+		driver, err := sqlite.NewDriver(context.Background(), c.sqlitePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
 		}

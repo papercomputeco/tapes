@@ -41,14 +41,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Daggerverse golangcilint
+      - name: Install Dagger
         uses: dagger/dagger-for-github@v8.2.0
+        with:
+          verb: version
+          version: ${{ env.DAGGER_VERSION }}
+
+      - name: Run lint check
         env:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-        with:
-          verb: call
-          args: "-m github.com/papercomputeco/daggerverse/golangcilint check"
-          version: ${{ env.DAGGER_VERSION }}
+        run: make check
 
   build:
     name: Build

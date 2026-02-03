@@ -3,6 +3,7 @@ package deck
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,13 +15,15 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
 )
 
+const blockTypeToolUse = "tool_use"
+
 type Query struct {
 	client  *ent.Client
 	pricing PricingTable
 }
 
-func NewQuery(dbPath string, pricing PricingTable) (*Query, func() error, error) {
-	driver, err := sqlite.NewSQLiteDriver(dbPath)
+func NewQuery(ctx context.Context, dbPath string, pricing PricingTable) (*Query, func() error, error) {
+	driver, err := sqlite.NewDriver(ctx, dbPath)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -32,13 +35,13 @@ func NewQuery(dbPath string, pricing PricingTable) (*Query, func() error, error)
 	return &Query{client: driver.Client, pricing: pricing}, closeFn, nil
 }
 
-func (q *Query) Overview(ctx context.Context, filters Filters) (*DeckOverview, error) {
+func (q *Query) Overview(ctx context.Context, filters Filters) (*Overview, error) {
 	leaves, err := q.client.Node.Query().Where(node.Not(node.HasChildren())).All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list leaves: %w", err)
 	}
 
-	overview := &DeckOverview{
+	overview := &Overview{
 		Sessions:    make([]SessionSummary, 0, len(leaves)),
 		CostByModel: map[string]ModelCost{},
 	}
@@ -169,15 +172,12 @@ func (q *Query) buildSessionSummary(ctx context.Context, leaf *ent.Node) (Sessio
 
 func (q *Query) buildSessionSummaryFromNodes(nodes []*ent.Node) (SessionSummary, map[string]ModelCost, string, error) {
 	if len(nodes) == 0 {
-		return SessionSummary{}, nil, "", fmt.Errorf("empty session nodes")
+		return SessionSummary{}, nil, "", errors.New("empty session nodes")
 	}
 
 	start := nodes[0].CreatedAt
 	end := nodes[len(nodes)-1].CreatedAt
-	duration := end.Sub(start)
-	if duration < 0 {
-		duration = 0
-	}
+	duration := max(end.Sub(start), 0)
 
 	label := buildLabel(nodes)
 	toolCalls := 0
@@ -284,19 +284,17 @@ func (q *Query) costForNode(node *ent.Node, inputTokens, outputTokens int64) (fl
 }
 
 func tokenCounts(node *ent.Node) (int64, int64, int64) {
-	inputTokens := int64(0)
-	outputTokens := int64(0)
-	totalTokens := int64(0)
+	var inputTokens, outputTokens int64
 	if node.PromptTokens != nil {
 		inputTokens = int64(*node.PromptTokens)
 	}
 	if node.CompletionTokens != nil {
 		outputTokens = int64(*node.CompletionTokens)
 	}
+
+	totalTokens := inputTokens + outputTokens
 	if node.TotalTokens != nil {
 		totalTokens = int64(*node.TotalTokens)
-	} else {
-		totalTokens = inputTokens + outputTokens
 	}
 
 	return inputTokens, outputTokens, totalTokens
@@ -323,7 +321,7 @@ func parseContentBlocks(raw []map[string]any) ([]llm.ContentBlock, error) {
 func extractToolCalls(blocks []llm.ContentBlock) []string {
 	tools := []string{}
 	for _, block := range blocks {
-		if block.Type == "tool_use" && block.ToolName != "" {
+		if block.Type == blockTypeToolUse && block.ToolName != "" {
 			tools = append(tools, block.ToolName)
 		}
 	}
@@ -333,7 +331,7 @@ func extractToolCalls(blocks []llm.ContentBlock) []string {
 func countToolCalls(blocks []llm.ContentBlock) int {
 	count := 0
 	for _, block := range blocks {
-		if block.Type == "tool_use" {
+		if block.Type == blockTypeToolUse {
 			count++
 		}
 	}
@@ -358,7 +356,7 @@ func extractText(blocks []llm.ContentBlock) string {
 		case block.ToolOutput != "":
 			texts = append(texts, block.ToolOutput)
 		case block.ToolName != "":
-			texts = append(texts, fmt.Sprintf("tool call: %s", block.ToolName))
+			texts = append(texts, "tool call: "+block.ToolName)
 		}
 	}
 	return strings.Join(texts, "\n")

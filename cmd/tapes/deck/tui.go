@@ -36,7 +36,7 @@ const (
 type deckModel struct {
 	query         *deck.Query
 	filters       deck.Filters
-	overview      *deck.DeckOverview
+	overview      *deck.Overview
 	detail        *deck.SessionDetail
 	view          deckView
 	cursor        int
@@ -70,9 +70,11 @@ var (
 	deckRoleAsstStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
 )
 
-var sortOrder = []string{"cost", "time", "tokens", "duration"}
-var messageSortOrder = []string{"time", "tokens", "cost", "delta"}
-var statusFilters = []string{"", deck.StatusCompleted, deck.StatusFailed, deck.StatusAbandoned}
+var (
+	sortOrder        = []string{"cost", "time", "tokens", "duration"}
+	messageSortOrder = []string{"time", "tokens", "cost", "delta"}
+	statusFilters    = []string{"", deck.StatusCompleted, deck.StatusFailed, deck.StatusAbandoned}
+)
 
 type deckKeyMap struct {
 	Up     key.Binding
@@ -114,7 +116,7 @@ type sessionLoadedMsg struct {
 }
 
 type overviewLoadedMsg struct {
-	overview *deck.DeckOverview
+	overview *deck.Overview
 	err      error
 }
 
@@ -145,9 +147,9 @@ func runDeckTUI(ctx context.Context, query *deck.Query, filters deck.Filters) er
 	return err
 }
 
-func newDeckModel(query *deck.Query, filters deck.Filters, overview *deck.DeckOverview) deckModel {
+func newDeckModel(query *deck.Query, filters deck.Filters, overview *deck.Overview) deckModel {
 	toggles := map[int]bool{}
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		toggles[i] = true
 	}
 
@@ -195,7 +197,7 @@ func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
 		}
 		m.overview = msg.overview
 		if m.cursor >= len(m.overview.Sessions) {
-			m.cursor = clamp(m.cursor, 0, len(m.overview.Sessions)-1)
+			m.cursor = clamp(m.cursor, len(m.overview.Sessions)-1)
 		}
 		return m, nil
 	case sessionLoadedMsg:
@@ -231,11 +233,12 @@ func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
 
 func (m deckModel) View() string {
 	switch m.view {
+	case viewOverview:
+		return m.viewOverview()
 	case viewSession:
 		return m.viewSession()
-	default:
-		return m.viewOverview()
 	}
+	return m.viewOverview()
 }
 
 func (m deckModel) handleKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.Cmd) {
@@ -301,14 +304,14 @@ func (m deckModel) moveCursor(delta int) (bubbletea.Model, bubbletea.Cmd) {
 		}
 		// Limit cursor to first 8 sessions
 		maxIdx := min(7, len(m.overview.Sessions)-1)
-		m.cursor = clamp(m.cursor+delta, 0, maxIdx)
+		m.cursor = clamp(m.cursor+delta, maxIdx)
 		return m, nil
 	}
 
 	if m.detail == nil || len(m.detail.Messages) == 0 {
 		return m, nil
 	}
-	m.messageCursor = clamp(m.messageCursor+delta, 0, len(m.detail.Messages)-1)
+	m.messageCursor = clamp(m.messageCursor+delta, len(m.detail.Messages)-1)
 	return m, nil
 }
 
@@ -339,7 +342,7 @@ func (m deckModel) cycleMessageSort() (bubbletea.Model, bubbletea.Cmd) {
 		m.messageCursor = 0
 		return m, nil
 	}
-	m.messageCursor = clamp(m.messageCursor, 0, len(m.sortedMessages())-1)
+	m.messageCursor = clamp(m.messageCursor, len(m.sortedMessages())-1)
 	return m, nil
 }
 
@@ -362,7 +365,8 @@ func (m deckModel) viewOverview() string {
 	headerLeft := deckTitleStyle.Render("tapes deck")
 	headerRight := deckMutedStyle.Render(m.headerSessionCount(lastWindow, len(selected), len(m.overview.Sessions), filtered))
 	header := renderHeaderLine(m.width, headerLeft, headerRight)
-	lines := []string{header, renderRule(m.width), ""}
+	lines := make([]string, 0, 10)
+	lines = append(lines, header, renderRule(m.width), "")
 
 	lines = append(lines, m.viewMetrics(stats))
 	lines = append(lines, "", m.viewCostByModel(stats), "", m.viewSessionList(), "", m.viewFooter())
@@ -380,13 +384,13 @@ func (m deckModel) viewMetrics(stats deckOverviewStats) string {
 		formatCost(stats.TotalCost),
 		fmt.Sprintf("%s in %s out", formatTokens(stats.InputTokens), formatTokens(stats.OutputTokens)),
 		formatDuration(stats.TotalDuration),
-		fmt.Sprintf("%d", stats.TotalToolCalls),
+		strconv.Itoa(stats.TotalToolCalls),
 		formatPercent(stats.SuccessRate),
 	}
 	avgValues := []string{
-		fmt.Sprintf("%s avg", formatCost(avgCost)),
+		formatCost(avgCost) + " avg",
 		fmt.Sprintf("%s in %s out", formatTokens(avgTokenCount(stats.InputTokens, stats.TotalSessions)), formatTokens(avgTokenCount(stats.OutputTokens, stats.TotalSessions))),
-		fmt.Sprintf("%s avg", formatDuration(avgTime)),
+		formatDuration(avgTime) + " avg",
 		fmt.Sprintf("%d avg", avgTools),
 		fmt.Sprintf("%d/%d", stats.Completed, stats.TotalSessions),
 	}
@@ -428,10 +432,7 @@ func (m deckModel) viewSessionList() string {
 	}
 
 	// Limit to 8 visible sessions
-	maxVisible := 8
-	if len(m.overview.Sessions) < maxVisible {
-		maxVisible = len(m.overview.Sessions)
-	}
+	maxVisible := min(len(m.overview.Sessions), 8)
 
 	status := m.filters.Status
 	if status == "" {
@@ -439,16 +440,16 @@ func (m deckModel) viewSessionList() string {
 	}
 	lines := []string{deckSectionStyle.Render(fmt.Sprintf("sessions (sort: %s, status: %s)", m.filters.Sort, status)), renderRule(m.width)}
 	lines = append(lines, deckMutedStyle.Render("  label           model        dur     tokens    cost    tools  msgs  status"))
-	for i := 0; i < maxVisible; i++ {
+	for i := range maxVisible {
 		session := m.overview.Sessions[i]
 		cursor := " "
 		if i == m.cursor {
 			cursor = ">"
 		}
 
-		toggle := " "
+		var toggle string
 		if m.trackToggles[i] {
-			toggle = fmt.Sprintf("%d", i+1)
+			toggle = strconv.Itoa(i + 1)
 		} else {
 			toggle = "-"
 		}
@@ -488,10 +489,11 @@ func (m deckModel) viewSession() string {
 
 	statusStyle := statusStyleFor(m.detail.Summary.Status)
 	statusDot := statusStyle.Render("●")
-	headerLeft := deckTitleStyle.Render(fmt.Sprintf("⏏ tapes deck › %s", m.detail.Summary.Label))
+	headerLeft := deckTitleStyle.Render("⏏ tapes deck › " + m.detail.Summary.Label)
 	headerRight := deckMutedStyle.Render(fmt.Sprintf("%s · %s %s", m.detail.Summary.ID, statusDot, m.detail.Summary.Status))
 	header := renderHeaderLine(m.width, headerLeft, headerRight)
-	lines := []string{header, renderRule(m.width), ""}
+	lines := make([]string, 0, 20)
+	lines = append(lines, header, renderRule(m.width), "")
 
 	lines = append(lines, deckSectionStyle.Render("session"), renderRule(m.width))
 	lines = append(lines, deckMutedStyle.Render("MODEL           DURATION        INPUT COST      OUTPUT COST     TOTAL"))
@@ -506,8 +508,8 @@ func (m deckModel) viewSession() string {
 	lines = append(lines, deckMutedStyle.Render(fmt.Sprintf("%-15s %-15s %-14s %-14s",
 		"",
 		"",
-		fmt.Sprintf("%s tokens", formatTokens(m.detail.Summary.InputTokens)),
-		fmt.Sprintf("%s tokens", formatTokens(m.detail.Summary.OutputTokens)),
+		formatTokens(m.detail.Summary.InputTokens)+" tokens",
+		formatTokens(m.detail.Summary.OutputTokens)+" tokens",
 	)))
 
 	inputRate, outputRate := costPerMTok(m.detail.Summary.InputCost, m.detail.Summary.InputTokens), costPerMTok(m.detail.Summary.OutputCost, m.detail.Summary.OutputTokens)
@@ -538,15 +540,9 @@ func (m deckModel) viewSession() string {
 		screenHeight = 40
 	}
 	footerHeight := 2
-	remaining := screenHeight - len(lines) - footerHeight
-	if remaining < 8 {
-		remaining = 8
-	}
+	remaining := max(screenHeight-len(lines)-footerHeight, 8)
 	gap := 3
-	leftWidth := (m.width - gap) * 2 / 3
-	if leftWidth < 30 {
-		leftWidth = 30
-	}
+	leftWidth := max((m.width-gap)*2/3, 30)
 	rightWidth := m.width - gap - leftWidth
 	if rightWidth < 24 {
 		rightWidth = 24
@@ -612,12 +608,12 @@ func numberKey(key string) (int, bool) {
 	}
 }
 
-func clamp(value, min, max int) int {
-	if value < min {
-		return min
+func clamp(value, upper int) int {
+	if value < 0 {
+		return 0
 	}
-	if value > max {
-		return max
+	if value > upper {
+		return upper
 	}
 	return value
 }
@@ -633,7 +629,7 @@ func formatTokens(value int64) string {
 	if value >= 1_000 {
 		return fmt.Sprintf("%.1fK", float64(value)/1_000.0)
 	}
-	return fmt.Sprintf("%d", value)
+	return strconv.FormatInt(value, 10)
 }
 
 func formatDuration(value time.Duration) string {
@@ -644,7 +640,7 @@ func formatDuration(value time.Duration) string {
 	minutes := int(value.Minutes())
 	seconds := int(value.Seconds()) % 60
 	hours := minutes / 60
-	minutes = minutes % 60
+	minutes %= 60
 	if hours > 0 {
 		return fmt.Sprintf("%dh%dm", hours, minutes)
 	}
@@ -668,18 +664,12 @@ func truncateText(value string, limit int) string {
 	return value[:limit-3] + "..."
 }
 
-func renderBar(value, max float64, width int) string {
-	if max <= 0 {
+func renderBar(value, ceiling float64, width int) string {
+	if ceiling <= 0 {
 		return strings.Repeat("░", width)
 	}
-	ratio := value / max
-	filled := int(ratio * float64(width))
-	if filled < 0 {
-		filled = 0
-	}
-	if filled > width {
-		filled = width
-	}
+	ratio := value / ceiling
+	filled := min(max(int(ratio*float64(width)), 0), width)
 	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
 }
 
@@ -715,10 +705,7 @@ func renderMetricRow(width int, items []string, style lipgloss.Style) string {
 	}
 	cols := len(items)
 	spaceWidth := (cols - 1) * 2
-	colWidth := (lineWidth - spaceWidth) / cols
-	if colWidth < 12 {
-		colWidth = 12
-	}
+	colWidth := max((lineWidth-spaceWidth)/cols, 12)
 	parts := make([]string, 0, len(items))
 	for _, item := range items {
 		parts = append(parts, style.Render(fitCell(item, colWidth)))
@@ -768,13 +755,7 @@ func renderSplitBar(label string, percent float64, width int) string {
 	if width <= 0 {
 		width = 24
 	}
-	filled := int((percent / 100) * float64(width))
-	if filled < 0 {
-		filled = 0
-	}
-	if filled > width {
-		filled = width
-	}
+	filled := min(max(int((percent/100)*float64(width)), 0), width)
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
 	return fmt.Sprintf("%s %s  %2.0f%%", label, bar, percent)
 }
@@ -801,10 +782,7 @@ func (m deckModel) renderTimelineBlock(width, height int) []string {
 	if height < 3 {
 		height = 3
 	}
-	maxVisible := height - 1
-	if maxVisible < 1 {
-		maxVisible = 1
-	}
+	maxVisible := max(height-1, 1)
 
 	messages := m.sortedMessages()
 	start, end := visibleRange(len(messages), m.messageCursor, maxVisible)
@@ -856,7 +834,7 @@ func (m deckModel) renderDetailBlock(width, height int) []string {
 	role := roleLabel(msg.Role)
 
 	lines = append(lines,
-		fmt.Sprintf("role: %s", role),
+		"role: "+role,
 		fmt.Sprintf("time: %s  delta: %s", msg.Timestamp.Format("15:04:05"), formatDelta(msg.Delta)),
 		fmt.Sprintf("tokens: in %s  out %s  total %s", formatTokensDetail(msg.InputTokens), formatTokensDetail(msg.OutputTokens), formatTokensDetail(msg.TotalTokens)),
 		fmt.Sprintf("cost:   in %s  out %s  total %s", formatCost(msg.InputCost), formatCost(msg.OutputCost), formatCost(msg.TotalCost)),
@@ -892,10 +870,7 @@ func renderTimelineLine(width int, cursor, timestamp, role, tokens, cost, tools,
 	costWidth := 7
 	deltaWidth := 6
 	baseWidth := cursorWidth + timeWidth + roleWidth + tokensWidth + costWidth + deltaWidth + gap*6
-	toolWidth := lineWidth - baseWidth
-	if toolWidth < 0 {
-		toolWidth = 0
-	}
+	toolWidth := max(lineWidth-baseWidth, 0)
 
 	columns := []string{
 		fitCell(cursor, cursorWidth),
@@ -1060,13 +1035,10 @@ func padRight(value string, width int) string {
 }
 
 func joinColumns(left, right []string, gap int) []string {
-	maxLines := len(left)
-	if len(right) > maxLines {
-		maxLines = len(right)
-	}
+	maxLines := max(len(right), len(left))
 	lines := make([]string, 0, maxLines)
 	gapSpace := strings.Repeat(" ", gap)
-	for i := 0; i < maxLines; i++ {
+	for i := range maxLines {
 		leftLine := ""
 		if i < len(left) {
 			leftLine = left[i]
@@ -1093,17 +1065,11 @@ func visibleRange(total, cursor, size int) (int, int) {
 	if cursor >= total {
 		cursor = total - 1
 	}
-	start := cursor - (size / 2)
-	if start < 0 {
-		start = 0
-	}
+	start := max(cursor-(size/2), 0)
 	end := start + size
 	if end > total {
 		end = total
-		start = end - size
-		if start < 0 {
-			start = 0
-		}
+		start = max(end-size, 0)
 	}
 	return start, end
 }
@@ -1139,9 +1105,9 @@ func formatDelta(value time.Duration) string {
 
 func formatTokensDetail(value int64) string {
 	if value < 10_000 {
-		return fmt.Sprintf("%s tok", formatInt(value))
+		return formatInt(value) + " tok"
 	}
-	return fmt.Sprintf("%s tok", formatTokens(value))
+	return formatTokens(value) + " tok"
 }
 
 func formatInt(value int64) string {
@@ -1215,60 +1181,4 @@ func wrapText(text string, width int) []string {
 		lines = append(lines, current)
 	}
 	return lines
-}
-
-func (m deckModel) viewToolFrequency() string {
-	if m.detail == nil || len(m.detail.ToolFrequency) == 0 {
-		return deckMutedStyle.Render("no tools recorded")
-	}
-
-	items := make([]toolCount, 0, len(m.detail.ToolFrequency))
-	maxCount := 0
-	for tool, count := range m.detail.ToolFrequency {
-		items = append(items, toolCount{name: tool, count: count})
-		if count > maxCount {
-			maxCount = count
-		}
-	}
-
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].count == items[j].count {
-			return items[i].name < items[j].name
-		}
-		return items[i].count > items[j].count
-	})
-
-	maxVisible := 6
-	if len(items) < maxVisible {
-		maxVisible = len(items)
-	}
-
-	lines := make([]string, 0, maxVisible)
-	for i := 0; i < maxVisible; i++ {
-		item := items[i]
-		bar := renderBar(float64(item.count), float64(maxCount), 24)
-		line := fmt.Sprintf("* %-16s %s %d", item.name, deckAccentStyle.Render(bar), item.count)
-		lines = append(lines, line)
-	}
-
-	return strings.Join(lines, "\n")
-}
-
-type toolCount struct {
-	name  string
-	count int
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

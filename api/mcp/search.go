@@ -25,15 +25,14 @@ type SearchInput struct {
 // handleSearch processes a search request via MCP.
 // It delegates to the shared search package for the core search logic.
 func (s *Server) handleSearch(ctx context.Context, _ *mcp.CallToolRequest, input SearchInput) (*mcp.CallToolResult, apisearch.Output, error) {
-	output, err := apisearch.Search(
+	searcher := apisearch.NewSearcher(
 		ctx,
-		input.Query,
-		input.TopK,
 		s.config.Embedder,
 		s.config.VectorDriver,
 		s.config.DagLoader,
 		s.config.Logger,
 	)
+	output, err := searcher.Search(input.Query, input.TopK)
 	if err != nil {
 		return &mcp.CallToolResult{
 			IsError: true,

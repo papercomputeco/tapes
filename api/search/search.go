@@ -45,35 +45,55 @@ type Output struct {
 	Count   int      `json:"count"`
 }
 
-// Search performs a semantic search over stored LLM sessions.
-// It embeds the query text, queries the vector store for similar documents,
-// then loads the full conversation branch from the Merkle DAG for each result.
-func Search(
+type Searcher struct {
+	ctx context.Context
+
+	embedder     embeddings.Embedder
+	vectorDriver vector.Driver
+	dagLoader    merkle.DagLoader
+	logger       *zap.Logger
+}
+
+func NewSearcher(
 	ctx context.Context,
-	query string,
-	topK int,
 	embedder embeddings.Embedder,
 	vectorDriver vector.Driver,
 	dagLoader merkle.DagLoader,
 	logger *zap.Logger,
+) *Searcher {
+	return &Searcher{
+		ctx,
+		embedder,
+		vectorDriver,
+		dagLoader,
+		logger,
+	}
+}
+
+// Search performs a semantic search over stored LLM sessions.
+// It embeds the query text, queries the vector store for similar documents,
+// then loads the full conversation branch from the Merkle DAG for each result.
+func (s *Searcher) Search(
+	query string,
+	topK int,
 ) (*Output, error) {
 	if topK <= 0 {
 		topK = 5
 	}
 
-	logger.Debug("search request",
+	s.logger.Debug("search request",
 		zap.String("query", query),
 		zap.Int("topK", topK),
 	)
 
 	// Embed the query
-	queryEmbedding, err := embedder.Embed(ctx, query)
+	queryEmbedding, err := s.embedder.Embed(s.ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to embed query: %w", err)
 	}
 
 	// Query the vector store
-	results, err := vectorDriver.Query(ctx, queryEmbedding, topK)
+	results, err := s.vectorDriver.Query(s.ctx, queryEmbedding, topK)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query vector store: %w", err)
 	}
@@ -81,16 +101,16 @@ func Search(
 	// Build search results with full branch using merkle.LoadDag
 	searchResults := make([]Result, 0, len(results))
 	for _, result := range results {
-		dag, err := merkle.LoadDag(ctx, dagLoader, result.Hash)
+		dag, err := merkle.LoadDag(s.ctx, s.dagLoader, result.Hash)
 		if err != nil {
-			logger.Warn("failed to load branch for result",
+			s.logger.Warn("failed to load branch for result",
 				zap.String("hash", result.Hash),
 				zap.Error(err),
 			)
 			continue
 		}
 
-		searchResult := BuildResult(result, dag)
+		searchResult := s.BuildResult(result, dag)
 		searchResults = append(searchResults, searchResult)
 	}
 
@@ -102,13 +122,13 @@ func Search(
 }
 
 // BuildResult converts a vector query result and DAG into a Result.
-func BuildResult(result vector.QueryResult, dag *merkle.Dag) Result {
+func (s *Searcher) BuildResult(result vector.QueryResult, dag *merkle.Dag) Result {
 	turns := []Turn{}
 	preview := ""
 	role := ""
 
 	// Build turns from the DAG using Walk (depth-first from root to leaves)
-	_ = dag.Walk(func(node *merkle.DagNode) (bool, error) {
+	err := dag.Walk(func(node *merkle.DagNode) (bool, error) {
 		isMatched := node.Hash == result.Hash
 		turns = append(turns, Turn{
 			Hash:    node.Hash,
@@ -124,6 +144,12 @@ func BuildResult(result vector.QueryResult, dag *merkle.Dag) Result {
 		}
 		return true, nil
 	})
+	if err != nil {
+		s.logger.Error(
+			"could not walk graph during search",
+			zap.Error(err),
+		)
+	}
 
 	return Result{
 		Hash:    result.Hash,

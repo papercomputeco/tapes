@@ -2,6 +2,7 @@
 package apicmder
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -84,7 +85,7 @@ func (c *apiCommander) run() error {
 
 func (c *apiCommander) newStorageDriver() (storage.Driver, error) {
 	if c.sqlitePath != "" {
-		driver, err := sqlite.NewDriver(c.sqlitePath)
+		driver, err := sqlite.NewDriver(context.Background(), c.sqlitePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
 		}
@@ -98,7 +99,7 @@ func (c *apiCommander) newStorageDriver() (storage.Driver, error) {
 
 func (c *apiCommander) newDagLoader() (merkle.DagLoader, error) {
 	if c.sqlitePath != "" {
-		driver, err := sqlite.NewDriver(c.sqlitePath)
+		driver, err := sqlite.NewDriver(context.Background(), c.sqlitePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
 		}

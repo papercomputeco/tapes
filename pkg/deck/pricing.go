@@ -3,6 +3,7 @@ package deck
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"strings"
 )
@@ -45,9 +46,7 @@ func LoadPricing(path string) (PricingTable, error) {
 		return nil, fmt.Errorf("parse pricing file: %w", err)
 	}
 
-	for model, price := range overrides {
-		pricing[model] = price
-	}
+	maps.Copy(pricing, overrides)
 
 	return pricing, nil
 }

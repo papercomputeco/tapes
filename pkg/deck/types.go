@@ -56,7 +56,7 @@ type ModelCost struct {
 	SessionCount int     `json:"session_count"`
 }
 
-type DeckOverview struct {
+type Overview struct {
 	Sessions       []SessionSummary     `json:"sessions"`
 	TotalCost      float64              `json:"total_cost"`
 	TotalTokens    int64                `json:"total_tokens"`

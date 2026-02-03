@@ -74,6 +74,7 @@ func NewSearchCmd() *cobra.Command {
 func (c *searchCommander) run() error {
 	c.logger = logger.NewLogger(c.debug)
 	defer func() { _ = c.logger.Sync() }()
+	client := &http.Client{}
 
 	c.logger.Debug("searching via API",
 		zap.String("api_target", c.apiTarget),
@@ -98,7 +99,7 @@ func (c *searchCommander) run() error {
 	if err != nil {
 		return fmt.Errorf("creating search request: %w", err)
 	}
-	resp, err := (&http.Client{}).Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to connect to Tapes API at %s: %w", c.apiTarget, err)
 	}

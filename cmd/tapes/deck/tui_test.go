@@ -75,7 +75,7 @@ var _ = Describe("Deck TUI helpers", func() {
 		It("returns all sessions when nothing is toggled off", func() {
 			sessions := []deck.SessionSummary{{ID: "s1"}, {ID: "s2"}, {ID: "s3"}}
 			model := deckModel{
-				overview: &deck.DeckOverview{Sessions: sessions},
+				overview: &deck.Overview{Sessions: sessions},
 				trackToggles: map[int]bool{
 					0: true,
 					1: true,
@@ -96,7 +96,7 @@ var _ = Describe("Deck TUI helpers", func() {
 		It("excludes deselected sessions", func() {
 			sessions := []deck.SessionSummary{{ID: "s1"}, {ID: "s2"}, {ID: "s3"}}
 			model := deckModel{
-				overview: &deck.DeckOverview{Sessions: sessions},
+				overview: &deck.Overview{Sessions: sessions},
 				trackToggles: map[int]bool{
 					0: true,
 					1: false,

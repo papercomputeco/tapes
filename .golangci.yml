@@ -57,8 +57,9 @@ linters:
     - nosprintfhostport  # host:port via net.JoinHostPort
 
   disable:
-    - gochecknoglobals   # forbid all globals
-    - gochecknoinits     # forbid all init()
+    # forbid all init() - we do this when the tuis come up to force color alignments.
+    # TODO @jpmcb - we should refactor this to avoid using an "init()"
+    - gochecknoinits
 
   exclusions:
     presets:

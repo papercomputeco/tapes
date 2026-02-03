@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
-	_ "github.com/mattn/go-sqlite3" // Register sqlite3 driver
+	_ "github.com/mattn/go-sqlite3" // load up the sqlite3 CGO libs
 	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/vector"
