@@ -113,7 +113,9 @@ func (t *Tapes) buildLinux(outputs *dagger.Directory, ldflags string) *dagger.Di
 // cross-compilers inside a Linux container.
 func (t *Tapes) buildDarwin(outputs *dagger.Directory, ldflags string) *dagger.Directory {
 	cgoFlags := "-I/opt/sqlite"
-	cgoLdFlags := ""
+	// Use lld instead of osxcross's ld64 to properly set SG_READ_ONLY flag on __DATA_CONST
+	// segment, which is required by macOS 15 (Sequoia) and later.
+	cgoLdFlags := "-fuse-ld=lld"
 
 	targets := []buildTarget{
 		{"darwin", "amd64", "o64-clang", "o64-clang++", cgoFlags, cgoLdFlags},
