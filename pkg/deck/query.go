@@ -368,15 +368,61 @@ func buildLabel(nodes []*ent.Node) string {
 			continue
 		}
 		blocks, _ := parseContentBlocks(node.Content)
-		text := strings.TrimSpace(extractText(blocks))
+		text := strings.TrimSpace(extractLabelText(blocks))
 		if text == "" {
 			continue
 		}
-		text = strings.Split(text, "\n")[0]
-		return truncate(text, 24)
+		for line := range strings.SplitSeq(text, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || isTagLine(line) {
+				continue
+			}
+			return truncate(line, 24)
+		}
 	}
 
 	return truncate(nodes[len(nodes)-1].ID, 12)
+}
+
+func extractLabelText(blocks []llm.ContentBlock) string {
+	texts := []string{}
+	for _, block := range blocks {
+		if block.Text == "" {
+			continue
+		}
+		texts = append(texts, block.Text)
+	}
+
+	text := strings.TrimSpace(strings.Join(texts, "\n"))
+	text = stripTaggedSection(text, "system-reminder")
+	text = stripTaggedSection(text, "local-command")
+	return strings.TrimSpace(text)
+}
+
+func stripTaggedSection(text, tag string) string {
+	openTag := "<" + tag + ">"
+	closeTag := "</" + tag + ">"
+
+	for {
+		start := strings.Index(text, openTag)
+		if start == -1 {
+			break
+		}
+		end := strings.Index(text[start:], closeTag)
+		if end == -1 {
+			text = strings.TrimSpace(text[:start])
+			break
+		}
+		end = start + end + len(closeTag)
+		text = strings.TrimSpace(text[:start] + text[end:])
+	}
+
+	return strings.TrimSpace(text)
+}
+
+func isTagLine(value string) bool {
+	value = strings.TrimSpace(value)
+	return strings.HasPrefix(value, "<") && strings.HasSuffix(value, ">")
 }
 
 func truncate(value string, limit int) string {
