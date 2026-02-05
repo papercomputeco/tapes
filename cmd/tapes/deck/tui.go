@@ -49,6 +49,7 @@ type deckModel struct {
 	trackToggles  map[int]bool
 	replayActive  bool
 	replayOnLoad  bool
+	refreshEvery  time.Duration
 	keys          deckKeyMap
 	help          help.Model
 }
@@ -115,20 +116,28 @@ type sessionLoadedMsg struct {
 	err    error
 }
 
+type sessionRefreshedMsg struct {
+	detail *deck.SessionDetail
+	err    error
+}
+
 type overviewLoadedMsg struct {
 	overview *deck.Overview
 	err      error
 }
 
-type replayTickMsg time.Time
+type (
+	replayTickMsg  time.Time
+	refreshTickMsg time.Time
+)
 
-func runDeckTUI(ctx context.Context, query *deck.Query, filters deck.Filters) error {
+func runDeckTUI(ctx context.Context, query *deck.Query, filters deck.Filters, refreshEvery time.Duration) error {
 	overview, err := query.Overview(ctx, filters)
 	if err != nil {
 		return err
 	}
 
-	model := newDeckModel(query, filters, overview)
+	model := newDeckModel(query, filters, overview, refreshEvery)
 
 	if filters.Session != "" {
 		detail, err := query.SessionDetail(ctx, filters.Session)
@@ -147,7 +156,7 @@ func runDeckTUI(ctx context.Context, query *deck.Query, filters deck.Filters) er
 	return err
 }
 
-func newDeckModel(query *deck.Query, filters deck.Filters, overview *deck.Overview) deckModel {
+func newDeckModel(query *deck.Query, filters deck.Filters, overview *deck.Overview, refreshEvery time.Duration) deckModel {
 	toggles := map[int]bool{}
 	for i := range 8 {
 		toggles[i] = true
@@ -176,13 +185,17 @@ func newDeckModel(query *deck.Query, filters deck.Filters, overview *deck.Overvi
 		sortIndex:    sortIndex,
 		statusIndex:  statusIndex,
 		messageSort:  0,
+		refreshEvery: refreshEvery,
 		keys:         defaultKeyMap(),
 		help:         help.New(),
 	}
 }
 
 func (m deckModel) Init() bubbletea.Cmd {
-	return nil
+	if m.refreshEvery <= 0 {
+		return nil
+	}
+	return refreshTick(m.refreshEvery)
 }
 
 func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
@@ -214,6 +227,17 @@ func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
 			return m, replayTick()
 		}
 		return m, nil
+	case sessionRefreshedMsg:
+		if msg.err != nil {
+			return m, nil
+		}
+		m.detail = msg.detail
+		if len(m.sortedMessages()) == 0 {
+			m.messageCursor = 0
+			return m, nil
+		}
+		m.messageCursor = clamp(m.messageCursor, len(m.sortedMessages())-1)
+		return m, nil
 	case replayTickMsg:
 		if !m.replayActive || m.detail == nil {
 			return m, nil
@@ -224,6 +248,15 @@ func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
 		}
 		m.messageCursor++
 		return m, replayTick()
+	case refreshTickMsg:
+		if m.refreshEvery <= 0 {
+			return m, nil
+		}
+		refreshCmd := m.refreshCmd()
+		if refreshCmd == nil {
+			return m, refreshTick(m.refreshEvery)
+		}
+		return m, bubbletea.Batch(refreshTick(m.refreshEvery), refreshCmd)
 	case bubbletea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -580,10 +613,33 @@ func loadSessionCmd(query *deck.Query, sessionID string) bubbletea.Cmd {
 	}
 }
 
+func loadSessionRefreshCmd(query *deck.Query, sessionID string) bubbletea.Cmd {
+	return func() bubbletea.Msg {
+		detail, err := query.SessionDetail(context.Background(), sessionID)
+		return sessionRefreshedMsg{detail: detail, err: err}
+	}
+}
+
 func replayTick() bubbletea.Cmd {
 	return bubbletea.Tick(300*time.Millisecond, func(t time.Time) bubbletea.Msg {
 		return replayTickMsg(t)
 	})
+}
+
+func refreshTick(interval time.Duration) bubbletea.Cmd {
+	return bubbletea.Tick(interval, func(t time.Time) bubbletea.Msg {
+		return refreshTickMsg(t)
+	})
+}
+
+func (m deckModel) refreshCmd() bubbletea.Cmd {
+	if m.view == viewOverview {
+		return loadOverviewCmd(m.query, m.filters)
+	}
+	if m.view == viewSession && m.detail != nil {
+		return loadSessionRefreshCmd(m.query, m.detail.Summary.ID)
+	}
+	return nil
 }
 
 func sortedModelCosts(costs map[string]deck.ModelCost) []deck.ModelCost {
