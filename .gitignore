@@ -5,6 +5,9 @@
 /build/
 /tmp/
 /tapes
+/config.toml
+/tapes.db
+/tapes.db~
 .DS_Store
 
 # JetBrains IDEs
