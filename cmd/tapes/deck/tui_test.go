@@ -85,6 +85,7 @@ var _ = Describe("Deck TUI helpers", func() {
 					5: true,
 					6: true,
 					7: true,
+					8: true,
 				},
 			}
 
@@ -106,6 +107,7 @@ var _ = Describe("Deck TUI helpers", func() {
 					5: true,
 					6: true,
 					7: true,
+					8: true,
 				},
 			}
 

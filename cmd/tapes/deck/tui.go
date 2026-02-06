@@ -33,6 +33,8 @@ const (
 	viewSession
 )
 
+const trackedSessionShortcuts = 9
+
 type deckModel struct {
 	query         *deck.Query
 	filters       deck.Filters
@@ -104,7 +106,7 @@ func defaultKeyMap() deckKeyMap {
 		Back:   key.NewBinding(key.WithKeys("h", "esc"), key.WithHelp("h", "back")),
 		Sort:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
 		Filter: key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "status")),
-		Track:  key.NewBinding(key.WithKeys("1", "2", "3", "4", "5", "6", "7", "8"), key.WithHelp("1-8", "sessions")),
+		Track:  key.NewBinding(key.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"), key.WithHelp("1-9", "sessions")),
 		Replay: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "replay")),
 		Quit:   key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 	}
@@ -149,7 +151,7 @@ func runDeckTUI(ctx context.Context, query *deck.Query, filters deck.Filters) er
 
 func newDeckModel(query *deck.Query, filters deck.Filters, overview *deck.Overview) deckModel {
 	toggles := map[int]bool{}
-	for i := range 8 {
+	for i := range trackedSessionShortcuts {
 		toggles[i] = true
 	}
 
@@ -302,9 +304,7 @@ func (m deckModel) moveCursor(delta int) (bubbletea.Model, bubbletea.Cmd) {
 		if len(m.overview.Sessions) == 0 {
 			return m, nil
 		}
-		// Limit cursor to first 8 sessions
-		maxIdx := min(7, len(m.overview.Sessions)-1)
-		m.cursor = clamp(m.cursor+delta, maxIdx)
+		m.cursor = clamp(m.cursor+delta, len(m.overview.Sessions)-1)
 		return m, nil
 	}
 
@@ -347,7 +347,7 @@ func (m deckModel) cycleMessageSort() (bubbletea.Model, bubbletea.Cmd) {
 }
 
 func (m deckModel) toggleTrack(idx int) {
-	if idx < 0 || idx > 7 {
+	if idx < 0 || idx >= trackedSessionShortcuts {
 		return
 	}
 	m.trackToggles[idx] = !m.trackToggles[idx]
@@ -431,16 +431,13 @@ func (m deckModel) viewSessionList() string {
 		return deckMutedStyle.Render("sessions: no data")
 	}
 
-	// Limit to 8 visible sessions
-	maxVisible := min(len(m.overview.Sessions), 8)
-
 	status := m.filters.Status
 	if status == "" {
 		status = "all"
 	}
 	lines := []string{deckSectionStyle.Render(fmt.Sprintf("sessions (sort: %s, status: %s)", m.filters.Sort, status)), renderRule(m.width)}
 	lines = append(lines, deckMutedStyle.Render("  label           model        dur     tokens    cost    tools  msgs  status"))
-	for i := range maxVisible {
+	for i := range m.overview.Sessions {
 		session := m.overview.Sessions[i]
 		cursor := " "
 		if i == m.cursor {
@@ -448,10 +445,14 @@ func (m deckModel) viewSessionList() string {
 		}
 
 		var toggle string
-		if m.trackToggles[i] {
-			toggle = strconv.Itoa(i + 1)
+		if i < trackedSessionShortcuts {
+			if m.trackToggles[i] {
+				toggle = strconv.Itoa(i + 1)
+			} else {
+				toggle = "-"
+			}
 		} else {
-			toggle = "-"
+			toggle = " "
 		}
 
 		statusValue := session.Status
@@ -469,7 +470,7 @@ func (m deckModel) viewSessionList() string {
 			statusStyle.Render(statusValue),
 		)
 
-		if !m.trackToggles[i] {
+		if i < trackedSessionShortcuts && !m.trackToggles[i] {
 			line = deckDimStyle.Render(line)
 		}
 		if i == m.cursor {
@@ -601,7 +602,7 @@ func sortedModelCosts(costs map[string]deck.ModelCost) []deck.ModelCost {
 
 func numberKey(key string) (int, bool) {
 	switch key {
-	case "1", "2", "3", "4", "5", "6", "7", "8":
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		return int(key[0] - '1'), true
 	default:
 		return 0, false
@@ -945,7 +946,7 @@ func (m deckModel) selectedSessions() ([]deck.SessionSummary, bool) {
 		return nil, false
 	}
 
-	maxVisible := min(7, len(m.overview.Sessions)-1)
+	maxVisible := min(trackedSessionShortcuts-1, len(m.overview.Sessions)-1)
 	filtered := false
 	for i := 0; i <= maxVisible; i++ {
 		if !m.trackToggles[i] {
