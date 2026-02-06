@@ -42,7 +42,7 @@ type deckCommander struct {
 	model       string
 	status      string
 	session     string
-	refresh     int
+	refresh     uint
 	web         bool
 	port        int
 }
@@ -69,7 +69,7 @@ func NewDeckCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cmder.model, "model", "", "Filter by model")
 	cmd.Flags().StringVar(&cmder.status, "status", "", "Filter by status (completed|failed|abandoned)")
 	cmd.Flags().StringVar(&cmder.session, "session", "", "Drill into a specific session ID")
-	cmd.Flags().IntVar(&cmder.refresh, "refresh", 10, "Auto-refresh interval in seconds (0 to disable)")
+	cmd.Flags().UintVar(&cmder.refresh, "refresh", 10, "Auto-refresh interval in seconds (0 to disable)")
 	cmd.Flags().BoolVar(&cmder.web, "web", false, "Serve the web dashboard locally")
 	cmd.Flags().IntVar(&cmder.port, "port", 8888, "Web server port")
 
@@ -100,10 +100,6 @@ func (c *deckCommander) run(ctx context.Context) error {
 
 	if c.web {
 		return runDeckWeb(ctx, query, filters, c.port)
-	}
-
-	if c.refresh < 0 {
-		return errors.New("refresh must be zero or greater")
 	}
 
 	return runDeckTUI(ctx, query, filters, time.Duration(c.refresh)*time.Second)
