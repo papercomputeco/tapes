@@ -102,7 +102,26 @@ func (c *deckCommander) run(ctx context.Context) error {
 		return runDeckWeb(ctx, query, filters, c.port)
 	}
 
-	return runDeckTUI(ctx, query, filters, time.Duration(c.refresh)*time.Second)
+	refreshDuration, err := refreshDuration(c.refresh)
+	if err != nil {
+		return err
+	}
+
+	return runDeckTUI(ctx, query, filters, refreshDuration)
+}
+
+func refreshDuration(refresh uint) (time.Duration, error) {
+	if refresh == 0 {
+		return 0, nil
+	}
+
+	maxSeconds := uint64(int64(^uint64(0)>>1) / int64(time.Second))
+	refreshSeconds := uint64(refresh)
+	if refreshSeconds > maxSeconds {
+		return 0, errors.New("refresh exceeds maximum duration")
+	}
+
+	return time.Duration(int64(refreshSeconds)) * time.Second, nil
 }
 
 func (c *deckCommander) parseFilters() (deck.Filters, error) {
