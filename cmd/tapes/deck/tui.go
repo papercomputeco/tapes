@@ -80,36 +80,40 @@ var (
 )
 
 type deckKeyMap struct {
-	Up     key.Binding
-	Down   key.Binding
-	Enter  key.Binding
-	Back   key.Binding
-	Sort   key.Binding
-	Filter key.Binding
-	Track  key.Binding
-	Replay key.Binding
-	Quit   key.Binding
+	Up       key.Binding
+	Down     key.Binding
+	PageUp   key.Binding
+	PageDown key.Binding
+	Enter    key.Binding
+	Back     key.Binding
+	Sort     key.Binding
+	Filter   key.Binding
+	Track    key.Binding
+	Replay   key.Binding
+	Quit     key.Binding
 }
 
 func (k deckKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Down, k.Up, k.Enter, k.Back, k.Sort, k.Filter, k.Track, k.Replay, k.Quit}
+	return []key.Binding{k.Down, k.Up, k.PageDown, k.PageUp, k.Enter, k.Back, k.Sort, k.Filter, k.Track, k.Replay, k.Quit}
 }
 
 func (k deckKeyMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.Down, k.Up, k.Enter, k.Back}, {k.Sort, k.Filter, k.Track, k.Replay, k.Quit}}
+	return [][]key.Binding{{k.Down, k.Up, k.PageDown, k.PageUp, k.Enter, k.Back}, {k.Sort, k.Filter, k.Track, k.Replay, k.Quit}}
 }
 
 func defaultKeyMap() deckKeyMap {
 	return deckKeyMap{
-		Up:     key.NewBinding(key.WithKeys("k", "up"), key.WithHelp("k", "up")),
-		Down:   key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("j", "down")),
-		Enter:  key.NewBinding(key.WithKeys("enter", "l"), key.WithHelp("enter", "drill")),
-		Back:   key.NewBinding(key.WithKeys("h", "esc"), key.WithHelp("h", "back")),
-		Sort:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
-		Filter: key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "status")),
-		Track:  key.NewBinding(key.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"), key.WithHelp("1-9", "sessions")),
-		Replay: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "replay")),
-		Quit:   key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+		Up:       key.NewBinding(key.WithKeys("k", "up"), key.WithHelp("k", "up")),
+		Down:     key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("j", "down")),
+		PageUp:   key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("ctrl+u", "half page up")),
+		PageDown: key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "half page down")),
+		Enter:    key.NewBinding(key.WithKeys("enter", "l"), key.WithHelp("enter", "drill")),
+		Back:     key.NewBinding(key.WithKeys("h", "esc"), key.WithHelp("h", "back")),
+		Sort:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
+		Filter:   key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "status")),
+		Track:    key.NewBinding(key.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"), key.WithHelp("1-9", "sessions")),
+		Replay:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "replay")),
+		Quit:     key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 	}
 }
 
@@ -284,6 +288,14 @@ func (m deckModel) handleKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.C
 		return m.moveCursor(1)
 	case "k", "up":
 		return m.moveCursor(-1)
+	case "ctrl+u":
+		if m.view == viewOverview {
+			return m.pageCursor(-1)
+		}
+	case "ctrl+d":
+		if m.view == viewOverview {
+			return m.pageCursor(1)
+		}
 	case "l", "enter":
 		if m.view == viewOverview {
 			return m.enterSession()
@@ -348,6 +360,26 @@ func (m deckModel) moveCursor(delta int) (bubbletea.Model, bubbletea.Cmd) {
 	return m, nil
 }
 
+func (m deckModel) pageCursor(direction int) (bubbletea.Model, bubbletea.Cmd) {
+	if m.view != viewOverview {
+		return m, nil
+	}
+	if len(m.overview.Sessions) == 0 {
+		return m, nil
+	}
+
+	selected, _ := m.selectedSessions()
+	stats := summarizeSessions(selected)
+	metrics := m.viewMetrics(stats)
+	insights := m.viewInsights(stats)
+	costByModel := m.viewCostByModel(stats)
+	listHeight := sessionListHeight(m.height, metrics, insights, costByModel)
+	pageSize := sessionListPageSize(listHeight)
+
+	m.cursor = clamp(m.cursor+(direction*pageSize), len(m.overview.Sessions)-1)
+	return m, nil
+}
+
 func (m deckModel) enterSession() (bubbletea.Model, bubbletea.Cmd) {
 	if len(m.overview.Sessions) == 0 {
 		return m, nil
@@ -398,14 +430,20 @@ func (m deckModel) viewOverview() string {
 	headerLeft := deckTitleStyle.Render("tapes deck")
 	headerRight := deckMutedStyle.Render(m.headerSessionCount(lastWindow, len(selected), len(m.overview.Sessions), filtered))
 	header := renderHeaderLine(m.width, headerLeft, headerRight)
+
+	metrics := m.viewMetrics(stats)
+	insights := m.viewInsights(stats)
+	costByModel := m.viewCostByModel(stats)
+
+	listHeight := sessionListHeight(m.height, metrics, insights, costByModel)
+
 	lines := make([]string, 0, 10)
 	lines = append(lines, header, renderRule(m.width), "")
-
-	lines = append(lines, m.viewMetrics(stats))
-	if insights := m.viewInsights(stats); insights != "" {
+	lines = append(lines, metrics)
+	if insights != "" {
 		lines = append(lines, "", insights)
 	}
-	lines = append(lines, "", m.viewCostByModel(stats), "", m.viewSessionList(), "", m.viewFooter())
+	lines = append(lines, "", costByModel, "", m.viewSessionList(listHeight), "", m.viewFooter())
 
 	return strings.Join(lines, "\n")
 }
@@ -494,7 +532,7 @@ func (m deckModel) viewCostByModel(stats deckOverviewStats) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m deckModel) viewSessionList() string {
+func (m deckModel) viewSessionList(height int) string {
 	if len(m.overview.Sessions) == 0 {
 		return deckMutedStyle.Render("sessions: no data")
 	}
@@ -505,7 +543,10 @@ func (m deckModel) viewSessionList() string {
 	}
 	lines := []string{deckSectionStyle.Render(fmt.Sprintf("sessions (sort: %s, status: %s)", m.filters.Sort, status)), renderRule(m.width)}
 	lines = append(lines, deckMutedStyle.Render("  label           model        dur     tokens    cost    tools  msgs  status"))
-	for i := range m.overview.Sessions {
+	baseLines := len(lines)
+	maxVisible := max(height-baseLines, 1)
+	start, end := visibleRange(len(m.overview.Sessions), m.cursor, maxVisible)
+	for i := start; i < end; i++ {
 		session := m.overview.Sessions[i]
 		cursor := " "
 		if i == m.cursor {
@@ -722,6 +763,30 @@ func formatTokens(value int64) string {
 		return fmt.Sprintf("%.1fK", float64(value)/1_000.0)
 	}
 	return strconv.FormatInt(value, 10)
+}
+
+func countLines(value string) int {
+	if value == "" {
+		return 0
+	}
+	return strings.Count(value, "\n") + 1
+}
+
+func sessionListHeight(screenHeight int, metrics, insights, costByModel string) int {
+	if screenHeight <= 0 {
+		screenHeight = 40
+	}
+	fixedLines := 3 + countLines(metrics)
+	if insights != "" {
+		fixedLines += 1 + countLines(insights)
+	}
+	fixedLines += 1 + countLines(costByModel)
+	fixedLines += 2
+	return max(screenHeight-fixedLines, 4)
+}
+
+func sessionListPageSize(listHeight int) int {
+	return max(listHeight/2, 1)
 }
 
 func formatDuration(value time.Duration) string {
