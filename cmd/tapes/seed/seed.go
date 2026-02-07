@@ -41,8 +41,8 @@ func NewSeedCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&cmder.sqlitePath, "sqlite", "s", "", "Path to SQLite database")
-	cmd.Flags().BoolVarP(&cmder.demo, "demo", "D", false, "Seed demo data")
-	cmd.Flags().BoolVarP(&cmder.overwrite, "overwrite", "O", false, "Overwrite database before seeding")
+	cmd.Flags().BoolVarP(&cmder.demo, "demo", "m", false, "Seed demo data")
+	cmd.Flags().BoolVarP(&cmder.overwrite, "overwrite", "f", false, "Overwrite database before seeding")
 
 	return cmd
 }

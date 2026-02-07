@@ -12,12 +12,12 @@ Allow automatic environment loading with `direnv` via `direnv allow`.
 Seed demo sessions for the deck UI without touching real data:
 
 ```bash
-tapes deck -D
-tapes deck --sqlite ./tapes.demo.sqlite
+tapes deck -m
+tapes deck --demo --sqlite ./tapes.demo.sqlite
 ```
 
 To reset the demo database:
 
 ```bash
-tapes deck -D -O
+tapes deck -m -f
 ```

@@ -29,8 +29,8 @@ Examples:
   tapes deck --pricing ./pricing.json
   tapes deck --demo
   tapes deck --demo --overwrite
-  tapes deck -D
-  tapes deck -D -O
+  tapes deck -m
+  tapes deck -m -f
 `
 
 const deckShortDesc string = "Deck - ROI dashboard for agent sessions"
@@ -77,8 +77,8 @@ func NewDeckCmd() *cobra.Command {
 	cmd.Flags().UintVar(&cmder.refresh, "refresh", 10, "Auto-refresh interval in seconds (0 to disable)")
 	cmd.Flags().BoolVar(&cmder.web, "web", false, "Serve the web dashboard locally")
 	cmd.Flags().IntVar(&cmder.port, "port", 8888, "Web server port")
-	cmd.Flags().BoolVarP(&cmder.demo, "demo", "D", false, "Seed demo data and open the deck UI")
-	cmd.Flags().BoolVarP(&cmder.overwrite, "overwrite", "O", false, "Overwrite demo database before seeding")
+	cmd.Flags().BoolVarP(&cmder.demo, "demo", "m", false, "Seed demo data and open the deck UI")
+	cmd.Flags().BoolVarP(&cmder.overwrite, "overwrite", "f", false, "Overwrite demo database before seeding")
 
 	return cmd
 }
