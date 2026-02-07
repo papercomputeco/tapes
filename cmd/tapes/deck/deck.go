@@ -28,6 +28,10 @@ Examples:
   tapes deck --web
   tapes deck --web --port 9999
   tapes deck --pricing ./pricing.json
+  tapes deck --demo
+  tapes deck --demo --overwrite
+  tapes deck -D
+  tapes deck -D -O
 `
 
 const deckShortDesc string = "Deck - ROI dashboard for agent sessions"
@@ -45,6 +49,8 @@ type deckCommander struct {
 	refresh     uint
 	web         bool
 	port        int
+	demo        bool
+	overwrite   bool
 }
 
 func NewDeckCmd() *cobra.Command {
@@ -56,7 +62,7 @@ func NewDeckCmd() *cobra.Command {
 		Long:  deckLongDesc,
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmder.run(cmd.Context())
+			return cmder.run(cmd.Context(), cmd)
 		},
 	}
 
@@ -72,19 +78,36 @@ func NewDeckCmd() *cobra.Command {
 	cmd.Flags().UintVar(&cmder.refresh, "refresh", 10, "Auto-refresh interval in seconds (0 to disable)")
 	cmd.Flags().BoolVar(&cmder.web, "web", false, "Serve the web dashboard locally")
 	cmd.Flags().IntVar(&cmder.port, "port", 8888, "Web server port")
+	cmd.Flags().BoolVarP(&cmder.demo, "demo", "D", false, "Seed demo data and open the deck UI")
+	cmd.Flags().BoolVarP(&cmder.overwrite, "overwrite", "O", false, "Overwrite demo database before seeding")
 
 	return cmd
 }
 
-func (c *deckCommander) run(ctx context.Context) error {
+func (c *deckCommander) run(ctx context.Context, cmd *cobra.Command) error {
 	pricing, err := deck.LoadPricing(c.pricingPath)
 	if err != nil {
 		return err
 	}
 
+	if c.overwrite && !c.demo {
+		return errors.New("--overwrite requires --demo")
+	}
+	if c.demo && strings.TrimSpace(c.sqlitePath) == "" {
+		c.sqlitePath = deck.DemoSQLitePath
+	}
+
 	sqlitePath, err := resolveSQLitePath(c.sqlitePath)
 	if err != nil {
 		return err
+	}
+
+	if c.demo {
+		sessionCount, messageCount, err := deck.SeedDemo(ctx, sqlitePath, c.overwrite)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Seeded %d demo sessions (%d messages) into %s\n", sessionCount, messageCount, sqlitePath)
 	}
 
 	query, closeFn, err := deck.NewQuery(ctx, sqlitePath, pricing)
