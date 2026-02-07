@@ -56,6 +56,16 @@ func SeedDemo(ctx context.Context, path string, overwrite bool) (int, int, error
 	}
 	defer func() { _ = driver.Close() }()
 
+	if !overwrite {
+		hasData, err := hasExistingData(ctx, driver.Client)
+		if err != nil {
+			return 0, 0, err
+		}
+		if hasData {
+			return 0, 0, fmt.Errorf("sqlite database already has data: %s (use --overwrite)", path)
+		}
+	}
+
 	sessions := demoDeckSessions(time.Now())
 	messageCount := 0
 	for _, session := range sessions {
@@ -77,11 +87,10 @@ func prepareSQLitePath(path string, overwrite bool) error {
 		if info.IsDir() {
 			return fmt.Errorf("sqlite path is a directory: %s", path)
 		}
-		if !overwrite {
-			return fmt.Errorf("sqlite database already exists: %s (use --overwrite)", path)
-		}
-		if err := os.Remove(path); err != nil {
-			return fmt.Errorf("remove sqlite database: %w", err)
+		if overwrite {
+			if err := os.Remove(path); err != nil {
+				return fmt.Errorf("remove sqlite database: %w", err)
+			}
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("stat sqlite database: %w", err)
@@ -97,6 +106,15 @@ func prepareSQLitePath(path string, overwrite bool) error {
 	}
 
 	return nil
+}
+
+func hasExistingData(ctx context.Context, client *ent.Client) (bool, error) {
+	exists, err := client.Node.Query().Exist(ctx)
+	if err != nil {
+		return false, fmt.Errorf("check sqlite database: %w", err)
+	}
+
+	return exists, nil
 }
 
 func isInMemorySQLite(path string) bool {

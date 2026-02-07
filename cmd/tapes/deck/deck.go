@@ -5,13 +5,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/papercomputeco/tapes/cmd/tapes/sqlitepath"
 	"github.com/papercomputeco/tapes/pkg/deck"
 )
 
@@ -97,7 +96,7 @@ func (c *deckCommander) run(ctx context.Context, cmd *cobra.Command) error {
 		c.sqlitePath = deck.DemoSQLitePath
 	}
 
-	sqlitePath, err := resolveSQLitePath(c.sqlitePath)
+	sqlitePath, err := sqlitepath.ResolveSQLitePath(c.sqlitePath)
 	if err != nil {
 		return err
 	}
@@ -197,47 +196,4 @@ func parseTime(value string) (time.Time, error) {
 	}
 
 	return time.Time{}, errors.New("expected RFC3339 or YYYY-MM-DD")
-}
-
-func resolveSQLitePath(override string) (string, error) {
-	if override != "" {
-		return override, nil
-	}
-
-	if envPath := strings.TrimSpace(os.Getenv("TAPES_SQLITE")); envPath != "" {
-		return envPath, nil
-	}
-	if envPath := strings.TrimSpace(os.Getenv("TAPES_DB")); envPath != "" {
-		return envPath, nil
-	}
-
-	candidates := []string{
-		"tapes.db",
-		"tapes.sqlite",
-		filepath.Join(".tapes", "tapes.db"),
-		filepath.Join(".tapes", "tapes.sqlite"),
-	}
-
-	home, err := os.UserHomeDir()
-	if err == nil {
-		candidates = append([]string{
-			filepath.Join(home, ".tapes", "tapes.db"),
-			filepath.Join(home, ".tapes", "tapes.sqlite"),
-		}, candidates...)
-	}
-
-	if xdgHome := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); xdgHome != "" {
-		candidates = append([]string{
-			filepath.Join(xdgHome, "tapes", "tapes.db"),
-			filepath.Join(xdgHome, "tapes", "tapes.sqlite"),
-		}, candidates...)
-	}
-
-	for _, candidate := range candidates {
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-	}
-
-	return "", errors.New("could not find tapes SQLite database; pass --sqlite")
 }

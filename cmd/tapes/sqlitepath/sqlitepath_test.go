@@ -1,4 +1,4 @@
-package deckcmder
+package sqlitepath
 
 import (
 	"os"
@@ -8,7 +8,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("resolveSQLitePath", func() {
+var _ = Describe("ResolveSQLitePath", func() {
 	var (
 		origHome    string
 		origXDG     string
@@ -39,7 +39,7 @@ var _ = Describe("resolveSQLitePath", func() {
 		Expect(os.Setenv("TAPES_SQLITE", "/tmp/custom.db")).To(Succeed())
 		Expect(os.Setenv("TAPES_DB", "")).To(Succeed())
 
-		path, err := resolveSQLitePath("")
+		path, err := ResolveSQLitePath("")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(path).To(Equal("/tmp/custom.db"))
 	})
@@ -67,7 +67,7 @@ var _ = Describe("resolveSQLitePath", func() {
 		Expect(os.MkdirAll(filepath.Dir(dbPath), 0o755)).To(Succeed())
 		Expect(os.WriteFile(dbPath, []byte("test"), 0o644)).To(Succeed())
 
-		path, err := resolveSQLitePath("")
+		path, err := ResolveSQLitePath("")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(path).To(Equal(dbPath))
 	})
