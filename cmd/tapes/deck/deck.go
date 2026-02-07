@@ -14,7 +14,8 @@ import (
 	"github.com/papercomputeco/tapes/pkg/deck"
 )
 
-const deckLongDesc string = `Deck is an ROI dashboard for agent sessions.
+const (
+	deckLongDesc = `Deck is an ROI dashboard for agent sessions.
 
 Summarize recent sessions with a TUI and drill down into a single session.
 
@@ -32,8 +33,9 @@ Examples:
   tapes deck -m
   tapes deck -m -f
 `
-
-const deckShortDesc string = "Deck - ROI dashboard for agent sessions"
+	deckShortDesc = "Deck - ROI dashboard for agent sessions"
+	sortDirDesc   = "desc"
+)
 
 type deckCommander struct {
 	sqlitePath  string
@@ -42,6 +44,7 @@ type deckCommander struct {
 	from        string
 	to          string
 	sort        string
+	sortDir     string
 	model       string
 	status      string
 	session     string
@@ -71,6 +74,7 @@ func NewDeckCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cmder.from, "from", "", "Start time (YYYY-MM-DD or RFC3339)")
 	cmd.Flags().StringVar(&cmder.to, "to", "", "End time (YYYY-MM-DD or RFC3339)")
 	cmd.Flags().StringVar(&cmder.sort, "sort", "cost", "Sort sessions by cost|time|tokens|duration")
+	cmd.Flags().StringVar(&cmder.sortDir, "sort-dir", sortDirDesc, "Sort direction asc|desc")
 	cmd.Flags().StringVar(&cmder.model, "model", "", "Filter by model")
 	cmd.Flags().StringVar(&cmder.status, "status", "", "Filter by status (completed|failed|abandoned)")
 	cmd.Flags().StringVar(&cmder.session, "session", "", "Drill into a specific session ID")
@@ -129,7 +133,7 @@ func (c *deckCommander) run(ctx context.Context, cmd *cobra.Command) error {
 		return err
 	}
 
-	return runDeckTUI(ctx, query, filters, refreshDuration)
+	return RunDeckTUI(ctx, query, filters, refreshDuration)
 }
 
 func refreshDuration(refresh uint) (time.Duration, error) {
@@ -149,9 +153,14 @@ func refreshDuration(refresh uint) (time.Duration, error) {
 func (c *deckCommander) parseFilters() (deck.Filters, error) {
 	filters := deck.Filters{
 		Sort:    strings.ToLower(strings.TrimSpace(c.sort)),
+		SortDir: strings.ToLower(strings.TrimSpace(c.sortDir)),
 		Model:   strings.TrimSpace(c.model),
 		Status:  strings.TrimSpace(c.status),
 		Session: strings.TrimSpace(c.session),
+	}
+
+	if filters.SortDir == "" {
+		filters.SortDir = sortDirDesc
 	}
 
 	if c.since != "" {

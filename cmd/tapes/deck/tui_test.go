@@ -72,49 +72,14 @@ var _ = Describe("Deck TUI helpers", func() {
 	})
 
 	Describe("selectedSessions", func() {
-		It("returns all sessions when nothing is toggled off", func() {
+		It("returns all sessions", func() {
 			sessions := []deck.SessionSummary{{ID: "s1"}, {ID: "s2"}, {ID: "s3"}}
 			model := deckModel{
 				overview: &deck.Overview{Sessions: sessions},
-				trackToggles: map[int]bool{
-					0: true,
-					1: true,
-					2: true,
-					3: true,
-					4: true,
-					5: true,
-					6: true,
-					7: true,
-					8: true,
-				},
 			}
 
-			selected, filtered := model.selectedSessions()
-			Expect(filtered).To(BeFalse())
+			selected := model.selectedSessions()
 			Expect(selected).To(HaveLen(3))
-		})
-
-		It("excludes deselected sessions", func() {
-			sessions := []deck.SessionSummary{{ID: "s1"}, {ID: "s2"}, {ID: "s3"}}
-			model := deckModel{
-				overview: &deck.Overview{Sessions: sessions},
-				trackToggles: map[int]bool{
-					0: true,
-					1: false,
-					2: false,
-					3: true,
-					4: true,
-					5: true,
-					6: true,
-					7: true,
-					8: true,
-				},
-			}
-
-			selected, filtered := model.selectedSessions()
-			Expect(filtered).To(BeTrue())
-			Expect(selected).To(HaveLen(1))
-			Expect(selected[0].ID).To(Equal("s1"))
 		})
 	})
 
