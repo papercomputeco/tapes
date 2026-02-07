@@ -10,6 +10,7 @@ import (
 	deckcmder "github.com/papercomputeco/tapes/cmd/tapes/deck"
 	initcmder "github.com/papercomputeco/tapes/cmd/tapes/init"
 	searchcmder "github.com/papercomputeco/tapes/cmd/tapes/search"
+	seedcmder "github.com/papercomputeco/tapes/cmd/tapes/seed"
 	servecmder "github.com/papercomputeco/tapes/cmd/tapes/serve"
 	statuscmder "github.com/papercomputeco/tapes/cmd/tapes/status"
 	versioncmder "github.com/papercomputeco/tapes/cmd/version"
@@ -33,12 +34,13 @@ Experimental: Chat through the proxy:
 Search sessions:
   tapes search         Search sessions using semantic similarity
 
-Deck sessions:
-  tapes deck           ROI dashboard for sessions
-  tapes deck --web     Local web dashboard
+	Deck sessions:
+	  tapes deck           ROI dashboard for sessions
+	  tapes deck --web     Local web dashboard
+	  tapes seed           Seed demo sessions
 
-Configuration:
-  tapes config set <key> <value>    Set a configuration value
+	Configuration:
+	  tapes config set <key> <value>    Set a configuration value
   tapes config get <key>            Get a configuration value
   tapes config list                 List all configuration values`
 
@@ -62,6 +64,7 @@ func NewTapesCmd() *cobra.Command {
 	cmd.AddCommand(deckcmder.NewDeckCmd())
 	cmd.AddCommand(initcmder.NewInitCmd())
 	cmd.AddCommand(searchcmder.NewSearchCmd())
+	cmd.AddCommand(seedcmder.NewSeedCmd())
 	cmd.AddCommand(servecmder.NewServeCmd())
 	cmd.AddCommand(statuscmder.NewStatusCmd())
 	cmd.AddCommand(versioncmder.NewVersionCmd())

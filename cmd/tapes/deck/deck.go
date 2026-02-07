@@ -5,13 +5,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/papercomputeco/tapes/cmd/tapes/sqlitepath"
 	"github.com/papercomputeco/tapes/pkg/deck"
 )
 
@@ -29,6 +28,10 @@ Examples:
   tapes deck --web
   tapes deck --web --port 9999
   tapes deck --pricing ./pricing.json
+  tapes deck --demo
+  tapes deck --demo --overwrite
+  tapes deck -m
+  tapes deck -m -f
 `
 	deckShortDesc = "Deck - ROI dashboard for agent sessions"
 	sortDirDesc   = "desc"
@@ -48,6 +51,8 @@ type deckCommander struct {
 	refresh     uint
 	web         bool
 	port        int
+	demo        bool
+	overwrite   bool
 }
 
 func NewDeckCmd() *cobra.Command {
@@ -59,7 +64,7 @@ func NewDeckCmd() *cobra.Command {
 		Long:  deckLongDesc,
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmder.run(cmd.Context())
+			return cmder.run(cmd.Context(), cmd)
 		},
 	}
 
@@ -76,19 +81,36 @@ func NewDeckCmd() *cobra.Command {
 	cmd.Flags().UintVar(&cmder.refresh, "refresh", 10, "Auto-refresh interval in seconds (0 to disable)")
 	cmd.Flags().BoolVar(&cmder.web, "web", false, "Serve the web dashboard locally")
 	cmd.Flags().IntVar(&cmder.port, "port", 8888, "Web server port")
+	cmd.Flags().BoolVarP(&cmder.demo, "demo", "m", false, "Seed demo data and open the deck UI")
+	cmd.Flags().BoolVarP(&cmder.overwrite, "overwrite", "f", false, "Overwrite demo database before seeding")
 
 	return cmd
 }
 
-func (c *deckCommander) run(ctx context.Context) error {
+func (c *deckCommander) run(ctx context.Context, cmd *cobra.Command) error {
 	pricing, err := deck.LoadPricing(c.pricingPath)
 	if err != nil {
 		return err
 	}
 
-	sqlitePath, err := resolveSQLitePath(c.sqlitePath)
+	if c.overwrite && !c.demo {
+		return errors.New("--overwrite requires --demo")
+	}
+	if c.demo && strings.TrimSpace(c.sqlitePath) == "" {
+		c.sqlitePath = deck.DemoSQLitePath
+	}
+
+	sqlitePath, err := sqlitepath.ResolveSQLitePath(c.sqlitePath)
 	if err != nil {
 		return err
+	}
+
+	if c.demo {
+		sessionCount, messageCount, err := deck.SeedDemo(ctx, sqlitePath, c.overwrite)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Seeded %d demo sessions (%d messages) into %s\n", sessionCount, messageCount, sqlitePath)
 	}
 
 	query, closeFn, err := deck.NewQuery(ctx, sqlitePath, pricing)
@@ -183,47 +205,4 @@ func parseTime(value string) (time.Time, error) {
 	}
 
 	return time.Time{}, errors.New("expected RFC3339 or YYYY-MM-DD")
-}
-
-func resolveSQLitePath(override string) (string, error) {
-	if override != "" {
-		return override, nil
-	}
-
-	if envPath := strings.TrimSpace(os.Getenv("TAPES_SQLITE")); envPath != "" {
-		return envPath, nil
-	}
-	if envPath := strings.TrimSpace(os.Getenv("TAPES_DB")); envPath != "" {
-		return envPath, nil
-	}
-
-	candidates := []string{
-		"tapes.db",
-		"tapes.sqlite",
-		filepath.Join(".tapes", "tapes.db"),
-		filepath.Join(".tapes", "tapes.sqlite"),
-	}
-
-	home, err := os.UserHomeDir()
-	if err == nil {
-		candidates = append([]string{
-			filepath.Join(home, ".tapes", "tapes.db"),
-			filepath.Join(home, ".tapes", "tapes.sqlite"),
-		}, candidates...)
-	}
-
-	if xdgHome := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); xdgHome != "" {
-		candidates = append([]string{
-			filepath.Join(xdgHome, "tapes", "tapes.db"),
-			filepath.Join(xdgHome, "tapes", "tapes.sqlite"),
-		}, candidates...)
-	}
-
-	for _, candidate := range candidates {
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-	}
-
-	return "", errors.New("could not find tapes SQLite database; pass --sqlite")
 }

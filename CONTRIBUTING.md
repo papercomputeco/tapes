@@ -14,6 +14,21 @@ make build-local
 ./build/tapes deck --demo
 ```
 
+## Local demo data
+
+Seed demo sessions for the deck UI without touching real data:
+
+```bash
+tapes deck -m
+tapes deck --demo --sqlite ./tapes.demo.sqlite
+```
+
+To reset the demo database:
+
+```bash
+tapes deck -m -f
+```
+
 ## Prerequisites checklist
 
 - Go 1.25+
