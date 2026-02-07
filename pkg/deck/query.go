@@ -17,10 +17,20 @@ import (
 
 const blockTypeToolUse = "tool_use"
 
+// Querier is an interface for querying session data.
+// This allows for mock implementations in testing and sandboxes.
+type Querier interface {
+	Overview(ctx context.Context, filters Filters) (*Overview, error)
+	SessionDetail(ctx context.Context, sessionID string) (*SessionDetail, error)
+}
+
 type Query struct {
 	client  *ent.Client
 	pricing PricingTable
 }
+
+// Ensure Query implements Querier
+var _ Querier = (*Query)(nil)
 
 func NewQuery(ctx context.Context, dbPath string, pricing PricingTable) (*Query, func() error, error) {
 	driver, err := sqlite.NewDriver(ctx, dbPath)
@@ -91,7 +101,7 @@ func (q *Query) Overview(ctx context.Context, filters Filters) (*Overview, error
 		overview.SuccessRate = float64(overview.Completed) / float64(total)
 	}
 
-	sortSessions(overview.Sessions, filters.Sort)
+	sortSessions(overview.Sessions, filters.Sort, filters.SortDir)
 
 	return overview, nil
 }
@@ -492,22 +502,37 @@ func matchesFilters(summary SessionSummary, filters Filters) bool {
 	return true
 }
 
-func sortSessions(sessions []SessionSummary, sortKey string) {
+func sortSessions(sessions []SessionSummary, sortKey, sortDir string) {
+	ascending := strings.EqualFold(sortDir, "asc")
 	switch sortKey {
 	case "time":
 		sort.Slice(sessions, func(i, j int) bool {
+			if ascending {
+				return sessions[i].EndTime.Before(sessions[j].EndTime)
+			}
 			return sessions[i].EndTime.After(sessions[j].EndTime)
 		})
 	case "tokens":
 		sort.Slice(sessions, func(i, j int) bool {
-			return sessions[i].InputTokens+sessions[i].OutputTokens > sessions[j].InputTokens+sessions[j].OutputTokens
+			left := sessions[i].InputTokens + sessions[i].OutputTokens
+			right := sessions[j].InputTokens + sessions[j].OutputTokens
+			if ascending {
+				return left < right
+			}
+			return left > right
 		})
 	case "duration":
 		sort.Slice(sessions, func(i, j int) bool {
+			if ascending {
+				return sessions[i].Duration < sessions[j].Duration
+			}
 			return sessions[i].Duration > sessions[j].Duration
 		})
 	default:
 		sort.Slice(sessions, func(i, j int) bool {
+			if ascending {
+				return sessions[i].TotalCost < sessions[j].TotalCost
+			}
 			return sessions[i].TotalCost > sessions[j].TotalCost
 		})
 	}

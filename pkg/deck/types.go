@@ -69,6 +69,16 @@ type Overview struct {
 	Failed         int                  `json:"failed"`
 	Abandoned      int                  `json:"abandoned"`
 	CostByModel    map[string]ModelCost `json:"cost_by_model"`
+	PreviousPeriod *PeriodComparison    `json:"previous_period,omitempty"`
+}
+
+type PeriodComparison struct {
+	TotalCost      float64       `json:"total_cost"`
+	TotalTokens    int64         `json:"total_tokens"`
+	TotalDuration  time.Duration `json:"total_duration_ns"`
+	TotalToolCalls int           `json:"total_tool_calls"`
+	SuccessRate    float64       `json:"success_rate"`
+	Completed      int           `json:"completed"`
 }
 
 type Filters struct {
@@ -78,6 +88,7 @@ type Filters struct {
 	Model   string
 	Status  string
 	Sort    string
+	SortDir string
 	Session string
 }
 
