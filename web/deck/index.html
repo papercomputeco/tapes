@@ -4,36 +4,103 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>tapes deck</title>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+    />
     <link rel="stylesheet" href="/deck.css" />
   </head>
   <body>
     <div class="app">
-      <header class="app__header">
-        <div>
-          <div class="app__title">tapes deck</div>
-          <div class="app__subtitle" id="session-count">loading sessions...</div>
-        </div>
-        <div class="app__badge">local only</div>
-      </header>
+      <main id="overview-view">
+        <header class="app__header">
+          <div>
+            <div class="app__title">tapes deck</div>
+            <div class="app__subtitle" id="session-count">loading sessions...</div>
+          </div>
+          <div class="app__header-right">
+            <div class="cassette" aria-hidden="true">
+              <div class="cassette__window"></div>
+              <div class="cassette__reel cassette__reel--left"></div>
+              <div class="cassette__reel cassette__reel--right"></div>
+            </div>
+            <div class="app__badge">local only</div>
+          </div>
+        </header>
 
-      <section class="metrics" id="metrics"></section>
+        <section class="period" id="period"></section>
+        <section class="metrics" id="metrics"></section>
 
-      <section class="grid">
-        <div class="panel">
-          <div class="panel__title">cost by model</div>
-          <div id="models"></div>
-        </div>
-        <div class="panel">
-          <div class="panel__title">sessions</div>
+        <section class="grid charts">
+          <div class="panel">
+            <div class="panel__title">cost by model</div>
+            <div id="models"></div>
+          </div>
+          <div class="panel">
+            <div class="panel__title">session status</div>
+            <div id="status"></div>
+          </div>
+        </section>
+
+        <section class="panel sessions" id="sessions-panel">
+          <div class="panel__header">
+            <div class="panel__title">sessions</div>
+            <div class="panel__controls">
+              <label class="control">
+                <span>sort</span>
+                <select id="sort-select">
+                  <option value="cost">cost</option>
+                  <option value="time">time</option>
+                  <option value="tokens">tokens</option>
+                  <option value="duration">duration</option>
+                </select>
+              </label>
+              <label class="control">
+                <span>dir</span>
+                <select id="sort-dir-select">
+                  <option value="desc">desc</option>
+                  <option value="asc">asc</option>
+                </select>
+              </label>
+              <label class="control">
+                <span>status</span>
+                <select id="status-select">
+                  <option value="">all</option>
+                  <option value="completed">completed</option>
+                  <option value="failed">failed</option>
+                  <option value="abandoned">abandoned</option>
+                </select>
+              </label>
+            </div>
+          </div>
           <div class="table" id="sessions"></div>
-        </div>
-      </section>
+        </section>
+      </main>
 
-      <section class="panel detail" id="detail">
-        <div class="panel__title">session detail</div>
-        <div class="detail__empty">select a session to drill down</div>
-      </section>
+      <main id="session-view" hidden>
+        <header class="app__header session-header">
+          <div>
+            <div class="app__title">tapes deck</div>
+            <div class="app__subtitle session-breadcrumb" id="session-breadcrumb">tapes &gt; session</div>
+          </div>
+          <div class="app__header-right">
+            <button class="back-button" id="back-button" type="button">back</button>
+          </div>
+        </header>
+        <section class="panel session-detail" id="detail"></section>
+      </main>
     </div>
+
+    <footer class="footer" id="footer">
+      <div class="footer__keys">
+        <span>j/k move</span>
+        <span>enter open</span>
+        <span>h back</span>
+        <span>s sort</span>
+        <span>f status</span>
+        <span>p period</span>
+      </div>
+    </footer>
 
     <script src="/deck.js"></script>
   </body>
