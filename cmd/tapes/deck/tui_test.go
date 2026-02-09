@@ -159,23 +159,40 @@ var _ = Describe("Deck TUI helpers", func() {
 		})
 	})
 
-	Describe("visibleRange", func() {
-		It("centers around the cursor", func() {
-			start, end := visibleRange(10, 5, 4)
+	Describe("stableVisibleRange", func() {
+		It("keeps offset stable when cursor is within view", func() {
+			start, end, offset := stableVisibleRange(10, 5, 4, 3)
 			Expect(start).To(Equal(3))
 			Expect(end).To(Equal(7))
+			Expect(offset).To(Equal(3))
+		})
+
+		It("scrolls down when cursor moves below visible window", func() {
+			start, end, offset := stableVisibleRange(10, 7, 4, 3)
+			Expect(start).To(Equal(4))
+			Expect(end).To(Equal(8))
+			Expect(offset).To(Equal(4))
+		})
+
+		It("scrolls up when cursor moves above visible window", func() {
+			start, end, offset := stableVisibleRange(10, 2, 4, 5)
+			Expect(start).To(Equal(2))
+			Expect(end).To(Equal(6))
+			Expect(offset).To(Equal(2))
 		})
 
 		It("clamps to the start", func() {
-			start, end := visibleRange(10, 0, 3)
+			start, end, offset := stableVisibleRange(10, 0, 3, 0)
 			Expect(start).To(Equal(0))
 			Expect(end).To(Equal(3))
+			Expect(offset).To(Equal(0))
 		})
 
 		It("clamps to the end", func() {
-			start, end := visibleRange(10, 9, 3)
+			start, end, offset := stableVisibleRange(10, 9, 3, 0)
 			Expect(start).To(Equal(7))
 			Expect(end).To(Equal(10))
+			Expect(offset).To(Equal(7))
 		})
 	})
 })

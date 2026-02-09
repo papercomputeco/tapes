@@ -62,6 +62,7 @@ type deckModel struct {
 	detail        *deck.SessionDetail
 	view          deckView
 	cursor        int
+	scrollOffset  int
 	messageCursor int
 	width         int
 	height        int
@@ -314,15 +315,20 @@ func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
 			for i, session := range m.overview.Sessions {
 				if session.ID == selectedSessionID {
 					m.cursor = i
+					// Clamp scroll offset to keep cursor visible
+					_, _, m.scrollOffset = stableVisibleRange(
+						len(m.overview.Sessions), m.cursor, m.sessionListHeight(), m.scrollOffset,
+					)
 					return m, nil
 				}
 			}
 		}
 
-		// If session not found or no previous selection, clamp cursor
+		// If session not found or no previous selection, clamp cursor and reset scroll
 		if m.cursor >= len(m.overview.Sessions) {
 			m.cursor = clamp(m.cursor, len(m.overview.Sessions)-1)
 		}
+		m.scrollOffset = 0
 		return m, nil
 	case sessionLoadedMsg:
 		if msg.err != nil {
@@ -410,6 +416,12 @@ func (m deckModel) handleKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.C
 		if m.view == viewSession {
 			m.view = viewOverview
 			m.replayActive = false
+			// Re-clamp scroll offset in case terminal was resized
+			if m.overview != nil && len(m.overview.Sessions) > 0 {
+				_, _, m.scrollOffset = stableVisibleRange(
+					len(m.overview.Sessions), m.cursor, m.sessionListHeight(), m.scrollOffset,
+				)
+			}
 		}
 	case "s":
 		if m.view == viewOverview {
@@ -522,6 +534,10 @@ func (m deckModel) moveCursor(delta int) (bubbletea.Model, bubbletea.Cmd) {
 			return m, nil
 		}
 		m.cursor = clamp(m.cursor+delta, len(m.overview.Sessions)-1)
+		// Update scroll offset to keep cursor visible without jumping
+		_, _, m.scrollOffset = stableVisibleRange(
+			len(m.overview.Sessions), m.cursor, m.sessionListHeight(), m.scrollOffset,
+		)
 		return m, nil
 	}
 
@@ -557,11 +573,17 @@ func (m deckModel) cycleMessageSort() (bubbletea.Model, bubbletea.Cmd) {
 	return m, nil
 }
 
-func (m deckModel) viewOverview() string {
-	if m.overview == nil {
-		return deckMutedStyle.Render("no data")
+func countLines(s string) int {
+	if s == "" {
+		return 0
 	}
+	return strings.Count(s, "\n") + 1
+}
 
+// overviewChrome renders all overview sections except the session list and
+// returns the joined string plus the total line count (including blank
+// separator lines and footer).
+func (m deckModel) overviewChrome() (above string, footer string) {
 	selected := m.selectedSessions()
 	stats := summarizeSessions(selected)
 
@@ -570,10 +592,8 @@ func (m deckModel) viewOverview() string {
 	filtered := len(selected) != len(m.overview.Sessions)
 	sessionCount := deckMutedStyle.Render(m.headerSessionCount(lastWindow, len(selected), len(m.overview.Sessions), filtered))
 
-	// Get cassette tape graphic (3 lines)
 	cassetteLines := renderCassetteTape()
 
-	// Build multi-line header with cassette in top right
 	header1 := renderHeaderLine(m.width, headerLeft, cassetteLines[0])
 	header2 := renderHeaderLine(m.width, "", cassetteLines[1])
 	header3 := renderHeaderLine(m.width, sessionCount, cassetteLines[2])
@@ -588,9 +608,34 @@ func (m deckModel) viewOverview() string {
 	if insights != "" {
 		lines = append(lines, "", insights)
 	}
-	lines = append(lines, "", costByModel, "", m.viewSessionList(), "", m.viewFooter())
+	lines = append(lines, "", costByModel, "")
 
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "\n"), m.viewFooter()
+}
+
+// sessionListHeight returns the number of rows available for the session list
+// in the current terminal, based on the actual rendered chrome height.
+func (m deckModel) sessionListHeight() int {
+	if m.overview == nil {
+		return max(m.height-31, 5) // fallback
+	}
+	above, footer := m.overviewChrome()
+	// +1 for the blank line between session list and footer
+	// +2*verticalPadding for the outer padding added by addPadding
+	chromeLines := countLines(above) + countLines(footer) + 1 + 2*verticalPadding
+	return max(m.height-chromeLines, 5)
+}
+
+func (m deckModel) viewOverview() string {
+	if m.overview == nil {
+		return deckMutedStyle.Render("no data")
+	}
+
+	above, footer := m.overviewChrome()
+	chromeLines := countLines(above) + countLines(footer) + 1 + 2*verticalPadding
+	availableHeight := max(m.height-chromeLines, 5)
+
+	return above + m.viewSessionList(availableHeight) + "\n\n" + footer
 }
 
 func (m deckModel) viewMetrics(stats deckOverviewStats) string {
@@ -1002,18 +1047,13 @@ func (m deckModel) viewInsights(stats deckOverviewStats) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m deckModel) viewSessionList() string {
+func (m deckModel) viewSessionList(availableHeight int) string {
 	if len(m.overview.Sessions) == 0 {
 		return deckMutedStyle.Render("sessions: no data")
 	}
 
-	// Calculate available height for sessions
-	// Estimate: header(5) + metrics(12) + insights(3) + cost(6) + footer(2) + session header(3) = ~31 lines
-	reservedLines := 31
-	availableHeight := max(m.height-reservedLines, 5) // Minimum 5 sessions visible
-
-	// Calculate which sessions to show based on cursor position
-	start, end := visibleRange(len(m.overview.Sessions), m.cursor, availableHeight)
+	// Calculate which sessions to show using stable scrolling
+	start, end, _ := stableVisibleRange(len(m.overview.Sessions), m.cursor, availableHeight, m.scrollOffset)
 	maxVisible := end - start
 
 	status := m.filters.Status
@@ -2271,7 +2311,7 @@ func (m deckModel) renderConversationTable(width, height int) []string {
 
 	// Calculate visible range (show current message and surrounding context)
 	maxVisible := max(height-2, 5) // Reserve space for header
-	start, end := visibleRange(len(messages), m.messageCursor, maxVisible)
+	start, end, _ := stableVisibleRange(len(messages), m.messageCursor, maxVisible, max(m.messageCursor-(maxVisible/2), 0))
 
 	// Render message rows
 	for i := start; i < end; i++ {
@@ -2622,12 +2662,12 @@ func joinColumns(left, right []string, gap int) []string {
 	return lines
 }
 
-func visibleRange(total, cursor, size int) (int, int) {
+func stableVisibleRange(total, cursor, size, offset int) (start, end, newOffset int) {
 	if total <= 0 || size <= 0 {
-		return 0, 0
+		return 0, 0, 0
 	}
 	if total <= size {
-		return 0, total
+		return 0, total, 0
 	}
 	if cursor < 0 {
 		cursor = 0
@@ -2635,13 +2675,24 @@ func visibleRange(total, cursor, size int) (int, int) {
 	if cursor >= total {
 		cursor = total - 1
 	}
-	start := max(cursor-(size/2), 0)
-	end := start + size
-	if end > total {
-		end = total
-		start = max(end-size, 0)
+
+	// Keep current offset unless cursor is outside the visible window
+	if cursor < offset {
+		offset = cursor
+	} else if cursor >= offset+size {
+		offset = cursor - size + 1
 	}
-	return start, end
+
+	// Clamp offset to valid range
+	maxOffset := total - size
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	return offset, offset + size, offset
 }
 
 func safeDivide(value, divisor float64) float64 {
