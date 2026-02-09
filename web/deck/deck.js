@@ -12,25 +12,28 @@ const overviewViewEl = document.getElementById("overview-view");
 const sessionViewEl = document.getElementById("session-view");
 const sessionBreadcrumbEl = document.getElementById("session-breadcrumb");
 const backButton = document.getElementById("back-button");
+const statusLabelEl = document.getElementById("status-label");
+const sessionsMoreEl = document.getElementById("sessions-more");
+const showMoreButton = document.getElementById("show-more-button");
+const sessionsFiltersEl = document.getElementById("sessions-filters");
 
-const gradient = ["#B6512B", "#D96840", "#FF7A45", "#FF8F4D", "#FFB25A"];
 const modelColors = {
   claude: {
-    opus: "#D97BC1",
-    sonnet: "#B656B1",
-    haiku: "#8E3F8A",
+    opus: "#f472b6",
+    sonnet: "#f472b6",
+    haiku: "#38bdf8",
   },
   openai: {
-    "gpt-4o": "#7DD9FF",
-    "gpt-4": "#4EB1E9",
-    "gpt-4o-mini": "#3889B8",
-    "gpt-3.5": "#2A6588",
+    "gpt-4o": "#4ade80",
+    "gpt-4": "#4ade80",
+    "gpt-4o-mini": "#4ade80",
+    "gpt-3.5": "#4ade80",
   },
   google: {
-    "gemini-2.0": "#7DD9FF",
-    "gemini-1.5-pro": "#4EB1E9",
-    "gemini-1.5": "#3889B8",
-    gemma: "#2A6588",
+    "gemini-2.0": "#fb923c",
+    "gemini-1.5-pro": "#fb923c",
+    "gemini-1.5": "#fb923c",
+    gemma: "#fb923c",
   },
 };
 
@@ -48,6 +51,8 @@ let selectedSessionId = null;
 let selectedMessageIndex = 0;
 let sessionIndex = 0;
 let currentView = "overview";
+let visibleSessionCount = 38;
+let filtersVisible = false;
 
 const formatCost = (value) => `$${value.toFixed(3)}`;
 const formatTokens = (value) => {
@@ -86,7 +91,7 @@ const statusClass = (status) => {
 };
 
 const colorForModel = (name) => {
-  if (!name) return "#FF6B4A";
+  if (!name) return "#f472b6";
   const value = name.toLowerCase();
   for (const [tier, color] of Object.entries(modelColors.claude)) {
     if (value.includes(tier)) return color;
@@ -97,25 +102,7 @@ const colorForModel = (name) => {
   for (const [model, color] of Object.entries(modelColors.google)) {
     if (value.includes(model.replace(/-/g, "")) || value.includes(model)) return color;
   }
-  return "#FF6B4A";
-};
-
-const costScale = (sessions) => {
-  let min = Infinity;
-  let max = 0;
-  sessions.forEach((session) => {
-    if (session.total_cost < min) min = session.total_cost;
-    if (session.total_cost > max) max = session.total_cost;
-  });
-  if (!Number.isFinite(min)) min = 0;
-  if (max <= min) max = min + 1;
-  return { min, max };
-};
-
-const costColor = (value, min, max) => {
-  const ratio = Math.min(Math.max((value - min) / (max - min), 0), 1);
-  const index = Math.min(gradient.length - 1, Math.floor(ratio * (gradient.length - 1)));
-  return gradient[index];
+  return "#f472b6";
 };
 
 const buildParams = () => {
@@ -153,12 +140,13 @@ const renderPeriodControls = () => {
 
 const renderMetrics = (data) => {
   metricsEl.innerHTML = "";
+  const sessionCount = Math.max(data.sessions.length, 1);
 
   const items = [
     {
       label: "total spend",
       value: formatCost(data.total_cost),
-      sub: `avg ${formatCost(data.total_cost / Math.max(data.sessions.length, 1))}`,
+      sub: `avg ${formatCost(data.total_cost / sessionCount)} / sess`,
       comparison: data.previous_period
         ? compareValues(data.total_cost, data.previous_period.total_cost, true)
         : null,
@@ -167,6 +155,9 @@ const renderMetrics = (data) => {
       label: "tokens used",
       value: formatTokens(data.total_tokens),
       sub: `${formatTokens(data.input_tokens)} in / ${formatTokens(data.output_tokens)} out`,
+      showTokenBar: true,
+      inputTokens: data.input_tokens,
+      outputTokens: data.output_tokens,
       comparison: data.previous_period
         ? compareValues(data.total_tokens, data.previous_period.total_tokens, false)
         : null,
@@ -174,23 +165,16 @@ const renderMetrics = (data) => {
     {
       label: "agent time",
       value: formatDuration(data.total_duration_ns),
-      sub: `${formatDuration(data.total_duration_ns / Math.max(data.sessions.length, 1))} avg`,
+      sub: `${formatDuration(data.total_duration_ns / sessionCount)} avg session`,
       comparison: data.previous_period
         ? compareValues(data.total_duration_ns, data.previous_period.total_duration_ns, false)
         : null,
     },
     {
-      label: "tool calls",
-      value: data.total_tool_calls,
-      sub: `${(data.total_tool_calls / Math.max(data.sessions.length, 1)).toFixed(1)} avg`,
-      comparison: data.previous_period
-        ? compareValues(data.total_tool_calls, data.previous_period.total_tool_calls, false)
-        : null,
-    },
-    {
       label: "success rate",
       value: formatPercent(data.success_rate),
-      sub: `${data.completed}/${data.sessions.length} complete`,
+      valueClass: "metric__value--green",
+      sub: `${data.completed}/${data.sessions.length} sessions complete`,
       comparison: data.previous_period
         ? compareValues(data.success_rate, data.previous_period.success_rate, false)
         : null,
@@ -207,6 +191,7 @@ const renderMetrics = (data) => {
 
     const value = document.createElement("div");
     value.className = "metric__value";
+    if (item.valueClass) value.classList.add(item.valueClass);
     value.textContent = item.value;
 
     card.appendChild(label);
@@ -216,7 +201,7 @@ const renderMetrics = (data) => {
       const compare = document.createElement("div");
       compare.className = "metric__compare";
       compare.classList.add(item.comparison.positive ? "metric__compare--up" : "metric__compare--down");
-      compare.textContent = `${item.comparison.direction === "up" ? "^" : "v"} ${item.comparison.value} vs prev`;
+      compare.textContent = `${item.comparison.direction === "up" ? "\u25B2" : "\u25BC"} ${item.comparison.value} vs prev`;
       card.appendChild(compare);
     }
 
@@ -224,6 +209,21 @@ const renderMetrics = (data) => {
     sub.className = "metric__sub";
     sub.textContent = item.sub;
     card.appendChild(sub);
+
+    if (item.showTokenBar) {
+      const total = item.inputTokens + item.outputTokens;
+      if (total > 0) {
+        const bar = document.createElement("div");
+        bar.className = "metric__token-bar";
+        const inSpan = document.createElement("span");
+        inSpan.style.width = `${(item.inputTokens / total) * 100}%`;
+        const outSpan = document.createElement("span");
+        outSpan.style.width = `${(item.outputTokens / total) * 100}%`;
+        bar.appendChild(inSpan);
+        bar.appendChild(outSpan);
+        card.appendChild(bar);
+      }
+    }
 
     metricsEl.appendChild(card);
   });
@@ -242,26 +242,31 @@ const renderModels = (data) => {
     const row = document.createElement("div");
     row.className = "model-row";
 
-    const name = document.createElement("div");
+    const header = document.createElement("div");
+    header.className = "model-row__header";
+
+    const name = document.createElement("span");
     name.className = "model-row__name";
     name.textContent = model.model;
     name.style.color = colorForModel(model.model);
+
+    const meta = document.createElement("span");
+    meta.className = "model-row__meta";
+    meta.textContent = `${formatCost(model.total_cost)} / ${model.session_count}`;
+
+    header.appendChild(name);
+    header.appendChild(meta);
 
     const bar = document.createElement("div");
     bar.className = "model-row__bar";
     const fill = document.createElement("div");
     fill.className = "model-row__fill";
     fill.style.width = `${Math.round((model.total_cost / max) * 100)}%`;
-    fill.style.background = `linear-gradient(90deg, ${colorForModel(model.model)}, #FFB25A)`;
+    fill.style.background = colorForModel(model.model);
     bar.appendChild(fill);
 
-    const meta = document.createElement("div");
-    meta.className = "model-row__meta";
-    meta.textContent = `${formatCost(model.total_cost)} / ${model.session_count} sessions`;
-
-    row.appendChild(name);
+    row.appendChild(header);
     row.appendChild(bar);
-    row.appendChild(meta);
     modelsEl.appendChild(row);
   });
 };
@@ -299,30 +304,30 @@ const renderStatus = (data) => {
   legend.className = "status__legend";
 
   const legendItems = [
-    { label: "completed", value: completedPct, count: data.completed, className: "status__dot--completed" },
-    { label: "failed", value: failedPct, count: data.failed, className: "status__dot--failed" },
-    { label: "abandoned", value: abandonedPct, count: data.abandoned, className: "status__dot--abandoned" },
+    { label: "completed", pct: completedPct, count: data.completed, cls: "status__dot--completed" },
+    { label: "failed", pct: failedPct, count: data.failed, cls: "status__dot--failed" },
+    { label: "abandoned", pct: abandonedPct, count: data.abandoned, cls: "status__dot--abandoned" },
   ];
 
   legendItems.forEach((item) => {
     const entry = document.createElement("div");
     entry.className = "status__legend-item";
     const dot = document.createElement("span");
-    dot.className = `status__dot ${item.className}`;
+    dot.className = `status__dot ${item.cls}`;
     const text = document.createElement("span");
-    text.textContent = `${item.label} ${item.value.toFixed(0)}% (${item.count})`;
+    text.textContent = `${item.label} ${item.pct.toFixed(0)}% (${item.count})`;
     entry.appendChild(dot);
     entry.appendChild(text);
     legend.appendChild(entry);
   });
 
   const efficiency = document.createElement("div");
+  efficiency.className = "status__efficiency";
   const tokensPerMinute = data.total_duration_ns > 0
     ? Math.round((data.total_tokens / (data.total_duration_ns / 1e9)) * 60)
     : 0;
   const costPerSession = data.total_cost / Math.max(data.sessions.length, 1);
-  efficiency.className = "model-row__meta";
-  efficiency.textContent = `eff: ${formatCost(costPerSession)} per sess | ${tokensPerMinute} tok/min`;
+  efficiency.textContent = `eff: ${formatCost(costPerSession)}/sess`;
 
   container.appendChild(bar);
   container.appendChild(legend);
@@ -334,33 +339,35 @@ const renderSessions = (data) => {
   sessionsEl.innerHTML = "";
   if (!data.sessions.length) {
     sessionsEl.textContent = "no sessions";
+    sessionsMoreEl.hidden = true;
     return;
   }
 
-  const selectedIndex = data.sessions.findIndex((session) => session.id === selectedSessionId);
+  const selectedIndex = data.sessions.findIndex((s) => s.id === selectedSessionId);
   if (selectedIndex >= 0) {
     sessionIndex = selectedIndex;
   }
 
   const header = document.createElement("div");
-  header.className = "table__row table__row--header";
+  header.className = "sessions-row sessions-row--header";
   header.innerHTML =
-    "<div></div><div>label</div><div>model</div><div>dur</div><div>tokens</div><div>in/out</div><div>cost</div><div>tools</div><div>msgs</div><div>status</div>";
+    "<div>#</div><div>label</div><div>model</div><div>dur</div><div>tokens</div><div>cost</div><div>tools</div><div>msgs</div><div>status</div>";
   sessionsEl.appendChild(header);
 
-  const scale = costScale(data.sessions);
-  data.sessions.forEach((session, index) => {
+  const visible = data.sessions.slice(0, visibleSessionCount);
+  visible.forEach((session, index) => {
     const row = document.createElement("div");
-    row.className = "table__row";
+    row.className = "sessions-row";
     if (session.id === selectedSessionId) {
-      row.classList.add("table__row--active");
+      row.classList.add("sessions-row--active");
     }
 
     const number = document.createElement("div");
     number.className = "session-number";
-    number.textContent = (index + 1).toString(16).padStart(2, "0");
+    number.textContent = String(index + 1).padStart(2, "0");
 
     const label = document.createElement("div");
+    label.className = "session-label";
     label.textContent = session.label;
 
     const model = document.createElement("div");
@@ -374,30 +381,24 @@ const renderSessions = (data) => {
     const tokens = document.createElement("div");
     tokens.textContent = formatTokens(session.input_tokens + session.output_tokens);
 
-    const barbell = document.createElement("div");
-    barbell.className = "barbell";
-    const leftDot = document.createElement("span");
-    leftDot.className = "barbell__dot barbell__dot--in";
-    const bar = document.createElement("span");
-    bar.className = "barbell__bar";
-    const totalCost = session.input_cost + session.output_cost || 1;
-    const inputPct = Math.round((session.input_cost / totalCost) * 100);
-    bar.style.setProperty("--in", `${inputPct}%`);
-    const rightDot = document.createElement("span");
-    rightDot.className = "barbell__dot barbell__dot--out";
-    barbell.appendChild(leftDot);
-    barbell.appendChild(bar);
-    barbell.appendChild(rightDot);
-
     const cost = document.createElement("div");
-    cost.className = "cost-indicator";
-    const dot = document.createElement("span");
-    dot.className = "cost-indicator__dot";
-    dot.style.background = costColor(session.total_cost, scale.min, scale.max);
-    const value = document.createElement("span");
-    value.textContent = formatCost(session.total_cost);
-    cost.appendChild(dot);
-    cost.appendChild(value);
+    cost.className = "session-cost";
+    const costBar = document.createElement("div");
+    costBar.className = "session-cost__bar";
+    const totalCostParts = session.input_cost + session.output_cost || 1;
+    const inputPct = Math.round((session.input_cost / totalCostParts) * 100);
+    const barIn = document.createElement("div");
+    barIn.className = "session-cost__bar-in";
+    barIn.style.width = `${inputPct}%`;
+    const barOut = document.createElement("div");
+    barOut.className = "session-cost__bar-out";
+    barOut.style.width = `${100 - inputPct}%`;
+    costBar.appendChild(barIn);
+    costBar.appendChild(barOut);
+    const costValue = document.createElement("span");
+    costValue.textContent = formatCost(session.total_cost);
+    cost.appendChild(costBar);
+    cost.appendChild(costValue);
 
     const tools = document.createElement("div");
     tools.textContent = session.tool_calls;
@@ -406,9 +407,9 @@ const renderSessions = (data) => {
     msgs.textContent = session.message_count;
 
     const status = document.createElement("div");
-    status.className = "status";
+    status.className = `session-status session-status--${statusClass(session.status)}`;
     const statusDot = document.createElement("span");
-    statusDot.className = `status__dot status__dot--${statusClass(session.status)}`;
+    statusDot.className = `session-status__dot session-status__dot--${statusClass(session.status)}`;
     const statusText = document.createElement("span");
     statusText.textContent = session.status;
     status.appendChild(statusDot);
@@ -419,7 +420,6 @@ const renderSessions = (data) => {
     row.appendChild(model);
     row.appendChild(duration);
     row.appendChild(tokens);
-    row.appendChild(barbell);
     row.appendChild(cost);
     row.appendChild(tools);
     row.appendChild(msgs);
@@ -428,6 +428,13 @@ const renderSessions = (data) => {
     row.addEventListener("click", () => loadSession(session.id));
     sessionsEl.appendChild(row);
   });
+
+  if (data.sessions.length > visibleSessionCount) {
+    sessionsMoreEl.hidden = false;
+    showMoreButton.textContent = `show more (${visibleSessionCount}-${data.sessions.length} of ${data.sessions.length})`;
+  } else {
+    sessionsMoreEl.hidden = true;
+  }
 };
 
 const renderDetailMetrics = (detail) => {
@@ -459,7 +466,7 @@ const renderDetailMetrics = (detail) => {
     {
       label: "total cost",
       value: formatCost(detail.summary.total_cost),
-      sub: avgCost ? `${formatCost(avgCost)} avg` : "no avg",
+      sub: avgCost ? `${formatCost(avgCost)} avg` : "",
       change: avgCost ? compareValues(detail.summary.total_cost, avgCost, true) : null,
     },
     {
@@ -472,13 +479,13 @@ const renderDetailMetrics = (detail) => {
     {
       label: "agent time",
       value: formatDuration(detail.summary.duration_ns),
-      sub: avgDuration ? `${formatDuration(avgDuration)} avg` : "no avg",
+      sub: avgDuration ? `${formatDuration(avgDuration)} avg` : "",
       change: avgDuration ? compareValues(detail.summary.duration_ns, avgDuration, false) : null,
     },
     {
       label: "tool calls",
       value: detail.summary.tool_calls,
-      sub: avgToolCalls ? `${avgToolCalls.toFixed(1)} avg` : "no avg",
+      sub: avgToolCalls ? `${avgToolCalls.toFixed(1)} avg` : "",
       change: avgToolCalls ? compareValues(detail.summary.tool_calls, avgToolCalls, false) : null,
     },
   ];
@@ -506,7 +513,7 @@ const renderDetailMetrics = (detail) => {
       const change = document.createElement("div");
       change.className = "metric__compare";
       change.classList.add(metric.change.positive ? "metric__compare--up" : "metric__compare--down");
-      change.textContent = `${metric.change.direction === "up" ? "^" : "v"} ${metric.change.value} vs avg`;
+      change.textContent = `${metric.change.direction === "up" ? "\u25B2" : "\u25BC"} ${metric.change.value} vs avg`;
       card.appendChild(change);
     }
 
@@ -533,7 +540,7 @@ const renderTimeline = (detail) => {
 
   const title = document.createElement("div");
   title.className = "timeline__title";
-  title.textContent = "conversation timeline";
+  title.textContent = `conversation timeline (${detail.messages.length} turns, ${detail.messages.length} messages)`;
 
   const chart = document.createElement("div");
   chart.className = "timeline__chart";
@@ -556,6 +563,31 @@ const renderTimeline = (detail) => {
 };
 
 const renderConversation = (detail) => {
+  const outer = document.createElement("div");
+
+  const sectionHeader = document.createElement("div");
+  sectionHeader.className = "detail__conversation-header";
+  const headerLabel = document.createElement("span");
+  headerLabel.className = "section-header__label";
+  headerLabel.textContent = "conversation";
+  const headerLine = document.createElement("div");
+  headerLine.className = "section-header__line";
+  headerLine.style.flex = "1";
+  sectionHeader.appendChild(headerLabel);
+  sectionHeader.appendChild(headerLine);
+
+  const tabs = document.createElement("div");
+  tabs.className = "detail__conversation-tabs";
+  const tableTab = document.createElement("button");
+  tableTab.className = "detail__conversation-tab detail__conversation-tab--active";
+  tableTab.textContent = "table";
+  const rawTab = document.createElement("button");
+  rawTab.className = "detail__conversation-tab";
+  rawTab.textContent = "raw";
+  tabs.appendChild(tableTab);
+  tabs.appendChild(rawTab);
+  sectionHeader.appendChild(tabs);
+
   const container = document.createElement("div");
   container.className = "detail__conversation";
 
@@ -564,7 +596,7 @@ const renderConversation = (detail) => {
 
   const header = document.createElement("div");
   header.className = "conversation__row conversation__row--header";
-  header.innerHTML = "<div>time</div><div>role</div><div>tokens</div><div>cost</div>";
+  header.innerHTML = "<div>#</div><div>role</div><div>tokens</div><div>cost</div>";
   table.appendChild(header);
 
   detail.messages.forEach((msg, idx) => {
@@ -574,12 +606,14 @@ const renderConversation = (detail) => {
       row.classList.add("conversation__row--active");
     }
 
-    const time = document.createElement("div");
-    time.textContent = new Date(msg.timestamp).toLocaleTimeString();
+    const num = document.createElement("div");
+    num.textContent = String(idx + 1);
+    num.style.color = "#525252";
 
     const role = document.createElement("div");
     role.textContent = msg.role;
-    role.style.color = msg.role === "user" ? "#4EB1E9" : "#FF6B4A";
+    role.style.color = msg.role === "user" ? "#38bdf8" : "#fb923c";
+    role.style.fontWeight = "600";
 
     const tokens = document.createElement("div");
     tokens.textContent = formatTokens(msg.total_tokens);
@@ -587,7 +621,7 @@ const renderConversation = (detail) => {
     const cost = document.createElement("div");
     cost.textContent = formatCost(msg.total_cost);
 
-    row.appendChild(time);
+    row.appendChild(num);
     row.appendChild(role);
     row.appendChild(tokens);
     row.appendChild(cost);
@@ -602,51 +636,55 @@ const renderConversation = (detail) => {
   detailPane.className = "conversation__detail";
   const msg = detail.messages[selectedMessageIndex] || detail.messages[0];
 
-  const meta = document.createElement("div");
-  meta.className = "conversation__meta";
-  const metaItems = [
-    { label: "role", value: msg.role },
-    { label: "model", value: msg.model || "unknown" },
-    { label: "tokens", value: formatTokens(msg.total_tokens) },
-    { label: "cost", value: formatCost(msg.total_cost) },
-  ];
-  metaItems.forEach((item) => {
-    const block = document.createElement("div");
-    block.textContent = item.label;
-    const span = document.createElement("span");
-    span.textContent = item.value;
-    block.appendChild(span);
-    meta.appendChild(block);
-  });
+  if (msg) {
+    const meta = document.createElement("div");
+    meta.className = "conversation__meta";
+    const metaItems = [
+      { label: "role", value: msg.role },
+      { label: "time", value: new Date(msg.timestamp).toLocaleTimeString() },
+      { label: "model", value: msg.model || "unknown" },
+      { label: "tokens", value: `In ${formatTokens(msg.input_tokens)}  Out ${formatTokens(msg.output_tokens)}  Total ${formatTokens(msg.total_tokens)}` },
+      { label: "cost", value: `In ${formatCost(msg.input_cost)}  Out ${formatCost(msg.output_cost)}  Total ${formatCost(msg.total_cost)}` },
+    ];
+    metaItems.forEach((item) => {
+      const block = document.createElement("div");
+      block.textContent = item.label;
+      const span = document.createElement("span");
+      span.className = "conversation__meta-value";
+      span.textContent = item.value;
+      block.appendChild(span);
+      meta.appendChild(block);
+    });
 
-  const tools = document.createElement("div");
-  tools.className = "conversation__meta";
-  const toolBlock = document.createElement("div");
-  toolBlock.textContent = "tools";
-  const toolValue = document.createElement("span");
-  toolValue.textContent = msg.tool_calls && msg.tool_calls.length ? msg.tool_calls.join(", ") : "none";
-  toolBlock.appendChild(toolValue);
-  tools.appendChild(toolBlock);
+    const tools = document.createElement("div");
+    tools.className = "conversation__meta";
+    const toolBlock = document.createElement("div");
+    toolBlock.textContent = "tools";
+    const toolValue = document.createElement("span");
+    toolValue.className = "conversation__meta-value";
+    toolValue.textContent = msg.tool_calls && msg.tool_calls.length ? msg.tool_calls.join(", ") : "none";
+    toolBlock.appendChild(toolValue);
+    tools.appendChild(toolBlock);
 
-  const text = document.createElement("div");
-  text.className = "conversation__text";
-  text.textContent = msg.text || "";
+    const text = document.createElement("div");
+    text.className = "conversation__text";
+    text.textContent = msg.text || "";
 
-  detailPane.appendChild(meta);
-  detailPane.appendChild(tools);
-  detailPane.appendChild(text);
+    detailPane.appendChild(meta);
+    detailPane.appendChild(tools);
+    detailPane.appendChild(text);
+  }
 
   container.appendChild(table);
   container.appendChild(detailPane);
-  return container;
+
+  outer.appendChild(sectionHeader);
+  outer.appendChild(container);
+  return outer;
 };
 
 const renderSessionDetail = (detail) => {
   detailEl.innerHTML = "";
-
-  const title = document.createElement("div");
-  title.className = "panel__title";
-  title.textContent = "session detail";
 
   const header = document.createElement("div");
   header.className = "detail__header";
@@ -661,9 +699,9 @@ const renderSessionDetail = (detail) => {
   headerText.appendChild(headerSub);
 
   const status = document.createElement("div");
-  status.className = "detail__status";
+  status.className = `detail__status session-status--${statusClass(detail.summary.status)}`;
   const dot = document.createElement("span");
-  dot.className = `status__dot status__dot--${statusClass(detail.summary.status)}`;
+  dot.className = `session-status__dot session-status__dot--${statusClass(detail.summary.status)}`;
   const statusText = document.createElement("span");
   statusText.textContent = detail.summary.status;
   status.appendChild(dot);
@@ -672,7 +710,6 @@ const renderSessionDetail = (detail) => {
   header.appendChild(headerText);
   header.appendChild(status);
 
-  detailEl.appendChild(title);
   detailEl.appendChild(header);
   detailEl.appendChild(renderDetailMetrics(detail));
   detailEl.appendChild(renderTimeline(detail));
@@ -689,8 +726,10 @@ const loadOverview = async () => {
     const label = filters.period === "90d" ? "3M" : filters.period === "180d" ? "6M" : "30d";
     filterBits.push(`period ${label}`);
   }
-  const filterText = filterBits.length ? ` | ${filterBits.join(" | ")}` : "";
-  sessionCountEl.textContent = `${data.sessions.length} sessions | ${formatDuration(data.total_duration_ns)} total${filterText}`;
+  const filterText = filterBits.length ? ` \u00B7 ${filterBits.join(" \u00B7 ")}` : "";
+  sessionCountEl.textContent = `${data.sessions.length} sessions \u00B7 ${formatDuration(data.total_duration_ns)} total time${filterText}`;
+  statusLabelEl.textContent = filters.status || "all";
+
   renderPeriodControls();
   renderMetrics(data);
   renderModels(data);
@@ -715,7 +754,7 @@ const loadSession = async (sessionId, keepMessage) => {
   if (overviewState) {
     renderSessions(overviewState);
   }
-  sessionBreadcrumbEl.textContent = `tapes > ${data.summary.label}`;
+  sessionBreadcrumbEl.textContent = data.summary.label;
   setView("session");
   if (window.location.pathname !== `/session/${sessionId}`) {
     window.history.pushState({}, "", `/session/${sessionId}`);
@@ -751,23 +790,28 @@ const moveSession = (delta) => {
   const session = overviewState.sessions[sessionIndex];
   selectedSessionId = session.id;
   renderSessions(overviewState);
-  const rows = sessionsEl.querySelectorAll(".table__row");
-  if (rows[sessionIndex + 1]) {
-    rows[sessionIndex + 1].scrollIntoView({ block: "nearest" });
+  const rows = sessionsEl.querySelectorAll(".sessions-row:not(.sessions-row--header)");
+  if (rows[sessionIndex]) {
+    rows[sessionIndex].scrollIntoView({ block: "nearest" });
   }
 };
 
 const moveMessage = (delta) => {
   if (!detailEl || !detailEl.querySelectorAll) return;
-  const rows = detailEl.querySelectorAll(".conversation__row");
+  const rows = detailEl.querySelectorAll(".conversation__row:not(.conversation__row--header)");
   if (!rows.length) return;
-  const maxIndex = rows.length - 2;
+  const maxIndex = rows.length - 1;
   selectedMessageIndex = Math.min(Math.max(selectedMessageIndex + delta, 0), maxIndex);
-  const row = rows[selectedMessageIndex + 1];
+  const row = rows[selectedMessageIndex];
   if (row) {
     row.scrollIntoView({ block: "nearest" });
     row.click();
   }
+};
+
+const toggleFilters = () => {
+  filtersVisible = !filtersVisible;
+  sessionsFiltersEl.hidden = !filtersVisible;
 };
 
 const handleKey = (event) => {
@@ -803,12 +847,14 @@ const handleKey = (event) => {
       break;
     case "s":
       if (currentView === "overview") {
-        sortSelect.focus();
+        toggleFilters();
+        if (filtersVisible) sortSelect.focus();
       }
       break;
     case "f":
       if (currentView === "overview") {
-        statusSelect.focus();
+        toggleFilters();
+        if (filtersVisible) statusSelect.focus();
       }
       break;
     case "p":
@@ -851,6 +897,11 @@ sortDirSelect.addEventListener("change", () => {
 statusSelect.addEventListener("change", () => {
   filters.status = statusSelect.value;
   loadOverview();
+});
+
+showMoreButton.addEventListener("click", () => {
+  visibleSessionCount += 38;
+  if (overviewState) renderSessions(overviewState);
 });
 
 loadOverview().catch((err) => {

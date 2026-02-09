@@ -1,104 +1,133 @@
 <!doctype html>
-<html lang="en">
+<html class="dark" lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>tapes deck</title>
+    <link href="https://fonts.googleapis.com" rel="preconnect" />
+    <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect" />
     <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap"
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap"
     />
     <link rel="stylesheet" href="/deck.css" />
   </head>
   <body>
     <div class="app">
       <main id="overview-view">
-        <header class="app__header">
-          <div>
-            <div class="app__title">tapes deck</div>
-            <div class="app__subtitle" id="session-count">loading sessions...</div>
-          </div>
-          <div class="app__header-right">
-            <div class="cassette" aria-hidden="true">
-              <div class="cassette__window"></div>
-              <div class="cassette__reel cassette__reel--left"></div>
-              <div class="cassette__reel cassette__reel--right"></div>
+        <header class="header">
+          <div class="header__left">
+            <div class="header__title-row">
+              <h1 class="header__title">tapes<span class="header__separator"> / </span>deck</h1>
+              <span class="header__status" id="online-status">
+                <span class="header__status-dot"></span>
+                online
+              </span>
+              <span class="header__version" id="version-label"></span>
             </div>
-            <div class="app__badge">local only</div>
+            <p class="header__subtitle" id="session-count">loading sessions...</p>
+          </div>
+          <div class="header__right">
+            <span class="header__badge">local only</span>
+            <span class="header__settings" id="settings-button">&#9881;</span>
           </div>
         </header>
 
-        <section class="period" id="period"></section>
+        <div class="header__toolbar">
+          <div class="header__title-label">Analytics Dashboard</div>
+          <section class="period" id="period"></section>
+        </div>
+
         <section class="metrics" id="metrics"></section>
 
-        <section class="grid charts">
-          <div class="panel">
-            <div class="panel__title">cost by model</div>
+        <section class="charts">
+          <div class="chart-panel chart-panel--models">
+            <div class="section-header">
+              <span class="section-header__label">cost by model</span>
+              <div class="section-header__line"></div>
+            </div>
             <div id="models"></div>
           </div>
-          <div class="panel">
-            <div class="panel__title">session status</div>
+          <div class="chart-panel chart-panel--status">
+            <div class="section-header">
+              <span class="section-header__label">session status</span>
+              <div class="section-header__line"></div>
+            </div>
             <div id="status"></div>
           </div>
         </section>
 
-        <section class="panel sessions" id="sessions-panel">
-          <div class="panel__header">
-            <div class="panel__title">sessions</div>
-            <div class="panel__controls">
-              <label class="control">
-                <span>sort</span>
-                <select id="sort-select">
-                  <option value="cost">cost</option>
-                  <option value="time">time</option>
-                  <option value="tokens">tokens</option>
-                  <option value="duration">duration</option>
-                </select>
-              </label>
-              <label class="control">
-                <span>dir</span>
-                <select id="sort-dir-select">
-                  <option value="desc">desc</option>
-                  <option value="asc">asc</option>
-                </select>
-              </label>
-              <label class="control">
-                <span>status</span>
-                <select id="status-select">
-                  <option value="">all</option>
-                  <option value="completed">completed</option>
-                  <option value="failed">failed</option>
-                  <option value="abandoned">abandoned</option>
-                </select>
-              </label>
+        <section class="sessions-section" id="sessions-panel">
+          <div class="section-header">
+            <span class="section-header__label">recent sessions</span>
+            <div class="section-header__line"></div>
+            <div class="sessions-controls">
+              <span class="sessions-control">[<span class="sessions-control__key">S</span>] sort</span>
+              <span class="sessions-control">[<span class="sessions-control__key">F</span>] filter</span>
+              <span class="sessions-control">status: <span class="sessions-control__value" id="status-label">all</span></span>
             </div>
           </div>
-          <div class="table" id="sessions"></div>
+          <div class="sessions-filters" id="sessions-filters" hidden>
+            <label class="filter-control">
+              <span>sort</span>
+              <select id="sort-select">
+                <option value="cost">cost</option>
+                <option value="time">time</option>
+                <option value="tokens">tokens</option>
+                <option value="duration">duration</option>
+              </select>
+            </label>
+            <label class="filter-control">
+              <span>dir</span>
+              <select id="sort-dir-select">
+                <option value="desc">desc</option>
+                <option value="asc">asc</option>
+              </select>
+            </label>
+            <label class="filter-control">
+              <span>status</span>
+              <select id="status-select">
+                <option value="">all</option>
+                <option value="completed">completed</option>
+                <option value="failed">failed</option>
+                <option value="abandoned">abandoned</option>
+              </select>
+            </label>
+          </div>
+          <div class="sessions-table" id="sessions"></div>
+          <div class="sessions-more" id="sessions-more" hidden>
+            <button class="sessions-more__button" id="show-more-button">show more</button>
+          </div>
         </section>
       </main>
 
       <main id="session-view" hidden>
-        <header class="app__header session-header">
-          <div>
-            <div class="app__title">tapes deck</div>
-            <div class="app__subtitle session-breadcrumb" id="session-breadcrumb">tapes &gt; session</div>
+        <header class="header">
+          <div class="header__left">
+            <div class="header__breadcrumb">
+              <span class="header__breadcrumb-root">Tapes</span>
+              <span class="header__breadcrumb-sep">&gt;</span>
+              <span id="session-breadcrumb">session</span>
+            </div>
           </div>
-          <div class="app__header-right">
-            <button class="back-button" id="back-button" type="button">back</button>
+          <div class="header__right">
+            <button class="back-button" id="back-button" type="button">&#8592; back</button>
           </div>
         </header>
-        <section class="panel session-detail" id="detail"></section>
+        <section class="session-detail" id="detail"></section>
       </main>
     </div>
 
     <footer class="footer" id="footer">
       <div class="footer__keys">
-        <span>j/k move</span>
-        <span>enter open</span>
-        <span>h back</span>
-        <span>s sort</span>
-        <span>f status</span>
-        <span>p period</span>
+        <div class="footer__key"><span class="footer__key-label">J/K</span> move</div>
+        <div class="footer__key"><span class="footer__key-label">Enter</span> drill</div>
+        <div class="footer__key"><span class="footer__key-label">H</span> back</div>
+        <div class="footer__key"><span class="footer__key-label">S</span> sort</div>
+        <div class="footer__key"><span class="footer__key-label">F</span> filter</div>
+        <div class="footer__key"><span class="footer__key-label">P</span> period</div>
+        <div class="footer__key"><span class="footer__key-label">R</span> replay</div>
+        <div class="footer__key"><span class="footer__key-label">Q</span> quit</div>
       </div>
     </footer>
 
