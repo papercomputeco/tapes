@@ -12,6 +12,14 @@ import (
 // Tx is a transactional client that is created by calling Client.Tx().
 type Tx struct {
 	config
+	// AgentTrace is the client for interacting with the AgentTrace builders.
+	AgentTrace *AgentTraceClient
+	// AgentTraceConversation is the client for interacting with the AgentTraceConversation builders.
+	AgentTraceConversation *AgentTraceConversationClient
+	// AgentTraceFile is the client for interacting with the AgentTraceFile builders.
+	AgentTraceFile *AgentTraceFileClient
+	// AgentTraceRange is the client for interacting with the AgentTraceRange builders.
+	AgentTraceRange *AgentTraceRangeClient
 	// Node is the client for interacting with the Node builders.
 	Node *NodeClient
 
@@ -145,6 +153,10 @@ func (tx *Tx) Client() *Client {
 }
 
 func (tx *Tx) init() {
+	tx.AgentTrace = NewAgentTraceClient(tx.config)
+	tx.AgentTraceConversation = NewAgentTraceConversationClient(tx.config)
+	tx.AgentTraceFile = NewAgentTraceFileClient(tx.config)
+	tx.AgentTraceRange = NewAgentTraceRangeClient(tx.config)
 	tx.Node = NewNodeClient(tx.config)
 }
 
@@ -155,7 +167,7 @@ func (tx *Tx) init() {
 // of them in order to commit or rollback the transaction.
 //
 // If a closed transaction is embedded in one of the generated entities, and the entity
-// applies a query, for example: Node.QueryXXX(), the query will be executed
+// applies a query, for example: AgentTrace.QueryXXX(), the query will be executed
 // through the driver which created this transaction.
 //
 // Note that txDriver is not goroutine safe.

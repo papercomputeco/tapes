@@ -5,6 +5,8 @@ package ent
 import (
 	"time"
 
+	"github.com/papercomputeco/tapes/pkg/storage/ent/agenttrace"
+	"github.com/papercomputeco/tapes/pkg/storage/ent/agenttracefile"
 	"github.com/papercomputeco/tapes/pkg/storage/ent/node"
 	"github.com/papercomputeco/tapes/pkg/storage/ent/schema"
 )
@@ -13,6 +15,30 @@ import (
 // (default values, validators, hooks and policies) and stitches it
 // to their package variables.
 func init() {
+	agenttraceFields := schema.AgentTrace{}.Fields()
+	_ = agenttraceFields
+	// agenttraceDescVersion is the schema descriptor for version field.
+	agenttraceDescVersion := agenttraceFields[1].Descriptor()
+	// agenttrace.VersionValidator is a validator for the "version" field. It is called by the builders before save.
+	agenttrace.VersionValidator = agenttraceDescVersion.Validators[0].(func(string) error)
+	// agenttraceDescTimestamp is the schema descriptor for timestamp field.
+	agenttraceDescTimestamp := agenttraceFields[2].Descriptor()
+	// agenttrace.TimestampValidator is a validator for the "timestamp" field. It is called by the builders before save.
+	agenttrace.TimestampValidator = agenttraceDescTimestamp.Validators[0].(func(string) error)
+	// agenttraceDescCreatedAt is the schema descriptor for created_at field.
+	agenttraceDescCreatedAt := agenttraceFields[8].Descriptor()
+	// agenttrace.DefaultCreatedAt holds the default value on creation for the created_at field.
+	agenttrace.DefaultCreatedAt = agenttraceDescCreatedAt.Default.(func() time.Time)
+	// agenttraceDescID is the schema descriptor for id field.
+	agenttraceDescID := agenttraceFields[0].Descriptor()
+	// agenttrace.IDValidator is a validator for the "id" field. It is called by the builders before save.
+	agenttrace.IDValidator = agenttraceDescID.Validators[0].(func(string) error)
+	agenttracefileFields := schema.AgentTraceFile{}.Fields()
+	_ = agenttracefileFields
+	// agenttracefileDescPath is the schema descriptor for path field.
+	agenttracefileDescPath := agenttracefileFields[0].Descriptor()
+	// agenttracefile.PathValidator is a validator for the "path" field. It is called by the builders before save.
+	agenttracefile.PathValidator = agenttracefileDescPath.Validators[0].(func(string) error)
 	nodeFields := schema.Node{}.Fields()
 	_ = nodeFields
 	// nodeDescCreatedAt is the schema descriptor for created_at field.

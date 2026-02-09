@@ -10,7 +10,6 @@ import (
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
-
 	"github.com/papercomputeco/tapes/pkg/storage/ent/node"
 )
 

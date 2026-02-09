@@ -38,7 +38,7 @@ var _ = Describe("buildHistory", func() {
 		inMem := inmemory.NewDriver()
 		driver = inMem
 		dagLoader = inMem
-		server, err = NewServer(Config{ListenAddr: ":0"}, driver, dagLoader, logger)
+		server, err = NewServer(Config{ListenAddr: ":0"}, driver, dagLoader, inmemory.NewAgentTraceStore(), logger)
 		Expect(err).ToNot(HaveOccurred())
 		ctx = context.Background()
 	})

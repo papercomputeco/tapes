@@ -17,6 +17,9 @@ import (
 // Driver implements storage.Driver using SQLite via the ent driver
 type Driver struct {
 	*entdriver.EntDriver
+
+	// AgentTraceStore provides agent trace storage using the same ent client.
+	AgentTraceStore *entdriver.EntAgentTraceDriver
 }
 
 // NewDriver creates a new SQLite-backed storer.
@@ -47,6 +50,9 @@ func NewDriver(ctx context.Context, dbPath string) (*Driver, error) {
 
 	return &Driver{
 		EntDriver: &entdriver.EntDriver{
+			Client: client,
+		},
+		AgentTraceStore: &entdriver.EntAgentTraceDriver{
 			Client: client,
 		},
 	}, nil

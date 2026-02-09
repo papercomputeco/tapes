@@ -8,30 +8,30 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/papercomputeco/tapes/pkg/storage/ent/node"
+	"github.com/papercomputeco/tapes/pkg/storage/ent/agenttracefile"
 	"github.com/papercomputeco/tapes/pkg/storage/ent/predicate"
 )
 
-// NodeDelete is the builder for deleting a Node entity.
-type NodeDelete struct {
+// AgentTraceFileDelete is the builder for deleting a AgentTraceFile entity.
+type AgentTraceFileDelete struct {
 	config
 	hooks    []Hook
-	mutation *NodeMutation
+	mutation *AgentTraceFileMutation
 }
 
-// Where appends a list predicates to the NodeDelete builder.
-func (_d *NodeDelete) Where(ps ...predicate.Node) *NodeDelete {
+// Where appends a list predicates to the AgentTraceFileDelete builder.
+func (_d *AgentTraceFileDelete) Where(ps ...predicate.AgentTraceFile) *AgentTraceFileDelete {
 	_d.mutation.Where(ps...)
 	return _d
 }
 
 // Exec executes the deletion query and returns how many vertices were deleted.
-func (_d *NodeDelete) Exec(ctx context.Context) (int, error) {
+func (_d *AgentTraceFileDelete) Exec(ctx context.Context) (int, error) {
 	return withHooks(ctx, _d.sqlExec, _d.mutation, _d.hooks)
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (_d *NodeDelete) ExecX(ctx context.Context) int {
+func (_d *AgentTraceFileDelete) ExecX(ctx context.Context) int {
 	n, err := _d.Exec(ctx)
 	if err != nil {
 		panic(err)
@@ -39,8 +39,8 @@ func (_d *NodeDelete) ExecX(ctx context.Context) int {
 	return n
 }
 
-func (_d *NodeDelete) sqlExec(ctx context.Context) (int, error) {
-	_spec := sqlgraph.NewDeleteSpec(node.Table, sqlgraph.NewFieldSpec(node.FieldID, field.TypeString))
+func (_d *AgentTraceFileDelete) sqlExec(ctx context.Context) (int, error) {
+	_spec := sqlgraph.NewDeleteSpec(agenttracefile.Table, sqlgraph.NewFieldSpec(agenttracefile.FieldID, field.TypeInt))
 	if ps := _d.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
 			for i := range ps {
@@ -56,32 +56,32 @@ func (_d *NodeDelete) sqlExec(ctx context.Context) (int, error) {
 	return affected, err
 }
 
-// NodeDeleteOne is the builder for deleting a single Node entity.
-type NodeDeleteOne struct {
-	_d *NodeDelete
+// AgentTraceFileDeleteOne is the builder for deleting a single AgentTraceFile entity.
+type AgentTraceFileDeleteOne struct {
+	_d *AgentTraceFileDelete
 }
 
-// Where appends a list predicates to the NodeDelete builder.
-func (_d *NodeDeleteOne) Where(ps ...predicate.Node) *NodeDeleteOne {
+// Where appends a list predicates to the AgentTraceFileDelete builder.
+func (_d *AgentTraceFileDeleteOne) Where(ps ...predicate.AgentTraceFile) *AgentTraceFileDeleteOne {
 	_d._d.mutation.Where(ps...)
 	return _d
 }
 
 // Exec executes the deletion query.
-func (_d *NodeDeleteOne) Exec(ctx context.Context) error {
+func (_d *AgentTraceFileDeleteOne) Exec(ctx context.Context) error {
 	n, err := _d._d.Exec(ctx)
 	switch {
 	case err != nil:
 		return err
 	case n == 0:
-		return &NotFoundError{node.Label}
+		return &NotFoundError{agenttracefile.Label}
 	default:
 		return nil
 	}
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (_d *NodeDeleteOne) ExecX(ctx context.Context) {
+func (_d *AgentTraceFileDeleteOne) ExecX(ctx context.Context) {
 	if err := _d.Exec(ctx); err != nil {
 		panic(err)
 	}

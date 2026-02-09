@@ -12,58 +12,61 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/papercomputeco/tapes/pkg/storage/ent/node"
+	"github.com/papercomputeco/tapes/pkg/storage/ent/agenttrace"
+	"github.com/papercomputeco/tapes/pkg/storage/ent/agenttraceconversation"
+	"github.com/papercomputeco/tapes/pkg/storage/ent/agenttracefile"
 	"github.com/papercomputeco/tapes/pkg/storage/ent/predicate"
 )
 
-// NodeQuery is the builder for querying Node entities.
-type NodeQuery struct {
+// AgentTraceFileQuery is the builder for querying AgentTraceFile entities.
+type AgentTraceFileQuery struct {
 	config
-	ctx          *QueryContext
-	order        []node.OrderOption
-	inters       []Interceptor
-	predicates   []predicate.Node
-	withParent   *NodeQuery
-	withChildren *NodeQuery
+	ctx               *QueryContext
+	order             []agenttracefile.OrderOption
+	inters            []Interceptor
+	predicates        []predicate.AgentTraceFile
+	withTrace         *AgentTraceQuery
+	withConversations *AgentTraceConversationQuery
+	withFKs           bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
 }
 
-// Where adds a new predicate for the NodeQuery builder.
-func (_q *NodeQuery) Where(ps ...predicate.Node) *NodeQuery {
+// Where adds a new predicate for the AgentTraceFileQuery builder.
+func (_q *AgentTraceFileQuery) Where(ps ...predicate.AgentTraceFile) *AgentTraceFileQuery {
 	_q.predicates = append(_q.predicates, ps...)
 	return _q
 }
 
 // Limit the number of records to be returned by this query.
-func (_q *NodeQuery) Limit(limit int) *NodeQuery {
+func (_q *AgentTraceFileQuery) Limit(limit int) *AgentTraceFileQuery {
 	_q.ctx.Limit = &limit
 	return _q
 }
 
 // Offset to start from.
-func (_q *NodeQuery) Offset(offset int) *NodeQuery {
+func (_q *AgentTraceFileQuery) Offset(offset int) *AgentTraceFileQuery {
 	_q.ctx.Offset = &offset
 	return _q
 }
 
 // Unique configures the query builder to filter duplicate records on query.
 // By default, unique is set to true, and can be disabled using this method.
-func (_q *NodeQuery) Unique(unique bool) *NodeQuery {
+func (_q *AgentTraceFileQuery) Unique(unique bool) *AgentTraceFileQuery {
 	_q.ctx.Unique = &unique
 	return _q
 }
 
 // Order specifies how the records should be ordered.
-func (_q *NodeQuery) Order(o ...node.OrderOption) *NodeQuery {
+func (_q *AgentTraceFileQuery) Order(o ...agenttracefile.OrderOption) *AgentTraceFileQuery {
 	_q.order = append(_q.order, o...)
 	return _q
 }
 
-// QueryParent chains the current query on the "parent" edge.
-func (_q *NodeQuery) QueryParent() *NodeQuery {
-	query := (&NodeClient{config: _q.config}).Query()
+// QueryTrace chains the current query on the "trace" edge.
+func (_q *AgentTraceFileQuery) QueryTrace() *AgentTraceQuery {
+	query := (&AgentTraceClient{config: _q.config}).Query()
 	query.path = func(ctx context.Context) (fromU *sql.Selector, err error) {
 		if err := _q.prepareQuery(ctx); err != nil {
 			return nil, err
@@ -73,9 +76,9 @@ func (_q *NodeQuery) QueryParent() *NodeQuery {
 			return nil, err
 		}
 		step := sqlgraph.NewStep(
-			sqlgraph.From(node.Table, node.FieldID, selector),
-			sqlgraph.To(node.Table, node.FieldID),
-			sqlgraph.Edge(sqlgraph.M2O, false, node.ParentTable, node.ParentColumn),
+			sqlgraph.From(agenttracefile.Table, agenttracefile.FieldID, selector),
+			sqlgraph.To(agenttrace.Table, agenttrace.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, agenttracefile.TraceTable, agenttracefile.TraceColumn),
 		)
 		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
 		return fromU, nil
@@ -83,9 +86,9 @@ func (_q *NodeQuery) QueryParent() *NodeQuery {
 	return query
 }
 
-// QueryChildren chains the current query on the "children" edge.
-func (_q *NodeQuery) QueryChildren() *NodeQuery {
-	query := (&NodeClient{config: _q.config}).Query()
+// QueryConversations chains the current query on the "conversations" edge.
+func (_q *AgentTraceFileQuery) QueryConversations() *AgentTraceConversationQuery {
+	query := (&AgentTraceConversationClient{config: _q.config}).Query()
 	query.path = func(ctx context.Context) (fromU *sql.Selector, err error) {
 		if err := _q.prepareQuery(ctx); err != nil {
 			return nil, err
@@ -95,9 +98,9 @@ func (_q *NodeQuery) QueryChildren() *NodeQuery {
 			return nil, err
 		}
 		step := sqlgraph.NewStep(
-			sqlgraph.From(node.Table, node.FieldID, selector),
-			sqlgraph.To(node.Table, node.FieldID),
-			sqlgraph.Edge(sqlgraph.O2M, true, node.ChildrenTable, node.ChildrenColumn),
+			sqlgraph.From(agenttracefile.Table, agenttracefile.FieldID, selector),
+			sqlgraph.To(agenttraceconversation.Table, agenttraceconversation.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, agenttracefile.ConversationsTable, agenttracefile.ConversationsColumn),
 		)
 		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
 		return fromU, nil
@@ -105,21 +108,21 @@ func (_q *NodeQuery) QueryChildren() *NodeQuery {
 	return query
 }
 
-// First returns the first Node entity from the query.
-// Returns a *NotFoundError when no Node was found.
-func (_q *NodeQuery) First(ctx context.Context) (*Node, error) {
+// First returns the first AgentTraceFile entity from the query.
+// Returns a *NotFoundError when no AgentTraceFile was found.
+func (_q *AgentTraceFileQuery) First(ctx context.Context) (*AgentTraceFile, error) {
 	nodes, err := _q.Limit(1).All(setContextOp(ctx, _q.ctx, ent.OpQueryFirst))
 	if err != nil {
 		return nil, err
 	}
 	if len(nodes) == 0 {
-		return nil, &NotFoundError{node.Label}
+		return nil, &NotFoundError{agenttracefile.Label}
 	}
 	return nodes[0], nil
 }
 
 // FirstX is like First, but panics if an error occurs.
-func (_q *NodeQuery) FirstX(ctx context.Context) *Node {
+func (_q *AgentTraceFileQuery) FirstX(ctx context.Context) *AgentTraceFile {
 	node, err := _q.First(ctx)
 	if err != nil && !IsNotFound(err) {
 		panic(err)
@@ -127,22 +130,22 @@ func (_q *NodeQuery) FirstX(ctx context.Context) *Node {
 	return node
 }
 
-// FirstID returns the first Node ID from the query.
-// Returns a *NotFoundError when no Node ID was found.
-func (_q *NodeQuery) FirstID(ctx context.Context) (id string, err error) {
-	var ids []string
+// FirstID returns the first AgentTraceFile ID from the query.
+// Returns a *NotFoundError when no AgentTraceFile ID was found.
+func (_q *AgentTraceFileQuery) FirstID(ctx context.Context) (id int, err error) {
+	var ids []int
 	if ids, err = _q.Limit(1).IDs(setContextOp(ctx, _q.ctx, ent.OpQueryFirstID)); err != nil {
 		return
 	}
 	if len(ids) == 0 {
-		err = &NotFoundError{node.Label}
+		err = &NotFoundError{agenttracefile.Label}
 		return
 	}
 	return ids[0], nil
 }
 
 // FirstIDX is like FirstID, but panics if an error occurs.
-func (_q *NodeQuery) FirstIDX(ctx context.Context) string {
+func (_q *AgentTraceFileQuery) FirstIDX(ctx context.Context) int {
 	id, err := _q.FirstID(ctx)
 	if err != nil && !IsNotFound(err) {
 		panic(err)
@@ -150,10 +153,10 @@ func (_q *NodeQuery) FirstIDX(ctx context.Context) string {
 	return id
 }
 
-// Only returns a single Node entity found by the query, ensuring it only returns one.
-// Returns a *NotSingularError when more than one Node entity is found.
-// Returns a *NotFoundError when no Node entities are found.
-func (_q *NodeQuery) Only(ctx context.Context) (*Node, error) {
+// Only returns a single AgentTraceFile entity found by the query, ensuring it only returns one.
+// Returns a *NotSingularError when more than one AgentTraceFile entity is found.
+// Returns a *NotFoundError when no AgentTraceFile entities are found.
+func (_q *AgentTraceFileQuery) Only(ctx context.Context) (*AgentTraceFile, error) {
 	nodes, err := _q.Limit(2).All(setContextOp(ctx, _q.ctx, ent.OpQueryOnly))
 	if err != nil {
 		return nil, err
@@ -162,14 +165,14 @@ func (_q *NodeQuery) Only(ctx context.Context) (*Node, error) {
 	case 1:
 		return nodes[0], nil
 	case 0:
-		return nil, &NotFoundError{node.Label}
+		return nil, &NotFoundError{agenttracefile.Label}
 	default:
-		return nil, &NotSingularError{node.Label}
+		return nil, &NotSingularError{agenttracefile.Label}
 	}
 }
 
 // OnlyX is like Only, but panics if an error occurs.
-func (_q *NodeQuery) OnlyX(ctx context.Context) *Node {
+func (_q *AgentTraceFileQuery) OnlyX(ctx context.Context) *AgentTraceFile {
 	node, err := _q.Only(ctx)
 	if err != nil {
 		panic(err)
@@ -177,11 +180,11 @@ func (_q *NodeQuery) OnlyX(ctx context.Context) *Node {
 	return node
 }
 
-// OnlyID is like Only, but returns the only Node ID in the query.
-// Returns a *NotSingularError when more than one Node ID is found.
+// OnlyID is like Only, but returns the only AgentTraceFile ID in the query.
+// Returns a *NotSingularError when more than one AgentTraceFile ID is found.
 // Returns a *NotFoundError when no entities are found.
-func (_q *NodeQuery) OnlyID(ctx context.Context) (id string, err error) {
-	var ids []string
+func (_q *AgentTraceFileQuery) OnlyID(ctx context.Context) (id int, err error) {
+	var ids []int
 	if ids, err = _q.Limit(2).IDs(setContextOp(ctx, _q.ctx, ent.OpQueryOnlyID)); err != nil {
 		return
 	}
@@ -189,15 +192,15 @@ func (_q *NodeQuery) OnlyID(ctx context.Context) (id string, err error) {
 	case 1:
 		id = ids[0]
 	case 0:
-		err = &NotFoundError{node.Label}
+		err = &NotFoundError{agenttracefile.Label}
 	default:
-		err = &NotSingularError{node.Label}
+		err = &NotSingularError{agenttracefile.Label}
 	}
 	return
 }
 
 // OnlyIDX is like OnlyID, but panics if an error occurs.
-func (_q *NodeQuery) OnlyIDX(ctx context.Context) string {
+func (_q *AgentTraceFileQuery) OnlyIDX(ctx context.Context) int {
 	id, err := _q.OnlyID(ctx)
 	if err != nil {
 		panic(err)
@@ -205,18 +208,18 @@ func (_q *NodeQuery) OnlyIDX(ctx context.Context) string {
 	return id
 }
 
-// All executes the query and returns a list of Nodes.
-func (_q *NodeQuery) All(ctx context.Context) ([]*Node, error) {
+// All executes the query and returns a list of AgentTraceFiles.
+func (_q *AgentTraceFileQuery) All(ctx context.Context) ([]*AgentTraceFile, error) {
 	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryAll)
 	if err := _q.prepareQuery(ctx); err != nil {
 		return nil, err
 	}
-	qr := querierAll[[]*Node, *NodeQuery]()
-	return withInterceptors[[]*Node](ctx, _q, qr, _q.inters)
+	qr := querierAll[[]*AgentTraceFile, *AgentTraceFileQuery]()
+	return withInterceptors[[]*AgentTraceFile](ctx, _q, qr, _q.inters)
 }
 
 // AllX is like All, but panics if an error occurs.
-func (_q *NodeQuery) AllX(ctx context.Context) []*Node {
+func (_q *AgentTraceFileQuery) AllX(ctx context.Context) []*AgentTraceFile {
 	nodes, err := _q.All(ctx)
 	if err != nil {
 		panic(err)
@@ -224,20 +227,20 @@ func (_q *NodeQuery) AllX(ctx context.Context) []*Node {
 	return nodes
 }
 
-// IDs executes the query and returns a list of Node IDs.
-func (_q *NodeQuery) IDs(ctx context.Context) (ids []string, err error) {
+// IDs executes the query and returns a list of AgentTraceFile IDs.
+func (_q *AgentTraceFileQuery) IDs(ctx context.Context) (ids []int, err error) {
 	if _q.ctx.Unique == nil && _q.path != nil {
 		_q.Unique(true)
 	}
 	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryIDs)
-	if err = _q.Select(node.FieldID).Scan(ctx, &ids); err != nil {
+	if err = _q.Select(agenttracefile.FieldID).Scan(ctx, &ids); err != nil {
 		return nil, err
 	}
 	return ids, nil
 }
 
 // IDsX is like IDs, but panics if an error occurs.
-func (_q *NodeQuery) IDsX(ctx context.Context) []string {
+func (_q *AgentTraceFileQuery) IDsX(ctx context.Context) []int {
 	ids, err := _q.IDs(ctx)
 	if err != nil {
 		panic(err)
@@ -246,16 +249,16 @@ func (_q *NodeQuery) IDsX(ctx context.Context) []string {
 }
 
 // Count returns the count of the given query.
-func (_q *NodeQuery) Count(ctx context.Context) (int, error) {
+func (_q *AgentTraceFileQuery) Count(ctx context.Context) (int, error) {
 	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryCount)
 	if err := _q.prepareQuery(ctx); err != nil {
 		return 0, err
 	}
-	return withInterceptors[int](ctx, _q, querierCount[*NodeQuery](), _q.inters)
+	return withInterceptors[int](ctx, _q, querierCount[*AgentTraceFileQuery](), _q.inters)
 }
 
 // CountX is like Count, but panics if an error occurs.
-func (_q *NodeQuery) CountX(ctx context.Context) int {
+func (_q *AgentTraceFileQuery) CountX(ctx context.Context) int {
 	count, err := _q.Count(ctx)
 	if err != nil {
 		panic(err)
@@ -264,7 +267,7 @@ func (_q *NodeQuery) CountX(ctx context.Context) int {
 }
 
 // Exist returns true if the query has elements in the graph.
-func (_q *NodeQuery) Exist(ctx context.Context) (bool, error) {
+func (_q *AgentTraceFileQuery) Exist(ctx context.Context) (bool, error) {
 	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryExist)
 	switch _, err := _q.FirstID(ctx); {
 	case IsNotFound(err):
@@ -277,7 +280,7 @@ func (_q *NodeQuery) Exist(ctx context.Context) (bool, error) {
 }
 
 // ExistX is like Exist, but panics if an error occurs.
-func (_q *NodeQuery) ExistX(ctx context.Context) bool {
+func (_q *AgentTraceFileQuery) ExistX(ctx context.Context) bool {
 	exist, err := _q.Exist(ctx)
 	if err != nil {
 		panic(err)
@@ -285,45 +288,45 @@ func (_q *NodeQuery) ExistX(ctx context.Context) bool {
 	return exist
 }
 
-// Clone returns a duplicate of the NodeQuery builder, including all associated steps. It can be
+// Clone returns a duplicate of the AgentTraceFileQuery builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
-func (_q *NodeQuery) Clone() *NodeQuery {
+func (_q *AgentTraceFileQuery) Clone() *AgentTraceFileQuery {
 	if _q == nil {
 		return nil
 	}
-	return &NodeQuery{
-		config:       _q.config,
-		ctx:          _q.ctx.Clone(),
-		order:        append([]node.OrderOption{}, _q.order...),
-		inters:       append([]Interceptor{}, _q.inters...),
-		predicates:   append([]predicate.Node{}, _q.predicates...),
-		withParent:   _q.withParent.Clone(),
-		withChildren: _q.withChildren.Clone(),
+	return &AgentTraceFileQuery{
+		config:            _q.config,
+		ctx:               _q.ctx.Clone(),
+		order:             append([]agenttracefile.OrderOption{}, _q.order...),
+		inters:            append([]Interceptor{}, _q.inters...),
+		predicates:        append([]predicate.AgentTraceFile{}, _q.predicates...),
+		withTrace:         _q.withTrace.Clone(),
+		withConversations: _q.withConversations.Clone(),
 		// clone intermediate query.
 		sql:  _q.sql.Clone(),
 		path: _q.path,
 	}
 }
 
-// WithParent tells the query-builder to eager-load the nodes that are connected to
-// the "parent" edge. The optional arguments are used to configure the query builder of the edge.
-func (_q *NodeQuery) WithParent(opts ...func(*NodeQuery)) *NodeQuery {
-	query := (&NodeClient{config: _q.config}).Query()
+// WithTrace tells the query-builder to eager-load the nodes that are connected to
+// the "trace" edge. The optional arguments are used to configure the query builder of the edge.
+func (_q *AgentTraceFileQuery) WithTrace(opts ...func(*AgentTraceQuery)) *AgentTraceFileQuery {
+	query := (&AgentTraceClient{config: _q.config}).Query()
 	for _, opt := range opts {
 		opt(query)
 	}
-	_q.withParent = query
+	_q.withTrace = query
 	return _q
 }
 
-// WithChildren tells the query-builder to eager-load the nodes that are connected to
-// the "children" edge. The optional arguments are used to configure the query builder of the edge.
-func (_q *NodeQuery) WithChildren(opts ...func(*NodeQuery)) *NodeQuery {
-	query := (&NodeClient{config: _q.config}).Query()
+// WithConversations tells the query-builder to eager-load the nodes that are connected to
+// the "conversations" edge. The optional arguments are used to configure the query builder of the edge.
+func (_q *AgentTraceFileQuery) WithConversations(opts ...func(*AgentTraceConversationQuery)) *AgentTraceFileQuery {
+	query := (&AgentTraceConversationClient{config: _q.config}).Query()
 	for _, opt := range opts {
 		opt(query)
 	}
-	_q.withChildren = query
+	_q.withConversations = query
 	return _q
 }
 
@@ -333,19 +336,19 @@ func (_q *NodeQuery) WithChildren(opts ...func(*NodeQuery)) *NodeQuery {
 // Example:
 //
 //	var v []struct {
-//		ParentHash string `json:"parent_hash,omitempty"`
+//		Path string `json:"path,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
-//	client.Node.Query().
-//		GroupBy(node.FieldParentHash).
+//	client.AgentTraceFile.Query().
+//		GroupBy(agenttracefile.FieldPath).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
-func (_q *NodeQuery) GroupBy(field string, fields ...string) *NodeGroupBy {
+func (_q *AgentTraceFileQuery) GroupBy(field string, fields ...string) *AgentTraceFileGroupBy {
 	_q.ctx.Fields = append([]string{field}, fields...)
-	grbuild := &NodeGroupBy{build: _q}
+	grbuild := &AgentTraceFileGroupBy{build: _q}
 	grbuild.flds = &_q.ctx.Fields
-	grbuild.label = node.Label
+	grbuild.label = agenttracefile.Label
 	grbuild.scan = grbuild.Scan
 	return grbuild
 }
@@ -356,26 +359,26 @@ func (_q *NodeQuery) GroupBy(field string, fields ...string) *NodeGroupBy {
 // Example:
 //
 //	var v []struct {
-//		ParentHash string `json:"parent_hash,omitempty"`
+//		Path string `json:"path,omitempty"`
 //	}
 //
-//	client.Node.Query().
-//		Select(node.FieldParentHash).
+//	client.AgentTraceFile.Query().
+//		Select(agenttracefile.FieldPath).
 //		Scan(ctx, &v)
-func (_q *NodeQuery) Select(fields ...string) *NodeSelect {
+func (_q *AgentTraceFileQuery) Select(fields ...string) *AgentTraceFileSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)
-	sbuild := &NodeSelect{NodeQuery: _q}
-	sbuild.label = node.Label
+	sbuild := &AgentTraceFileSelect{AgentTraceFileQuery: _q}
+	sbuild.label = agenttracefile.Label
 	sbuild.flds, sbuild.scan = &_q.ctx.Fields, sbuild.Scan
 	return sbuild
 }
 
-// Aggregate returns a NodeSelect configured with the given aggregations.
-func (_q *NodeQuery) Aggregate(fns ...AggregateFunc) *NodeSelect {
+// Aggregate returns a AgentTraceFileSelect configured with the given aggregations.
+func (_q *AgentTraceFileQuery) Aggregate(fns ...AggregateFunc) *AgentTraceFileSelect {
 	return _q.Select().Aggregate(fns...)
 }
 
-func (_q *NodeQuery) prepareQuery(ctx context.Context) error {
+func (_q *AgentTraceFileQuery) prepareQuery(ctx context.Context) error {
 	for _, inter := range _q.inters {
 		if inter == nil {
 			return fmt.Errorf("ent: uninitialized interceptor (forgotten import ent/runtime?)")
@@ -387,7 +390,7 @@ func (_q *NodeQuery) prepareQuery(ctx context.Context) error {
 		}
 	}
 	for _, f := range _q.ctx.Fields {
-		if !node.ValidColumn(f) {
+		if !agenttracefile.ValidColumn(f) {
 			return &ValidationError{Name: f, err: fmt.Errorf("ent: invalid field %q for query", f)}
 		}
 	}
@@ -401,20 +404,27 @@ func (_q *NodeQuery) prepareQuery(ctx context.Context) error {
 	return nil
 }
 
-func (_q *NodeQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*Node, error) {
+func (_q *AgentTraceFileQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*AgentTraceFile, error) {
 	var (
-		nodes       = []*Node{}
+		nodes       = []*AgentTraceFile{}
+		withFKs     = _q.withFKs
 		_spec       = _q.querySpec()
 		loadedTypes = [2]bool{
-			_q.withParent != nil,
-			_q.withChildren != nil,
+			_q.withTrace != nil,
+			_q.withConversations != nil,
 		}
 	)
+	if _q.withTrace != nil {
+		withFKs = true
+	}
+	if withFKs {
+		_spec.Node.Columns = append(_spec.Node.Columns, agenttracefile.ForeignKeys...)
+	}
 	_spec.ScanValues = func(columns []string) ([]any, error) {
-		return (*Node).scanValues(nil, columns)
+		return (*AgentTraceFile).scanValues(nil, columns)
 	}
 	_spec.Assign = func(columns []string, values []any) error {
-		node := &Node{config: _q.config}
+		node := &AgentTraceFile{config: _q.config}
 		nodes = append(nodes, node)
 		node.Edges.loadedTypes = loadedTypes
 		return node.assignValues(columns, values)
@@ -428,30 +438,32 @@ func (_q *NodeQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*Node, e
 	if len(nodes) == 0 {
 		return nodes, nil
 	}
-	if query := _q.withParent; query != nil {
-		if err := _q.loadParent(ctx, query, nodes, nil,
-			func(n *Node, e *Node) { n.Edges.Parent = e }); err != nil {
+	if query := _q.withTrace; query != nil {
+		if err := _q.loadTrace(ctx, query, nodes, nil,
+			func(n *AgentTraceFile, e *AgentTrace) { n.Edges.Trace = e }); err != nil {
 			return nil, err
 		}
 	}
-	if query := _q.withChildren; query != nil {
-		if err := _q.loadChildren(ctx, query, nodes,
-			func(n *Node) { n.Edges.Children = []*Node{} },
-			func(n *Node, e *Node) { n.Edges.Children = append(n.Edges.Children, e) }); err != nil {
+	if query := _q.withConversations; query != nil {
+		if err := _q.loadConversations(ctx, query, nodes,
+			func(n *AgentTraceFile) { n.Edges.Conversations = []*AgentTraceConversation{} },
+			func(n *AgentTraceFile, e *AgentTraceConversation) {
+				n.Edges.Conversations = append(n.Edges.Conversations, e)
+			}); err != nil {
 			return nil, err
 		}
 	}
 	return nodes, nil
 }
 
-func (_q *NodeQuery) loadParent(ctx context.Context, query *NodeQuery, nodes []*Node, init func(*Node), assign func(*Node, *Node)) error {
+func (_q *AgentTraceFileQuery) loadTrace(ctx context.Context, query *AgentTraceQuery, nodes []*AgentTraceFile, init func(*AgentTraceFile), assign func(*AgentTraceFile, *AgentTrace)) error {
 	ids := make([]string, 0, len(nodes))
-	nodeids := make(map[string][]*Node)
+	nodeids := make(map[string][]*AgentTraceFile)
 	for i := range nodes {
-		if nodes[i].ParentHash == nil {
+		if nodes[i].agent_trace_files == nil {
 			continue
 		}
-		fk := *nodes[i].ParentHash
+		fk := *nodes[i].agent_trace_files
 		if _, ok := nodeids[fk]; !ok {
 			ids = append(ids, fk)
 		}
@@ -460,7 +472,7 @@ func (_q *NodeQuery) loadParent(ctx context.Context, query *NodeQuery, nodes []*
 	if len(ids) == 0 {
 		return nil
 	}
-	query.Where(node.IDIn(ids...))
+	query.Where(agenttrace.IDIn(ids...))
 	neighbors, err := query.All(ctx)
 	if err != nil {
 		return err
@@ -468,7 +480,7 @@ func (_q *NodeQuery) loadParent(ctx context.Context, query *NodeQuery, nodes []*
 	for _, n := range neighbors {
 		nodes, ok := nodeids[n.ID]
 		if !ok {
-			return fmt.Errorf(`unexpected foreign-key "parent_hash" returned %v`, n.ID)
+			return fmt.Errorf(`unexpected foreign-key "agent_trace_files" returned %v`, n.ID)
 		}
 		for i := range nodes {
 			assign(nodes[i], n)
@@ -476,9 +488,9 @@ func (_q *NodeQuery) loadParent(ctx context.Context, query *NodeQuery, nodes []*
 	}
 	return nil
 }
-func (_q *NodeQuery) loadChildren(ctx context.Context, query *NodeQuery, nodes []*Node, init func(*Node), assign func(*Node, *Node)) error {
+func (_q *AgentTraceFileQuery) loadConversations(ctx context.Context, query *AgentTraceConversationQuery, nodes []*AgentTraceFile, init func(*AgentTraceFile), assign func(*AgentTraceFile, *AgentTraceConversation)) error {
 	fks := make([]driver.Value, 0, len(nodes))
-	nodeids := make(map[string]*Node)
+	nodeids := make(map[int]*AgentTraceFile)
 	for i := range nodes {
 		fks = append(fks, nodes[i].ID)
 		nodeids[nodes[i].ID] = nodes[i]
@@ -486,31 +498,29 @@ func (_q *NodeQuery) loadChildren(ctx context.Context, query *NodeQuery, nodes [
 			init(nodes[i])
 		}
 	}
-	if len(query.ctx.Fields) > 0 {
-		query.ctx.AppendFieldOnce(node.FieldParentHash)
-	}
-	query.Where(predicate.Node(func(s *sql.Selector) {
-		s.Where(sql.InValues(s.C(node.ChildrenColumn), fks...))
+	query.withFKs = true
+	query.Where(predicate.AgentTraceConversation(func(s *sql.Selector) {
+		s.Where(sql.InValues(s.C(agenttracefile.ConversationsColumn), fks...))
 	}))
 	neighbors, err := query.All(ctx)
 	if err != nil {
 		return err
 	}
 	for _, n := range neighbors {
-		fk := n.ParentHash
+		fk := n.agent_trace_file_conversations
 		if fk == nil {
-			return fmt.Errorf(`foreign-key "parent_hash" is nil for node %v`, n.ID)
+			return fmt.Errorf(`foreign-key "agent_trace_file_conversations" is nil for node %v`, n.ID)
 		}
 		node, ok := nodeids[*fk]
 		if !ok {
-			return fmt.Errorf(`unexpected referenced foreign-key "parent_hash" returned %v for node %v`, *fk, n.ID)
+			return fmt.Errorf(`unexpected referenced foreign-key "agent_trace_file_conversations" returned %v for node %v`, *fk, n.ID)
 		}
 		assign(node, n)
 	}
 	return nil
 }
 
-func (_q *NodeQuery) sqlCount(ctx context.Context) (int, error) {
+func (_q *AgentTraceFileQuery) sqlCount(ctx context.Context) (int, error) {
 	_spec := _q.querySpec()
 	_spec.Node.Columns = _q.ctx.Fields
 	if len(_q.ctx.Fields) > 0 {
@@ -519,8 +529,8 @@ func (_q *NodeQuery) sqlCount(ctx context.Context) (int, error) {
 	return sqlgraph.CountNodes(ctx, _q.driver, _spec)
 }
 
-func (_q *NodeQuery) querySpec() *sqlgraph.QuerySpec {
-	_spec := sqlgraph.NewQuerySpec(node.Table, node.Columns, sqlgraph.NewFieldSpec(node.FieldID, field.TypeString))
+func (_q *AgentTraceFileQuery) querySpec() *sqlgraph.QuerySpec {
+	_spec := sqlgraph.NewQuerySpec(agenttracefile.Table, agenttracefile.Columns, sqlgraph.NewFieldSpec(agenttracefile.FieldID, field.TypeInt))
 	_spec.From = _q.sql
 	if unique := _q.ctx.Unique; unique != nil {
 		_spec.Unique = *unique
@@ -529,14 +539,11 @@ func (_q *NodeQuery) querySpec() *sqlgraph.QuerySpec {
 	}
 	if fields := _q.ctx.Fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))
-		_spec.Node.Columns = append(_spec.Node.Columns, node.FieldID)
+		_spec.Node.Columns = append(_spec.Node.Columns, agenttracefile.FieldID)
 		for i := range fields {
-			if fields[i] != node.FieldID {
+			if fields[i] != agenttracefile.FieldID {
 				_spec.Node.Columns = append(_spec.Node.Columns, fields[i])
 			}
-		}
-		if _q.withParent != nil {
-			_spec.Node.AddColumnOnce(node.FieldParentHash)
 		}
 	}
 	if ps := _q.predicates; len(ps) > 0 {
@@ -562,12 +569,12 @@ func (_q *NodeQuery) querySpec() *sqlgraph.QuerySpec {
 	return _spec
 }
 
-func (_q *NodeQuery) sqlQuery(ctx context.Context) *sql.Selector {
+func (_q *AgentTraceFileQuery) sqlQuery(ctx context.Context) *sql.Selector {
 	builder := sql.Dialect(_q.driver.Dialect())
-	t1 := builder.Table(node.Table)
+	t1 := builder.Table(agenttracefile.Table)
 	columns := _q.ctx.Fields
 	if len(columns) == 0 {
-		columns = node.Columns
+		columns = agenttracefile.Columns
 	}
 	selector := builder.Select(t1.Columns(columns...)...).From(t1)
 	if _q.sql != nil {
@@ -594,28 +601,28 @@ func (_q *NodeQuery) sqlQuery(ctx context.Context) *sql.Selector {
 	return selector
 }
 
-// NodeGroupBy is the group-by builder for Node entities.
-type NodeGroupBy struct {
+// AgentTraceFileGroupBy is the group-by builder for AgentTraceFile entities.
+type AgentTraceFileGroupBy struct {
 	selector
-	build *NodeQuery
+	build *AgentTraceFileQuery
 }
 
 // Aggregate adds the given aggregation functions to the group-by query.
-func (_g *NodeGroupBy) Aggregate(fns ...AggregateFunc) *NodeGroupBy {
+func (_g *AgentTraceFileGroupBy) Aggregate(fns ...AggregateFunc) *AgentTraceFileGroupBy {
 	_g.fns = append(_g.fns, fns...)
 	return _g
 }
 
 // Scan applies the selector query and scans the result into the given value.
-func (_g *NodeGroupBy) Scan(ctx context.Context, v any) error {
+func (_g *AgentTraceFileGroupBy) Scan(ctx context.Context, v any) error {
 	ctx = setContextOp(ctx, _g.build.ctx, ent.OpQueryGroupBy)
 	if err := _g.build.prepareQuery(ctx); err != nil {
 		return err
 	}
-	return scanWithInterceptors[*NodeQuery, *NodeGroupBy](ctx, _g.build, _g, _g.build.inters, v)
+	return scanWithInterceptors[*AgentTraceFileQuery, *AgentTraceFileGroupBy](ctx, _g.build, _g, _g.build.inters, v)
 }
 
-func (_g *NodeGroupBy) sqlScan(ctx context.Context, root *NodeQuery, v any) error {
+func (_g *AgentTraceFileGroupBy) sqlScan(ctx context.Context, root *AgentTraceFileQuery, v any) error {
 	selector := root.sqlQuery(ctx).Select()
 	aggregation := make([]string, 0, len(_g.fns))
 	for _, fn := range _g.fns {
@@ -642,28 +649,28 @@ func (_g *NodeGroupBy) sqlScan(ctx context.Context, root *NodeQuery, v any) erro
 	return sql.ScanSlice(rows, v)
 }
 
-// NodeSelect is the builder for selecting fields of Node entities.
-type NodeSelect struct {
-	*NodeQuery
+// AgentTraceFileSelect is the builder for selecting fields of AgentTraceFile entities.
+type AgentTraceFileSelect struct {
+	*AgentTraceFileQuery
 	selector
 }
 
 // Aggregate adds the given aggregation functions to the selector query.
-func (_s *NodeSelect) Aggregate(fns ...AggregateFunc) *NodeSelect {
+func (_s *AgentTraceFileSelect) Aggregate(fns ...AggregateFunc) *AgentTraceFileSelect {
 	_s.fns = append(_s.fns, fns...)
 	return _s
 }
 
 // Scan applies the selector query and scans the result into the given value.
-func (_s *NodeSelect) Scan(ctx context.Context, v any) error {
+func (_s *AgentTraceFileSelect) Scan(ctx context.Context, v any) error {
 	ctx = setContextOp(ctx, _s.ctx, ent.OpQuerySelect)
 	if err := _s.prepareQuery(ctx); err != nil {
 		return err
 	}
-	return scanWithInterceptors[*NodeQuery, *NodeSelect](ctx, _s.NodeQuery, _s, _s.inters, v)
+	return scanWithInterceptors[*AgentTraceFileQuery, *AgentTraceFileSelect](ctx, _s.AgentTraceFileQuery, _s, _s.inters, v)
 }
 
-func (_s *NodeSelect) sqlScan(ctx context.Context, root *NodeQuery, v any) error {
+func (_s *AgentTraceFileSelect) sqlScan(ctx context.Context, root *AgentTraceFileQuery, v any) error {
 	selector := root.sqlQuery(ctx)
 	aggregation := make([]string, 0, len(_s.fns))
 	for _, fn := range _s.fns {

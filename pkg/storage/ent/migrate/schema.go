@@ -8,6 +8,134 @@ import (
 )
 
 var (
+	// AgentTracesColumns holds the columns for the "agent_traces" table.
+	AgentTracesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeString, Unique: true},
+		{Name: "version", Type: field.TypeString},
+		{Name: "timestamp", Type: field.TypeString},
+		{Name: "vcs_type", Type: field.TypeString, Nullable: true},
+		{Name: "vcs_revision", Type: field.TypeString, Nullable: true},
+		{Name: "tool_name", Type: field.TypeString, Nullable: true},
+		{Name: "tool_version", Type: field.TypeString, Nullable: true},
+		{Name: "metadata", Type: field.TypeJSON, Nullable: true},
+		{Name: "created_at", Type: field.TypeTime, Default: "CURRENT_TIMESTAMP"},
+	}
+	// AgentTracesTable holds the schema information for the "agent_traces" table.
+	AgentTracesTable = &schema.Table{
+		Name:       "agent_traces",
+		Columns:    AgentTracesColumns,
+		PrimaryKey: []*schema.Column{AgentTracesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "agenttrace_vcs_revision",
+				Unique:  false,
+				Columns: []*schema.Column{AgentTracesColumns[4]},
+			},
+			{
+				Name:    "agenttrace_tool_name",
+				Unique:  false,
+				Columns: []*schema.Column{AgentTracesColumns[5]},
+			},
+			{
+				Name:    "agenttrace_timestamp",
+				Unique:  false,
+				Columns: []*schema.Column{AgentTracesColumns[2]},
+			},
+		},
+	}
+	// AgentTraceConversationsColumns holds the columns for the "agent_trace_conversations" table.
+	AgentTraceConversationsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "url", Type: field.TypeString, Nullable: true},
+		{Name: "contributor_type", Type: field.TypeString, Nullable: true},
+		{Name: "contributor_model_id", Type: field.TypeString, Nullable: true},
+		{Name: "related", Type: field.TypeJSON, Nullable: true},
+		{Name: "agent_trace_file_conversations", Type: field.TypeInt},
+	}
+	// AgentTraceConversationsTable holds the schema information for the "agent_trace_conversations" table.
+	AgentTraceConversationsTable = &schema.Table{
+		Name:       "agent_trace_conversations",
+		Columns:    AgentTraceConversationsColumns,
+		PrimaryKey: []*schema.Column{AgentTraceConversationsColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "agent_trace_conversations_agent_trace_files_conversations",
+				Columns:    []*schema.Column{AgentTraceConversationsColumns[5]},
+				RefColumns: []*schema.Column{AgentTraceFilesColumns[0]},
+				OnDelete:   schema.NoAction,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "agenttraceconversation_contributor_type",
+				Unique:  false,
+				Columns: []*schema.Column{AgentTraceConversationsColumns[2]},
+			},
+			{
+				Name:    "agenttraceconversation_contributor_model_id",
+				Unique:  false,
+				Columns: []*schema.Column{AgentTraceConversationsColumns[3]},
+			},
+		},
+	}
+	// AgentTraceFilesColumns holds the columns for the "agent_trace_files" table.
+	AgentTraceFilesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "path", Type: field.TypeString},
+		{Name: "agent_trace_files", Type: field.TypeString},
+	}
+	// AgentTraceFilesTable holds the schema information for the "agent_trace_files" table.
+	AgentTraceFilesTable = &schema.Table{
+		Name:       "agent_trace_files",
+		Columns:    AgentTraceFilesColumns,
+		PrimaryKey: []*schema.Column{AgentTraceFilesColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "agent_trace_files_agent_traces_files",
+				Columns:    []*schema.Column{AgentTraceFilesColumns[2]},
+				RefColumns: []*schema.Column{AgentTracesColumns[0]},
+				OnDelete:   schema.NoAction,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "agenttracefile_path",
+				Unique:  false,
+				Columns: []*schema.Column{AgentTraceFilesColumns[1]},
+			},
+		},
+	}
+	// AgentTraceRangesColumns holds the columns for the "agent_trace_ranges" table.
+	AgentTraceRangesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "start_line", Type: field.TypeInt},
+		{Name: "end_line", Type: field.TypeInt},
+		{Name: "content_hash", Type: field.TypeString, Nullable: true},
+		{Name: "contributor_type", Type: field.TypeString, Nullable: true},
+		{Name: "contributor_model_id", Type: field.TypeString, Nullable: true},
+		{Name: "agent_trace_conversation_ranges", Type: field.TypeInt},
+	}
+	// AgentTraceRangesTable holds the schema information for the "agent_trace_ranges" table.
+	AgentTraceRangesTable = &schema.Table{
+		Name:       "agent_trace_ranges",
+		Columns:    AgentTraceRangesColumns,
+		PrimaryKey: []*schema.Column{AgentTraceRangesColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "agent_trace_ranges_agent_trace_conversations_ranges",
+				Columns:    []*schema.Column{AgentTraceRangesColumns[6]},
+				RefColumns: []*schema.Column{AgentTraceConversationsColumns[0]},
+				OnDelete:   schema.NoAction,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "agenttracerange_start_line_end_line",
+				Unique:  false,
+				Columns: []*schema.Column{AgentTraceRangesColumns[1], AgentTraceRangesColumns[2]},
+			},
+		},
+	}
 	// NodesColumns holds the columns for the "nodes" table.
 	NodesColumns = []*schema.Column{
 		{Name: "hash", Type: field.TypeString, Unique: true},
@@ -69,10 +197,17 @@ var (
 	}
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
+		AgentTracesTable,
+		AgentTraceConversationsTable,
+		AgentTraceFilesTable,
+		AgentTraceRangesTable,
 		NodesTable,
 	}
 )
 
 func init() {
+	AgentTraceConversationsTable.ForeignKeys[0].RefTable = AgentTraceFilesTable
+	AgentTraceFilesTable.ForeignKeys[0].RefTable = AgentTracesTable
+	AgentTraceRangesTable.ForeignKeys[0].RefTable = AgentTraceConversationsTable
 	NodesTable.ForeignKeys[0].RefTable = NodesTable
 }
