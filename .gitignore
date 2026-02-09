@@ -8,6 +8,7 @@
 /config.toml
 /tapes.db
 /tapes.db~
+/tapes.demo.sqlite
 .DS_Store
 
 # JetBrains IDEs
