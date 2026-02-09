@@ -82,7 +82,7 @@ func NewDeckCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&cmder.web, "web", false, "Serve the web dashboard locally")
 	cmd.Flags().IntVar(&cmder.port, "port", 8888, "Web server port")
 	cmd.Flags().BoolVarP(&cmder.demo, "demo", "m", false, "Seed demo data and open the deck UI")
-	cmd.Flags().BoolVarP(&cmder.overwrite, "overwrite", "f", false, "Overwrite demo database before seeding")
+	cmd.Flags().BoolVarP(&cmder.overwrite, "overwrite", "f", false, "Overwrite demo database before seeding (default for demo db)")
 
 	return cmd
 }
@@ -98,6 +98,9 @@ func (c *deckCommander) run(ctx context.Context, cmd *cobra.Command) error {
 	}
 	if c.demo && strings.TrimSpace(c.sqlitePath) == "" {
 		c.sqlitePath = deck.DemoSQLitePath
+		if !c.overwrite {
+			c.overwrite = true
+		}
 	}
 
 	sqlitePath, err := sqlitepath.ResolveSQLitePath(c.sqlitePath)
