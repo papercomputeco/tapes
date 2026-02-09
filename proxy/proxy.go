@@ -18,6 +18,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/llm/provider"
+	"github.com/papercomputeco/tapes/pkg/sse"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/proxy/header"
 	"github.com/papercomputeco/tapes/proxy/worker"
@@ -292,7 +293,53 @@ func (p *Proxy) handleHTTPRespToPipeWriter(httpResp *http.Response, pw *io.PipeW
 	defer httpResp.Body.Close()
 	defer pw.Close()
 
-	// Accumulate chunks for storage
+	switch ct := httpResp.Header.Get("Content-Type"); {
+	case strings.HasPrefix(ct, "text/event-stream"):
+		p.handleSSEStream(httpResp, pw, parsedReq, startTime)
+	default:
+		p.handleNDJSONStream(httpResp, pw, parsedReq, startTime)
+	}
+}
+
+// handleSSEStream reads an SSE-formatted upstream response (used by OpenAI
+// and Anthropic), forwarding raw bytes verbatim to the pipe writer while
+// parsing events for telemetry accumulation.
+func (p *Proxy) handleSSEStream(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, startTime time.Time) {
+	var allChunks [][]byte
+	var fullContent strings.Builder
+
+	tr := sse.NewTeeReader(httpResp.Body, pw)
+
+	for {
+		ev, err := tr.Next()
+		if err != nil {
+			p.logger.Error("error reading SSE stream", zap.Error(err))
+			return
+		}
+		if ev == nil {
+			break
+		}
+
+		// Skip non-data sentinels like OpenAI's "[DONE]"
+		if ev.Data == "[DONE]" {
+			continue
+		}
+
+		// Store the data payload for later reconstruction
+		chunkCopy := []byte(ev.Data)
+		allChunks = append(allChunks, chunkCopy)
+
+		// Best-effort content extraction from the JSON payload
+		p.extractContentFromJSON([]byte(ev.Data), &fullContent)
+	}
+
+	p.enqueueStreamedResponse(allChunks, fullContent.String(), parsedReq, startTime)
+}
+
+// handleNDJSONStream reads a newline-delimited JSON upstream response (used by
+// Ollama), forwarding raw bytes to the pipe writer while accumulating chunks
+// for telemetry.
+func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, startTime time.Time) {
 	var allChunks [][]byte
 	var fullContent strings.Builder
 
@@ -311,25 +358,8 @@ func (p *Proxy) handleHTTPRespToPipeWriter(httpResp *http.Response, pw *io.PipeW
 		copy(chunkCopy, line)
 		allChunks = append(allChunks, chunkCopy)
 
-		// Try to extract content incrementally for logging
-		// This is a best-effort extraction from the raw chunk
-		var chunkData map[string]any
-		if err := json.Unmarshal(line, &chunkData); err == nil {
-			// Try common content paths
-			if msg, ok := chunkData["message"].(map[string]any); ok {
-				if content, ok := msg["content"].(string); ok {
-					fullContent.WriteString(content)
-				}
-			} else if choices, ok := chunkData["choices"].([]any); ok && len(choices) > 0 {
-				if choice, ok := choices[0].(map[string]any); ok {
-					if delta, ok := choice["delta"].(map[string]any); ok {
-						if content, ok := delta["content"].(string); ok {
-							fullContent.WriteString(content)
-						}
-					}
-				}
-			}
-		}
+		// Best-effort content extraction from the raw chunk
+		p.extractContentFromJSON(line, &fullContent)
 
 		// Write chunk to client — pw.Write blocks until fasthttp reads
 		// from the pipe reader and flushes to the TCP socket.
@@ -345,21 +375,61 @@ func (p *Proxy) handleHTTPRespToPipeWriter(httpResp *http.Response, pw *io.PipeW
 	}
 
 	if err := scanner.Err(); err != nil {
-		p.logger.Error("error reading stream", zap.Error(err))
+		p.logger.Error("error reading NDJSON stream", zap.Error(err))
 	}
 
-	// After streaming completes, enqueue for async storage
+	p.enqueueStreamedResponse(allChunks, fullContent.String(), parsedReq, startTime)
+}
+
+// extractContentFromJSON performs best-effort content extraction from a JSON
+// streaming chunk, dispatching on the configured provider.
+func (p *Proxy) extractContentFromJSON(data []byte, content *strings.Builder) {
+	var chunkData map[string]any
+	if err := json.Unmarshal(data, &chunkData); err != nil {
+		return
+	}
+
+	switch p.provider.Name() {
+	case "ollama":
+		// Ollama NDJSON: message.content
+		if msg, ok := chunkData["message"].(map[string]any); ok {
+			if c, ok := msg["content"].(string); ok {
+				content.WriteString(c)
+			}
+		}
+	case "openai":
+		// OpenAI SSE: choices[0].delta.content
+		if choices, ok := chunkData["choices"].([]any); ok && len(choices) > 0 {
+			if choice, ok := choices[0].(map[string]any); ok {
+				if delta, ok := choice["delta"].(map[string]any); ok {
+					if c, ok := delta["content"].(string); ok {
+						content.WriteString(c)
+					}
+				}
+			}
+		}
+	case "anthropic":
+		// Anthropic SSE: content_block_delta events carry delta.text
+		if delta, ok := chunkData["delta"].(map[string]any); ok {
+			if text, ok := delta["text"].(string); ok {
+				content.WriteString(text)
+			}
+		}
+	}
+}
+
+// enqueueStreamedResponse handles post-stream telemetry: logging and
+// enqueuing the reconstructed response for async storage.
+func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, parsedReq *llm.ChatRequest, startTime time.Time) {
 	if parsedReq != nil && len(allChunks) > 0 {
 		p.logger.Debug("streaming complete",
-			zap.String("content_preview", fullContent.String()),
+			zap.String("content_preview", fullContent),
 			zap.Int("chunk_count", len(allChunks)),
 			zap.Duration("duration", time.Since(startTime)),
 		)
 
-		// Try to parse the final chunk or reconstruct response
-		finalResp := p.reconstructStreamedResponse(allChunks, fullContent.String())
+		finalResp := p.reconstructStreamedResponse(allChunks, fullContent)
 		if finalResp != nil {
-			// Non-blocking enqueue for async storage
 			p.workerPool.Enqueue(worker.Job{
 				Provider: p.provider.Name(),
 				Req:      parsedReq,
