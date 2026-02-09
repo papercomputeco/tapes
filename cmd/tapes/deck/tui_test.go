@@ -195,4 +195,18 @@ var _ = Describe("Deck TUI helpers", func() {
 			Expect(offset).To(Equal(7))
 		})
 	})
+
+	Describe("countWrappedLines", func() {
+		It("returns zero for empty strings", func() {
+			Expect(countWrappedLines("", 10)).To(Equal(0))
+		})
+
+		It("counts wrapped lines based on width", func() {
+			Expect(countWrappedLines("123456789", 4)).To(Equal(3))
+		})
+
+		It("counts blank lines", func() {
+			Expect(countWrappedLines("a\n\nb", 10)).To(Equal(3))
+		})
+	})
 })

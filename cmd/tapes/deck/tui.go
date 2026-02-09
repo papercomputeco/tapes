@@ -581,11 +581,28 @@ func (m deckModel) cycleMessageSort() (bubbletea.Model, bubbletea.Cmd) {
 	return m, nil
 }
 
-func countLines(s string) int {
+func countWrappedLines(s string, width int) int {
 	if s == "" {
 		return 0
 	}
-	return strings.Count(s, "\n") + 1
+	if width <= 0 {
+		width = 80
+	}
+	lines := strings.Split(s, "\n")
+	count := 0
+	for _, line := range lines {
+		lineWidth := lipgloss.Width(line)
+		if lineWidth == 0 {
+			count++
+			continue
+		}
+		rows := lineWidth / width
+		if lineWidth%width != 0 {
+			rows++
+		}
+		count += max(rows, 1)
+	}
+	return count
 }
 
 // overviewChrome renders all overview sections except the session list and
@@ -630,7 +647,7 @@ func (m deckModel) sessionListHeight() int {
 	above, footer := m.overviewChrome()
 	// +1 for the blank line between session list and footer
 	// +2*verticalPadding for the outer padding added by addPadding
-	chromeLines := countLines(above) + countLines(footer) + 1 + 2*verticalPadding
+	chromeLines := countWrappedLines(above, m.width) + countWrappedLines(footer, m.width) + 1 + 2*verticalPadding
 	return max(m.height-chromeLines, 5)
 }
 
@@ -640,7 +657,7 @@ func (m deckModel) viewOverview() string {
 	}
 
 	above, footer := m.overviewChrome()
-	chromeLines := countLines(above) + countLines(footer) + 1 + 2*verticalPadding
+	chromeLines := countWrappedLines(above, m.width) + countWrappedLines(footer, m.width) + 1 + 2*verticalPadding
 	availableHeight := max(m.height-chromeLines, 5)
 
 	return above + m.viewSessionList(availableHeight) + "\n\n" + footer
@@ -1279,7 +1296,7 @@ func (m deckModel) viewSession() string {
 	// 3 & 4. CONVERSATION TABLE + MESSAGE DETAIL (side by side)
 	footer := m.viewSessionFooter()
 	above := strings.Join(lines, "\n")
-	chromeLines := countLines(above) + countLines(footer) + 1
+	chromeLines := countWrappedLines(above, m.width) + countWrappedLines(footer, m.width) + 1
 	screenHeight := m.height
 	if screenHeight <= 0 {
 		screenHeight = 40
