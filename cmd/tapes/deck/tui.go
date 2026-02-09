@@ -55,6 +55,11 @@ const (
 	circleLarge   = "⬤"
 )
 
+const (
+	sessionListChromeLines   = 3
+	sessionListPositionLines = 2
+)
+
 type deckModel struct {
 	query         deck.Querier
 	filters       deck.Filters
@@ -316,8 +321,9 @@ func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
 				if session.ID == selectedSessionID {
 					m.cursor = i
 					// Clamp scroll offset to keep cursor visible
+					visibleRows := sessionListVisibleRows(len(m.overview.Sessions), m.sessionListHeight())
 					_, _, m.scrollOffset = stableVisibleRange(
-						len(m.overview.Sessions), m.cursor, m.sessionListHeight(), m.scrollOffset,
+						len(m.overview.Sessions), m.cursor, visibleRows, m.scrollOffset,
 					)
 					return m, nil
 				}
@@ -418,8 +424,9 @@ func (m deckModel) handleKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.C
 			m.replayActive = false
 			// Re-clamp scroll offset in case terminal was resized
 			if m.overview != nil && len(m.overview.Sessions) > 0 {
+				visibleRows := sessionListVisibleRows(len(m.overview.Sessions), m.sessionListHeight())
 				_, _, m.scrollOffset = stableVisibleRange(
-					len(m.overview.Sessions), m.cursor, m.sessionListHeight(), m.scrollOffset,
+					len(m.overview.Sessions), m.cursor, visibleRows, m.scrollOffset,
 				)
 			}
 		}
@@ -535,8 +542,9 @@ func (m deckModel) moveCursor(delta int) (bubbletea.Model, bubbletea.Cmd) {
 		}
 		m.cursor = clamp(m.cursor+delta, len(m.overview.Sessions)-1)
 		// Update scroll offset to keep cursor visible without jumping
+		visibleRows := sessionListVisibleRows(len(m.overview.Sessions), m.sessionListHeight())
 		_, _, m.scrollOffset = stableVisibleRange(
-			len(m.overview.Sessions), m.cursor, m.sessionListHeight(), m.scrollOffset,
+			len(m.overview.Sessions), m.cursor, visibleRows, m.scrollOffset,
 		)
 		return m, nil
 	}
@@ -1052,8 +1060,9 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 		return deckMutedStyle.Render("sessions: no data")
 	}
 
+	visibleRows := sessionListVisibleRows(len(m.overview.Sessions), availableHeight)
 	// Calculate which sessions to show using stable scrolling
-	start, end, _ := stableVisibleRange(len(m.overview.Sessions), m.cursor, availableHeight, m.scrollOffset)
+	start, end, _ := stableVisibleRange(len(m.overview.Sessions), m.cursor, visibleRows, m.scrollOffset)
 	maxVisible := end - start
 
 	status := m.filters.Status
@@ -1268,13 +1277,14 @@ func (m deckModel) viewSession() string {
 	lines = append(lines, "", renderRule(m.width), "")
 
 	// 3 & 4. CONVERSATION TABLE + MESSAGE DETAIL (side by side)
+	footer := m.viewSessionFooter()
+	above := strings.Join(lines, "\n")
+	chromeLines := countLines(above) + countLines(footer) + 1
 	screenHeight := m.height
 	if screenHeight <= 0 {
 		screenHeight = 40
 	}
-	footerHeight := 2
-	usedLines := len(lines) + footerHeight
-	remaining := max(screenHeight-usedLines, 10)
+	remaining := max(screenHeight-chromeLines, 10)
 
 	gap := 3
 	// Table takes ~45%, detail pane takes ~55% (detail is ~20% wider than table)
@@ -1287,11 +1297,9 @@ func (m deckModel) viewSession() string {
 
 	tableBlock := m.renderConversationTable(tableWidth, remaining)
 	detailBlock := m.renderMessageDetailPane(detailWidth, remaining)
-	lines = append(lines, joinColumns(tableBlock, detailBlock, gap)...)
+	tableLines := joinColumns(tableBlock, detailBlock, gap)
 
-	lines = append(lines, "", m.viewSessionFooter())
-
-	return strings.Join(lines, "\n")
+	return above + "\n" + strings.Join(tableLines, "\n") + "\n\n" + footer
 }
 
 func (m deckModel) renderSessionMetrics() []string {
@@ -2693,6 +2701,17 @@ func stableVisibleRange(total, cursor, size, offset int) (start, end, newOffset 
 	}
 
 	return offset, offset + size, offset
+}
+
+func sessionListVisibleRows(totalSessions, availableHeight int) int {
+	if availableHeight <= 0 {
+		return 1
+	}
+	visible := max(availableHeight-sessionListChromeLines, 1)
+	if totalSessions > visible {
+		visible = max(availableHeight-sessionListChromeLines-sessionListPositionLines, 1)
+	}
+	return visible
 }
 
 func safeDivide(value, divisor float64) float64 {
