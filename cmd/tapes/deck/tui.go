@@ -48,6 +48,13 @@ const (
 	verticalPadding   = 1
 )
 
+// Concrete hex strings for OSC 11 background color (AdaptiveColor is a struct,
+// can't be passed to termenv.RGBColor directly).
+const (
+	baseBgDark  = "#1B1B1C"
+	baseBgLight = "#E2E0DB"
+)
+
 const (
 	sortKeyCost   = "cost"
 	roleUser      = "user"
@@ -92,19 +99,20 @@ const (
 )
 
 var (
-	// Core color palette - modern, high-contrast design
-	colorForeground  = lipgloss.Color("#E6E4D9") // BoneParchment - primary text
-	colorRed         = lipgloss.Color("#FF6B4A") // Vibrant Orange - primary accent
-	colorGreen       = lipgloss.Color("#4DA667") // Forest Green
-	colorYellow      = lipgloss.Color("#F2B84B") // Caution Gold
-	colorBlue        = lipgloss.Color("#4EB1E9") // Electric Cyan
-	colorMagenta     = lipgloss.Color("#B656B1") // Royal Purple
-	colorBrightBlack = lipgloss.Color("#4A4A4A") // Muted Slate - inactive elements
-	colorDimmed      = lipgloss.Color("#2A2A2B") // Dimmed Obsidian - subtle elements
+	// Core color palette - adaptive dark/light design
+	colorForeground  = lipgloss.AdaptiveColor{Dark: "#E6E4D9", Light: "#1A1A1B"} // Primary text
+	colorRed         = lipgloss.AdaptiveColor{Dark: "#FF6B4A", Light: "#CC4422"} // Primary accent
+	colorGreen       = lipgloss.AdaptiveColor{Dark: "#4DA667", Light: "#2D7A47"} // Forest Green
+	colorYellow      = lipgloss.AdaptiveColor{Dark: "#F2B84B", Light: "#9B7500"} // Caution Gold
+	colorBlue        = lipgloss.AdaptiveColor{Dark: "#4EB1E9", Light: "#1A6FA0"} // Electric Cyan
+	colorMagenta     = lipgloss.AdaptiveColor{Dark: "#B656B1", Light: "#8B3A8B"} // Royal Purple
+	colorBrightBlack = lipgloss.AdaptiveColor{Dark: "#4A4A4A", Light: "#707070"} // Muted Slate
+	colorDimmed      = lipgloss.AdaptiveColor{Dark: "#2A2A2B", Light: "#A0A0A0"} // Subtle elements
 
 	// Complementary shades for UI depth
-	colorHighlightBg = lipgloss.Color("#252526") // Subtle highlight background
-	colorPanelBg     = lipgloss.Color("#212122") // Panel background (slightly lighter than main)
+	colorHighlightBg = lipgloss.AdaptiveColor{Dark: "#252526", Light: "#CFCDC7"} // Highlight background
+	colorPanelBg     = lipgloss.AdaptiveColor{Dark: "#212122", Light: "#D8D6D1"} // Panel background
+	colorBaseBg      = lipgloss.AdaptiveColor{Dark: "#1B1B1C", Light: "#E2E0DB"} // Main background
 
 	// Orange gradient for cost visualization (light to bright)
 	costOrangeGradient = []string{
@@ -128,34 +136,51 @@ var (
 	deckStatusWarnStyle  = lipgloss.NewStyle().Foreground(colorYellow)
 	deckRoleUserStyle    = lipgloss.NewStyle().Foreground(colorBlue)
 	deckRoleAsstStyle    = lipgloss.NewStyle().Foreground(colorRed) // Assistant uses primary accent orange
+	deckBackgroundStyle  = lipgloss.NewStyle().Background(colorBaseBg)
 	deckModalBgStyle     = lipgloss.NewStyle().Background(colorPanelBg).Foreground(colorForeground).Padding(1, 2)
 	deckTabBoxStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorDimmed).Padding(0, 1)
 	deckTabActiveStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorForeground)
 	deckTabInactiveStyle = lipgloss.NewStyle().Foreground(colorBrightBlack)
 )
 
-// Model color schemes by provider (intensity indicates tier/usage)
-// Using the new color palette
+// Model color schemes by provider — dark and light variants per tier.
 var (
 	// Anthropic - Royal Purple family
-	claudeColors = map[string]string{
-		"opus":   "#D97BC1", // Bright purple (highest tier)
-		"sonnet": "#B656B1", // Base Royal Purple
-		"haiku":  "#8E3F8A", // Deep purple (lowest tier)
+	claudeColorsDark = map[string]string{
+		"opus":   "#D97BC1",
+		"sonnet": "#B656B1",
+		"haiku":  "#8E3F8A",
+	}
+	claudeColorsLight = map[string]string{
+		"opus":   "#A0306E",
+		"sonnet": "#8B3A8B",
+		"haiku":  "#6B2A6B",
 	}
 	// OpenAI - Cyan family
-	openaiColors = map[string]string{
-		"gpt-4o":      "#7DD9FF", // Bright cyan
-		"gpt-4":       "#4EB1E9", // Base cyan
-		"gpt-4o-mini": "#3889B8", // Medium cyan
-		"gpt-3.5":     "#2A6588", // Dark cyan
+	openaiColorsDark = map[string]string{
+		"gpt-4o":      "#7DD9FF",
+		"gpt-4":       "#4EB1E9",
+		"gpt-4o-mini": "#3889B8",
+		"gpt-3.5":     "#2A6588",
+	}
+	openaiColorsLight = map[string]string{
+		"gpt-4o":      "#1A6FA0",
+		"gpt-4":       "#155A82",
+		"gpt-4o-mini": "#104568",
+		"gpt-3.5":     "#0C3550",
 	}
 	// Google - Electric Cyan family
-	googleColors = map[string]string{
-		"gemini-2.0":     "#7DD9FF", // Bright cyan
-		"gemini-1.5-pro": "#4EB1E9", // Base Electric Cyan
-		"gemini-1.5":     "#3889B8", // Medium cyan
-		"gemma":          "#2A6588", // Dark cyan
+	googleColorsDark = map[string]string{
+		"gemini-2.0":     "#7DD9FF",
+		"gemini-1.5-pro": "#4EB1E9",
+		"gemini-1.5":     "#3889B8",
+		"gemma":          "#2A6588",
+	}
+	googleColorsLight = map[string]string{
+		"gemini-2.0":     "#1A6FA0",
+		"gemini-1.5-pro": "#155A82",
+		"gemini-1.5":     "#104568",
+		"gemma":          "#0C3550",
 	}
 )
 
@@ -233,6 +258,20 @@ func RunDeckTUI(ctx context.Context, query deck.Querier, filters deck.Filters, r
 		model.view = viewSession
 		model.detail = detail
 	}
+
+	// Set the terminal's default background color so the entire alt-screen
+	// (including padding and empty regions) uses our base background.
+	// Detect dark/light terminal and pick the matching shade.
+	out := termenv.NewOutput(os.Stdout, termenv.WithProfile(termenv.TrueColor))
+	if out.HasDarkBackground() {
+		out.SetBackgroundColor(termenv.RGBColor(baseBgDark))
+	} else {
+		out.SetBackgroundColor(termenv.RGBColor(baseBgLight))
+	}
+	defer func() {
+		// OSC 111: reset the default background color to the terminal's original.
+		fmt.Fprint(os.Stdout, "\033]111\007")
+	}()
 
 	program := bubbletea.NewProgram(model,
 		bubbletea.WithContext(ctx),
@@ -394,11 +433,11 @@ func (m deckModel) View() string {
 		base = m.viewSession()
 	case viewModal:
 		base = m.viewOverview()
-		return addPadding(m.overlayModal(base, m.viewModal()))
+		return m.applyBackground(addPadding(m.overlayModal(base, m.viewModal())))
 	default:
 		base = m.viewOverview()
 	}
-	return addPadding(base)
+	return m.applyBackground(addPadding(base))
 }
 
 func (m deckModel) handleKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.Cmd) {
@@ -780,7 +819,7 @@ func (m deckModel) viewMetrics(stats deckOverviewStats) string {
 	colWidth := max((lineWidth-spaceWidth)/cols, 16)
 
 	// Label style with more contrast and bold value style
-	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#8A8079")).Bold(true)
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Dark: "#8A8079", Light: "#6B5E55"}).Bold(true)
 	highlightValueStyle := lipgloss.NewStyle().Foreground(colorForeground).Bold(true)
 	dimSeparator := deckDimStyle.Render(" │ ")
 
@@ -909,8 +948,8 @@ func (m deckModel) renderCostByModelChart(stats deckOverviewStats, width int) []
 	for _, cost := range costs {
 		bar := renderBar(cost.TotalCost, maxCost, barWidth)
 		// Use model color for the bar
-		modelColorHex := getModelColor(cost.Model)
-		coloredBar := lipgloss.NewStyle().Foreground(lipgloss.Color(modelColorHex)).Render(bar)
+		modelColor := getModelColor(cost.Model)
+		coloredBar := lipgloss.NewStyle().Foreground(modelColor).Render(bar)
 
 		line := fmt.Sprintf(" %-17s %s %s %d", cost.Model, coloredBar, formatCost(cost.TotalCost), cost.SessionCount)
 		// Calculate padding to fill the width
@@ -1002,31 +1041,31 @@ func (m deckModel) renderStatusPieChart(stats deckOverviewStats, width int) []st
 	return lines
 }
 
-func getModelColor(model string) string {
+func getModelColor(model string) lipgloss.TerminalColor {
 	modelLower := strings.ToLower(model)
 
 	// Check for Claude models
-	for tier, color := range claudeColors {
+	for tier, dark := range claudeColorsDark {
 		if strings.Contains(modelLower, tier) {
-			return color
+			return lipgloss.AdaptiveColor{Dark: dark, Light: claudeColorsLight[tier]}
 		}
 	}
 
 	// Check for OpenAI models
-	for modelName, color := range openaiColors {
+	for modelName, dark := range openaiColorsDark {
 		if strings.Contains(modelLower, modelName) || strings.Contains(modelLower, strings.ReplaceAll(modelName, "-", "")) {
-			return color
+			return lipgloss.AdaptiveColor{Dark: dark, Light: openaiColorsLight[modelName]}
 		}
 	}
 
 	// Check for Google models
-	for modelName, color := range googleColors {
+	for modelName, dark := range googleColorsDark {
 		if strings.Contains(modelLower, modelName) || strings.Contains(modelLower, strings.ReplaceAll(modelName, "-", "")) {
-			return color
+			return lipgloss.AdaptiveColor{Dark: dark, Light: googleColorsLight[modelName]}
 		}
 	}
 
-	return "#FF6B4A" // Default to vibrant orange
+	return colorRed // Default to primary accent
 }
 
 func countByStatusInStats(stats deckOverviewStats, status string) int {
@@ -1423,7 +1462,7 @@ func (m deckModel) renderSessionMetrics() []string {
 	spaceWidth := (cols - 1) * 3
 	colWidth := max((lineWidth-spaceWidth)/cols, 16)
 
-	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#8A8079")).Bold(true)
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Dark: "#8A8079", Light: "#6B5E55"}).Bold(true)
 	highlightValueStyle := lipgloss.NewStyle().Foreground(colorForeground).Bold(true)
 	lightGrayStyle := lipgloss.NewStyle().Foreground(colorBrightBlack)
 	dimSeparator := deckDimStyle.Render(" │ ")
@@ -1922,23 +1961,23 @@ func colorizeModel(model string) string {
 	modelLower := strings.ToLower(model)
 
 	// Check for Claude models
-	for tier, color := range claudeColors {
+	for tier, dark := range claudeColorsDark {
 		if strings.Contains(modelLower, tier) {
-			return lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: color, Dark: color}).Render(model)
+			return lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Dark: dark, Light: claudeColorsLight[tier]}).Render(model)
 		}
 	}
 
 	// Check for OpenAI models
-	for modelName, color := range openaiColors {
+	for modelName, dark := range openaiColorsDark {
 		if strings.Contains(modelLower, modelName) || strings.Contains(modelLower, strings.ReplaceAll(modelName, "-", "")) {
-			return lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: color, Dark: color}).Render(model)
+			return lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Dark: dark, Light: openaiColorsLight[modelName]}).Render(model)
 		}
 	}
 
 	// Check for Google models
-	for modelName, color := range googleColors {
+	for modelName, dark := range googleColorsDark {
 		if strings.Contains(modelLower, modelName) || strings.Contains(modelLower, strings.ReplaceAll(modelName, "-", "")) {
-			return lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: color, Dark: color}).Render(model)
+			return lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Dark: dark, Light: googleColorsLight[modelName]}).Render(model)
 		}
 	}
 
@@ -2083,6 +2122,25 @@ func addPadding(content string) string {
 	}
 
 	return strings.Join(paddedLines, "\n")
+}
+
+func (m deckModel) applyBackground(content string) string {
+	content = deckBackgroundStyle.Render(content)
+	contentWidth := lipgloss.Width(content)
+	contentHeight := strings.Count(content, "\n") + 1
+	width := max(m.width+2*horizontalPadding, contentWidth)
+	height := max(m.height+2*verticalPadding, contentHeight)
+	if width <= 0 || height <= 0 {
+		return content
+	}
+	return lipgloss.Place(
+		width,
+		height,
+		lipgloss.Left,
+		lipgloss.Top,
+		content,
+		lipgloss.WithWhitespaceBackground(colorBaseBg),
+	)
 }
 
 func renderCassetteTape() []string {
