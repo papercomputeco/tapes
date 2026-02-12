@@ -16,6 +16,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/embeddings"
 	"github.com/papercomputeco/tapes/pkg/llm"
+	"github.com/papercomputeco/tapes/pkg/memory"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/vector"
@@ -44,6 +45,10 @@ type Config struct {
 	// Embedder generates optional text embeddings.
 	// A configured Embedder is required if VectorDriver is set.
 	Embedder embeddings.Embedder
+
+	// MemoryDriver is the optional memory driver for storing conversation
+	// context into short-term and long-term memory.
+	MemoryDriver memory.Driver
 
 	// NumWorkers is the number of background workers in the pool.
 	NumWorkers uint
@@ -154,6 +159,14 @@ func (p *Pool) processJob(job Job) {
 			zap.Int("new_node_count", len(newNodes)),
 		)
 		p.storeEmbeddings(ctx, newNodes)
+	}
+
+	// If the memory driver is configured, store nodes into memory
+	if p.config.MemoryDriver != nil && len(newNodes) > 0 {
+		p.logger.Debug("storing nodes in memory",
+			zap.Int("new_node_count", len(newNodes)),
+		)
+		p.storeMemory(ctx, newNodes)
 	}
 }
 
@@ -267,6 +280,17 @@ func (p *Pool) storeEmbeddings(ctx context.Context, nodes []*merkle.Node) {
 		p.logger.Debug("stored embedding",
 			zap.String("hash", node.Hash),
 			zap.Int("embedding_dim", len(embedding)),
+		)
+	}
+}
+
+// storeMemory feeds newly inserted nodes to the memory driver.
+// Errors are logged but not returned to avoid failing the main storage operation.
+func (p *Pool) storeMemory(ctx context.Context, nodes []*merkle.Node) {
+	if err := p.config.MemoryDriver.Store(ctx, nodes); err != nil {
+		p.logger.Warn("failed to store nodes in memory",
+			zap.Error(err),
+			zap.Int("node_count", len(nodes)),
 		)
 	}
 }

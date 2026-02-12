@@ -3,6 +3,7 @@ package api
 
 import (
 	"github.com/papercomputeco/tapes/pkg/embeddings"
+	"github.com/papercomputeco/tapes/pkg/memory"
 	"github.com/papercomputeco/tapes/pkg/vector"
 )
 
@@ -16,4 +17,7 @@ type Config struct {
 
 	// Embedder for converting query text to vectors (optional, enables MCP server)
 	Embedder embeddings.Embedder
+
+	// MemoryDriver for fact recall (optional, enables memory_recall MCP tool)
+	MemoryDriver memory.Driver
 }

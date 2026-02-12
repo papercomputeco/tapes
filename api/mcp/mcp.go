@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/embeddings"
+	"github.com/papercomputeco/tapes/pkg/memory"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/utils"
 	"github.com/papercomputeco/tapes/pkg/vector"
@@ -24,6 +25,9 @@ type Config struct {
 	// Embedder for converting query text to vectors for semantic search with
 	// configured VectorDriver
 	Embedder embeddings.Embedder
+
+	// MemoryDriver for fact recall (optional, enables memory_recall tool)
+	MemoryDriver memory.Driver
 
 	// Noop for empty MCP server
 	Noop bool
@@ -78,6 +82,14 @@ func NewServer(c Config) (*Server, error) {
 		Name:        searchToolName,
 		Description: searchDescription,
 	}, s.handleSearch)
+
+	// Add memory recall tool if a memory driver is configured
+	if c.MemoryDriver != nil {
+		mcp.AddTool(mcpServer, &mcp.Tool{
+			Name:        memoryRecallToolName,
+			Description: memoryRecallDescription,
+		}, s.handleMemoryRecall)
+	}
 
 	s.mcpServer = mcpServer
 
