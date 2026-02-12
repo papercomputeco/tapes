@@ -22,6 +22,8 @@ import (
 )
 
 type checkoutCommander struct {
+	flags config.FlagSet
+
 	hash      string
 	apiTarget string
 	debug     bool
@@ -48,6 +50,10 @@ type historyMessage struct {
 	Usage      *llm.Usage         `json:"usage,omitempty"`
 }
 
+var checkoutFlags = config.FlagSet{
+	config.FlagAPITarget: {Name: "api-target", Shorthand: "a", ViperKey: "client.api_target", Description: "Tapes API server URL"},
+}
+
 const checkoutLongDesc string = `Experimental: Checkout a point in the conversation for replay.
 
 Fetches the conversation history up to the given hash from the API server
@@ -63,7 +69,9 @@ Examples:
 const checkoutShortDesc string = "Checkout a conversation point"
 
 func NewCheckoutCmd() *cobra.Command {
-	cmder := &checkoutCommander{}
+	cmder := &checkoutCommander{
+		flags: checkoutFlags,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "checkout [hash]",
@@ -72,19 +80,16 @@ func NewCheckoutCmd() *cobra.Command {
 		Args:  cobra.MaximumNArgs(1),
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
 			configDir, _ := cmd.Flags().GetString("config-dir")
-			cfger, err := config.NewConfiger(configDir)
+			v, err := config.InitViper(configDir)
 			if err != nil {
 				return fmt.Errorf("loading config: %w", err)
 			}
 
-			cfg, err := cfger.LoadConfig()
-			if err != nil {
-				return fmt.Errorf("loading config: %w", err)
-			}
+			config.BindRegisteredFlags(v, cmd, cmder.flags, []string{
+				config.FlagAPITarget,
+			})
 
-			if !cmd.Flags().Changed("api-target") {
-				cmder.apiTarget = cfg.Client.APITarget
-			}
+			cmder.apiTarget = v.GetString("client.api_target")
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -102,8 +107,7 @@ func NewCheckoutCmd() *cobra.Command {
 		},
 	}
 
-	defaults := config.NewDefaultConfig()
-	cmd.Flags().StringVarP(&cmder.apiTarget, "api-target", "a", defaults.Client.APITarget, "Tapes API server URL")
+	config.AddStringFlag(cmd, cmder.flags, config.FlagAPITarget, &cmder.apiTarget)
 
 	return cmd
 }

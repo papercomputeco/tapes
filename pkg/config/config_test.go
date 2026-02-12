@@ -7,6 +7,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/spf13/cobra"
 
 	"github.com/papercomputeco/tapes/pkg/config"
 )
@@ -606,7 +607,185 @@ var _ = Describe("NewDefaultConfig", func() {
 	})
 })
 
-var _ = Describe("applyDefaults via LoadConfig", func() {
+var _ = Describe("InitViper", func() {
+	var tmpDir string
+
+	BeforeEach(func() {
+		var err error
+		tmpDir, err = os.MkdirTemp("", "viper-test-*")
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	AfterEach(func() {
+		os.RemoveAll(tmpDir)
+	})
+
+	It("returns viper with defaults when no config file exists", func() {
+		v, err := config.InitViper(tmpDir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(v).NotTo(BeNil())
+
+		defaults := config.NewDefaultConfig()
+		Expect(v.GetString("proxy.provider")).To(Equal(defaults.Proxy.Provider))
+		Expect(v.GetString("proxy.upstream")).To(Equal(defaults.Proxy.Upstream))
+		Expect(v.GetString("proxy.listen")).To(Equal(defaults.Proxy.Listen))
+		Expect(v.GetString("api.listen")).To(Equal(defaults.API.Listen))
+		Expect(v.GetString("client.proxy_target")).To(Equal(defaults.Client.ProxyTarget))
+		Expect(v.GetString("client.api_target")).To(Equal(defaults.Client.APITarget))
+	})
+
+	It("reads config file values over defaults", func() {
+		data := `[proxy]
+provider = "anthropic"
+upstream = "https://api.anthropic.com"
+`
+		err := os.WriteFile(filepath.Join(tmpDir, "config.toml"), []byte(data), 0o600)
+		Expect(err).NotTo(HaveOccurred())
+
+		v, err := config.InitViper(tmpDir)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(v.GetString("proxy.provider")).To(Equal("anthropic"))
+		Expect(v.GetString("proxy.upstream")).To(Equal("https://api.anthropic.com"))
+		// Unset fields should still get defaults
+		defaults := config.NewDefaultConfig()
+		Expect(v.GetString("proxy.listen")).To(Equal(defaults.Proxy.Listen))
+	})
+
+	It("respects environment variables with TAPES_ prefix", func() {
+		os.Setenv("TAPES_PROXY_PROVIDER", "openai")
+		defer os.Unsetenv("TAPES_PROXY_PROVIDER")
+
+		v, err := config.InitViper(tmpDir)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(v.GetString("proxy.provider")).To(Equal("openai"))
+	})
+
+	It("env vars take precedence over config file values", func() {
+		data := `[proxy]
+provider = "anthropic"
+`
+		err := os.WriteFile(filepath.Join(tmpDir, "config.toml"), []byte(data), 0o600)
+		Expect(err).NotTo(HaveOccurred())
+
+		os.Setenv("TAPES_PROXY_PROVIDER", "openai")
+		defer os.Unsetenv("TAPES_PROXY_PROVIDER")
+
+		v, err := config.InitViper(tmpDir)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(v.GetString("proxy.provider")).To(Equal("openai"))
+	})
+})
+
+var _ = Describe("BindFlags", func() {
+	var tmpDir string
+
+	BeforeEach(func() {
+		var err error
+		tmpDir, err = os.MkdirTemp("", "bindflag-test-*")
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	AfterEach(func() {
+		os.RemoveAll(tmpDir)
+	})
+
+	It("binds cobra flags to viper keys via registry", func() {
+		v, err := config.InitViper(tmpDir)
+		Expect(err).NotTo(HaveOccurred())
+
+		fs := config.FlagSet{
+			config.FlagAPIListenStandalone: {Name: "listen", Shorthand: "l", ViperKey: "api.listen", Description: "Address for API server to listen on"},
+		}
+
+		cmd := &cobra.Command{Use: "test"}
+		var listen string
+		config.AddStringFlag(cmd, fs, config.FlagAPIListenStandalone, &listen)
+
+		// Simulate flag being set by user
+		err = cmd.Flags().Set("listen", ":7777")
+		Expect(err).NotTo(HaveOccurred())
+
+		config.BindRegisteredFlags(v, cmd, fs, []string{config.FlagAPIListenStandalone})
+
+		Expect(v.GetString("api.listen")).To(Equal(":7777"))
+	})
+
+	It("falls through to config when flag not set", func() {
+		data := `[api]
+listen = ":5555"
+`
+		err := os.WriteFile(filepath.Join(tmpDir, "config.toml"), []byte(data), 0o600)
+		Expect(err).NotTo(HaveOccurred())
+
+		v, err := config.InitViper(tmpDir)
+		Expect(err).NotTo(HaveOccurred())
+
+		fs := config.FlagSet{
+			config.FlagAPIListenStandalone: {Name: "listen", Shorthand: "l", ViperKey: "api.listen", Description: "Address for API server to listen on"},
+		}
+
+		cmd := &cobra.Command{Use: "test"}
+		var listen string
+		config.AddStringFlag(cmd, fs, config.FlagAPIListenStandalone, &listen)
+
+		// Do NOT set the flag -- should fall through to config file value
+		config.BindRegisteredFlags(v, cmd, fs, []string{config.FlagAPIListenStandalone})
+
+		Expect(v.GetString("api.listen")).To(Equal(":5555"))
+	})
+
+	It("skips bindings for nonexistent registry keys", func() {
+		v, err := config.InitViper(tmpDir)
+		Expect(err).NotTo(HaveOccurred())
+
+		fs := config.FlagSet{}
+
+		cmd := &cobra.Command{Use: "test"}
+
+		// "nonexistent" is not in the FlagSet -- should be safely skipped
+		config.BindRegisteredFlags(v, cmd, fs, []string{"nonexistent"})
+
+		defaults := config.NewDefaultConfig()
+		Expect(v.GetString("proxy.listen")).To(Equal(defaults.Proxy.Listen))
+	})
+
+	It("AddStringFlag pulls name, shorthand, and description from FlagSet", func() {
+		fs := config.FlagSet{
+			config.FlagAPITarget: {Name: "api-target", Shorthand: "a", ViperKey: "client.api_target", Description: "Tapes API server URL"},
+		}
+
+		cmd := &cobra.Command{Use: "test"}
+		var target string
+		config.AddStringFlag(cmd, fs, config.FlagAPITarget, &target)
+
+		f := cmd.Flags().Lookup("api-target")
+		Expect(f).NotTo(BeNil())
+		Expect(f.Shorthand).To(Equal("a"))
+		Expect(f.Usage).To(Equal("Tapes API server URL"))
+
+		defaults := config.NewDefaultConfig()
+		Expect(f.DefValue).To(Equal(defaults.Client.APITarget))
+	})
+
+	It("AddUintFlag works for embedding-dimensions", func() {
+		fs := config.FlagSet{
+			config.FlagEmbeddingDims: {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Embedding dimensionality"},
+		}
+
+		cmd := &cobra.Command{Use: "test"}
+		var dims uint
+		config.AddUintFlag(cmd, fs, config.FlagEmbeddingDims, &dims)
+
+		f := cmd.Flags().Lookup("embedding-dimensions")
+		Expect(f).NotTo(BeNil())
+		Expect(f.Usage).To(Equal("Embedding dimensionality"))
+	})
+})
+
+var _ = Describe("viper default merging via LoadConfig", func() {
 	var tmpDir string
 
 	BeforeEach(func() {
