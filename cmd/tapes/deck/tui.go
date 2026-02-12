@@ -54,6 +54,13 @@ const (
 	verticalPadding   = 1
 )
 
+// Concrete hex strings for OSC 11 background color (AdaptiveColor is a struct,
+// can't be passed to termenv.RGBColor directly).
+const (
+	baseBgDark  = "#1B1B1C"
+	baseBgLight = "#E2E0DB"
+)
+
 const (
 	sortKeyCost   = "cost"
 	roleUser      = "user"
@@ -109,6 +116,7 @@ type deckPalette struct {
 	highlightBg        lipgloss.Color
 	panelBg            lipgloss.Color
 	label              lipgloss.Color
+	baseBg             lipgloss.Color
 	costOrangeGradient []string
 	claudeColors       map[string]string
 	openaiColors       map[string]string
@@ -127,6 +135,7 @@ var (
 	colorHighlightBg lipgloss.Color
 	colorPanelBg     lipgloss.Color
 	colorLabel       lipgloss.Color
+	colorBaseBg      lipgloss.Color
 
 	costOrangeGradient []string
 
@@ -146,10 +155,10 @@ var (
 	deckTabBoxStyle      lipgloss.Style
 	deckTabActiveStyle   lipgloss.Style
 	deckTabInactiveStyle lipgloss.Style
+	deckBackgroundStyle  lipgloss.Style
 )
 
-// Model color schemes by provider (intensity indicates tier/usage)
-// Using the new color palette
+// Model color schemes by provider — dark and light variants per tier.
 var (
 	claudeColors map[string]string
 	openaiColors map[string]string
@@ -168,6 +177,7 @@ var darkPalette = deckPalette{
 	highlightBg: lipgloss.Color("#252526"),
 	panelBg:     lipgloss.Color("#212122"),
 	label:       lipgloss.Color("#8A8079"),
+	baseBg:      lipgloss.Color("#1B1B1C"),
 	costOrangeGradient: []string{
 		"#B6512B",
 		"#D96840",
@@ -206,6 +216,7 @@ var lightPalette = deckPalette{
 	highlightBg: lipgloss.Color("#EFE6D8"),
 	panelBg:     lipgloss.Color("#F5EFE6"),
 	label:       lipgloss.Color("#7A6F64"),
+	baseBg:      lipgloss.Color("#E2E0DB"),
 	costOrangeGradient: []string{
 		"#9C3C1E",
 		"#B64A28",
@@ -244,6 +255,7 @@ func applyPalette(p deckPalette) {
 	colorHighlightBg = p.highlightBg
 	colorPanelBg = p.panelBg
 	colorLabel = p.label
+	colorBaseBg = p.baseBg
 	costOrangeGradient = p.costOrangeGradient
 	claudeColors = p.claudeColors
 	openaiColors = p.openaiColors
@@ -265,6 +277,7 @@ func applyPalette(p deckPalette) {
 	deckTabBoxStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorDimmed).Padding(0, 1)
 	deckTabActiveStyle = lipgloss.NewStyle().Bold(true).Foreground(colorForeground)
 	deckTabInactiveStyle = lipgloss.NewStyle().Foreground(colorBrightBlack)
+	deckBackgroundStyle = lipgloss.NewStyle().Background(colorBaseBg)
 }
 
 var (
@@ -341,6 +354,20 @@ func RunDeckTUI(ctx context.Context, query deck.Querier, filters deck.Filters, r
 		model.view = viewSession
 		model.detail = detail
 	}
+
+	// Set the terminal's default background color so the entire alt-screen
+	// (including padding and empty regions) uses our base background.
+	// Detect dark/light terminal and pick the matching shade.
+	out := termenv.NewOutput(os.Stdout, termenv.WithProfile(termenv.TrueColor))
+	if out.HasDarkBackground() {
+		out.SetBackgroundColor(termenv.RGBColor(baseBgDark))
+	} else {
+		out.SetBackgroundColor(termenv.RGBColor(baseBgLight))
+	}
+	defer func() {
+		// OSC 111: reset the default background color to the terminal's original.
+		fmt.Fprint(os.Stdout, "\033]111\007")
+	}()
 
 	program := bubbletea.NewProgram(model,
 		bubbletea.WithContext(ctx),
@@ -502,11 +529,11 @@ func (m deckModel) View() string {
 		base = m.viewSession()
 	case viewModal:
 		base = m.viewOverview()
-		return addPadding(m.overlayModal(base, m.viewModal()))
+		return m.applyBackground(addPadding(m.overlayModal(base, m.viewModal())))
 	default:
 		base = m.viewOverview()
 	}
-	return addPadding(base)
+	return m.applyBackground(addPadding(base))
 }
 
 func (m deckModel) handleKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.Cmd) {
@@ -1017,8 +1044,8 @@ func (m deckModel) renderCostByModelChart(stats deckOverviewStats, width int) []
 	for _, cost := range costs {
 		bar := renderBar(cost.TotalCost, maxCost, barWidth)
 		// Use model color for the bar
-		modelColorHex := getModelColor(cost.Model)
-		coloredBar := lipgloss.NewStyle().Foreground(lipgloss.Color(modelColorHex)).Render(bar)
+		modelColor := getModelColor(cost.Model)
+		coloredBar := lipgloss.NewStyle().Foreground(modelColor).Render(bar)
 
 		line := fmt.Sprintf(" %-17s %s %s %d", cost.Model, coloredBar, formatCost(cost.TotalCost), cost.SessionCount)
 		// Calculate padding to fill the width
@@ -1110,31 +1137,31 @@ func (m deckModel) renderStatusPieChart(stats deckOverviewStats, width int) []st
 	return lines
 }
 
-func getModelColor(model string) string {
+func getModelColor(model string) lipgloss.TerminalColor {
 	modelLower := strings.ToLower(model)
 
 	// Check for Claude models
-	for tier, color := range claudeColors {
+	for tier, colorValue := range claudeColors {
 		if strings.Contains(modelLower, tier) {
-			return color
+			return lipgloss.Color(colorValue)
 		}
 	}
 
 	// Check for OpenAI models
-	for modelName, color := range openaiColors {
+	for modelName, colorValue := range openaiColors {
 		if strings.Contains(modelLower, modelName) || strings.Contains(modelLower, strings.ReplaceAll(modelName, "-", "")) {
-			return color
+			return lipgloss.Color(colorValue)
 		}
 	}
 
 	// Check for Google models
-	for modelName, color := range googleColors {
+	for modelName, colorValue := range googleColors {
 		if strings.Contains(modelLower, modelName) || strings.Contains(modelLower, strings.ReplaceAll(modelName, "-", "")) {
-			return color
+			return lipgloss.Color(colorValue)
 		}
 	}
 
-	return "#FF6B4A" // Default to vibrant orange
+	return colorRed // Default to primary accent
 }
 
 func countByStatusInStats(stats deckOverviewStats, status string) int {
@@ -2030,23 +2057,23 @@ func colorizeModel(model string) string {
 	modelLower := strings.ToLower(model)
 
 	// Check for Claude models
-	for tier, color := range claudeColors {
+	for tier, colorValue := range claudeColors {
 		if strings.Contains(modelLower, tier) {
-			return lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: color, Dark: color}).Render(model)
+			return lipgloss.NewStyle().Foreground(lipgloss.Color(colorValue)).Render(model)
 		}
 	}
 
 	// Check for OpenAI models
-	for modelName, color := range openaiColors {
+	for modelName, colorValue := range openaiColors {
 		if strings.Contains(modelLower, modelName) || strings.Contains(modelLower, strings.ReplaceAll(modelName, "-", "")) {
-			return lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: color, Dark: color}).Render(model)
+			return lipgloss.NewStyle().Foreground(lipgloss.Color(colorValue)).Render(model)
 		}
 	}
 
 	// Check for Google models
-	for modelName, color := range googleColors {
+	for modelName, colorValue := range googleColors {
 		if strings.Contains(modelLower, modelName) || strings.Contains(modelLower, strings.ReplaceAll(modelName, "-", "")) {
-			return lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: color, Dark: color}).Render(model)
+			return lipgloss.NewStyle().Foreground(lipgloss.Color(colorValue)).Render(model)
 		}
 	}
 
@@ -2191,6 +2218,25 @@ func addPadding(content string) string {
 	}
 
 	return strings.Join(paddedLines, "\n")
+}
+
+func (m deckModel) applyBackground(content string) string {
+	content = deckBackgroundStyle.Render(content)
+	contentWidth := lipgloss.Width(content)
+	contentHeight := strings.Count(content, "\n") + 1
+	width := max(m.width+2*horizontalPadding, contentWidth)
+	height := max(m.height+2*verticalPadding, contentHeight)
+	if width <= 0 || height <= 0 {
+		return content
+	}
+	return lipgloss.Place(
+		width,
+		height,
+		lipgloss.Left,
+		lipgloss.Top,
+		content,
+		lipgloss.WithWhitespaceBackground(colorBaseBg),
+	)
 }
 
 func renderCassetteTape() []string {
