@@ -568,21 +568,31 @@ func (p *Proxy) providerByName(providerName, agentName, path string) (provider.P
 	if prov, ok := p.providers[providerName]; ok {
 		switch providerName {
 		case "openai":
-			upstream := "https://api.openai.com/v1"
+			upstream := p.providerUpstream(providerName, "https://api.openai.com/v1")
 			if agentName == "codex" && isOpenAIAuthPath(path) {
 				upstream = "https://auth.openai.com"
 			}
 			return prov, upstream
 		case "anthropic":
-			return prov, "https://api.anthropic.com"
+			return prov, p.providerUpstream(providerName, "https://api.anthropic.com")
 		case "ollama":
-			return prov, p.config.UpstreamURL
+			return prov, p.providerUpstream(providerName, p.config.UpstreamURL)
 		}
 
 		return prov, p.config.UpstreamURL
 	}
 
 	return p.defaultProv, p.config.UpstreamURL
+}
+
+func (p *Proxy) providerUpstream(providerName, fallback string) string {
+	if p.config.ProviderUpstreams == nil {
+		return fallback
+	}
+	if upstream := strings.TrimSpace(p.config.ProviderUpstreams[providerName]); upstream != "" {
+		return upstream
+	}
+	return fallback
 }
 
 func resolveProviderOverride(path string) (string, string) {

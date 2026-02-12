@@ -70,6 +70,7 @@ type startConfig struct {
 	EmbeddingDimensions uint
 	DefaultProvider     string
 	DefaultUpstream     string
+	OllamaUpstream      string
 }
 
 func NewStartCmd() *cobra.Command {
@@ -323,6 +324,11 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 			agentClaude:   {ProviderType: "anthropic", UpstreamURL: "https://api.anthropic.com"},
 			agentOpenCode: {ProviderType: "anthropic", UpstreamURL: "https://api.anthropic.com"},
 			agentCodex:    {ProviderType: "openai", UpstreamURL: "https://api.openai.com/v1"},
+		},
+		ProviderUpstreams: map[string]string{
+			"anthropic": "https://api.anthropic.com",
+			"openai":    "https://api.openai.com/v1",
+			"ollama":    startCfg.OllamaUpstream,
 		},
 		VectorDriver: vectorDriver,
 		Embedder:     embedder,
@@ -595,6 +601,7 @@ func (c *startCommander) loadConfig() (*startConfig, error) {
 		EmbeddingDimensions: cfg.Embedding.Dimensions,
 		DefaultProvider:     cfg.Proxy.Provider,
 		DefaultUpstream:     cfg.Proxy.Upstream,
+		OllamaUpstream:      resolveOllamaUpstream(cfg.Proxy.Provider, cfg.Proxy.Upstream),
 	}, nil
 }
 
@@ -832,6 +839,16 @@ func configureOpenCodeProvider(provider map[string]any, name, baseURL string) {
 	entry := ensureMap(provider, name)
 	options := ensureMap(entry, "options")
 	options["baseURL"] = baseURL
+}
+
+func resolveOllamaUpstream(provider, upstream string) string {
+	if env := strings.TrimSpace(os.Getenv("OLLAMA_HOST")); env != "" {
+		return env
+	}
+	if strings.EqualFold(provider, "ollama") && upstream != "" {
+		return upstream
+	}
+	return "http://localhost:11434"
 }
 
 func signalNotify(sigChan chan<- os.Signal) {

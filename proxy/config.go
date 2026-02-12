@@ -20,6 +20,9 @@ type Config struct {
 	// AgentRoutes maps agent names to provider routing configuration.
 	AgentRoutes map[string]AgentRoute
 
+	// ProviderUpstreams optionally overrides upstream URLs per provider.
+	ProviderUpstreams map[string]string
+
 	// VectorDriver is an optional vector store for storing embeddings.
 	// If nil, vector storage is disabled.
 	VectorDriver vector.Driver
