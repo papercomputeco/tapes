@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"net"
 
 	"github.com/gofiber/adaptor/v2"
 	"github.com/gofiber/fiber/v2"
@@ -84,6 +85,14 @@ func (s *Server) Run() error {
 		zap.String("listen", s.config.ListenAddr),
 	)
 	return s.app.Listen(s.config.ListenAddr)
+}
+
+// RunWithListener starts the API server using the provided listener.
+func (s *Server) RunWithListener(listener net.Listener) error {
+	s.logger.Info("starting API server",
+		zap.String("listen", listener.Addr().String()),
+	)
+	return s.app.Listener(listener)
 }
 
 // Shutdown gracefully shuts down the API server.

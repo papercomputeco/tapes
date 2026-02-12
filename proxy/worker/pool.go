@@ -28,9 +28,10 @@ var (
 
 // Job is a unit of work for the worker pool to execute against.
 type Job struct {
-	Provider string
-	Req      *llm.ChatRequest
-	Resp     *llm.ChatResponse
+	Provider  string
+	AgentName string
+	Req       *llm.ChatRequest
+	Resp      *llm.ChatResponse
 }
 
 // Config is the configuration options for the worker pool.
@@ -166,11 +167,12 @@ func (p *Pool) storeConversationTurn(ctx context.Context, job Job) (string, []*m
 	// Store each message from the request as nodes.
 	for _, msg := range job.Req.Messages {
 		bucket := merkle.Bucket{
-			Type:     "message",
-			Role:     msg.Role,
-			Content:  msg.Content,
-			Model:    job.Req.Model,
-			Provider: job.Provider,
+			Type:      "message",
+			Role:      msg.Role,
+			Content:   msg.Content,
+			Model:     job.Req.Model,
+			Provider:  job.Provider,
+			AgentName: job.AgentName,
 		}
 
 		node := merkle.NewNode(bucket, parent)
@@ -194,11 +196,12 @@ func (p *Pool) storeConversationTurn(ctx context.Context, job Job) (string, []*m
 	}
 
 	responseBucket := merkle.Bucket{
-		Type:     "message",
-		Role:     job.Resp.Message.Role,
-		Content:  job.Resp.Message.Content,
-		Model:    job.Resp.Model,
-		Provider: job.Provider,
+		Type:      "message",
+		Role:      job.Resp.Message.Role,
+		Content:   job.Resp.Message.Content,
+		Model:     job.Resp.Model,
+		Provider:  job.Provider,
+		AgentName: job.AgentName,
 	}
 
 	responseNode := merkle.NewNode(

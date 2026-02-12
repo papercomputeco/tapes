@@ -11,7 +11,6 @@ import (
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
-
 	"github.com/papercomputeco/tapes/pkg/storage/ent/node"
 	"github.com/papercomputeco/tapes/pkg/storage/ent/predicate"
 )
@@ -41,6 +40,7 @@ type NodeMutation struct {
 	appendcontent         []map[string]interface{}
 	model                 *string
 	provider              *string
+	agent_name            *string
 	stop_reason           *string
 	prompt_tokens         *int
 	addprompt_tokens      *int
@@ -525,6 +525,55 @@ func (m *NodeMutation) ProviderCleared() bool {
 func (m *NodeMutation) ResetProvider() {
 	m.provider = nil
 	delete(m.clearedFields, node.FieldProvider)
+}
+
+// SetAgentName sets the "agent_name" field.
+func (m *NodeMutation) SetAgentName(s string) {
+	m.agent_name = &s
+}
+
+// AgentName returns the value of the "agent_name" field in the mutation.
+func (m *NodeMutation) AgentName() (r string, exists bool) {
+	v := m.agent_name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAgentName returns the old "agent_name" field's value of the Node entity.
+// If the Node object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *NodeMutation) OldAgentName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAgentName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAgentName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAgentName: %w", err)
+	}
+	return oldValue.AgentName, nil
+}
+
+// ClearAgentName clears the value of the "agent_name" field.
+func (m *NodeMutation) ClearAgentName() {
+	m.agent_name = nil
+	m.clearedFields[node.FieldAgentName] = struct{}{}
+}
+
+// AgentNameCleared returns if the "agent_name" field was cleared in this mutation.
+func (m *NodeMutation) AgentNameCleared() bool {
+	_, ok := m.clearedFields[node.FieldAgentName]
+	return ok
+}
+
+// ResetAgentName resets all changes to the "agent_name" field.
+func (m *NodeMutation) ResetAgentName() {
+	m.agent_name = nil
+	delete(m.clearedFields, node.FieldAgentName)
 }
 
 // SetStopReason sets the "stop_reason" field.
@@ -1090,7 +1139,7 @@ func (m *NodeMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *NodeMutation) Fields() []string {
-	fields := make([]string, 0, 14)
+	fields := make([]string, 0, 15)
 	if m.parent != nil {
 		fields = append(fields, node.FieldParentHash)
 	}
@@ -1111,6 +1160,9 @@ func (m *NodeMutation) Fields() []string {
 	}
 	if m.provider != nil {
 		fields = append(fields, node.FieldProvider)
+	}
+	if m.agent_name != nil {
+		fields = append(fields, node.FieldAgentName)
 	}
 	if m.stop_reason != nil {
 		fields = append(fields, node.FieldStopReason)
@@ -1155,6 +1207,8 @@ func (m *NodeMutation) Field(name string) (ent.Value, bool) {
 		return m.Model()
 	case node.FieldProvider:
 		return m.Provider()
+	case node.FieldAgentName:
+		return m.AgentName()
 	case node.FieldStopReason:
 		return m.StopReason()
 	case node.FieldPromptTokens:
@@ -1192,6 +1246,8 @@ func (m *NodeMutation) OldField(ctx context.Context, name string) (ent.Value, er
 		return m.OldModel(ctx)
 	case node.FieldProvider:
 		return m.OldProvider(ctx)
+	case node.FieldAgentName:
+		return m.OldAgentName(ctx)
 	case node.FieldStopReason:
 		return m.OldStopReason(ctx)
 	case node.FieldPromptTokens:
@@ -1263,6 +1319,13 @@ func (m *NodeMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetProvider(v)
+		return nil
+	case node.FieldAgentName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAgentName(v)
 		return nil
 	case node.FieldStopReason:
 		v, ok := value.(string)
@@ -1427,6 +1490,9 @@ func (m *NodeMutation) ClearedFields() []string {
 	if m.FieldCleared(node.FieldProvider) {
 		fields = append(fields, node.FieldProvider)
 	}
+	if m.FieldCleared(node.FieldAgentName) {
+		fields = append(fields, node.FieldAgentName)
+	}
 	if m.FieldCleared(node.FieldStopReason) {
 		fields = append(fields, node.FieldStopReason)
 	}
@@ -1480,6 +1546,9 @@ func (m *NodeMutation) ClearField(name string) error {
 	case node.FieldProvider:
 		m.ClearProvider()
 		return nil
+	case node.FieldAgentName:
+		m.ClearAgentName()
+		return nil
 	case node.FieldStopReason:
 		m.ClearStopReason()
 		return nil
@@ -1526,6 +1595,9 @@ func (m *NodeMutation) ResetField(name string) error {
 		return nil
 	case node.FieldProvider:
 		m.ResetProvider()
+		return nil
+	case node.FieldAgentName:
+		m.ResetAgentName()
 		return nil
 	case node.FieldStopReason:
 		m.ResetStopReason()

@@ -12,6 +12,7 @@ import (
 	searchcmder "github.com/papercomputeco/tapes/cmd/tapes/search"
 	seedcmder "github.com/papercomputeco/tapes/cmd/tapes/seed"
 	servecmder "github.com/papercomputeco/tapes/cmd/tapes/serve"
+	startcmder "github.com/papercomputeco/tapes/cmd/tapes/start"
 	statuscmder "github.com/papercomputeco/tapes/cmd/tapes/status"
 	versioncmder "github.com/papercomputeco/tapes/cmd/version"
 )
@@ -19,6 +20,8 @@ import (
 const tapesLongDesc string = `Tapes is automatic telemetry for your agents.
 
 Run services using:
+  tapes start          Start proxy + API (auto ports)
+  tapes start <agent>  Start proxy + API and launch an agent
   tapes serve api      Run the API server
   tapes serve proxy    Run the proxy server
   tapes serve          Run both servers together
@@ -66,6 +69,7 @@ func NewTapesCmd() *cobra.Command {
 	cmd.AddCommand(searchcmder.NewSearchCmd())
 	cmd.AddCommand(seedcmder.NewSeedCmd())
 	cmd.AddCommand(servecmder.NewServeCmd())
+	cmd.AddCommand(startcmder.NewStartCmd())
 	cmd.AddCommand(statuscmder.NewStatusCmd())
 	cmd.AddCommand(versioncmder.NewVersionCmd())
 

@@ -47,6 +47,10 @@ func (ed *EntDriver) Put(ctx context.Context, n *merkle.Node) (bool, error) {
 		SetProvider(n.Bucket.Provider).
 		SetStopReason(n.StopReason)
 
+	if n.Bucket.AgentName != "" {
+		create.SetAgentName(n.Bucket.AgentName)
+	}
+
 	// Marshal bucket to JSON for storage
 	bucketJSON, err := json.Marshal(n.Bucket)
 	if err != nil {

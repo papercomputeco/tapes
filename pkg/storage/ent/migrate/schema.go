@@ -17,6 +17,7 @@ var (
 		{Name: "content", Type: field.TypeJSON, Nullable: true},
 		{Name: "model", Type: field.TypeString, Nullable: true},
 		{Name: "provider", Type: field.TypeString, Nullable: true},
+		{Name: "agent_name", Type: field.TypeString, Nullable: true},
 		{Name: "stop_reason", Type: field.TypeString, Nullable: true},
 		{Name: "prompt_tokens", Type: field.TypeInt, Nullable: true},
 		{Name: "completion_tokens", Type: field.TypeInt, Nullable: true},
@@ -34,7 +35,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "nodes_nodes_parent",
-				Columns:    []*schema.Column{NodesColumns[14]},
+				Columns:    []*schema.Column{NodesColumns[15]},
 				RefColumns: []*schema.Column{NodesColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
@@ -43,7 +44,7 @@ var (
 			{
 				Name:    "node_parent_hash",
 				Unique:  false,
-				Columns: []*schema.Column{NodesColumns[14]},
+				Columns: []*schema.Column{NodesColumns[15]},
 			},
 			{
 				Name:    "node_role",
@@ -59,6 +60,11 @@ var (
 				Name:    "node_provider",
 				Unique:  false,
 				Columns: []*schema.Column{NodesColumns[6]},
+			},
+			{
+				Name:    "node_agent_name",
+				Unique:  false,
+				Columns: []*schema.Column{NodesColumns[7]},
 			},
 			{
 				Name:    "node_role_model",

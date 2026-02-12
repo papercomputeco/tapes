@@ -10,7 +10,6 @@ import (
 
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-
 	"github.com/papercomputeco/tapes/pkg/storage/ent/node"
 )
 
@@ -99,6 +98,20 @@ func (_c *NodeCreate) SetProvider(v string) *NodeCreate {
 func (_c *NodeCreate) SetNillableProvider(v *string) *NodeCreate {
 	if v != nil {
 		_c.SetProvider(*v)
+	}
+	return _c
+}
+
+// SetAgentName sets the "agent_name" field.
+func (_c *NodeCreate) SetAgentName(v string) *NodeCreate {
+	_c.mutation.SetAgentName(v)
+	return _c
+}
+
+// SetNillableAgentName sets the "agent_name" field if the given value is not nil.
+func (_c *NodeCreate) SetNillableAgentName(v *string) *NodeCreate {
+	if v != nil {
+		_c.SetAgentName(*v)
 	}
 	return _c
 }
@@ -350,6 +363,10 @@ func (_c *NodeCreate) createSpec() (*Node, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Provider(); ok {
 		_spec.SetField(node.FieldProvider, field.TypeString, value)
 		_node.Provider = value
+	}
+	if value, ok := _c.mutation.AgentName(); ok {
+		_spec.SetField(node.FieldAgentName, field.TypeString, value)
+		_node.AgentName = value
 	}
 	if value, ok := _c.mutation.StopReason(); ok {
 		_spec.SetField(node.FieldStopReason, field.TypeString, value)

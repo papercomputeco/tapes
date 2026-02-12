@@ -25,6 +25,9 @@ type Bucket struct {
 
 	// Provider identifies the API provider (e.g., "openai", "anthropic", "ollama")
 	Provider string `json:"provider"`
+
+	// AgentName identifies the agent harness (e.g., "claude", "opencode", "codex")
+	AgentName string `json:"agent_name,omitempty"`
 }
 
 // ExtractText returns the concatenated text content from the bucket's content blocks.
