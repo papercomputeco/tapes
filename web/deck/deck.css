@@ -1,5 +1,5 @@
 :root {
-  color-scheme: dark;
+  color-scheme: light dark;
   --bg: #000000;
   --surface: #000000;
   --border: #262626;
@@ -14,6 +14,37 @@
   --blue: #38bdf8;
   --pink: #f472b6;
   --yellow: #fbbf24;
+  --row-hover: rgba(255, 255, 255, 0.02);
+  --row-active: rgba(255, 255, 255, 0.04);
+  --row-header: rgba(255, 255, 255, 0.01);
+  --tab-active-bg: rgba(255, 255, 255, 0.04);
+  --conversation-text-bg: rgba(255, 255, 255, 0.01);
+  --footer-bg: rgba(0, 0, 0, 0.95);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f7f4ee;
+    --surface: #ffffff;
+    --border: #d6d0c6;
+    --border-hover: #bcb4a6;
+    --text: #2a2622;
+    --text-bright: #120f0c;
+    --muted: #6a6157;
+    --dim: #8b8176;
+    --primary: #c0243a;
+    --green: #1f8a4c;
+    --orange: #c05a12;
+    --blue: #1b6ea8;
+    --pink: #b33b7a;
+    --yellow: #b07b00;
+    --row-hover: rgba(0, 0, 0, 0.03);
+    --row-active: rgba(0, 0, 0, 0.06);
+    --row-header: rgba(0, 0, 0, 0.02);
+    --tab-active-bg: rgba(0, 0, 0, 0.04);
+    --conversation-text-bg: rgba(0, 0, 0, 0.03);
+    --footer-bg: rgba(247, 244, 238, 0.98);
+  }
 }
 
 * {
@@ -500,11 +531,11 @@ body {
 }
 
 .sessions-row:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--row-hover);
 }
 
 .sessions-row--active {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--row-active);
 }
 
 .sessions-row--header {
@@ -514,11 +545,11 @@ body {
   color: var(--muted);
   cursor: default;
   border-bottom: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.01);
+  background: var(--row-header);
 }
 
 .sessions-row--header:hover {
-  background: rgba(255, 255, 255, 0.01);
+  background: var(--row-header);
 }
 
 .session-number {
@@ -792,7 +823,7 @@ body {
 .detail__conversation-tab--active {
   border-color: var(--border-hover);
   color: var(--text-bright);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--tab-active-bg);
 }
 
 .detail__conversation {
@@ -831,15 +862,15 @@ body {
   color: var(--muted);
   font-size: 9px;
   cursor: default;
-  background: rgba(255, 255, 255, 0.01);
+  background: var(--row-header);
 }
 
 .conversation__row--active {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--row-active);
 }
 
 .conversation__row:hover:not(.conversation__row--header) {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--row-hover);
 }
 
 .conversation__detail {
@@ -875,7 +906,7 @@ body {
   white-space: pre-wrap;
   font-size: 11px;
   line-height: 1.5;
-  background: rgba(255, 255, 255, 0.01);
+  background: var(--conversation-text-bg);
   border: 1px solid var(--border);
   padding: 10px;
   max-height: 280px;
@@ -888,7 +919,7 @@ body {
   bottom: 0;
   left: 0;
   right: 0;
-  background: rgba(0, 0, 0, 0.95);
+  background: var(--footer-bg);
   border-top: 1px solid var(--border);
   backdrop-filter: blur(8px);
   padding: 8px 24px;

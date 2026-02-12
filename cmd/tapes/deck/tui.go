@@ -25,6 +25,12 @@ func init() {
 	renderer := lipgloss.NewRenderer(os.Stdout, termenv.WithProfile(termenv.TrueColor))
 	renderer.SetColorProfile(termenv.TrueColor)
 	lipgloss.SetDefaultRenderer(renderer)
+
+	if termenv.HasDarkBackground() {
+		applyPalette(darkPalette)
+	} else {
+		applyPalette(lightPalette)
+	}
 }
 
 type deckView int
@@ -98,91 +104,181 @@ const (
 	modalFilter
 )
 
+type deckPalette struct {
+	foreground         lipgloss.Color
+	red                lipgloss.Color
+	green              lipgloss.Color
+	yellow             lipgloss.Color
+	blue               lipgloss.Color
+	magenta            lipgloss.Color
+	brightBlack        lipgloss.Color
+	dimmed             lipgloss.Color
+	highlightBg        lipgloss.Color
+	panelBg            lipgloss.Color
+	label              lipgloss.Color
+	baseBg             lipgloss.Color
+	costOrangeGradient []string
+	claudeColors       map[string]string
+	openaiColors       map[string]string
+	googleColors       map[string]string
+}
+
 var (
-	// Core color palette - adaptive dark/light design
-	colorForeground  = lipgloss.AdaptiveColor{Dark: "#E6E4D9", Light: "#1A1A1B"} // Primary text
-	colorRed         = lipgloss.AdaptiveColor{Dark: "#FF6B4A", Light: "#CC4422"} // Primary accent
-	colorGreen       = lipgloss.AdaptiveColor{Dark: "#4DA667", Light: "#2D7A47"} // Forest Green
-	colorYellow      = lipgloss.AdaptiveColor{Dark: "#F2B84B", Light: "#9B7500"} // Caution Gold
-	colorBlue        = lipgloss.AdaptiveColor{Dark: "#4EB1E9", Light: "#1A6FA0"} // Electric Cyan
-	colorMagenta     = lipgloss.AdaptiveColor{Dark: "#B656B1", Light: "#8B3A8B"} // Royal Purple
-	colorBrightBlack = lipgloss.AdaptiveColor{Dark: "#4A4A4A", Light: "#707070"} // Muted Slate
-	colorDimmed      = lipgloss.AdaptiveColor{Dark: "#2A2A2B", Light: "#A0A0A0"} // Subtle elements
+	colorForeground  lipgloss.Color
+	colorRed         lipgloss.Color
+	colorGreen       lipgloss.Color
+	colorYellow      lipgloss.Color
+	colorBlue        lipgloss.Color
+	colorMagenta     lipgloss.Color
+	colorBrightBlack lipgloss.Color
+	colorDimmed      lipgloss.Color
+	colorHighlightBg lipgloss.Color
+	colorPanelBg     lipgloss.Color
+	colorLabel       lipgloss.Color
+	colorBaseBg      lipgloss.Color
 
-	// Complementary shades for UI depth
-	colorHighlightBg = lipgloss.AdaptiveColor{Dark: "#252526", Light: "#CFCDC7"} // Highlight background
-	colorPanelBg     = lipgloss.AdaptiveColor{Dark: "#212122", Light: "#D8D6D1"} // Panel background
-	colorBaseBg      = lipgloss.AdaptiveColor{Dark: "#1B1B1C", Light: "#E2E0DB"} // Main background
+	costOrangeGradient []string
 
-	// Orange gradient for cost visualization (light to bright)
-	costOrangeGradient = []string{
-		"#B6512B", // Dim orange (cheapest)
-		"#D96840", // Medium orange
-		"#FF7A45", // Bright orange
-		"#FF8F4D", // Hot orange
-		"#FFB25A", // Hottest orange (most expensive)
-	}
-
-	// UI element styles using the palette
-	deckTitleStyle       = lipgloss.NewStyle().Bold(true).Foreground(colorYellow)
-	deckMutedStyle       = lipgloss.NewStyle().Foreground(colorBrightBlack)
-	deckAccentStyle      = lipgloss.NewStyle().Foreground(colorRed) // Primary accent is now orange
-	deckDimStyle         = lipgloss.NewStyle().Foreground(colorDimmed)
-	deckSectionStyle     = lipgloss.NewStyle().Bold(true).Foreground(colorForeground)
-	deckDividerStyle     = lipgloss.NewStyle().Foreground(colorDimmed)
-	deckHighlightStyle   = lipgloss.NewStyle().Background(colorHighlightBg)
-	deckStatusOKStyle    = lipgloss.NewStyle().Foreground(colorGreen)
-	deckStatusFailStyle  = lipgloss.NewStyle().Foreground(colorRed)
-	deckStatusWarnStyle  = lipgloss.NewStyle().Foreground(colorYellow)
-	deckRoleUserStyle    = lipgloss.NewStyle().Foreground(colorBlue)
-	deckRoleAsstStyle    = lipgloss.NewStyle().Foreground(colorRed) // Assistant uses primary accent orange
-	deckBackgroundStyle  = lipgloss.NewStyle().Background(colorBaseBg)
-	deckModalBgStyle     = lipgloss.NewStyle().Background(colorPanelBg).Foreground(colorForeground).Padding(1, 2)
-	deckTabBoxStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorDimmed).Padding(0, 1)
-	deckTabActiveStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorForeground)
-	deckTabInactiveStyle = lipgloss.NewStyle().Foreground(colorBrightBlack)
+	deckTitleStyle       lipgloss.Style
+	deckMutedStyle       lipgloss.Style
+	deckAccentStyle      lipgloss.Style
+	deckDimStyle         lipgloss.Style
+	deckSectionStyle     lipgloss.Style
+	deckDividerStyle     lipgloss.Style
+	deckHighlightStyle   lipgloss.Style
+	deckStatusOKStyle    lipgloss.Style
+	deckStatusFailStyle  lipgloss.Style
+	deckStatusWarnStyle  lipgloss.Style
+	deckRoleUserStyle    lipgloss.Style
+	deckRoleAsstStyle    lipgloss.Style
+	deckModalBgStyle     lipgloss.Style
+	deckTabBoxStyle      lipgloss.Style
+	deckTabActiveStyle   lipgloss.Style
+	deckTabInactiveStyle lipgloss.Style
+	deckBackgroundStyle  lipgloss.Style
 )
 
 // Model color schemes by provider — dark and light variants per tier.
 var (
-	// Anthropic - Royal Purple family
-	claudeColorsDark = map[string]string{
+	claudeColors map[string]string
+	openaiColors map[string]string
+	googleColors map[string]string
+)
+
+var darkPalette = deckPalette{
+	foreground:  lipgloss.Color("#E6E4D9"),
+	red:         lipgloss.Color("#FF6B4A"),
+	green:       lipgloss.Color("#4DA667"),
+	yellow:      lipgloss.Color("#F2B84B"),
+	blue:        lipgloss.Color("#4EB1E9"),
+	magenta:     lipgloss.Color("#B656B1"),
+	brightBlack: lipgloss.Color("#4A4A4A"),
+	dimmed:      lipgloss.Color("#2A2A2B"),
+	highlightBg: lipgloss.Color("#252526"),
+	panelBg:     lipgloss.Color("#212122"),
+	label:       lipgloss.Color("#8A8079"),
+	baseBg:      lipgloss.Color("#1B1B1C"),
+	costOrangeGradient: []string{
+		"#B6512B",
+		"#D96840",
+		"#FF7A45",
+		"#FF8F4D",
+		"#FFB25A",
+	},
+	claudeColors: map[string]string{
 		"opus":   "#D97BC1",
 		"sonnet": "#B656B1",
 		"haiku":  "#8E3F8A",
-	}
-	claudeColorsLight = map[string]string{
-		"opus":   "#A0306E",
-		"sonnet": "#8B3A8B",
-		"haiku":  "#6B2A6B",
-	}
-	// OpenAI - Cyan family
-	openaiColorsDark = map[string]string{
+	},
+	openaiColors: map[string]string{
 		"gpt-4o":      "#7DD9FF",
 		"gpt-4":       "#4EB1E9",
 		"gpt-4o-mini": "#3889B8",
 		"gpt-3.5":     "#2A6588",
-	}
-	openaiColorsLight = map[string]string{
-		"gpt-4o":      "#1A6FA0",
-		"gpt-4":       "#155A82",
-		"gpt-4o-mini": "#104568",
-		"gpt-3.5":     "#0C3550",
-	}
-	// Google - Electric Cyan family
-	googleColorsDark = map[string]string{
+	},
+	googleColors: map[string]string{
 		"gemini-2.0":     "#7DD9FF",
 		"gemini-1.5-pro": "#4EB1E9",
 		"gemini-1.5":     "#3889B8",
 		"gemma":          "#2A6588",
-	}
-	googleColorsLight = map[string]string{
-		"gemini-2.0":     "#1A6FA0",
-		"gemini-1.5-pro": "#155A82",
-		"gemini-1.5":     "#104568",
-		"gemma":          "#0C3550",
-	}
-)
+	},
+}
+
+var lightPalette = deckPalette{
+	foreground:  lipgloss.Color("#1F1B17"),
+	red:         lipgloss.Color("#C04A32"),
+	green:       lipgloss.Color("#1F7A48"),
+	yellow:      lipgloss.Color("#B6801A"),
+	blue:        lipgloss.Color("#1B6EA8"),
+	magenta:     lipgloss.Color("#8F3F8F"),
+	brightBlack: lipgloss.Color("#5F564D"),
+	dimmed:      lipgloss.Color("#A3988D"),
+	highlightBg: lipgloss.Color("#EFE6D8"),
+	panelBg:     lipgloss.Color("#F5EFE6"),
+	label:       lipgloss.Color("#7A6F64"),
+	baseBg:      lipgloss.Color("#E2E0DB"),
+	costOrangeGradient: []string{
+		"#9C3C1E",
+		"#B64A28",
+		"#CF5A33",
+		"#E06A3F",
+		"#F08B57",
+	},
+	claudeColors: map[string]string{
+		"opus":   "#B24B9C",
+		"sonnet": "#8F3B85",
+		"haiku":  "#6E2D66",
+	},
+	openaiColors: map[string]string{
+		"gpt-4o":      "#2F89C6",
+		"gpt-4":       "#1B6EA8",
+		"gpt-4o-mini": "#185A87",
+		"gpt-3.5":     "#134466",
+	},
+	googleColors: map[string]string{
+		"gemini-2.0":     "#2F89C6",
+		"gemini-1.5-pro": "#1B6EA8",
+		"gemini-1.5":     "#185A87",
+		"gemma":          "#134466",
+	},
+}
+
+func applyPalette(p deckPalette) {
+	colorForeground = p.foreground
+	colorRed = p.red
+	colorGreen = p.green
+	colorYellow = p.yellow
+	colorBlue = p.blue
+	colorMagenta = p.magenta
+	colorBrightBlack = p.brightBlack
+	colorDimmed = p.dimmed
+	colorHighlightBg = p.highlightBg
+	colorPanelBg = p.panelBg
+	colorLabel = p.label
+	colorBaseBg = p.baseBg
+	costOrangeGradient = p.costOrangeGradient
+	claudeColors = p.claudeColors
+	openaiColors = p.openaiColors
+	googleColors = p.googleColors
+
+	deckTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(colorYellow)
+	deckMutedStyle = lipgloss.NewStyle().Foreground(colorBrightBlack)
+	deckAccentStyle = lipgloss.NewStyle().Foreground(colorRed)
+	deckDimStyle = lipgloss.NewStyle().Foreground(colorDimmed)
+	deckSectionStyle = lipgloss.NewStyle().Bold(true).Foreground(colorForeground)
+	deckDividerStyle = lipgloss.NewStyle().Foreground(colorDimmed)
+	deckHighlightStyle = lipgloss.NewStyle().Background(colorHighlightBg)
+	deckStatusOKStyle = lipgloss.NewStyle().Foreground(colorGreen)
+	deckStatusFailStyle = lipgloss.NewStyle().Foreground(colorRed)
+	deckStatusWarnStyle = lipgloss.NewStyle().Foreground(colorYellow)
+	deckRoleUserStyle = lipgloss.NewStyle().Foreground(colorBlue)
+	deckRoleAsstStyle = lipgloss.NewStyle().Foreground(colorRed)
+	deckModalBgStyle = lipgloss.NewStyle().Background(colorPanelBg).Foreground(colorForeground).Padding(1, 2)
+	deckTabBoxStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorDimmed).Padding(0, 1)
+	deckTabActiveStyle = lipgloss.NewStyle().Bold(true).Foreground(colorForeground)
+	deckTabInactiveStyle = lipgloss.NewStyle().Foreground(colorBrightBlack)
+	deckBackgroundStyle = lipgloss.NewStyle().Background(colorBaseBg)
+}
 
 var (
 	sortOrder        = []string{sortKeyCost, "time", "tokens", "duration"}
@@ -819,7 +915,7 @@ func (m deckModel) viewMetrics(stats deckOverviewStats) string {
 	colWidth := max((lineWidth-spaceWidth)/cols, 16)
 
 	// Label style with more contrast and bold value style
-	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Dark: "#8A8079", Light: "#6B5E55"}).Bold(true)
+	labelStyle := lipgloss.NewStyle().Foreground(colorLabel).Bold(true)
 	highlightValueStyle := lipgloss.NewStyle().Foreground(colorForeground).Bold(true)
 	dimSeparator := deckDimStyle.Render(" │ ")
 
@@ -1045,23 +1141,23 @@ func getModelColor(model string) lipgloss.TerminalColor {
 	modelLower := strings.ToLower(model)
 
 	// Check for Claude models
-	for tier, dark := range claudeColorsDark {
+	for tier, colorValue := range claudeColors {
 		if strings.Contains(modelLower, tier) {
-			return lipgloss.AdaptiveColor{Dark: dark, Light: claudeColorsLight[tier]}
+			return lipgloss.Color(colorValue)
 		}
 	}
 
 	// Check for OpenAI models
-	for modelName, dark := range openaiColorsDark {
+	for modelName, colorValue := range openaiColors {
 		if strings.Contains(modelLower, modelName) || strings.Contains(modelLower, strings.ReplaceAll(modelName, "-", "")) {
-			return lipgloss.AdaptiveColor{Dark: dark, Light: openaiColorsLight[modelName]}
+			return lipgloss.Color(colorValue)
 		}
 	}
 
 	// Check for Google models
-	for modelName, dark := range googleColorsDark {
+	for modelName, colorValue := range googleColors {
 		if strings.Contains(modelLower, modelName) || strings.Contains(modelLower, strings.ReplaceAll(modelName, "-", "")) {
-			return lipgloss.AdaptiveColor{Dark: dark, Light: googleColorsLight[modelName]}
+			return lipgloss.Color(colorValue)
 		}
 	}
 
@@ -1462,7 +1558,7 @@ func (m deckModel) renderSessionMetrics() []string {
 	spaceWidth := (cols - 1) * 3
 	colWidth := max((lineWidth-spaceWidth)/cols, 16)
 
-	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Dark: "#8A8079", Light: "#6B5E55"}).Bold(true)
+	labelStyle := lipgloss.NewStyle().Foreground(colorLabel).Bold(true)
 	highlightValueStyle := lipgloss.NewStyle().Foreground(colorForeground).Bold(true)
 	lightGrayStyle := lipgloss.NewStyle().Foreground(colorBrightBlack)
 	dimSeparator := deckDimStyle.Render(" │ ")
@@ -1961,23 +2057,23 @@ func colorizeModel(model string) string {
 	modelLower := strings.ToLower(model)
 
 	// Check for Claude models
-	for tier, dark := range claudeColorsDark {
+	for tier, colorValue := range claudeColors {
 		if strings.Contains(modelLower, tier) {
-			return lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Dark: dark, Light: claudeColorsLight[tier]}).Render(model)
+			return lipgloss.NewStyle().Foreground(lipgloss.Color(colorValue)).Render(model)
 		}
 	}
 
 	// Check for OpenAI models
-	for modelName, dark := range openaiColorsDark {
+	for modelName, colorValue := range openaiColors {
 		if strings.Contains(modelLower, modelName) || strings.Contains(modelLower, strings.ReplaceAll(modelName, "-", "")) {
-			return lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Dark: dark, Light: openaiColorsLight[modelName]}).Render(model)
+			return lipgloss.NewStyle().Foreground(lipgloss.Color(colorValue)).Render(model)
 		}
 	}
 
 	// Check for Google models
-	for modelName, dark := range googleColorsDark {
+	for modelName, colorValue := range googleColors {
 		if strings.Contains(modelLower, modelName) || strings.Contains(modelLower, strings.ReplaceAll(modelName, "-", "")) {
-			return lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Dark: dark, Light: googleColorsLight[modelName]}).Render(model)
+			return lipgloss.NewStyle().Foreground(lipgloss.Color(colorValue)).Render(model)
 		}
 	}
 
