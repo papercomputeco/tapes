@@ -10,6 +10,14 @@ LDFLAGS := -s -w \
 	-X 'github.com/papercomputeco/tapes/pkg/utils.Sha=$(COMMIT)' \
 	-X 'github.com/papercomputeco/tapes/pkg/utils.Buildtime=$(BUILDTIME)'
 
+# Suppress sqlite-vec deprecation warnings on macOS (sqlite3_auto_extension).
+# Apple deprecated process-global auto-extension APIs in their SDK headers
+# but the functions still work. See: https://github.com/asg017/sqlite-vec/issues/169
+ifeq ($(shell uname -s),Darwin)
+CGO_CFLAGS := -Wno-deprecated-declarations
+export CGO_CFLAGS
+endif
+
 .PHONY: check
 check: ## Runs golangci-lint check. Auto-fixes are not automatically applied.
 	$(call print-target)
@@ -108,6 +116,11 @@ build-proxy-container: ## Build the tapesprox container artifact
 		-t papercomputeco/proxy:$(VERSION) \
 		-t papercomputeco/proxy:latest \
 		.
+
+.PHONY: run
+run: ## Runs a tapes CLI command, e.g. make run ARGS="deck"
+	$(call print-target)
+	CGO_ENABLED=1 GOEXPERIMENT=jsonv2 go run -ldflags "$(LDFLAGS)" ./cli/tapes $(ARGS)
 
 .PHONY: clean
 clean: ## Removes the "build" directory with built artifacts
