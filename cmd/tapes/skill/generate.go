@@ -18,6 +18,8 @@ import (
 )
 
 type generateCommander struct {
+	flags config.FlagSet
+
 	sqlitePath string
 	name       string
 	skillType  string
@@ -32,8 +34,14 @@ type generateCommander struct {
 	apiTarget  string
 }
 
+var generateFlags = config.FlagSet{
+	config.FlagAPITarget: {Name: "api-target", ViperKey: "client.api_target", Description: "Tapes API server URL"},
+}
+
 func newGenerateCmd() *cobra.Command {
-	cmder := &generateCommander{}
+	cmder := &generateCommander{
+		flags: generateFlags,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "generate [hash...]",
@@ -56,27 +64,23 @@ Examples:
   tapes skill generate --search "react hooks" --search-top 3 --name react-debug
   tapes skill generate abc123 --name morning-work --since 2026-02-17`,
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
-			if cmd.Flags().Changed("api-target") {
-				return nil
-			}
 			configDir, _ := cmd.Flags().GetString("config-dir")
-			cfger, err := config.NewConfiger(configDir)
+			v, err := config.InitViper(configDir)
 			if err != nil {
 				return nil //nolint:nilerr // non-fatal, fall back to default
 			}
-			cfg, err := cfger.LoadConfig()
-			if err != nil {
-				return nil //nolint:nilerr // non-fatal, fall back to default
-			}
-			cmder.apiTarget = cfg.Client.APITarget
+
+			config.BindRegisteredFlags(v, cmd, cmder.flags, []string{
+				config.FlagAPITarget,
+			})
+
+			cmder.apiTarget = v.GetString("client.api_target")
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmder.run(cmd, args)
 		},
 	}
-
-	defaults := config.NewDefaultConfig()
 
 	cmd.Flags().StringVar(&cmder.name, "name", "", "Skill name, kebab-case (required)")
 	cmd.Flags().StringVar(&cmder.skillType, "type", "workflow", "Skill type: workflow|domain-knowledge|prompt-template")
@@ -89,7 +93,7 @@ Examples:
 	cmd.Flags().StringVar(&cmder.until, "until", "", "Only include messages on or before this date (YYYY-MM-DD or RFC3339)")
 	cmd.Flags().StringVar(&cmder.search, "search", "", "Search query to find sessions (requires running API server)")
 	cmd.Flags().IntVar(&cmder.searchTop, "search-top", 3, "Number of search results to use")
-	cmd.Flags().StringVar(&cmder.apiTarget, "api-target", defaults.Client.APITarget, "Tapes API server URL")
+	config.AddStringFlag(cmd, cmder.flags, config.FlagAPITarget, &cmder.apiTarget)
 
 	_ = cmd.MarkFlagRequired("name")
 

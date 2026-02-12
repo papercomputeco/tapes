@@ -631,61 +631,70 @@ func (c *startCommander) unregisterAgent(manager *start.Manager, pid int) error 
 }
 
 func (c *startCommander) loadConfig() (*startConfig, error) {
-	cfger, err := config.NewConfiger(c.configDir)
+	v, err := config.InitViper(c.configDir)
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
 	}
 
-	cfg, err := cfger.LoadConfig()
-	if err != nil {
-		return nil, fmt.Errorf("loading config: %w", err)
+	// Bind the --project CLI flag so it takes precedence.
+	if c.project != "" {
+		v.Set("proxy.project", c.project)
 	}
 
-	dotdirManager := dotdir.NewManager()
-	defaultTargetDir, err := dotdirManager.Target(c.configDir)
-	if err != nil {
-		return nil, fmt.Errorf("resolving target dir: %w", err)
-	}
-	if defaultTargetDir == "" {
-		home, err := os.UserHomeDir()
+	// Resolve default sqlite path from dotdir target when not set
+	// via env or config file.
+	if v.GetString("storage.sqlite_path") == "" {
+		dotdirManager := dotdir.NewManager()
+		defaultTargetDir, err := dotdirManager.Target(c.configDir)
 		if err != nil {
-			return nil, fmt.Errorf("resolving home dir: %w", err)
+			return nil, fmt.Errorf("resolving target dir: %w", err)
 		}
-		defaultTargetDir = filepath.Join(home, ".tapes")
-		if err := os.MkdirAll(defaultTargetDir, 0o755); err != nil {
-			return nil, fmt.Errorf("creating tapes dir: %w", err)
+		if defaultTargetDir == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return nil, fmt.Errorf("resolving home dir: %w", err)
+			}
+			defaultTargetDir = filepath.Join(home, ".tapes")
+			if err := os.MkdirAll(defaultTargetDir, 0o755); err != nil {
+				return nil, fmt.Errorf("creating tapes dir: %w", err)
+			}
 		}
-	}
-	defaultTargetSqliteFile := filepath.Join(defaultTargetDir, "tapes.sqlite")
-
-	sqlitePath := cfg.Storage.SQLitePath
-	if sqlitePath == "" {
-		sqlitePath = defaultTargetSqliteFile
+		v.Set("storage.sqlite_path", filepath.Join(defaultTargetDir, "tapes.sqlite"))
 	}
 
-	vectorTarget := cfg.VectorStore.Target
-	if vectorTarget == "" {
-		vectorTarget = defaultTargetSqliteFile
+	// Same fallback for vector store target.
+	if v.GetString("vector_store.target") == "" {
+		dotdirManager := dotdir.NewManager()
+		defaultTargetDir, err := dotdirManager.Target(c.configDir)
+		if err != nil {
+			return nil, fmt.Errorf("resolving target dir: %w", err)
+		}
+		if defaultTargetDir == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return nil, fmt.Errorf("resolving home dir: %w", err)
+			}
+			defaultTargetDir = filepath.Join(home, ".tapes")
+		}
+		v.Set("vector_store.target", filepath.Join(defaultTargetDir, "tapes.sqlite"))
 	}
 
-	project := c.project
-	if project == "" {
-		project = cfg.Proxy.Project
-	}
+	provider := v.GetString("proxy.provider")
+	upstream := v.GetString("proxy.upstream")
 
 	return &startConfig{
-		SQLitePath:          sqlitePath,
-		VectorStoreProvider: cfg.VectorStore.Provider,
-		VectorStoreTarget:   vectorTarget,
-		EmbeddingProvider:   cfg.Embedding.Provider,
-		EmbeddingTarget:     cfg.Embedding.Target,
-		EmbeddingModel:      cfg.Embedding.Model,
-		EmbeddingDimensions: cfg.Embedding.Dimensions,
-		DefaultProvider:     cfg.Proxy.Provider,
-		DefaultUpstream:     cfg.Proxy.Upstream,
-		OllamaUpstream:      resolveOllamaUpstream(cfg.Proxy.Provider, cfg.Proxy.Upstream),
-		OpenCodeProvider:    cfg.OpenCode.Provider,
-		Project:             project,
+		SQLitePath:          v.GetString("storage.sqlite_path"),
+		VectorStoreProvider: v.GetString("vector_store.provider"),
+		VectorStoreTarget:   v.GetString("vector_store.target"),
+		EmbeddingProvider:   v.GetString("embedding.provider"),
+		EmbeddingTarget:     v.GetString("embedding.target"),
+		EmbeddingModel:      v.GetString("embedding.model"),
+		EmbeddingDimensions: v.GetUint("embedding.dimensions"),
+		DefaultProvider:     provider,
+		DefaultUpstream:     upstream,
+		OllamaUpstream:      resolveOllamaUpstream(provider, upstream),
+		OpenCodeProvider:    v.GetString("opencode.provider"),
+		Project:             v.GetString("proxy.project"),
 	}, nil
 }
 

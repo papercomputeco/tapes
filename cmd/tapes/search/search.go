@@ -22,14 +22,19 @@ import (
 )
 
 type searchCommander struct {
-	query string
-	topK  int
-	quiet bool
+	flags config.FlagSet
 
+	query     string
+	topK      int
+	quiet     bool
 	apiTarget string
+	debug     bool
 
-	debug  bool
 	logger *zap.Logger
+}
+
+var searchFlags = config.FlagSet{
+	config.FlagAPITarget: {Name: "api-target", ViperKey: "client.api_target", Description: "Tapes API server URL"},
 }
 
 const searchLongDesc string = `Search session data via the Tapes API.
@@ -54,7 +59,9 @@ Example:
 const searchShortDesc string = "Search session data"
 
 func NewSearchCmd() *cobra.Command {
-	cmder := &searchCommander{}
+	cmder := &searchCommander{
+		flags: searchFlags,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "search <query>",
@@ -63,19 +70,16 @@ func NewSearchCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
 			configDir, _ := cmd.Flags().GetString("config-dir")
-			cfger, err := config.NewConfiger(configDir)
+			v, err := config.InitViper(configDir)
 			if err != nil {
 				return fmt.Errorf("loading config: %w", err)
 			}
 
-			cfg, err := cfger.LoadConfig()
-			if err != nil {
-				return fmt.Errorf("loading config: %w", err)
-			}
+			config.BindRegisteredFlags(v, cmd, cmder.flags, []string{
+				config.FlagAPITarget,
+			})
 
-			if !cmd.Flags().Changed("api-target") {
-				cmder.apiTarget = cfg.Client.APITarget
-			}
+			cmder.apiTarget = v.GetString("client.api_target")
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -91,10 +95,9 @@ func NewSearchCmd() *cobra.Command {
 		},
 	}
 
-	defaults := config.NewDefaultConfig()
 	cmd.Flags().IntVarP(&cmder.topK, "top", "k", 5, "Number of results to return")
 	cmd.Flags().BoolVarP(&cmder.quiet, "quiet", "q", false, "Output only leaf hashes, one per line (for piping)")
-	cmd.Flags().StringVar(&cmder.apiTarget, "api-target", defaults.Client.APITarget, "Tapes API server URL")
+	config.AddStringFlag(cmd, cmder.flags, config.FlagAPITarget, &cmder.apiTarget)
 
 	return cmd
 }

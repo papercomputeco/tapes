@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/spf13/viper"
 
 	"github.com/papercomputeco/tapes/pkg/dotdir"
 )
@@ -58,17 +59,13 @@ func NewConfiger(override string) (*Configer, error) {
 
 // ValidConfigKeys returns the sorted list of all supported configuration key names.
 func ValidConfigKeys() []string {
-	keys := make([]string, 0, len(configKeys))
-	for k := range configKeys {
-		keys = append(keys, k)
-	}
-
 	// Return in a stable, logical order matching the TOML section layout.
 	ordered := []string{
 		"storage.sqlite_path",
 		"proxy.provider",
 		"proxy.upstream",
 		"proxy.listen",
+		"proxy.project",
 		"api.listen",
 		"client.proxy_target",
 		"client.api_target",
@@ -85,7 +82,7 @@ func ValidConfigKeys() []string {
 	// Sanity: only return keys that actually exist in the map.
 	result := make([]string, 0, len(ordered))
 	for _, k := range ordered {
-		if _, ok := configKeys[k]; ok {
+		if configKeySet[k] {
 			result = append(result, k)
 		}
 	}
@@ -95,7 +92,7 @@ func ValidConfigKeys() []string {
 	for _, k := range result {
 		seen[k] = true
 	}
-	for _, k := range keys {
+	for k := range configKeySet {
 		if !seen[k] {
 			result = append(result, k)
 		}
@@ -106,8 +103,7 @@ func ValidConfigKeys() []string {
 
 // IsValidConfigKey returns true if the given key is a supported configuration key.
 func IsValidConfigKey(key string) bool {
-	_, ok := configKeys[key]
-	return ok
+	return configKeySet[key]
 }
 
 func (c *Configer) GetTarget() string {
@@ -118,7 +114,6 @@ func (c *Configer) GetTarget() string {
 // If the file does not exist, returns DefaultConfig() so callers always receive
 // a fully-populated Config with sane defaults. Fields explicitly set in the file
 // override the defaults.
-// If overrideDir is non-empty, it is used instead of the default .tapes/ location.
 func (c *Configer) LoadConfig() (*Config, error) {
 	if c.targetPath == "" {
 		return NewDefaultConfig(), nil
@@ -137,57 +132,25 @@ func (c *Configer) LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
-	// Merge in defaults: fill in any zero-value fields from the loaded config
-	applyDefaults(cfg)
+	// Use viper to merge defaults into the parsed config.
+	// This replaces the old hand-rolled applyDefaults function.
+	v := viper.New()
+	setViperDefaults(v)
+	v.SetConfigType("toml")
 
-	return cfg, nil
-}
-
-// applyDefaults fills zero-value fields in cfg with values from DefaultConfig().
-func applyDefaults(cfg *Config) {
-	defaults := NewDefaultConfig()
-
-	if cfg.Version == 0 {
-		cfg.Version = defaults.Version
+	if err := v.ReadConfig(bytes.NewReader(data)); err != nil {
+		return nil, fmt.Errorf("reading config into viper: %w", err)
 	}
 
-	if cfg.Proxy.Provider == "" {
-		cfg.Proxy.Provider = defaults.Proxy.Provider
-	}
-	if cfg.Proxy.Upstream == "" {
-		cfg.Proxy.Upstream = defaults.Proxy.Upstream
-	}
-	if cfg.Proxy.Listen == "" {
-		cfg.Proxy.Listen = defaults.Proxy.Listen
+	merged := &Config{}
+	if err := v.Unmarshal(merged); err != nil {
+		return nil, fmt.Errorf("unmarshalling config: %w", err)
 	}
 
-	if cfg.API.Listen == "" {
-		cfg.API.Listen = defaults.API.Listen
-	}
+	// Preserve the version from the parsed config (version 0 is valid).
+	merged.Version = cfg.Version
 
-	if cfg.Client.ProxyTarget == "" {
-		cfg.Client.ProxyTarget = defaults.Client.ProxyTarget
-	}
-	if cfg.Client.APITarget == "" {
-		cfg.Client.APITarget = defaults.Client.APITarget
-	}
-
-	if cfg.VectorStore.Provider == "" {
-		cfg.VectorStore.Provider = defaults.VectorStore.Provider
-	}
-
-	if cfg.Embedding.Provider == "" {
-		cfg.Embedding.Provider = defaults.Embedding.Provider
-	}
-	if cfg.Embedding.Target == "" {
-		cfg.Embedding.Target = defaults.Embedding.Target
-	}
-	if cfg.Embedding.Model == "" {
-		cfg.Embedding.Model = defaults.Embedding.Model
-	}
-	if cfg.Embedding.Dimensions == 0 {
-		cfg.Embedding.Dimensions = defaults.Embedding.Dimensions
-	}
+	return merged, nil
 }
 
 // SaveConfig persists the configuration to config.toml in the target .tapes/ directory.
@@ -216,8 +179,7 @@ func (c *Configer) SaveConfig(cfg *Config) error {
 // SetConfigValue loads the config, sets the given key to the given value, and saves it.
 // Returns an error if the key is not a valid config key.
 func (c *Configer) SetConfigValue(key string, value string) error {
-	info, ok := configKeys[key]
-	if !ok {
+	if !configKeySet[key] {
 		return fmt.Errorf("unknown config key: %q", key)
 	}
 
@@ -226,27 +188,58 @@ func (c *Configer) SetConfigValue(key string, value string) error {
 		return err
 	}
 
-	if err := info.set(cfg, value); err != nil {
-		return err
+	// Use viper to set the value and unmarshal back to the Config struct.
+	// This handles type coercion (e.g., string to uint for embedding.dimensions).
+	v := viper.New()
+	setViperDefaults(v)
+	v.SetConfigType("toml")
+
+	// Load existing config into viper if the file exists.
+	if c.targetPath != "" {
+		data, err := os.ReadFile(c.targetPath)
+		if err == nil {
+			_ = v.ReadConfig(bytes.NewReader(data))
+		}
 	}
 
-	return c.SaveConfig(cfg)
+	v.Set(key, value)
+
+	updated := &Config{}
+	if err := v.Unmarshal(updated); err != nil {
+		return fmt.Errorf("invalid value for %s: %w", key, err)
+	}
+
+	// Preserve the version from the loaded config.
+	updated.Version = cfg.Version
+
+	return c.SaveConfig(updated)
 }
 
 // GetConfigValue loads the config and returns the string representation of the given key.
 // Returns an error if the key is not a valid config key.
 func (c *Configer) GetConfigValue(key string) (string, error) {
-	info, ok := configKeys[key]
-	if !ok {
+	if !configKeySet[key] {
 		return "", fmt.Errorf("unknown config key: %q", key)
 	}
 
-	cfg, err := c.LoadConfig()
-	if err != nil {
-		return "", err
+	v := viper.New()
+	setViperDefaults(v)
+	v.SetConfigType("toml")
+
+	// Load existing config into viper if the file exists.
+	if c.targetPath != "" {
+		data, err := os.ReadFile(c.targetPath)
+		if err == nil {
+			_ = v.ReadConfig(bytes.NewReader(data))
+		}
 	}
 
-	return info.get(cfg), nil
+	// Bind environment variables so TAPES_PROXY_LISTEN etc. are reflected.
+	v.SetEnvPrefix("TAPES")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+
+	return v.GetString(key), nil
 }
 
 // PresetConfig returns a Config with sane defaults for the named provider preset.

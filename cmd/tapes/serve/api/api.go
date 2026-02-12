@@ -18,10 +18,19 @@ import (
 )
 
 type apiCommander struct {
+	flags config.FlagSet
+
 	listen     string
 	debug      bool
 	sqlitePath string
-	logger     *zap.Logger
+
+	logger *zap.Logger
+}
+
+// apiFlags defines the flags for the standalone API subcommand.
+var apiFlags = config.FlagSet{
+	config.FlagAPIListenStandalone: {Name: "listen", Shorthand: "l", ViperKey: "api.listen", Description: "Address for API server to listen on"},
+	config.FlagSQLite:              {Name: "sqlite", Shorthand: "s", ViperKey: "storage.sqlite_path", Description: "Path to SQLite database"},
 }
 
 const apiLongDesc string = `Run the Tapes API server for inspecting, managing, and query agent sessions.`
@@ -29,7 +38,9 @@ const apiLongDesc string = `Run the Tapes API server for inspecting, managing, a
 const apiShortDesc string = "Run the Tapes API server"
 
 func NewAPICmd() *cobra.Command {
-	cmder := &apiCommander{}
+	cmder := &apiCommander{
+		flags: apiFlags,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "api",
@@ -37,22 +48,18 @@ func NewAPICmd() *cobra.Command {
 		Long:  apiLongDesc,
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
 			configDir, _ := cmd.Flags().GetString("config-dir")
-			cfger, err := config.NewConfiger(configDir)
+			v, err := config.InitViper(configDir)
 			if err != nil {
 				return fmt.Errorf("loading config: %w", err)
 			}
 
-			cfg, err := cfger.LoadConfig()
-			if err != nil {
-				return fmt.Errorf("loading config: %w", err)
-			}
+			config.BindRegisteredFlags(v, cmd, cmder.flags, []string{
+				config.FlagAPIListenStandalone,
+				config.FlagSQLite,
+			})
 
-			if !cmd.Flags().Changed("listen") {
-				cmder.listen = cfg.API.Listen
-			}
-			if !cmd.Flags().Changed("sqlite") {
-				cmder.sqlitePath = cfg.Storage.SQLitePath
-			}
+			cmder.listen = v.GetString("api.listen")
+			cmder.sqlitePath = v.GetString("storage.sqlite_path")
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -66,9 +73,8 @@ func NewAPICmd() *cobra.Command {
 		},
 	}
 
-	defaults := config.NewDefaultConfig()
-	cmd.Flags().StringVarP(&cmder.listen, "listen", "l", defaults.API.Listen, "Address for API server to listen on")
-	cmd.Flags().StringVarP(&cmder.sqlitePath, "sqlite", "s", "", "Path to SQLite database (default: in-memory)")
+	config.AddStringFlag(cmd, cmder.flags, config.FlagAPIListenStandalone, &cmder.listen)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagSQLite, &cmder.sqlitePath)
 
 	return cmd
 }
