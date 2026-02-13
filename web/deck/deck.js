@@ -1394,17 +1394,8 @@ const loadAnalytics = async () => {
   renderProviderSplit(data);
   renderAnalyticsPeriodControls();
 
-  // Load facets if available
-  try {
-    const facetsRes = await fetch("/api/facets");
-    if (facetsRes.ok) {
-      const facetsData = await facetsRes.json();
-      facetsState = facetsData;
-      renderFacetInsights(facetsData);
-    }
-  } catch {
-    // Facets endpoint may not be available yet
-  }
+  // AI insights via facets disabled — see #94
+  analyticsInsightsEl.hidden = true;
 
   analyticsLoadingEl.hidden = true;
   analyticsContentEl.hidden = false;
