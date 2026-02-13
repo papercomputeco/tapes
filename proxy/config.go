@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"github.com/papercomputeco/tapes/pkg/embeddings"
+	"github.com/papercomputeco/tapes/pkg/memory"
 	"github.com/papercomputeco/tapes/pkg/vector"
 )
 
@@ -24,4 +25,8 @@ type Config struct {
 	// Embedder is an optional embedder for generating embeddings.
 	// Required if VectorDriver is set.
 	Embedder embeddings.Embedder
+
+	// MemoryDriver is an optional memory driver for context-driven recall.
+	// If nil, memory is disabled and the proxy operates without context injection.
+	MemoryDriver memory.Driver
 }

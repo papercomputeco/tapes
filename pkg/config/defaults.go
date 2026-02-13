@@ -14,6 +14,8 @@ const (
 	defaultEmbeddingModel      = "embeddinggemma"
 	defaultEmbeddingDimensions = 768
 	defaultEmbeddingTarget     = "http://localhost:11434"
+
+	defaultMemoryProvider = "local"
 )
 
 // NewDefaultConfig returns a Config with sane defaults for all fields.
@@ -41,6 +43,10 @@ func NewDefaultConfig() *Config {
 			Target:     defaultUpstream,
 			Model:      defaultEmbeddingModel,
 			Dimensions: defaultEmbeddingDimensions,
+		},
+		Memory: MemoryConfig{
+			Provider: defaultMemoryProvider,
+			Enabled:  true,
 		},
 	}
 }

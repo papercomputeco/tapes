@@ -54,6 +54,7 @@ func NewServer(config Config, driver storage.Driver, dagLoader merkle.DagLoader,
 			DagLoader:    dagLoader,
 			VectorDriver: config.VectorDriver,
 			Embedder:     config.Embedder,
+			MemoryDriver: config.MemoryDriver,
 			Logger:       logger,
 		})
 		if err != nil {

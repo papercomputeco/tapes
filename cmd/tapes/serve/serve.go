@@ -19,6 +19,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/dotdir"
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/logger"
+	"github.com/papercomputeco/tapes/pkg/memory/local"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
@@ -210,6 +211,17 @@ func (c *ServeCommander) run() error {
 		zap.String("embedding_model", c.embeddingModel),
 	)
 
+	// Create local memory driver
+	memDriver := local.NewDriver(local.Config{
+		Enabled: true,
+	})
+	defer memDriver.Close()
+	proxyConfig.MemoryDriver = memDriver
+
+	c.logger.Info("memory enabled",
+		zap.String("provider", "local"),
+	)
+
 	// Create proxy
 	p, err := proxy.New(proxyConfig, driver, c.logger)
 	if err != nil {
@@ -228,6 +240,7 @@ func (c *ServeCommander) run() error {
 		ListenAddr:   c.apiListen,
 		VectorDriver: proxyConfig.VectorDriver,
 		Embedder:     proxyConfig.Embedder,
+		MemoryDriver: memDriver,
 	}
 	apiServer, err := api.NewServer(apiConfig, driver, dagLoader, c.logger)
 	if err != nil {

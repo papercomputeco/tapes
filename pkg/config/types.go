@@ -15,6 +15,7 @@ type Config struct {
 	Client      ClientConfig      `toml:"client"`
 	VectorStore VectorStoreConfig `toml:"vector_store"`
 	Embedding   EmbeddingConfig   `toml:"embedding"`
+	Memory      MemoryConfig      `toml:"memory"`
 }
 
 // StorageConfig holds shared storage settings used by both proxy and API.
@@ -54,6 +55,12 @@ type EmbeddingConfig struct {
 	Target     string `toml:"target,omitempty"`
 	Model      string `toml:"model,omitempty"`
 	Dimensions uint   `toml:"dimensions,omitempty"`
+}
+
+// MemoryConfig holds memory layer settings.
+type MemoryConfig struct {
+	Provider string `toml:"provider,omitempty"`
+	Enabled  bool   `toml:"enabled,omitempty"`
 }
 
 // configKeyInfo maps a user-facing dotted key name to a getter and setter on *Config.
@@ -126,6 +133,21 @@ var configKeys = map[string]configKeyInfo{
 				return fmt.Errorf("invalid value for embedding.dimensions: %w", err)
 			}
 			c.Embedding.Dimensions = uint(n)
+			return nil
+		},
+	},
+	"memory.provider": {
+		get: func(c *Config) string { return c.Memory.Provider },
+		set: func(c *Config, v string) error { c.Memory.Provider = v; return nil },
+	},
+	"memory.enabled": {
+		get: func(c *Config) string { return strconv.FormatBool(c.Memory.Enabled) },
+		set: func(c *Config, v string) error {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return fmt.Errorf("invalid value for memory.enabled: %w", err)
+			}
+			c.Memory.Enabled = b
 			return nil
 		},
 	},

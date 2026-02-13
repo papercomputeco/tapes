@@ -11,6 +11,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/config"
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/logger"
+	"github.com/papercomputeco/tapes/pkg/memory/local"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
@@ -168,6 +169,17 @@ func (c *proxyCommander) run() error {
 			zap.String("embedding_model", c.embeddingModel),
 		)
 	}
+
+	// Create local memory driver
+	memDriver := local.NewDriver(local.Config{
+		Enabled: true,
+	})
+	defer memDriver.Close()
+	config.MemoryDriver = memDriver
+
+	c.logger.Info("memory enabled",
+		zap.String("provider", "local"),
+	)
 
 	p, err := proxy.New(config, driver, c.logger)
 	if err != nil {
