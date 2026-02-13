@@ -2,6 +2,9 @@
 
 ### Do
 
+- Use the Nix flake dev shell (`nix develop`) for development. It pins Go 1.25,
+  Dagger, SQLite dev headers, and sets `CGO_ENABLED=1` / `GOEXPERIMENT=jsonv2`
+  automatically. Use `direnv allow` for automatic shell activation.
 - Always use the Ginkgo/Gomega testing frameworks
 - Always use `make` operations for development: use `make help` to understand
   the various operations available.

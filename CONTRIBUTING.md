@@ -1,13 +1,24 @@
 # Contributing
 
-## Quick start (Nix)
+## Quick start (recommended)
 
-We encourage contributors to utilize the Nix flake which carries all development dependencies
-and has automatic `direnv` support:
-to enter the nix development shell, run `nix develop`.
-Allow automatic environment loading with `direnv` via `direnv allow`.
+The Nix flake dev shell is the recommended way to develop tapes. It pins
+Go 1.25, Dagger, SQLite dev headers, and configures all required environment
+variables (`CGO_ENABLED`, `GOEXPERIMENT`). This avoids toolchain drift that
+can cause CGO build warnings on macOS with Xcode's system clang.
+
+```bash
+nix develop          # enter the dev shell
+direnv allow         # or use direnv for automatic activation
+make build-local
+./build/tapes deck --demo
+```
 
 ## Quick start (manual)
+
+If you prefer not to use Nix, ensure you have the prerequisites below and
+note that you may see harmless deprecation warnings from Apple's SDK headers
+during CGO compilation.
 
 ```bash
 make build-local
@@ -38,6 +49,8 @@ tapes deck -m -f
 
 ## Common issues
 
+- SQLite deprecation warnings on macOS (e.g., `sqlite3_auto_extension is deprecated`)
+  - These are harmless warnings from Apple's SDK headers. Use the Nix dev shell to avoid them.
 - SQLite errors when building or running
   - Ensure SQLite dev libraries are installed and `CGO_ENABLED=1`
 - Merkle hashing requires `GOEXPERIMENT=jsonv2`
