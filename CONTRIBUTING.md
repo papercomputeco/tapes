@@ -3,9 +3,10 @@
 ## Quick start (recommended)
 
 The Nix flake dev shell is the recommended way to develop tapes. It pins
-Go 1.25, Dagger, SQLite dev headers, and configures all required environment
-variables (`CGO_ENABLED`, `GOEXPERIMENT`). This avoids toolchain drift that
-can cause CGO build warnings on macOS with Xcode's system clang.
+Go 1.25, GCC, Dagger, SQLite dev headers, and configures all required
+environment variables (`CGO_ENABLED`, `GOEXPERIMENT`). This avoids toolchain
+drift and CGO build warnings on macOS by using Nix-provided GCC instead of
+Xcode's system clang.
 
 ```bash
 nix develop          # enter the dev shell
