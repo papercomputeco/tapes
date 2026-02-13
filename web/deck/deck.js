@@ -30,6 +30,7 @@ const analyticsPeriodEl = document.getElementById("analytics-period");
 const analyticsInsightsEl = document.getElementById("analytics-insights");
 const analyticsLoadingEl = document.getElementById("analytics-loading");
 const analyticsContentEl = document.getElementById("analytics-content");
+const heatmapLabelsEl = document.getElementById("heatmap-labels");
 const insightsGoalsEl = document.getElementById("insights-goals");
 const insightsOutcomesEl = document.getElementById("insights-outcomes");
 const insightsFrictionEl = document.getElementById("insights-friction");
@@ -39,6 +40,7 @@ const dayDetailEl = document.getElementById("day-detail");
 const dayDetailDateEl = document.getElementById("day-detail-date");
 const dayDetailMetricsEl = document.getElementById("day-detail-metrics");
 const dayDetailSessionsEl = document.getElementById("day-detail-sessions");
+const dayDetailPlaceholderEl = document.getElementById("day-detail-placeholder");
 const dayPrevButton = document.getElementById("day-prev");
 const dayNextButton = document.getElementById("day-next");
 const dayDetailCloseButton = document.getElementById("day-detail-close");
@@ -85,6 +87,7 @@ let filtersVisible = false;
 let selectedDayDate = null;
 let dayDetailState = null;
 let sessionEntryView = null;
+let heatmapSelectableDays = [];
 
 const formatCost = (value) => `$${value.toFixed(3)}`;
 const formatTokens = (value) => {
@@ -783,17 +786,26 @@ const renderHeatmap = (data) => {
   const days = data.activity_by_day || [];
   if (days.length === 0) {
     analyticsHeatmapEl.textContent = "no activity data";
+    heatmapLabelsEl.innerHTML = "";
+    heatmapSelectableDays = [];
     return;
   }
   const maxSessions = Math.max(...days.map((d) => d.sessions), 1);
+  heatmapSelectableDays = days.slice(-9);
   days.forEach((day) => {
     const cell = document.createElement("div");
     cell.className = "heatmap-cell";
     if (day.sessions === 0) {
       cell.classList.add("heatmap-cell--empty");
     } else {
-      const intensity = Math.max(day.sessions / maxSessions, 0.15);
-      cell.style.opacity = intensity;
+      const intensity = day.sessions / maxSessions;
+      if (intensity >= 0.7) {
+        cell.classList.add("heatmap-cell--high");
+      } else if (intensity >= 0.3) {
+        cell.classList.add("heatmap-cell--med");
+      } else {
+        cell.classList.add("heatmap-cell--low");
+      }
       cell.addEventListener("click", () => {
         selectHeatmapDay(day.date);
       });
@@ -802,15 +814,35 @@ const renderHeatmap = (data) => {
       cell.classList.add("heatmap-cell--selected");
     }
     cell.title = `${day.date}: ${day.sessions} sessions, ${formatCost(day.cost)}`;
-    const label = document.createElement("div");
-    label.className = "heatmap-cell__label";
-    label.textContent = day.date.slice(5);
-    const count = document.createElement("div");
-    count.className = "heatmap-cell__count";
-    count.textContent = day.sessions;
-    cell.appendChild(count);
-    cell.appendChild(label);
     analyticsHeatmapEl.appendChild(cell);
+  });
+  renderHeatmapLabels();
+};
+
+const renderHeatmapLabels = () => {
+  heatmapLabelsEl.innerHTML = "";
+  if (!heatmapSelectableDays.length) return;
+
+  heatmapSelectableDays.forEach((day, index) => {
+    const label = document.createElement("button");
+    label.type = "button";
+    label.className = "heatmap-label";
+    if (selectedDayDate === day.date) {
+      label.classList.add("heatmap-label--selected");
+    }
+    label.addEventListener("click", () => selectHeatmapDay(day.date));
+
+    const indexEl = document.createElement("span");
+    indexEl.className = "heatmap-label__index";
+    indexEl.textContent = String(index + 1);
+
+    const dateEl = document.createElement("span");
+    dateEl.className = "heatmap-label__date";
+    dateEl.textContent = day.date.slice(5);
+
+    label.appendChild(indexEl);
+    label.appendChild(dateEl);
+    heatmapLabelsEl.appendChild(label);
   });
 };
 
@@ -1067,7 +1099,13 @@ const selectHeatmapDay = (dateStr) => {
 const closeDayDetail = () => {
   selectedDayDate = null;
   dayDetailState = null;
-  dayDetailEl.hidden = true;
+  dayDetailEl.hidden = false;
+  dayDetailDateEl.textContent = "day detail";
+  dayDetailMetricsEl.innerHTML = "";
+  dayDetailSessionsEl.innerHTML = "";
+  dayDetailPlaceholderEl.hidden = false;
+  dayPrevButton.disabled = true;
+  dayNextButton.disabled = true;
   if (analyticsState) {
     renderHeatmap(analyticsState);
     renderHeatmapHint(analyticsState);
@@ -1108,6 +1146,9 @@ const loadDayDetail = async (dateStr) => {
   dayDetailEl.hidden = false;
   dayDetailEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
   dayDetailDateEl.textContent = dateStr;
+  dayDetailPlaceholderEl.hidden = true;
+  dayPrevButton.disabled = false;
+  dayNextButton.disabled = false;
   dayDetailMetricsEl.innerHTML = "";
   dayDetailSessionsEl.innerHTML = '<div style="padding:12px;color:var(--muted);font-size:11px;">loading...</div>';
 
@@ -1328,7 +1369,13 @@ const renderAnalyticsPeriodControls = () => {
 const loadAnalytics = async () => {
   selectedDayDate = null;
   dayDetailState = null;
-  dayDetailEl.hidden = true;
+  dayDetailEl.hidden = false;
+  dayDetailDateEl.textContent = "day detail";
+  dayDetailMetricsEl.innerHTML = "";
+  dayDetailSessionsEl.innerHTML = "";
+  dayDetailPlaceholderEl.hidden = false;
+  dayPrevButton.disabled = true;
+  dayNextButton.disabled = true;
   analyticsLoadingEl.hidden = false;
   analyticsContentEl.hidden = true;
   analyticsSubtitleEl.textContent = "loading analytics...";
@@ -1471,6 +1518,23 @@ const handleKey = (event) => {
     return;
   }
   switch (event.key) {
+    case "1":
+    case "2":
+    case "3":
+    case "4":
+    case "5":
+    case "6":
+    case "7":
+    case "8":
+    case "9":
+      if (currentView === "analytics" && heatmapSelectableDays.length) {
+        const idx = Number(event.key) - 1;
+        const day = heatmapSelectableDays[idx];
+        if (day) {
+          selectHeatmapDay(day.date);
+        }
+      }
+      break;
     case "j":
     case "ArrowDown":
       if (currentView === "session") {

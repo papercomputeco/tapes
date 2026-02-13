@@ -81,11 +81,13 @@ type deckModel struct {
 	overview        *deck.Overview
 	detail          *deck.SessionDetail
 	analytics       *deck.AnalyticsOverview
+	analyticsDay    *deck.Overview
 	view            deckView
 	cursor          int
 	scrollOffset    int
 	messageCursor   int
 	analyticsScroll int
+	analyticsDaySel string
 	width           int
 	height          int
 	sortIndex       int
@@ -344,6 +346,12 @@ type analyticsLoadedMsg struct {
 	err       error
 }
 
+type analyticsDayLoadedMsg struct {
+	date     string
+	overview *deck.Overview
+	err      error
+}
+
 type refreshTickMsg time.Time
 
 // RunDeckTUI starts the deck TUI with the provided query implementation.
@@ -526,9 +534,26 @@ func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
 		m.analytics = msg.analytics
 		m.view = viewAnalytics
 		m.analyticsScroll = 0
+		if m.analyticsDaySel != "" && !analyticsDayExists(m.analytics.ActivityByDay, m.analyticsDaySel) {
+			m.analyticsDaySel = ""
+			m.analyticsDay = nil
+			return m, nil
+		}
+		if m.analyticsDaySel != "" && m.analyticsDay == nil {
+			return m, bubbletea.Batch(m.spinner.Tick, loadAnalyticsDayCmd(m.query, m.filters, m.analyticsDaySel))
+		}
+		return m, nil
+	case analyticsDayLoadedMsg:
+		if msg.err != nil {
+			return m, nil
+		}
+		if msg.date != m.analyticsDaySel {
+			return m, nil
+		}
+		m.analyticsDay = msg.overview
 		return m, nil
 	case spinner.TickMsg:
-		if m.view == viewAnalytics && m.analytics == nil {
+		if m.view == viewAnalytics && (m.analytics == nil || (m.analyticsDaySel != "" && m.analyticsDay == nil)) {
 			var cmd bubbletea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
@@ -598,6 +623,11 @@ func (m deckModel) handleKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.C
 			}
 		}
 		if m.view == viewAnalytics {
+			if m.analyticsDaySel != "" {
+				m.analyticsDaySel = ""
+				m.analyticsDay = nil
+				return m, nil
+			}
 			m.view = viewOverview
 		}
 	case "s":
@@ -620,8 +650,19 @@ func (m deckModel) handleKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.C
 	case "a":
 		if m.view == viewOverview {
 			m.analytics = nil
+			m.analyticsDay = nil
+			m.analyticsDaySel = ""
 			m.view = viewAnalytics
 			return m, bubbletea.Batch(m.spinner.Tick, loadAnalyticsCmd(m.query, m.filters))
+		}
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		if m.view == viewAnalytics {
+			if selected, ok := m.selectAnalyticsDay(msg.String()); ok {
+				m.analyticsDaySel = selected
+				m.analyticsDay = nil
+				return m, bubbletea.Batch(m.spinner.Tick, loadAnalyticsDayCmd(m.query, m.filters, selected))
+			}
+			return m, nil
 		}
 	case "p":
 		if m.view == viewOverview || m.view == viewAnalytics {
@@ -751,6 +792,8 @@ func (m deckModel) cyclePeriod() (bubbletea.Model, bubbletea.Cmd) {
 	m.filters.Since = periodToDuration(m.timePeriod)
 	if m.view == viewAnalytics {
 		m.analytics = nil
+		m.analyticsDay = nil
+		m.analyticsDaySel = ""
 		return m, bubbletea.Batch(m.spinner.Tick, loadAnalyticsCmd(m.query, m.filters))
 	}
 	return m, loadOverviewCmd(m.query, m.filters)
@@ -1768,6 +1811,11 @@ func (m deckModel) viewAnalytics() string {
 	lines = append(lines, combined...)
 	lines = append(lines, "")
 
+	if dayDetail := m.renderAnalyticsDayDetail(w); len(dayDetail) > 0 {
+		lines = append(lines, dayDetail...)
+		lines = append(lines, "")
+	}
+
 	// ── Duration + Cost distribution (side by side) ──
 	leftHist := m.renderAnalyticsHistogram(a.DurationBuckets, "duration distribution", halfW)
 	rightHist := m.renderAnalyticsHistogram(a.CostBuckets, "cost distribution", halfW)
@@ -1916,6 +1964,7 @@ func (m deckModel) renderAnalyticsHeatmap(days []deck.DayActivity, width int) []
 	greenHigh := lipgloss.NewStyle().Foreground(colorGreen).Bold(true)
 	greenMed := lipgloss.NewStyle().Foreground(colorGreen)
 	greenLow := lipgloss.NewStyle().Foreground(colorBrightBlack)
+	selectedStyle := lipgloss.NewStyle().Foreground(colorYellow).Bold(true)
 
 	for i := 0; i < len(displayDays); i += cellsPerRow {
 		end := min(i+cellsPerRow, len(displayDays))
@@ -1926,18 +1975,28 @@ func (m deckModel) renderAnalyticsHeatmap(days []deck.DayActivity, width int) []
 		blockRow.WriteString("  ")
 		dateRow.WriteString("  ")
 		for _, d := range chunk {
+			selected := d.Date == m.analyticsDaySel
 			if d.Sessions == 0 {
-				blockRow.WriteString(deckDimStyle.Render("░░") + " ")
+				cell := deckDimStyle.Render("░░")
+				if selected {
+					cell = selectedStyle.Render("░░")
+				}
+				blockRow.WriteString(cell + " ")
 			} else {
 				intensity := float64(d.Sessions) / float64(maxSessions)
+				var cell string
 				switch {
 				case intensity >= 0.7:
-					blockRow.WriteString(greenHigh.Render("██") + " ")
+					cell = greenHigh.Render("██")
 				case intensity >= 0.3:
-					blockRow.WriteString(greenMed.Render("▓▓") + " ")
+					cell = greenMed.Render("▓▓")
 				default:
-					blockRow.WriteString(greenLow.Render("▒▒") + " ")
+					cell = greenLow.Render("▒▒")
 				}
+				if selected {
+					cell = selectedStyle.Render("██")
+				}
+				blockRow.WriteString(cell + " ")
 			}
 			dateLabel := d.Date
 			if len(dateLabel) > 5 {
@@ -1951,6 +2010,11 @@ func (m deckModel) renderAnalyticsHeatmap(days []deck.DayActivity, width int) []
 		}
 		lines = append(lines, blockRow.String())
 		lines = append(lines, dateRow.String())
+	}
+
+	if keyRows := m.renderAnalyticsHeatmapKeys(days, width); len(keyRows) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, keyRows...)
 	}
 
 	// Legend
@@ -2004,7 +2068,217 @@ func (m deckModel) renderAnalyticsHeatmap(days []deck.DayActivity, width int) []
 			"current streak: %d %s", streak, label)))
 	}
 
+	if selectedLine := m.renderAnalyticsSelectedDay(days); selectedLine != "" {
+		lines = append(lines, "  "+bullet+" "+insightStyle.Render(selectedLine))
+	}
+
 	return lines
+}
+
+func (m deckModel) renderAnalyticsHeatmapKeys(days []deck.DayActivity, width int) []string {
+	selectable := analyticsSelectableDays(days)
+	if len(selectable) == 0 {
+		return nil
+	}
+
+	parts := make([]string, 0, len(selectable))
+	for i, d := range selectable {
+		label := d.Date
+		if len(label) > 5 {
+			label = label[5:]
+		}
+		entry := fmt.Sprintf("%d:%s", i+1, label)
+		if d.Date == m.analyticsDaySel {
+			entry = deckHighlightStyle.Render(entry)
+		} else {
+			entry = deckMutedStyle.Render(entry)
+		}
+		parts = append(parts, entry)
+	}
+
+	line := "  " + strings.Join(parts, "  ")
+	if width > 0 && lipgloss.Width(line) > width {
+		line = "  " + strings.Join(parts, " ")
+	}
+	return []string{line, deckDimStyle.Render("  1-9 select recent days")}
+}
+
+func (m deckModel) renderAnalyticsSelectedDay(days []deck.DayActivity) string {
+	if m.analyticsDaySel == "" {
+		return ""
+	}
+	for _, d := range days {
+		if d.Date == m.analyticsDaySel {
+			label := d.Date
+			if len(label) > 5 {
+				label = label[5:]
+			}
+			return fmt.Sprintf("selected: %s · %d sessions · %s spent", label, d.Sessions, formatCost(d.Cost))
+		}
+	}
+	return ""
+}
+
+func (m deckModel) renderAnalyticsDayDetail(width int) []string {
+	label := "day detail"
+	if m.analyticsDaySel != "" {
+		label = "day detail " + trimDateLabel(m.analyticsDaySel)
+	}
+
+	lines := []string{renderAnalyticsSectionHeader(label, width)}
+	if m.analyticsDaySel == "" {
+		lines = append(lines, "  "+deckMutedStyle.Render("select a day (1-9) to drill in"))
+		lines = append(lines, strings.Repeat(" ", max(0, width-2)))
+		lines = append(lines, strings.Repeat(" ", max(0, width-2)))
+		lines = append(lines, strings.Repeat(" ", max(0, width-2)))
+		return lines
+	}
+	if m.analyticsDay == nil {
+		lines = append(lines, "  "+m.spinner.View()+" "+deckMutedStyle.Render("loading day details..."))
+		lines = append(lines, strings.Repeat(" ", max(0, width-2)))
+		lines = append(lines, strings.Repeat(" ", max(0, width-2)))
+		return lines
+	}
+
+	overview := m.analyticsDay
+	sessionCount := len(overview.Sessions)
+	avgCost := 0.0
+	if sessionCount > 0 {
+		avgCost = overview.TotalCost / float64(sessionCount)
+	}
+	metrics := fmt.Sprintf("  sessions: %d · total: %s · avg: %s · success: %s",
+		sessionCount,
+		formatCost(overview.TotalCost),
+		formatCost(avgCost),
+		formatPercent(overview.SuccessRate),
+	)
+	lines = append(lines, deckMutedStyle.Render(metrics))
+
+	if sessionCount == 0 {
+		lines = append(lines, "  "+deckMutedStyle.Render("no sessions for this day"))
+		return lines
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, m.renderAnalyticsDaySessions(overview.Sessions, width)...)
+	lines = append(lines, deckDimStyle.Render("  h/esc to clear day"))
+
+	return lines
+}
+
+func (m deckModel) renderAnalyticsDaySessions(sessions []deck.SessionSummary, width int) []string {
+	const (
+		minLabelW = 12
+		maxRows   = 8
+	)
+
+	indexW := 3
+	labelW := 24
+	modelW := 12
+	durW := 7
+	costW := 8
+	statusW := 9
+	gap := 2
+
+	available := max(width-2, 40)
+	base := indexW + labelW + modelW + durW + costW + statusW + gap*5
+	if base > available {
+		diff := base - available
+		reduce := min(diff, labelW-minLabelW)
+		labelW -= reduce
+		diff -= reduce
+		if diff > 0 {
+			modelW = max(8, modelW-diff)
+		}
+	}
+
+	gapStr := strings.Repeat(" ", gap)
+	header := strings.Join([]string{
+		fitCell("#", indexW),
+		fitCell("label", labelW),
+		fitCell("model", modelW),
+		fitCell("dur", durW),
+		fitCell("cost", costW),
+		fitCell("status", statusW),
+	}, gapStr)
+	lines := []string{"  " + deckDimStyle.Render(header)}
+
+	limit := min(len(sessions), maxRows)
+	for i := 0; i < limit; i++ {
+		s := sessions[i]
+		model := s.Model
+		if model == "" {
+			model = "unknown"
+		}
+		row := strings.Join([]string{
+			fitCell(fmt.Sprintf("%02d", i+1), indexW),
+			fitCell(truncateText(s.Label, labelW), labelW),
+			fitCell(truncateText(model, modelW), modelW),
+			fitCell(formatDurationMinutes(s.Duration), durW),
+			fitCell(formatCost(s.TotalCost), costW),
+			statusStyleFor(s.Status).Render(fitCell(s.Status, statusW)),
+		}, gapStr)
+		lines = append(lines, "  "+row)
+	}
+
+	if len(sessions) > maxRows {
+		lines = append(lines, "  "+deckDimStyle.Render(fmt.Sprintf("... %d more sessions", len(sessions)-maxRows)))
+	}
+
+	return lines
+}
+
+func (m deckModel) selectAnalyticsDay(key string) (string, bool) {
+	if m.analytics == nil {
+		return "", false
+	}
+	index := int(key[0] - '1')
+	selectable := analyticsSelectableDays(m.analytics.ActivityByDay)
+	if index < 0 || index >= len(selectable) {
+		return "", false
+	}
+	return selectable[index].Date, true
+}
+
+func analyticsSelectableDays(days []deck.DayActivity) []deck.DayActivity {
+	if len(days) == 0 {
+		return nil
+	}
+	if len(days) > 9 {
+		return days[len(days)-9:]
+	}
+	return days
+}
+
+func analyticsDayExists(days []deck.DayActivity, date string) bool {
+	for _, d := range days {
+		if d.Date == date {
+			return true
+		}
+	}
+	return false
+}
+
+func trimDateLabel(dateStr string) string {
+	if len(dateStr) > 5 {
+		return dateStr[5:]
+	}
+	return dateStr
+}
+
+type analyticsDayRange struct {
+	from time.Time
+	to   time.Time
+}
+
+func parseAnalyticsDay(dateStr string) (analyticsDayRange, error) {
+	parsed, err := time.ParseInLocation("2006-01-02", dateStr, time.Local)
+	if err != nil {
+		return analyticsDayRange{}, fmt.Errorf("parse analytics day: %w", err)
+	}
+	start := time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, time.Local)
+	end := start.AddDate(0, 0, 1)
+	return analyticsDayRange{from: start, to: end}, nil
 }
 
 func (m deckModel) renderAnalyticsTools(tools []deck.ToolMetric, width int) []string {
@@ -2326,7 +2600,7 @@ func (m deckModel) renderAnalyticsProviders(providers map[string]int, width int)
 }
 
 func (m deckModel) viewAnalyticsFooter() string {
-	helpText := "j down • k up • h back • p period • q quit"
+	helpText := "j down • k up • h back • p period • 1-9 day • q quit"
 	return deckMutedStyle.Render(helpText)
 }
 
@@ -2506,6 +2780,21 @@ func loadAnalyticsCmd(query deck.Querier, filters deck.Filters) bubbletea.Cmd {
 	return func() bubbletea.Msg {
 		analytics, err := query.AnalyticsOverview(context.Background(), filters)
 		return analyticsLoadedMsg{analytics: analytics, err: err}
+	}
+}
+
+func loadAnalyticsDayCmd(query deck.Querier, filters deck.Filters, dateStr string) bubbletea.Cmd {
+	return func() bubbletea.Msg {
+		dayRange, err := parseAnalyticsDay(dateStr)
+		if err != nil {
+			return analyticsDayLoadedMsg{date: dateStr, err: err}
+		}
+		filtered := filters
+		filtered.Since = 0
+		filtered.From = &dayRange.from
+		filtered.To = &dayRange.to
+		overview, err := query.Overview(context.Background(), filtered)
+		return analyticsDayLoadedMsg{date: dateStr, overview: overview, err: err}
 	}
 }
 
