@@ -3,19 +3,124 @@ package deckcmder
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/papercomputeco/tapes/pkg/deck"
+	"github.com/papercomputeco/tapes/pkg/storage/ent"
 	deckweb "github.com/papercomputeco/tapes/web/deck"
 )
 
-func runDeckWeb(ctx context.Context, query deck.Querier, filters deck.Filters, port int) error {
+type insightOptions struct {
+	enabled bool
+	model   string
+	target  string
+}
+
+type facetService struct {
+	query     deck.Querier
+	extractor *deck.FacetExtractor
+	store     deck.FacetStore
+
+	backfillMu   sync.Mutex
+	backfillCh   chan error
+	backfillDone bool
+}
+
+func newFacetService(query deck.Querier, store deck.FacetStore, llmCall deck.LLMCallFunc) *facetService {
+	return &facetService{
+		query:     query,
+		extractor: deck.NewFacetExtractor(query, llmCall, store),
+		store:     store,
+	}
+}
+
+func (s *facetService) Aggregate(ctx context.Context) (*deck.FacetAnalytics, error) {
+	return s.extractor.AggregateFacets(ctx)
+}
+
+func (s *facetService) GetFacet(ctx context.Context, sessionID string) (*deck.SessionFacet, error) {
+	if s.store == nil {
+		return s.extractor.Extract(ctx, sessionID)
+	}
+
+	facet, err := s.store.GetFacet(ctx, sessionID)
+	if err == nil {
+		return facet, nil
+	}
+	if !ent.IsNotFound(err) {
+		return nil, err
+	}
+
+	return s.extractor.Extract(ctx, sessionID)
+}
+
+func (s *facetService) BackfillAll(ctx context.Context) error {
+	s.backfillMu.Lock()
+	if s.backfillDone {
+		s.backfillMu.Unlock()
+		return nil
+	}
+	if s.backfillCh != nil {
+		ch := s.backfillCh
+		s.backfillMu.Unlock()
+		return <-ch
+	}
+
+	ch := make(chan error, 1)
+	s.backfillCh = ch
+	s.backfillMu.Unlock()
+
+	err := s.backfillAll(ctx)
+
+	s.backfillMu.Lock()
+	if err == nil {
+		s.backfillDone = true
+	}
+	s.backfillCh = nil
+	s.backfillMu.Unlock()
+
+	ch <- err
+	close(ch)
+	return err
+}
+
+func (s *facetService) backfillAll(ctx context.Context) error {
+	overview, err := s.query.Overview(ctx, deck.Filters{})
+	if err != nil {
+		return err
+	}
+
+	for _, session := range overview.Sessions {
+		if _, err := s.GetFacet(ctx, session.ID); err != nil {
+			// Skip sessions that fail extraction rather than aborting.
+			fmt.Printf("facet extraction skipped for %s: %v\n", session.ID, err)
+			continue
+		}
+	}
+
+	return nil
+}
+
+func runDeckWeb(ctx context.Context, query deck.Querier, filters deck.Filters, port int, insights insightOptions) error {
 	address := fmt.Sprintf("127.0.0.1:%d", port)
+
+	var facets *facetService
+	if insights.enabled {
+		queryWithClient, ok := query.(*deck.Query)
+		if !ok {
+			return errors.New("insights require sqlite-backed deck query")
+		}
+		store := deck.NewEntFacetStore(queryWithClient.Client())
+		llmCall := deck.NewOllamaFacetLLM(insights.target, insights.model)
+		facets = newFacetService(query, store, llmCall)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/overview", func(w http.ResponseWriter, r *http.Request) {
@@ -76,12 +181,25 @@ func runDeckWeb(ctx context.Context, query deck.Querier, filters deck.Filters, p
 	})
 
 	// Facet endpoints — return empty data when no extractor is configured.
-	mux.HandleFunc("/api/facets", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, deck.FacetAnalytics{
-			GoalDistribution:    map[string]int{},
-			OutcomeDistribution: map[string]int{},
-			SessionTypes:        map[string]int{},
-		})
+	mux.HandleFunc("/api/facets", func(w http.ResponseWriter, r *http.Request) {
+		if facets == nil {
+			writeJSON(w, deck.FacetAnalytics{
+				GoalDistribution:    map[string]int{},
+				OutcomeDistribution: map[string]int{},
+				SessionTypes:        map[string]int{},
+			})
+			return
+		}
+		if err := facets.BackfillAll(r.Context()); err != nil {
+			writeJSONError(w, err)
+			return
+		}
+		analytics, err := facets.Aggregate(r.Context())
+		if err != nil {
+			writeJSONError(w, err)
+			return
+		}
+		writeJSON(w, analytics)
 	})
 
 	mux.HandleFunc("/api/facets/session/", func(w http.ResponseWriter, r *http.Request) {
@@ -90,10 +208,23 @@ func runDeckWeb(ctx context.Context, query deck.Querier, filters deck.Filters, p
 			http.Error(w, "missing session id", http.StatusBadRequest)
 			return
 		}
-		writeJSON(w, deck.SessionFacet{SessionID: sessionID})
+		if facets == nil {
+			writeJSON(w, deck.SessionFacet{SessionID: sessionID})
+			return
+		}
+		facet, err := facets.GetFacet(r.Context(), sessionID)
+		if err != nil {
+			writeJSONError(w, err)
+			return
+		}
+		writeJSON(w, facet)
 	})
 
 	mux.HandleFunc("/session/", func(w http.ResponseWriter, _ *http.Request) {
+		serveIndex(w)
+	})
+
+	mux.HandleFunc("/analytics", func(w http.ResponseWriter, _ *http.Request) {
 		serveIndex(w)
 	})
 

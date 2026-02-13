@@ -51,6 +51,11 @@ func NewQuery(ctx context.Context, dbPath string, pricing PricingTable) (*Query,
 	return &Query{client: driver.Client, pricing: pricing}, closeFn, nil
 }
 
+// Client returns the underlying ent client.
+func (q *Query) Client() *ent.Client {
+	return q.client
+}
+
 func (q *Query) Overview(ctx context.Context, filters Filters) (*Overview, error) {
 	leaves, err := q.client.Node.Query().Where(node.Not(node.HasChildren())).All(ctx)
 	if err != nil {

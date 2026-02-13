@@ -5,6 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -26,6 +31,7 @@ Examples:
   tapes deck --sort cost --model claude-sonnet-4.5
   tapes deck --session sess_a8f2c1d3
   tapes deck --web
+  tapes deck --web --insights --insights-model gemma3:latest
   tapes deck --web --port 9999
   tapes deck --pricing ./pricing.json
   tapes deck --demo
@@ -38,21 +44,24 @@ Examples:
 )
 
 type deckCommander struct {
-	sqlitePath  string
-	pricingPath string
-	since       string
-	from        string
-	to          string
-	sort        string
-	sortDir     string
-	model       string
-	status      string
-	session     string
-	refresh     uint
-	web         bool
-	port        int
-	demo        bool
-	overwrite   bool
+	sqlitePath     string
+	pricingPath    string
+	since          string
+	from           string
+	to             string
+	sort           string
+	sortDir        string
+	model          string
+	status         string
+	session        string
+	refresh        uint
+	web            bool
+	port           int
+	insights       bool
+	insightsModel  string
+	insightsTarget string
+	demo           bool
+	overwrite      bool
 }
 
 func NewDeckCmd() *cobra.Command {
@@ -81,6 +90,9 @@ func NewDeckCmd() *cobra.Command {
 	cmd.Flags().UintVar(&cmder.refresh, "refresh", 10, "Auto-refresh interval in seconds (0 to disable)")
 	cmd.Flags().BoolVar(&cmder.web, "web", false, "Serve the web dashboard locally")
 	cmd.Flags().IntVar(&cmder.port, "port", 8888, "Web server port")
+	cmd.Flags().BoolVar(&cmder.insights, "insights", false, "Enable AI insights (requires Ollama)")
+	cmd.Flags().StringVar(&cmder.insightsModel, "insights-model", "auto", "Ollama model for AI insights (auto uses first available)")
+	cmd.Flags().StringVar(&cmder.insightsTarget, "insights-target", "http://localhost:11434", "Ollama base URL for AI insights")
 	cmd.Flags().BoolVarP(&cmder.demo, "demo", "m", false, "Seed demo data and open the deck UI")
 	cmd.Flags().BoolVarP(&cmder.overwrite, "overwrite", "f", false, "Overwrite demo database before seeding (default for demo db)")
 
@@ -128,7 +140,16 @@ func (c *deckCommander) run(ctx context.Context, cmd *cobra.Command) error {
 	}
 
 	if c.web {
-		return runDeckWeb(ctx, query, filters, c.port)
+		opts := insightOptions{target: c.insightsTarget}
+		if c.insights {
+			model, err := resolveInsightsModel(ctx, true, c.insightsModel, c.insightsTarget)
+			if err != nil {
+				return err
+			}
+			opts.enabled = true
+			opts.model = model
+		}
+		return runDeckWeb(ctx, query, filters, c.port, opts)
 	}
 
 	refreshDuration, err := refreshDuration(c.refresh)
@@ -191,6 +212,191 @@ func (c *deckCommander) parseFilters() (deck.Filters, error) {
 	}
 
 	return filters, nil
+}
+
+func resolveInsightsModel(ctx context.Context, enabled bool, model string, target string) (string, error) {
+	if !enabled {
+		return model, nil
+	}
+
+	if err := ensureOllamaAvailable(ctx, target); err != nil {
+		return "", err
+	}
+
+	requested := strings.TrimSpace(model)
+	models, err := listOllamaModels(ctx)
+	if err != nil {
+		return "", err
+	}
+	if len(models) == 0 {
+		return "", errors.New("no Ollama models found (run `ollama list` to see available models)")
+	}
+
+	if requested == "" || strings.EqualFold(requested, "auto") {
+		model := pickAutoModel(models)
+		if model == "" {
+			return "", errors.New("no chat-capable Ollama models found (embedding-only models present)")
+		}
+		return model, nil
+	}
+
+	if slices.Contains(models, requested) {
+		return requested, nil
+	}
+
+	return "", fmt.Errorf("ollama model %q not found (available: %s)", requested, strings.Join(models, ", "))
+}
+
+func pickAutoModel(models []string) string {
+	if len(models) == 0 {
+		return ""
+	}
+
+	filtered := filterChatModels(models)
+	if len(filtered) == 0 {
+		return ""
+	}
+	if len(filtered) == 1 {
+		return filtered[0]
+	}
+
+	priorities := []string{"gemma", "gpt", "kimi", "qwen"}
+	slices.SortStableFunc(filtered, func(a, b string) int {
+		rankA, nameA := modelRank(a, priorities)
+		rankB, nameB := modelRank(b, priorities)
+		if rankA != rankB {
+			return rankA - rankB
+		}
+		if nameA < nameB {
+			return -1
+		}
+		if nameA > nameB {
+			return 1
+		}
+		return 0
+	})
+
+	return filtered[0]
+}
+
+func filterChatModels(models []string) []string {
+	filtered := make([]string, 0, len(models))
+	for _, model := range models {
+		if isEmbeddingModel(model) {
+			continue
+		}
+		filtered = append(filtered, model)
+	}
+	return filtered
+}
+
+func isEmbeddingModel(model string) bool {
+	name := strings.ToLower(model)
+	return strings.Contains(name, "embed") || strings.Contains(name, "embedding")
+}
+
+func modelRank(model string, priorities []string) (int, string) {
+	name := strings.ToLower(model)
+	for idx, prefix := range priorities {
+		if strings.Contains(name, prefix) {
+			return idx, name
+		}
+	}
+	return len(priorities), name
+}
+
+func listOllamaModels(ctx context.Context) ([]string, error) {
+	cmd := exec.CommandContext(ctx, "ollama", "list")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(output))
+		if msg == "" {
+			return nil, fmt.Errorf("ollama list failed: %w", err)
+		}
+		return nil, fmt.Errorf("ollama list failed: %s", msg)
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(lines) <= 1 {
+		return []string{}, nil
+	}
+
+	models := make([]string, 0, len(lines)-1)
+	for i, line := range lines {
+		if i == 0 {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		models = append(models, fields[0])
+	}
+
+	return models, nil
+}
+
+func ensureOllamaAvailable(ctx context.Context, target string) error {
+	if err := ollamaPing(ctx, target); err == nil {
+		return nil
+	}
+
+	if !isLocalOllamaTarget(target) {
+		return fmt.Errorf("ollama not reachable at %s; start it manually", target)
+	}
+
+	cmd := exec.CommandContext(ctx, "ollama", "serve")
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start ollama: %w", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := ollamaPing(ctx, target); err == nil {
+			return nil
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+
+	return fmt.Errorf("ollama did not become ready at %s", target)
+}
+
+func ollamaPing(ctx context.Context, target string) error {
+	urlStr := strings.TrimRight(target, "/") + "/api/tags"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
+	if err != nil {
+		return err
+	}
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("ollama status %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func isLocalOllamaTarget(target string) bool {
+	parsed, err := url.Parse(target)
+	if err != nil {
+		return false
+	}
+
+	host := parsed.Hostname()
+	switch host {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseTime(value string) (time.Time, error) {
