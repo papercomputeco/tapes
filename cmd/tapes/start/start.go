@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
@@ -135,18 +136,30 @@ func (c *startCommander) runLogs(ctx context.Context, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := lock.Release(); err != nil {
+	state, err := manager.LoadState()
+	if releaseErr := lock.Release(); releaseErr != nil {
+		return releaseErr
+	}
+	if err != nil {
 		return err
 	}
+	if !stateHealthy(ctx, state) {
+		return errors.New("daemon is not running")
+	}
 
-	if _, err := os.Stat(manager.LogPath); err != nil {
+	logPath := manager.LogPath
+	if state != nil && state.LogPath != "" {
+		logPath = state.LogPath
+	}
+
+	if _, err := os.Stat(logPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return errors.New("no start logs found")
 		}
 		return fmt.Errorf("checking log file: %w", err)
 	}
 
-	return followLog(ctx, manager.LogPath, out)
+	return followLog(ctx, logPath, out)
 }
 
 func (c *startCommander) runAgent(ctx context.Context, agent string) error {
@@ -185,10 +198,12 @@ func (c *startCommander) runAgent(ctx context.Context, agent string) error {
 			"OPENAI_API_BASE="+agentBaseURL,
 		)
 	case agentOpenCode:
-		cleanup, err = configureOpenCode(agentBaseURL)
+		var configRoot string
+		cleanup, configRoot, err = configureOpenCode(agentBaseURL)
 		if err != nil {
 			return err
 		}
+		cmd.Env = append(cmd.Env, "XDG_CONFIG_HOME="+configRoot)
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -300,7 +315,7 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 	}
 	defer driver.Close()
 
-	dagLoader, err := c.newDagLoader(ctx, startCfg, zapLogger)
+	dagLoader, err := c.newDagLoader(ctx, startCfg, zapLogger, driver)
 	if err != nil {
 		return err
 	}
@@ -371,7 +386,7 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 	}
 
 	sigChan := make(chan os.Signal, 1)
-	signalNotify(sigChan)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	select {
 	case err := <-errChan:
@@ -474,6 +489,9 @@ func (c *startCommander) spawnDaemon(ctx context.Context, manager *start.Manager
 		_ = logFile.Close()
 		return fmt.Errorf("starting daemon: %w", err)
 	}
+	go func() {
+		_ = cmd.Wait()
+	}()
 	return logFile.Close()
 }
 
@@ -619,14 +637,20 @@ func (c *startCommander) newStorageDriver(ctx context.Context, cfg *startConfig,
 	return inmemory.NewDriver(), nil
 }
 
-func (c *startCommander) newDagLoader(ctx context.Context, cfg *startConfig, zapLogger *zap.Logger) (merkle.DagLoader, error) {
+func (c *startCommander) newDagLoader(ctx context.Context, cfg *startConfig, zapLogger *zap.Logger, driver storage.Driver) (merkle.DagLoader, error) {
+	if driver != nil {
+		if loader, ok := driver.(merkle.DagLoader); ok {
+			return loader, nil
+		}
+	}
+
 	if cfg.SQLitePath != "" {
-		driver, err := sqlite.NewDriver(ctx, cfg.SQLitePath)
+		loader, err := sqlite.NewDriver(ctx, cfg.SQLitePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
 		}
 		zapLogger.Info("using SQLite storage", zap.String("path", cfg.SQLitePath))
-		return driver, nil
+		return loader, nil
 	}
 
 	zapLogger.Info("using in-memory storage")
@@ -735,6 +759,12 @@ func followLog(ctx context.Context, path string, out io.Writer) error {
 	}
 	defer file.Close()
 
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("creating log watcher: %w", err)
+	}
+	defer watcher.Close()
+
 	stat, err := file.Stat()
 	if err != nil {
 		return fmt.Errorf("stat log file: %w", err)
@@ -744,54 +774,66 @@ func followLog(ctx context.Context, path string, out io.Writer) error {
 		return fmt.Errorf("seek log file: %w", err)
 	}
 
+	if err := watcher.Add(filepath.Dir(path)); err != nil {
+		return fmt.Errorf("watching log dir: %w", err)
+	}
+
 	buf := make([]byte, 4096)
+	readAvailable := func() error {
+		for {
+			n, err := file.Read(buf)
+			if n > 0 {
+				if _, writeErr := out.Write(buf[:n]); writeErr != nil {
+					return writeErr
+				}
+			}
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					return nil
+				}
+				return err
+			}
+		}
+	}
+
+	if err := readAvailable(); err != nil {
+		return err
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
-		}
-
-		n, err := file.Read(buf)
-		if n > 0 {
-			if _, writeErr := out.Write(buf[:n]); writeErr != nil {
-				return writeErr
-			}
-		}
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				time.Sleep(250 * time.Millisecond)
+		case event := <-watcher.Events:
+			if filepath.Clean(event.Name) != filepath.Clean(path) {
 				continue
 			}
-			return err
+			if event.Op&(fsnotify.Write|fsnotify.Create) == 0 {
+				continue
+			}
+			if err := readAvailable(); err != nil {
+				return err
+			}
+		case err := <-watcher.Errors:
+			return fmt.Errorf("log watcher error: %w", err)
 		}
 	}
 }
 
-func configureOpenCode(baseURL string) (func() error, error) {
-	home, err := os.UserHomeDir()
+func configureOpenCode(baseURL string) (func() error, string, error) {
+	configRoot, err := os.MkdirTemp("", "tapes-opencode-config-")
 	if err != nil {
-		return nil, fmt.Errorf("resolving home dir: %w", err)
+		return nil, "", fmt.Errorf("creating opencode config root: %w", err)
 	}
-	configDir := filepath.Join(home, ".config", "opencode")
+	configDir := filepath.Join(configRoot, "opencode")
 	configPath := filepath.Join(configDir, "opencode.json")
 
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		return nil, fmt.Errorf("creating opencode config dir: %w", err)
-	}
-
-	var original []byte
-	if data, err := os.ReadFile(configPath); err == nil {
-		original = data
+		_ = os.RemoveAll(configRoot)
+		return nil, "", fmt.Errorf("creating opencode config dir: %w", err)
 	}
 
 	config := map[string]any{}
-	if len(original) > 0 {
-		if err := json.Unmarshal(original, &config); err != nil {
-			return nil, fmt.Errorf("parsing opencode config: %w", err)
-		}
-	}
-
 	provider := ensureMap(config, "provider")
 	configureOpenCodeProvider(provider, "anthropic", baseURL+"/providers/anthropic")
 	configureOpenCodeProvider(provider, "openai", baseURL+"/providers/openai")
@@ -799,27 +841,23 @@ func configureOpenCode(baseURL string) (func() error, error) {
 
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
-		return nil, fmt.Errorf("marshaling opencode config: %w", err)
+		_ = os.RemoveAll(configRoot)
+		return nil, "", fmt.Errorf("marshaling opencode config: %w", err)
 	}
 
 	if err := os.WriteFile(configPath, data, 0o600); err != nil {
-		return nil, fmt.Errorf("writing opencode config: %w", err)
+		_ = os.RemoveAll(configRoot)
+		return nil, "", fmt.Errorf("writing opencode config: %w", err)
 	}
 
 	cleanup := func() error {
-		if len(original) == 0 {
-			if err := os.Remove(configPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("removing opencode config: %w", err)
-			}
-			return nil
-		}
-		if err := os.WriteFile(configPath, original, 0o600); err != nil {
-			return fmt.Errorf("restoring opencode config: %w", err)
+		if err := os.RemoveAll(configRoot); err != nil {
+			return fmt.Errorf("removing opencode config: %w", err)
 		}
 		return nil
 	}
 
-	return cleanup, nil
+	return cleanup, configRoot, nil
 }
 
 func ensureMap(target map[string]any, key string) map[string]any {
@@ -849,8 +887,4 @@ func resolveOllamaUpstream(provider, upstream string) string {
 		return upstream
 	}
 	return "http://localhost:11434"
-}
-
-func signalNotify(sigChan chan<- os.Signal) {
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 }

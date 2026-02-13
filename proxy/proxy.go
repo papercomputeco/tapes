@@ -26,7 +26,10 @@ import (
 	"github.com/papercomputeco/tapes/proxy/worker"
 )
 
-const agentPathPrefix = "/agents/"
+const (
+	agentPathPrefix = "/agents/"
+	providerOpenAI  = "openai"
+)
 
 // Proxy is a client, LLM inference proxy that instruments storing sessions as Merkle DAGs.
 // The proxy is transparent: it forwards requests to the upstream LLM provider and
@@ -439,7 +442,7 @@ func (p *Proxy) extractContentFromJSON(data []byte, providerName string, content
 				content.WriteString(c)
 			}
 		}
-	case "openai":
+	case providerOpenAI:
 		// OpenAI SSE: choices[0].delta.content
 		if choices, ok := chunkData["choices"].([]any); ok && len(choices) > 0 {
 			if choice, ok := choices[0].(map[string]any); ok {
@@ -551,12 +554,7 @@ func (p *Proxy) resolveProvider(agentName, providerName, path string) (provider.
 				if upstream == "" {
 					upstream = p.config.UpstreamURL
 				}
-
-				if agentName == "codex" && isOpenAIAuthPath(path) {
-					return prov, "https://auth.openai.com"
-				}
-
-				return prov, upstream
+				return prov, p.resolveOpenAIAuthUpstream(agentName, route.ProviderType, path, upstream)
 			}
 		}
 	}
@@ -567,12 +565,9 @@ func (p *Proxy) resolveProvider(agentName, providerName, path string) (provider.
 func (p *Proxy) providerByName(providerName, agentName, path string) (provider.Provider, string) {
 	if prov, ok := p.providers[providerName]; ok {
 		switch providerName {
-		case "openai":
+		case providerOpenAI:
 			upstream := p.providerUpstream(providerName, "https://api.openai.com/v1")
-			if agentName == "codex" && isOpenAIAuthPath(path) {
-				upstream = "https://auth.openai.com"
-			}
-			return prov, upstream
+			return prov, p.resolveOpenAIAuthUpstream(agentName, providerName, path, upstream)
 		case "anthropic":
 			return prov, p.providerUpstream(providerName, "https://api.anthropic.com")
 		case "ollama":
@@ -583,6 +578,13 @@ func (p *Proxy) providerByName(providerName, agentName, path string) (provider.P
 	}
 
 	return p.defaultProv, p.config.UpstreamURL
+}
+
+func (p *Proxy) resolveOpenAIAuthUpstream(agentName, providerName, path, upstream string) string {
+	if providerName == providerOpenAI && agentName == "codex" && isOpenAIAuthPath(path) {
+		return "https://auth.openai.com"
+	}
+	return upstream
 }
 
 func (p *Proxy) providerUpstream(providerName, fallback string) string {

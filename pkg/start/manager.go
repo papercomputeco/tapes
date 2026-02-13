@@ -137,18 +137,22 @@ func (m *Manager) SaveState(state *State) error {
 	if err != nil {
 		return fmt.Errorf("creating temp state file: %w", err)
 	}
+	tmpPath := tmpFile.Name()
 
 	if err := tmpFile.Chmod(0o600); err != nil {
 		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("chmod temp state file: %w", err)
 	}
 
 	if _, err := tmpFile.Write(data); err != nil {
 		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("writing temp state file: %w", err)
 	}
 
 	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("closing temp state file: %w", err)
 	}
 
