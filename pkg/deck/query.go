@@ -590,6 +590,7 @@ func (q *Query) AnalyticsOverview(ctx context.Context, filters Filters) (*Analyt
 	toolSessions := map[string]map[string]bool{}
 	dayMap := map[string]*DayActivity{}
 	modelMap := map[string]*modelAccumulator{}
+	var filteredSummaries []SessionSummary
 
 	for _, leaf := range leaves {
 		nodes, err := q.loadAncestry(ctx, leaf)
@@ -606,6 +607,7 @@ func (q *Query) AnalyticsOverview(ctx context.Context, filters Filters) (*Analyt
 			continue
 		}
 
+		filteredSummaries = append(filteredSummaries, summary)
 		analytics.TotalSessions++
 		analytics.AvgSessionCost += summary.TotalCost
 		analytics.AvgDurationNs += int64(summary.Duration)
@@ -729,11 +731,9 @@ func (q *Query) AnalyticsOverview(ctx context.Context, filters Filters) (*Analyt
 		return analytics.ModelPerformance[i].TotalCost > analytics.ModelPerformance[j].TotalCost
 	})
 
-	// Build duration buckets
-	analytics.DurationBuckets = buildDurationBuckets(ctx, leaves, q, filters)
-
-	// Build cost buckets
-	analytics.CostBuckets = buildCostBuckets(ctx, leaves, q, filters)
+	// Build duration and cost buckets from already-computed summaries
+	analytics.DurationBuckets = buildDurationBucketsFromSummaries(filteredSummaries)
+	analytics.CostBuckets = buildCostBucketsFromSummaries(filteredSummaries)
 
 	return analytics, nil
 }
@@ -847,18 +847,10 @@ type modelAccumulator struct {
 	completedCount  int
 }
 
-func buildDurationBuckets(ctx context.Context, leaves []*ent.Node, q *Query, filters Filters) []Bucket {
+func buildDurationBucketsFromSummaries(summaries []SessionSummary) []Bucket {
 	counts := map[string]int{}
 	labels := []string{"<1m", "1-5m", "5-15m", "15-30m", "30-60m", ">1h"}
-	for _, leaf := range leaves {
-		nodes, err := q.loadAncestry(ctx, leaf)
-		if err != nil || len(nodes) == 0 {
-			continue
-		}
-		summary, _, _, err := q.buildSessionSummaryFromNodes(nodes)
-		if err != nil || !matchesFilters(summary, filters) {
-			continue
-		}
+	for _, summary := range summaries {
 		minutes := summary.Duration.Minutes()
 		switch {
 		case minutes < 1:
@@ -882,18 +874,10 @@ func buildDurationBuckets(ctx context.Context, leaves []*ent.Node, q *Query, fil
 	return buckets
 }
 
-func buildCostBuckets(ctx context.Context, leaves []*ent.Node, q *Query, filters Filters) []Bucket {
+func buildCostBucketsFromSummaries(summaries []SessionSummary) []Bucket {
 	counts := map[string]int{}
 	labels := []string{"<$0.01", "$0.01-0.10", "$0.10-0.50", "$0.50-1.00", "$1.00-5.00", ">$5.00"}
-	for _, leaf := range leaves {
-		nodes, err := q.loadAncestry(ctx, leaf)
-		if err != nil || len(nodes) == 0 {
-			continue
-		}
-		summary, _, _, err := q.buildSessionSummaryFromNodes(nodes)
-		if err != nil || !matchesFilters(summary, filters) {
-			continue
-		}
+	for _, summary := range summaries {
 		cost := summary.TotalCost
 		switch {
 		case cost < 0.01:
