@@ -373,7 +373,12 @@ func extractText(blocks []llm.ContentBlock) string {
 }
 
 func buildLabel(nodes []*ent.Node) string {
-	for _, node := range nodes {
+	const labelLimit = 36
+	const labelPrompts = 3
+
+	labelLines := make([]string, 0, labelPrompts)
+	for i := len(nodes) - 1; i >= 0; i-- {
+		node := nodes[i]
 		if node.Role != "user" {
 			continue
 		}
@@ -382,16 +387,42 @@ func buildLabel(nodes []*ent.Node) string {
 		if text == "" {
 			continue
 		}
-		for line := range strings.SplitSeq(text, "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" || isTagLine(line) {
-				continue
-			}
-			return truncate(line, 24)
+		line := firstLabelLine(text)
+		if line == "" {
+			continue
+		}
+		labelLines = append(labelLines, line)
+		if len(labelLines) >= labelPrompts {
+			break
 		}
 	}
 
-	return truncate(nodes[len(nodes)-1].ID, 12)
+	if len(labelLines) == 0 {
+		return truncate(nodes[len(nodes)-1].ID, 12)
+	}
+
+	for i, j := 0, len(labelLines)-1; i < j; i, j = i+1, j-1 {
+		labelLines[i], labelLines[j] = labelLines[j], labelLines[i]
+	}
+
+	label := strings.Join(labelLines, " / ")
+	return truncate(label, labelLimit)
+}
+
+func firstLabelLine(text string) string {
+	for line := range strings.SplitSeq(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || isTagLine(line) || isCommandLine(line) {
+			continue
+		}
+		return line
+	}
+	return ""
+}
+
+func isCommandLine(value string) bool {
+	value = strings.TrimSpace(strings.ToLower(value))
+	return strings.HasPrefix(value, "command:")
 }
 
 func extractLabelText(blocks []llm.ContentBlock) string {
