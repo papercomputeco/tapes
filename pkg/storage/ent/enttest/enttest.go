@@ -10,7 +10,6 @@ import (
 	_ "github.com/papercomputeco/tapes/pkg/storage/ent/runtime"
 
 	"entgo.io/ent/dialect/sql/schema"
-
 	"github.com/papercomputeco/tapes/pkg/storage/ent/migrate"
 )
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
 	bubbletea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -39,6 +40,7 @@ const (
 	viewOverview deckView = iota
 	viewSession
 	viewModal
+	viewAnalytics
 )
 
 type timePeriod int
@@ -74,27 +76,30 @@ const (
 )
 
 type deckModel struct {
-	query         deck.Querier
-	filters       deck.Filters
-	overview      *deck.Overview
-	detail        *deck.SessionDetail
-	view          deckView
-	cursor        int
-	scrollOffset  int
-	messageCursor int
-	width         int
-	height        int
-	sortIndex     int
-	statusIndex   int
-	messageSort   int
-	timePeriod    timePeriod
-	modalCursor   int
-	modalTab      modalTab
-	replayActive  bool
-	replayOnLoad  bool
-	refreshEvery  time.Duration
-	keys          deckKeyMap
-	help          help.Model
+	query           deck.Querier
+	filters         deck.Filters
+	overview        *deck.Overview
+	detail          *deck.SessionDetail
+	analytics       *deck.AnalyticsOverview
+	view            deckView
+	cursor          int
+	scrollOffset    int
+	messageCursor   int
+	analyticsScroll int
+	width           int
+	height          int
+	sortIndex       int
+	statusIndex     int
+	messageSort     int
+	timePeriod      timePeriod
+	modalCursor     int
+	modalTab        modalTab
+	replayActive    bool
+	replayOnLoad    bool
+	refreshEvery    time.Duration
+	spinner         spinner.Model
+	keys            deckKeyMap
+	help            help.Model
 }
 
 type modalTab int
@@ -334,6 +339,11 @@ type overviewLoadedMsg struct {
 
 type replayTickMsg time.Time
 
+type analyticsLoadedMsg struct {
+	analytics *deck.AnalyticsOverview
+	err       error
+}
+
 type refreshTickMsg time.Time
 
 // RunDeckTUI starts the deck TUI with the provided query implementation.
@@ -409,6 +419,10 @@ func newDeckModel(query deck.Querier, filters deck.Filters, overview *deck.Overv
 		}
 	}
 
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(colorGreen)
+
 	return deckModel{
 		query:        query,
 		filters:      filters,
@@ -420,6 +434,7 @@ func newDeckModel(query deck.Querier, filters deck.Filters, overview *deck.Overv
 		timePeriod:   period,
 		modalTab:     modalSort,
 		refreshEvery: refreshEvery,
+		spinner:      s,
 		keys:         defaultKeyMap(),
 		help:         help.New(),
 	}
@@ -504,6 +519,21 @@ func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
 		}
 		m.messageCursor++
 		return m, replayTick()
+	case analyticsLoadedMsg:
+		if msg.err != nil {
+			return m, nil
+		}
+		m.analytics = msg.analytics
+		m.view = viewAnalytics
+		m.analyticsScroll = 0
+		return m, nil
+	case spinner.TickMsg:
+		if m.view == viewAnalytics && m.analytics == nil {
+			var cmd bubbletea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
+		return m, nil
 	case refreshTickMsg:
 		if m.refreshEvery <= 0 {
 			return m, nil
@@ -530,6 +560,8 @@ func (m deckModel) View() string {
 	case viewModal:
 		base = m.viewOverview()
 		return m.applyBackground(addPadding(m.overlayModal(base, m.viewModal())))
+	case viewAnalytics:
+		base = m.viewAnalytics()
 	default:
 		base = m.viewOverview()
 	}
@@ -565,6 +597,9 @@ func (m deckModel) handleKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.C
 				)
 			}
 		}
+		if m.view == viewAnalytics {
+			m.view = viewOverview
+		}
 	case "s":
 		if m.view == viewOverview {
 			m.view = viewModal
@@ -582,8 +617,14 @@ func (m deckModel) handleKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.C
 			m.modalCursor = m.statusIndex
 			return m, nil
 		}
-	case "p":
+	case "a":
 		if m.view == viewOverview {
+			m.analytics = nil
+			m.view = viewAnalytics
+			return m, bubbletea.Batch(m.spinner.Tick, loadAnalyticsCmd(m.query, m.filters))
+		}
+	case "p":
+		if m.view == viewOverview || m.view == viewAnalytics {
 			return m.cyclePeriod()
 		}
 	case "r":
@@ -684,6 +725,11 @@ func (m deckModel) moveCursor(delta int) (bubbletea.Model, bubbletea.Cmd) {
 		return m, nil
 	}
 
+	if m.view == viewAnalytics {
+		m.analyticsScroll = max(0, m.analyticsScroll+delta)
+		return m, nil
+	}
+
 	if m.detail == nil || len(m.detail.Messages) == 0 {
 		return m, nil
 	}
@@ -703,6 +749,10 @@ func (m deckModel) enterSession() (bubbletea.Model, bubbletea.Cmd) {
 func (m deckModel) cyclePeriod() (bubbletea.Model, bubbletea.Cmd) {
 	m.timePeriod = (m.timePeriod + 1) % 3
 	m.filters.Since = periodToDuration(m.timePeriod)
+	if m.view == viewAnalytics {
+		m.analytics = nil
+		return m, bubbletea.Batch(m.spinner.Tick, loadAnalyticsCmd(m.query, m.filters))
+	}
 	return m, loadOverviewCmd(m.query, m.filters)
 }
 
@@ -1643,12 +1693,641 @@ func (m deckModel) renderSessionMetrics() []string {
 }
 
 func (m deckModel) viewFooter() string {
-	helpText := "j down • k up • enter drill • h back • s sort • f status • p period • r replay • q quit"
+	helpText := "j down • k up • enter drill • h back • s sort • f status • p period • r replay • a analytics • q quit"
 	return deckMutedStyle.Render(helpText)
 }
 
 func (m deckModel) viewSessionFooter() string {
 	return deckMutedStyle.Render(m.help.View(m.keys))
+}
+
+func (m deckModel) viewAnalytics() string {
+	if m.analytics == nil {
+		w := m.width
+		if w <= 0 {
+			w = 80
+		}
+		cassetteLines := renderCassetteTape()
+		header1 := renderHeaderLine(w, deckTitleStyle.Render("tapes deck"), cassetteLines[0])
+		header2 := renderHeaderLine(w, "", cassetteLines[1])
+		header3 := renderHeaderLine(w, deckMutedStyle.Render("loading..."), cassetteLines[2])
+
+		lines := make([]string, 0, 8)
+		lines = append(lines, header1, header2, header3, renderRule(w))
+		lines = append(lines, "")
+		lines = append(lines, renderAnalyticsSectionHeader("session analytics", w))
+		lines = append(lines, "")
+		lines = append(lines, "  "+m.spinner.View()+" "+deckMutedStyle.Render("analyzing sessions..."))
+
+		return strings.Join(lines, "\n")
+	}
+
+	a := m.analytics
+	w := m.width
+	if w <= 0 {
+		w = 80
+	}
+
+	// Header — same style as overview
+	cassetteLines := renderCassetteTape()
+	header1 := renderHeaderLine(w, deckTitleStyle.Render("tapes deck"), cassetteLines[0])
+	header2 := renderHeaderLine(w, "", cassetteLines[1])
+	subtitle := deckMutedStyle.Render(fmt.Sprintf("%d sessions analyzed", a.TotalSessions))
+	header3 := renderHeaderLine(w, subtitle, cassetteLines[2])
+
+	lines := make([]string, 0, 64)
+	lines = append(lines, header1, header2, header3, renderRule(w))
+
+	// Title + period selector
+	periodLabel := periodToLabel(m.timePeriod)
+	periods := []string{"30d", "3M", "6M"}
+	periodParts := make([]string, 0, len(periods))
+	for _, p := range periods {
+		if p == periodLabel {
+			periodParts = append(periodParts, deckHighlightStyle.Render(" "+p+" "))
+		} else {
+			periodParts = append(periodParts, deckMutedStyle.Render(p))
+		}
+	}
+	titleLine := renderHeaderLine(w,
+		deckSectionStyle.Render("SESSION ANALYTICS"),
+		strings.Join(periodParts, "  ")+" "+deckDimStyle.Render("(p)"),
+	)
+	lines = append(lines, "", titleLine, "")
+
+	// ── Summary metric cards ──
+	lines = append(lines, m.renderAnalyticsSummaryCards(a, w)...)
+	lines = append(lines, "")
+
+	// ── Activity heatmap + Top tools (side by side) ──
+	halfW := (w - 4) / 2
+	leftPanel := m.renderAnalyticsHeatmap(a.ActivityByDay, halfW)
+	rightPanel := m.renderAnalyticsTools(a.TopTools, halfW)
+	padPanelLines(leftPanel, halfW)
+	combined := joinColumns(leftPanel, rightPanel, 4)
+	lines = append(lines, combined...)
+	lines = append(lines, "")
+
+	// ── Duration + Cost distribution (side by side) ──
+	leftHist := m.renderAnalyticsHistogram(a.DurationBuckets, "duration distribution", halfW)
+	rightHist := m.renderAnalyticsHistogram(a.CostBuckets, "cost distribution", halfW)
+	padPanelLines(leftHist, halfW)
+	combined = joinColumns(leftHist, rightHist, 4)
+	lines = append(lines, combined...)
+	lines = append(lines, "")
+
+	// ── Model comparison + Provider split (side by side) ──
+	modelW := (w * 3 / 5) - 2
+	providerW := (w * 2 / 5) - 2
+	leftModel := m.renderAnalyticsModelTable(a.ModelPerformance, modelW)
+	rightProvider := m.renderAnalyticsProviders(a.ProviderBreakdown, providerW)
+	padPanelLines(leftModel, modelW)
+	combined = joinColumns(leftModel, rightProvider, 4)
+	lines = append(lines, combined...)
+
+	lines = append(lines, "", renderRule(w))
+	lines = append(lines, m.viewAnalyticsFooter())
+
+	// Apply scrolling
+	content := strings.Split(strings.Join(lines, "\n"), "\n")
+	visibleHeight := m.height - 2*verticalPadding
+	if visibleHeight <= 0 {
+		visibleHeight = 20
+	}
+	maxScroll := max(0, len(content)-visibleHeight)
+	if m.analyticsScroll > maxScroll {
+		m.analyticsScroll = maxScroll
+	}
+	start := m.analyticsScroll
+	end := min(start+visibleHeight, len(content))
+
+	return strings.Join(content[start:end], "\n")
+}
+
+// renderAnalyticsSectionHeader renders "LABEL ────────────────" like the web's section-header.
+func renderAnalyticsSectionHeader(label string, width int) string {
+	rendered := deckMutedStyle.Bold(true).Render(strings.ToUpper(label))
+	labelWidth := lipgloss.Width(rendered)
+	lineWidth := max(0, width-labelWidth-1)
+	return rendered + " " + deckDimStyle.Render(strings.Repeat("─", lineWidth))
+}
+
+func (m deckModel) renderAnalyticsSummaryCards(a *deck.AnalyticsOverview, width int) []string {
+	type metricCard struct {
+		label string
+		value string
+		sub   string
+	}
+
+	modelCount := len(a.ModelPerformance)
+	avgDuration := time.Duration(a.AvgDurationNs)
+
+	cards := []metricCard{
+		{label: "TOTAL SESSIONS", value: strconv.Itoa(a.TotalSessions), sub: "sessions tracked"},
+		{label: "AVG COST/SESSION", value: formatCost(a.AvgSessionCost), sub: "per session avg"},
+		{label: "AVG DURATION", value: formatDurationMinutes(avgDuration), sub: "per session avg"},
+		{label: "MODELS TRACKED", value: strconv.Itoa(modelCount), sub: fmt.Sprintf("%d providers", len(a.ProviderBreakdown))},
+	}
+
+	cols := len(cards)
+	gap := 3
+	cardWidth := max((width-(cols-1)*gap)/cols, 18)
+
+	labelStyle := lipgloss.NewStyle().Foreground(colorLabel)
+	valueStyle := lipgloss.NewStyle().Foreground(colorForeground).Bold(true)
+
+	// Build each card as a bordered box
+	cardLines := make([][]string, cols)
+	maxHeight := 0
+	for i, c := range cards {
+		topBorder := deckDimStyle.Render("┌" + strings.Repeat("─", cardWidth-2) + "┐")
+		bottomBorder := deckDimStyle.Render("└" + strings.Repeat("─", cardWidth-2) + "┘")
+
+		inner := cardWidth - 4 // 2 for borders, 2 for padding
+		labelLine := deckDimStyle.Render("│") + " " + labelStyle.Render(fitCell(c.label, inner)) + " " + deckDimStyle.Render("│")
+		valueLine := deckDimStyle.Render("│") + " " + valueStyle.Render(fitCell(c.value, inner)) + " " + deckDimStyle.Render("│")
+		subLine := deckDimStyle.Render("│") + " " + deckMutedStyle.Render(fitCell(c.sub, inner)) + " " + deckDimStyle.Render("│")
+		emptyLine := deckDimStyle.Render("│") + strings.Repeat(" ", cardWidth-2) + deckDimStyle.Render("│")
+
+		cardLines[i] = []string{topBorder, labelLine, emptyLine, valueLine, subLine, bottomBorder}
+		if len(cardLines[i]) > maxHeight {
+			maxHeight = len(cardLines[i])
+		}
+	}
+
+	// Pad columns and join side by side
+	padded := make([][]string, cols)
+	for i := range cols {
+		padded[i] = padLines(cardLines[i], cardWidth, maxHeight)
+	}
+
+	result := make([]string, 0, maxHeight)
+	gapStr := strings.Repeat(" ", gap)
+	for row := range maxHeight {
+		parts := make([]string, 0, cols)
+		for col := range cols {
+			parts = append(parts, padded[col][row])
+		}
+		result = append(result, strings.Join(parts, gapStr))
+	}
+
+	return result
+}
+
+func (m deckModel) renderAnalyticsHeatmap(days []deck.DayActivity, width int) []string {
+	lines := []string{renderAnalyticsSectionHeader("activity", width)}
+
+	if len(days) == 0 {
+		lines = append(lines, deckMutedStyle.Render("  no activity data"))
+		return lines
+	}
+
+	maxSessions := 0
+	totalSessions := 0
+	totalCost := 0.0
+	activeDays := 0
+	peakDay := days[0]
+	for _, d := range days {
+		totalSessions += d.Sessions
+		totalCost += d.Cost
+		if d.Sessions > maxSessions {
+			maxSessions = d.Sessions
+			peakDay = d
+		}
+		if d.Sessions > 0 {
+			activeDays++
+		}
+	}
+	if maxSessions == 0 {
+		maxSessions = 1
+	}
+
+	// Heatmap grid — 2-char colored blocks with intensity
+	// 4 levels: empty, low, medium, high
+	cellW := 3 // "██ " visual width
+	cellsPerRow := max((m.width-4)/cellW, 1)
+
+	displayDays := days
+	maxCells := cellsPerRow * 4
+	if len(displayDays) > maxCells {
+		displayDays = displayDays[len(displayDays)-maxCells:]
+	}
+
+	greenHigh := lipgloss.NewStyle().Foreground(colorGreen).Bold(true)
+	greenMed := lipgloss.NewStyle().Foreground(colorGreen)
+	greenLow := lipgloss.NewStyle().Foreground(colorBrightBlack)
+
+	for i := 0; i < len(displayDays); i += cellsPerRow {
+		end := min(i+cellsPerRow, len(displayDays))
+		chunk := displayDays[i:end]
+
+		var blockRow strings.Builder
+		var dateRow strings.Builder
+		blockRow.WriteString("  ")
+		dateRow.WriteString("  ")
+		for _, d := range chunk {
+			if d.Sessions == 0 {
+				blockRow.WriteString(deckDimStyle.Render("░░") + " ")
+			} else {
+				intensity := float64(d.Sessions) / float64(maxSessions)
+				switch {
+				case intensity >= 0.7:
+					blockRow.WriteString(greenHigh.Render("██") + " ")
+				case intensity >= 0.3:
+					blockRow.WriteString(greenMed.Render("▓▓") + " ")
+				default:
+					blockRow.WriteString(greenLow.Render("▒▒") + " ")
+				}
+			}
+			dateLabel := d.Date
+			if len(dateLabel) > 5 {
+				dateLabel = dateLabel[5:]
+			}
+			dayPart := dateLabel
+			if len(dateLabel) >= 5 {
+				dayPart = dateLabel[3:5]
+			}
+			dateRow.WriteString(deckDimStyle.Render(fmt.Sprintf("%-2s", dayPart)) + " ")
+		}
+		lines = append(lines, blockRow.String())
+		lines = append(lines, dateRow.String())
+	}
+
+	// Legend
+	legend := "  " + deckDimStyle.Render("░░") + " none  " +
+		greenLow.Render("▒▒") + " low  " +
+		greenMed.Render("▓▓") + " med  " +
+		greenHigh.Render("██") + " high"
+	lines = append(lines, "", legend)
+
+	// Insights
+	insightStyle := lipgloss.NewStyle().Foreground(colorBrightBlack)
+	bulletStyle := lipgloss.NewStyle().Foreground(colorGreen)
+	bullet := bulletStyle.Render("▸")
+	lines = append(lines, "")
+
+	peakDate := peakDay.Date
+	if len(peakDate) > 5 {
+		peakDate = peakDate[5:]
+	}
+	lines = append(lines, "  "+bullet+" "+insightStyle.Render(fmt.Sprintf(
+		"peak: %s with %d sessions (%s spent)", peakDate, peakDay.Sessions, formatCost(peakDay.Cost))))
+
+	pct := 0
+	if len(days) > 0 {
+		pct = activeDays * 100 / len(days)
+	}
+	lines = append(lines, "  "+bullet+" "+insightStyle.Render(fmt.Sprintf(
+		"%d of %d days active (%d%%)", activeDays, len(days), pct)))
+
+	if activeDays > 0 {
+		avg := float64(totalSessions) / float64(activeDays)
+		lines = append(lines, "  "+bullet+" "+insightStyle.Render(fmt.Sprintf(
+			"avg %.1f sessions on active days", avg)))
+	}
+
+	// Current streak
+	streak := 0
+	for i := len(days) - 1; i >= 0; i-- {
+		if days[i].Sessions > 0 {
+			streak++
+		} else {
+			break
+		}
+	}
+	if streak > 0 {
+		label := "day"
+		if streak > 1 {
+			label = "days"
+		}
+		lines = append(lines, "  "+bullet+" "+insightStyle.Render(fmt.Sprintf(
+			"current streak: %d %s", streak, label)))
+	}
+
+	return lines
+}
+
+func (m deckModel) renderAnalyticsTools(tools []deck.ToolMetric, width int) []string {
+	lines := []string{renderAnalyticsSectionHeader("top tools", width)}
+
+	if len(tools) == 0 {
+		lines = append(lines, deckMutedStyle.Render("no tool data"))
+		return lines
+	}
+
+	displayTools := tools
+	if len(displayTools) > 8 {
+		displayTools = displayTools[:8]
+	}
+
+	maxCount := 0
+	for _, t := range displayTools {
+		if t.Count > maxCount {
+			maxCount = t.Count
+		}
+	}
+	if maxCount == 0 {
+		maxCount = 1
+	}
+
+	nameWidth := 18
+	barWidth := max(width-nameWidth-14, 8)
+
+	for _, t := range displayTools {
+		name := fitCell(truncateText(t.Name, nameWidth), nameWidth)
+		ratio := float64(t.Count) / float64(maxCount)
+		filled := min(max(int(ratio*float64(barWidth)), 0), barWidth)
+		empty := barWidth - filled
+
+		bar := lipgloss.NewStyle().Foreground(colorBlue).Render(strings.Repeat("█", filled)) +
+			deckDimStyle.Render(strings.Repeat("░", empty))
+
+		meta := fmt.Sprintf("%4dx", t.Count)
+		if t.ErrorCount > 0 {
+			meta += deckStatusFailStyle.Render(fmt.Sprintf(" %de", t.ErrorCount))
+		}
+
+		lines = append(lines, name+" "+bar+" "+meta)
+	}
+
+	// Insights
+	insightStyle := lipgloss.NewStyle().Foreground(colorBrightBlack)
+	bullet := lipgloss.NewStyle().Foreground(colorBlue).Render("▸")
+	lines = append(lines, "")
+
+	totalCalls := 0
+	totalErrors := 0
+	for _, t := range tools {
+		totalCalls += t.Count
+		totalErrors += t.ErrorCount
+	}
+
+	if len(tools) > 0 {
+		lines = append(lines, bullet+" "+insightStyle.Render(fmt.Sprintf(
+			"%s is most used (%d%% of all calls)",
+			tools[0].Name, tools[0].Count*100/max(totalCalls, 1))))
+	}
+
+	if totalErrors > 0 {
+		errRate := float64(totalErrors) / float64(totalCalls) * 100
+		lines = append(lines, bullet+" "+insightStyle.Render(fmt.Sprintf(
+			"%.1f%% overall error rate (%d errors across %d calls)",
+			errRate, totalErrors, totalCalls)))
+	} else {
+		lines = append(lines, bullet+" "+insightStyle.Render("no tool errors detected"))
+	}
+
+	lines = append(lines, bullet+" "+insightStyle.Render(fmt.Sprintf(
+		"%d unique tools across %d total calls", len(tools), totalCalls)))
+
+	return lines
+}
+
+func (m deckModel) renderAnalyticsHistogram(buckets []deck.Bucket, label string, width int) []string {
+	lines := []string{renderAnalyticsSectionHeader(label, width)}
+
+	if len(buckets) == 0 {
+		lines = append(lines, deckMutedStyle.Render("no data"))
+		return lines
+	}
+
+	maxCount := 0
+	for _, b := range buckets {
+		if b.Count > maxCount {
+			maxCount = b.Count
+		}
+	}
+	if maxCount == 0 {
+		maxCount = 1
+	}
+
+	// Compute label width from longest bucket label
+	labelWidth := 6
+	for _, b := range buckets {
+		if len(b.Label) > labelWidth {
+			labelWidth = len(b.Label)
+		}
+	}
+	labelWidth++ // trailing space
+	countWidth := 5
+	barWidth := max(width-labelWidth-countWidth-4, 8)
+
+	for _, b := range buckets {
+		bucketLabel := deckMutedStyle.Render(fitCell(b.Label, labelWidth))
+		ratio := float64(b.Count) / float64(maxCount)
+		filled := min(max(int(ratio*float64(barWidth)), 0), barWidth)
+		empty := barWidth - filled
+
+		bar := deckDimStyle.Render(strings.Repeat("░", empty))
+		if filled > 0 {
+			bar = lipgloss.NewStyle().Foreground(colorMagenta).Render(strings.Repeat("█", filled)) + bar
+		}
+
+		count := lipgloss.NewStyle().Foreground(colorForeground).Bold(true).Render(fmt.Sprintf("%4d", b.Count))
+		lines = append(lines, bucketLabel+" "+bar+" "+count)
+	}
+
+	// Insights
+	insightStyle := lipgloss.NewStyle().Foreground(colorBrightBlack)
+	bullet := lipgloss.NewStyle().Foreground(colorMagenta).Render("▸")
+	lines = append(lines, "")
+
+	// Find the most common bucket (mode)
+	totalCount := 0
+	modeBucket := buckets[0]
+	for _, b := range buckets {
+		totalCount += b.Count
+		if b.Count > modeBucket.Count {
+			modeBucket = b
+		}
+	}
+	pct := modeBucket.Count * 100 / max(totalCount, 1)
+	lines = append(lines, bullet+" "+insightStyle.Render(fmt.Sprintf(
+		"most common: %s (%d%% of sessions)", modeBucket.Label, pct)))
+
+	return lines
+}
+
+func (m deckModel) renderAnalyticsModelTable(models []deck.ModelPerformance, width int) []string {
+	lines := []string{renderAnalyticsSectionHeader("model comparison", width)}
+
+	if len(models) == 0 {
+		lines = append(lines, deckMutedStyle.Render("no model data"))
+		return lines
+	}
+
+	// Table with borders
+	topBorder := deckDimStyle.Render("┌" + strings.Repeat("─", width-2) + "┐")
+	bottomBorder := deckDimStyle.Render("└" + strings.Repeat("─", width-2) + "┘")
+
+	inner := width - 4 // borders + padding
+
+	// Column widths — 6 columns with 2-char gaps between them
+	dataCols := 5
+	colGap := 2
+	nameW := max(inner*3/10, 14)
+	colW := max((inner-nameW-(dataCols-1)*colGap)/dataCols, 7)
+	gap := strings.Repeat(" ", colGap)
+
+	headerParts := []string{
+		fitCell("MODEL", nameW),
+		fitCell("SESS", colW),
+		fitCell("AVG $", colW),
+		fitCell("AVG DUR", colW),
+		fitCell("TOKENS", colW),
+		fitCell("SUCCESS", colW),
+	}
+	headerLine := strings.Join(headerParts, gap)
+	headerRow := deckDimStyle.Render("│") + " " +
+		deckMutedStyle.Render(fitCell(headerLine, inner)) + " " +
+		deckDimStyle.Render("│")
+	divider := deckDimStyle.Render("├" + strings.Repeat("─", width-2) + "┤")
+
+	lines = append(lines, topBorder, headerRow, divider)
+
+	for _, mp := range models {
+		modelName := colorizeModel(truncateText(mp.Model, nameW-1))
+		modelPadded := padRightWithColor(modelName, nameW)
+
+		avgDur := formatDurationMinutes(time.Duration(mp.AvgDurationNs))
+		tokens := formatTokens(mp.AvgTokens)
+		cost := formatCost(mp.AvgCost)
+
+		// Color success rate based on threshold (like the web)
+		successStr := formatPercent(mp.SuccessRate)
+		var successStyled string
+		switch {
+		case mp.SuccessRate >= 0.8:
+			successStyled = deckStatusOKStyle.Render(successStr)
+		case mp.SuccessRate >= 0.5:
+			successStyled = deckStatusWarnStyle.Render(successStr)
+		default:
+			successStyled = deckStatusFailStyle.Render(successStr)
+		}
+
+		dataParts := []string{
+			fitCell(strconv.Itoa(mp.Sessions), colW),
+			fitCell(cost, colW),
+			fitCell(avgDur, colW),
+			fitCell(tokens, colW),
+		}
+		dataLine := strings.Join(dataParts, gap)
+
+		row := deckDimStyle.Render("│") + " " +
+			modelPadded + gap + dataLine + gap + padRightWithColor(successStyled, colW) + " " +
+			deckDimStyle.Render("│")
+		lines = append(lines, row)
+	}
+
+	lines = append(lines, bottomBorder)
+
+	// Insights
+	insightStyle := lipgloss.NewStyle().Foreground(colorBrightBlack)
+	bullet := lipgloss.NewStyle().Foreground(colorMagenta).Render("▸")
+	lines = append(lines, "")
+
+	if len(models) > 0 {
+		// Most cost-effective: lowest avg cost among models with >=2 sessions
+		bestValue := models[0]
+		bestSuccess := models[0]
+		for _, mp := range models {
+			if mp.Sessions >= 2 && mp.AvgCost < bestValue.AvgCost {
+				bestValue = mp
+			}
+			if mp.SuccessRate > bestSuccess.SuccessRate {
+				bestSuccess = mp
+			}
+		}
+		lines = append(lines, bullet+" "+insightStyle.Render(fmt.Sprintf(
+			"%s is most cost-effective at %s/session", bestValue.Model, formatCost(bestValue.AvgCost))))
+		if bestSuccess.Model != bestValue.Model {
+			lines = append(lines, bullet+" "+insightStyle.Render(fmt.Sprintf(
+				"%s has highest success rate at %s", bestSuccess.Model, formatPercent(bestSuccess.SuccessRate))))
+		}
+	}
+
+	return lines
+}
+
+func (m deckModel) renderAnalyticsProviders(providers map[string]int, width int) []string {
+	lines := []string{renderAnalyticsSectionHeader("provider split", width)}
+
+	if len(providers) == 0 {
+		lines = append(lines, deckMutedStyle.Render("no provider data"))
+		return lines
+	}
+
+	total := 0
+	for _, count := range providers {
+		total += count
+	}
+	if total == 0 {
+		total = 1
+	}
+
+	type providerEntry struct {
+		name  string
+		count int
+	}
+	sorted := make([]providerEntry, 0, len(providers))
+	for name, count := range providers {
+		sorted = append(sorted, providerEntry{name: name, count: count})
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].count > sorted[j].count
+	})
+
+	// Stacked bar (like the web's provider__bar)
+	barWidth := max(width-2, 10)
+	var stackedBar strings.Builder
+	providerColor := func(name string) lipgloss.Style {
+		switch strings.ToLower(name) {
+		case "anthropic":
+			return lipgloss.NewStyle().Foreground(colorMagenta)
+		case "openai":
+			return lipgloss.NewStyle().Foreground(colorGreen)
+		case "google":
+			return lipgloss.NewStyle().Foreground(colorYellow)
+		default:
+			return lipgloss.NewStyle().Foreground(colorBlue)
+		}
+	}
+
+	for _, p := range sorted {
+		segWidth := max(int(float64(p.count)/float64(total)*float64(barWidth)), 1)
+		stackedBar.WriteString(providerColor(p.name).Render(strings.Repeat("█", segWidth)))
+	}
+	lines = append(lines, stackedBar.String(), "")
+
+	// Legend with dots (like the web's provider__legend)
+	for _, p := range sorted {
+		pct := float64(p.count) / float64(total) * 100
+		dot := providerColor(p.name).Render("●")
+		legend := fmt.Sprintf("%s %-12s %3.0f%% (%d)", dot, p.name, pct, p.count)
+		lines = append(lines, legend)
+	}
+
+	// Insights
+	insightStyle := lipgloss.NewStyle().Foreground(colorBrightBlack)
+	bullet := lipgloss.NewStyle().Foreground(colorMagenta).Render("▸")
+	lines = append(lines, "")
+
+	if len(sorted) > 0 {
+		topPct := float64(sorted[0].count) / float64(total) * 100
+		lines = append(lines, bullet+" "+insightStyle.Render(fmt.Sprintf(
+			"%s is primary provider at %.0f%% of sessions", sorted[0].name, topPct)))
+	}
+	if len(sorted) > 1 {
+		lines = append(lines, bullet+" "+insightStyle.Render(fmt.Sprintf(
+			"%d providers in use", len(sorted))))
+	}
+
+	return lines
+}
+
+func (m deckModel) viewAnalyticsFooter() string {
+	helpText := "j down • k up • h back • p period • q quit"
+	return deckMutedStyle.Render(helpText)
 }
 
 func (m deckModel) viewModal() string {
@@ -1823,6 +2502,13 @@ func loadOverviewCmd(query deck.Querier, filters deck.Filters) bubbletea.Cmd {
 	}
 }
 
+func loadAnalyticsCmd(query deck.Querier, filters deck.Filters) bubbletea.Cmd {
+	return func() bubbletea.Msg {
+		analytics, err := query.AnalyticsOverview(context.Background(), filters)
+		return analyticsLoadedMsg{analytics: analytics, err: err}
+	}
+}
+
 func loadSessionCmd(query deck.Querier, sessionID string, keepUI bool) bubbletea.Cmd {
 	return func() bubbletea.Msg {
 		detail, err := query.SessionDetail(context.Background(), sessionID)
@@ -1848,6 +2534,9 @@ func (m deckModel) refreshCmd() bubbletea.Cmd {
 	}
 	if m.view == viewSession && m.detail != nil {
 		return loadSessionCmd(m.query, m.detail.Summary.ID, true)
+	}
+	if m.view == viewAnalytics {
+		return loadAnalyticsCmd(m.query, m.filters)
 	}
 	return nil
 }
@@ -2812,6 +3501,14 @@ func padRight(value string, width int) string {
 		return value
 	}
 	return value + strings.Repeat(" ", width-visualWidth)
+}
+
+// padPanelLines pads every line in-place to a consistent visual width.
+// This ensures joinColumns aligns right panels correctly.
+func padPanelLines(lines []string, width int) {
+	for i, line := range lines {
+		lines[i] = padRight(line, width)
+	}
 }
 
 func padRightWithColor(coloredValue string, width int) string {

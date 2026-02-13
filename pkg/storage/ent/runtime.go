@@ -5,6 +5,7 @@ package ent
 import (
 	"time"
 
+	"github.com/papercomputeco/tapes/pkg/storage/ent/facet"
 	"github.com/papercomputeco/tapes/pkg/storage/ent/node"
 	"github.com/papercomputeco/tapes/pkg/storage/ent/schema"
 )
@@ -13,6 +14,20 @@ import (
 // (default values, validators, hooks and policies) and stitches it
 // to their package variables.
 func init() {
+	facetFields := schema.Facet{}.Fields()
+	_ = facetFields
+	// facetDescSessionID is the schema descriptor for session_id field.
+	facetDescSessionID := facetFields[1].Descriptor()
+	// facet.SessionIDValidator is a validator for the "session_id" field. It is called by the builders before save.
+	facet.SessionIDValidator = facetDescSessionID.Validators[0].(func(string) error)
+	// facetDescCreatedAt is the schema descriptor for created_at field.
+	facetDescCreatedAt := facetFields[3].Descriptor()
+	// facet.DefaultCreatedAt holds the default value on creation for the created_at field.
+	facet.DefaultCreatedAt = facetDescCreatedAt.Default.(func() time.Time)
+	// facetDescID is the schema descriptor for id field.
+	facetDescID := facetFields[0].Descriptor()
+	// facet.IDValidator is a validator for the "id" field. It is called by the builders before save.
+	facet.IDValidator = facetDescID.Validators[0].(func(string) error)
 	nodeFields := schema.Node{}.Fields()
 	_ = nodeFields
 	// nodeDescCreatedAt is the schema descriptor for created_at field.

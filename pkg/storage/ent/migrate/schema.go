@@ -8,6 +8,26 @@ import (
 )
 
 var (
+	// FacetsColumns holds the columns for the "facets" table.
+	FacetsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeString, Unique: true},
+		{Name: "session_id", Type: field.TypeString},
+		{Name: "facets", Type: field.TypeJSON, Nullable: true},
+		{Name: "created_at", Type: field.TypeTime, Default: "CURRENT_TIMESTAMP"},
+	}
+	// FacetsTable holds the schema information for the "facets" table.
+	FacetsTable = &schema.Table{
+		Name:       "facets",
+		Columns:    FacetsColumns,
+		PrimaryKey: []*schema.Column{FacetsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "facet_session_id",
+				Unique:  true,
+				Columns: []*schema.Column{FacetsColumns[1]},
+			},
+		},
+	}
 	// NodesColumns holds the columns for the "nodes" table.
 	NodesColumns = []*schema.Column{
 		{Name: "hash", Type: field.TypeString, Unique: true},
@@ -69,6 +89,7 @@ var (
 	}
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
+		FacetsTable,
 		NodesTable,
 	}
 )
