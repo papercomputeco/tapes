@@ -1442,10 +1442,14 @@ func (m deckModel) viewSession() string {
 		return deckMutedStyle.Render("no session selected")
 	}
 
-	// Breadcrumb navigation: tapes > session-name
+	// Breadcrumb navigation: tapes > [project >] session-name
 	statusStyle := statusStyleFor(m.detail.Summary.Status)
 	statusDot := statusStyle.Render("●")
-	breadcrumb := deckAccentStyle.Render("tapes") + deckMutedStyle.Render(" > ") + deckTitleStyle.Render(m.detail.Summary.Label)
+	breadcrumb := deckAccentStyle.Render("tapes")
+	if m.detail.Summary.Project != "" {
+		breadcrumb += deckMutedStyle.Render(" > ") + deckMutedStyle.Render(m.detail.Summary.Project)
+	}
+	breadcrumb += deckMutedStyle.Render(" > ") + deckTitleStyle.Render(m.detail.Summary.Label)
 	headerRight := deckMutedStyle.Render(fmt.Sprintf("%s · %s %s", m.detail.Summary.ID, statusDot, m.detail.Summary.Status))
 	header := renderHeaderLine(m.width, breadcrumb, headerRight)
 	lines := make([]string, 0, 30)

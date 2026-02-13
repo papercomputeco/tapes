@@ -707,6 +707,12 @@ body {
   margin-top: 4px;
 }
 
+.detail__project {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
 .detail__status {
   display: inline-flex;
   align-items: center;

@@ -706,6 +706,13 @@ const renderSessionDetail = (detail) => {
   headerText.appendChild(headerTitle);
   headerText.appendChild(headerSub);
 
+  if (detail.summary.project) {
+    const headerProject = document.createElement("div");
+    headerProject.className = "detail__project";
+    headerProject.textContent = detail.summary.project;
+    headerText.appendChild(headerProject);
+  }
+
   const status = document.createElement("div");
   status.className = `detail__status session-status--${statusClass(detail.summary.status)}`;
   const dot = document.createElement("span");
