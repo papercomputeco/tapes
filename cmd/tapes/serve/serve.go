@@ -229,7 +229,10 @@ func (c *ServeCommander) run() error {
 		VectorDriver: proxyConfig.VectorDriver,
 		Embedder:     proxyConfig.Embedder,
 	}
-	apiServer, err := api.NewServer(apiConfig, driver, dagLoader, c.logger)
+	// Create agent trace store from the same storage driver
+	agentTraceStore := c.newAgentTraceStore(driver)
+
+	apiServer, err := api.NewServer(apiConfig, driver, dagLoader, agentTraceStore, c.logger)
 	if err != nil {
 		return fmt.Errorf("could not build new api server: %w", err)
 	}
@@ -280,6 +283,13 @@ func (c *ServeCommander) newStorageDriver() (storage.Driver, error) {
 
 	c.logger.Info("using in-memory storage")
 	return inmemory.NewDriver(), nil
+}
+
+func (c *ServeCommander) newAgentTraceStore(driver storage.Driver) storage.AgentTraceStore {
+	if sqliteDriver, ok := driver.(*sqlite.Driver); ok {
+		return sqliteDriver.AgentTraceStore
+	}
+	return inmemory.NewAgentTraceStore()
 }
 
 func (c *ServeCommander) newDagLoader() (merkle.DagLoader, error) {

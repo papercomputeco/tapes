@@ -9,6 +9,54 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage/ent"
 )
 
+// The AgentTraceFunc type is an adapter to allow the use of ordinary
+// function as AgentTrace mutator.
+type AgentTraceFunc func(context.Context, *ent.AgentTraceMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f AgentTraceFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.AgentTraceMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.AgentTraceMutation", m)
+}
+
+// The AgentTraceConversationFunc type is an adapter to allow the use of ordinary
+// function as AgentTraceConversation mutator.
+type AgentTraceConversationFunc func(context.Context, *ent.AgentTraceConversationMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f AgentTraceConversationFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.AgentTraceConversationMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.AgentTraceConversationMutation", m)
+}
+
+// The AgentTraceFileFunc type is an adapter to allow the use of ordinary
+// function as AgentTraceFile mutator.
+type AgentTraceFileFunc func(context.Context, *ent.AgentTraceFileMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f AgentTraceFileFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.AgentTraceFileMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.AgentTraceFileMutation", m)
+}
+
+// The AgentTraceRangeFunc type is an adapter to allow the use of ordinary
+// function as AgentTraceRange mutator.
+type AgentTraceRangeFunc func(context.Context, *ent.AgentTraceRangeMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f AgentTraceRangeFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.AgentTraceRangeMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.AgentTraceRangeMutation", m)
+}
+
 // The NodeFunc type is an adapter to allow the use of ordinary
 // function as Node mutator.
 type NodeFunc func(context.Context, *ent.NodeMutation) (ent.Value, error)

@@ -11,7 +11,10 @@ import (
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
-
+	"github.com/papercomputeco/tapes/pkg/storage/ent/agenttrace"
+	"github.com/papercomputeco/tapes/pkg/storage/ent/agenttraceconversation"
+	"github.com/papercomputeco/tapes/pkg/storage/ent/agenttracefile"
+	"github.com/papercomputeco/tapes/pkg/storage/ent/agenttracerange"
 	"github.com/papercomputeco/tapes/pkg/storage/ent/node"
 	"github.com/papercomputeco/tapes/pkg/storage/ent/predicate"
 )
@@ -25,8 +28,2865 @@ const (
 	OpUpdateOne = ent.OpUpdateOne
 
 	// Node types.
-	TypeNode = "Node"
+	TypeAgentTrace             = "AgentTrace"
+	TypeAgentTraceConversation = "AgentTraceConversation"
+	TypeAgentTraceFile         = "AgentTraceFile"
+	TypeAgentTraceRange        = "AgentTraceRange"
+	TypeNode                   = "Node"
 )
+
+// AgentTraceMutation represents an operation that mutates the AgentTrace nodes in the graph.
+type AgentTraceMutation struct {
+	config
+	op            Op
+	typ           string
+	id            *string
+	version       *string
+	timestamp     *string
+	vcs_type      *string
+	vcs_revision  *string
+	tool_name     *string
+	tool_version  *string
+	metadata      *map[string]interface{}
+	created_at    *time.Time
+	clearedFields map[string]struct{}
+	files         map[int]struct{}
+	removedfiles  map[int]struct{}
+	clearedfiles  bool
+	done          bool
+	oldValue      func(context.Context) (*AgentTrace, error)
+	predicates    []predicate.AgentTrace
+}
+
+var _ ent.Mutation = (*AgentTraceMutation)(nil)
+
+// agenttraceOption allows management of the mutation configuration using functional options.
+type agenttraceOption func(*AgentTraceMutation)
+
+// newAgentTraceMutation creates new mutation for the AgentTrace entity.
+func newAgentTraceMutation(c config, op Op, opts ...agenttraceOption) *AgentTraceMutation {
+	m := &AgentTraceMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeAgentTrace,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withAgentTraceID sets the ID field of the mutation.
+func withAgentTraceID(id string) agenttraceOption {
+	return func(m *AgentTraceMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *AgentTrace
+		)
+		m.oldValue = func(ctx context.Context) (*AgentTrace, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().AgentTrace.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withAgentTrace sets the old AgentTrace of the mutation.
+func withAgentTrace(node *AgentTrace) agenttraceOption {
+	return func(m *AgentTraceMutation) {
+		m.oldValue = func(context.Context) (*AgentTrace, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m AgentTraceMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m AgentTraceMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of AgentTrace entities.
+func (m *AgentTraceMutation) SetID(id string) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *AgentTraceMutation) ID() (id string, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *AgentTraceMutation) IDs(ctx context.Context) ([]string, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []string{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().AgentTrace.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetVersion sets the "version" field.
+func (m *AgentTraceMutation) SetVersion(s string) {
+	m.version = &s
+}
+
+// Version returns the value of the "version" field in the mutation.
+func (m *AgentTraceMutation) Version() (r string, exists bool) {
+	v := m.version
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldVersion returns the old "version" field's value of the AgentTrace entity.
+// If the AgentTrace object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AgentTraceMutation) OldVersion(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldVersion is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldVersion requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldVersion: %w", err)
+	}
+	return oldValue.Version, nil
+}
+
+// ResetVersion resets all changes to the "version" field.
+func (m *AgentTraceMutation) ResetVersion() {
+	m.version = nil
+}
+
+// SetTimestamp sets the "timestamp" field.
+func (m *AgentTraceMutation) SetTimestamp(s string) {
+	m.timestamp = &s
+}
+
+// Timestamp returns the value of the "timestamp" field in the mutation.
+func (m *AgentTraceMutation) Timestamp() (r string, exists bool) {
+	v := m.timestamp
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTimestamp returns the old "timestamp" field's value of the AgentTrace entity.
+// If the AgentTrace object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AgentTraceMutation) OldTimestamp(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTimestamp is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTimestamp requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTimestamp: %w", err)
+	}
+	return oldValue.Timestamp, nil
+}
+
+// ResetTimestamp resets all changes to the "timestamp" field.
+func (m *AgentTraceMutation) ResetTimestamp() {
+	m.timestamp = nil
+}
+
+// SetVcsType sets the "vcs_type" field.
+func (m *AgentTraceMutation) SetVcsType(s string) {
+	m.vcs_type = &s
+}
+
+// VcsType returns the value of the "vcs_type" field in the mutation.
+func (m *AgentTraceMutation) VcsType() (r string, exists bool) {
+	v := m.vcs_type
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldVcsType returns the old "vcs_type" field's value of the AgentTrace entity.
+// If the AgentTrace object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AgentTraceMutation) OldVcsType(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldVcsType is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldVcsType requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldVcsType: %w", err)
+	}
+	return oldValue.VcsType, nil
+}
+
+// ClearVcsType clears the value of the "vcs_type" field.
+func (m *AgentTraceMutation) ClearVcsType() {
+	m.vcs_type = nil
+	m.clearedFields[agenttrace.FieldVcsType] = struct{}{}
+}
+
+// VcsTypeCleared returns if the "vcs_type" field was cleared in this mutation.
+func (m *AgentTraceMutation) VcsTypeCleared() bool {
+	_, ok := m.clearedFields[agenttrace.FieldVcsType]
+	return ok
+}
+
+// ResetVcsType resets all changes to the "vcs_type" field.
+func (m *AgentTraceMutation) ResetVcsType() {
+	m.vcs_type = nil
+	delete(m.clearedFields, agenttrace.FieldVcsType)
+}
+
+// SetVcsRevision sets the "vcs_revision" field.
+func (m *AgentTraceMutation) SetVcsRevision(s string) {
+	m.vcs_revision = &s
+}
+
+// VcsRevision returns the value of the "vcs_revision" field in the mutation.
+func (m *AgentTraceMutation) VcsRevision() (r string, exists bool) {
+	v := m.vcs_revision
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldVcsRevision returns the old "vcs_revision" field's value of the AgentTrace entity.
+// If the AgentTrace object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AgentTraceMutation) OldVcsRevision(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldVcsRevision is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldVcsRevision requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldVcsRevision: %w", err)
+	}
+	return oldValue.VcsRevision, nil
+}
+
+// ClearVcsRevision clears the value of the "vcs_revision" field.
+func (m *AgentTraceMutation) ClearVcsRevision() {
+	m.vcs_revision = nil
+	m.clearedFields[agenttrace.FieldVcsRevision] = struct{}{}
+}
+
+// VcsRevisionCleared returns if the "vcs_revision" field was cleared in this mutation.
+func (m *AgentTraceMutation) VcsRevisionCleared() bool {
+	_, ok := m.clearedFields[agenttrace.FieldVcsRevision]
+	return ok
+}
+
+// ResetVcsRevision resets all changes to the "vcs_revision" field.
+func (m *AgentTraceMutation) ResetVcsRevision() {
+	m.vcs_revision = nil
+	delete(m.clearedFields, agenttrace.FieldVcsRevision)
+}
+
+// SetToolName sets the "tool_name" field.
+func (m *AgentTraceMutation) SetToolName(s string) {
+	m.tool_name = &s
+}
+
+// ToolName returns the value of the "tool_name" field in the mutation.
+func (m *AgentTraceMutation) ToolName() (r string, exists bool) {
+	v := m.tool_name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldToolName returns the old "tool_name" field's value of the AgentTrace entity.
+// If the AgentTrace object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AgentTraceMutation) OldToolName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldToolName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldToolName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldToolName: %w", err)
+	}
+	return oldValue.ToolName, nil
+}
+
+// ClearToolName clears the value of the "tool_name" field.
+func (m *AgentTraceMutation) ClearToolName() {
+	m.tool_name = nil
+	m.clearedFields[agenttrace.FieldToolName] = struct{}{}
+}
+
+// ToolNameCleared returns if the "tool_name" field was cleared in this mutation.
+func (m *AgentTraceMutation) ToolNameCleared() bool {
+	_, ok := m.clearedFields[agenttrace.FieldToolName]
+	return ok
+}
+
+// ResetToolName resets all changes to the "tool_name" field.
+func (m *AgentTraceMutation) ResetToolName() {
+	m.tool_name = nil
+	delete(m.clearedFields, agenttrace.FieldToolName)
+}
+
+// SetToolVersion sets the "tool_version" field.
+func (m *AgentTraceMutation) SetToolVersion(s string) {
+	m.tool_version = &s
+}
+
+// ToolVersion returns the value of the "tool_version" field in the mutation.
+func (m *AgentTraceMutation) ToolVersion() (r string, exists bool) {
+	v := m.tool_version
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldToolVersion returns the old "tool_version" field's value of the AgentTrace entity.
+// If the AgentTrace object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AgentTraceMutation) OldToolVersion(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldToolVersion is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldToolVersion requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldToolVersion: %w", err)
+	}
+	return oldValue.ToolVersion, nil
+}
+
+// ClearToolVersion clears the value of the "tool_version" field.
+func (m *AgentTraceMutation) ClearToolVersion() {
+	m.tool_version = nil
+	m.clearedFields[agenttrace.FieldToolVersion] = struct{}{}
+}
+
+// ToolVersionCleared returns if the "tool_version" field was cleared in this mutation.
+func (m *AgentTraceMutation) ToolVersionCleared() bool {
+	_, ok := m.clearedFields[agenttrace.FieldToolVersion]
+	return ok
+}
+
+// ResetToolVersion resets all changes to the "tool_version" field.
+func (m *AgentTraceMutation) ResetToolVersion() {
+	m.tool_version = nil
+	delete(m.clearedFields, agenttrace.FieldToolVersion)
+}
+
+// SetMetadata sets the "metadata" field.
+func (m *AgentTraceMutation) SetMetadata(value map[string]interface{}) {
+	m.metadata = &value
+}
+
+// Metadata returns the value of the "metadata" field in the mutation.
+func (m *AgentTraceMutation) Metadata() (r map[string]interface{}, exists bool) {
+	v := m.metadata
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldMetadata returns the old "metadata" field's value of the AgentTrace entity.
+// If the AgentTrace object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AgentTraceMutation) OldMetadata(ctx context.Context) (v map[string]interface{}, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldMetadata is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldMetadata requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldMetadata: %w", err)
+	}
+	return oldValue.Metadata, nil
+}
+
+// ClearMetadata clears the value of the "metadata" field.
+func (m *AgentTraceMutation) ClearMetadata() {
+	m.metadata = nil
+	m.clearedFields[agenttrace.FieldMetadata] = struct{}{}
+}
+
+// MetadataCleared returns if the "metadata" field was cleared in this mutation.
+func (m *AgentTraceMutation) MetadataCleared() bool {
+	_, ok := m.clearedFields[agenttrace.FieldMetadata]
+	return ok
+}
+
+// ResetMetadata resets all changes to the "metadata" field.
+func (m *AgentTraceMutation) ResetMetadata() {
+	m.metadata = nil
+	delete(m.clearedFields, agenttrace.FieldMetadata)
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *AgentTraceMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *AgentTraceMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the AgentTrace entity.
+// If the AgentTrace object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AgentTraceMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *AgentTraceMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// AddFileIDs adds the "files" edge to the AgentTraceFile entity by ids.
+func (m *AgentTraceMutation) AddFileIDs(ids ...int) {
+	if m.files == nil {
+		m.files = make(map[int]struct{})
+	}
+	for i := range ids {
+		m.files[ids[i]] = struct{}{}
+	}
+}
+
+// ClearFiles clears the "files" edge to the AgentTraceFile entity.
+func (m *AgentTraceMutation) ClearFiles() {
+	m.clearedfiles = true
+}
+
+// FilesCleared reports if the "files" edge to the AgentTraceFile entity was cleared.
+func (m *AgentTraceMutation) FilesCleared() bool {
+	return m.clearedfiles
+}
+
+// RemoveFileIDs removes the "files" edge to the AgentTraceFile entity by IDs.
+func (m *AgentTraceMutation) RemoveFileIDs(ids ...int) {
+	if m.removedfiles == nil {
+		m.removedfiles = make(map[int]struct{})
+	}
+	for i := range ids {
+		delete(m.files, ids[i])
+		m.removedfiles[ids[i]] = struct{}{}
+	}
+}
+
+// RemovedFiles returns the removed IDs of the "files" edge to the AgentTraceFile entity.
+func (m *AgentTraceMutation) RemovedFilesIDs() (ids []int) {
+	for id := range m.removedfiles {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// FilesIDs returns the "files" edge IDs in the mutation.
+func (m *AgentTraceMutation) FilesIDs() (ids []int) {
+	for id := range m.files {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// ResetFiles resets all changes to the "files" edge.
+func (m *AgentTraceMutation) ResetFiles() {
+	m.files = nil
+	m.clearedfiles = false
+	m.removedfiles = nil
+}
+
+// Where appends a list predicates to the AgentTraceMutation builder.
+func (m *AgentTraceMutation) Where(ps ...predicate.AgentTrace) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the AgentTraceMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *AgentTraceMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.AgentTrace, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *AgentTraceMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *AgentTraceMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (AgentTrace).
+func (m *AgentTraceMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *AgentTraceMutation) Fields() []string {
+	fields := make([]string, 0, 8)
+	if m.version != nil {
+		fields = append(fields, agenttrace.FieldVersion)
+	}
+	if m.timestamp != nil {
+		fields = append(fields, agenttrace.FieldTimestamp)
+	}
+	if m.vcs_type != nil {
+		fields = append(fields, agenttrace.FieldVcsType)
+	}
+	if m.vcs_revision != nil {
+		fields = append(fields, agenttrace.FieldVcsRevision)
+	}
+	if m.tool_name != nil {
+		fields = append(fields, agenttrace.FieldToolName)
+	}
+	if m.tool_version != nil {
+		fields = append(fields, agenttrace.FieldToolVersion)
+	}
+	if m.metadata != nil {
+		fields = append(fields, agenttrace.FieldMetadata)
+	}
+	if m.created_at != nil {
+		fields = append(fields, agenttrace.FieldCreatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *AgentTraceMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case agenttrace.FieldVersion:
+		return m.Version()
+	case agenttrace.FieldTimestamp:
+		return m.Timestamp()
+	case agenttrace.FieldVcsType:
+		return m.VcsType()
+	case agenttrace.FieldVcsRevision:
+		return m.VcsRevision()
+	case agenttrace.FieldToolName:
+		return m.ToolName()
+	case agenttrace.FieldToolVersion:
+		return m.ToolVersion()
+	case agenttrace.FieldMetadata:
+		return m.Metadata()
+	case agenttrace.FieldCreatedAt:
+		return m.CreatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *AgentTraceMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case agenttrace.FieldVersion:
+		return m.OldVersion(ctx)
+	case agenttrace.FieldTimestamp:
+		return m.OldTimestamp(ctx)
+	case agenttrace.FieldVcsType:
+		return m.OldVcsType(ctx)
+	case agenttrace.FieldVcsRevision:
+		return m.OldVcsRevision(ctx)
+	case agenttrace.FieldToolName:
+		return m.OldToolName(ctx)
+	case agenttrace.FieldToolVersion:
+		return m.OldToolVersion(ctx)
+	case agenttrace.FieldMetadata:
+		return m.OldMetadata(ctx)
+	case agenttrace.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown AgentTrace field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *AgentTraceMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case agenttrace.FieldVersion:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetVersion(v)
+		return nil
+	case agenttrace.FieldTimestamp:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTimestamp(v)
+		return nil
+	case agenttrace.FieldVcsType:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetVcsType(v)
+		return nil
+	case agenttrace.FieldVcsRevision:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetVcsRevision(v)
+		return nil
+	case agenttrace.FieldToolName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetToolName(v)
+		return nil
+	case agenttrace.FieldToolVersion:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetToolVersion(v)
+		return nil
+	case agenttrace.FieldMetadata:
+		v, ok := value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetMetadata(v)
+		return nil
+	case agenttrace.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown AgentTrace field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *AgentTraceMutation) AddedFields() []string {
+	return nil
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *AgentTraceMutation) AddedField(name string) (ent.Value, bool) {
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *AgentTraceMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	}
+	return fmt.Errorf("unknown AgentTrace numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *AgentTraceMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(agenttrace.FieldVcsType) {
+		fields = append(fields, agenttrace.FieldVcsType)
+	}
+	if m.FieldCleared(agenttrace.FieldVcsRevision) {
+		fields = append(fields, agenttrace.FieldVcsRevision)
+	}
+	if m.FieldCleared(agenttrace.FieldToolName) {
+		fields = append(fields, agenttrace.FieldToolName)
+	}
+	if m.FieldCleared(agenttrace.FieldToolVersion) {
+		fields = append(fields, agenttrace.FieldToolVersion)
+	}
+	if m.FieldCleared(agenttrace.FieldMetadata) {
+		fields = append(fields, agenttrace.FieldMetadata)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *AgentTraceMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *AgentTraceMutation) ClearField(name string) error {
+	switch name {
+	case agenttrace.FieldVcsType:
+		m.ClearVcsType()
+		return nil
+	case agenttrace.FieldVcsRevision:
+		m.ClearVcsRevision()
+		return nil
+	case agenttrace.FieldToolName:
+		m.ClearToolName()
+		return nil
+	case agenttrace.FieldToolVersion:
+		m.ClearToolVersion()
+		return nil
+	case agenttrace.FieldMetadata:
+		m.ClearMetadata()
+		return nil
+	}
+	return fmt.Errorf("unknown AgentTrace nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *AgentTraceMutation) ResetField(name string) error {
+	switch name {
+	case agenttrace.FieldVersion:
+		m.ResetVersion()
+		return nil
+	case agenttrace.FieldTimestamp:
+		m.ResetTimestamp()
+		return nil
+	case agenttrace.FieldVcsType:
+		m.ResetVcsType()
+		return nil
+	case agenttrace.FieldVcsRevision:
+		m.ResetVcsRevision()
+		return nil
+	case agenttrace.FieldToolName:
+		m.ResetToolName()
+		return nil
+	case agenttrace.FieldToolVersion:
+		m.ResetToolVersion()
+		return nil
+	case agenttrace.FieldMetadata:
+		m.ResetMetadata()
+		return nil
+	case agenttrace.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown AgentTrace field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *AgentTraceMutation) AddedEdges() []string {
+	edges := make([]string, 0, 1)
+	if m.files != nil {
+		edges = append(edges, agenttrace.EdgeFiles)
+	}
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *AgentTraceMutation) AddedIDs(name string) []ent.Value {
+	switch name {
+	case agenttrace.EdgeFiles:
+		ids := make([]ent.Value, 0, len(m.files))
+		for id := range m.files {
+			ids = append(ids, id)
+		}
+		return ids
+	}
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *AgentTraceMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 1)
+	if m.removedfiles != nil {
+		edges = append(edges, agenttrace.EdgeFiles)
+	}
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *AgentTraceMutation) RemovedIDs(name string) []ent.Value {
+	switch name {
+	case agenttrace.EdgeFiles:
+		ids := make([]ent.Value, 0, len(m.removedfiles))
+		for id := range m.removedfiles {
+			ids = append(ids, id)
+		}
+		return ids
+	}
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *AgentTraceMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 1)
+	if m.clearedfiles {
+		edges = append(edges, agenttrace.EdgeFiles)
+	}
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *AgentTraceMutation) EdgeCleared(name string) bool {
+	switch name {
+	case agenttrace.EdgeFiles:
+		return m.clearedfiles
+	}
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *AgentTraceMutation) ClearEdge(name string) error {
+	switch name {
+	}
+	return fmt.Errorf("unknown AgentTrace unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *AgentTraceMutation) ResetEdge(name string) error {
+	switch name {
+	case agenttrace.EdgeFiles:
+		m.ResetFiles()
+		return nil
+	}
+	return fmt.Errorf("unknown AgentTrace edge %s", name)
+}
+
+// AgentTraceConversationMutation represents an operation that mutates the AgentTraceConversation nodes in the graph.
+type AgentTraceConversationMutation struct {
+	config
+	op                   Op
+	typ                  string
+	id                   *int
+	url                  *string
+	contributor_type     *string
+	contributor_model_id *string
+	related              *[]map[string]interface{}
+	appendrelated        []map[string]interface{}
+	clearedFields        map[string]struct{}
+	file                 *int
+	clearedfile          bool
+	ranges               map[int]struct{}
+	removedranges        map[int]struct{}
+	clearedranges        bool
+	done                 bool
+	oldValue             func(context.Context) (*AgentTraceConversation, error)
+	predicates           []predicate.AgentTraceConversation
+}
+
+var _ ent.Mutation = (*AgentTraceConversationMutation)(nil)
+
+// agenttraceconversationOption allows management of the mutation configuration using functional options.
+type agenttraceconversationOption func(*AgentTraceConversationMutation)
+
+// newAgentTraceConversationMutation creates new mutation for the AgentTraceConversation entity.
+func newAgentTraceConversationMutation(c config, op Op, opts ...agenttraceconversationOption) *AgentTraceConversationMutation {
+	m := &AgentTraceConversationMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeAgentTraceConversation,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withAgentTraceConversationID sets the ID field of the mutation.
+func withAgentTraceConversationID(id int) agenttraceconversationOption {
+	return func(m *AgentTraceConversationMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *AgentTraceConversation
+		)
+		m.oldValue = func(ctx context.Context) (*AgentTraceConversation, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().AgentTraceConversation.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withAgentTraceConversation sets the old AgentTraceConversation of the mutation.
+func withAgentTraceConversation(node *AgentTraceConversation) agenttraceconversationOption {
+	return func(m *AgentTraceConversationMutation) {
+		m.oldValue = func(context.Context) (*AgentTraceConversation, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m AgentTraceConversationMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m AgentTraceConversationMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *AgentTraceConversationMutation) ID() (id int, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *AgentTraceConversationMutation) IDs(ctx context.Context) ([]int, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().AgentTraceConversation.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetURL sets the "url" field.
+func (m *AgentTraceConversationMutation) SetURL(s string) {
+	m.url = &s
+}
+
+// URL returns the value of the "url" field in the mutation.
+func (m *AgentTraceConversationMutation) URL() (r string, exists bool) {
+	v := m.url
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldURL returns the old "url" field's value of the AgentTraceConversation entity.
+// If the AgentTraceConversation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AgentTraceConversationMutation) OldURL(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldURL is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldURL requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldURL: %w", err)
+	}
+	return oldValue.URL, nil
+}
+
+// ClearURL clears the value of the "url" field.
+func (m *AgentTraceConversationMutation) ClearURL() {
+	m.url = nil
+	m.clearedFields[agenttraceconversation.FieldURL] = struct{}{}
+}
+
+// URLCleared returns if the "url" field was cleared in this mutation.
+func (m *AgentTraceConversationMutation) URLCleared() bool {
+	_, ok := m.clearedFields[agenttraceconversation.FieldURL]
+	return ok
+}
+
+// ResetURL resets all changes to the "url" field.
+func (m *AgentTraceConversationMutation) ResetURL() {
+	m.url = nil
+	delete(m.clearedFields, agenttraceconversation.FieldURL)
+}
+
+// SetContributorType sets the "contributor_type" field.
+func (m *AgentTraceConversationMutation) SetContributorType(s string) {
+	m.contributor_type = &s
+}
+
+// ContributorType returns the value of the "contributor_type" field in the mutation.
+func (m *AgentTraceConversationMutation) ContributorType() (r string, exists bool) {
+	v := m.contributor_type
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldContributorType returns the old "contributor_type" field's value of the AgentTraceConversation entity.
+// If the AgentTraceConversation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AgentTraceConversationMutation) OldContributorType(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldContributorType is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldContributorType requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldContributorType: %w", err)
+	}
+	return oldValue.ContributorType, nil
+}
+
+// ClearContributorType clears the value of the "contributor_type" field.
+func (m *AgentTraceConversationMutation) ClearContributorType() {
+	m.contributor_type = nil
+	m.clearedFields[agenttraceconversation.FieldContributorType] = struct{}{}
+}
+
+// ContributorTypeCleared returns if the "contributor_type" field was cleared in this mutation.
+func (m *AgentTraceConversationMutation) ContributorTypeCleared() bool {
+	_, ok := m.clearedFields[agenttraceconversation.FieldContributorType]
+	return ok
+}
+
+// ResetContributorType resets all changes to the "contributor_type" field.
+func (m *AgentTraceConversationMutation) ResetContributorType() {
+	m.contributor_type = nil
+	delete(m.clearedFields, agenttraceconversation.FieldContributorType)
+}
+
+// SetContributorModelID sets the "contributor_model_id" field.
+func (m *AgentTraceConversationMutation) SetContributorModelID(s string) {
+	m.contributor_model_id = &s
+}
+
+// ContributorModelID returns the value of the "contributor_model_id" field in the mutation.
+func (m *AgentTraceConversationMutation) ContributorModelID() (r string, exists bool) {
+	v := m.contributor_model_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldContributorModelID returns the old "contributor_model_id" field's value of the AgentTraceConversation entity.
+// If the AgentTraceConversation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AgentTraceConversationMutation) OldContributorModelID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldContributorModelID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldContributorModelID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldContributorModelID: %w", err)
+	}
+	return oldValue.ContributorModelID, nil
+}
+
+// ClearContributorModelID clears the value of the "contributor_model_id" field.
+func (m *AgentTraceConversationMutation) ClearContributorModelID() {
+	m.contributor_model_id = nil
+	m.clearedFields[agenttraceconversation.FieldContributorModelID] = struct{}{}
+}
+
+// ContributorModelIDCleared returns if the "contributor_model_id" field was cleared in this mutation.
+func (m *AgentTraceConversationMutation) ContributorModelIDCleared() bool {
+	_, ok := m.clearedFields[agenttraceconversation.FieldContributorModelID]
+	return ok
+}
+
+// ResetContributorModelID resets all changes to the "contributor_model_id" field.
+func (m *AgentTraceConversationMutation) ResetContributorModelID() {
+	m.contributor_model_id = nil
+	delete(m.clearedFields, agenttraceconversation.FieldContributorModelID)
+}
+
+// SetRelated sets the "related" field.
+func (m *AgentTraceConversationMutation) SetRelated(value []map[string]interface{}) {
+	m.related = &value
+	m.appendrelated = nil
+}
+
+// Related returns the value of the "related" field in the mutation.
+func (m *AgentTraceConversationMutation) Related() (r []map[string]interface{}, exists bool) {
+	v := m.related
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRelated returns the old "related" field's value of the AgentTraceConversation entity.
+// If the AgentTraceConversation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AgentTraceConversationMutation) OldRelated(ctx context.Context) (v []map[string]interface{}, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRelated is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRelated requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRelated: %w", err)
+	}
+	return oldValue.Related, nil
+}
+
+// AppendRelated adds value to the "related" field.
+func (m *AgentTraceConversationMutation) AppendRelated(value []map[string]interface{}) {
+	m.appendrelated = append(m.appendrelated, value...)
+}
+
+// AppendedRelated returns the list of values that were appended to the "related" field in this mutation.
+func (m *AgentTraceConversationMutation) AppendedRelated() ([]map[string]interface{}, bool) {
+	if len(m.appendrelated) == 0 {
+		return nil, false
+	}
+	return m.appendrelated, true
+}
+
+// ClearRelated clears the value of the "related" field.
+func (m *AgentTraceConversationMutation) ClearRelated() {
+	m.related = nil
+	m.appendrelated = nil
+	m.clearedFields[agenttraceconversation.FieldRelated] = struct{}{}
+}
+
+// RelatedCleared returns if the "related" field was cleared in this mutation.
+func (m *AgentTraceConversationMutation) RelatedCleared() bool {
+	_, ok := m.clearedFields[agenttraceconversation.FieldRelated]
+	return ok
+}
+
+// ResetRelated resets all changes to the "related" field.
+func (m *AgentTraceConversationMutation) ResetRelated() {
+	m.related = nil
+	m.appendrelated = nil
+	delete(m.clearedFields, agenttraceconversation.FieldRelated)
+}
+
+// SetFileID sets the "file" edge to the AgentTraceFile entity by id.
+func (m *AgentTraceConversationMutation) SetFileID(id int) {
+	m.file = &id
+}
+
+// ClearFile clears the "file" edge to the AgentTraceFile entity.
+func (m *AgentTraceConversationMutation) ClearFile() {
+	m.clearedfile = true
+}
+
+// FileCleared reports if the "file" edge to the AgentTraceFile entity was cleared.
+func (m *AgentTraceConversationMutation) FileCleared() bool {
+	return m.clearedfile
+}
+
+// FileID returns the "file" edge ID in the mutation.
+func (m *AgentTraceConversationMutation) FileID() (id int, exists bool) {
+	if m.file != nil {
+		return *m.file, true
+	}
+	return
+}
+
+// FileIDs returns the "file" edge IDs in the mutation.
+// Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
+// FileID instead. It exists only for internal usage by the builders.
+func (m *AgentTraceConversationMutation) FileIDs() (ids []int) {
+	if id := m.file; id != nil {
+		ids = append(ids, *id)
+	}
+	return
+}
+
+// ResetFile resets all changes to the "file" edge.
+func (m *AgentTraceConversationMutation) ResetFile() {
+	m.file = nil
+	m.clearedfile = false
+}
+
+// AddRangeIDs adds the "ranges" edge to the AgentTraceRange entity by ids.
+func (m *AgentTraceConversationMutation) AddRangeIDs(ids ...int) {
+	if m.ranges == nil {
+		m.ranges = make(map[int]struct{})
+	}
+	for i := range ids {
+		m.ranges[ids[i]] = struct{}{}
+	}
+}
+
+// ClearRanges clears the "ranges" edge to the AgentTraceRange entity.
+func (m *AgentTraceConversationMutation) ClearRanges() {
+	m.clearedranges = true
+}
+
+// RangesCleared reports if the "ranges" edge to the AgentTraceRange entity was cleared.
+func (m *AgentTraceConversationMutation) RangesCleared() bool {
+	return m.clearedranges
+}
+
+// RemoveRangeIDs removes the "ranges" edge to the AgentTraceRange entity by IDs.
+func (m *AgentTraceConversationMutation) RemoveRangeIDs(ids ...int) {
+	if m.removedranges == nil {
+		m.removedranges = make(map[int]struct{})
+	}
+	for i := range ids {
+		delete(m.ranges, ids[i])
+		m.removedranges[ids[i]] = struct{}{}
+	}
+}
+
+// RemovedRanges returns the removed IDs of the "ranges" edge to the AgentTraceRange entity.
+func (m *AgentTraceConversationMutation) RemovedRangesIDs() (ids []int) {
+	for id := range m.removedranges {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// RangesIDs returns the "ranges" edge IDs in the mutation.
+func (m *AgentTraceConversationMutation) RangesIDs() (ids []int) {
+	for id := range m.ranges {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// ResetRanges resets all changes to the "ranges" edge.
+func (m *AgentTraceConversationMutation) ResetRanges() {
+	m.ranges = nil
+	m.clearedranges = false
+	m.removedranges = nil
+}
+
+// Where appends a list predicates to the AgentTraceConversationMutation builder.
+func (m *AgentTraceConversationMutation) Where(ps ...predicate.AgentTraceConversation) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the AgentTraceConversationMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *AgentTraceConversationMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.AgentTraceConversation, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *AgentTraceConversationMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *AgentTraceConversationMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (AgentTraceConversation).
+func (m *AgentTraceConversationMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *AgentTraceConversationMutation) Fields() []string {
+	fields := make([]string, 0, 4)
+	if m.url != nil {
+		fields = append(fields, agenttraceconversation.FieldURL)
+	}
+	if m.contributor_type != nil {
+		fields = append(fields, agenttraceconversation.FieldContributorType)
+	}
+	if m.contributor_model_id != nil {
+		fields = append(fields, agenttraceconversation.FieldContributorModelID)
+	}
+	if m.related != nil {
+		fields = append(fields, agenttraceconversation.FieldRelated)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *AgentTraceConversationMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case agenttraceconversation.FieldURL:
+		return m.URL()
+	case agenttraceconversation.FieldContributorType:
+		return m.ContributorType()
+	case agenttraceconversation.FieldContributorModelID:
+		return m.ContributorModelID()
+	case agenttraceconversation.FieldRelated:
+		return m.Related()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *AgentTraceConversationMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case agenttraceconversation.FieldURL:
+		return m.OldURL(ctx)
+	case agenttraceconversation.FieldContributorType:
+		return m.OldContributorType(ctx)
+	case agenttraceconversation.FieldContributorModelID:
+		return m.OldContributorModelID(ctx)
+	case agenttraceconversation.FieldRelated:
+		return m.OldRelated(ctx)
+	}
+	return nil, fmt.Errorf("unknown AgentTraceConversation field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *AgentTraceConversationMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case agenttraceconversation.FieldURL:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetURL(v)
+		return nil
+	case agenttraceconversation.FieldContributorType:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetContributorType(v)
+		return nil
+	case agenttraceconversation.FieldContributorModelID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetContributorModelID(v)
+		return nil
+	case agenttraceconversation.FieldRelated:
+		v, ok := value.([]map[string]interface{})
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRelated(v)
+		return nil
+	}
+	return fmt.Errorf("unknown AgentTraceConversation field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *AgentTraceConversationMutation) AddedFields() []string {
+	return nil
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *AgentTraceConversationMutation) AddedField(name string) (ent.Value, bool) {
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *AgentTraceConversationMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	}
+	return fmt.Errorf("unknown AgentTraceConversation numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *AgentTraceConversationMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(agenttraceconversation.FieldURL) {
+		fields = append(fields, agenttraceconversation.FieldURL)
+	}
+	if m.FieldCleared(agenttraceconversation.FieldContributorType) {
+		fields = append(fields, agenttraceconversation.FieldContributorType)
+	}
+	if m.FieldCleared(agenttraceconversation.FieldContributorModelID) {
+		fields = append(fields, agenttraceconversation.FieldContributorModelID)
+	}
+	if m.FieldCleared(agenttraceconversation.FieldRelated) {
+		fields = append(fields, agenttraceconversation.FieldRelated)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *AgentTraceConversationMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *AgentTraceConversationMutation) ClearField(name string) error {
+	switch name {
+	case agenttraceconversation.FieldURL:
+		m.ClearURL()
+		return nil
+	case agenttraceconversation.FieldContributorType:
+		m.ClearContributorType()
+		return nil
+	case agenttraceconversation.FieldContributorModelID:
+		m.ClearContributorModelID()
+		return nil
+	case agenttraceconversation.FieldRelated:
+		m.ClearRelated()
+		return nil
+	}
+	return fmt.Errorf("unknown AgentTraceConversation nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *AgentTraceConversationMutation) ResetField(name string) error {
+	switch name {
+	case agenttraceconversation.FieldURL:
+		m.ResetURL()
+		return nil
+	case agenttraceconversation.FieldContributorType:
+		m.ResetContributorType()
+		return nil
+	case agenttraceconversation.FieldContributorModelID:
+		m.ResetContributorModelID()
+		return nil
+	case agenttraceconversation.FieldRelated:
+		m.ResetRelated()
+		return nil
+	}
+	return fmt.Errorf("unknown AgentTraceConversation field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *AgentTraceConversationMutation) AddedEdges() []string {
+	edges := make([]string, 0, 2)
+	if m.file != nil {
+		edges = append(edges, agenttraceconversation.EdgeFile)
+	}
+	if m.ranges != nil {
+		edges = append(edges, agenttraceconversation.EdgeRanges)
+	}
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *AgentTraceConversationMutation) AddedIDs(name string) []ent.Value {
+	switch name {
+	case agenttraceconversation.EdgeFile:
+		if id := m.file; id != nil {
+			return []ent.Value{*id}
+		}
+	case agenttraceconversation.EdgeRanges:
+		ids := make([]ent.Value, 0, len(m.ranges))
+		for id := range m.ranges {
+			ids = append(ids, id)
+		}
+		return ids
+	}
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *AgentTraceConversationMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 2)
+	if m.removedranges != nil {
+		edges = append(edges, agenttraceconversation.EdgeRanges)
+	}
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *AgentTraceConversationMutation) RemovedIDs(name string) []ent.Value {
+	switch name {
+	case agenttraceconversation.EdgeRanges:
+		ids := make([]ent.Value, 0, len(m.removedranges))
+		for id := range m.removedranges {
+			ids = append(ids, id)
+		}
+		return ids
+	}
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *AgentTraceConversationMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 2)
+	if m.clearedfile {
+		edges = append(edges, agenttraceconversation.EdgeFile)
+	}
+	if m.clearedranges {
+		edges = append(edges, agenttraceconversation.EdgeRanges)
+	}
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *AgentTraceConversationMutation) EdgeCleared(name string) bool {
+	switch name {
+	case agenttraceconversation.EdgeFile:
+		return m.clearedfile
+	case agenttraceconversation.EdgeRanges:
+		return m.clearedranges
+	}
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *AgentTraceConversationMutation) ClearEdge(name string) error {
+	switch name {
+	case agenttraceconversation.EdgeFile:
+		m.ClearFile()
+		return nil
+	}
+	return fmt.Errorf("unknown AgentTraceConversation unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *AgentTraceConversationMutation) ResetEdge(name string) error {
+	switch name {
+	case agenttraceconversation.EdgeFile:
+		m.ResetFile()
+		return nil
+	case agenttraceconversation.EdgeRanges:
+		m.ResetRanges()
+		return nil
+	}
+	return fmt.Errorf("unknown AgentTraceConversation edge %s", name)
+}
+
+// AgentTraceFileMutation represents an operation that mutates the AgentTraceFile nodes in the graph.
+type AgentTraceFileMutation struct {
+	config
+	op                   Op
+	typ                  string
+	id                   *int
+	_path                *string
+	clearedFields        map[string]struct{}
+	trace                *string
+	clearedtrace         bool
+	conversations        map[int]struct{}
+	removedconversations map[int]struct{}
+	clearedconversations bool
+	done                 bool
+	oldValue             func(context.Context) (*AgentTraceFile, error)
+	predicates           []predicate.AgentTraceFile
+}
+
+var _ ent.Mutation = (*AgentTraceFileMutation)(nil)
+
+// agenttracefileOption allows management of the mutation configuration using functional options.
+type agenttracefileOption func(*AgentTraceFileMutation)
+
+// newAgentTraceFileMutation creates new mutation for the AgentTraceFile entity.
+func newAgentTraceFileMutation(c config, op Op, opts ...agenttracefileOption) *AgentTraceFileMutation {
+	m := &AgentTraceFileMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeAgentTraceFile,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withAgentTraceFileID sets the ID field of the mutation.
+func withAgentTraceFileID(id int) agenttracefileOption {
+	return func(m *AgentTraceFileMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *AgentTraceFile
+		)
+		m.oldValue = func(ctx context.Context) (*AgentTraceFile, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().AgentTraceFile.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withAgentTraceFile sets the old AgentTraceFile of the mutation.
+func withAgentTraceFile(node *AgentTraceFile) agenttracefileOption {
+	return func(m *AgentTraceFileMutation) {
+		m.oldValue = func(context.Context) (*AgentTraceFile, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m AgentTraceFileMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m AgentTraceFileMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *AgentTraceFileMutation) ID() (id int, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *AgentTraceFileMutation) IDs(ctx context.Context) ([]int, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().AgentTraceFile.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetPath sets the "path" field.
+func (m *AgentTraceFileMutation) SetPath(s string) {
+	m._path = &s
+}
+
+// Path returns the value of the "path" field in the mutation.
+func (m *AgentTraceFileMutation) Path() (r string, exists bool) {
+	v := m._path
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPath returns the old "path" field's value of the AgentTraceFile entity.
+// If the AgentTraceFile object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AgentTraceFileMutation) OldPath(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPath is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPath requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPath: %w", err)
+	}
+	return oldValue.Path, nil
+}
+
+// ResetPath resets all changes to the "path" field.
+func (m *AgentTraceFileMutation) ResetPath() {
+	m._path = nil
+}
+
+// SetTraceID sets the "trace" edge to the AgentTrace entity by id.
+func (m *AgentTraceFileMutation) SetTraceID(id string) {
+	m.trace = &id
+}
+
+// ClearTrace clears the "trace" edge to the AgentTrace entity.
+func (m *AgentTraceFileMutation) ClearTrace() {
+	m.clearedtrace = true
+}
+
+// TraceCleared reports if the "trace" edge to the AgentTrace entity was cleared.
+func (m *AgentTraceFileMutation) TraceCleared() bool {
+	return m.clearedtrace
+}
+
+// TraceID returns the "trace" edge ID in the mutation.
+func (m *AgentTraceFileMutation) TraceID() (id string, exists bool) {
+	if m.trace != nil {
+		return *m.trace, true
+	}
+	return
+}
+
+// TraceIDs returns the "trace" edge IDs in the mutation.
+// Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
+// TraceID instead. It exists only for internal usage by the builders.
+func (m *AgentTraceFileMutation) TraceIDs() (ids []string) {
+	if id := m.trace; id != nil {
+		ids = append(ids, *id)
+	}
+	return
+}
+
+// ResetTrace resets all changes to the "trace" edge.
+func (m *AgentTraceFileMutation) ResetTrace() {
+	m.trace = nil
+	m.clearedtrace = false
+}
+
+// AddConversationIDs adds the "conversations" edge to the AgentTraceConversation entity by ids.
+func (m *AgentTraceFileMutation) AddConversationIDs(ids ...int) {
+	if m.conversations == nil {
+		m.conversations = make(map[int]struct{})
+	}
+	for i := range ids {
+		m.conversations[ids[i]] = struct{}{}
+	}
+}
+
+// ClearConversations clears the "conversations" edge to the AgentTraceConversation entity.
+func (m *AgentTraceFileMutation) ClearConversations() {
+	m.clearedconversations = true
+}
+
+// ConversationsCleared reports if the "conversations" edge to the AgentTraceConversation entity was cleared.
+func (m *AgentTraceFileMutation) ConversationsCleared() bool {
+	return m.clearedconversations
+}
+
+// RemoveConversationIDs removes the "conversations" edge to the AgentTraceConversation entity by IDs.
+func (m *AgentTraceFileMutation) RemoveConversationIDs(ids ...int) {
+	if m.removedconversations == nil {
+		m.removedconversations = make(map[int]struct{})
+	}
+	for i := range ids {
+		delete(m.conversations, ids[i])
+		m.removedconversations[ids[i]] = struct{}{}
+	}
+}
+
+// RemovedConversations returns the removed IDs of the "conversations" edge to the AgentTraceConversation entity.
+func (m *AgentTraceFileMutation) RemovedConversationsIDs() (ids []int) {
+	for id := range m.removedconversations {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// ConversationsIDs returns the "conversations" edge IDs in the mutation.
+func (m *AgentTraceFileMutation) ConversationsIDs() (ids []int) {
+	for id := range m.conversations {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// ResetConversations resets all changes to the "conversations" edge.
+func (m *AgentTraceFileMutation) ResetConversations() {
+	m.conversations = nil
+	m.clearedconversations = false
+	m.removedconversations = nil
+}
+
+// Where appends a list predicates to the AgentTraceFileMutation builder.
+func (m *AgentTraceFileMutation) Where(ps ...predicate.AgentTraceFile) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the AgentTraceFileMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *AgentTraceFileMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.AgentTraceFile, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *AgentTraceFileMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *AgentTraceFileMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (AgentTraceFile).
+func (m *AgentTraceFileMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *AgentTraceFileMutation) Fields() []string {
+	fields := make([]string, 0, 1)
+	if m._path != nil {
+		fields = append(fields, agenttracefile.FieldPath)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *AgentTraceFileMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case agenttracefile.FieldPath:
+		return m.Path()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *AgentTraceFileMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case agenttracefile.FieldPath:
+		return m.OldPath(ctx)
+	}
+	return nil, fmt.Errorf("unknown AgentTraceFile field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *AgentTraceFileMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case agenttracefile.FieldPath:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPath(v)
+		return nil
+	}
+	return fmt.Errorf("unknown AgentTraceFile field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *AgentTraceFileMutation) AddedFields() []string {
+	return nil
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *AgentTraceFileMutation) AddedField(name string) (ent.Value, bool) {
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *AgentTraceFileMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	}
+	return fmt.Errorf("unknown AgentTraceFile numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *AgentTraceFileMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *AgentTraceFileMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *AgentTraceFileMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown AgentTraceFile nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *AgentTraceFileMutation) ResetField(name string) error {
+	switch name {
+	case agenttracefile.FieldPath:
+		m.ResetPath()
+		return nil
+	}
+	return fmt.Errorf("unknown AgentTraceFile field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *AgentTraceFileMutation) AddedEdges() []string {
+	edges := make([]string, 0, 2)
+	if m.trace != nil {
+		edges = append(edges, agenttracefile.EdgeTrace)
+	}
+	if m.conversations != nil {
+		edges = append(edges, agenttracefile.EdgeConversations)
+	}
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *AgentTraceFileMutation) AddedIDs(name string) []ent.Value {
+	switch name {
+	case agenttracefile.EdgeTrace:
+		if id := m.trace; id != nil {
+			return []ent.Value{*id}
+		}
+	case agenttracefile.EdgeConversations:
+		ids := make([]ent.Value, 0, len(m.conversations))
+		for id := range m.conversations {
+			ids = append(ids, id)
+		}
+		return ids
+	}
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *AgentTraceFileMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 2)
+	if m.removedconversations != nil {
+		edges = append(edges, agenttracefile.EdgeConversations)
+	}
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *AgentTraceFileMutation) RemovedIDs(name string) []ent.Value {
+	switch name {
+	case agenttracefile.EdgeConversations:
+		ids := make([]ent.Value, 0, len(m.removedconversations))
+		for id := range m.removedconversations {
+			ids = append(ids, id)
+		}
+		return ids
+	}
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *AgentTraceFileMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 2)
+	if m.clearedtrace {
+		edges = append(edges, agenttracefile.EdgeTrace)
+	}
+	if m.clearedconversations {
+		edges = append(edges, agenttracefile.EdgeConversations)
+	}
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *AgentTraceFileMutation) EdgeCleared(name string) bool {
+	switch name {
+	case agenttracefile.EdgeTrace:
+		return m.clearedtrace
+	case agenttracefile.EdgeConversations:
+		return m.clearedconversations
+	}
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *AgentTraceFileMutation) ClearEdge(name string) error {
+	switch name {
+	case agenttracefile.EdgeTrace:
+		m.ClearTrace()
+		return nil
+	}
+	return fmt.Errorf("unknown AgentTraceFile unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *AgentTraceFileMutation) ResetEdge(name string) error {
+	switch name {
+	case agenttracefile.EdgeTrace:
+		m.ResetTrace()
+		return nil
+	case agenttracefile.EdgeConversations:
+		m.ResetConversations()
+		return nil
+	}
+	return fmt.Errorf("unknown AgentTraceFile edge %s", name)
+}
+
+// AgentTraceRangeMutation represents an operation that mutates the AgentTraceRange nodes in the graph.
+type AgentTraceRangeMutation struct {
+	config
+	op                   Op
+	typ                  string
+	id                   *int
+	start_line           *int
+	addstart_line        *int
+	end_line             *int
+	addend_line          *int
+	content_hash         *string
+	contributor_type     *string
+	contributor_model_id *string
+	clearedFields        map[string]struct{}
+	conversation         *int
+	clearedconversation  bool
+	done                 bool
+	oldValue             func(context.Context) (*AgentTraceRange, error)
+	predicates           []predicate.AgentTraceRange
+}
+
+var _ ent.Mutation = (*AgentTraceRangeMutation)(nil)
+
+// agenttracerangeOption allows management of the mutation configuration using functional options.
+type agenttracerangeOption func(*AgentTraceRangeMutation)
+
+// newAgentTraceRangeMutation creates new mutation for the AgentTraceRange entity.
+func newAgentTraceRangeMutation(c config, op Op, opts ...agenttracerangeOption) *AgentTraceRangeMutation {
+	m := &AgentTraceRangeMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeAgentTraceRange,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withAgentTraceRangeID sets the ID field of the mutation.
+func withAgentTraceRangeID(id int) agenttracerangeOption {
+	return func(m *AgentTraceRangeMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *AgentTraceRange
+		)
+		m.oldValue = func(ctx context.Context) (*AgentTraceRange, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().AgentTraceRange.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withAgentTraceRange sets the old AgentTraceRange of the mutation.
+func withAgentTraceRange(node *AgentTraceRange) agenttracerangeOption {
+	return func(m *AgentTraceRangeMutation) {
+		m.oldValue = func(context.Context) (*AgentTraceRange, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m AgentTraceRangeMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m AgentTraceRangeMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *AgentTraceRangeMutation) ID() (id int, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *AgentTraceRangeMutation) IDs(ctx context.Context) ([]int, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().AgentTraceRange.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetStartLine sets the "start_line" field.
+func (m *AgentTraceRangeMutation) SetStartLine(i int) {
+	m.start_line = &i
+	m.addstart_line = nil
+}
+
+// StartLine returns the value of the "start_line" field in the mutation.
+func (m *AgentTraceRangeMutation) StartLine() (r int, exists bool) {
+	v := m.start_line
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStartLine returns the old "start_line" field's value of the AgentTraceRange entity.
+// If the AgentTraceRange object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AgentTraceRangeMutation) OldStartLine(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStartLine is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStartLine requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStartLine: %w", err)
+	}
+	return oldValue.StartLine, nil
+}
+
+// AddStartLine adds i to the "start_line" field.
+func (m *AgentTraceRangeMutation) AddStartLine(i int) {
+	if m.addstart_line != nil {
+		*m.addstart_line += i
+	} else {
+		m.addstart_line = &i
+	}
+}
+
+// AddedStartLine returns the value that was added to the "start_line" field in this mutation.
+func (m *AgentTraceRangeMutation) AddedStartLine() (r int, exists bool) {
+	v := m.addstart_line
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetStartLine resets all changes to the "start_line" field.
+func (m *AgentTraceRangeMutation) ResetStartLine() {
+	m.start_line = nil
+	m.addstart_line = nil
+}
+
+// SetEndLine sets the "end_line" field.
+func (m *AgentTraceRangeMutation) SetEndLine(i int) {
+	m.end_line = &i
+	m.addend_line = nil
+}
+
+// EndLine returns the value of the "end_line" field in the mutation.
+func (m *AgentTraceRangeMutation) EndLine() (r int, exists bool) {
+	v := m.end_line
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEndLine returns the old "end_line" field's value of the AgentTraceRange entity.
+// If the AgentTraceRange object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AgentTraceRangeMutation) OldEndLine(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEndLine is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEndLine requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEndLine: %w", err)
+	}
+	return oldValue.EndLine, nil
+}
+
+// AddEndLine adds i to the "end_line" field.
+func (m *AgentTraceRangeMutation) AddEndLine(i int) {
+	if m.addend_line != nil {
+		*m.addend_line += i
+	} else {
+		m.addend_line = &i
+	}
+}
+
+// AddedEndLine returns the value that was added to the "end_line" field in this mutation.
+func (m *AgentTraceRangeMutation) AddedEndLine() (r int, exists bool) {
+	v := m.addend_line
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetEndLine resets all changes to the "end_line" field.
+func (m *AgentTraceRangeMutation) ResetEndLine() {
+	m.end_line = nil
+	m.addend_line = nil
+}
+
+// SetContentHash sets the "content_hash" field.
+func (m *AgentTraceRangeMutation) SetContentHash(s string) {
+	m.content_hash = &s
+}
+
+// ContentHash returns the value of the "content_hash" field in the mutation.
+func (m *AgentTraceRangeMutation) ContentHash() (r string, exists bool) {
+	v := m.content_hash
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldContentHash returns the old "content_hash" field's value of the AgentTraceRange entity.
+// If the AgentTraceRange object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AgentTraceRangeMutation) OldContentHash(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldContentHash is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldContentHash requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldContentHash: %w", err)
+	}
+	return oldValue.ContentHash, nil
+}
+
+// ClearContentHash clears the value of the "content_hash" field.
+func (m *AgentTraceRangeMutation) ClearContentHash() {
+	m.content_hash = nil
+	m.clearedFields[agenttracerange.FieldContentHash] = struct{}{}
+}
+
+// ContentHashCleared returns if the "content_hash" field was cleared in this mutation.
+func (m *AgentTraceRangeMutation) ContentHashCleared() bool {
+	_, ok := m.clearedFields[agenttracerange.FieldContentHash]
+	return ok
+}
+
+// ResetContentHash resets all changes to the "content_hash" field.
+func (m *AgentTraceRangeMutation) ResetContentHash() {
+	m.content_hash = nil
+	delete(m.clearedFields, agenttracerange.FieldContentHash)
+}
+
+// SetContributorType sets the "contributor_type" field.
+func (m *AgentTraceRangeMutation) SetContributorType(s string) {
+	m.contributor_type = &s
+}
+
+// ContributorType returns the value of the "contributor_type" field in the mutation.
+func (m *AgentTraceRangeMutation) ContributorType() (r string, exists bool) {
+	v := m.contributor_type
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldContributorType returns the old "contributor_type" field's value of the AgentTraceRange entity.
+// If the AgentTraceRange object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AgentTraceRangeMutation) OldContributorType(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldContributorType is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldContributorType requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldContributorType: %w", err)
+	}
+	return oldValue.ContributorType, nil
+}
+
+// ClearContributorType clears the value of the "contributor_type" field.
+func (m *AgentTraceRangeMutation) ClearContributorType() {
+	m.contributor_type = nil
+	m.clearedFields[agenttracerange.FieldContributorType] = struct{}{}
+}
+
+// ContributorTypeCleared returns if the "contributor_type" field was cleared in this mutation.
+func (m *AgentTraceRangeMutation) ContributorTypeCleared() bool {
+	_, ok := m.clearedFields[agenttracerange.FieldContributorType]
+	return ok
+}
+
+// ResetContributorType resets all changes to the "contributor_type" field.
+func (m *AgentTraceRangeMutation) ResetContributorType() {
+	m.contributor_type = nil
+	delete(m.clearedFields, agenttracerange.FieldContributorType)
+}
+
+// SetContributorModelID sets the "contributor_model_id" field.
+func (m *AgentTraceRangeMutation) SetContributorModelID(s string) {
+	m.contributor_model_id = &s
+}
+
+// ContributorModelID returns the value of the "contributor_model_id" field in the mutation.
+func (m *AgentTraceRangeMutation) ContributorModelID() (r string, exists bool) {
+	v := m.contributor_model_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldContributorModelID returns the old "contributor_model_id" field's value of the AgentTraceRange entity.
+// If the AgentTraceRange object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AgentTraceRangeMutation) OldContributorModelID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldContributorModelID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldContributorModelID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldContributorModelID: %w", err)
+	}
+	return oldValue.ContributorModelID, nil
+}
+
+// ClearContributorModelID clears the value of the "contributor_model_id" field.
+func (m *AgentTraceRangeMutation) ClearContributorModelID() {
+	m.contributor_model_id = nil
+	m.clearedFields[agenttracerange.FieldContributorModelID] = struct{}{}
+}
+
+// ContributorModelIDCleared returns if the "contributor_model_id" field was cleared in this mutation.
+func (m *AgentTraceRangeMutation) ContributorModelIDCleared() bool {
+	_, ok := m.clearedFields[agenttracerange.FieldContributorModelID]
+	return ok
+}
+
+// ResetContributorModelID resets all changes to the "contributor_model_id" field.
+func (m *AgentTraceRangeMutation) ResetContributorModelID() {
+	m.contributor_model_id = nil
+	delete(m.clearedFields, agenttracerange.FieldContributorModelID)
+}
+
+// SetConversationID sets the "conversation" edge to the AgentTraceConversation entity by id.
+func (m *AgentTraceRangeMutation) SetConversationID(id int) {
+	m.conversation = &id
+}
+
+// ClearConversation clears the "conversation" edge to the AgentTraceConversation entity.
+func (m *AgentTraceRangeMutation) ClearConversation() {
+	m.clearedconversation = true
+}
+
+// ConversationCleared reports if the "conversation" edge to the AgentTraceConversation entity was cleared.
+func (m *AgentTraceRangeMutation) ConversationCleared() bool {
+	return m.clearedconversation
+}
+
+// ConversationID returns the "conversation" edge ID in the mutation.
+func (m *AgentTraceRangeMutation) ConversationID() (id int, exists bool) {
+	if m.conversation != nil {
+		return *m.conversation, true
+	}
+	return
+}
+
+// ConversationIDs returns the "conversation" edge IDs in the mutation.
+// Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
+// ConversationID instead. It exists only for internal usage by the builders.
+func (m *AgentTraceRangeMutation) ConversationIDs() (ids []int) {
+	if id := m.conversation; id != nil {
+		ids = append(ids, *id)
+	}
+	return
+}
+
+// ResetConversation resets all changes to the "conversation" edge.
+func (m *AgentTraceRangeMutation) ResetConversation() {
+	m.conversation = nil
+	m.clearedconversation = false
+}
+
+// Where appends a list predicates to the AgentTraceRangeMutation builder.
+func (m *AgentTraceRangeMutation) Where(ps ...predicate.AgentTraceRange) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the AgentTraceRangeMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *AgentTraceRangeMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.AgentTraceRange, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *AgentTraceRangeMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *AgentTraceRangeMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (AgentTraceRange).
+func (m *AgentTraceRangeMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *AgentTraceRangeMutation) Fields() []string {
+	fields := make([]string, 0, 5)
+	if m.start_line != nil {
+		fields = append(fields, agenttracerange.FieldStartLine)
+	}
+	if m.end_line != nil {
+		fields = append(fields, agenttracerange.FieldEndLine)
+	}
+	if m.content_hash != nil {
+		fields = append(fields, agenttracerange.FieldContentHash)
+	}
+	if m.contributor_type != nil {
+		fields = append(fields, agenttracerange.FieldContributorType)
+	}
+	if m.contributor_model_id != nil {
+		fields = append(fields, agenttracerange.FieldContributorModelID)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *AgentTraceRangeMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case agenttracerange.FieldStartLine:
+		return m.StartLine()
+	case agenttracerange.FieldEndLine:
+		return m.EndLine()
+	case agenttracerange.FieldContentHash:
+		return m.ContentHash()
+	case agenttracerange.FieldContributorType:
+		return m.ContributorType()
+	case agenttracerange.FieldContributorModelID:
+		return m.ContributorModelID()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *AgentTraceRangeMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case agenttracerange.FieldStartLine:
+		return m.OldStartLine(ctx)
+	case agenttracerange.FieldEndLine:
+		return m.OldEndLine(ctx)
+	case agenttracerange.FieldContentHash:
+		return m.OldContentHash(ctx)
+	case agenttracerange.FieldContributorType:
+		return m.OldContributorType(ctx)
+	case agenttracerange.FieldContributorModelID:
+		return m.OldContributorModelID(ctx)
+	}
+	return nil, fmt.Errorf("unknown AgentTraceRange field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *AgentTraceRangeMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case agenttracerange.FieldStartLine:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStartLine(v)
+		return nil
+	case agenttracerange.FieldEndLine:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEndLine(v)
+		return nil
+	case agenttracerange.FieldContentHash:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetContentHash(v)
+		return nil
+	case agenttracerange.FieldContributorType:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetContributorType(v)
+		return nil
+	case agenttracerange.FieldContributorModelID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetContributorModelID(v)
+		return nil
+	}
+	return fmt.Errorf("unknown AgentTraceRange field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *AgentTraceRangeMutation) AddedFields() []string {
+	var fields []string
+	if m.addstart_line != nil {
+		fields = append(fields, agenttracerange.FieldStartLine)
+	}
+	if m.addend_line != nil {
+		fields = append(fields, agenttracerange.FieldEndLine)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *AgentTraceRangeMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case agenttracerange.FieldStartLine:
+		return m.AddedStartLine()
+	case agenttracerange.FieldEndLine:
+		return m.AddedEndLine()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *AgentTraceRangeMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case agenttracerange.FieldStartLine:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddStartLine(v)
+		return nil
+	case agenttracerange.FieldEndLine:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddEndLine(v)
+		return nil
+	}
+	return fmt.Errorf("unknown AgentTraceRange numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *AgentTraceRangeMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(agenttracerange.FieldContentHash) {
+		fields = append(fields, agenttracerange.FieldContentHash)
+	}
+	if m.FieldCleared(agenttracerange.FieldContributorType) {
+		fields = append(fields, agenttracerange.FieldContributorType)
+	}
+	if m.FieldCleared(agenttracerange.FieldContributorModelID) {
+		fields = append(fields, agenttracerange.FieldContributorModelID)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *AgentTraceRangeMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *AgentTraceRangeMutation) ClearField(name string) error {
+	switch name {
+	case agenttracerange.FieldContentHash:
+		m.ClearContentHash()
+		return nil
+	case agenttracerange.FieldContributorType:
+		m.ClearContributorType()
+		return nil
+	case agenttracerange.FieldContributorModelID:
+		m.ClearContributorModelID()
+		return nil
+	}
+	return fmt.Errorf("unknown AgentTraceRange nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *AgentTraceRangeMutation) ResetField(name string) error {
+	switch name {
+	case agenttracerange.FieldStartLine:
+		m.ResetStartLine()
+		return nil
+	case agenttracerange.FieldEndLine:
+		m.ResetEndLine()
+		return nil
+	case agenttracerange.FieldContentHash:
+		m.ResetContentHash()
+		return nil
+	case agenttracerange.FieldContributorType:
+		m.ResetContributorType()
+		return nil
+	case agenttracerange.FieldContributorModelID:
+		m.ResetContributorModelID()
+		return nil
+	}
+	return fmt.Errorf("unknown AgentTraceRange field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *AgentTraceRangeMutation) AddedEdges() []string {
+	edges := make([]string, 0, 1)
+	if m.conversation != nil {
+		edges = append(edges, agenttracerange.EdgeConversation)
+	}
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *AgentTraceRangeMutation) AddedIDs(name string) []ent.Value {
+	switch name {
+	case agenttracerange.EdgeConversation:
+		if id := m.conversation; id != nil {
+			return []ent.Value{*id}
+		}
+	}
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *AgentTraceRangeMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 1)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *AgentTraceRangeMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *AgentTraceRangeMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 1)
+	if m.clearedconversation {
+		edges = append(edges, agenttracerange.EdgeConversation)
+	}
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *AgentTraceRangeMutation) EdgeCleared(name string) bool {
+	switch name {
+	case agenttracerange.EdgeConversation:
+		return m.clearedconversation
+	}
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *AgentTraceRangeMutation) ClearEdge(name string) error {
+	switch name {
+	case agenttracerange.EdgeConversation:
+		m.ClearConversation()
+		return nil
+	}
+	return fmt.Errorf("unknown AgentTraceRange unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *AgentTraceRangeMutation) ResetEdge(name string) error {
+	switch name {
+	case agenttracerange.EdgeConversation:
+		m.ResetConversation()
+		return nil
+	}
+	return fmt.Errorf("unknown AgentTraceRange edge %s", name)
+}
 
 // NodeMutation represents an operation that mutates the Node nodes in the graph.
 type NodeMutation struct {

@@ -12,7 +12,10 @@ import (
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
-
+	"github.com/papercomputeco/tapes/pkg/storage/ent/agenttrace"
+	"github.com/papercomputeco/tapes/pkg/storage/ent/agenttraceconversation"
+	"github.com/papercomputeco/tapes/pkg/storage/ent/agenttracefile"
+	"github.com/papercomputeco/tapes/pkg/storage/ent/agenttracerange"
 	"github.com/papercomputeco/tapes/pkg/storage/ent/node"
 )
 
@@ -74,7 +77,11 @@ var (
 func checkColumn(t, c string) error {
 	initCheck.Do(func() {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
-			node.Table: node.ValidColumn,
+			agenttrace.Table:             agenttrace.ValidColumn,
+			agenttraceconversation.Table: agenttraceconversation.ValidColumn,
+			agenttracefile.Table:         agenttracefile.ValidColumn,
+			agenttracerange.Table:        agenttracerange.ValidColumn,
+			node.Table:                   node.ValidColumn,
 		})
 	})
 	return columnCheck(t, c)

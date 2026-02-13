@@ -15,7 +15,10 @@ import (
 	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
-
+	"github.com/papercomputeco/tapes/pkg/storage/ent/agenttrace"
+	"github.com/papercomputeco/tapes/pkg/storage/ent/agenttraceconversation"
+	"github.com/papercomputeco/tapes/pkg/storage/ent/agenttracefile"
+	"github.com/papercomputeco/tapes/pkg/storage/ent/agenttracerange"
 	"github.com/papercomputeco/tapes/pkg/storage/ent/node"
 )
 
@@ -24,6 +27,14 @@ type Client struct {
 	config
 	// Schema is the client for creating, migrating and dropping schema.
 	Schema *migrate.Schema
+	// AgentTrace is the client for interacting with the AgentTrace builders.
+	AgentTrace *AgentTraceClient
+	// AgentTraceConversation is the client for interacting with the AgentTraceConversation builders.
+	AgentTraceConversation *AgentTraceConversationClient
+	// AgentTraceFile is the client for interacting with the AgentTraceFile builders.
+	AgentTraceFile *AgentTraceFileClient
+	// AgentTraceRange is the client for interacting with the AgentTraceRange builders.
+	AgentTraceRange *AgentTraceRangeClient
 	// Node is the client for interacting with the Node builders.
 	Node *NodeClient
 }
@@ -37,6 +48,10 @@ func NewClient(opts ...Option) *Client {
 
 func (c *Client) init() {
 	c.Schema = migrate.NewSchema(c.driver)
+	c.AgentTrace = NewAgentTraceClient(c.config)
+	c.AgentTraceConversation = NewAgentTraceConversationClient(c.config)
+	c.AgentTraceFile = NewAgentTraceFileClient(c.config)
+	c.AgentTraceRange = NewAgentTraceRangeClient(c.config)
 	c.Node = NewNodeClient(c.config)
 }
 
@@ -128,9 +143,13 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 	cfg := c.config
 	cfg.driver = tx
 	return &Tx{
-		ctx:    ctx,
-		config: cfg,
-		Node:   NewNodeClient(cfg),
+		ctx:                    ctx,
+		config:                 cfg,
+		AgentTrace:             NewAgentTraceClient(cfg),
+		AgentTraceConversation: NewAgentTraceConversationClient(cfg),
+		AgentTraceFile:         NewAgentTraceFileClient(cfg),
+		AgentTraceRange:        NewAgentTraceRangeClient(cfg),
+		Node:                   NewNodeClient(cfg),
 	}, nil
 }
 
@@ -148,16 +167,20 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 	cfg := c.config
 	cfg.driver = &txDriver{tx: tx, drv: c.driver}
 	return &Tx{
-		ctx:    ctx,
-		config: cfg,
-		Node:   NewNodeClient(cfg),
+		ctx:                    ctx,
+		config:                 cfg,
+		AgentTrace:             NewAgentTraceClient(cfg),
+		AgentTraceConversation: NewAgentTraceConversationClient(cfg),
+		AgentTraceFile:         NewAgentTraceFileClient(cfg),
+		AgentTraceRange:        NewAgentTraceRangeClient(cfg),
+		Node:                   NewNodeClient(cfg),
 	}, nil
 }
 
 // Debug returns a new debug-client. It's used to get verbose logging on specific operations.
 //
 //	client.Debug().
-//		Node.
+//		AgentTrace.
 //		Query().
 //		Count(ctx)
 func (c *Client) Debug() *Client {
@@ -179,22 +202,666 @@ func (c *Client) Close() error {
 // Use adds the mutation hooks to all the entity clients.
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
 func (c *Client) Use(hooks ...Hook) {
+	c.AgentTrace.Use(hooks...)
+	c.AgentTraceConversation.Use(hooks...)
+	c.AgentTraceFile.Use(hooks...)
+	c.AgentTraceRange.Use(hooks...)
 	c.Node.Use(hooks...)
 }
 
 // Intercept adds the query interceptors to all the entity clients.
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
 func (c *Client) Intercept(interceptors ...Interceptor) {
+	c.AgentTrace.Intercept(interceptors...)
+	c.AgentTraceConversation.Intercept(interceptors...)
+	c.AgentTraceFile.Intercept(interceptors...)
+	c.AgentTraceRange.Intercept(interceptors...)
 	c.Node.Intercept(interceptors...)
 }
 
 // Mutate implements the ent.Mutator interface.
 func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 	switch m := m.(type) {
+	case *AgentTraceMutation:
+		return c.AgentTrace.mutate(ctx, m)
+	case *AgentTraceConversationMutation:
+		return c.AgentTraceConversation.mutate(ctx, m)
+	case *AgentTraceFileMutation:
+		return c.AgentTraceFile.mutate(ctx, m)
+	case *AgentTraceRangeMutation:
+		return c.AgentTraceRange.mutate(ctx, m)
 	case *NodeMutation:
 		return c.Node.mutate(ctx, m)
 	default:
 		return nil, fmt.Errorf("ent: unknown mutation type %T", m)
+	}
+}
+
+// AgentTraceClient is a client for the AgentTrace schema.
+type AgentTraceClient struct {
+	config
+}
+
+// NewAgentTraceClient returns a client for the AgentTrace from the given config.
+func NewAgentTraceClient(c config) *AgentTraceClient {
+	return &AgentTraceClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `agenttrace.Hooks(f(g(h())))`.
+func (c *AgentTraceClient) Use(hooks ...Hook) {
+	c.hooks.AgentTrace = append(c.hooks.AgentTrace, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `agenttrace.Intercept(f(g(h())))`.
+func (c *AgentTraceClient) Intercept(interceptors ...Interceptor) {
+	c.inters.AgentTrace = append(c.inters.AgentTrace, interceptors...)
+}
+
+// Create returns a builder for creating a AgentTrace entity.
+func (c *AgentTraceClient) Create() *AgentTraceCreate {
+	mutation := newAgentTraceMutation(c.config, OpCreate)
+	return &AgentTraceCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of AgentTrace entities.
+func (c *AgentTraceClient) CreateBulk(builders ...*AgentTraceCreate) *AgentTraceCreateBulk {
+	return &AgentTraceCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *AgentTraceClient) MapCreateBulk(slice any, setFunc func(*AgentTraceCreate, int)) *AgentTraceCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &AgentTraceCreateBulk{err: fmt.Errorf("calling to AgentTraceClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*AgentTraceCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &AgentTraceCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for AgentTrace.
+func (c *AgentTraceClient) Update() *AgentTraceUpdate {
+	mutation := newAgentTraceMutation(c.config, OpUpdate)
+	return &AgentTraceUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *AgentTraceClient) UpdateOne(_m *AgentTrace) *AgentTraceUpdateOne {
+	mutation := newAgentTraceMutation(c.config, OpUpdateOne, withAgentTrace(_m))
+	return &AgentTraceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *AgentTraceClient) UpdateOneID(id string) *AgentTraceUpdateOne {
+	mutation := newAgentTraceMutation(c.config, OpUpdateOne, withAgentTraceID(id))
+	return &AgentTraceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for AgentTrace.
+func (c *AgentTraceClient) Delete() *AgentTraceDelete {
+	mutation := newAgentTraceMutation(c.config, OpDelete)
+	return &AgentTraceDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *AgentTraceClient) DeleteOne(_m *AgentTrace) *AgentTraceDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *AgentTraceClient) DeleteOneID(id string) *AgentTraceDeleteOne {
+	builder := c.Delete().Where(agenttrace.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &AgentTraceDeleteOne{builder}
+}
+
+// Query returns a query builder for AgentTrace.
+func (c *AgentTraceClient) Query() *AgentTraceQuery {
+	return &AgentTraceQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeAgentTrace},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a AgentTrace entity by its id.
+func (c *AgentTraceClient) Get(ctx context.Context, id string) (*AgentTrace, error) {
+	return c.Query().Where(agenttrace.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *AgentTraceClient) GetX(ctx context.Context, id string) *AgentTrace {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// QueryFiles queries the files edge of a AgentTrace.
+func (c *AgentTraceClient) QueryFiles(_m *AgentTrace) *AgentTraceFileQuery {
+	query := (&AgentTraceFileClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(agenttrace.Table, agenttrace.FieldID, id),
+			sqlgraph.To(agenttracefile.Table, agenttracefile.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, agenttrace.FilesTable, agenttrace.FilesColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// Hooks returns the client hooks.
+func (c *AgentTraceClient) Hooks() []Hook {
+	return c.hooks.AgentTrace
+}
+
+// Interceptors returns the client interceptors.
+func (c *AgentTraceClient) Interceptors() []Interceptor {
+	return c.inters.AgentTrace
+}
+
+func (c *AgentTraceClient) mutate(ctx context.Context, m *AgentTraceMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&AgentTraceCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&AgentTraceUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&AgentTraceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&AgentTraceDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown AgentTrace mutation op: %q", m.Op())
+	}
+}
+
+// AgentTraceConversationClient is a client for the AgentTraceConversation schema.
+type AgentTraceConversationClient struct {
+	config
+}
+
+// NewAgentTraceConversationClient returns a client for the AgentTraceConversation from the given config.
+func NewAgentTraceConversationClient(c config) *AgentTraceConversationClient {
+	return &AgentTraceConversationClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `agenttraceconversation.Hooks(f(g(h())))`.
+func (c *AgentTraceConversationClient) Use(hooks ...Hook) {
+	c.hooks.AgentTraceConversation = append(c.hooks.AgentTraceConversation, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `agenttraceconversation.Intercept(f(g(h())))`.
+func (c *AgentTraceConversationClient) Intercept(interceptors ...Interceptor) {
+	c.inters.AgentTraceConversation = append(c.inters.AgentTraceConversation, interceptors...)
+}
+
+// Create returns a builder for creating a AgentTraceConversation entity.
+func (c *AgentTraceConversationClient) Create() *AgentTraceConversationCreate {
+	mutation := newAgentTraceConversationMutation(c.config, OpCreate)
+	return &AgentTraceConversationCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of AgentTraceConversation entities.
+func (c *AgentTraceConversationClient) CreateBulk(builders ...*AgentTraceConversationCreate) *AgentTraceConversationCreateBulk {
+	return &AgentTraceConversationCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *AgentTraceConversationClient) MapCreateBulk(slice any, setFunc func(*AgentTraceConversationCreate, int)) *AgentTraceConversationCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &AgentTraceConversationCreateBulk{err: fmt.Errorf("calling to AgentTraceConversationClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*AgentTraceConversationCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &AgentTraceConversationCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for AgentTraceConversation.
+func (c *AgentTraceConversationClient) Update() *AgentTraceConversationUpdate {
+	mutation := newAgentTraceConversationMutation(c.config, OpUpdate)
+	return &AgentTraceConversationUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *AgentTraceConversationClient) UpdateOne(_m *AgentTraceConversation) *AgentTraceConversationUpdateOne {
+	mutation := newAgentTraceConversationMutation(c.config, OpUpdateOne, withAgentTraceConversation(_m))
+	return &AgentTraceConversationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *AgentTraceConversationClient) UpdateOneID(id int) *AgentTraceConversationUpdateOne {
+	mutation := newAgentTraceConversationMutation(c.config, OpUpdateOne, withAgentTraceConversationID(id))
+	return &AgentTraceConversationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for AgentTraceConversation.
+func (c *AgentTraceConversationClient) Delete() *AgentTraceConversationDelete {
+	mutation := newAgentTraceConversationMutation(c.config, OpDelete)
+	return &AgentTraceConversationDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *AgentTraceConversationClient) DeleteOne(_m *AgentTraceConversation) *AgentTraceConversationDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *AgentTraceConversationClient) DeleteOneID(id int) *AgentTraceConversationDeleteOne {
+	builder := c.Delete().Where(agenttraceconversation.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &AgentTraceConversationDeleteOne{builder}
+}
+
+// Query returns a query builder for AgentTraceConversation.
+func (c *AgentTraceConversationClient) Query() *AgentTraceConversationQuery {
+	return &AgentTraceConversationQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeAgentTraceConversation},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a AgentTraceConversation entity by its id.
+func (c *AgentTraceConversationClient) Get(ctx context.Context, id int) (*AgentTraceConversation, error) {
+	return c.Query().Where(agenttraceconversation.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *AgentTraceConversationClient) GetX(ctx context.Context, id int) *AgentTraceConversation {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// QueryFile queries the file edge of a AgentTraceConversation.
+func (c *AgentTraceConversationClient) QueryFile(_m *AgentTraceConversation) *AgentTraceFileQuery {
+	query := (&AgentTraceFileClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(agenttraceconversation.Table, agenttraceconversation.FieldID, id),
+			sqlgraph.To(agenttracefile.Table, agenttracefile.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, agenttraceconversation.FileTable, agenttraceconversation.FileColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// QueryRanges queries the ranges edge of a AgentTraceConversation.
+func (c *AgentTraceConversationClient) QueryRanges(_m *AgentTraceConversation) *AgentTraceRangeQuery {
+	query := (&AgentTraceRangeClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(agenttraceconversation.Table, agenttraceconversation.FieldID, id),
+			sqlgraph.To(agenttracerange.Table, agenttracerange.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, agenttraceconversation.RangesTable, agenttraceconversation.RangesColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// Hooks returns the client hooks.
+func (c *AgentTraceConversationClient) Hooks() []Hook {
+	return c.hooks.AgentTraceConversation
+}
+
+// Interceptors returns the client interceptors.
+func (c *AgentTraceConversationClient) Interceptors() []Interceptor {
+	return c.inters.AgentTraceConversation
+}
+
+func (c *AgentTraceConversationClient) mutate(ctx context.Context, m *AgentTraceConversationMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&AgentTraceConversationCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&AgentTraceConversationUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&AgentTraceConversationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&AgentTraceConversationDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown AgentTraceConversation mutation op: %q", m.Op())
+	}
+}
+
+// AgentTraceFileClient is a client for the AgentTraceFile schema.
+type AgentTraceFileClient struct {
+	config
+}
+
+// NewAgentTraceFileClient returns a client for the AgentTraceFile from the given config.
+func NewAgentTraceFileClient(c config) *AgentTraceFileClient {
+	return &AgentTraceFileClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `agenttracefile.Hooks(f(g(h())))`.
+func (c *AgentTraceFileClient) Use(hooks ...Hook) {
+	c.hooks.AgentTraceFile = append(c.hooks.AgentTraceFile, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `agenttracefile.Intercept(f(g(h())))`.
+func (c *AgentTraceFileClient) Intercept(interceptors ...Interceptor) {
+	c.inters.AgentTraceFile = append(c.inters.AgentTraceFile, interceptors...)
+}
+
+// Create returns a builder for creating a AgentTraceFile entity.
+func (c *AgentTraceFileClient) Create() *AgentTraceFileCreate {
+	mutation := newAgentTraceFileMutation(c.config, OpCreate)
+	return &AgentTraceFileCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of AgentTraceFile entities.
+func (c *AgentTraceFileClient) CreateBulk(builders ...*AgentTraceFileCreate) *AgentTraceFileCreateBulk {
+	return &AgentTraceFileCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *AgentTraceFileClient) MapCreateBulk(slice any, setFunc func(*AgentTraceFileCreate, int)) *AgentTraceFileCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &AgentTraceFileCreateBulk{err: fmt.Errorf("calling to AgentTraceFileClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*AgentTraceFileCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &AgentTraceFileCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for AgentTraceFile.
+func (c *AgentTraceFileClient) Update() *AgentTraceFileUpdate {
+	mutation := newAgentTraceFileMutation(c.config, OpUpdate)
+	return &AgentTraceFileUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *AgentTraceFileClient) UpdateOne(_m *AgentTraceFile) *AgentTraceFileUpdateOne {
+	mutation := newAgentTraceFileMutation(c.config, OpUpdateOne, withAgentTraceFile(_m))
+	return &AgentTraceFileUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *AgentTraceFileClient) UpdateOneID(id int) *AgentTraceFileUpdateOne {
+	mutation := newAgentTraceFileMutation(c.config, OpUpdateOne, withAgentTraceFileID(id))
+	return &AgentTraceFileUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for AgentTraceFile.
+func (c *AgentTraceFileClient) Delete() *AgentTraceFileDelete {
+	mutation := newAgentTraceFileMutation(c.config, OpDelete)
+	return &AgentTraceFileDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *AgentTraceFileClient) DeleteOne(_m *AgentTraceFile) *AgentTraceFileDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *AgentTraceFileClient) DeleteOneID(id int) *AgentTraceFileDeleteOne {
+	builder := c.Delete().Where(agenttracefile.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &AgentTraceFileDeleteOne{builder}
+}
+
+// Query returns a query builder for AgentTraceFile.
+func (c *AgentTraceFileClient) Query() *AgentTraceFileQuery {
+	return &AgentTraceFileQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeAgentTraceFile},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a AgentTraceFile entity by its id.
+func (c *AgentTraceFileClient) Get(ctx context.Context, id int) (*AgentTraceFile, error) {
+	return c.Query().Where(agenttracefile.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *AgentTraceFileClient) GetX(ctx context.Context, id int) *AgentTraceFile {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// QueryTrace queries the trace edge of a AgentTraceFile.
+func (c *AgentTraceFileClient) QueryTrace(_m *AgentTraceFile) *AgentTraceQuery {
+	query := (&AgentTraceClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(agenttracefile.Table, agenttracefile.FieldID, id),
+			sqlgraph.To(agenttrace.Table, agenttrace.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, agenttracefile.TraceTable, agenttracefile.TraceColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// QueryConversations queries the conversations edge of a AgentTraceFile.
+func (c *AgentTraceFileClient) QueryConversations(_m *AgentTraceFile) *AgentTraceConversationQuery {
+	query := (&AgentTraceConversationClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(agenttracefile.Table, agenttracefile.FieldID, id),
+			sqlgraph.To(agenttraceconversation.Table, agenttraceconversation.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, agenttracefile.ConversationsTable, agenttracefile.ConversationsColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// Hooks returns the client hooks.
+func (c *AgentTraceFileClient) Hooks() []Hook {
+	return c.hooks.AgentTraceFile
+}
+
+// Interceptors returns the client interceptors.
+func (c *AgentTraceFileClient) Interceptors() []Interceptor {
+	return c.inters.AgentTraceFile
+}
+
+func (c *AgentTraceFileClient) mutate(ctx context.Context, m *AgentTraceFileMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&AgentTraceFileCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&AgentTraceFileUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&AgentTraceFileUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&AgentTraceFileDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown AgentTraceFile mutation op: %q", m.Op())
+	}
+}
+
+// AgentTraceRangeClient is a client for the AgentTraceRange schema.
+type AgentTraceRangeClient struct {
+	config
+}
+
+// NewAgentTraceRangeClient returns a client for the AgentTraceRange from the given config.
+func NewAgentTraceRangeClient(c config) *AgentTraceRangeClient {
+	return &AgentTraceRangeClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `agenttracerange.Hooks(f(g(h())))`.
+func (c *AgentTraceRangeClient) Use(hooks ...Hook) {
+	c.hooks.AgentTraceRange = append(c.hooks.AgentTraceRange, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `agenttracerange.Intercept(f(g(h())))`.
+func (c *AgentTraceRangeClient) Intercept(interceptors ...Interceptor) {
+	c.inters.AgentTraceRange = append(c.inters.AgentTraceRange, interceptors...)
+}
+
+// Create returns a builder for creating a AgentTraceRange entity.
+func (c *AgentTraceRangeClient) Create() *AgentTraceRangeCreate {
+	mutation := newAgentTraceRangeMutation(c.config, OpCreate)
+	return &AgentTraceRangeCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of AgentTraceRange entities.
+func (c *AgentTraceRangeClient) CreateBulk(builders ...*AgentTraceRangeCreate) *AgentTraceRangeCreateBulk {
+	return &AgentTraceRangeCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *AgentTraceRangeClient) MapCreateBulk(slice any, setFunc func(*AgentTraceRangeCreate, int)) *AgentTraceRangeCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &AgentTraceRangeCreateBulk{err: fmt.Errorf("calling to AgentTraceRangeClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*AgentTraceRangeCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &AgentTraceRangeCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for AgentTraceRange.
+func (c *AgentTraceRangeClient) Update() *AgentTraceRangeUpdate {
+	mutation := newAgentTraceRangeMutation(c.config, OpUpdate)
+	return &AgentTraceRangeUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *AgentTraceRangeClient) UpdateOne(_m *AgentTraceRange) *AgentTraceRangeUpdateOne {
+	mutation := newAgentTraceRangeMutation(c.config, OpUpdateOne, withAgentTraceRange(_m))
+	return &AgentTraceRangeUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *AgentTraceRangeClient) UpdateOneID(id int) *AgentTraceRangeUpdateOne {
+	mutation := newAgentTraceRangeMutation(c.config, OpUpdateOne, withAgentTraceRangeID(id))
+	return &AgentTraceRangeUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for AgentTraceRange.
+func (c *AgentTraceRangeClient) Delete() *AgentTraceRangeDelete {
+	mutation := newAgentTraceRangeMutation(c.config, OpDelete)
+	return &AgentTraceRangeDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *AgentTraceRangeClient) DeleteOne(_m *AgentTraceRange) *AgentTraceRangeDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *AgentTraceRangeClient) DeleteOneID(id int) *AgentTraceRangeDeleteOne {
+	builder := c.Delete().Where(agenttracerange.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &AgentTraceRangeDeleteOne{builder}
+}
+
+// Query returns a query builder for AgentTraceRange.
+func (c *AgentTraceRangeClient) Query() *AgentTraceRangeQuery {
+	return &AgentTraceRangeQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeAgentTraceRange},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a AgentTraceRange entity by its id.
+func (c *AgentTraceRangeClient) Get(ctx context.Context, id int) (*AgentTraceRange, error) {
+	return c.Query().Where(agenttracerange.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *AgentTraceRangeClient) GetX(ctx context.Context, id int) *AgentTraceRange {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// QueryConversation queries the conversation edge of a AgentTraceRange.
+func (c *AgentTraceRangeClient) QueryConversation(_m *AgentTraceRange) *AgentTraceConversationQuery {
+	query := (&AgentTraceConversationClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(agenttracerange.Table, agenttracerange.FieldID, id),
+			sqlgraph.To(agenttraceconversation.Table, agenttraceconversation.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, agenttracerange.ConversationTable, agenttracerange.ConversationColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// Hooks returns the client hooks.
+func (c *AgentTraceRangeClient) Hooks() []Hook {
+	return c.hooks.AgentTraceRange
+}
+
+// Interceptors returns the client interceptors.
+func (c *AgentTraceRangeClient) Interceptors() []Interceptor {
+	return c.inters.AgentTraceRange
+}
+
+func (c *AgentTraceRangeClient) mutate(ctx context.Context, m *AgentTraceRangeMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&AgentTraceRangeCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&AgentTraceRangeUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&AgentTraceRangeUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&AgentTraceRangeDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown AgentTraceRange mutation op: %q", m.Op())
 	}
 }
 
@@ -366,9 +1033,11 @@ func (c *NodeClient) mutate(ctx context.Context, m *NodeMutation) (Value, error)
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
+		AgentTrace, AgentTraceConversation, AgentTraceFile, AgentTraceRange,
 		Node []ent.Hook
 	}
 	inters struct {
+		AgentTrace, AgentTraceConversation, AgentTraceFile, AgentTraceRange,
 		Node []ent.Interceptor
 	}
 )

@@ -6,5 +6,17 @@ import (
 	"entgo.io/ent/dialect/sql"
 )
 
+// AgentTrace is the predicate function for agenttrace builders.
+type AgentTrace func(*sql.Selector)
+
+// AgentTraceConversation is the predicate function for agenttraceconversation builders.
+type AgentTraceConversation func(*sql.Selector)
+
+// AgentTraceFile is the predicate function for agenttracefile builders.
+type AgentTraceFile func(*sql.Selector)
+
+// AgentTraceRange is the predicate function for agenttracerange builders.
+type AgentTraceRange func(*sql.Selector)
+
 // Node is the predicate function for node builders.
 type Node func(*sql.Selector)

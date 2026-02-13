@@ -43,6 +43,7 @@ var _ = Describe("handleSearchEndpoint", func() {
 			},
 			inMem,
 			inMem,
+			inmemory.NewAgentTraceStore(),
 			logger,
 		)
 		Expect(err).NotTo(HaveOccurred())
@@ -55,6 +56,7 @@ var _ = Describe("handleSearchEndpoint", func() {
 				Config{ListenAddr: ":0"},
 				inMem,
 				inMem,
+				inmemory.NewAgentTraceStore(),
 				logger,
 			)
 			Expect(err).NotTo(HaveOccurred())

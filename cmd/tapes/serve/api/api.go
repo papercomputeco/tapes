@@ -93,7 +93,9 @@ func (c *apiCommander) run() error {
 		ListenAddr: c.listen,
 	}
 
-	server, err := api.NewServer(config, driver, dagLoader, c.logger)
+	agentTraceStore := c.newAgentTraceStore(driver)
+
+	server, err := api.NewServer(config, driver, dagLoader, agentTraceStore, c.logger)
 	if err != nil {
 		return fmt.Errorf("could not build new api server: %w", err)
 	}
@@ -117,6 +119,13 @@ func (c *apiCommander) newStorageDriver() (storage.Driver, error) {
 
 	c.logger.Info("using in-memory storage")
 	return inmemory.NewDriver(), nil
+}
+
+func (c *apiCommander) newAgentTraceStore(driver storage.Driver) storage.AgentTraceStore {
+	if sqliteDriver, ok := driver.(*sqlite.Driver); ok {
+		return sqliteDriver.AgentTraceStore
+	}
+	return inmemory.NewAgentTraceStore()
 }
 
 func (c *apiCommander) newDagLoader() (merkle.DagLoader, error) {

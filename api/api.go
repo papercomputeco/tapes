@@ -14,29 +14,31 @@ import (
 
 // Server is the API server for managing and querying the Tapes system
 type Server struct {
-	config    Config
-	driver    storage.Driver
-	dagLoader merkle.DagLoader
-	logger    *zap.Logger
-	app       *fiber.App
-	mcpServer *mcp.Server
+	config          Config
+	driver          storage.Driver
+	dagLoader       merkle.DagLoader
+	agentTraceStore storage.AgentTraceStore
+	logger          *zap.Logger
+	app             *fiber.App
+	mcpServer       *mcp.Server
 }
 
 // NewServer creates a new API server.
 // The storer is injected to allow sharing with other components
 // (e.g., the proxy when not run as a singleton).
-func NewServer(config Config, driver storage.Driver, dagLoader merkle.DagLoader, logger *zap.Logger) (*Server, error) {
+func NewServer(config Config, driver storage.Driver, dagLoader merkle.DagLoader, agentTraceStore storage.AgentTraceStore, logger *zap.Logger) (*Server, error) {
 	var err error
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
 
 	s := &Server{
-		config:    config,
-		driver:    driver,
-		dagLoader: dagLoader,
-		logger:    logger,
-		app:       app,
+		config:          config,
+		driver:          driver,
+		dagLoader:       dagLoader,
+		agentTraceStore: agentTraceStore,
+		logger:          logger,
+		app:             app,
 	}
 
 	app.Get("/ping", s.handlePing)
@@ -45,6 +47,10 @@ func NewServer(config Config, driver storage.Driver, dagLoader merkle.DagLoader,
 	app.Get("/dag/history", s.handleListHistories)
 	app.Get("/dag/history/:hash", s.handleGetHistory)
 	app.Get("/v1/search", s.handleSearchEndpoint)
+
+	app.Post("/v1/agent-traces", s.handleCreateAgentTrace)
+	app.Get("/v1/agent-traces/:id", s.handleGetAgentTrace)
+	app.Get("/v1/agent-traces", s.handleQueryAgentTraces)
 
 	// Register MCP server if vector driver and embedder are configured
 	var mcpServer *mcp.Server
