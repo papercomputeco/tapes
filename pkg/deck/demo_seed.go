@@ -29,6 +29,7 @@ const (
 )
 
 type seedSession struct {
+	Project  string
 	Messages []seedMessage
 }
 
@@ -141,6 +142,7 @@ func insertSession(ctx context.Context, client *ent.Client, session seedSession)
 		node := merkle.NewNode(bucket, parent, merkle.NodeMeta{
 			StopReason: message.StopReason,
 			Usage:      usage,
+			Project:    session.Project,
 		})
 
 		if err := createEntNode(ctx, client, node, message.At); err != nil {
@@ -186,6 +188,10 @@ func createEntNode(ctx context.Context, client *ent.Client, node *merkle.Node, c
 		SetProvider(node.Bucket.Provider).
 		SetStopReason(node.StopReason).
 		SetCreatedAt(createdAt)
+
+	if node.Project != "" {
+		create.SetProject(node.Project)
+	}
 
 	bucketJSON, err := json.Marshal(node.Bucket)
 	if err != nil {
@@ -235,7 +241,7 @@ func createEntNode(ctx context.Context, client *ent.Client, node *merkle.Node, c
 }
 
 func demoDeckSessions(now time.Time) []seedSession {
-	return []seedSession{
+	sessions := []seedSession{
 		codeReviewSession(now.Add(-6 * time.Hour)),
 		bugHuntSession(now.Add(-12 * time.Hour)),
 		rateLimitSession(now.Add(-18 * time.Hour)),
@@ -244,6 +250,14 @@ func demoDeckSessions(now time.Time) []seedSession {
 		quickQuestionSession(now.Add(-36 * time.Hour)),
 		abandonedResearchSession(now.Add(-42 * time.Hour)),
 	}
+
+	// Distribute sessions across projects
+	projects := []string{"tapes", "tapes", "acme-api", "acme-api", "infra-ops", "tapes", "acme-api"}
+	for i := range sessions {
+		sessions[i].Project = projects[i]
+	}
+
+	return sessions
 }
 
 func codeReviewSession(base time.Time) seedSession {
