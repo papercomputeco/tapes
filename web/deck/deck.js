@@ -1209,15 +1209,6 @@ const renderFacetInsights = (data) => {
     analyticsInsightsEl.hidden = true;
     return;
   }
-  const hasGoals = data.goal_distribution && Object.keys(data.goal_distribution).length > 0;
-  const hasOutcomes = data.outcome_distribution && Object.keys(data.outcome_distribution).length > 0;
-  const hasTypes = data.session_types && Object.keys(data.session_types).length > 0;
-  const hasFriction = data.top_friction && data.top_friction.length > 0;
-  const hasSummaries = data.recent_summaries && data.recent_summaries.length > 0;
-  if (!hasGoals && !hasOutcomes && !hasTypes && !hasFriction && !hasSummaries) {
-    analyticsInsightsEl.hidden = true;
-    return;
-  }
   analyticsInsightsEl.hidden = false;
 
   // Goal distribution
@@ -1483,7 +1474,6 @@ const backToOverview = () => {
   detailEl.innerHTML = "";
   if (returnTo === "analytics") {
     setView("analytics");
-    window.history.pushState({}, "", "/analytics");
   } else {
     setView("overview");
     window.history.pushState({}, "", "/");
@@ -1585,11 +1575,9 @@ const handleKey = (event) => {
       if (currentView === "overview") {
         filters.periodEnabled = true;
         setView("analytics");
-        window.history.pushState({}, "", "/analytics");
         loadAnalytics().catch(console.error);
       } else if (currentView === "analytics") {
         setView("overview");
-        window.history.pushState({}, "", "/");
       }
       break;
     case "h":
@@ -1600,7 +1588,6 @@ const handleKey = (event) => {
           closeDayDetail();
         } else {
           setView("overview");
-          window.history.pushState({}, "", "/");
         }
       }
       break;
@@ -1670,10 +1657,7 @@ loadOverview().catch((err) => {
 
 window.addEventListener("keydown", handleKey);
 backButton.addEventListener("click", backToOverview);
-analyticsBackButton.addEventListener("click", () => {
-  setView("overview");
-  window.history.pushState({}, "", "/");
-});
+analyticsBackButton.addEventListener("click", () => setView("overview"));
 dayPrevButton.addEventListener("click", () => navigateDay(-1));
 dayNextButton.addEventListener("click", () => navigateDay(1));
 dayDetailCloseButton.addEventListener("click", closeDayDetail);
@@ -1686,20 +1670,7 @@ window.addEventListener("popstate", () => {
       return;
     }
   }
-  if (window.location.pathname === "/analytics") {
-    setView("analytics");
-    loadAnalytics().catch(console.error);
-    return;
-  }
-  selectedSessionId = null;
-  selectedMessageIndex = 0;
-  sessionDetailState = null;
-  sessionEntryView = null;
-  detailEl.innerHTML = "";
-  setView("overview");
-  if (overviewState) {
-    renderSessions(overviewState);
-  }
+  backToOverview();
 });
 
 if (window.location.pathname.startsWith("/session/")) {
@@ -1707,10 +1678,6 @@ if (window.location.pathname.startsWith("/session/")) {
   if (sessionId) {
     loadSession(sessionId);
   }
-} else if (window.location.pathname === "/analytics") {
-  filters.periodEnabled = true;
-  setView("analytics");
-  loadAnalytics().catch(console.error);
 } else {
   setView("overview");
 }

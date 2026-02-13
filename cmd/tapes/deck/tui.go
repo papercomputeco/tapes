@@ -2204,7 +2204,7 @@ func (m deckModel) renderAnalyticsDaySessions(sessions []deck.SessionSummary, wi
 	lines := []string{"  " + deckDimStyle.Render(header)}
 
 	limit := min(len(sessions), maxRows)
-	for i := range limit {
+	for i := 0; i < limit; i++ {
 		s := sessions[i]
 		model := s.Model
 		if model == "" {
