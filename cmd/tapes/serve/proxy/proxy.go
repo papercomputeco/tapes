@@ -19,6 +19,8 @@ import (
 )
 
 type proxyCommander struct {
+	flags config.FlagSet
+
 	listen       string
 	upstream     string
 	providerType string
@@ -28,11 +30,28 @@ type proxyCommander struct {
 	vectorStoreProvider string
 	vectorStoreTarget   string
 
-	embeddingProvider string
-	embeddingTarget   string
-	embeddingModel    string
+	embeddingProvider   string
+	embeddingTarget     string
+	embeddingModel      string
+	embeddingDimensions uint
 
 	logger *zap.Logger
+}
+
+// proxyFlags defines the flags for the standalone proxy subcommand.
+// Uses FlagProxyListenStandalone (--listen/-l) instead of the parent's
+// --proxy-listen/-p, and omits --api-listen since this is proxy-only.
+var proxyFlags = config.FlagSet{
+	config.FlagProxyListenStandalone: {Name: "listen", Shorthand: "l", ViperKey: "proxy.listen", Description: "Address for proxy to listen on"},
+	config.FlagUpstream:              {Name: "upstream", Shorthand: "u", ViperKey: "proxy.upstream", Description: "Upstream LLM provider URL"},
+	config.FlagProvider:              {Name: "provider", ViperKey: "proxy.provider", Description: "LLM provider type (anthropic, openai, ollama)"},
+	config.FlagSQLite:                {Name: "sqlite", Shorthand: "s", ViperKey: "storage.sqlite_path", Description: "Path to SQLite database"},
+	config.FlagVectorStoreProv:       {Name: "vector-store-provider", ViperKey: "vector_store.provider", Description: "Vector store provider type (e.g., chroma, sqlite)"},
+	config.FlagVectorStoreTgt:        {Name: "vector-store-target", ViperKey: "vector_store.target", Description: "Vector store target: filepath for sqlite or URL for remote service"},
+	config.FlagEmbeddingProv:         {Name: "embedding-provider", ViperKey: "embedding.provider", Description: "Embedding provider type (e.g., ollama)"},
+	config.FlagEmbeddingTgt:          {Name: "embedding-target", ViperKey: "embedding.target", Description: "Embedding provider URL"},
+	config.FlagEmbeddingModel:        {Name: "embedding-model", ViperKey: "embedding.model", Description: "Embedding model name (e.g., nomic-embed-text)"},
+	config.FlagEmbeddingDims:         {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Embedding dimensionality"},
 }
 
 const proxyLongDesc string = `Run the proxy server.
@@ -48,7 +67,9 @@ agentic functionality.`
 const proxyShortDesc string = "Run the Tapes proxy server"
 
 func NewProxyCmd() *cobra.Command {
-	cmder := &proxyCommander{}
+	cmder := &proxyCommander{
+		flags: proxyFlags,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "proxy",
@@ -56,43 +77,35 @@ func NewProxyCmd() *cobra.Command {
 		Long:  proxyLongDesc,
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
 			configDir, _ := cmd.Flags().GetString("config-dir")
-			cfger, err := config.NewConfiger(configDir)
+			v, err := config.InitViper(configDir)
 			if err != nil {
 				return fmt.Errorf("loading config: %w", err)
 			}
 
-			cfg, err := cfger.LoadConfig()
-			if err != nil {
-				return fmt.Errorf("loading config: %w", err)
-			}
+			config.BindRegisteredFlags(v, cmd, cmder.flags, []string{
+				config.FlagProxyListenStandalone,
+				config.FlagUpstream,
+				config.FlagProvider,
+				config.FlagSQLite,
+				config.FlagVectorStoreProv,
+				config.FlagVectorStoreTgt,
+				config.FlagEmbeddingProv,
+				config.FlagEmbeddingTgt,
+				config.FlagEmbeddingModel,
+				config.FlagEmbeddingDims,
+			})
 
-			if !cmd.Flags().Changed("listen") {
-				cmder.listen = cfg.Proxy.Listen
-			}
-			if !cmd.Flags().Changed("upstream") {
-				cmder.upstream = cfg.Proxy.Upstream
-			}
-			if !cmd.Flags().Changed("provider") {
-				cmder.providerType = cfg.Proxy.Provider
-			}
-			if !cmd.Flags().Changed("sqlite") {
-				cmder.sqlitePath = cfg.Storage.SQLitePath
-			}
-			if !cmd.Flags().Changed("vector-store-provider") {
-				cmder.vectorStoreProvider = cfg.VectorStore.Provider
-			}
-			if !cmd.Flags().Changed("vector-store-target") {
-				cmder.vectorStoreTarget = cfg.VectorStore.Target
-			}
-			if !cmd.Flags().Changed("embedding-provider") {
-				cmder.embeddingProvider = cfg.Embedding.Provider
-			}
-			if !cmd.Flags().Changed("embedding-target") {
-				cmder.embeddingTarget = cfg.Embedding.Target
-			}
-			if !cmd.Flags().Changed("embedding-model") {
-				cmder.embeddingModel = cfg.Embedding.Model
-			}
+			cmder.listen = v.GetString("proxy.listen")
+			cmder.upstream = v.GetString("proxy.upstream")
+			cmder.providerType = v.GetString("proxy.provider")
+			cmder.sqlitePath = v.GetString("storage.sqlite_path")
+			cmder.vectorStoreProvider = v.GetString("vector_store.provider")
+			cmder.vectorStoreTarget = v.GetString("vector_store.target")
+			cmder.embeddingProvider = v.GetString("embedding.provider")
+			cmder.embeddingTarget = v.GetString("embedding.target")
+			cmder.embeddingModel = v.GetString("embedding.model")
+			cmder.embeddingDimensions = v.GetUint("embedding.dimensions")
+
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -106,16 +119,16 @@ func NewProxyCmd() *cobra.Command {
 		},
 	}
 
-	defaults := config.NewDefaultConfig()
-	cmd.Flags().StringVarP(&cmder.listen, "listen", "l", defaults.Proxy.Listen, "Address for proxy to listen on")
-	cmd.Flags().StringVarP(&cmder.upstream, "upstream", "u", defaults.Proxy.Upstream, "Upstream LLM provider URL")
-	cmd.Flags().StringVarP(&cmder.providerType, "provider", "p", defaults.Proxy.Provider, "LLM provider type (anthropic, openai, ollama)")
-	cmd.Flags().StringVarP(&cmder.sqlitePath, "sqlite", "s", "", "Path to SQLite database (default: in-memory)")
-	cmd.Flags().StringVar(&cmder.vectorStoreProvider, "vector-store-provider", defaults.VectorStore.Provider, "Vector store provider type (e.g., chroma, sqlite)")
-	cmd.Flags().StringVar(&cmder.vectorStoreTarget, "vector-store-target", defaults.VectorStore.Target, "Vector store URL (e.g., http://localhost:8000)")
-	cmd.Flags().StringVar(&cmder.embeddingProvider, "embedding-provider", defaults.Embedding.Provider, "Embedding provider type (e.g., ollama)")
-	cmd.Flags().StringVar(&cmder.embeddingTarget, "embedding-target", defaults.Embedding.Target, "Embedding provider URL")
-	cmd.Flags().StringVar(&cmder.embeddingModel, "embedding-model", defaults.Embedding.Model, "Embedding model name (e.g., nomic-embed-text)")
+	config.AddStringFlag(cmd, cmder.flags, config.FlagProxyListenStandalone, &cmder.listen)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagUpstream, &cmder.upstream)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagProvider, &cmder.providerType)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagSQLite, &cmder.sqlitePath)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagVectorStoreProv, &cmder.vectorStoreProvider)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagVectorStoreTgt, &cmder.vectorStoreTarget)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingProv, &cmder.embeddingProvider)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingTgt, &cmder.embeddingTarget)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingModel, &cmder.embeddingModel)
+	config.AddUintFlag(cmd, cmder.flags, config.FlagEmbeddingDims, &cmder.embeddingDimensions)
 
 	return cmd
 }
@@ -151,9 +164,7 @@ func (c *proxyCommander) run() error {
 			ProviderType: c.vectorStoreProvider,
 			Target:       c.vectorStoreTarget,
 			Logger:       c.logger,
-
-			// TODO - need to make this actually configurable
-			Dimensions: 1024,
+			Dimensions:   c.embeddingDimensions,
 		})
 		if err != nil {
 			return fmt.Errorf("creating vector driver: %w", err)

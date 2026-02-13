@@ -24,6 +24,8 @@ import (
 )
 
 type chatCommander struct {
+	flags config.FlagSet
+
 	proxyTarget string
 	apiTarget   string
 	model       string
@@ -59,6 +61,11 @@ type ollamaStreamChunk struct {
 	Done      bool          `json:"done"`
 }
 
+var chatFlags = config.FlagSet{
+	config.FlagAPITarget:   {Name: "api-target", Shorthand: "a", ViperKey: "client.api_target", Description: "Tapes API server URL"},
+	config.FlagProxyTarget: {Name: "proxy-target", Shorthand: "p", ViperKey: "client.proxy_target", Description: "Tapes proxy URL"},
+}
+
 const chatLongDesc string = `Experimental: Start an interactive chat session through the tapes proxy.
 
 The chat command sends messages to an LLM through the configured tapes proxy,
@@ -79,7 +86,9 @@ Examples:
 const chatShortDesc string = "Experimental: Interactive LLM chat through the tapes proxy"
 
 func NewChatCmd() *cobra.Command {
-	cmder := &chatCommander{}
+	cmder := &chatCommander{
+		flags: chatFlags,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "chat",
@@ -87,23 +96,18 @@ func NewChatCmd() *cobra.Command {
 		Long:  chatLongDesc,
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
 			configDir, _ := cmd.Flags().GetString("config-dir")
-			cfger, err := config.NewConfiger(configDir)
+			v, err := config.InitViper(configDir)
 			if err != nil {
 				return fmt.Errorf("loading config: %w", err)
 			}
 
-			cfg, err := cfger.LoadConfig()
-			if err != nil {
-				return fmt.Errorf("loading config: %w", err)
-			}
+			config.BindRegisteredFlags(v, cmd, cmder.flags, []string{
+				config.FlagAPITarget,
+				config.FlagProxyTarget,
+			})
 
-			if !cmd.Flags().Changed("api-target") {
-				cmder.apiTarget = cfg.Client.APITarget
-			}
-
-			if !cmd.Flags().Changed("proxy-target") {
-				cmder.proxyTarget = cfg.Client.ProxyTarget
-			}
+			cmder.apiTarget = v.GetString("client.api_target")
+			cmder.proxyTarget = v.GetString("client.proxy_target")
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -117,9 +121,8 @@ func NewChatCmd() *cobra.Command {
 		},
 	}
 
-	defaults := config.NewDefaultConfig()
-	cmd.Flags().StringVarP(&cmder.apiTarget, "api-target", "a", defaults.Client.APITarget, "Tapes API server URL")
-	cmd.Flags().StringVarP(&cmder.proxyTarget, "proxy-target", "p", defaults.Client.ProxyTarget, "Tapes proxy URL")
+	config.AddStringFlag(cmd, cmder.flags, config.FlagAPITarget, &cmder.apiTarget)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagProxyTarget, &cmder.proxyTarget)
 	cmd.Flags().StringVarP(&cmder.model, "model", "m", "gemma3:latest", "Model name (e.g., gemma3:1b, ministral-3:latest)")
 
 	return cmd
