@@ -10,7 +10,6 @@ import (
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
-
 	"github.com/papercomputeco/tapes/pkg/storage/ent/node"
 )
 
@@ -45,6 +44,8 @@ type Node struct {
 	TotalDurationNs *int64 `json:"total_duration_ns,omitempty"`
 	// PromptDurationNs holds the value of the "prompt_duration_ns" field.
 	PromptDurationNs *int64 `json:"prompt_duration_ns,omitempty"`
+	// Project holds the value of the "project" field.
+	Project *string `json:"project,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
@@ -93,7 +94,7 @@ func (*Node) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case node.FieldPromptTokens, node.FieldCompletionTokens, node.FieldTotalTokens, node.FieldTotalDurationNs, node.FieldPromptDurationNs:
 			values[i] = new(sql.NullInt64)
-		case node.FieldID, node.FieldParentHash, node.FieldType, node.FieldRole, node.FieldModel, node.FieldProvider, node.FieldStopReason:
+		case node.FieldID, node.FieldParentHash, node.FieldType, node.FieldRole, node.FieldModel, node.FieldProvider, node.FieldStopReason, node.FieldProject:
 			values[i] = new(sql.NullString)
 		case node.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -206,6 +207,13 @@ func (_m *Node) assignValues(columns []string, values []any) error {
 				_m.PromptDurationNs = new(int64)
 				*_m.PromptDurationNs = value.Int64
 			}
+		case node.FieldProject:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field project", values[i])
+			} else if value.Valid {
+				_m.Project = new(string)
+				*_m.Project = value.String
+			}
 		case node.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field created_at", values[i])
@@ -307,6 +315,11 @@ func (_m *Node) String() string {
 	if v := _m.PromptDurationNs; v != nil {
 		builder.WriteString("prompt_duration_ns=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.Project; v != nil {
+		builder.WriteString("project=")
+		builder.WriteString(*v)
 	}
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")

@@ -16,7 +16,7 @@ func init() {
 	nodeFields := schema.Node{}.Fields()
 	_ = nodeFields
 	// nodeDescCreatedAt is the schema descriptor for created_at field.
-	nodeDescCreatedAt := nodeFields[14].Descriptor()
+	nodeDescCreatedAt := nodeFields[15].Descriptor()
 	// node.DefaultCreatedAt holds the default value on creation for the created_at field.
 	node.DefaultCreatedAt = nodeDescCreatedAt.Default.(func() time.Time)
 	// nodeDescID is the schema descriptor for id field.

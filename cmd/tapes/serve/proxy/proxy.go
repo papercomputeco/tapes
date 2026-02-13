@@ -10,6 +10,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/config"
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
+	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
@@ -24,6 +25,7 @@ type proxyCommander struct {
 	providerType string
 	debug        bool
 	sqlitePath   string
+	project      string
 
 	vectorStoreProvider string
 	vectorStoreTarget   string
@@ -93,6 +95,12 @@ func NewProxyCmd() *cobra.Command {
 			if !cmd.Flags().Changed("embedding-model") {
 				cmder.embeddingModel = cfg.Embedding.Model
 			}
+			if !cmd.Flags().Changed("project") {
+				cmder.project = cfg.Proxy.Project
+			}
+			if cmder.project == "" {
+				cmder.project = git.RepoName()
+			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -116,6 +124,7 @@ func NewProxyCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cmder.embeddingProvider, "embedding-provider", defaults.Embedding.Provider, "Embedding provider type (e.g., ollama)")
 	cmd.Flags().StringVar(&cmder.embeddingTarget, "embedding-target", defaults.Embedding.Target, "Embedding provider URL")
 	cmd.Flags().StringVar(&cmder.embeddingModel, "embedding-model", defaults.Embedding.Model, "Embedding model name (e.g., nomic-embed-text)")
+	cmd.Flags().StringVar(&cmder.project, "project", "", "Project name to tag sessions (default: auto-detect from git)")
 
 	return cmd
 }
@@ -134,6 +143,7 @@ func (c *proxyCommander) run() error {
 		ListenAddr:   c.listen,
 		UpstreamURL:  c.upstream,
 		ProviderType: c.providerType,
+		Project:      c.project,
 	}
 
 	if c.vectorStoreTarget != "" {

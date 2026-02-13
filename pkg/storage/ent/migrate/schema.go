@@ -23,6 +23,7 @@ var (
 		{Name: "total_tokens", Type: field.TypeInt, Nullable: true},
 		{Name: "total_duration_ns", Type: field.TypeInt64, Nullable: true},
 		{Name: "prompt_duration_ns", Type: field.TypeInt64, Nullable: true},
+		{Name: "project", Type: field.TypeString, Nullable: true},
 		{Name: "created_at", Type: field.TypeTime, Default: "CURRENT_TIMESTAMP"},
 		{Name: "parent_hash", Type: field.TypeString, Nullable: true},
 	}
@@ -34,7 +35,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "nodes_nodes_parent",
-				Columns:    []*schema.Column{NodesColumns[14]},
+				Columns:    []*schema.Column{NodesColumns[15]},
 				RefColumns: []*schema.Column{NodesColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
@@ -43,7 +44,7 @@ var (
 			{
 				Name:    "node_parent_hash",
 				Unique:  false,
-				Columns: []*schema.Column{NodesColumns[14]},
+				Columns: []*schema.Column{NodesColumns[15]},
 			},
 			{
 				Name:    "node_role",
@@ -64,6 +65,11 @@ var (
 				Name:    "node_role_model",
 				Unique:  false,
 				Columns: []*schema.Column{NodesColumns[3], NodesColumns[5]},
+			},
+			{
+				Name:    "node_project",
+				Unique:  false,
+				Columns: []*schema.Column{NodesColumns[13]},
 			},
 		},
 	}

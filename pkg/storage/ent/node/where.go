@@ -7,7 +7,6 @@ import (
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
-
 	"github.com/papercomputeco/tapes/pkg/storage/ent/predicate"
 )
 
@@ -119,6 +118,11 @@ func TotalDurationNs(v int64) predicate.Node {
 // PromptDurationNs applies equality check predicate on the "prompt_duration_ns" field. It's identical to PromptDurationNsEQ.
 func PromptDurationNs(v int64) predicate.Node {
 	return predicate.Node(sql.FieldEQ(FieldPromptDurationNs, v))
+}
+
+// Project applies equality check predicate on the "project" field. It's identical to ProjectEQ.
+func Project(v string) predicate.Node {
+	return predicate.Node(sql.FieldEQ(FieldProject, v))
 }
 
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
@@ -844,6 +848,81 @@ func PromptDurationNsIsNil() predicate.Node {
 // PromptDurationNsNotNil applies the NotNil predicate on the "prompt_duration_ns" field.
 func PromptDurationNsNotNil() predicate.Node {
 	return predicate.Node(sql.FieldNotNull(FieldPromptDurationNs))
+}
+
+// ProjectEQ applies the EQ predicate on the "project" field.
+func ProjectEQ(v string) predicate.Node {
+	return predicate.Node(sql.FieldEQ(FieldProject, v))
+}
+
+// ProjectNEQ applies the NEQ predicate on the "project" field.
+func ProjectNEQ(v string) predicate.Node {
+	return predicate.Node(sql.FieldNEQ(FieldProject, v))
+}
+
+// ProjectIn applies the In predicate on the "project" field.
+func ProjectIn(vs ...string) predicate.Node {
+	return predicate.Node(sql.FieldIn(FieldProject, vs...))
+}
+
+// ProjectNotIn applies the NotIn predicate on the "project" field.
+func ProjectNotIn(vs ...string) predicate.Node {
+	return predicate.Node(sql.FieldNotIn(FieldProject, vs...))
+}
+
+// ProjectGT applies the GT predicate on the "project" field.
+func ProjectGT(v string) predicate.Node {
+	return predicate.Node(sql.FieldGT(FieldProject, v))
+}
+
+// ProjectGTE applies the GTE predicate on the "project" field.
+func ProjectGTE(v string) predicate.Node {
+	return predicate.Node(sql.FieldGTE(FieldProject, v))
+}
+
+// ProjectLT applies the LT predicate on the "project" field.
+func ProjectLT(v string) predicate.Node {
+	return predicate.Node(sql.FieldLT(FieldProject, v))
+}
+
+// ProjectLTE applies the LTE predicate on the "project" field.
+func ProjectLTE(v string) predicate.Node {
+	return predicate.Node(sql.FieldLTE(FieldProject, v))
+}
+
+// ProjectContains applies the Contains predicate on the "project" field.
+func ProjectContains(v string) predicate.Node {
+	return predicate.Node(sql.FieldContains(FieldProject, v))
+}
+
+// ProjectHasPrefix applies the HasPrefix predicate on the "project" field.
+func ProjectHasPrefix(v string) predicate.Node {
+	return predicate.Node(sql.FieldHasPrefix(FieldProject, v))
+}
+
+// ProjectHasSuffix applies the HasSuffix predicate on the "project" field.
+func ProjectHasSuffix(v string) predicate.Node {
+	return predicate.Node(sql.FieldHasSuffix(FieldProject, v))
+}
+
+// ProjectIsNil applies the IsNil predicate on the "project" field.
+func ProjectIsNil() predicate.Node {
+	return predicate.Node(sql.FieldIsNull(FieldProject))
+}
+
+// ProjectNotNil applies the NotNil predicate on the "project" field.
+func ProjectNotNil() predicate.Node {
+	return predicate.Node(sql.FieldNotNull(FieldProject))
+}
+
+// ProjectEqualFold applies the EqualFold predicate on the "project" field.
+func ProjectEqualFold(v string) predicate.Node {
+	return predicate.Node(sql.FieldEqualFold(FieldProject, v))
+}
+
+// ProjectContainsFold applies the ContainsFold predicate on the "project" field.
+func ProjectContainsFold(v string) predicate.Node {
+	return predicate.Node(sql.FieldContainsFold(FieldProject, v))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.

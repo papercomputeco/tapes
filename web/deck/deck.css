@@ -516,7 +516,7 @@ body {
 
 .sessions-row {
   display: grid;
-  grid-template-columns: 40px 1.5fr 1fr 70px 70px 80px 60px 60px 100px;
+  grid-template-columns: 40px 1.5fr 0.8fr 1fr 70px 70px 80px 60px 60px 100px;
   gap: 8px;
   padding: 10px 12px;
   font-size: 11px;
@@ -558,6 +558,13 @@ body {
 
 .session-label {
   color: var(--text);
+}
+
+.session-project {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-model {
@@ -955,7 +962,7 @@ body {
   }
 
   .sessions-row {
-    grid-template-columns: 32px 1.2fr 1fr 60px 60px 70px 50px 50px 90px;
+    grid-template-columns: 32px 1.2fr 0.8fr 1fr 60px 60px 70px 50px 50px 90px;
     font-size: 10px;
   }
 

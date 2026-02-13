@@ -11,6 +11,7 @@ type SessionSummary struct {
 	ID           string        `json:"id"`
 	Label        string        `json:"label"`
 	Model        string        `json:"model"`
+	Project      string        `json:"project"`
 	Status       string        `json:"status"`
 	StartTime    time.Time     `json:"start_time"`
 	EndTime      time.Time     `json:"end_time"`
@@ -87,6 +88,7 @@ type Filters struct {
 	To      *time.Time
 	Model   string
 	Status  string
+	Project string
 	Sort    string
 	SortDir string
 	Session string

@@ -40,6 +40,8 @@ const (
 	FieldTotalDurationNs = "total_duration_ns"
 	// FieldPromptDurationNs holds the string denoting the prompt_duration_ns field in the database.
 	FieldPromptDurationNs = "prompt_duration_ns"
+	// FieldProject holds the string denoting the project field in the database.
+	FieldProject = "project"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// EdgeParent holds the string denoting the parent edge name in mutations.
@@ -74,6 +76,7 @@ var Columns = []string{
 	FieldTotalTokens,
 	FieldTotalDurationNs,
 	FieldPromptDurationNs,
+	FieldProject,
 	FieldCreatedAt,
 }
 
@@ -155,6 +158,11 @@ func ByTotalDurationNs(opts ...sql.OrderTermOption) OrderOption {
 // ByPromptDurationNs orders the results by the prompt_duration_ns field.
 func ByPromptDurationNs(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldPromptDurationNs, opts...).ToFunc()
+}
+
+// ByProject orders the results by the project field.
+func ByProject(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldProject, opts...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.

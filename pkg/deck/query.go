@@ -237,10 +237,20 @@ func (q *Query) buildSessionSummaryFromNodes(nodes []*ent.Node) (SessionSummary,
 
 	status := determineStatus(nodes[len(nodes)-1], hasToolError)
 
+	// Extract project from the first node that has one set
+	project := ""
+	for _, n := range nodes {
+		if n.Project != nil && *n.Project != "" {
+			project = *n.Project
+			break
+		}
+	}
+
 	summary := SessionSummary{
 		ID:           nodes[len(nodes)-1].ID,
 		Label:        label,
 		Model:        model,
+		Project:      project,
 		Status:       status,
 		StartTime:    start,
 		EndTime:      end,
@@ -516,6 +526,9 @@ func matchesFilters(summary SessionSummary, filters Filters) bool {
 		}
 	}
 	if filters.Status != "" && summary.Status != filters.Status {
+		return false
+	}
+	if filters.Project != "" && summary.Project != filters.Project {
 		return false
 	}
 	if filters.From != nil && summary.EndTime.Before(*filters.From) {

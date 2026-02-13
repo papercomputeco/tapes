@@ -1239,6 +1239,7 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 	// Calculate column widths based on actual content
 	type rowData struct {
 		label        string
+		project      string
 		model        string
 		modelColored string
 		dur          string
@@ -1255,7 +1256,20 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 
 	rows := make([]rowData, maxVisible)
 
+	// Determine if any session has a project set
+	hasProject := false
+	for _, session := range m.overview.Sessions {
+		if session.Project != "" {
+			hasProject = true
+			break
+		}
+	}
+
 	// Column width tracking
+	maxProjectW := 0
+	if hasProject {
+		maxProjectW = len("project")
+	}
 	maxLabelW := len("label")
 	maxModelW := len("model")
 	maxDurW := len("dur")
@@ -1273,6 +1287,7 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 		rowIdx := i - start
 
 		rows[rowIdx].label = session.Label
+		rows[rowIdx].project = session.Project
 		rows[rowIdx].model = session.Model
 		rows[rowIdx].modelColored = colorizeModel(session.Model)
 		rows[rowIdx].dur = formatDurationMinutes(session.Duration)
@@ -1288,6 +1303,9 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 		// Measure widths (without ANSI codes for models/status)
 		if len(rows[rowIdx].label) > maxLabelW {
 			maxLabelW = len(rows[rowIdx].label)
+		}
+		if hasProject && len(rows[rowIdx].project) > maxProjectW {
+			maxProjectW = len(rows[rowIdx].project)
 		}
 		if len(rows[rowIdx].model) > maxModelW {
 			maxModelW = len(rows[rowIdx].model)
@@ -1320,9 +1338,12 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 	}
 
 	// Calculate total width used by fixed columns (excluding label)
-	// Format: "  " + rowNum + " " + label + gap + model + gap + dur + gap + tokens + gap + barbell + gap + costInd + " " + cost + gap + tools + gap + msgs + gap + status
+	// Format: "  " + rowNum + " " + label + [gap + project] + gap + model + gap + dur + gap + tokens + gap + barbell + gap + costInd + " " + cost + gap + tools + gap + msgs + gap + status
 	colGap := 3
 	fixedWidth := 2 + 1 + 1 + colGap + maxModelW + colGap + maxDurW + colGap + maxTokensW + colGap + maxBarbellW + colGap + maxCostIndW + 1 + maxCostW + colGap + maxToolsW + colGap + maxMsgsW + colGap + 1 + maxStatusW
+	if hasProject {
+		fixedWidth += colGap + maxProjectW
+	}
 
 	// Cap label column width to avoid excessive whitespace
 	availableLabelWidth := m.width - fixedWidth
@@ -1345,6 +1366,11 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 
 	headerParts := []string{
 		"  " + padRight("label", maxLabelW),
+	}
+	if hasProject {
+		headerParts = append(headerParts, padRight("project", maxProjectW))
+	}
+	headerParts = append(headerParts,
 		padRight("model", maxModelW),
 		padRight("dur", maxDurW),
 		padRight("tokens", maxTokensW),
@@ -1358,7 +1384,7 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 		padRight("tools", maxToolsW),
 		padRight("msgs", maxMsgsW),
 		"status",
-	}
+	)
 	lines = append(lines, deckMutedStyle.Render(strings.Join(headerParts, strings.Repeat(" ", colGap))))
 
 	// Second pass: render rows with consistent widths
@@ -1374,15 +1400,20 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 
 		parts := []string{
 			deckDimStyle.Render(rowNum) + " " + padRight(rows[rowIdx].label, maxLabelW),
+		}
+		if hasProject {
+			parts = append(parts, deckMutedStyle.Render(padRight(rows[rowIdx].project, maxProjectW)))
+		}
+		parts = append(parts,
 			padRightWithColor(rows[rowIdx].modelColored, maxModelW),
 			padRight(rows[rowIdx].dur, maxDurW),
 			padRight(rows[rowIdx].tokens, maxTokensW),
 			barbellPadded, // Cost-weighted barbell visualization
-			costIndPadded + " " + costPadded,
+			costIndPadded+" "+costPadded,
 			padRight(rows[rowIdx].tools, maxToolsW),
 			padRight(rows[rowIdx].msgs, maxMsgsW),
-			rows[rowIdx].statusCircle + " " + rows[rowIdx].statusText,
-		}
+			rows[rowIdx].statusCircle+" "+rows[rowIdx].statusText,
+		)
 
 		line := strings.Join(parts, strings.Repeat(" ", colGap))
 
