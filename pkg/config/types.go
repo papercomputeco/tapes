@@ -27,6 +27,7 @@ type ProxyConfig struct {
 	Provider string `toml:"provider,omitempty"`
 	Upstream string `toml:"upstream,omitempty"`
 	Listen   string `toml:"listen,omitempty"`
+	Project  string `toml:"project,omitempty"`
 }
 
 // APIConfig holds API server settings.
@@ -80,6 +81,10 @@ var configKeys = map[string]configKeyInfo{
 	"proxy.listen": {
 		get: func(c *Config) string { return c.Proxy.Listen },
 		set: func(c *Config, v string) error { c.Proxy.Listen = v; return nil },
+	},
+	"proxy.project": {
+		get: func(c *Config) string { return c.Proxy.Project },
+		set: func(c *Config, v string) error { c.Proxy.Project = v; return nil },
 	},
 	"api.listen": {
 		get: func(c *Config) string { return c.API.Listen },

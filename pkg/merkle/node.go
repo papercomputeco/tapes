@@ -28,6 +28,9 @@ type Node struct {
 
 	// Usage contains token counts and timing (only for responses)
 	Usage *llm.Usage `json:"usage,omitempty"`
+
+	// Project is the git repository or project name that produced this node
+	Project string `json:"project,omitempty"`
 }
 
 // NodeMeta contains optional metadata for a node that is stored
@@ -35,6 +38,7 @@ type Node struct {
 type NodeMeta struct {
 	StopReason string
 	Usage      *llm.Usage
+	Project    string
 }
 
 // NewNode creates a new node with the computed hash for the provided bucket.
@@ -53,6 +57,7 @@ func NewNode(bucket Bucket, parent *Node, metas ...NodeMeta) *Node {
 	if len(metas) > 0 {
 		n.StopReason = metas[0].StopReason
 		n.Usage = metas[0].Usage
+		n.Project = metas[0].Project
 	}
 
 	n.Hash = n.computeHash()

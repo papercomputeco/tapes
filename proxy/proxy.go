@@ -6,8 +6,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -24,6 +26,11 @@ import (
 	"github.com/papercomputeco/tapes/proxy/worker"
 )
 
+const (
+	agentPathPrefix = "/agents/"
+	providerOpenAI  = "openai"
+)
+
 // Proxy is a client, LLM inference proxy that instruments storing sessions as Merkle DAGs.
 // The proxy is transparent: it forwards requests to the upstream LLM provider and
 // enqueues conversation turns for async storage via its worker pool.
@@ -34,7 +41,8 @@ type Proxy struct {
 	logger        *zap.Logger
 	httpClient    *http.Client
 	server        *fiber.App
-	provider      provider.Provider
+	providers     map[string]provider.Provider
+	defaultProv   provider.Provider
 	headerHandler *header.Handler
 }
 
@@ -42,9 +50,29 @@ type Proxy struct {
 // The storer is injected to handle async persistence of conversation turns.
 // Returns an error if the configured provider type is not recognized.
 func New(config Config, driver storage.Driver, logger *zap.Logger) (*Proxy, error) {
-	prov, err := provider.New(config.ProviderType)
+	if config.ProviderType == "" {
+		return nil, errors.New("provider type is required")
+	}
+
+	providers := make(map[string]provider.Provider)
+	defaultProv, err := provider.New(config.ProviderType)
 	if err != nil {
 		return nil, fmt.Errorf("could not create new provider: %w", err)
+	}
+	providers[config.ProviderType] = defaultProv
+
+	for _, route := range config.AgentRoutes {
+		if route.ProviderType == "" {
+			continue
+		}
+		if _, exists := providers[route.ProviderType]; exists {
+			continue
+		}
+		prov, err := provider.New(route.ProviderType)
+		if err != nil {
+			return nil, fmt.Errorf("could not create provider %s: %w", route.ProviderType, err)
+		}
+		providers[route.ProviderType] = prov
 	}
 
 	app := fiber.New(fiber.Config{
@@ -61,6 +89,7 @@ func New(config Config, driver storage.Driver, logger *zap.Logger) (*Proxy, erro
 		Driver:       driver,
 		VectorDriver: config.VectorDriver,
 		Embedder:     config.Embedder,
+		Project:      config.Project,
 		Logger:       logger,
 	})
 	if err != nil {
@@ -73,7 +102,8 @@ func New(config Config, driver storage.Driver, logger *zap.Logger) (*Proxy, erro
 		workerPool:    wp,
 		logger:        logger,
 		server:        app,
-		provider:      prov,
+		providers:     providers,
+		defaultProv:   defaultProv,
 		headerHandler: header.NewHandler(),
 		httpClient: &http.Client{
 			// LLM requests can be slow, especially with thinking blocks
@@ -97,6 +127,16 @@ func (p *Proxy) Run() error {
 	return p.server.Listen(p.config.ListenAddr)
 }
 
+// RunWithListener starts the proxy server using the provided listener.
+func (p *Proxy) RunWithListener(listener net.Listener) error {
+	p.logger.Info("starting proxy server",
+		zap.String("listen", listener.Addr().String()),
+		zap.String("upstream", p.config.UpstreamURL),
+	)
+
+	return p.server.Listener(listener)
+}
+
 // Close gracefully shuts down the proxy and waits for the worker pool to drain
 func (p *Proxy) Close() error {
 	p.workerPool.Close()
@@ -109,7 +149,8 @@ func (p *Proxy) handleProxy(c *fiber.Ctx) error {
 	startTime := time.Now()
 
 	// Get the request path and method
-	path := c.Path()
+	agentName, providerName, path := p.resolveAgent(c.Path(), c.Get(header.AgentNameHeader))
+	prov, upstreamURL := p.resolveProvider(agentName, providerName, path)
 	method := c.Method()
 
 	// Only process POST requests that look like chat/completion endpoints
@@ -120,15 +161,17 @@ func (p *Proxy) handleProxy(c *fiber.Ctx) error {
 	var parsedReq *llm.ChatRequest
 	if isChatRequest {
 		var err error
-		parsedReq, err = p.provider.ParseRequest(body)
+		parsedReq, err = prov.ParseRequest(body)
 		if err != nil {
 			p.logger.Warn("failed to parse request",
 				zap.Error(err),
-				zap.String("provider", p.provider.Name()),
+				zap.String("provider", prov.Name()),
+				zap.String("agent", agentName),
 			)
 		} else {
 			p.logger.Debug("parsed request",
-				zap.String("provider", p.provider.Name()),
+				zap.String("provider", prov.Name()),
+				zap.String("agent", agentName),
 				zap.String("model", parsedReq.Model),
 				zap.Int("message_count", len(parsedReq.Messages)),
 			)
@@ -149,21 +192,21 @@ func (p *Proxy) handleProxy(c *fiber.Ctx) error {
 		if err := json.Unmarshal(body, &streamCheck); err == nil && streamCheck.Stream != nil {
 			streaming = *streamCheck.Stream
 		} else {
-			streaming = p.provider.DefaultStreaming()
+			streaming = prov.DefaultStreaming()
 		}
 	}
 
 	if streaming && isChatRequest {
-		return p.handleStreamingProxy(c, path, body, parsedReq, startTime)
+		return p.handleStreamingProxy(c, path, upstreamURL, prov, agentName, body, parsedReq, startTime)
 	}
 
-	return p.handleNonStreamingProxy(c, path, method, body, parsedReq, startTime)
+	return p.handleNonStreamingProxy(c, path, method, upstreamURL, prov, agentName, body, parsedReq, startTime)
 }
 
 // handleNonStreamingProxy handles non-streaming requests.
-func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
+func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL string, prov provider.Provider, agentName string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
 	// Build upstream URL
-	upstreamURL := p.config.UpstreamURL + path
+	upstreamURL += path
 
 	// Create upstream request
 	var reqBody io.Reader
@@ -203,24 +246,27 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method string, body 
 
 	// If this was a chat request, enqueue for async storage
 	if parsedReq != nil && httpResp.StatusCode == http.StatusOK {
-		parsedResp, err := p.provider.ParseResponse(respBody)
+		parsedResp, err := prov.ParseResponse(respBody)
 		if err != nil {
 			p.logger.Warn("failed to parse response",
 				zap.Error(err),
-				zap.String("provider", p.provider.Name()),
+				zap.String("provider", prov.Name()),
+				zap.String("agent", agentName),
 			)
 		} else {
 			p.logger.Debug("received response from upstream",
 				zap.String("model", parsedResp.Model),
-				zap.String("provider", p.provider.Name()),
+				zap.String("provider", prov.Name()),
+				zap.String("agent", agentName),
 				zap.Duration("duration", time.Since(startTime)),
 			)
 
 			// Non-blocking enqueue for async storage
 			p.workerPool.Enqueue(worker.Job{
-				Provider: p.provider.Name(),
-				Req:      parsedReq,
-				Resp:     parsedResp,
+				Provider:  prov.Name(),
+				AgentName: agentName,
+				Req:       parsedReq,
+				Resp:      parsedResp,
 			})
 		}
 	}
@@ -230,9 +276,9 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method string, body 
 }
 
 // handleStreamingProxy handles streaming requests.
-func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
+func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path, upstreamURL string, prov provider.Provider, agentName string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
 	// Build upstream URL
-	upstreamURL := p.config.UpstreamURL + path
+	upstreamURL += path
 
 	// Use context.Background() instead of c.Context() because fasthttp recycles
 	// its RequestCtx after the handler returns, but the streaming callback runs
@@ -279,7 +325,7 @@ func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path string, body []byte, par
 	// every chunk. This gives direct backpressure and true per-chunk streaming
 	// for LLM based.
 	pr, pw := io.Pipe()
-	go p.handleHTTPRespToPipeWriter(httpResp, pw, parsedReq, startTime)
+	go p.handleHTTPRespToPipeWriter(httpResp, pw, parsedReq, prov, agentName, startTime)
 
 	// Set the pipe reader as the body stream with unknown size (-1),
 	// which triggers chunked transfer encoding in fasthttp.
@@ -288,23 +334,23 @@ func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path string, body []byte, par
 	return nil
 }
 
-func (p *Proxy) handleHTTPRespToPipeWriter(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, startTime time.Time) {
+func (p *Proxy) handleHTTPRespToPipeWriter(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
 	// Close the upstream response body once streaming is complete.
 	defer httpResp.Body.Close()
 	defer pw.Close()
 
 	switch ct := httpResp.Header.Get("Content-Type"); {
 	case strings.HasPrefix(ct, "text/event-stream"):
-		p.handleSSEStream(httpResp, pw, parsedReq, startTime)
+		p.handleSSEStream(httpResp, pw, parsedReq, prov, agentName, startTime)
 	default:
-		p.handleNDJSONStream(httpResp, pw, parsedReq, startTime)
+		p.handleNDJSONStream(httpResp, pw, parsedReq, prov, agentName, startTime)
 	}
 }
 
 // handleSSEStream reads an SSE-formatted upstream response (used by OpenAI
 // and Anthropic), forwarding raw bytes verbatim to the pipe writer while
 // parsing events for telemetry accumulation.
-func (p *Proxy) handleSSEStream(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, startTime time.Time) {
+func (p *Proxy) handleSSEStream(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
 	var allChunks [][]byte
 	var fullContent strings.Builder
 
@@ -330,16 +376,16 @@ func (p *Proxy) handleSSEStream(httpResp *http.Response, pw *io.PipeWriter, pars
 		allChunks = append(allChunks, chunkCopy)
 
 		// Best-effort content extraction from the JSON payload
-		p.extractContentFromJSON([]byte(ev.Data), &fullContent)
+		p.extractContentFromJSON([]byte(ev.Data), prov.Name(), &fullContent)
 	}
 
-	p.enqueueStreamedResponse(allChunks, fullContent.String(), parsedReq, startTime)
+	p.enqueueStreamedResponse(allChunks, fullContent.String(), parsedReq, prov, agentName, startTime)
 }
 
 // handleNDJSONStream reads a newline-delimited JSON upstream response (used by
 // Ollama), forwarding raw bytes to the pipe writer while accumulating chunks
 // for telemetry.
-func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, startTime time.Time) {
+func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
 	var allChunks [][]byte
 	var fullContent strings.Builder
 
@@ -359,7 +405,7 @@ func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, p
 		allChunks = append(allChunks, chunkCopy)
 
 		// Best-effort content extraction from the raw chunk
-		p.extractContentFromJSON(line, &fullContent)
+		p.extractContentFromJSON(line, prov.Name(), &fullContent)
 
 		// Write chunk to client — pw.Write blocks until fasthttp reads
 		// from the pipe reader and flushes to the TCP socket.
@@ -378,18 +424,18 @@ func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, p
 		p.logger.Error("error reading NDJSON stream", zap.Error(err))
 	}
 
-	p.enqueueStreamedResponse(allChunks, fullContent.String(), parsedReq, startTime)
+	p.enqueueStreamedResponse(allChunks, fullContent.String(), parsedReq, prov, agentName, startTime)
 }
 
 // extractContentFromJSON performs best-effort content extraction from a JSON
 // streaming chunk, dispatching on the configured provider.
-func (p *Proxy) extractContentFromJSON(data []byte, content *strings.Builder) {
+func (p *Proxy) extractContentFromJSON(data []byte, providerName string, content *strings.Builder) {
 	var chunkData map[string]any
 	if err := json.Unmarshal(data, &chunkData); err != nil {
 		return
 	}
 
-	switch p.provider.Name() {
+	switch providerName {
 	case "ollama":
 		// Ollama NDJSON: message.content
 		if msg, ok := chunkData["message"].(map[string]any); ok {
@@ -397,7 +443,7 @@ func (p *Proxy) extractContentFromJSON(data []byte, content *strings.Builder) {
 				content.WriteString(c)
 			}
 		}
-	case "openai":
+	case providerOpenAI:
 		// OpenAI SSE: choices[0].delta.content
 		if choices, ok := chunkData["choices"].([]any); ok && len(choices) > 0 {
 			if choice, ok := choices[0].(map[string]any); ok {
@@ -420,31 +466,33 @@ func (p *Proxy) extractContentFromJSON(data []byte, content *strings.Builder) {
 
 // enqueueStreamedResponse handles post-stream telemetry: logging and
 // enqueuing the reconstructed response for async storage.
-func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, parsedReq *llm.ChatRequest, startTime time.Time) {
+func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
 	if parsedReq != nil && len(allChunks) > 0 {
 		p.logger.Debug("streaming complete",
 			zap.String("content_preview", fullContent),
 			zap.Int("chunk_count", len(allChunks)),
+			zap.String("agent", agentName),
 			zap.Duration("duration", time.Since(startTime)),
 		)
 
-		finalResp := p.reconstructStreamedResponse(allChunks, fullContent)
+		finalResp := p.reconstructStreamedResponse(allChunks, fullContent, prov)
 		if finalResp != nil {
 			p.workerPool.Enqueue(worker.Job{
-				Provider: p.provider.Name(),
-				Req:      parsedReq,
-				Resp:     finalResp,
+				Provider:  prov.Name(),
+				AgentName: agentName,
+				Req:       parsedReq,
+				Resp:      finalResp,
 			})
 		}
 	}
 }
 
 // reconstructStreamedResponse attempts to build a ChatResponse from accumulated stream chunks.
-func (p *Proxy) reconstructStreamedResponse(chunks [][]byte, fullContent string) *llm.ChatResponse {
+func (p *Proxy) reconstructStreamedResponse(chunks [][]byte, fullContent string, prov provider.Provider) *llm.ChatResponse {
 	// Try parsing the last chunk as it often contains final metadata
 	if len(chunks) > 0 {
 		lastChunk := chunks[len(chunks)-1]
-		resp, err := p.provider.ParseResponse(lastChunk)
+		resp, err := prov.ParseResponse(lastChunk)
 		if err == nil && resp != nil {
 			// If the last chunk has minimal content, supplement with accumulated content
 			if resp.Message.GetText() == "" && fullContent != "" {
@@ -464,4 +512,128 @@ func (p *Proxy) reconstructStreamedResponse(chunks [][]byte, fullContent string)
 	}
 
 	return nil
+}
+
+func (p *Proxy) resolveAgent(path, headerValue string) (string, string, string) {
+	agent := strings.TrimSpace(headerValue)
+	if agent != "" {
+		return agent, "", path
+	}
+
+	if !strings.HasPrefix(path, agentPathPrefix) {
+		return "", "", path
+	}
+
+	remainder := strings.TrimPrefix(path, agentPathPrefix)
+	if remainder == "" {
+		return "", "", path
+	}
+
+	parts := strings.SplitN(remainder, "/", 2)
+	agent = strings.TrimSpace(parts[0])
+	if agent == "" {
+		return "", "", path
+	}
+
+	if len(parts) == 1 {
+		return agent, "", "/"
+	}
+
+	providerName, trimmedPath := resolveProviderOverride("/" + parts[1])
+	return agent, providerName, trimmedPath
+}
+
+func (p *Proxy) resolveProvider(agentName, providerName, path string) (provider.Provider, string) {
+	if providerName != "" {
+		return p.providerByName(providerName, agentName, path)
+	}
+
+	if agentName != "" {
+		if route, ok := p.config.AgentRoutes[agentName]; ok {
+			if prov, ok := p.providers[route.ProviderType]; ok {
+				upstream := route.UpstreamURL
+				if upstream == "" {
+					upstream = p.config.UpstreamURL
+				}
+				return prov, p.resolveOpenAIAuthUpstream(agentName, route.ProviderType, path, upstream)
+			}
+		}
+	}
+
+	return p.defaultProv, p.config.UpstreamURL
+}
+
+func (p *Proxy) providerByName(providerName, agentName, path string) (provider.Provider, string) {
+	if prov, ok := p.providers[providerName]; ok {
+		switch providerName {
+		case providerOpenAI:
+			upstream := p.providerUpstream(providerName, "https://api.openai.com/v1")
+			return prov, p.resolveOpenAIAuthUpstream(agentName, providerName, path, upstream)
+		case "anthropic":
+			return prov, p.providerUpstream(providerName, "https://api.anthropic.com")
+		case "ollama":
+			return prov, p.providerUpstream(providerName, p.config.UpstreamURL)
+		}
+
+		return prov, p.config.UpstreamURL
+	}
+
+	return p.defaultProv, p.config.UpstreamURL
+}
+
+func (p *Proxy) resolveOpenAIAuthUpstream(agentName, providerName, path, upstream string) string {
+	if providerName == providerOpenAI && agentName == "codex" && isOpenAIAuthPath(path) {
+		return "https://auth.openai.com"
+	}
+	return upstream
+}
+
+func (p *Proxy) providerUpstream(providerName, fallback string) string {
+	if p.config.ProviderUpstreams == nil {
+		return fallback
+	}
+	if upstream := strings.TrimSpace(p.config.ProviderUpstreams[providerName]); upstream != "" {
+		return upstream
+	}
+	return fallback
+}
+
+func resolveProviderOverride(path string) (string, string) {
+	if !strings.HasPrefix(path, "/providers/") {
+		return "", path
+	}
+
+	remainder := strings.TrimPrefix(path, "/providers/")
+	if remainder == "" {
+		return "", path
+	}
+
+	parts := strings.SplitN(remainder, "/", 2)
+	providerName := strings.TrimSpace(parts[0])
+	if providerName == "" {
+		return "", path
+	}
+
+	if len(parts) == 1 {
+		return providerName, "/"
+	}
+
+	return providerName, "/" + parts[1]
+}
+
+func isOpenAIAuthPath(path string) bool {
+	lower := strings.ToLower(path)
+	if strings.HasPrefix(lower, "/oauth") || strings.HasPrefix(lower, "/v1/oauth") {
+		return true
+	}
+	if strings.HasPrefix(lower, "/auth") || strings.HasPrefix(lower, "/v1/auth") {
+		return true
+	}
+	if strings.HasPrefix(lower, "/api/oauth") || strings.HasPrefix(lower, "/api/auth") {
+		return true
+	}
+	if strings.HasPrefix(lower, "/oauth2") || strings.HasPrefix(lower, "/v1/oauth2") {
+		return true
+	}
+	return false
 }

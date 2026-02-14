@@ -37,12 +37,14 @@ var (
 		{Name: "content", Type: field.TypeJSON, Nullable: true},
 		{Name: "model", Type: field.TypeString, Nullable: true},
 		{Name: "provider", Type: field.TypeString, Nullable: true},
+		{Name: "agent_name", Type: field.TypeString, Nullable: true},
 		{Name: "stop_reason", Type: field.TypeString, Nullable: true},
 		{Name: "prompt_tokens", Type: field.TypeInt, Nullable: true},
 		{Name: "completion_tokens", Type: field.TypeInt, Nullable: true},
 		{Name: "total_tokens", Type: field.TypeInt, Nullable: true},
 		{Name: "total_duration_ns", Type: field.TypeInt64, Nullable: true},
 		{Name: "prompt_duration_ns", Type: field.TypeInt64, Nullable: true},
+		{Name: "project", Type: field.TypeString, Nullable: true},
 		{Name: "created_at", Type: field.TypeTime, Default: "CURRENT_TIMESTAMP"},
 		{Name: "parent_hash", Type: field.TypeString, Nullable: true},
 	}
@@ -54,7 +56,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "nodes_nodes_parent",
-				Columns:    []*schema.Column{NodesColumns[14]},
+				Columns:    []*schema.Column{NodesColumns[16]},
 				RefColumns: []*schema.Column{NodesColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
@@ -63,7 +65,7 @@ var (
 			{
 				Name:    "node_parent_hash",
 				Unique:  false,
-				Columns: []*schema.Column{NodesColumns[14]},
+				Columns: []*schema.Column{NodesColumns[16]},
 			},
 			{
 				Name:    "node_role",
@@ -81,9 +83,19 @@ var (
 				Columns: []*schema.Column{NodesColumns[6]},
 			},
 			{
+				Name:    "node_agent_name",
+				Unique:  false,
+				Columns: []*schema.Column{NodesColumns[7]},
+			},
+			{
 				Name:    "node_role_model",
 				Unique:  false,
 				Columns: []*schema.Column{NodesColumns[3], NodesColumns[5]},
+			},
+			{
+				Name:    "node_project",
+				Unique:  false,
+				Columns: []*schema.Column{NodesColumns[14]},
 			},
 		},
 	}

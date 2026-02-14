@@ -18,6 +18,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/dotdir"
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
+	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
@@ -33,6 +34,7 @@ type ServeCommander struct {
 	upstream    string
 	debug       bool
 	sqlitePath  string
+	project     string
 
 	providerType string
 
@@ -127,6 +129,12 @@ func NewServeCmd() *cobra.Command {
 			if !cmd.Flags().Changed("embedding-dimensions") {
 				cmder.embeddingDimensions = cfg.Embedding.Dimensions
 			}
+			if !cmd.Flags().Changed("project") {
+				cmder.project = cfg.Proxy.Project
+			}
+			if cmder.project == "" {
+				cmder.project = git.RepoName()
+			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -151,6 +159,7 @@ func NewServeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cmder.embeddingTarget, "embedding-target", defaults.Embedding.Target, "Embedding provider URL")
 	cmd.Flags().StringVar(&cmder.embeddingModel, "embedding-model", defaults.Embedding.Model, "Embedding model name (e.g., nomic-embed-text)")
 	cmd.Flags().UintVar(&cmder.embeddingDimensions, "embedding-dimensions", defaults.Embedding.Dimensions, "Embedding dimensionality.")
+	cmd.Flags().StringVar(&cmder.project, "project", "", "Project name to tag sessions (default: auto-detect from git)")
 
 	cmd.AddCommand(apicmder.NewAPICmd())
 	cmd.AddCommand(proxycmder.NewProxyCmd())
@@ -179,6 +188,7 @@ func (c *ServeCommander) run() error {
 		ListenAddr:   c.proxyListen,
 		UpstreamURL:  c.upstream,
 		ProviderType: c.providerType,
+		Project:      c.project,
 	}
 
 	proxyConfig.VectorDriver, err = vectorutils.NewVectorDriver(&vectorutils.NewVectorDriverOpts{

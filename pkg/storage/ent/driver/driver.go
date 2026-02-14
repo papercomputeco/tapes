@@ -47,6 +47,14 @@ func (ed *EntDriver) Put(ctx context.Context, n *merkle.Node) (bool, error) {
 		SetProvider(n.Bucket.Provider).
 		SetStopReason(n.StopReason)
 
+	if n.Project != "" {
+		create.SetProject(n.Project)
+	}
+
+	if n.Bucket.AgentName != "" {
+		create.SetAgentName(n.Bucket.AgentName)
+	}
+
 	// Marshal bucket to JSON for storage
 	bucketJSON, err := json.Marshal(n.Bucket)
 	if err != nil {
@@ -234,6 +242,10 @@ func (ed *EntDriver) entNodeToMerkleNode(entNode *ent.Node) (*merkle.Node, error
 		ParentHash: entNode.ParentHash,
 		Bucket:     bucket,
 		StopReason: entNode.StopReason,
+	}
+
+	if entNode.Project != nil {
+		node.Project = *entNode.Project
 	}
 
 	// Rebuild usage metrics if they exist.

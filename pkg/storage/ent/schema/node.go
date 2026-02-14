@@ -58,6 +58,10 @@ func (Node) Fields() []ent.Field {
 		field.String("provider").
 			Optional(),
 
+		// agent_name identifies the agent harness (e.g., "claude", "opencode", "codex")
+		field.String("agent_name").
+			Optional(),
+
 		// stop_reason indicates why generation stopped (only for responses)
 		field.String("stop_reason").
 			Optional(),
@@ -87,6 +91,11 @@ func (Node) Fields() []ent.Field {
 			Optional().
 			Nillable(),
 
+		// project is the git repository or project name that produced this node
+		field.String("project").
+			Optional().
+			Nillable(),
+
 		// created_at is the timestamp when the node was created
 		field.Time("created_at").
 			Default(time.Now).
@@ -110,8 +119,14 @@ func (Node) Indexes() []ent.Index {
 		// Index on provider for filtering by provider
 		index.Fields("provider"),
 
+		// Index on agent_name for filtering by agent
+		index.Fields("agent_name"),
+
 		// Composite index for common query patterns
 		index.Fields("role", "model"),
+
+		// Index on project for filtering by project
+		index.Fields("project"),
 	}
 }
 

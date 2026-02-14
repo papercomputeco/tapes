@@ -45,6 +45,7 @@ const dayPrevButton = document.getElementById("day-prev");
 const dayNextButton = document.getElementById("day-next");
 const dayDetailCloseButton = document.getElementById("day-detail-close");
 const heatmapHintEl = document.getElementById("heatmap-hint");
+const projectSelect = document.getElementById("project-select");
 
 const modelColors = {
   claude: {
@@ -70,6 +71,7 @@ const filters = {
   sort: "cost",
   sortDir: "desc",
   status: "",
+  project: "",
   period: "30d",
   periodEnabled: false,
 };
@@ -145,6 +147,7 @@ const buildParams = () => {
   if (filters.sort) params.set("sort", filters.sort);
   if (filters.sortDir) params.set("sort_dir", filters.sortDir);
   if (filters.status) params.set("status", filters.status);
+  if (filters.project) params.set("project", filters.project);
   if (filters.periodEnabled && filters.period) params.set("since", filters.period);
   return params.toString();
 };
@@ -385,6 +388,10 @@ const buildSessionRow = (session, index, onClick) => {
   label.className = "session-label";
   label.textContent = session.label;
 
+  const project = document.createElement("div");
+  project.className = "session-project";
+  project.textContent = session.project || "";
+
   const model = document.createElement("div");
   model.className = "session-model";
   model.textContent = session.model || "unknown";
@@ -432,6 +439,7 @@ const buildSessionRow = (session, index, onClick) => {
 
   row.appendChild(number);
   row.appendChild(label);
+  row.appendChild(project);
   row.appendChild(model);
   row.appendChild(duration);
   row.appendChild(tokens);
@@ -460,7 +468,7 @@ const renderSessions = (data) => {
   const header = document.createElement("div");
   header.className = "sessions-row sessions-row--header";
   header.innerHTML =
-    "<div>#</div><div>label</div><div>model</div><div>dur</div><div>tokens</div><div>cost</div><div>tools</div><div>msgs</div><div>status</div>";
+    "<div>#</div><div>label</div><div>project</div><div>model</div><div>dur</div><div>tokens</div><div>cost</div><div>tools</div><div>msgs</div><div>status</div>";
   sessionsEl.appendChild(header);
 
   const visible = data.sessions.slice(0, visibleSessionCount);
@@ -737,6 +745,13 @@ const renderSessionDetail = (detail) => {
   headerSub.textContent = detail.summary.id;
   headerText.appendChild(headerTitle);
   headerText.appendChild(headerSub);
+
+  if (detail.summary.project) {
+    const headerProject = document.createElement("div");
+    headerProject.className = "detail__project";
+    headerProject.textContent = detail.summary.project;
+    headerText.appendChild(headerProject);
+  }
 
   const status = document.createElement("div");
   status.className = `detail__status session-status--${statusClass(detail.summary.status)}`;
@@ -1407,6 +1422,7 @@ const loadOverview = async () => {
   overviewState = data;
   const filterBits = [];
   if (filters.status) filterBits.push(`status ${filters.status}`);
+  if (filters.project) filterBits.push(`project ${filters.project}`);
   if (filters.periodEnabled) {
     const label = filters.period === "90d" ? "3M" : filters.period === "180d" ? "6M" : "30d";
     filterBits.push(`period ${label}`);
@@ -1414,6 +1430,17 @@ const loadOverview = async () => {
   const filterText = filterBits.length ? ` \u00B7 ${filterBits.join(" \u00B7 ")}` : "";
   sessionCountEl.textContent = `${data.sessions.length} sessions \u00B7 ${formatDuration(data.total_duration_ns)} total time${filterText}`;
   statusLabelEl.textContent = filters.status || "all";
+
+  // Populate project dropdown from session data
+  const projects = [...new Set(data.sessions.map((s) => s.project).filter(Boolean))].sort();
+  projectSelect.innerHTML = '<option value="">all</option>';
+  projects.forEach((p) => {
+    const opt = document.createElement("option");
+    opt.value = p;
+    opt.textContent = p;
+    projectSelect.appendChild(opt);
+  });
+  projectSelect.value = filters.project;
 
   renderPeriodControls();
   renderMetrics(data);
@@ -1612,6 +1639,7 @@ const parseUrlFilters = () => {
   if (params.get("sort")) filters.sort = params.get("sort");
   if (params.get("sort_dir")) filters.sortDir = params.get("sort_dir");
   if (params.get("status")) filters.status = params.get("status");
+  if (params.get("project")) filters.project = params.get("project");
   if (params.get("since")) {
     filters.period = params.get("since");
     filters.periodEnabled = true;
@@ -1633,6 +1661,10 @@ sortDirSelect.addEventListener("change", () => {
 });
 statusSelect.addEventListener("change", () => {
   filters.status = statusSelect.value;
+  loadOverview();
+});
+projectSelect.addEventListener("change", () => {
+  filters.project = projectSelect.value;
   loadOverview();
 });
 

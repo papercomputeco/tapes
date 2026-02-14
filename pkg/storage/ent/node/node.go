@@ -28,6 +28,8 @@ const (
 	FieldModel = "model"
 	// FieldProvider holds the string denoting the provider field in the database.
 	FieldProvider = "provider"
+	// FieldAgentName holds the string denoting the agent_name field in the database.
+	FieldAgentName = "agent_name"
 	// FieldStopReason holds the string denoting the stop_reason field in the database.
 	FieldStopReason = "stop_reason"
 	// FieldPromptTokens holds the string denoting the prompt_tokens field in the database.
@@ -40,6 +42,8 @@ const (
 	FieldTotalDurationNs = "total_duration_ns"
 	// FieldPromptDurationNs holds the string denoting the prompt_duration_ns field in the database.
 	FieldPromptDurationNs = "prompt_duration_ns"
+	// FieldProject holds the string denoting the project field in the database.
+	FieldProject = "project"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// EdgeParent holds the string denoting the parent edge name in mutations.
@@ -68,12 +72,14 @@ var Columns = []string{
 	FieldContent,
 	FieldModel,
 	FieldProvider,
+	FieldAgentName,
 	FieldStopReason,
 	FieldPromptTokens,
 	FieldCompletionTokens,
 	FieldTotalTokens,
 	FieldTotalDurationNs,
 	FieldPromptDurationNs,
+	FieldProject,
 	FieldCreatedAt,
 }
 
@@ -127,6 +133,11 @@ func ByProvider(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldProvider, opts...).ToFunc()
 }
 
+// ByAgentName orders the results by the agent_name field.
+func ByAgentName(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAgentName, opts...).ToFunc()
+}
+
 // ByStopReason orders the results by the stop_reason field.
 func ByStopReason(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldStopReason, opts...).ToFunc()
@@ -155,6 +166,11 @@ func ByTotalDurationNs(opts ...sql.OrderTermOption) OrderOption {
 // ByPromptDurationNs orders the results by the prompt_duration_ns field.
 func ByPromptDurationNs(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldPromptDurationNs, opts...).ToFunc()
+}
+
+// ByProject orders the results by the project field.
+func ByProject(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldProject, opts...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.

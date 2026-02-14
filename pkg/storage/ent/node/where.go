@@ -90,6 +90,11 @@ func Provider(v string) predicate.Node {
 	return predicate.Node(sql.FieldEQ(FieldProvider, v))
 }
 
+// AgentName applies equality check predicate on the "agent_name" field. It's identical to AgentNameEQ.
+func AgentName(v string) predicate.Node {
+	return predicate.Node(sql.FieldEQ(FieldAgentName, v))
+}
+
 // StopReason applies equality check predicate on the "stop_reason" field. It's identical to StopReasonEQ.
 func StopReason(v string) predicate.Node {
 	return predicate.Node(sql.FieldEQ(FieldStopReason, v))
@@ -118,6 +123,11 @@ func TotalDurationNs(v int64) predicate.Node {
 // PromptDurationNs applies equality check predicate on the "prompt_duration_ns" field. It's identical to PromptDurationNsEQ.
 func PromptDurationNs(v int64) predicate.Node {
 	return predicate.Node(sql.FieldEQ(FieldPromptDurationNs, v))
+}
+
+// Project applies equality check predicate on the "project" field. It's identical to ProjectEQ.
+func Project(v string) predicate.Node {
+	return predicate.Node(sql.FieldEQ(FieldProject, v))
 }
 
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
@@ -520,6 +530,81 @@ func ProviderContainsFold(v string) predicate.Node {
 	return predicate.Node(sql.FieldContainsFold(FieldProvider, v))
 }
 
+// AgentNameEQ applies the EQ predicate on the "agent_name" field.
+func AgentNameEQ(v string) predicate.Node {
+	return predicate.Node(sql.FieldEQ(FieldAgentName, v))
+}
+
+// AgentNameNEQ applies the NEQ predicate on the "agent_name" field.
+func AgentNameNEQ(v string) predicate.Node {
+	return predicate.Node(sql.FieldNEQ(FieldAgentName, v))
+}
+
+// AgentNameIn applies the In predicate on the "agent_name" field.
+func AgentNameIn(vs ...string) predicate.Node {
+	return predicate.Node(sql.FieldIn(FieldAgentName, vs...))
+}
+
+// AgentNameNotIn applies the NotIn predicate on the "agent_name" field.
+func AgentNameNotIn(vs ...string) predicate.Node {
+	return predicate.Node(sql.FieldNotIn(FieldAgentName, vs...))
+}
+
+// AgentNameGT applies the GT predicate on the "agent_name" field.
+func AgentNameGT(v string) predicate.Node {
+	return predicate.Node(sql.FieldGT(FieldAgentName, v))
+}
+
+// AgentNameGTE applies the GTE predicate on the "agent_name" field.
+func AgentNameGTE(v string) predicate.Node {
+	return predicate.Node(sql.FieldGTE(FieldAgentName, v))
+}
+
+// AgentNameLT applies the LT predicate on the "agent_name" field.
+func AgentNameLT(v string) predicate.Node {
+	return predicate.Node(sql.FieldLT(FieldAgentName, v))
+}
+
+// AgentNameLTE applies the LTE predicate on the "agent_name" field.
+func AgentNameLTE(v string) predicate.Node {
+	return predicate.Node(sql.FieldLTE(FieldAgentName, v))
+}
+
+// AgentNameContains applies the Contains predicate on the "agent_name" field.
+func AgentNameContains(v string) predicate.Node {
+	return predicate.Node(sql.FieldContains(FieldAgentName, v))
+}
+
+// AgentNameHasPrefix applies the HasPrefix predicate on the "agent_name" field.
+func AgentNameHasPrefix(v string) predicate.Node {
+	return predicate.Node(sql.FieldHasPrefix(FieldAgentName, v))
+}
+
+// AgentNameHasSuffix applies the HasSuffix predicate on the "agent_name" field.
+func AgentNameHasSuffix(v string) predicate.Node {
+	return predicate.Node(sql.FieldHasSuffix(FieldAgentName, v))
+}
+
+// AgentNameIsNil applies the IsNil predicate on the "agent_name" field.
+func AgentNameIsNil() predicate.Node {
+	return predicate.Node(sql.FieldIsNull(FieldAgentName))
+}
+
+// AgentNameNotNil applies the NotNil predicate on the "agent_name" field.
+func AgentNameNotNil() predicate.Node {
+	return predicate.Node(sql.FieldNotNull(FieldAgentName))
+}
+
+// AgentNameEqualFold applies the EqualFold predicate on the "agent_name" field.
+func AgentNameEqualFold(v string) predicate.Node {
+	return predicate.Node(sql.FieldEqualFold(FieldAgentName, v))
+}
+
+// AgentNameContainsFold applies the ContainsFold predicate on the "agent_name" field.
+func AgentNameContainsFold(v string) predicate.Node {
+	return predicate.Node(sql.FieldContainsFold(FieldAgentName, v))
+}
+
 // StopReasonEQ applies the EQ predicate on the "stop_reason" field.
 func StopReasonEQ(v string) predicate.Node {
 	return predicate.Node(sql.FieldEQ(FieldStopReason, v))
@@ -843,6 +928,81 @@ func PromptDurationNsIsNil() predicate.Node {
 // PromptDurationNsNotNil applies the NotNil predicate on the "prompt_duration_ns" field.
 func PromptDurationNsNotNil() predicate.Node {
 	return predicate.Node(sql.FieldNotNull(FieldPromptDurationNs))
+}
+
+// ProjectEQ applies the EQ predicate on the "project" field.
+func ProjectEQ(v string) predicate.Node {
+	return predicate.Node(sql.FieldEQ(FieldProject, v))
+}
+
+// ProjectNEQ applies the NEQ predicate on the "project" field.
+func ProjectNEQ(v string) predicate.Node {
+	return predicate.Node(sql.FieldNEQ(FieldProject, v))
+}
+
+// ProjectIn applies the In predicate on the "project" field.
+func ProjectIn(vs ...string) predicate.Node {
+	return predicate.Node(sql.FieldIn(FieldProject, vs...))
+}
+
+// ProjectNotIn applies the NotIn predicate on the "project" field.
+func ProjectNotIn(vs ...string) predicate.Node {
+	return predicate.Node(sql.FieldNotIn(FieldProject, vs...))
+}
+
+// ProjectGT applies the GT predicate on the "project" field.
+func ProjectGT(v string) predicate.Node {
+	return predicate.Node(sql.FieldGT(FieldProject, v))
+}
+
+// ProjectGTE applies the GTE predicate on the "project" field.
+func ProjectGTE(v string) predicate.Node {
+	return predicate.Node(sql.FieldGTE(FieldProject, v))
+}
+
+// ProjectLT applies the LT predicate on the "project" field.
+func ProjectLT(v string) predicate.Node {
+	return predicate.Node(sql.FieldLT(FieldProject, v))
+}
+
+// ProjectLTE applies the LTE predicate on the "project" field.
+func ProjectLTE(v string) predicate.Node {
+	return predicate.Node(sql.FieldLTE(FieldProject, v))
+}
+
+// ProjectContains applies the Contains predicate on the "project" field.
+func ProjectContains(v string) predicate.Node {
+	return predicate.Node(sql.FieldContains(FieldProject, v))
+}
+
+// ProjectHasPrefix applies the HasPrefix predicate on the "project" field.
+func ProjectHasPrefix(v string) predicate.Node {
+	return predicate.Node(sql.FieldHasPrefix(FieldProject, v))
+}
+
+// ProjectHasSuffix applies the HasSuffix predicate on the "project" field.
+func ProjectHasSuffix(v string) predicate.Node {
+	return predicate.Node(sql.FieldHasSuffix(FieldProject, v))
+}
+
+// ProjectIsNil applies the IsNil predicate on the "project" field.
+func ProjectIsNil() predicate.Node {
+	return predicate.Node(sql.FieldIsNull(FieldProject))
+}
+
+// ProjectNotNil applies the NotNil predicate on the "project" field.
+func ProjectNotNil() predicate.Node {
+	return predicate.Node(sql.FieldNotNull(FieldProject))
+}
+
+// ProjectEqualFold applies the EqualFold predicate on the "project" field.
+func ProjectEqualFold(v string) predicate.Node {
+	return predicate.Node(sql.FieldEqualFold(FieldProject, v))
+}
+
+// ProjectContainsFold applies the ContainsFold predicate on the "project" field.
+func ProjectContainsFold(v string) predicate.Node {
+	return predicate.Node(sql.FieldContainsFold(FieldProject, v))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.

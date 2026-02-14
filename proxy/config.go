@@ -17,6 +17,12 @@ type Config struct {
 	// This determines how requests and responses are parsed.
 	ProviderType string
 
+	// AgentRoutes maps agent names to provider routing configuration.
+	AgentRoutes map[string]AgentRoute
+
+	// ProviderUpstreams optionally overrides upstream URLs per provider.
+	ProviderUpstreams map[string]string
+
 	// VectorDriver is an optional vector store for storing embeddings.
 	// If nil, vector storage is disabled.
 	VectorDriver vector.Driver
@@ -24,4 +30,13 @@ type Config struct {
 	// Embedder is an optional embedder for generating embeddings.
 	// Required if VectorDriver is set.
 	Embedder embeddings.Embedder
+
+	// Project is the git repository or project name to tag on stored nodes.
+	Project string
+}
+
+// AgentRoute defines proxy routing for a specific agent.
+type AgentRoute struct {
+	ProviderType string
+	UpstreamURL  string
 }

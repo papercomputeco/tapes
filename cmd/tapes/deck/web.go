@@ -140,6 +140,9 @@ func applyWebFilters(base deck.Filters, r *http.Request) (deck.Filters, error) {
 	if value := strings.TrimSpace(query.Get("model")); value != "" {
 		filters.Model = value
 	}
+	if value := strings.TrimSpace(query.Get("project")); value != "" {
+		filters.Project = value
+	}
 	if value := strings.TrimSpace(query.Get("since")); value != "" {
 		duration, err := parseSince(value)
 		if err != nil {

@@ -47,6 +47,7 @@ type deckCommander struct {
 	sortDir     string
 	model       string
 	status      string
+	project     string
 	session     string
 	refresh     uint
 	web         bool
@@ -77,6 +78,7 @@ func NewDeckCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cmder.sortDir, "sort-dir", sortDirDesc, "Sort direction asc|desc")
 	cmd.Flags().StringVar(&cmder.model, "model", "", "Filter by model")
 	cmd.Flags().StringVar(&cmder.status, "status", "", "Filter by status (completed|failed|abandoned)")
+	cmd.Flags().StringVar(&cmder.project, "project", "", "Filter by project name")
 	cmd.Flags().StringVar(&cmder.session, "session", "", "Drill into a specific session ID")
 	cmd.Flags().UintVar(&cmder.refresh, "refresh", 10, "Auto-refresh interval in seconds (0 to disable)")
 	cmd.Flags().BoolVar(&cmder.web, "web", false, "Serve the web dashboard locally")
@@ -159,6 +161,7 @@ func (c *deckCommander) parseFilters() (deck.Filters, error) {
 		SortDir: strings.ToLower(strings.TrimSpace(c.sortDir)),
 		Model:   strings.TrimSpace(c.model),
 		Status:  strings.TrimSpace(c.status),
+		Project: strings.TrimSpace(c.project),
 		Session: strings.TrimSpace(c.session),
 	}
 

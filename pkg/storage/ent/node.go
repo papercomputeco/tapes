@@ -32,6 +32,8 @@ type Node struct {
 	Model string `json:"model,omitempty"`
 	// Provider holds the value of the "provider" field.
 	Provider string `json:"provider,omitempty"`
+	// AgentName holds the value of the "agent_name" field.
+	AgentName string `json:"agent_name,omitempty"`
 	// StopReason holds the value of the "stop_reason" field.
 	StopReason string `json:"stop_reason,omitempty"`
 	// PromptTokens holds the value of the "prompt_tokens" field.
@@ -44,6 +46,8 @@ type Node struct {
 	TotalDurationNs *int64 `json:"total_duration_ns,omitempty"`
 	// PromptDurationNs holds the value of the "prompt_duration_ns" field.
 	PromptDurationNs *int64 `json:"prompt_duration_ns,omitempty"`
+	// Project holds the value of the "project" field.
+	Project *string `json:"project,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
@@ -92,7 +96,7 @@ func (*Node) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case node.FieldPromptTokens, node.FieldCompletionTokens, node.FieldTotalTokens, node.FieldTotalDurationNs, node.FieldPromptDurationNs:
 			values[i] = new(sql.NullInt64)
-		case node.FieldID, node.FieldParentHash, node.FieldType, node.FieldRole, node.FieldModel, node.FieldProvider, node.FieldStopReason:
+		case node.FieldID, node.FieldParentHash, node.FieldType, node.FieldRole, node.FieldModel, node.FieldProvider, node.FieldAgentName, node.FieldStopReason, node.FieldProject:
 			values[i] = new(sql.NullString)
 		case node.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -164,6 +168,12 @@ func (_m *Node) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.Provider = value.String
 			}
+		case node.FieldAgentName:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field agent_name", values[i])
+			} else if value.Valid {
+				_m.AgentName = value.String
+			}
 		case node.FieldStopReason:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field stop_reason", values[i])
@@ -204,6 +214,13 @@ func (_m *Node) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.PromptDurationNs = new(int64)
 				*_m.PromptDurationNs = value.Int64
+			}
+		case node.FieldProject:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field project", values[i])
+			} else if value.Valid {
+				_m.Project = new(string)
+				*_m.Project = value.String
 			}
 		case node.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -280,6 +297,9 @@ func (_m *Node) String() string {
 	builder.WriteString("provider=")
 	builder.WriteString(_m.Provider)
 	builder.WriteString(", ")
+	builder.WriteString("agent_name=")
+	builder.WriteString(_m.AgentName)
+	builder.WriteString(", ")
 	builder.WriteString("stop_reason=")
 	builder.WriteString(_m.StopReason)
 	builder.WriteString(", ")
@@ -306,6 +326,11 @@ func (_m *Node) String() string {
 	if v := _m.PromptDurationNs; v != nil {
 		builder.WriteString("prompt_duration_ns=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.Project; v != nil {
+		builder.WriteString("project=")
+		builder.WriteString(*v)
 	}
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")

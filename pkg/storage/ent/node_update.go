@@ -158,6 +158,26 @@ func (_u *NodeUpdate) ClearProvider() *NodeUpdate {
 	return _u
 }
 
+// SetAgentName sets the "agent_name" field.
+func (_u *NodeUpdate) SetAgentName(v string) *NodeUpdate {
+	_u.mutation.SetAgentName(v)
+	return _u
+}
+
+// SetNillableAgentName sets the "agent_name" field if the given value is not nil.
+func (_u *NodeUpdate) SetNillableAgentName(v *string) *NodeUpdate {
+	if v != nil {
+		_u.SetAgentName(*v)
+	}
+	return _u
+}
+
+// ClearAgentName clears the value of the "agent_name" field.
+func (_u *NodeUpdate) ClearAgentName() *NodeUpdate {
+	_u.mutation.ClearAgentName()
+	return _u
+}
+
 // SetStopReason sets the "stop_reason" field.
 func (_u *NodeUpdate) SetStopReason(v string) *NodeUpdate {
 	_u.mutation.SetStopReason(v)
@@ -313,6 +333,26 @@ func (_u *NodeUpdate) ClearPromptDurationNs() *NodeUpdate {
 	return _u
 }
 
+// SetProject sets the "project" field.
+func (_u *NodeUpdate) SetProject(v string) *NodeUpdate {
+	_u.mutation.SetProject(v)
+	return _u
+}
+
+// SetNillableProject sets the "project" field if the given value is not nil.
+func (_u *NodeUpdate) SetNillableProject(v *string) *NodeUpdate {
+	if v != nil {
+		_u.SetProject(*v)
+	}
+	return _u
+}
+
+// ClearProject clears the value of the "project" field.
+func (_u *NodeUpdate) ClearProject() *NodeUpdate {
+	_u.mutation.ClearProject()
+	return _u
+}
+
 // SetParentID sets the "parent" edge to the Node entity by ID.
 func (_u *NodeUpdate) SetParentID(id string) *NodeUpdate {
 	_u.mutation.SetParentID(id)
@@ -456,6 +496,12 @@ func (_u *NodeUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if _u.mutation.ProviderCleared() {
 		_spec.ClearField(node.FieldProvider, field.TypeString)
 	}
+	if value, ok := _u.mutation.AgentName(); ok {
+		_spec.SetField(node.FieldAgentName, field.TypeString, value)
+	}
+	if _u.mutation.AgentNameCleared() {
+		_spec.ClearField(node.FieldAgentName, field.TypeString)
+	}
 	if value, ok := _u.mutation.StopReason(); ok {
 		_spec.SetField(node.FieldStopReason, field.TypeString, value)
 	}
@@ -506,6 +552,12 @@ func (_u *NodeUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.PromptDurationNsCleared() {
 		_spec.ClearField(node.FieldPromptDurationNs, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.Project(); ok {
+		_spec.SetField(node.FieldProject, field.TypeString, value)
+	}
+	if _u.mutation.ProjectCleared() {
+		_spec.ClearField(node.FieldProject, field.TypeString)
 	}
 	if _u.mutation.ParentCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -731,6 +783,26 @@ func (_u *NodeUpdateOne) ClearProvider() *NodeUpdateOne {
 	return _u
 }
 
+// SetAgentName sets the "agent_name" field.
+func (_u *NodeUpdateOne) SetAgentName(v string) *NodeUpdateOne {
+	_u.mutation.SetAgentName(v)
+	return _u
+}
+
+// SetNillableAgentName sets the "agent_name" field if the given value is not nil.
+func (_u *NodeUpdateOne) SetNillableAgentName(v *string) *NodeUpdateOne {
+	if v != nil {
+		_u.SetAgentName(*v)
+	}
+	return _u
+}
+
+// ClearAgentName clears the value of the "agent_name" field.
+func (_u *NodeUpdateOne) ClearAgentName() *NodeUpdateOne {
+	_u.mutation.ClearAgentName()
+	return _u
+}
+
 // SetStopReason sets the "stop_reason" field.
 func (_u *NodeUpdateOne) SetStopReason(v string) *NodeUpdateOne {
 	_u.mutation.SetStopReason(v)
@@ -883,6 +955,26 @@ func (_u *NodeUpdateOne) AddPromptDurationNs(v int64) *NodeUpdateOne {
 // ClearPromptDurationNs clears the value of the "prompt_duration_ns" field.
 func (_u *NodeUpdateOne) ClearPromptDurationNs() *NodeUpdateOne {
 	_u.mutation.ClearPromptDurationNs()
+	return _u
+}
+
+// SetProject sets the "project" field.
+func (_u *NodeUpdateOne) SetProject(v string) *NodeUpdateOne {
+	_u.mutation.SetProject(v)
+	return _u
+}
+
+// SetNillableProject sets the "project" field if the given value is not nil.
+func (_u *NodeUpdateOne) SetNillableProject(v *string) *NodeUpdateOne {
+	if v != nil {
+		_u.SetProject(*v)
+	}
+	return _u
+}
+
+// ClearProject clears the value of the "project" field.
+func (_u *NodeUpdateOne) ClearProject() *NodeUpdateOne {
+	_u.mutation.ClearProject()
 	return _u
 }
 
@@ -1059,6 +1151,12 @@ func (_u *NodeUpdateOne) sqlSave(ctx context.Context) (_node *Node, err error) {
 	if _u.mutation.ProviderCleared() {
 		_spec.ClearField(node.FieldProvider, field.TypeString)
 	}
+	if value, ok := _u.mutation.AgentName(); ok {
+		_spec.SetField(node.FieldAgentName, field.TypeString, value)
+	}
+	if _u.mutation.AgentNameCleared() {
+		_spec.ClearField(node.FieldAgentName, field.TypeString)
+	}
 	if value, ok := _u.mutation.StopReason(); ok {
 		_spec.SetField(node.FieldStopReason, field.TypeString, value)
 	}
@@ -1109,6 +1207,12 @@ func (_u *NodeUpdateOne) sqlSave(ctx context.Context) (_node *Node, err error) {
 	}
 	if _u.mutation.PromptDurationNsCleared() {
 		_spec.ClearField(node.FieldPromptDurationNs, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.Project(); ok {
+		_spec.SetField(node.FieldProject, field.TypeString, value)
+	}
+	if _u.mutation.ProjectCleared() {
+		_spec.ClearField(node.FieldProject, field.TypeString)
 	}
 	if _u.mutation.ParentCleared() {
 		edge := &sqlgraph.EdgeSpec{

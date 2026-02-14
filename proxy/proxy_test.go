@@ -14,6 +14,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
+	"github.com/papercomputeco/tapes/proxy/header"
 )
 
 // ollamaTestRequest is a minimal Ollama-format request for test fixtures.
@@ -329,6 +330,21 @@ var _ = Describe("Non-Streaming Proxy", func() {
 			// Other headers should still be forwarded
 			Expect(receivedHeaders.Get("Authorization")).To(Equal("Bearer token123"))
 		})
+
+		It("filters the agent header from upstream", func() {
+			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+				{Role: "user", Content: "hello"},
+			}, boolPtr(false))
+
+			req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody)))
+			req.Header.Set(header.AgentNameHeader, "claude")
+
+			resp, err := p.server.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+
+			Expect(receivedHeaders.Get(header.AgentNameHeader)).To(BeEmpty())
+		})
 	})
 })
 
@@ -635,7 +651,7 @@ var _ = Describe("reconstructStreamedResponse", func() {
 			[]byte(`{"model":"test-model","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":10,"eval_count":5}`),
 		}
 
-		resp := p.reconstructStreamedResponse(chunks, "Hello")
+		resp := p.reconstructStreamedResponse(chunks, "Hello", p.defaultProv)
 		Expect(resp).NotTo(BeNil())
 		Expect(resp.Message.GetText()).To(Equal("Hello"))
 		Expect(resp.Done).To(BeTrue())
@@ -648,7 +664,7 @@ var _ = Describe("reconstructStreamedResponse", func() {
 			[]byte(`{"model":"test-model","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop"}`),
 		}
 
-		resp := p.reconstructStreamedResponse(chunks, "partial content here")
+		resp := p.reconstructStreamedResponse(chunks, "partial content here", p.defaultProv)
 		Expect(resp).NotTo(BeNil())
 		Expect(resp.Message.GetText()).To(Equal("partial content here"))
 	})
@@ -659,7 +675,7 @@ var _ = Describe("reconstructStreamedResponse", func() {
 			[]byte(`also-not-json`),
 		}
 
-		resp := p.reconstructStreamedResponse(chunks, "fallback content")
+		resp := p.reconstructStreamedResponse(chunks, "fallback content", p.defaultProv)
 		Expect(resp).NotTo(BeNil())
 		Expect(resp.Message.GetText()).To(Equal("fallback content"))
 		Expect(resp.Done).To(BeTrue())
@@ -667,7 +683,7 @@ var _ = Describe("reconstructStreamedResponse", func() {
 	})
 
 	It("returns nil when there are no chunks and no content", func() {
-		resp := p.reconstructStreamedResponse(nil, "")
+		resp := p.reconstructStreamedResponse(nil, "", p.defaultProv)
 		Expect(resp).To(BeNil())
 	})
 
@@ -675,7 +691,7 @@ var _ = Describe("reconstructStreamedResponse", func() {
 		chunks := [][]byte{
 			[]byte(`not-json`),
 		}
-		resp := p.reconstructStreamedResponse(chunks, "")
+		resp := p.reconstructStreamedResponse(chunks, "", p.defaultProv)
 		Expect(resp).To(BeNil())
 	})
 })
@@ -705,7 +721,7 @@ var _ = Describe("New", func() {
 		}, driver, logger)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(p).NotTo(BeNil())
-		Expect(p.provider.Name()).To(Equal("ollama"))
+		Expect(p.defaultProv.Name()).To(Equal("ollama"))
 		p.Close()
 	})
 })
@@ -862,6 +878,30 @@ var _ = Describe("Storage Provider Metadata", func() {
 
 		for _, node := range nodes {
 			Expect(node.Bucket.Model).To(Equal("test-model"))
+		}
+	})
+
+	It("stores the agent name in each node's bucket", func() {
+		reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+			{Role: "user", Content: "hi"},
+		}, boolPtr(false))
+
+		req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody)))
+		req.Header.Set(header.AgentNameHeader, "claude")
+		resp, err := p.server.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		resp.Body.Close()
+
+		p.Close()
+		p = nil
+
+		ctx := GinkgoT().Context()
+		nodes, err := driver.List(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(nodes).NotTo(BeEmpty())
+
+		for _, node := range nodes {
+			Expect(node.Bucket.AgentName).To(Equal("claude"))
 		}
 	})
 
