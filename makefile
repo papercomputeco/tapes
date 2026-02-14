@@ -15,6 +15,11 @@ check: ## Runs golangci-lint check. Auto-fixes are not automatically applied.
 	$(call print-target)
 	dagger call check-lint
 
+.PHONY: tidy-check
+tidy-check: ## Checks that go.mod and go.sum are tidy. Fails if "go mod tidy" would produce changes.
+	$(call print-target)
+	dagger call check-go-mod-tidy
+
 .PHONY: format
 format: ## Runs golangci-lint linters and formatters with auto-fixes applied.
 	$(call print-target)
