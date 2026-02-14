@@ -36,7 +36,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "nodes_nodes_parent",
-				Columns:    []*schema.Column{NodesColumns[15]},
+				Columns:    []*schema.Column{NodesColumns[16]},
 				RefColumns: []*schema.Column{NodesColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
@@ -45,7 +45,7 @@ var (
 			{
 				Name:    "node_parent_hash",
 				Unique:  false,
-				Columns: []*schema.Column{NodesColumns[15]},
+				Columns: []*schema.Column{NodesColumns[16]},
 			},
 			{
 				Name:    "node_role",
@@ -75,7 +75,7 @@ var (
 			{
 				Name:    "node_project",
 				Unique:  false,
-				Columns: []*schema.Column{NodesColumns[13]},
+				Columns: []*schema.Column{NodesColumns[14]},
 			},
 		},
 	}
