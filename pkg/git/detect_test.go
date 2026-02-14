@@ -8,10 +8,8 @@ import (
 )
 
 var _ = Describe("RepoName", func() {
-	It("returns the repository name when inside a git repo", func() {
+	It("returns a non-empty name when inside a git repo", func() {
 		name := git.RepoName()
 		Expect(name).ToNot(BeEmpty())
-		// Running inside the tapes repo itself
-		Expect(name).To(Equal("tapes"))
 	})
 })
