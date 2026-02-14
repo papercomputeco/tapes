@@ -10,6 +10,8 @@ import (
 
 // CheckGoModTidy runs "go mod tidy" and fails if it produces any changes to
 // go.mod or go.sum, indicating that the caller forgot to tidy before committing.
+//
+// +check
 func (t *Tapes) CheckGoModTidy(ctx context.Context) (string, error) {
 	out, err := t.goContainer().
 		WithExec([]string{"cp", "go.mod", "go.mod.HEAD"}).
