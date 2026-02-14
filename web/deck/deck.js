@@ -90,6 +90,7 @@ let selectedDayDate = null;
 let dayDetailState = null;
 let sessionEntryView = null;
 let heatmapSelectableDays = [];
+let activeAnalyticsTab = "activity";
 
 const formatCost = (value) => `$${value.toFixed(3)}`;
 const formatTokens = (value) => {
@@ -806,7 +807,7 @@ const renderHeatmap = (data) => {
     return;
   }
   const maxSessions = Math.max(...days.map((d) => d.sessions), 1);
-  heatmapSelectableDays = days.slice(-9);
+  heatmapSelectableDays = days.slice(-9).reverse();
   days.forEach((day) => {
     const cell = document.createElement("div");
     cell.className = "heatmap-cell";
@@ -947,6 +948,8 @@ const renderHeatmapHint = (data) => {
   heatmapHintEl.appendChild(prompt);
 };
 
+const TOOLS_LIMIT = 10;
+
 const renderTopTools = (data) => {
   analyticsToolsEl.innerHTML = "";
   const tools = data.top_tools || [];
@@ -954,40 +957,65 @@ const renderTopTools = (data) => {
     analyticsToolsEl.textContent = "no tool data";
     return;
   }
-  const maxCount = tools[0].count || 1;
-  tools.forEach((tool) => {
-    const row = document.createElement("div");
-    row.className = "tool-row";
-    const header = document.createElement("div");
-    header.className = "tool-row__header";
-    const name = document.createElement("span");
-    name.className = "tool-row__name";
-    name.textContent = tool.name;
-    const meta = document.createElement("span");
-    meta.className = "tool-row__meta";
-    meta.textContent = `${tool.count}x`;
-    if (tool.error_count > 0) {
-      meta.textContent += ` (${tool.error_count} err)`;
-      meta.classList.add("tool-row__meta--error");
+  const sorted = [...tools].sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
+  const maxSessions = sorted.length > 0 ? (sorted[0].sessions || 1) : 1;
+  const needsExpand = sorted.length > TOOLS_LIMIT;
+  let expanded = false;
+
+  const container = document.createElement("div");
+  const renderRows = () => {
+    container.innerHTML = "";
+    const visible = expanded ? sorted : sorted.slice(0, TOOLS_LIMIT);
+    visible.forEach((tool) => {
+      const sessions = tool.sessions || 0;
+      const avg = sessions > 0 ? Math.round(tool.count / sessions) : 0;
+      const row = document.createElement("div");
+      row.className = "tool-row";
+      const header = document.createElement("div");
+      header.className = "tool-row__header";
+      const name = document.createElement("span");
+      name.className = "tool-row__name";
+      name.textContent = tool.name;
+      const meta = document.createElement("span");
+      meta.className = "tool-row__meta";
+      meta.textContent = `${sessions} sessions · ${avg}/s`;
+      if (tool.error_count > 0) {
+        meta.textContent += ` · ${tool.error_count} err`;
+        meta.classList.add("tool-row__meta--error");
+      }
+      header.appendChild(name);
+      header.appendChild(meta);
+      const bar = document.createElement("div");
+      bar.className = "tool-row__bar";
+      const fill = document.createElement("div");
+      fill.className = "tool-row__fill";
+      fill.style.width = `${Math.max(Math.round((sessions / maxSessions) * 100), 2)}%`;
+      if (tool.error_count > 0) {
+        const errorFill = document.createElement("div");
+        errorFill.className = "tool-row__fill--error";
+        errorFill.style.width = `${Math.round((tool.error_count / tool.count) * 100)}%`;
+        fill.appendChild(errorFill);
+      }
+      bar.appendChild(fill);
+      row.appendChild(header);
+      row.appendChild(bar);
+      container.appendChild(row);
+    });
+    if (needsExpand) {
+      const toggle = document.createElement("div");
+      toggle.className = "histogram__toggle";
+      toggle.textContent = expanded
+        ? "show less"
+        : `+${sorted.length - TOOLS_LIMIT} more`;
+      toggle.addEventListener("click", () => {
+        expanded = !expanded;
+        renderRows();
+      });
+      container.appendChild(toggle);
     }
-    header.appendChild(name);
-    header.appendChild(meta);
-    const bar = document.createElement("div");
-    bar.className = "tool-row__bar";
-    const fill = document.createElement("div");
-    fill.className = "tool-row__fill";
-    fill.style.width = `${Math.round((tool.count / maxCount) * 100)}%`;
-    if (tool.error_count > 0) {
-      const errorFill = document.createElement("div");
-      errorFill.className = "tool-row__fill--error";
-      errorFill.style.width = `${Math.round((tool.error_count / tool.count) * 100)}%`;
-      fill.appendChild(errorFill);
-    }
-    bar.appendChild(fill);
-    row.appendChild(header);
-    row.appendChild(bar);
-    analyticsToolsEl.appendChild(row);
-  });
+  };
+  renderRows();
+  analyticsToolsEl.appendChild(container);
 };
 
 const renderHistogram = (el, buckets) => {
@@ -1219,6 +1247,46 @@ const loadDayDetail = async (dateStr) => {
   });
 };
 
+const goalLabels = {
+  debug_investigate: { label: "Debug / Investigate", desc: "Diagnosing errors, tracing issues, reading logs" },
+  implement_feature: { label: "Implement Feature", desc: "Building new functionality from scratch" },
+  fix_bug: { label: "Fix Bug", desc: "Correcting broken behavior in existing code" },
+  write_script_tool: { label: "Write Script / Tool", desc: "One-off scripts, automation, or CLI tools" },
+  refactor_code: { label: "Refactor Code", desc: "Restructuring code without changing behavior" },
+  configure_system: { label: "Configure System", desc: "Setting up infra, CI/CD, environment configs" },
+  create_pr_commit: { label: "Create PR / Commit", desc: "Preparing code for review and submission" },
+  analyze_data: { label: "Analyze Data", desc: "Querying, exploring, or summarizing data" },
+  understand_codebase: { label: "Understand Codebase", desc: "Reading code to learn how something works" },
+  write_tests: { label: "Write Tests", desc: "Adding unit, integration, or e2e tests" },
+  write_docs: { label: "Write Docs", desc: "Creating or updating documentation" },
+  deploy_infra: { label: "Deploy / Infra", desc: "Deploying code or managing infrastructure" },
+  warmup_minimal: { label: "Warmup / Minimal", desc: "Brief session with little substantive work" },
+};
+
+const outcomeLabels = {
+  fully_achieved: { label: "Fully Achieved", desc: "Goal completed successfully" },
+  mostly_achieved: { label: "Mostly Achieved", desc: "Goal met with minor gaps remaining" },
+  partially_achieved: { label: "Partially Achieved", desc: "Some progress but significant work remains" },
+  not_achieved: { label: "Not Achieved", desc: "Goal was not accomplished" },
+};
+
+const sessionTypeLabels = {
+  single_task: { label: "Single Task", desc: "Focused on one specific objective" },
+  multi_task: { label: "Multi-Task", desc: "Tackled several distinct objectives" },
+  iterative_refinement: { label: "Iterative Refinement", desc: "Repeated cycles of adjustment and improvement" },
+  exploration: { label: "Exploration", desc: "Open-ended investigation or learning" },
+};
+
+const frictionLabels = {
+  wrong_approach: { label: "Wrong Approach", desc: "Went down an incorrect path before correcting" },
+  buggy_code: { label: "Buggy Code", desc: "Generated code that had bugs needing fixes" },
+  misunderstood_request: { label: "Misunderstood Request", desc: "Misinterpreted what the user was asking" },
+  tool_failure: { label: "Tool Failure", desc: "A tool call failed or returned unexpected results" },
+  unclear_requirements: { label: "Unclear Requirements", desc: "Ambiguous or incomplete requirements" },
+  scope_creep: { label: "Scope Creep", desc: "Task expanded beyond the original ask" },
+  environment_issue: { label: "Environment Issue", desc: "Problems with setup, deps, or config" },
+};
+
 const renderFacetInsights = (data) => {
   if (!data) {
     analyticsInsightsEl.hidden = true;
@@ -1227,7 +1295,7 @@ const renderFacetInsights = (data) => {
   analyticsInsightsEl.hidden = false;
 
   // Goal distribution
-  renderDistributionBars(insightsGoalsEl, data.goal_distribution, "var(--blue)");
+  renderDistributionBars(insightsGoalsEl, data.goal_distribution, "var(--blue)", goalLabels);
 
   // Outcome distribution
   const outcomeColors = {
@@ -1236,19 +1304,21 @@ const renderFacetInsights = (data) => {
     partially_achieved: "var(--orange)",
     not_achieved: "var(--primary)",
   };
-  renderDistributionBarsColored(insightsOutcomesEl, data.outcome_distribution, outcomeColors);
+  renderDistributionBarsColored(insightsOutcomesEl, data.outcome_distribution, outcomeColors, outcomeLabels);
 
   // Friction points
-  renderFrictionList(insightsFrictionEl, data.top_friction);
+  renderFrictionList(insightsFrictionEl, data.top_friction, frictionLabels);
 
   // Session types
-  renderDistributionBars(insightsTypesEl, data.session_types, "var(--pink)");
+  renderDistributionBars(insightsTypesEl, data.session_types, "var(--pink)", sessionTypeLabels);
 
-  // Recent summaries
+  // Summaries go on separate tab
   renderSummariesList(insightsSummariesEl, data.recent_summaries);
 };
 
-const renderDistributionBars = (el, distribution, color) => {
+const COLLAPSED_LIMIT = 5;
+
+const renderDistributionBars = (el, distribution, color, labelMap) => {
   el.innerHTML = "";
   if (!distribution) {
     el.textContent = "no data";
@@ -1256,30 +1326,61 @@ const renderDistributionBars = (el, distribution, color) => {
   }
   const entries = Object.entries(distribution).sort((a, b) => b[1] - a[1]);
   const maxCount = entries.length > 0 ? entries[0][1] : 1;
-  entries.forEach(([label, count]) => {
-    const row = document.createElement("div");
-    row.className = "histogram__row";
-    const labelEl = document.createElement("div");
-    labelEl.className = "histogram__label";
-    labelEl.textContent = label.replace(/_/g, " ");
-    const barWrap = document.createElement("div");
-    barWrap.className = "histogram__bar-wrap";
-    const bar = document.createElement("div");
-    bar.className = "histogram__bar";
-    bar.style.width = `${Math.max(Math.round((count / maxCount) * 100), 2)}%`;
-    bar.style.background = color;
-    barWrap.appendChild(bar);
-    const countEl = document.createElement("div");
-    countEl.className = "histogram__count";
-    countEl.textContent = count;
-    row.appendChild(labelEl);
-    row.appendChild(barWrap);
-    row.appendChild(countEl);
-    el.appendChild(row);
-  });
+  const needsExpand = entries.length > COLLAPSED_LIMIT;
+  let expanded = false;
+
+  const container = document.createElement("div");
+  const renderRows = () => {
+    container.innerHTML = "";
+    const visible = expanded ? entries : entries.slice(0, COLLAPSED_LIMIT);
+    visible.forEach(([key, count]) => {
+      const info = labelMap?.[key];
+      const row = document.createElement("div");
+      row.className = "histogram__row";
+      const labelEl = document.createElement("div");
+      labelEl.className = "histogram__label";
+      labelEl.textContent = info?.label || key.replace(/_/g, " ");
+      if (info?.desc) labelEl.title = info.desc;
+      const barWrap = document.createElement("div");
+      barWrap.className = "histogram__bar-wrap";
+      const bar = document.createElement("div");
+      bar.className = "histogram__bar";
+      bar.style.width = `${Math.max(Math.round((count / maxCount) * 100), 2)}%`;
+      bar.style.background = color;
+      if (info?.desc) bar.title = info.desc;
+      barWrap.appendChild(bar);
+      const countEl = document.createElement("div");
+      countEl.className = "histogram__count";
+      countEl.textContent = count;
+      row.appendChild(labelEl);
+      row.appendChild(barWrap);
+      row.appendChild(countEl);
+      if (info?.desc) {
+        const descEl = document.createElement("div");
+        descEl.className = "histogram__desc";
+        descEl.textContent = info.desc;
+        row.appendChild(descEl);
+      }
+      container.appendChild(row);
+    });
+    if (needsExpand) {
+      const toggle = document.createElement("div");
+      toggle.className = "histogram__toggle";
+      toggle.textContent = expanded
+        ? "show less"
+        : `+${entries.length - COLLAPSED_LIMIT} more`;
+      toggle.addEventListener("click", () => {
+        expanded = !expanded;
+        renderRows();
+      });
+      container.appendChild(toggle);
+    }
+  };
+  renderRows();
+  el.appendChild(container);
 };
 
-const renderDistributionBarsColored = (el, distribution, colors) => {
+const renderDistributionBarsColored = (el, distribution, colors, labelMap) => {
   el.innerHTML = "";
   if (!distribution) {
     el.textContent = "no data";
@@ -1289,39 +1390,50 @@ const renderDistributionBarsColored = (el, distribution, colors) => {
   const total = entries.reduce((sum, [, count]) => sum + count, 0) || 1;
   const bar = document.createElement("div");
   bar.className = "provider__bar";
-  entries.forEach(([label, count]) => {
+  entries.forEach(([key, count]) => {
+    const info = labelMap?.[key];
     const segment = document.createElement("span");
     segment.className = "provider__segment";
     segment.style.width = `${(count / total) * 100}%`;
-    segment.style.background = colors[label] || "var(--muted)";
-    segment.title = `${label.replace(/_/g, " ")} (${count})`;
+    segment.style.background = colors[key] || "var(--muted)";
+    segment.title = `${info?.label || key.replace(/_/g, " ")} (${count})${info?.desc ? " — " + info.desc : ""}`;
     bar.appendChild(segment);
   });
   el.appendChild(bar);
   const legend = document.createElement("div");
   legend.className = "provider__legend";
-  entries.forEach(([label, count]) => {
+  entries.forEach(([key, count]) => {
+    const info = labelMap?.[key];
+    const displayLabel = info?.label || key.replace(/_/g, " ");
     const item = document.createElement("div");
     item.className = "provider__legend-item";
     const dot = document.createElement("span");
     dot.className = "provider__dot";
-    dot.style.background = colors[label] || "var(--muted)";
+    dot.style.background = colors[key] || "var(--muted)";
     const text = document.createElement("span");
-    text.textContent = `${label.replace(/_/g, " ")} ${Math.round((count / total) * 100)}% (${count})`;
+    text.textContent = `${displayLabel} ${Math.round((count / total) * 100)}% (${count})`;
     item.appendChild(dot);
     item.appendChild(text);
+    if (info?.desc) {
+      const desc = document.createElement("span");
+      desc.className = "legend__desc";
+      desc.textContent = info.desc;
+      item.appendChild(desc);
+    }
     legend.appendChild(item);
   });
   el.appendChild(legend);
 };
 
-const renderFrictionList = (el, friction) => {
+const renderFrictionList = (el, friction, labelMap) => {
   el.innerHTML = "";
   if (!friction || friction.length === 0) {
     el.textContent = "no friction data";
     return;
   }
   friction.forEach((item) => {
+    const key = item.type || item.name || "";
+    const info = labelMap?.[key];
     const row = document.createElement("div");
     row.className = "friction-item";
     const badge = document.createElement("span");
@@ -1329,12 +1441,20 @@ const renderFrictionList = (el, friction) => {
     badge.textContent = item.count;
     const label = document.createElement("span");
     label.className = "friction-item__label";
-    label.textContent = (item.type || item.name || "").replace(/_/g, " ");
+    label.textContent = info?.label || key.replace(/_/g, " ");
     row.appendChild(badge);
     row.appendChild(label);
+    if (info?.desc) {
+      const desc = document.createElement("span");
+      desc.className = "friction-item__desc";
+      desc.textContent = info.desc;
+      row.appendChild(desc);
+    }
     el.appendChild(row);
   });
 };
+
+const SUMMARIES_LIMIT = 6;
 
 const renderSummariesList = (el, summaries) => {
   el.innerHTML = "";
@@ -1342,19 +1462,44 @@ const renderSummariesList = (el, summaries) => {
     el.textContent = "no summaries";
     return;
   }
-  summaries.forEach((s) => {
-    const card = document.createElement("div");
-    card.className = "summary-card";
-    const goal = document.createElement("div");
-    goal.className = "summary-card__goal";
-    goal.textContent = s.goal || s.underlying_goal || "";
-    const summary = document.createElement("div");
-    summary.className = "summary-card__text";
-    summary.textContent = s.summary || s.brief_summary || "";
-    card.appendChild(goal);
-    card.appendChild(summary);
-    el.appendChild(card);
-  });
+  const filtered = summaries.filter(
+    (s) => (s.goal || s.underlying_goal || "").trim() || (s.summary || s.brief_summary || "").trim()
+  );
+  const needsExpand = filtered.length > SUMMARIES_LIMIT;
+  let expanded = false;
+
+  const container = document.createElement("div");
+  const renderCards = () => {
+    container.innerHTML = "";
+    const visible = expanded ? filtered : filtered.slice(0, SUMMARIES_LIMIT);
+    visible.forEach((s) => {
+      const card = document.createElement("div");
+      card.className = "summary-card";
+      const goal = document.createElement("div");
+      goal.className = "summary-card__goal";
+      goal.textContent = s.goal || s.underlying_goal || "";
+      const summary = document.createElement("div");
+      summary.className = "summary-card__text";
+      summary.textContent = s.summary || s.brief_summary || "";
+      card.appendChild(goal);
+      card.appendChild(summary);
+      container.appendChild(card);
+    });
+    if (needsExpand) {
+      const toggle = document.createElement("div");
+      toggle.className = "histogram__toggle";
+      toggle.textContent = expanded
+        ? "show less"
+        : `+${filtered.length - SUMMARIES_LIMIT} more`;
+      toggle.addEventListener("click", () => {
+        expanded = !expanded;
+        renderCards();
+      });
+      container.appendChild(toggle);
+    }
+  };
+  renderCards();
+  el.appendChild(container);
 };
 
 const renderAnalyticsPeriodControls = () => {
@@ -1382,6 +1527,9 @@ const renderAnalyticsPeriodControls = () => {
 };
 
 const loadAnalytics = async () => {
+  const isRefresh = analyticsState !== null;
+  const scrollY = window.scrollY;
+
   selectedDayDate = null;
   dayDetailState = null;
   dayDetailEl.hidden = false;
@@ -1391,9 +1539,13 @@ const loadAnalytics = async () => {
   dayDetailPlaceholderEl.hidden = false;
   dayPrevButton.disabled = true;
   dayNextButton.disabled = true;
-  analyticsLoadingEl.hidden = false;
-  analyticsContentEl.hidden = true;
-  analyticsSubtitleEl.textContent = "loading analytics...";
+
+  if (!isRefresh) {
+    analyticsLoadingEl.hidden = true;
+    analyticsContentEl.hidden = false;
+    analyticsSubtitleEl.textContent = "loading analytics...";
+    renderAnalyticsSkeletons();
+  }
 
   const res = await fetch(`/api/analytics?${buildParams()}`);
   const data = await res.json();
@@ -1409,14 +1561,87 @@ const loadAnalytics = async () => {
   renderProviderSplit(data);
   renderAnalyticsPeriodControls();
 
-  // AI insights via facets disabled — see #94
-  analyticsInsightsEl.hidden = true;
+  // Load AI insights via facets
+  loadFacetInsights();
 
   analyticsLoadingEl.hidden = true;
   analyticsContentEl.hidden = false;
+
+  if (isRefresh) {
+    requestAnimationFrame(() => window.scrollTo(0, scrollY));
+  }
+};
+
+let facetPollTimer = null;
+
+const loadFacetInsights = async () => {
+  if (facetPollTimer) {
+    clearInterval(facetPollTimer);
+    facetPollTimer = null;
+  }
+
+  try {
+    const res = await fetch("/api/facets");
+    const data = await res.json();
+    facetsState = data;
+
+    const hasData = data &&
+      (Object.keys(data.goal_distribution || {}).length > 0 ||
+       Object.keys(data.outcome_distribution || {}).length > 0);
+
+    if (hasData) {
+      renderFacetInsights(data);
+    } else {
+      // Check if backfill is in progress
+      const statusRes = await fetch("/api/facets/status");
+      const status = await statusRes.json();
+
+      if (status.total > 0) {
+        insightsGoalsEl.innerHTML = "";
+        insightsOutcomesEl.innerHTML = "";
+        insightsFrictionEl.innerHTML = "";
+        insightsTypesEl.innerHTML = "";
+        insightsSummariesEl.innerHTML = "";
+
+        const progress = document.createElement("div");
+        progress.className = "insights-progress";
+        progress.textContent = `analyzing sessions... ${status.done} of ${status.total}`;
+        insightsGoalsEl.appendChild(progress);
+
+        // Poll for progress
+        facetPollTimer = setInterval(async () => {
+          try {
+            const pollStatus = await fetch("/api/facets/status");
+            const pollData = await pollStatus.json();
+            const progressEl = insightsGoalsEl.querySelector(".insights-progress");
+            if (progressEl) {
+              progressEl.textContent = `analyzing sessions... ${pollData.done} of ${pollData.total}`;
+            }
+            if (pollData.done >= pollData.total) {
+              clearInterval(facetPollTimer);
+              facetPollTimer = null;
+              const sy = window.scrollY;
+              const facetRes = await fetch("/api/facets");
+              const facetData = await facetRes.json();
+              facetsState = facetData;
+              renderFacetInsights(facetData);
+              requestAnimationFrame(() => window.scrollTo(0, sy));
+            }
+          } catch {
+            clearInterval(facetPollTimer);
+            facetPollTimer = null;
+          }
+        }, 3000);
+      }
+    }
+  } catch {
+    // facets not available
+  }
 };
 
 const loadOverview = async () => {
+  const scrollY = window.scrollY;
+  const isRefresh = overviewState !== null;
   const res = await fetch(`/api/overview?${buildParams()}`);
   const data = await res.json();
   overviewState = data;
@@ -1452,6 +1677,9 @@ const loadOverview = async () => {
   } else if (data.sessions.length) {
     sessionIndex = Math.min(sessionIndex, data.sessions.length - 1);
   }
+  if (isRefresh) {
+    requestAnimationFrame(() => window.scrollTo(0, scrollY));
+  }
 };
 
 const loadSession = async (sessionId, keepMessage) => {
@@ -1481,6 +1709,22 @@ const setView = (view) => {
   overviewViewEl.hidden = view !== "overview";
   sessionViewEl.hidden = view !== "session";
   analyticsViewEl.hidden = view !== "analytics";
+};
+
+const setAnalyticsTab = (tab) => {
+  activeAnalyticsTab = tab;
+  const panels = {
+    activity: document.getElementById("tab-activity"),
+    distribution: document.getElementById("tab-distribution"),
+    insights: document.getElementById("tab-insights"),
+    summaries: document.getElementById("tab-summaries"),
+  };
+  Object.entries(panels).forEach(([key, el]) => {
+    if (el) el.hidden = key !== tab;
+  });
+  document.querySelectorAll(".analytics-tab").forEach((btn) => {
+    btn.classList.toggle("analytics-tab--active", btn.dataset.tab === tab);
+  });
 };
 
 const backToOverview = () => {
@@ -1545,7 +1789,7 @@ const handleKey = (event) => {
     case "7":
     case "8":
     case "9":
-      if (currentView === "analytics" && heatmapSelectableDays.length) {
+      if (currentView === "analytics" && activeAnalyticsTab === "activity" && heatmapSelectableDays.length) {
         const idx = Number(event.key) - 1;
         const day = heatmapSelectableDays[idx];
         if (day) {
@@ -1593,9 +1837,11 @@ const handleKey = (event) => {
       if (currentView === "overview") {
         filters.periodEnabled = true;
         setView("analytics");
+        window.history.pushState({}, "", "/analytics");
         loadAnalytics().catch(console.error);
       } else if (currentView === "analytics") {
         setView("overview");
+        window.history.pushState({}, "", "/");
       }
       break;
     case "h":
@@ -1606,6 +1852,7 @@ const handleKey = (event) => {
           closeDayDetail();
         } else {
           setView("overview");
+          window.history.pushState({}, "", "/");
         }
       }
       break;
@@ -1673,6 +1920,146 @@ showMoreButton.addEventListener("click", () => {
   if (overviewState) renderSessions(overviewState);
 });
 
+// ── Skeleton loading placeholders ──
+
+const renderSkeletonMetrics = () => {
+  metricsEl.innerHTML = "";
+  for (let i = 0; i < 4; i++) {
+    const card = document.createElement("div");
+    card.className = "skeleton-metric";
+    const label = document.createElement("div");
+    label.className = "skeleton skeleton-metric__label";
+    const value = document.createElement("div");
+    value.className = "skeleton skeleton-metric__value";
+    card.appendChild(label);
+    card.appendChild(value);
+    metricsEl.appendChild(card);
+  }
+};
+
+const renderSkeletonSessions = () => {
+  sessionsEl.innerHTML = "";
+  for (let i = 0; i < 8; i++) {
+    const row = document.createElement("div");
+    row.className = "skeleton-row";
+    const sm = document.createElement("div");
+    sm.className = "skeleton skeleton-row__cell--sm";
+    const lg = document.createElement("div");
+    lg.className = "skeleton skeleton-row__cell";
+    const md = document.createElement("div");
+    md.className = "skeleton skeleton-row__cell--md";
+    const sm2 = document.createElement("div");
+    sm2.className = "skeleton skeleton-row__cell--sm";
+    row.appendChild(sm);
+    row.appendChild(lg);
+    row.appendChild(md);
+    row.appendChild(sm2);
+    sessionsEl.appendChild(row);
+  }
+};
+
+const renderSkeletonCharts = () => {
+  [modelsEl, statusEl].forEach((el) => {
+    el.innerHTML = "";
+    for (let i = 0; i < 3; i++) {
+      const bar = document.createElement("div");
+      bar.className = "skeleton-bar";
+      const label = document.createElement("div");
+      label.className = "skeleton skeleton-bar__label";
+      const track = document.createElement("div");
+      track.className = "skeleton skeleton-bar__track";
+      bar.appendChild(label);
+      bar.appendChild(track);
+      el.appendChild(bar);
+    }
+  });
+};
+
+const renderAnalyticsSkeletons = () => {
+  // Summary cards skeleton
+  analyticsSummaryEl.innerHTML = "";
+  for (let i = 0; i < 4; i++) {
+    const card = document.createElement("div");
+    card.className = "skeleton-metric";
+    const label = document.createElement("div");
+    label.className = "skeleton skeleton-metric__label";
+    const value = document.createElement("div");
+    value.className = "skeleton skeleton-metric__value";
+    card.appendChild(label);
+    card.appendChild(value);
+    analyticsSummaryEl.appendChild(card);
+  }
+
+  // Heatmap skeleton
+  analyticsHeatmapEl.innerHTML = "";
+  for (let i = 0; i < 30; i++) {
+    const cell = document.createElement("div");
+    cell.className = "skeleton heatmap-cell";
+    cell.style.opacity = "0.3";
+    analyticsHeatmapEl.appendChild(cell);
+  }
+  heatmapLabelsEl.innerHTML = "";
+  heatmapHintEl.innerHTML = "";
+
+  // Tools skeleton
+  analyticsToolsEl.innerHTML = "";
+  for (let i = 0; i < 5; i++) {
+    const bar = document.createElement("div");
+    bar.className = "skeleton-bar";
+    const label = document.createElement("div");
+    label.className = "skeleton skeleton-bar__label";
+    const track = document.createElement("div");
+    track.className = "skeleton skeleton-bar__track";
+    bar.appendChild(label);
+    bar.appendChild(track);
+    analyticsToolsEl.appendChild(bar);
+  }
+
+  // Distribution skeletons
+  [analyticsDurationEl, analyticsCostEl].forEach((el) => {
+    el.innerHTML = "";
+    for (let i = 0; i < 4; i++) {
+      const bar = document.createElement("div");
+      bar.className = "skeleton-bar";
+      const label = document.createElement("div");
+      label.className = "skeleton skeleton-bar__label";
+      const track = document.createElement("div");
+      track.className = "skeleton skeleton-bar__track";
+      bar.appendChild(label);
+      bar.appendChild(track);
+      el.appendChild(bar);
+    }
+  });
+
+  // Model table skeleton
+  analyticsModelsEl.innerHTML = "";
+  for (let i = 0; i < 3; i++) {
+    const row = document.createElement("div");
+    row.className = "skeleton-row";
+    const sm = document.createElement("div");
+    sm.className = "skeleton skeleton-row__cell--sm";
+    const lg = document.createElement("div");
+    lg.className = "skeleton skeleton-row__cell";
+    const md = document.createElement("div");
+    md.className = "skeleton skeleton-row__cell--md";
+    row.appendChild(sm);
+    row.appendChild(lg);
+    row.appendChild(md);
+    analyticsModelsEl.appendChild(row);
+  }
+
+  // Provider skeleton
+  analyticsProvidersEl.innerHTML = "";
+  const provBar = document.createElement("div");
+  provBar.className = "skeleton skeleton-bar__track";
+  provBar.style.height = "16px";
+  analyticsProvidersEl.appendChild(provBar);
+};
+
+renderSkeletonMetrics();
+renderSkeletonCharts();
+renderSkeletonSessions();
+
 loadOverview().catch((err) => {
   sessionCountEl.textContent = "failed to load data";
   console.error(err);
@@ -1680,10 +2067,16 @@ loadOverview().catch((err) => {
 
 window.addEventListener("keydown", handleKey);
 backButton.addEventListener("click", backToOverview);
-analyticsBackButton.addEventListener("click", () => setView("overview"));
+analyticsBackButton.addEventListener("click", () => {
+  setView("overview");
+  window.history.pushState({}, "", "/");
+});
 dayPrevButton.addEventListener("click", () => navigateDay(-1));
 dayNextButton.addEventListener("click", () => navigateDay(1));
 dayDetailCloseButton.addEventListener("click", closeDayDetail);
+document.querySelectorAll(".analytics-tab").forEach((btn) => {
+  btn.addEventListener("click", () => setAnalyticsTab(btn.dataset.tab));
+});
 
 window.addEventListener("popstate", () => {
   if (window.location.pathname.startsWith("/session/")) {
@@ -1693,6 +2086,12 @@ window.addEventListener("popstate", () => {
       return;
     }
   }
+  if (window.location.pathname === "/analytics") {
+    filters.periodEnabled = true;
+    setView("analytics");
+    loadAnalytics().catch(console.error);
+    return;
+  }
   backToOverview();
 });
 
@@ -1701,6 +2100,10 @@ if (window.location.pathname.startsWith("/session/")) {
   if (sessionId) {
     loadSession(sessionId);
   }
+} else if (window.location.pathname === "/analytics") {
+  filters.periodEnabled = true;
+  setView("analytics");
+  loadAnalytics().catch(console.error);
 } else {
   setView("overview");
 }

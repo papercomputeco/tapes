@@ -38,6 +38,12 @@ type Query struct {
 // Ensure Query implements Querier
 var _ Querier = (*Query)(nil)
 
+// EntClient returns the underlying ent client for use by subsystems
+// like the facet store.
+func (q *Query) EntClient() *ent.Client {
+	return q.client
+}
+
 func NewQuery(ctx context.Context, dbPath string, pricing PricingTable) (*Query, func() error, error) {
 	driver, err := sqlite.NewDriver(ctx, dbPath)
 	if err != nil {

@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"time"
 )
+
+const maxExtractRetries = 3
 
 // SessionFacet holds LLM-extracted qualitative data about a session.
 type SessionFacet struct {
@@ -72,6 +75,7 @@ func NewFacetExtractor(query Querier, llmCall LLMCallFunc, store FacetStore) *Fa
 }
 
 // Extract runs facet extraction for a single session.
+// It retries up to 2 times on JSON parse failures with a stricter prompt.
 func (f *FacetExtractor) Extract(ctx context.Context, sessionID string) (*SessionFacet, error) {
 	detail, err := f.query.SessionDetail(ctx, sessionID)
 	if err != nil {
@@ -86,27 +90,40 @@ func (f *FacetExtractor) Extract(ctx context.Context, sessionID string) (*Sessio
 		transcript = transcript[:maxChars]
 	}
 
-	prompt := buildFacetPrompt(transcript)
-	response, err := f.llmCall(ctx, prompt)
-	if err != nil {
-		return nil, fmt.Errorf("llm call: %w", err)
-	}
+	basePrompt := buildFacetPrompt(transcript)
 
-	facet, err := parseFacetResponse(response)
-	if err != nil {
-		return nil, fmt.Errorf("parse response: %w", err)
-	}
-
-	facet.SessionID = sessionID
-	facet.ExtractedAt = time.Now()
-
-	if f.store != nil {
-		if err := f.store.SaveFacet(ctx, facet); err != nil {
-			return nil, fmt.Errorf("save facet: %w", err)
+	var lastErr error
+	for attempt := range maxExtractRetries {
+		prompt := basePrompt
+		if attempt > 0 {
+			prompt += "\n\nReturn ONLY valid JSON, no markdown."
+			log.Printf("facets: retrying extraction for session %s (attempt %d/%d)", sessionID, attempt+1, maxExtractRetries)
 		}
+
+		response, err := f.llmCall(ctx, prompt)
+		if err != nil {
+			return nil, fmt.Errorf("llm call: %w", err)
+		}
+
+		facet, err := parseFacetResponse(response)
+		if err != nil {
+			lastErr = fmt.Errorf("parse response (attempt %d): %w", attempt+1, err)
+			continue
+		}
+
+		facet.SessionID = sessionID
+		facet.ExtractedAt = time.Now()
+
+		if f.store != nil {
+			if err := f.store.SaveFacet(ctx, facet); err != nil {
+				return nil, fmt.Errorf("save facet: %w", err)
+			}
+		}
+
+		return facet, nil
 	}
 
-	return facet, nil
+	return nil, lastErr
 }
 
 // AggregateFacets computes aggregated analytics from all stored facets.
@@ -164,11 +181,11 @@ func aggregateFacets(facets []*SessionFacet) *FacetAnalytics {
 		analytics.TopFriction = analytics.TopFriction[:10]
 	}
 
-	// Recent summaries (last 20)
+	// Recent summaries (last 10)
 	sort.Slice(facets, func(i, j int) bool {
 		return facets[i].ExtractedAt.After(facets[j].ExtractedAt)
 	})
-	limit := min(20, len(facets))
+	limit := min(10, len(facets))
 	for _, facet := range facets[:limit] {
 		analytics.RecentSummaries = append(analytics.RecentSummaries, FacetSummary{
 			SessionID:      facet.SessionID,

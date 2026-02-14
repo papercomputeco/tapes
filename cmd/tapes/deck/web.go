@@ -14,8 +14,20 @@ import (
 	deckweb "github.com/papercomputeco/tapes/web/deck"
 )
 
-func runDeckWeb(ctx context.Context, query deck.Querier, filters deck.Filters, port int) error {
+// facetDeps holds optional facet extraction dependencies for the web server.
+type facetDeps struct {
+	extractor *deck.FacetExtractor
+	worker    *deck.FacetWorker
+	store     deck.FacetStore
+}
+
+func runDeckWeb(ctx context.Context, query deck.Querier, filters deck.Filters, port int, facets *facetDeps) error {
 	address := fmt.Sprintf("127.0.0.1:%d", port)
+
+	// Start background facet worker if configured
+	if facets != nil && facets.worker != nil {
+		go facets.worker.Run(ctx)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/overview", func(w http.ResponseWriter, r *http.Request) {
@@ -75,13 +87,23 @@ func runDeckWeb(ctx context.Context, query deck.Querier, filters deck.Filters, p
 		writeJSON(w, detail)
 	})
 
-	// Facet endpoints — return empty data when no extractor is configured.
-	mux.HandleFunc("/api/facets", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, deck.FacetAnalytics{
-			GoalDistribution:    map[string]int{},
-			OutcomeDistribution: map[string]int{},
-			SessionTypes:        map[string]int{},
-		})
+	// Facet endpoints — real data when extractor is configured, empty stubs otherwise.
+	mux.HandleFunc("/api/facets", func(w http.ResponseWriter, r *http.Request) {
+		if facets == nil || facets.extractor == nil {
+			writeJSON(w, deck.FacetAnalytics{
+				GoalDistribution:    map[string]int{},
+				OutcomeDistribution: map[string]int{},
+				SessionTypes:        map[string]int{},
+			})
+			return
+		}
+
+		analytics, err := facets.extractor.AggregateFacets(r.Context())
+		if err != nil {
+			writeJSONError(w, err)
+			return
+		}
+		writeJSON(w, analytics)
 	})
 
 	mux.HandleFunc("/api/facets/session/", func(w http.ResponseWriter, r *http.Request) {
@@ -90,10 +112,34 @@ func runDeckWeb(ctx context.Context, query deck.Querier, filters deck.Filters, p
 			http.Error(w, "missing session id", http.StatusBadRequest)
 			return
 		}
-		writeJSON(w, deck.SessionFacet{SessionID: sessionID})
+
+		if facets == nil || facets.store == nil {
+			writeJSON(w, deck.SessionFacet{SessionID: sessionID})
+			return
+		}
+
+		facet, err := facets.store.GetFacet(r.Context(), sessionID)
+		if err != nil {
+			writeJSON(w, deck.SessionFacet{SessionID: sessionID})
+			return
+		}
+		writeJSON(w, facet)
+	})
+
+	mux.HandleFunc("/api/facets/status", func(w http.ResponseWriter, _ *http.Request) {
+		if facets == nil || facets.worker == nil {
+			writeJSON(w, map[string]int{"done": 0, "total": 0})
+			return
+		}
+		done, total := facets.worker.Progress()
+		writeJSON(w, map[string]int{"done": done, "total": total})
 	})
 
 	mux.HandleFunc("/session/", func(w http.ResponseWriter, _ *http.Request) {
+		serveIndex(w)
+	})
+
+	mux.HandleFunc("/analytics", func(w http.ResponseWriter, _ *http.Request) {
 		serveIndex(w)
 	})
 

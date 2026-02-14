@@ -926,6 +926,42 @@ body {
   overflow: auto;
 }
 
+/* ── Analytics tabs ── */
+.analytics-tabs {
+  display: flex;
+  gap: 0;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.analytics-tab {
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  padding: 10px 16px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.analytics-tab:hover {
+  color: var(--text);
+}
+
+.analytics-tab--active {
+  color: var(--text-bright);
+  border-bottom-color: var(--primary);
+}
+
+.analytics-tab-panel[hidden] {
+  display: none;
+}
+
 /* ── Analytics panels ── */
 .analytics-summary {
   display: grid;
@@ -982,6 +1018,83 @@ body {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+/* ── Skeleton loading ── */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--border) 25%, transparent 50%, var(--border) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: 2px;
+}
+
+.skeleton-metric {
+  border: 1px solid var(--border);
+  padding: 16px;
+}
+
+.skeleton-metric__label {
+  width: 80px;
+  height: 9px;
+  margin-bottom: 12px;
+}
+
+.skeleton-metric__value {
+  width: 60%;
+  height: 22px;
+}
+
+.skeleton-row {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.skeleton-row__cell {
+  height: 12px;
+  flex: 1;
+}
+
+.skeleton-row__cell--sm { flex: 0.4; }
+.skeleton-row__cell--md { flex: 0.7; }
+
+.skeleton-bar {
+  margin-bottom: 12px;
+}
+
+.skeleton-bar__label {
+  width: 60%;
+  height: 10px;
+  margin-bottom: 6px;
+}
+
+.skeleton-bar__track {
+  width: 100%;
+  height: 8px;
+}
+
+.loading-spinner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.loading-spinner__dot {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--green);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
 }
 
 /* ── Heatmap ── */
@@ -1320,10 +1433,19 @@ body {
 /* ── Histogram ── */
 .histogram__row {
   display: grid;
-  grid-template-columns: 90px 1fr 40px;
+  grid-template-columns: 120px 1fr 40px;
   gap: 8px;
   align-items: center;
   margin-bottom: 8px;
+}
+
+.histogram__desc {
+  grid-column: 1 / -1;
+  font-size: 9px;
+  color: var(--muted);
+  margin-top: -4px;
+  margin-bottom: 4px;
+  padding-left: 128px;
 }
 
 .histogram__label {
@@ -1348,6 +1470,17 @@ body {
 .histogram__count {
   font-size: 11px;
   font-weight: 600;
+  color: var(--text-bright);
+}
+
+.histogram__toggle {
+  font-size: 10px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px 0;
+  text-align: right;
+}
+.histogram__toggle:hover {
   color: var(--text-bright);
 }
 
@@ -1408,8 +1541,17 @@ body {
 
 .provider__legend-item {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 6px;
+  flex-wrap: wrap;
+}
+
+.legend__desc {
+  font-size: 9px;
+  color: var(--muted);
+  width: 100%;
+  padding-left: 14px;
+  margin-top: -2px;
 }
 
 .provider__dot {
@@ -1440,6 +1582,12 @@ body {
 .friction-item__label {
   color: var(--text);
   text-transform: capitalize;
+}
+
+.friction-item__desc {
+  font-size: 9px;
+  color: var(--muted);
+  margin-left: auto;
 }
 
 /* ── Summary cards ── */
@@ -1550,6 +1698,16 @@ body {
 
   .metric__value {
     font-size: 20px;
+  }
+
+  .analytics-tabs {
+    padding: 0 16px;
+    overflow-x: auto;
+  }
+
+  .analytics-tab {
+    padding: 8px 10px;
+    font-size: 9px;
   }
 
   .charts {

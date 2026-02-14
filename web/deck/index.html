@@ -137,6 +137,14 @@
         <div id="analytics-content">
         <section class="analytics-summary" id="analytics-summary"></section>
 
+        <div class="analytics-tabs" id="analytics-tabs">
+          <button class="analytics-tab analytics-tab--active" data-tab="activity" type="button">activity</button>
+          <button class="analytics-tab" data-tab="distribution" type="button">distribution + models</button>
+          <button class="analytics-tab" data-tab="insights" type="button">ai insights</button>
+          <button class="analytics-tab" data-tab="summaries" type="button">summaries</button>
+        </div>
+
+        <div class="analytics-tab-panel" id="tab-activity">
         <section class="analytics-panels">
           <div class="analytics-panel">
             <div class="section-header">
@@ -167,7 +175,9 @@
             <div class="day-detail__sessions" id="day-detail-sessions"></div>
           </div>
         </section>
+        </div>
 
+        <div class="analytics-tab-panel" id="tab-distribution" hidden>
         <section class="analytics-panels">
           <div class="analytics-panel">
             <div class="section-header">
@@ -184,7 +194,6 @@
             <div class="histogram" id="analytics-cost"></div>
           </div>
         </section>
-
         <section class="analytics-panels">
           <div class="analytics-panel analytics-panel--wide">
             <div class="section-header">
@@ -201,8 +210,10 @@
             <div id="analytics-providers"></div>
           </div>
         </section>
+        </div>
 
-        <section class="analytics-insights" id="analytics-insights" hidden>
+        <div class="analytics-tab-panel" id="tab-insights" hidden>
+        <section class="analytics-insights" id="analytics-insights">
           <div class="section-header">
             <span class="section-header__label">ai insights</span>
             <div class="section-header__line"></div>
@@ -239,14 +250,19 @@
               <div id="insights-types"></div>
             </div>
           </div>
-          <div class="analytics-panel analytics-panel--full">
-            <div class="section-header">
-              <span class="section-header__label">recent summaries</span>
-              <div class="section-header__line"></div>
-            </div>
-            <div id="insights-summaries"></div>
-          </div>
         </section>
+        </div>
+
+        <div class="analytics-tab-panel" id="tab-summaries" hidden>
+        <section class="analytics-insights" id="analytics-summaries-section">
+          <div class="section-header">
+            <span class="section-header__label">recent summaries</span>
+            <div class="section-header__line"></div>
+          </div>
+          <div id="insights-summaries"></div>
+        </section>
+        </div>
+
         </div><!-- analytics-content -->
       </main>
 
