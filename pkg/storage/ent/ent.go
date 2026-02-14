@@ -12,6 +12,7 @@ import (
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
+	"github.com/papercomputeco/tapes/pkg/storage/ent/facet"
 	"github.com/papercomputeco/tapes/pkg/storage/ent/node"
 )
 
@@ -73,7 +74,8 @@ var (
 func checkColumn(t, c string) error {
 	initCheck.Do(func() {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
-			node.Table: node.ValidColumn,
+			facet.Table: facet.ValidColumn,
+			node.Table:  node.ValidColumn,
 		})
 	})
 	return columnCheck(t, c)

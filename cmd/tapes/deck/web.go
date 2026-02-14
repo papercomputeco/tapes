@@ -32,6 +32,34 @@ func runDeckWeb(ctx context.Context, query deck.Querier, filters deck.Filters, p
 		writeJSON(w, overview)
 	})
 
+	mux.HandleFunc("/api/analytics", func(w http.ResponseWriter, r *http.Request) {
+		queryFilters, err := applyWebFilters(filters, r)
+		if err != nil {
+			writeJSONError(w, err)
+			return
+		}
+		analytics, err := query.AnalyticsOverview(r.Context(), queryFilters)
+		if err != nil {
+			writeJSONError(w, err)
+			return
+		}
+		writeJSON(w, analytics)
+	})
+
+	mux.HandleFunc("/api/analytics/session/", func(w http.ResponseWriter, r *http.Request) {
+		sessionID := strings.TrimPrefix(r.URL.Path, "/api/analytics/session/")
+		if sessionID == "" {
+			http.Error(w, "missing session id", http.StatusBadRequest)
+			return
+		}
+		sa, err := query.SessionAnalytics(r.Context(), sessionID)
+		if err != nil {
+			writeJSONError(w, err)
+			return
+		}
+		writeJSON(w, sa)
+	})
+
 	mux.HandleFunc("/api/session/", func(w http.ResponseWriter, r *http.Request) {
 		sessionID := strings.TrimPrefix(r.URL.Path, "/api/session/")
 		if sessionID == "" {
@@ -45,6 +73,24 @@ func runDeckWeb(ctx context.Context, query deck.Querier, filters deck.Filters, p
 			return
 		}
 		writeJSON(w, detail)
+	})
+
+	// Facet endpoints — return empty data when no extractor is configured.
+	mux.HandleFunc("/api/facets", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, deck.FacetAnalytics{
+			GoalDistribution:    map[string]int{},
+			OutcomeDistribution: map[string]int{},
+			SessionTypes:        map[string]int{},
+		})
+	})
+
+	mux.HandleFunc("/api/facets/session/", func(w http.ResponseWriter, r *http.Request) {
+		sessionID := strings.TrimPrefix(r.URL.Path, "/api/facets/session/")
+		if sessionID == "" {
+			http.Error(w, "missing session id", http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, deck.SessionFacet{SessionID: sessionID})
 	})
 
 	mux.HandleFunc("/session/", func(w http.ResponseWriter, _ *http.Request) {

@@ -15,6 +15,7 @@ import (
 	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
+	"github.com/papercomputeco/tapes/pkg/storage/ent/facet"
 	"github.com/papercomputeco/tapes/pkg/storage/ent/node"
 )
 
@@ -23,6 +24,8 @@ type Client struct {
 	config
 	// Schema is the client for creating, migrating and dropping schema.
 	Schema *migrate.Schema
+	// Facet is the client for interacting with the Facet builders.
+	Facet *FacetClient
 	// Node is the client for interacting with the Node builders.
 	Node *NodeClient
 }
@@ -36,6 +39,7 @@ func NewClient(opts ...Option) *Client {
 
 func (c *Client) init() {
 	c.Schema = migrate.NewSchema(c.driver)
+	c.Facet = NewFacetClient(c.config)
 	c.Node = NewNodeClient(c.config)
 }
 
@@ -129,6 +133,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 	return &Tx{
 		ctx:    ctx,
 		config: cfg,
+		Facet:  NewFacetClient(cfg),
 		Node:   NewNodeClient(cfg),
 	}, nil
 }
@@ -149,6 +154,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 	return &Tx{
 		ctx:    ctx,
 		config: cfg,
+		Facet:  NewFacetClient(cfg),
 		Node:   NewNodeClient(cfg),
 	}, nil
 }
@@ -156,7 +162,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 // Debug returns a new debug-client. It's used to get verbose logging on specific operations.
 //
 //	client.Debug().
-//		Node.
+//		Facet.
 //		Query().
 //		Count(ctx)
 func (c *Client) Debug() *Client {
@@ -178,22 +184,159 @@ func (c *Client) Close() error {
 // Use adds the mutation hooks to all the entity clients.
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
 func (c *Client) Use(hooks ...Hook) {
+	c.Facet.Use(hooks...)
 	c.Node.Use(hooks...)
 }
 
 // Intercept adds the query interceptors to all the entity clients.
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
 func (c *Client) Intercept(interceptors ...Interceptor) {
+	c.Facet.Intercept(interceptors...)
 	c.Node.Intercept(interceptors...)
 }
 
 // Mutate implements the ent.Mutator interface.
 func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 	switch m := m.(type) {
+	case *FacetMutation:
+		return c.Facet.mutate(ctx, m)
 	case *NodeMutation:
 		return c.Node.mutate(ctx, m)
 	default:
 		return nil, fmt.Errorf("ent: unknown mutation type %T", m)
+	}
+}
+
+// FacetClient is a client for the Facet schema.
+type FacetClient struct {
+	config
+}
+
+// NewFacetClient returns a client for the Facet from the given config.
+func NewFacetClient(c config) *FacetClient {
+	return &FacetClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `facet.Hooks(f(g(h())))`.
+func (c *FacetClient) Use(hooks ...Hook) {
+	c.hooks.Facet = append(c.hooks.Facet, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `facet.Intercept(f(g(h())))`.
+func (c *FacetClient) Intercept(interceptors ...Interceptor) {
+	c.inters.Facet = append(c.inters.Facet, interceptors...)
+}
+
+// Create returns a builder for creating a Facet entity.
+func (c *FacetClient) Create() *FacetCreate {
+	mutation := newFacetMutation(c.config, OpCreate)
+	return &FacetCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of Facet entities.
+func (c *FacetClient) CreateBulk(builders ...*FacetCreate) *FacetCreateBulk {
+	return &FacetCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *FacetClient) MapCreateBulk(slice any, setFunc func(*FacetCreate, int)) *FacetCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &FacetCreateBulk{err: fmt.Errorf("calling to FacetClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*FacetCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &FacetCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for Facet.
+func (c *FacetClient) Update() *FacetUpdate {
+	mutation := newFacetMutation(c.config, OpUpdate)
+	return &FacetUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *FacetClient) UpdateOne(_m *Facet) *FacetUpdateOne {
+	mutation := newFacetMutation(c.config, OpUpdateOne, withFacet(_m))
+	return &FacetUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *FacetClient) UpdateOneID(id string) *FacetUpdateOne {
+	mutation := newFacetMutation(c.config, OpUpdateOne, withFacetID(id))
+	return &FacetUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for Facet.
+func (c *FacetClient) Delete() *FacetDelete {
+	mutation := newFacetMutation(c.config, OpDelete)
+	return &FacetDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *FacetClient) DeleteOne(_m *Facet) *FacetDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *FacetClient) DeleteOneID(id string) *FacetDeleteOne {
+	builder := c.Delete().Where(facet.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &FacetDeleteOne{builder}
+}
+
+// Query returns a query builder for Facet.
+func (c *FacetClient) Query() *FacetQuery {
+	return &FacetQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeFacet},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a Facet entity by its id.
+func (c *FacetClient) Get(ctx context.Context, id string) (*Facet, error) {
+	return c.Query().Where(facet.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *FacetClient) GetX(ctx context.Context, id string) *Facet {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *FacetClient) Hooks() []Hook {
+	return c.hooks.Facet
+}
+
+// Interceptors returns the client interceptors.
+func (c *FacetClient) Interceptors() []Interceptor {
+	return c.inters.Facet
+}
+
+func (c *FacetClient) mutate(ctx context.Context, m *FacetMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&FacetCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&FacetUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&FacetUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&FacetDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown Facet mutation op: %q", m.Op())
 	}
 }
 
@@ -365,9 +508,9 @@ func (c *NodeClient) mutate(ctx context.Context, m *NodeMutation) (Value, error)
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		Node []ent.Hook
+		Facet, Node []ent.Hook
 	}
 	inters struct {
-		Node []ent.Interceptor
+		Facet, Node []ent.Interceptor
 	}
 )

@@ -15,13 +15,19 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
 )
 
-const blockTypeToolUse = "tool_use"
+const (
+	blockTypeToolUse = "tool_use"
+	roleAssistant    = "assistant"
+	roleUser         = "user"
+)
 
 // Querier is an interface for querying session data.
 // This allows for mock implementations in testing and sandboxes.
 type Querier interface {
 	Overview(ctx context.Context, filters Filters) (*Overview, error)
 	SessionDetail(ctx context.Context, sessionID string) (*SessionDetail, error)
+	AnalyticsOverview(ctx context.Context, filters Filters) (*AnalyticsOverview, error)
+	SessionAnalytics(ctx context.Context, sessionID string) (*SessionAnalytics, error)
 }
 
 type Query struct {
@@ -389,7 +395,7 @@ func buildLabel(nodes []*ent.Node) string {
 	labelLines := make([]string, 0, labelPrompts)
 	for i := len(nodes) - 1; i >= 0; i-- {
 		node := nodes[i]
-		if node.Role != "user" {
+		if node.Role != roleUser {
 			continue
 		}
 		blocks, _ := parseContentBlocks(node.Content)
@@ -582,13 +588,339 @@ func sortSessions(sessions []SessionSummary, sortKey, sortDir string) {
 	}
 }
 
+func (q *Query) AnalyticsOverview(ctx context.Context, filters Filters) (*AnalyticsOverview, error) {
+	leaves, err := q.client.Node.Query().Where(node.Not(node.HasChildren())).All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list leaves: %w", err)
+	}
+
+	analytics := &AnalyticsOverview{
+		ProviderBreakdown: map[string]int{},
+	}
+
+	toolGlobal := map[string]*ToolMetric{}
+	toolErrors := map[string]int{}
+	toolSessions := map[string]map[string]bool{}
+	dayMap := map[string]*DayActivity{}
+	modelMap := map[string]*modelAccumulator{}
+	var filteredSummaries []SessionSummary
+
+	for _, leaf := range leaves {
+		nodes, err := q.loadAncestry(ctx, leaf)
+		if err != nil {
+			return nil, err
+		}
+
+		summary, _, status, err := q.buildSessionSummaryFromNodes(nodes)
+		if err != nil {
+			continue
+		}
+
+		if !matchesFilters(summary, filters) {
+			continue
+		}
+
+		filteredSummaries = append(filteredSummaries, summary)
+		analytics.TotalSessions++
+		analytics.AvgSessionCost += summary.TotalCost
+		analytics.AvgDurationNs += int64(summary.Duration)
+
+		// Activity by day
+		dayKey := summary.StartTime.Format("2006-01-02")
+		day, ok := dayMap[dayKey]
+		if !ok {
+			day = &DayActivity{Date: dayKey}
+			dayMap[dayKey] = day
+		}
+		day.Sessions++
+		day.Cost += summary.TotalCost
+		day.Tokens += summary.InputTokens + summary.OutputTokens
+
+		// Tool and provider aggregation per session
+		sessionTools := map[string]bool{}
+		for _, n := range nodes {
+			blocks, _ := parseContentBlocks(n.Content)
+			for _, tool := range extractToolCalls(blocks) {
+				if _, ok := toolGlobal[tool]; !ok {
+					toolGlobal[tool] = &ToolMetric{Name: tool}
+				}
+				toolGlobal[tool].Count++
+				sessionTools[tool] = true
+			}
+			if blocksHaveToolError(blocks) {
+				for _, tool := range extractToolCalls(blocks) {
+					toolErrors[tool]++
+				}
+			}
+			if n.Provider != "" {
+				analytics.ProviderBreakdown[n.Provider]++
+			}
+		}
+		for tool := range sessionTools {
+			if toolSessions[tool] == nil {
+				toolSessions[tool] = map[string]bool{}
+			}
+			toolSessions[tool][summary.ID] = true
+		}
+
+		// Model performance
+		model := normalizeModel(summary.Model)
+		if model != "" {
+			acc, ok := modelMap[model]
+			if !ok {
+				provider := ""
+				for _, n := range nodes {
+					if n.Provider != "" {
+						provider = n.Provider
+						break
+					}
+				}
+				acc = &modelAccumulator{provider: provider}
+				modelMap[model] = acc
+			}
+			acc.sessions++
+			acc.totalCost += summary.TotalCost
+			acc.totalDurationNs += int64(summary.Duration)
+			acc.totalTokens += summary.InputTokens + summary.OutputTokens
+			if status == StatusCompleted {
+				acc.completedCount++
+			}
+		}
+	}
+
+	if analytics.TotalSessions > 0 {
+		analytics.AvgSessionCost /= float64(analytics.TotalSessions)
+		analytics.AvgDurationNs /= int64(analytics.TotalSessions)
+	}
+
+	// Build top tools sorted by count
+	for name, metric := range toolGlobal {
+		metric.ErrorCount = toolErrors[name]
+		metric.Sessions = len(toolSessions[name])
+		analytics.TopTools = append(analytics.TopTools, *metric)
+	}
+	sort.Slice(analytics.TopTools, func(i, j int) bool {
+		return analytics.TopTools[i].Count > analytics.TopTools[j].Count
+	})
+	if len(analytics.TopTools) > 15 {
+		analytics.TopTools = analytics.TopTools[:15]
+	}
+
+	// Ensure the last 7 days are always present so heatmaps render a full week
+	today := time.Now()
+	for i := 6; i >= 0; i-- {
+		dayKey := today.AddDate(0, 0, -i).Format("2006-01-02")
+		if _, ok := dayMap[dayKey]; !ok {
+			dayMap[dayKey] = &DayActivity{Date: dayKey}
+		}
+	}
+
+	// Build activity by day sorted by date
+	for _, day := range dayMap {
+		analytics.ActivityByDay = append(analytics.ActivityByDay, *day)
+	}
+	sort.Slice(analytics.ActivityByDay, func(i, j int) bool {
+		return analytics.ActivityByDay[i].Date < analytics.ActivityByDay[j].Date
+	})
+
+	// Build model performance
+	for model, acc := range modelMap {
+		perf := ModelPerformance{
+			Model:          model,
+			Provider:       acc.provider,
+			Sessions:       acc.sessions,
+			TotalCost:      acc.totalCost,
+			CompletedCount: acc.completedCount,
+		}
+		if acc.sessions > 0 {
+			perf.AvgCost = acc.totalCost / float64(acc.sessions)
+			perf.AvgDurationNs = acc.totalDurationNs / int64(acc.sessions)
+			perf.AvgTokens = acc.totalTokens / int64(acc.sessions)
+			perf.SuccessRate = float64(acc.completedCount) / float64(acc.sessions)
+		}
+		analytics.ModelPerformance = append(analytics.ModelPerformance, perf)
+	}
+	sort.Slice(analytics.ModelPerformance, func(i, j int) bool {
+		return analytics.ModelPerformance[i].TotalCost > analytics.ModelPerformance[j].TotalCost
+	})
+
+	// Build duration and cost buckets from already-computed summaries
+	analytics.DurationBuckets = buildDurationBucketsFromSummaries(filteredSummaries)
+	analytics.CostBuckets = buildCostBucketsFromSummaries(filteredSummaries)
+
+	return analytics, nil
+}
+
+func (q *Query) SessionAnalytics(ctx context.Context, sessionID string) (*SessionAnalytics, error) {
+	leaf, err := q.client.Node.Get(ctx, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("get session: %w", err)
+	}
+
+	nodes, err := q.loadAncestry(ctx, leaf)
+	if err != nil {
+		return nil, err
+	}
+
+	sa := &SessionAnalytics{SessionID: sessionID}
+	uniqueTools := map[string]bool{}
+
+	var lastTime time.Time
+	var responseTimes []int64
+	var promptLengths []int
+	var responseLengths []int
+
+	for i, n := range nodes {
+		blocks, _ := parseContentBlocks(n.Content)
+		text := extractText(blocks)
+
+		switch n.Role {
+		case roleUser:
+			sa.UserMessageCount++
+			promptLengths = append(promptLengths, len(text))
+			if sa.FirstPrompt == "" && text != "" {
+				labelText := extractLabelText(blocks)
+				line := firstLabelLine(labelText)
+				if line != "" {
+					sa.FirstPrompt = truncate(line, 200)
+				}
+			}
+		case roleAssistant:
+			sa.AssistantMsgCount++
+			responseLengths = append(responseLengths, len(text))
+		}
+
+		for _, tool := range extractToolCalls(blocks) {
+			uniqueTools[tool] = true
+		}
+		if blocksHaveToolError(blocks) {
+			sa.ToolErrorCount++
+		}
+
+		if i > 0 {
+			delta := n.CreatedAt.Sub(lastTime).Nanoseconds()
+			if delta > sa.LongestPauseNs {
+				sa.LongestPauseNs = delta
+			}
+			if n.Role == roleAssistant {
+				responseTimes = append(responseTimes, delta)
+			}
+		}
+		lastTime = n.CreatedAt
+	}
+
+	sa.UniqueTools = len(uniqueTools)
+
+	if len(responseTimes) > 0 {
+		var total int64
+		for _, rt := range responseTimes {
+			total += rt
+		}
+		sa.AvgResponseTimeNs = total / int64(len(responseTimes))
+	}
+
+	if len(promptLengths) > 0 {
+		var total int
+		for _, pl := range promptLengths {
+			total += pl
+		}
+		sa.AvgPromptLength = total / len(promptLengths)
+	}
+
+	if len(responseLengths) > 0 {
+		var total int
+		for _, rl := range responseLengths {
+			total += rl
+		}
+		sa.AvgResponseLength = total / len(responseLengths)
+	}
+
+	// Tokens per minute
+	if len(nodes) >= 2 {
+		duration := nodes[len(nodes)-1].CreatedAt.Sub(nodes[0].CreatedAt)
+		if duration.Minutes() > 0 {
+			var totalTokens int64
+			for _, n := range nodes {
+				input, output, _ := tokenCounts(n)
+				totalTokens += input + output
+			}
+			sa.TokensPerMinute = float64(totalTokens) / duration.Minutes()
+		}
+	}
+
+	return sa, nil
+}
+
+type modelAccumulator struct {
+	provider        string
+	sessions        int
+	totalCost       float64
+	totalDurationNs int64
+	totalTokens     int64
+	completedCount  int
+}
+
+func buildDurationBucketsFromSummaries(summaries []SessionSummary) []Bucket {
+	counts := map[string]int{}
+	labels := []string{"<1m", "1-5m", "5-15m", "15-30m", "30-60m", ">1h"}
+	for _, summary := range summaries {
+		minutes := summary.Duration.Minutes()
+		switch {
+		case minutes < 1:
+			counts["<1m"]++
+		case minutes < 5:
+			counts["1-5m"]++
+		case minutes < 15:
+			counts["5-15m"]++
+		case minutes < 30:
+			counts["15-30m"]++
+		case minutes < 60:
+			counts["30-60m"]++
+		default:
+			counts[">1h"]++
+		}
+	}
+	buckets := make([]Bucket, len(labels))
+	for i, label := range labels {
+		buckets[i] = Bucket{Label: label, Count: counts[label]}
+	}
+	return buckets
+}
+
+func buildCostBucketsFromSummaries(summaries []SessionSummary) []Bucket {
+	counts := map[string]int{}
+	labels := []string{"<$0.01", "$0.01-0.10", "$0.10-0.50", "$0.50-1.00", "$1.00-5.00", ">$5.00"}
+	for _, summary := range summaries {
+		cost := summary.TotalCost
+		switch {
+		case cost < 0.01:
+			counts["<$0.01"]++
+		case cost < 0.10:
+			counts["$0.01-0.10"]++
+		case cost < 0.50:
+			counts["$0.10-0.50"]++
+		case cost < 1.00:
+			counts["$0.50-1.00"]++
+		case cost < 5.00:
+			counts["$1.00-5.00"]++
+		default:
+			counts[">$5.00"]++
+		}
+	}
+	buckets := make([]Bucket, len(labels))
+	for i, label := range labels {
+		buckets[i] = Bucket{Label: label, Count: counts[label]}
+	}
+	return buckets
+}
+
 func determineStatus(leaf *ent.Node, hasToolError bool) string {
 	if hasToolError {
 		return StatusFailed
 	}
 
 	role := strings.ToLower(leaf.Role)
-	if role != "assistant" {
+	if role != roleAssistant {
 		return StatusAbandoned
 	}
 

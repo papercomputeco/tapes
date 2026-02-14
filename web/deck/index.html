@@ -107,6 +107,149 @@
         </section>
       </main>
 
+      <main id="analytics-view" hidden>
+        <header class="header">
+          <div class="header__left">
+            <div class="header__title-row">
+              <h1 class="header__title">tapes<span class="header__separator"> / </span>deck</h1>
+              <span class="header__status" id="analytics-online-status">
+                <span class="header__status-dot"></span>
+                online
+              </span>
+            </div>
+            <p class="header__subtitle" id="analytics-subtitle">loading analytics...</p>
+          </div>
+          <div class="header__right">
+            <button class="back-button" id="analytics-back-button" type="button">&#8592; overview</button>
+          </div>
+        </header>
+
+        <div class="header__toolbar">
+          <div class="header__title-label">Session Analytics</div>
+          <section class="period" id="analytics-period"></section>
+        </div>
+
+        <div class="analytics-loading" id="analytics-loading">
+          <div class="analytics-loading__spinner"></div>
+          <span class="analytics-loading__text">analyzing sessions...</span>
+        </div>
+
+        <div id="analytics-content">
+        <section class="analytics-summary" id="analytics-summary"></section>
+
+        <section class="analytics-panels">
+          <div class="analytics-panel">
+            <div class="section-header">
+              <span class="section-header__label">activity heatmap</span>
+              <div class="section-header__line"></div>
+            </div>
+            <div class="heatmap-grid" id="analytics-heatmap"></div>
+            <div class="heatmap-labels" id="heatmap-labels"></div>
+            <div class="heatmap-keys">1-9 select recent days</div>
+            <div class="heatmap-hint" id="heatmap-hint"></div>
+          </div>
+          <div class="analytics-panel">
+            <div class="section-header">
+              <span class="section-header__label">top tools</span>
+              <div class="section-header__line"></div>
+            </div>
+            <div id="analytics-tools"></div>
+          </div>
+          <div class="day-detail-section" id="day-detail">
+            <div class="day-detail__header">
+              <button class="day-detail__nav" id="day-prev" type="button">&#8592;</button>
+              <span class="day-detail__date" id="day-detail-date"></span>
+              <button class="day-detail__nav" id="day-next" type="button">&#8594;</button>
+              <button class="day-detail__close" id="day-detail-close" type="button">&#10005;</button>
+            </div>
+            <div class="day-detail__placeholder" id="day-detail-placeholder">select a day (1-9) to drill in</div>
+            <div class="day-detail__metrics" id="day-detail-metrics"></div>
+            <div class="day-detail__sessions" id="day-detail-sessions"></div>
+          </div>
+        </section>
+
+        <section class="analytics-panels">
+          <div class="analytics-panel">
+            <div class="section-header">
+              <span class="section-header__label">duration distribution</span>
+              <div class="section-header__line"></div>
+            </div>
+            <div class="histogram" id="analytics-duration"></div>
+          </div>
+          <div class="analytics-panel">
+            <div class="section-header">
+              <span class="section-header__label">cost distribution</span>
+              <div class="section-header__line"></div>
+            </div>
+            <div class="histogram" id="analytics-cost"></div>
+          </div>
+        </section>
+
+        <section class="analytics-panels">
+          <div class="analytics-panel analytics-panel--wide">
+            <div class="section-header">
+              <span class="section-header__label">model comparison</span>
+              <div class="section-header__line"></div>
+            </div>
+            <div id="analytics-models"></div>
+          </div>
+          <div class="analytics-panel">
+            <div class="section-header">
+              <span class="section-header__label">provider split</span>
+              <div class="section-header__line"></div>
+            </div>
+            <div id="analytics-providers"></div>
+          </div>
+        </section>
+
+        <section class="analytics-insights" id="analytics-insights" hidden>
+          <div class="section-header">
+            <span class="section-header__label">ai insights</span>
+            <div class="section-header__line"></div>
+          </div>
+          <div class="analytics-panels">
+            <div class="analytics-panel">
+              <div class="section-header">
+                <span class="section-header__label">goal categories</span>
+                <div class="section-header__line"></div>
+              </div>
+              <div id="insights-goals"></div>
+            </div>
+            <div class="analytics-panel">
+              <div class="section-header">
+                <span class="section-header__label">outcomes</span>
+                <div class="section-header__line"></div>
+              </div>
+              <div id="insights-outcomes"></div>
+            </div>
+          </div>
+          <div class="analytics-panels">
+            <div class="analytics-panel">
+              <div class="section-header">
+                <span class="section-header__label">friction points</span>
+                <div class="section-header__line"></div>
+              </div>
+              <div id="insights-friction"></div>
+            </div>
+            <div class="analytics-panel">
+              <div class="section-header">
+                <span class="section-header__label">session types</span>
+                <div class="section-header__line"></div>
+              </div>
+              <div id="insights-types"></div>
+            </div>
+          </div>
+          <div class="analytics-panel analytics-panel--full">
+            <div class="section-header">
+              <span class="section-header__label">recent summaries</span>
+              <div class="section-header__line"></div>
+            </div>
+            <div id="insights-summaries"></div>
+          </div>
+        </section>
+        </div><!-- analytics-content -->
+      </main>
+
       <main id="session-view" hidden>
         <header class="header">
           <div class="header__left">
@@ -132,6 +275,7 @@
         <div class="footer__key"><span class="footer__key-label">S</span> sort</div>
         <div class="footer__key"><span class="footer__key-label">F</span> filter</div>
         <div class="footer__key"><span class="footer__key-label">P</span> period</div>
+        <div class="footer__key"><span class="footer__key-label">A</span> analytics</div>
         <div class="footer__key"><span class="footer__key-label">R</span> replay</div>
         <div class="footer__key"><span class="footer__key-label">Q</span> quit</div>
       </div>

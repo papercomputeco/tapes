@@ -10,12 +10,41 @@ const sortDirSelect = document.getElementById("sort-dir-select");
 const statusSelect = document.getElementById("status-select");
 const overviewViewEl = document.getElementById("overview-view");
 const sessionViewEl = document.getElementById("session-view");
+const analyticsViewEl = document.getElementById("analytics-view");
 const sessionBreadcrumbEl = document.getElementById("session-breadcrumb");
 const backButton = document.getElementById("back-button");
+const analyticsBackButton = document.getElementById("analytics-back-button");
 const statusLabelEl = document.getElementById("status-label");
 const sessionsMoreEl = document.getElementById("sessions-more");
 const showMoreButton = document.getElementById("show-more-button");
 const sessionsFiltersEl = document.getElementById("sessions-filters");
+const analyticsSummaryEl = document.getElementById("analytics-summary");
+const analyticsHeatmapEl = document.getElementById("analytics-heatmap");
+const analyticsToolsEl = document.getElementById("analytics-tools");
+const analyticsDurationEl = document.getElementById("analytics-duration");
+const analyticsCostEl = document.getElementById("analytics-cost");
+const analyticsModelsEl = document.getElementById("analytics-models");
+const analyticsProvidersEl = document.getElementById("analytics-providers");
+const analyticsSubtitleEl = document.getElementById("analytics-subtitle");
+const analyticsPeriodEl = document.getElementById("analytics-period");
+const analyticsInsightsEl = document.getElementById("analytics-insights");
+const analyticsLoadingEl = document.getElementById("analytics-loading");
+const analyticsContentEl = document.getElementById("analytics-content");
+const heatmapLabelsEl = document.getElementById("heatmap-labels");
+const insightsGoalsEl = document.getElementById("insights-goals");
+const insightsOutcomesEl = document.getElementById("insights-outcomes");
+const insightsFrictionEl = document.getElementById("insights-friction");
+const insightsTypesEl = document.getElementById("insights-types");
+const insightsSummariesEl = document.getElementById("insights-summaries");
+const dayDetailEl = document.getElementById("day-detail");
+const dayDetailDateEl = document.getElementById("day-detail-date");
+const dayDetailMetricsEl = document.getElementById("day-detail-metrics");
+const dayDetailSessionsEl = document.getElementById("day-detail-sessions");
+const dayDetailPlaceholderEl = document.getElementById("day-detail-placeholder");
+const dayPrevButton = document.getElementById("day-prev");
+const dayNextButton = document.getElementById("day-next");
+const dayDetailCloseButton = document.getElementById("day-detail-close");
+const heatmapHintEl = document.getElementById("heatmap-hint");
 const projectSelect = document.getElementById("project-select");
 
 const modelColors = {
@@ -49,12 +78,18 @@ const filters = {
 
 let overviewState = null;
 let sessionDetailState = null;
+let analyticsState = null;
+let facetsState = null;
 let selectedSessionId = null;
 let selectedMessageIndex = 0;
 let sessionIndex = 0;
 let currentView = "overview";
 let visibleSessionCount = 38;
 let filtersVisible = false;
+let selectedDayDate = null;
+let dayDetailState = null;
+let sessionEntryView = null;
+let heatmapSelectableDays = [];
 
 const formatCost = (value) => `$${value.toFixed(3)}`;
 const formatTokens = (value) => {
@@ -338,6 +373,85 @@ const renderStatus = (data) => {
   statusEl.appendChild(container);
 };
 
+const buildSessionRow = (session, index, onClick) => {
+  const row = document.createElement("div");
+  row.className = "sessions-row";
+  if (session.id === selectedSessionId) {
+    row.classList.add("sessions-row--active");
+  }
+
+  const number = document.createElement("div");
+  number.className = "session-number";
+  number.textContent = String(index + 1).padStart(2, "0");
+
+  const label = document.createElement("div");
+  label.className = "session-label";
+  label.textContent = session.label;
+
+  const project = document.createElement("div");
+  project.className = "session-project";
+  project.textContent = session.project || "";
+
+  const model = document.createElement("div");
+  model.className = "session-model";
+  model.textContent = session.model || "unknown";
+  model.style.color = colorForModel(session.model);
+
+  const duration = document.createElement("div");
+  duration.textContent = formatDuration(session.duration_ns);
+
+  const tokens = document.createElement("div");
+  tokens.textContent = formatTokens(session.input_tokens + session.output_tokens);
+
+  const cost = document.createElement("div");
+  cost.className = "session-cost";
+  const costBar = document.createElement("div");
+  costBar.className = "session-cost__bar";
+  const totalCostParts = session.input_cost + session.output_cost || 1;
+  const inputPct = Math.round((session.input_cost / totalCostParts) * 100);
+  const barIn = document.createElement("div");
+  barIn.className = "session-cost__bar-in";
+  barIn.style.width = `${inputPct}%`;
+  const barOut = document.createElement("div");
+  barOut.className = "session-cost__bar-out";
+  barOut.style.width = `${100 - inputPct}%`;
+  costBar.appendChild(barIn);
+  costBar.appendChild(barOut);
+  const costValue = document.createElement("span");
+  costValue.textContent = formatCost(session.total_cost);
+  cost.appendChild(costBar);
+  cost.appendChild(costValue);
+
+  const tools = document.createElement("div");
+  tools.textContent = session.tool_calls;
+
+  const msgs = document.createElement("div");
+  msgs.textContent = session.message_count;
+
+  const status = document.createElement("div");
+  status.className = `session-status session-status--${statusClass(session.status)}`;
+  const statusDot = document.createElement("span");
+  statusDot.className = `session-status__dot session-status__dot--${statusClass(session.status)}`;
+  const statusText = document.createElement("span");
+  statusText.textContent = session.status;
+  status.appendChild(statusDot);
+  status.appendChild(statusText);
+
+  row.appendChild(number);
+  row.appendChild(label);
+  row.appendChild(project);
+  row.appendChild(model);
+  row.appendChild(duration);
+  row.appendChild(tokens);
+  row.appendChild(cost);
+  row.appendChild(tools);
+  row.appendChild(msgs);
+  row.appendChild(status);
+
+  row.addEventListener("click", onClick);
+  return row;
+};
+
 const renderSessions = (data) => {
   sessionsEl.innerHTML = "";
   if (!data.sessions.length) {
@@ -359,81 +473,7 @@ const renderSessions = (data) => {
 
   const visible = data.sessions.slice(0, visibleSessionCount);
   visible.forEach((session, index) => {
-    const row = document.createElement("div");
-    row.className = "sessions-row";
-    if (session.id === selectedSessionId) {
-      row.classList.add("sessions-row--active");
-    }
-
-    const number = document.createElement("div");
-    number.className = "session-number";
-    number.textContent = String(index + 1).padStart(2, "0");
-
-    const label = document.createElement("div");
-    label.className = "session-label";
-    label.textContent = session.label;
-
-    const project = document.createElement("div");
-    project.className = "session-project";
-    project.textContent = session.project || "";
-
-    const model = document.createElement("div");
-    model.className = "session-model";
-    model.textContent = session.model || "unknown";
-    model.style.color = colorForModel(session.model);
-
-    const duration = document.createElement("div");
-    duration.textContent = formatDuration(session.duration_ns);
-
-    const tokens = document.createElement("div");
-    tokens.textContent = formatTokens(session.input_tokens + session.output_tokens);
-
-    const cost = document.createElement("div");
-    cost.className = "session-cost";
-    const costBar = document.createElement("div");
-    costBar.className = "session-cost__bar";
-    const totalCostParts = session.input_cost + session.output_cost || 1;
-    const inputPct = Math.round((session.input_cost / totalCostParts) * 100);
-    const barIn = document.createElement("div");
-    barIn.className = "session-cost__bar-in";
-    barIn.style.width = `${inputPct}%`;
-    const barOut = document.createElement("div");
-    barOut.className = "session-cost__bar-out";
-    barOut.style.width = `${100 - inputPct}%`;
-    costBar.appendChild(barIn);
-    costBar.appendChild(barOut);
-    const costValue = document.createElement("span");
-    costValue.textContent = formatCost(session.total_cost);
-    cost.appendChild(costBar);
-    cost.appendChild(costValue);
-
-    const tools = document.createElement("div");
-    tools.textContent = session.tool_calls;
-
-    const msgs = document.createElement("div");
-    msgs.textContent = session.message_count;
-
-    const status = document.createElement("div");
-    status.className = `session-status session-status--${statusClass(session.status)}`;
-    const statusDot = document.createElement("span");
-    statusDot.className = `session-status__dot session-status__dot--${statusClass(session.status)}`;
-    const statusText = document.createElement("span");
-    statusText.textContent = session.status;
-    status.appendChild(statusDot);
-    status.appendChild(statusText);
-
-    row.appendChild(number);
-    row.appendChild(label);
-    row.appendChild(project);
-    row.appendChild(model);
-    row.appendChild(duration);
-    row.appendChild(tokens);
-    row.appendChild(cost);
-    row.appendChild(tools);
-    row.appendChild(msgs);
-    row.appendChild(status);
-
-    row.addEventListener("click", () => loadSession(session.id));
+    const row = buildSessionRow(session, index, () => loadSession(session.id));
     sessionsEl.appendChild(row);
   });
 
@@ -731,6 +771,651 @@ const renderSessionDetail = (detail) => {
   detailEl.appendChild(renderConversation(detail));
 };
 
+// ── Analytics rendering ──
+
+const renderAnalyticsSummary = (data) => {
+  analyticsSummaryEl.innerHTML = "";
+  const items = [
+    { label: "total sessions", value: data.total_sessions },
+    { label: "avg cost/session", value: formatCost(data.avg_session_cost) },
+    { label: "avg duration", value: formatDuration(data.avg_duration_ns) },
+    { label: "models tracked", value: data.model_performance ? data.model_performance.length : 0 },
+  ];
+  items.forEach((item) => {
+    const card = document.createElement("div");
+    card.className = "metric";
+    const label = document.createElement("div");
+    label.className = "metric__label";
+    label.textContent = item.label;
+    const value = document.createElement("div");
+    value.className = "metric__value";
+    value.textContent = item.value;
+    card.appendChild(label);
+    card.appendChild(value);
+    analyticsSummaryEl.appendChild(card);
+  });
+};
+
+const renderHeatmap = (data) => {
+  analyticsHeatmapEl.innerHTML = "";
+  const days = data.activity_by_day || [];
+  if (days.length === 0) {
+    analyticsHeatmapEl.textContent = "no activity data";
+    heatmapLabelsEl.innerHTML = "";
+    heatmapSelectableDays = [];
+    return;
+  }
+  const maxSessions = Math.max(...days.map((d) => d.sessions), 1);
+  heatmapSelectableDays = days.slice(-9);
+  days.forEach((day) => {
+    const cell = document.createElement("div");
+    cell.className = "heatmap-cell";
+    if (day.sessions === 0) {
+      cell.classList.add("heatmap-cell--empty");
+    } else {
+      const intensity = day.sessions / maxSessions;
+      if (intensity >= 0.7) {
+        cell.classList.add("heatmap-cell--high");
+      } else if (intensity >= 0.3) {
+        cell.classList.add("heatmap-cell--med");
+      } else {
+        cell.classList.add("heatmap-cell--low");
+      }
+      cell.addEventListener("click", () => {
+        selectHeatmapDay(day.date);
+      });
+    }
+    if (selectedDayDate === day.date) {
+      cell.classList.add("heatmap-cell--selected");
+    }
+    cell.title = `${day.date}: ${day.sessions} sessions, ${formatCost(day.cost)}`;
+    analyticsHeatmapEl.appendChild(cell);
+  });
+  renderHeatmapLabels();
+};
+
+const renderHeatmapLabels = () => {
+  heatmapLabelsEl.innerHTML = "";
+  if (!heatmapSelectableDays.length) return;
+
+  heatmapSelectableDays.forEach((day, index) => {
+    const label = document.createElement("button");
+    label.type = "button";
+    label.className = "heatmap-label";
+    if (selectedDayDate === day.date) {
+      label.classList.add("heatmap-label--selected");
+    }
+    label.addEventListener("click", () => selectHeatmapDay(day.date));
+
+    const indexEl = document.createElement("span");
+    indexEl.className = "heatmap-label__index";
+    indexEl.textContent = String(index + 1);
+
+    const dateEl = document.createElement("span");
+    dateEl.className = "heatmap-label__date";
+    dateEl.textContent = day.date.slice(5);
+
+    label.appendChild(indexEl);
+    label.appendChild(dateEl);
+    heatmapLabelsEl.appendChild(label);
+  });
+};
+
+const renderHeatmapHint = (data) => {
+  heatmapHintEl.innerHTML = "";
+  const days = data.activity_by_day || [];
+  if (days.length === 0) return;
+
+  // Legend
+  const legend = document.createElement("div");
+  legend.className = "heatmap-hint__legend";
+  const maxSessions = Math.max(...days.map((d) => d.sessions), 1);
+  const levels = [
+    { label: "none", opacity: 1, bg: "var(--border)" },
+    { label: "low", opacity: 0.25, bg: "var(--green)" },
+    { label: "med", opacity: 0.55, bg: "var(--green)" },
+    { label: "high", opacity: 1, bg: "var(--green)" },
+  ];
+  levels.forEach((lvl) => {
+    const item = document.createElement("span");
+    const swatch = document.createElement("span");
+    swatch.className = "heatmap-hint__swatch";
+    swatch.style.background = lvl.bg;
+    swatch.style.opacity = lvl.opacity;
+    item.appendChild(swatch);
+    item.appendChild(document.createTextNode(lvl.label));
+    legend.appendChild(item);
+  });
+  heatmapHintEl.appendChild(legend);
+
+  // Compute stats
+  const activeDays = days.filter((d) => d.sessions > 0);
+  const totalDays = days.length;
+  const peakDay = activeDays.length > 0
+    ? activeDays.reduce((a, b) => (b.sessions > a.sessions ? b : a))
+    : null;
+  const avgSessions = activeDays.length > 0
+    ? (activeDays.reduce((sum, d) => sum + d.sessions, 0) / activeDays.length)
+    : 0;
+
+  // Current streak (count consecutive active days from the end)
+  let streak = 0;
+  for (let i = days.length - 1; i >= 0; i--) {
+    if (days[i].sessions > 0) streak++;
+    else break;
+  }
+
+  // Top tool from analytics data
+  const topTools = data.top_tools || [];
+  const topTool = topTools.length > 0 ? topTools[0] : null;
+  const totalToolCalls = topTools.reduce((sum, t) => sum + t.count, 0);
+  const totalErrors = topTools.reduce((sum, t) => sum + (t.error_count || 0), 0);
+
+  const stats = document.createElement("div");
+  stats.className = "heatmap-hint__stats";
+
+  const lines = [];
+  if (peakDay) {
+    lines.push(`peak: <span>${peakDay.date.slice(5)}</span> with <span>${peakDay.sessions} sessions</span> (<span>${formatCost(peakDay.cost)}</span> spent)`);
+  }
+  lines.push(`<span>${activeDays.length}</span> of <span>${totalDays}</span> days active (<span>${Math.round((activeDays.length / totalDays) * 100)}%</span>)`);
+  lines.push(`avg <span>${avgSessions.toFixed(1)}</span> sessions on active days`);
+  lines.push(`current streak: <span>${streak} day${streak !== 1 ? "s" : ""}</span>`);
+  if (topTool) {
+    const topToolPct = totalToolCalls > 0 ? Math.round((topTool.count / totalToolCalls) * 100) : 0;
+    lines.push(`<span>${topTool.name}</span> is most used (<span>${topToolPct}%</span> of all calls)`);
+  }
+  if (totalErrors > 0) {
+    lines.push(`<span>${totalErrors}</span> tool errors across <span>${totalToolCalls}</span> total calls`);
+  } else {
+    lines.push(`no tool errors detected`);
+  }
+  lines.push(`<span>${topTools.length}</span> unique tools across <span>${totalToolCalls.toLocaleString()}</span> total calls`);
+
+  stats.innerHTML = lines.map((l) => `<div>${l}</div>`).join("");
+  heatmapHintEl.appendChild(stats);
+
+  const prompt = document.createElement("div");
+  prompt.className = "heatmap-hint__prompt";
+  if (selectedDayDate) {
+    const dayData = days.find((d) => d.date === selectedDayDate);
+    const count = dayData ? dayData.sessions : 0;
+    prompt.innerHTML = `filtering by <span style="color:var(--primary);font-weight:700">${selectedDayDate}</span> — ${count} session${count !== 1 ? "s" : ""} shown below`;
+  } else {
+    prompt.textContent = "click a cell to drill into that day's sessions";
+  }
+  heatmapHintEl.appendChild(prompt);
+};
+
+const renderTopTools = (data) => {
+  analyticsToolsEl.innerHTML = "";
+  const tools = data.top_tools || [];
+  if (tools.length === 0) {
+    analyticsToolsEl.textContent = "no tool data";
+    return;
+  }
+  const maxCount = tools[0].count || 1;
+  tools.forEach((tool) => {
+    const row = document.createElement("div");
+    row.className = "tool-row";
+    const header = document.createElement("div");
+    header.className = "tool-row__header";
+    const name = document.createElement("span");
+    name.className = "tool-row__name";
+    name.textContent = tool.name;
+    const meta = document.createElement("span");
+    meta.className = "tool-row__meta";
+    meta.textContent = `${tool.count}x`;
+    if (tool.error_count > 0) {
+      meta.textContent += ` (${tool.error_count} err)`;
+      meta.classList.add("tool-row__meta--error");
+    }
+    header.appendChild(name);
+    header.appendChild(meta);
+    const bar = document.createElement("div");
+    bar.className = "tool-row__bar";
+    const fill = document.createElement("div");
+    fill.className = "tool-row__fill";
+    fill.style.width = `${Math.round((tool.count / maxCount) * 100)}%`;
+    if (tool.error_count > 0) {
+      const errorFill = document.createElement("div");
+      errorFill.className = "tool-row__fill--error";
+      errorFill.style.width = `${Math.round((tool.error_count / tool.count) * 100)}%`;
+      fill.appendChild(errorFill);
+    }
+    bar.appendChild(fill);
+    row.appendChild(header);
+    row.appendChild(bar);
+    analyticsToolsEl.appendChild(row);
+  });
+};
+
+const renderHistogram = (el, buckets) => {
+  el.innerHTML = "";
+  if (!buckets || buckets.length === 0) {
+    el.textContent = "no data";
+    return;
+  }
+  const maxCount = Math.max(...buckets.map((b) => b.count), 1);
+  buckets.forEach((bucket) => {
+    const row = document.createElement("div");
+    row.className = "histogram__row";
+    const label = document.createElement("div");
+    label.className = "histogram__label";
+    label.textContent = bucket.label;
+    const barWrap = document.createElement("div");
+    barWrap.className = "histogram__bar-wrap";
+    const bar = document.createElement("div");
+    bar.className = "histogram__bar";
+    bar.style.width = `${Math.max(Math.round((bucket.count / maxCount) * 100), 2)}%`;
+    barWrap.appendChild(bar);
+    const count = document.createElement("div");
+    count.className = "histogram__count";
+    count.textContent = bucket.count;
+    row.appendChild(label);
+    row.appendChild(barWrap);
+    row.appendChild(count);
+    el.appendChild(row);
+  });
+};
+
+const renderModelComparison = (data) => {
+  analyticsModelsEl.innerHTML = "";
+  const models = data.model_performance || [];
+  if (models.length === 0) {
+    analyticsModelsEl.textContent = "no model data";
+    return;
+  }
+  const table = document.createElement("div");
+  table.className = "model-table";
+  const header = document.createElement("div");
+  header.className = "model-table__row model-table__row--header";
+  header.innerHTML = "<div>model</div><div>sessions</div><div>avg cost</div><div>avg dur</div><div>avg tokens</div><div>success</div>";
+  table.appendChild(header);
+  models.forEach((model) => {
+    const row = document.createElement("div");
+    row.className = "model-table__row";
+    const nameEl = document.createElement("div");
+    nameEl.className = "model-table__name";
+    nameEl.textContent = model.model;
+    nameEl.style.color = colorForModel(model.model);
+    const sessEl = document.createElement("div");
+    sessEl.textContent = model.sessions;
+    const costEl = document.createElement("div");
+    costEl.textContent = formatCost(model.avg_cost);
+    const durEl = document.createElement("div");
+    durEl.textContent = formatDuration(model.avg_duration_ns);
+    const tokEl = document.createElement("div");
+    tokEl.textContent = formatTokens(model.avg_tokens);
+    const successEl = document.createElement("div");
+    successEl.textContent = formatPercent(model.success_rate);
+    successEl.style.color = model.success_rate >= 0.8 ? "var(--green)" : model.success_rate >= 0.5 ? "var(--orange)" : "var(--primary)";
+    row.appendChild(nameEl);
+    row.appendChild(sessEl);
+    row.appendChild(costEl);
+    row.appendChild(durEl);
+    row.appendChild(tokEl);
+    row.appendChild(successEl);
+    table.appendChild(row);
+  });
+  analyticsModelsEl.appendChild(table);
+};
+
+const renderProviderSplit = (data) => {
+  analyticsProvidersEl.innerHTML = "";
+  const providers = data.provider_breakdown || {};
+  const entries = Object.entries(providers).sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) {
+    analyticsProvidersEl.textContent = "no provider data";
+    return;
+  }
+  const total = entries.reduce((sum, [, count]) => sum + count, 0);
+  const providerColors = { anthropic: "var(--pink)", openai: "var(--green)", google: "var(--orange)" };
+  const bar = document.createElement("div");
+  bar.className = "provider__bar";
+  entries.forEach(([name, count]) => {
+    const segment = document.createElement("span");
+    segment.className = "provider__segment";
+    segment.style.width = `${(count / total) * 100}%`;
+    segment.style.background = providerColors[name] || "var(--blue)";
+    bar.appendChild(segment);
+  });
+  analyticsProvidersEl.appendChild(bar);
+  const legend = document.createElement("div");
+  legend.className = "provider__legend";
+  entries.forEach(([name, count]) => {
+    const item = document.createElement("div");
+    item.className = "provider__legend-item";
+    const dot = document.createElement("span");
+    dot.className = "provider__dot";
+    dot.style.background = providerColors[name] || "var(--blue)";
+    const text = document.createElement("span");
+    text.textContent = `${name} ${Math.round((count / total) * 100)}% (${count})`;
+    item.appendChild(dot);
+    item.appendChild(text);
+    legend.appendChild(item);
+  });
+  analyticsProvidersEl.appendChild(legend);
+};
+
+const selectHeatmapDay = (dateStr) => {
+  if (selectedDayDate === dateStr) {
+    closeDayDetail();
+    return;
+  }
+  selectedDayDate = dateStr;
+  if (analyticsState) {
+    renderHeatmap(analyticsState);
+    renderHeatmapHint(analyticsState);
+  }
+  loadDayDetail(dateStr);
+};
+
+const closeDayDetail = () => {
+  selectedDayDate = null;
+  dayDetailState = null;
+  dayDetailEl.hidden = false;
+  dayDetailDateEl.textContent = "day detail";
+  dayDetailMetricsEl.innerHTML = "";
+  dayDetailSessionsEl.innerHTML = "";
+  dayDetailPlaceholderEl.hidden = false;
+  dayPrevButton.disabled = true;
+  dayNextButton.disabled = true;
+  if (analyticsState) {
+    renderHeatmap(analyticsState);
+    renderHeatmapHint(analyticsState);
+  }
+};
+
+const navigateDay = (delta) => {
+  if (!analyticsState || !selectedDayDate) return;
+  const days = (analyticsState.activity_by_day || []).filter((d) => d.sessions > 0);
+  const currentIdx = days.findIndex((d) => d.date === selectedDayDate);
+  if (currentIdx < 0) return;
+  const nextIdx = currentIdx + delta;
+  if (nextIdx < 0 || nextIdx >= days.length) return;
+  selectHeatmapDay(days[nextIdx].date);
+};
+
+const toLocalISO = (date) => {
+  const off = date.getTimezoneOffset();
+  const sign = off <= 0 ? "+" : "-";
+  const hh = String(Math.floor(Math.abs(off) / 60)).padStart(2, "0");
+  const mm = String(Math.abs(off) % 60).padStart(2, "0");
+  const y = date.getFullYear();
+  const mo = String(date.getMonth() + 1).padStart(2, "0");
+  const da = String(date.getDate()).padStart(2, "0");
+  const h = String(date.getHours()).padStart(2, "0");
+  const mi = String(date.getMinutes()).padStart(2, "0");
+  const s = String(date.getSeconds()).padStart(2, "0");
+  return `${y}-${mo}-${da}T${h}:${mi}:${s}${sign}${hh}:${mm}`;
+};
+
+const loadDayDetail = async (dateStr) => {
+  const fromDate = new Date(dateStr + "T00:00:00");
+  const toDate = new Date(dateStr + "T00:00:00");
+  toDate.setDate(toDate.getDate() + 1);
+  const from = toLocalISO(fromDate);
+  const to = toLocalISO(toDate);
+
+  dayDetailEl.hidden = false;
+  dayDetailEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  dayDetailDateEl.textContent = dateStr;
+  dayDetailPlaceholderEl.hidden = true;
+  dayPrevButton.disabled = false;
+  dayNextButton.disabled = false;
+  dayDetailMetricsEl.innerHTML = "";
+  dayDetailSessionsEl.innerHTML = '<div style="padding:12px;color:var(--muted);font-size:11px;">loading...</div>';
+
+  const res = await fetch(`/api/overview?from=${from}&to=${to}`);
+  const data = await res.json();
+  dayDetailState = data;
+
+  const sessions = data.sessions || [];
+  const totalCost = data.total_cost || 0;
+  const avgCost = sessions.length ? totalCost / sessions.length : 0;
+  const completed = sessions.filter((s) => s.status === "completed").length;
+  const successRate = sessions.length ? completed / sessions.length : 0;
+
+  dayDetailMetricsEl.innerHTML = "";
+  const metrics = [
+    { label: "sessions", value: sessions.length },
+    { label: "total cost", value: formatCost(totalCost) },
+    { label: "avg cost", value: formatCost(avgCost) },
+    { label: "success rate", value: formatPercent(successRate) },
+  ];
+  metrics.forEach((m) => {
+    const card = document.createElement("div");
+    card.className = "day-detail__metric";
+    const label = document.createElement("div");
+    label.className = "day-detail__metric-label";
+    label.textContent = m.label;
+    const value = document.createElement("div");
+    value.className = "day-detail__metric-value";
+    value.textContent = m.value;
+    card.appendChild(label);
+    card.appendChild(value);
+    dayDetailMetricsEl.appendChild(card);
+  });
+
+  dayDetailSessionsEl.innerHTML = "";
+  if (sessions.length === 0) {
+    dayDetailSessionsEl.innerHTML = '<div style="padding:12px;color:var(--muted);font-size:11px;">no sessions</div>';
+    return;
+  }
+
+  const header = document.createElement("div");
+  header.className = "sessions-row sessions-row--header";
+  header.innerHTML =
+    "<div>#</div><div>label</div><div>model</div><div>dur</div><div>tokens</div><div>cost</div><div>tools</div><div>msgs</div><div>status</div>";
+  dayDetailSessionsEl.appendChild(header);
+
+  sessions.forEach((session, index) => {
+    const row = buildSessionRow(session, index, () => {
+      sessionEntryView = "analytics";
+      loadSession(session.id);
+    });
+    dayDetailSessionsEl.appendChild(row);
+  });
+};
+
+const renderFacetInsights = (data) => {
+  if (!data) {
+    analyticsInsightsEl.hidden = true;
+    return;
+  }
+  analyticsInsightsEl.hidden = false;
+
+  // Goal distribution
+  renderDistributionBars(insightsGoalsEl, data.goal_distribution, "var(--blue)");
+
+  // Outcome distribution
+  const outcomeColors = {
+    fully_achieved: "var(--green)",
+    mostly_achieved: "var(--blue)",
+    partially_achieved: "var(--orange)",
+    not_achieved: "var(--primary)",
+  };
+  renderDistributionBarsColored(insightsOutcomesEl, data.outcome_distribution, outcomeColors);
+
+  // Friction points
+  renderFrictionList(insightsFrictionEl, data.top_friction);
+
+  // Session types
+  renderDistributionBars(insightsTypesEl, data.session_types, "var(--pink)");
+
+  // Recent summaries
+  renderSummariesList(insightsSummariesEl, data.recent_summaries);
+};
+
+const renderDistributionBars = (el, distribution, color) => {
+  el.innerHTML = "";
+  if (!distribution) {
+    el.textContent = "no data";
+    return;
+  }
+  const entries = Object.entries(distribution).sort((a, b) => b[1] - a[1]);
+  const maxCount = entries.length > 0 ? entries[0][1] : 1;
+  entries.forEach(([label, count]) => {
+    const row = document.createElement("div");
+    row.className = "histogram__row";
+    const labelEl = document.createElement("div");
+    labelEl.className = "histogram__label";
+    labelEl.textContent = label.replace(/_/g, " ");
+    const barWrap = document.createElement("div");
+    barWrap.className = "histogram__bar-wrap";
+    const bar = document.createElement("div");
+    bar.className = "histogram__bar";
+    bar.style.width = `${Math.max(Math.round((count / maxCount) * 100), 2)}%`;
+    bar.style.background = color;
+    barWrap.appendChild(bar);
+    const countEl = document.createElement("div");
+    countEl.className = "histogram__count";
+    countEl.textContent = count;
+    row.appendChild(labelEl);
+    row.appendChild(barWrap);
+    row.appendChild(countEl);
+    el.appendChild(row);
+  });
+};
+
+const renderDistributionBarsColored = (el, distribution, colors) => {
+  el.innerHTML = "";
+  if (!distribution) {
+    el.textContent = "no data";
+    return;
+  }
+  const entries = Object.entries(distribution).sort((a, b) => b[1] - a[1]);
+  const total = entries.reduce((sum, [, count]) => sum + count, 0) || 1;
+  const bar = document.createElement("div");
+  bar.className = "provider__bar";
+  entries.forEach(([label, count]) => {
+    const segment = document.createElement("span");
+    segment.className = "provider__segment";
+    segment.style.width = `${(count / total) * 100}%`;
+    segment.style.background = colors[label] || "var(--muted)";
+    segment.title = `${label.replace(/_/g, " ")} (${count})`;
+    bar.appendChild(segment);
+  });
+  el.appendChild(bar);
+  const legend = document.createElement("div");
+  legend.className = "provider__legend";
+  entries.forEach(([label, count]) => {
+    const item = document.createElement("div");
+    item.className = "provider__legend-item";
+    const dot = document.createElement("span");
+    dot.className = "provider__dot";
+    dot.style.background = colors[label] || "var(--muted)";
+    const text = document.createElement("span");
+    text.textContent = `${label.replace(/_/g, " ")} ${Math.round((count / total) * 100)}% (${count})`;
+    item.appendChild(dot);
+    item.appendChild(text);
+    legend.appendChild(item);
+  });
+  el.appendChild(legend);
+};
+
+const renderFrictionList = (el, friction) => {
+  el.innerHTML = "";
+  if (!friction || friction.length === 0) {
+    el.textContent = "no friction data";
+    return;
+  }
+  friction.forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "friction-item";
+    const badge = document.createElement("span");
+    badge.className = "friction-item__badge";
+    badge.textContent = item.count;
+    const label = document.createElement("span");
+    label.className = "friction-item__label";
+    label.textContent = (item.type || item.name || "").replace(/_/g, " ");
+    row.appendChild(badge);
+    row.appendChild(label);
+    el.appendChild(row);
+  });
+};
+
+const renderSummariesList = (el, summaries) => {
+  el.innerHTML = "";
+  if (!summaries || summaries.length === 0) {
+    el.textContent = "no summaries";
+    return;
+  }
+  summaries.forEach((s) => {
+    const card = document.createElement("div");
+    card.className = "summary-card";
+    const goal = document.createElement("div");
+    goal.className = "summary-card__goal";
+    goal.textContent = s.goal || s.underlying_goal || "";
+    const summary = document.createElement("div");
+    summary.className = "summary-card__text";
+    summary.textContent = s.summary || s.brief_summary || "";
+    card.appendChild(goal);
+    card.appendChild(summary);
+    el.appendChild(card);
+  });
+};
+
+const renderAnalyticsPeriodControls = () => {
+  analyticsPeriodEl.innerHTML = "";
+  const periods = [
+    { label: "30d", value: "30d" },
+    { label: "3M", value: "90d" },
+    { label: "6M", value: "180d" },
+  ];
+  periods.forEach((period) => {
+    const button = document.createElement("button");
+    button.className = "period__button";
+    if (filters.period === period.value) {
+      button.classList.add("period__button--active");
+    }
+    button.textContent = period.label;
+    button.addEventListener("click", () => {
+      filters.period = period.value;
+      filters.periodEnabled = true;
+      renderAnalyticsPeriodControls();
+      loadAnalytics();
+    });
+    analyticsPeriodEl.appendChild(button);
+  });
+};
+
+const loadAnalytics = async () => {
+  selectedDayDate = null;
+  dayDetailState = null;
+  dayDetailEl.hidden = false;
+  dayDetailDateEl.textContent = "day detail";
+  dayDetailMetricsEl.innerHTML = "";
+  dayDetailSessionsEl.innerHTML = "";
+  dayDetailPlaceholderEl.hidden = false;
+  dayPrevButton.disabled = true;
+  dayNextButton.disabled = true;
+  analyticsLoadingEl.hidden = false;
+  analyticsContentEl.hidden = true;
+  analyticsSubtitleEl.textContent = "loading analytics...";
+
+  const res = await fetch(`/api/analytics?${buildParams()}`);
+  const data = await res.json();
+  analyticsState = data;
+  analyticsSubtitleEl.textContent = `${data.total_sessions} sessions analyzed`;
+  renderAnalyticsSummary(data);
+  renderHeatmap(data);
+  renderHeatmapHint(data);
+  renderTopTools(data);
+  renderHistogram(analyticsDurationEl, data.duration_buckets);
+  renderHistogram(analyticsCostEl, data.cost_buckets);
+  renderModelComparison(data);
+  renderProviderSplit(data);
+  renderAnalyticsPeriodControls();
+
+  // AI insights via facets disabled — see #94
+  analyticsInsightsEl.hidden = true;
+
+  analyticsLoadingEl.hidden = true;
+  analyticsContentEl.hidden = false;
+};
+
 const loadOverview = async () => {
   const res = await fetch(`/api/overview?${buildParams()}`);
   const data = await res.json();
@@ -770,6 +1455,9 @@ const loadOverview = async () => {
 };
 
 const loadSession = async (sessionId, keepMessage) => {
+  if (!sessionEntryView) {
+    sessionEntryView = currentView;
+  }
   selectedSessionId = sessionId;
   const res = await fetch(`/api/session/${sessionId}`);
   const data = await res.json();
@@ -790,24 +1478,26 @@ const loadSession = async (sessionId, keepMessage) => {
 
 const setView = (view) => {
   currentView = view;
-  if (view === "session") {
-    overviewViewEl.hidden = true;
-    sessionViewEl.hidden = false;
-  } else {
-    overviewViewEl.hidden = false;
-    sessionViewEl.hidden = true;
-  }
+  overviewViewEl.hidden = view !== "overview";
+  sessionViewEl.hidden = view !== "session";
+  analyticsViewEl.hidden = view !== "analytics";
 };
 
 const backToOverview = () => {
+  const returnTo = sessionEntryView;
   selectedSessionId = null;
   selectedMessageIndex = 0;
   sessionDetailState = null;
+  sessionEntryView = null;
   detailEl.innerHTML = "";
-  setView("overview");
-  window.history.pushState({}, "", "/");
-  if (overviewState) {
-    renderSessions(overviewState);
+  if (returnTo === "analytics") {
+    setView("analytics");
+  } else {
+    setView("overview");
+    window.history.pushState({}, "", "/");
+    if (overviewState) {
+      renderSessions(overviewState);
+    }
   }
 };
 
@@ -846,6 +1536,23 @@ const handleKey = (event) => {
     return;
   }
   switch (event.key) {
+    case "1":
+    case "2":
+    case "3":
+    case "4":
+    case "5":
+    case "6":
+    case "7":
+    case "8":
+    case "9":
+      if (currentView === "analytics" && heatmapSelectableDays.length) {
+        const idx = Number(event.key) - 1;
+        const day = heatmapSelectableDays[idx];
+        if (day) {
+          selectHeatmapDay(day.date);
+        }
+      }
+      break;
     case "j":
     case "ArrowDown":
       if (currentView === "session") {
@@ -862,14 +1569,44 @@ const handleKey = (event) => {
         moveSession(-1);
       }
       break;
+    case "ArrowLeft":
+      if (currentView === "analytics" && selectedDayDate) {
+        navigateDay(-1);
+      }
+      break;
+    case "ArrowRight":
+      if (currentView === "analytics" && selectedDayDate) {
+        navigateDay(1);
+      }
+      break;
+    case "Escape":
+      if (currentView === "analytics" && selectedDayDate) {
+        closeDayDetail();
+      }
+      break;
     case "Enter":
       if (currentView === "overview" && overviewState && overviewState.sessions[sessionIndex]) {
         loadSession(overviewState.sessions[sessionIndex].id);
       }
       break;
+    case "a":
+      if (currentView === "overview") {
+        filters.periodEnabled = true;
+        setView("analytics");
+        loadAnalytics().catch(console.error);
+      } else if (currentView === "analytics") {
+        setView("overview");
+      }
+      break;
     case "h":
       if (currentView === "session") {
         backToOverview();
+      } else if (currentView === "analytics") {
+        if (selectedDayDate) {
+          closeDayDetail();
+        } else {
+          setView("overview");
+        }
       }
       break;
     case "s":
@@ -943,6 +1680,10 @@ loadOverview().catch((err) => {
 
 window.addEventListener("keydown", handleKey);
 backButton.addEventListener("click", backToOverview);
+analyticsBackButton.addEventListener("click", () => setView("overview"));
+dayPrevButton.addEventListener("click", () => navigateDay(-1));
+dayNextButton.addEventListener("click", () => navigateDay(1));
+dayDetailCloseButton.addEventListener("click", closeDayDetail);
 
 window.addEventListener("popstate", () => {
   if (window.location.pathname.startsWith("/session/")) {

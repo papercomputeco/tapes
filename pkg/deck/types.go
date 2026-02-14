@@ -94,6 +94,65 @@ type Filters struct {
 	Session string
 }
 
+// SessionAnalytics holds per-session computed analytics.
+type SessionAnalytics struct {
+	SessionID         string  `json:"session_id"`
+	UserMessageCount  int     `json:"user_message_count"`
+	AssistantMsgCount int     `json:"assistant_message_count"`
+	AvgResponseTimeNs int64   `json:"avg_response_time_ns"`
+	LongestPauseNs    int64   `json:"longest_pause_ns"`
+	UniqueTools       int     `json:"unique_tools"`
+	ToolErrorCount    int     `json:"tool_error_count"`
+	TokensPerMinute   float64 `json:"tokens_per_minute"`
+	AvgPromptLength   int     `json:"avg_prompt_length"`
+	AvgResponseLength int     `json:"avg_response_length"`
+	FirstPrompt       string  `json:"first_prompt"`
+}
+
+// AnalyticsOverview holds cross-session analytics.
+type AnalyticsOverview struct {
+	TotalSessions     int                `json:"total_sessions"`
+	AvgSessionCost    float64            `json:"avg_session_cost"`
+	AvgDurationNs     int64              `json:"avg_duration_ns"`
+	TopTools          []ToolMetric       `json:"top_tools"`
+	ActivityByDay     []DayActivity      `json:"activity_by_day"`
+	DurationBuckets   []Bucket           `json:"duration_buckets"`
+	CostBuckets       []Bucket           `json:"cost_buckets"`
+	ModelPerformance  []ModelPerformance `json:"model_performance"`
+	ProviderBreakdown map[string]int     `json:"provider_breakdown"`
+}
+
+type ToolMetric struct {
+	Name       string `json:"name"`
+	Count      int    `json:"count"`
+	ErrorCount int    `json:"error_count"`
+	Sessions   int    `json:"sessions"`
+}
+
+type DayActivity struct {
+	Date     string  `json:"date"`
+	Sessions int     `json:"sessions"`
+	Cost     float64 `json:"cost"`
+	Tokens   int64   `json:"tokens"`
+}
+
+type Bucket struct {
+	Label string `json:"label"`
+	Count int    `json:"count"`
+}
+
+type ModelPerformance struct {
+	Model          string  `json:"model"`
+	Provider       string  `json:"provider"`
+	Sessions       int     `json:"sessions"`
+	AvgCost        float64 `json:"avg_cost"`
+	AvgDurationNs  int64   `json:"avg_duration_ns"`
+	AvgTokens      int64   `json:"avg_tokens"`
+	TotalCost      float64 `json:"total_cost"`
+	SuccessRate    float64 `json:"success_rate"`
+	CompletedCount int     `json:"completed_count"`
+}
+
 const (
 	StatusCompleted = "completed"
 	StatusFailed    = "failed"

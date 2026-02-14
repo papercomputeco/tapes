@@ -9,6 +9,18 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage/ent"
 )
 
+// The FacetFunc type is an adapter to allow the use of ordinary
+// function as Facet mutator.
+type FacetFunc func(context.Context, *ent.FacetMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f FacetFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.FacetMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.FacetMutation", m)
+}
+
 // The NodeFunc type is an adapter to allow the use of ordinary
 // function as Node mutator.
 type NodeFunc func(context.Context, *ent.NodeMutation) (ent.Value, error)

@@ -6,5 +6,8 @@ import (
 	"entgo.io/ent/dialect/sql"
 )
 
+// Facet is the predicate function for facet builders.
+type Facet func(*sql.Selector)
+
 // Node is the predicate function for node builders.
 type Node func(*sql.Selector)
