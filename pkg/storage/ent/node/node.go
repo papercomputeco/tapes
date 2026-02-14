@@ -28,6 +28,8 @@ const (
 	FieldModel = "model"
 	// FieldProvider holds the string denoting the provider field in the database.
 	FieldProvider = "provider"
+	// FieldAgentName holds the string denoting the agent_name field in the database.
+	FieldAgentName = "agent_name"
 	// FieldStopReason holds the string denoting the stop_reason field in the database.
 	FieldStopReason = "stop_reason"
 	// FieldPromptTokens holds the string denoting the prompt_tokens field in the database.
@@ -70,6 +72,7 @@ var Columns = []string{
 	FieldContent,
 	FieldModel,
 	FieldProvider,
+	FieldAgentName,
 	FieldStopReason,
 	FieldPromptTokens,
 	FieldCompletionTokens,
@@ -128,6 +131,11 @@ func ByModel(opts ...sql.OrderTermOption) OrderOption {
 // ByProvider orders the results by the provider field.
 func ByProvider(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldProvider, opts...).ToFunc()
+}
+
+// ByAgentName orders the results by the agent_name field.
+func ByAgentName(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAgentName, opts...).ToFunc()
 }
 
 // ByStopReason orders the results by the stop_reason field.

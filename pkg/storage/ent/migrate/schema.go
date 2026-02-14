@@ -17,6 +17,7 @@ var (
 		{Name: "content", Type: field.TypeJSON, Nullable: true},
 		{Name: "model", Type: field.TypeString, Nullable: true},
 		{Name: "provider", Type: field.TypeString, Nullable: true},
+		{Name: "agent_name", Type: field.TypeString, Nullable: true},
 		{Name: "stop_reason", Type: field.TypeString, Nullable: true},
 		{Name: "prompt_tokens", Type: field.TypeInt, Nullable: true},
 		{Name: "completion_tokens", Type: field.TypeInt, Nullable: true},
@@ -60,6 +61,11 @@ var (
 				Name:    "node_provider",
 				Unique:  false,
 				Columns: []*schema.Column{NodesColumns[6]},
+			},
+			{
+				Name:    "node_agent_name",
+				Unique:  false,
+				Columns: []*schema.Column{NodesColumns[7]},
 			},
 			{
 				Name:    "node_role_model",

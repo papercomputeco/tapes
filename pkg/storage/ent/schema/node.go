@@ -58,6 +58,10 @@ func (Node) Fields() []ent.Field {
 		field.String("provider").
 			Optional(),
 
+		// agent_name identifies the agent harness (e.g., "claude", "opencode", "codex")
+		field.String("agent_name").
+			Optional(),
+
 		// stop_reason indicates why generation stopped (only for responses)
 		field.String("stop_reason").
 			Optional(),
@@ -114,6 +118,9 @@ func (Node) Indexes() []ent.Index {
 
 		// Index on provider for filtering by provider
 		index.Fields("provider"),
+
+		// Index on agent_name for filtering by agent
+		index.Fields("agent_name"),
 
 		// Composite index for common query patterns
 		index.Fields("role", "model"),

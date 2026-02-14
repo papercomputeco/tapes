@@ -32,6 +32,8 @@ type Node struct {
 	Model string `json:"model,omitempty"`
 	// Provider holds the value of the "provider" field.
 	Provider string `json:"provider,omitempty"`
+	// AgentName holds the value of the "agent_name" field.
+	AgentName string `json:"agent_name,omitempty"`
 	// StopReason holds the value of the "stop_reason" field.
 	StopReason string `json:"stop_reason,omitempty"`
 	// PromptTokens holds the value of the "prompt_tokens" field.
@@ -94,7 +96,7 @@ func (*Node) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case node.FieldPromptTokens, node.FieldCompletionTokens, node.FieldTotalTokens, node.FieldTotalDurationNs, node.FieldPromptDurationNs:
 			values[i] = new(sql.NullInt64)
-		case node.FieldID, node.FieldParentHash, node.FieldType, node.FieldRole, node.FieldModel, node.FieldProvider, node.FieldStopReason, node.FieldProject:
+		case node.FieldID, node.FieldParentHash, node.FieldType, node.FieldRole, node.FieldModel, node.FieldProvider, node.FieldAgentName, node.FieldStopReason, node.FieldProject:
 			values[i] = new(sql.NullString)
 		case node.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -165,6 +167,12 @@ func (_m *Node) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field provider", values[i])
 			} else if value.Valid {
 				_m.Provider = value.String
+			}
+		case node.FieldAgentName:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field agent_name", values[i])
+			} else if value.Valid {
+				_m.AgentName = value.String
 			}
 		case node.FieldStopReason:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -288,6 +296,9 @@ func (_m *Node) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("provider=")
 	builder.WriteString(_m.Provider)
+	builder.WriteString(", ")
+	builder.WriteString("agent_name=")
+	builder.WriteString(_m.AgentName)
 	builder.WriteString(", ")
 	builder.WriteString("stop_reason=")
 	builder.WriteString(_m.StopReason)

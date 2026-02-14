@@ -102,6 +102,20 @@ func (_c *NodeCreate) SetNillableProvider(v *string) *NodeCreate {
 	return _c
 }
 
+// SetAgentName sets the "agent_name" field.
+func (_c *NodeCreate) SetAgentName(v string) *NodeCreate {
+	_c.mutation.SetAgentName(v)
+	return _c
+}
+
+// SetNillableAgentName sets the "agent_name" field if the given value is not nil.
+func (_c *NodeCreate) SetNillableAgentName(v *string) *NodeCreate {
+	if v != nil {
+		_c.SetAgentName(*v)
+	}
+	return _c
+}
+
 // SetStopReason sets the "stop_reason" field.
 func (_c *NodeCreate) SetStopReason(v string) *NodeCreate {
 	_c.mutation.SetStopReason(v)
@@ -363,6 +377,10 @@ func (_c *NodeCreate) createSpec() (*Node, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Provider(); ok {
 		_spec.SetField(node.FieldProvider, field.TypeString, value)
 		_node.Provider = value
+	}
+	if value, ok := _c.mutation.AgentName(); ok {
+		_spec.SetField(node.FieldAgentName, field.TypeString, value)
+		_node.AgentName = value
 	}
 	if value, ok := _c.mutation.StopReason(); ok {
 		_spec.SetField(node.FieldStopReason, field.TypeString, value)

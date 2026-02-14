@@ -158,6 +158,26 @@ func (_u *NodeUpdate) ClearProvider() *NodeUpdate {
 	return _u
 }
 
+// SetAgentName sets the "agent_name" field.
+func (_u *NodeUpdate) SetAgentName(v string) *NodeUpdate {
+	_u.mutation.SetAgentName(v)
+	return _u
+}
+
+// SetNillableAgentName sets the "agent_name" field if the given value is not nil.
+func (_u *NodeUpdate) SetNillableAgentName(v *string) *NodeUpdate {
+	if v != nil {
+		_u.SetAgentName(*v)
+	}
+	return _u
+}
+
+// ClearAgentName clears the value of the "agent_name" field.
+func (_u *NodeUpdate) ClearAgentName() *NodeUpdate {
+	_u.mutation.ClearAgentName()
+	return _u
+}
+
 // SetStopReason sets the "stop_reason" field.
 func (_u *NodeUpdate) SetStopReason(v string) *NodeUpdate {
 	_u.mutation.SetStopReason(v)
@@ -476,6 +496,12 @@ func (_u *NodeUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if _u.mutation.ProviderCleared() {
 		_spec.ClearField(node.FieldProvider, field.TypeString)
 	}
+	if value, ok := _u.mutation.AgentName(); ok {
+		_spec.SetField(node.FieldAgentName, field.TypeString, value)
+	}
+	if _u.mutation.AgentNameCleared() {
+		_spec.ClearField(node.FieldAgentName, field.TypeString)
+	}
 	if value, ok := _u.mutation.StopReason(); ok {
 		_spec.SetField(node.FieldStopReason, field.TypeString, value)
 	}
@@ -754,6 +780,26 @@ func (_u *NodeUpdateOne) SetNillableProvider(v *string) *NodeUpdateOne {
 // ClearProvider clears the value of the "provider" field.
 func (_u *NodeUpdateOne) ClearProvider() *NodeUpdateOne {
 	_u.mutation.ClearProvider()
+	return _u
+}
+
+// SetAgentName sets the "agent_name" field.
+func (_u *NodeUpdateOne) SetAgentName(v string) *NodeUpdateOne {
+	_u.mutation.SetAgentName(v)
+	return _u
+}
+
+// SetNillableAgentName sets the "agent_name" field if the given value is not nil.
+func (_u *NodeUpdateOne) SetNillableAgentName(v *string) *NodeUpdateOne {
+	if v != nil {
+		_u.SetAgentName(*v)
+	}
+	return _u
+}
+
+// ClearAgentName clears the value of the "agent_name" field.
+func (_u *NodeUpdateOne) ClearAgentName() *NodeUpdateOne {
+	_u.mutation.ClearAgentName()
 	return _u
 }
 
@@ -1104,6 +1150,12 @@ func (_u *NodeUpdateOne) sqlSave(ctx context.Context) (_node *Node, err error) {
 	}
 	if _u.mutation.ProviderCleared() {
 		_spec.ClearField(node.FieldProvider, field.TypeString)
+	}
+	if value, ok := _u.mutation.AgentName(); ok {
+		_spec.SetField(node.FieldAgentName, field.TypeString, value)
+	}
+	if _u.mutation.AgentNameCleared() {
+		_spec.ClearField(node.FieldAgentName, field.TypeString)
 	}
 	if value, ok := _u.mutation.StopReason(); ok {
 		_spec.SetField(node.FieldStopReason, field.TypeString, value)

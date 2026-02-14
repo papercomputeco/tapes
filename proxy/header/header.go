@@ -23,6 +23,9 @@ func NewHandler() *Handler {
 	return &Handler{}
 }
 
+// AgentNameHeader is the optional header used to tag agent requests.
+const AgentNameHeader = "X-Tapes-Agent-Name"
+
 // skipRequest is the set of request headers (client --> proxy --> upstream)
 // that are not forwarded to the upstream LLM provider.
 var skipRequest = map[string]struct{}{
@@ -38,6 +41,9 @@ var skipRequest = map[string]struct{}{
 	// "Accept-Encoding: gzip" and transparently decompresses the upstream
 	// response.
 	"Accept-Encoding": {},
+
+	// Internal agent routing header.
+	AgentNameHeader: {},
 }
 
 // skipResponse is the set of upstream response headers (client <-- proxy <-- upstream)
