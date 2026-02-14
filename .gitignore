@@ -6,6 +6,7 @@
 /tmp/
 /tapes
 /config.toml
+/credentials.toml
 /tapes.db
 /tapes.db~
 /tapes.demo.sqlite

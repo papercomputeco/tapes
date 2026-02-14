@@ -7,11 +7,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/papercomputeco/tapes/pkg/credentials"
 	"github.com/papercomputeco/tapes/pkg/start"
 )
 
@@ -105,6 +107,82 @@ var _ = Describe("followLog", func() {
 		Expect(out.String()).NotTo(ContainSubstring("old"))
 		cancel()
 		Eventually(errChan, 2*time.Second, 50*time.Millisecond).Should(Receive(MatchError(context.Canceled)))
+	})
+})
+
+var _ = Describe("injectCredentials", func() {
+	var tmpDir string
+
+	BeforeEach(func() {
+		var err error
+		tmpDir, err = os.MkdirTemp("", "tapes-inject-creds-*")
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	AfterEach(func() {
+		Expect(os.RemoveAll(tmpDir)).To(Succeed())
+	})
+
+	It("injects stored credentials into env", func() {
+		mgr, err := credentials.NewManager(tmpDir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mgr.SetKey("openai", "sk-test-inject")).To(Succeed())
+
+		cmder := &startCommander{configDir: tmpDir}
+		env := cmder.injectCredentials([]string{"HOME=/tmp"})
+
+		found := false
+		for _, e := range env {
+			if strings.HasPrefix(e, "OPENAI_API_KEY=") {
+				Expect(e).To(Equal("OPENAI_API_KEY=sk-test-inject"))
+				found = true
+			}
+		}
+		Expect(found).To(BeTrue(), "OPENAI_API_KEY should be injected")
+	})
+
+	It("does not override existing env vars", func() {
+		mgr, err := credentials.NewManager(tmpDir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mgr.SetKey("openai", "sk-stored")).To(Succeed())
+
+		cmder := &startCommander{configDir: tmpDir}
+		env := cmder.injectCredentials([]string{"OPENAI_API_KEY=sk-existing"})
+
+		count := 0
+		for _, e := range env {
+			if strings.HasPrefix(e, "OPENAI_API_KEY=") {
+				Expect(e).To(Equal("OPENAI_API_KEY=sk-existing"))
+				count++
+			}
+		}
+		Expect(count).To(Equal(1), "existing env var should not be duplicated")
+	})
+
+	It("returns env unchanged when no credentials stored", func() {
+		cmder := &startCommander{configDir: tmpDir}
+		original := []string{"HOME=/tmp", "PATH=/usr/bin"}
+		env := cmder.injectCredentials(original)
+		Expect(env).To(Equal(original))
+	})
+
+	It("injects multiple providers", func() {
+		mgr, err := credentials.NewManager(tmpDir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mgr.SetKey("openai", "sk-openai-test")).To(Succeed())
+		Expect(mgr.SetKey("anthropic", "sk-anthropic-test")).To(Succeed())
+
+		cmder := &startCommander{configDir: tmpDir}
+		env := cmder.injectCredentials([]string{})
+
+		envMap := make(map[string]string)
+		for _, e := range env {
+			if k, v, ok := strings.Cut(e, "="); ok {
+				envMap[k] = v
+			}
+		}
+		Expect(envMap).To(HaveKeyWithValue("OPENAI_API_KEY", "sk-openai-test"))
+		Expect(envMap).To(HaveKeyWithValue("ANTHROPIC_API_KEY", "sk-anthropic-test"))
 	})
 })
 

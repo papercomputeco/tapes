@@ -23,6 +23,7 @@ import (
 
 	"github.com/papercomputeco/tapes/api"
 	"github.com/papercomputeco/tapes/pkg/config"
+	"github.com/papercomputeco/tapes/pkg/credentials"
 	"github.com/papercomputeco/tapes/pkg/dotdir"
 	"github.com/papercomputeco/tapes/pkg/embeddings"
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
@@ -197,6 +198,19 @@ func (c *startCommander) runAgent(ctx context.Context, agent string) error {
 			"OPENAI_BASE_URL="+agentBaseURL,
 			"OPENAI_API_BASE="+agentBaseURL,
 		)
+		codexCleanup, err := c.configureCodexAuth()
+		if err != nil {
+			return err
+		}
+		prevCleanup := cleanup
+		cleanup = func() error {
+			err1 := codexCleanup()
+			err2 := prevCleanup()
+			if err1 != nil {
+				return err1
+			}
+			return err2
+		}
 	case agentOpenCode:
 		var configRoot string
 		cleanup, configRoot, err = configureOpenCode(agentBaseURL)
@@ -205,6 +219,8 @@ func (c *startCommander) runAgent(ctx context.Context, agent string) error {
 		}
 		cmd.Env = append(cmd.Env, "XDG_CONFIG_HOME="+configRoot)
 	}
+
+	cmd.Env = c.injectCredentials(cmd.Env)
 
 	if err := cmd.Start(); err != nil {
 		_ = cleanup()
@@ -679,6 +695,88 @@ func (c *startCommander) newVectorAndEmbedder(cfg *startConfig, zapLogger *zap.L
 	}
 
 	return vectorDriver, embedder, nil
+}
+
+// configureCodexAuth temporarily writes the stored OpenAI API key into codex's
+// ~/.codex/auth.json so that codex uses it instead of its OAuth token when
+// routing through the tapes proxy. The returned cleanup function restores the
+// original auth.json contents.
+func (c *startCommander) configureCodexAuth() (func() error, error) {
+	noop := func() error { return nil }
+
+	mgr, err := credentials.NewManager(c.configDir)
+	if err != nil {
+		return noop, errors.New("run 'tapes auth openai' with a service account key (sk-svcacct-...) before starting codex")
+	}
+
+	apiKey, err := mgr.GetKey("openai")
+	if err != nil {
+		return noop, errors.New("run 'tapes auth openai' with a service account key (sk-svcacct-...) before starting codex")
+	}
+	if apiKey == "" {
+		return noop, errors.New("no OpenAI API key found — run 'tapes auth openai' with a service account key first")
+	}
+
+	original, authPath := credentials.ReadCodexAuthFile()
+	if original == nil {
+		return noop, nil
+	}
+
+	updated, ok := credentials.PatchCodexAuthKey(original, apiKey)
+	if !ok {
+		return noop, nil
+	}
+
+	if err := os.WriteFile(authPath, updated, 0o600); err != nil {
+		return noop, fmt.Errorf("writing codex auth: %w", err)
+	}
+
+	restore := func() error {
+		return os.WriteFile(authPath, original, 0o600)
+	}
+
+	return restore, nil
+}
+
+// injectCredentials appends stored credential env vars to the given env slice.
+// If an env var is already set in the slice, the stored credential is skipped
+// so that shell environment takes precedence.
+func (c *startCommander) injectCredentials(env []string) []string {
+	mgr, err := credentials.NewManager(c.configDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not load credential manager: %v\n", err)
+		return env
+	}
+
+	creds, err := mgr.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not load credentials: %v\n", err)
+		return env
+	}
+
+	// Build a set of env var names already present in the slice.
+	existing := make(map[string]bool, len(env))
+	for _, e := range env {
+		if k, _, ok := strings.Cut(e, "="); ok {
+			existing[k] = true
+		}
+	}
+
+	for provider, pc := range creds.Providers {
+		if pc.APIKey == "" {
+			continue
+		}
+		envVar := credentials.EnvVarForProvider(provider)
+		if envVar == "" {
+			continue
+		}
+		if existing[envVar] {
+			continue
+		}
+		env = append(env, envVar+"="+pc.APIKey)
+	}
+
+	return env
 }
 
 func isSupportedAgent(agent string) bool {
