@@ -153,7 +153,10 @@ func (m *Manager) ListProviders() ([]string, error) {
 	}
 
 	providers := make([]string, 0, len(creds.Providers))
-	for name := range creds.Providers {
+	for name, pc := range creds.Providers {
+		if pc.APIKey == "" {
+			continue
+		}
 		providers = append(providers, name)
 	}
 
@@ -173,9 +176,14 @@ func EnvVarForProvider(provider string) string {
 	return providerEnvVars[provider]
 }
 
-// SupportedProviders returns the list of providers that require API keys.
+// supportedProviders is the canonical list of providers that require API keys.
+var supportedProviders = []string{"openai", "anthropic"}
+
+// SupportedProviders returns a copy of the supported provider list.
 func SupportedProviders() []string {
-	return []string{"openai", "anthropic"}
+	out := make([]string, len(supportedProviders))
+	copy(out, supportedProviders)
+	return out
 }
 
 // IsSupportedProvider returns true if the given provider is supported.

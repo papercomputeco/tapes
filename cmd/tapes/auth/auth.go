@@ -3,11 +3,9 @@ package authcmder
 
 import (
 	"bufio"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -107,45 +105,14 @@ func runAuth(provider, configDir string) error {
 	fmt.Printf("Stored %s credentials (will be injected as %s)\n", provider, envVar)
 
 	if provider == "openai" {
-		if err := configureCodexAuthFile(apiKey); err == nil {
-			fmt.Println("Configured codex to use this API key via ~/.codex/auth.json")
+		if strings.HasPrefix(apiKey, "sk-proj-") {
+			fmt.Println("Warning: project keys (sk-proj-...) may lack required API scopes for codex.")
+			fmt.Println("Consider using a service account key (sk-svcacct-...) from platform.openai.com/api-keys.")
 		}
+		fmt.Println("Codex auth.json will be temporarily configured when running 'tapes start codex'.")
 	}
 
 	return nil
-}
-
-// configureCodexAuthFile writes the API key into codex's ~/.codex/auth.json
-// so that 'tapes start codex' works without needing a separate 'codex auth' step.
-func configureCodexAuthFile(apiKey string) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
-	authPath := filepath.Join(home, ".codex", "auth.json")
-	authData, err := os.ReadFile(authPath)
-	if err != nil {
-		return err
-	}
-
-	var auth map[string]json.RawMessage
-	if err := json.Unmarshal(authData, &auth); err != nil {
-		return err
-	}
-
-	keyJSON, err := json.Marshal(apiKey)
-	if err != nil {
-		return err
-	}
-	auth["OPENAI_API_KEY"] = keyJSON
-
-	updated, err := json.MarshalIndent(auth, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(authPath, updated, 0o600)
 }
 
 func runList(configDir string) error {

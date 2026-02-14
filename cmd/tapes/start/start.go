@@ -717,12 +717,12 @@ func (c *startCommander) configureCodexAuth() (func() error, error) {
 		return noop, errors.New("no OpenAI API key found — run 'tapes auth openai' with a service account key first")
 	}
 
-	original, authPath := readCodexAuthFile()
+	original, authPath := credentials.ReadCodexAuthFile()
 	if original == nil {
 		return noop, nil
 	}
 
-	updated, ok := patchCodexAuthKey(original, apiKey)
+	updated, ok := credentials.PatchCodexAuthKey(original, apiKey)
 	if !ok {
 		return noop, nil
 	}
@@ -738,56 +738,19 @@ func (c *startCommander) configureCodexAuth() (func() error, error) {
 	return restore, nil
 }
 
-// readCodexAuthFile reads ~/.codex/auth.json and returns its contents and path.
-// Returns nil, "" if the file cannot be read.
-func readCodexAuthFile() ([]byte, string) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, ""
-	}
-
-	authPath := filepath.Join(home, ".codex", "auth.json")
-	data, err := os.ReadFile(authPath)
-	if err != nil {
-		return nil, ""
-	}
-
-	return data, authPath
-}
-
-// patchCodexAuthKey sets OPENAI_API_KEY in the codex auth JSON and returns the
-// updated bytes. Returns nil, false if the JSON cannot be processed.
-func patchCodexAuthKey(data []byte, apiKey string) ([]byte, bool) {
-	var auth map[string]json.RawMessage
-	if err := json.Unmarshal(data, &auth); err != nil {
-		return nil, false
-	}
-
-	keyJSON, err := json.Marshal(apiKey)
-	if err != nil {
-		return nil, false
-	}
-	auth["OPENAI_API_KEY"] = keyJSON
-
-	updated, err := json.MarshalIndent(auth, "", "  ")
-	if err != nil {
-		return nil, false
-	}
-
-	return updated, true
-}
-
 // injectCredentials appends stored credential env vars to the given env slice.
 // If an env var is already set in the slice, the stored credential is skipped
 // so that shell environment takes precedence.
 func (c *startCommander) injectCredentials(env []string) []string {
 	mgr, err := credentials.NewManager(c.configDir)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not load credential manager: %v\n", err)
 		return env
 	}
 
 	creds, err := mgr.Load()
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not load credentials: %v\n", err)
 		return env
 	}
 
