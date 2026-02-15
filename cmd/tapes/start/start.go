@@ -45,6 +45,8 @@ Examples:
   tapes start
   tapes start claude
   tapes start opencode
+  tapes start opencode --provider anthropic --model claude-sonnet-4-5
+  tapes start opencode --provider ollama --model qwen3-coder:30b
   tapes start codex
   tapes start --logs
 `
@@ -60,6 +62,8 @@ type startCommander struct {
 	configDir string
 	logs      bool
 	daemon    bool
+	provider  string
+	model     string
 }
 
 type startConfig struct {
@@ -73,6 +77,7 @@ type startConfig struct {
 	DefaultProvider     string
 	DefaultUpstream     string
 	OllamaUpstream      string
+	OpenCodeProvider    string
 }
 
 func NewStartCmd() *cobra.Command {
@@ -123,6 +128,8 @@ func NewStartCmd() *cobra.Command {
 	cmd.Flags().Bool("logs", false, "Stream logs from the running tapes start daemon")
 	cmd.Flags().Bool("daemon", false, "Run start daemon (internal)")
 	_ = cmd.Flags().MarkHidden("daemon")
+	cmd.Flags().StringVar(&cmder.provider, "provider", "", "LLM provider for opencode (anthropic, openai, ollama)")
+	cmd.Flags().StringVar(&cmder.model, "model", "", "Model for opencode (e.g. claude-sonnet-4-5)")
 
 	return cmd
 }
@@ -181,8 +188,20 @@ func (c *startCommander) runAgent(ctx context.Context, agent string) error {
 	proxyURL := strings.TrimRight(state.ProxyURL, "/")
 	agentBaseURL := fmt.Sprintf("%s/agents/%s", proxyURL, agent)
 
+	// Resolve opencode provider/model before building the command,
+	// since we need to pass --model as a CLI argument.
+	var agentArgs []string
+	if agent == agentOpenCode {
+		pref, prefErr := resolveOpenCodePreference(c.configDir, c.provider, c.model, os.Stdin, os.Stdout)
+		if prefErr != nil {
+			return prefErr
+		}
+		agentArgs = []string{"--model", pref.Provider + "/" + pref.Model}
+		fmt.Fprintf(os.Stderr, "Note: tapes will capture telemetry for %s/%s. Switching models inside opencode will not be captured by tapes.\n", pref.Provider, pref.Model)
+	}
+
 	// #nosec G204 -- agent commands are restricted to known binaries.
-	cmd := exec.CommandContext(ctx, agentCommand(agent))
+	cmd := exec.CommandContext(ctx, agentCommand(agent), agentArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -213,7 +232,7 @@ func (c *startCommander) runAgent(ctx context.Context, agent string) error {
 		}
 	case agentOpenCode:
 		var configRoot string
-		cleanup, configRoot, err = configureOpenCode(agentBaseURL)
+		cleanup, configRoot, err = configureOpenCode(agentBaseURL, c.configDir)
 		if err != nil {
 			return err
 		}
@@ -347,13 +366,15 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 		defer embedder.Close()
 	}
 
+	openCodeRoute := resolveOpenCodeAgentRoute(startCfg)
+
 	proxyConfig := proxy.Config{
 		ListenAddr:   proxyListener.Addr().String(),
 		UpstreamURL:  startCfg.DefaultUpstream,
 		ProviderType: startCfg.DefaultProvider,
 		AgentRoutes: map[string]proxy.AgentRoute{
 			agentClaude:   {ProviderType: "anthropic", UpstreamURL: "https://api.anthropic.com"},
-			agentOpenCode: {ProviderType: "anthropic", UpstreamURL: "https://api.anthropic.com"},
+			agentOpenCode: openCodeRoute,
 			agentCodex:    {ProviderType: "openai", UpstreamURL: "https://api.openai.com/v1"},
 		},
 		ProviderUpstreams: map[string]string{
@@ -636,6 +657,7 @@ func (c *startCommander) loadConfig() (*startConfig, error) {
 		DefaultProvider:     cfg.Proxy.Provider,
 		DefaultUpstream:     cfg.Proxy.Upstream,
 		OllamaUpstream:      resolveOllamaUpstream(cfg.Proxy.Provider, cfg.Proxy.Upstream),
+		OpenCodeProvider:    cfg.OpenCode.Provider,
 	}, nil
 }
 
@@ -918,7 +940,7 @@ func followLog(ctx context.Context, path string, out io.Writer) error {
 	}
 }
 
-func configureOpenCode(baseURL string) (func() error, string, error) {
+func configureOpenCode(baseURL, tapesConfigDir string) (func() error, string, error) {
 	configRoot, err := os.MkdirTemp("", "tapes-opencode-config-")
 	if err != nil {
 		return nil, "", fmt.Errorf("creating opencode config root: %w", err)
@@ -931,13 +953,24 @@ func configureOpenCode(baseURL string) (func() error, string, error) {
 		return nil, "", fmt.Errorf("creating opencode config dir: %w", err)
 	}
 
-	config := map[string]any{}
-	provider := ensureMap(config, "provider")
-	configureOpenCodeProvider(provider, "anthropic", baseURL+"/providers/anthropic")
-	configureOpenCodeProvider(provider, "openai", baseURL+"/providers/openai")
-	configureOpenCodeProvider(provider, "ollama", baseURL+"/providers/ollama")
+	// Load stored API keys so we can inject them into the opencode config.
+	// This is the same pattern as configureCodexAuth — opencode uses its own
+	// auth flow, so env vars alone are not sufficient.
+	apiKeys := loadStoredAPIKeys(tapesConfigDir)
 
-	data, err := json.MarshalIndent(config, "", "  ")
+	// Start from the user's existing opencode config if available.
+	existing := loadUserOpenCodeConfig()
+
+	// The AI SDK adapters append only the endpoint name (e.g. /messages,
+	// /chat/completions) to baseURL — they expect /v1 to be part of it.
+	// However the tapes proxy upstream for openai already includes /v1
+	// ("https://api.openai.com/v1"), so we must not double it.
+	provider := ensureMap(existing, "provider")
+	configureOpenCodeProvider(provider, "anthropic", baseURL+"/providers/anthropic/v1", apiKeys["anthropic"])
+	configureOpenCodeProvider(provider, "openai", baseURL+"/providers/openai", apiKeys["openai"])
+	configureOpenCodeProvider(provider, "ollama", baseURL+"/providers/ollama/v1", "")
+
+	data, err := json.MarshalIndent(existing, "", "  ")
 	if err != nil {
 		_ = os.RemoveAll(configRoot)
 		return nil, "", fmt.Errorf("marshaling opencode config: %w", err)
@@ -958,6 +991,56 @@ func configureOpenCode(baseURL string) (func() error, string, error) {
 	return cleanup, configRoot, nil
 }
 
+// loadStoredAPIKeys reads all stored API keys from tapes credentials.
+func loadStoredAPIKeys(tapesConfigDir string) map[string]string {
+	keys := make(map[string]string)
+
+	mgr, err := credentials.NewManager(tapesConfigDir)
+	if err != nil {
+		return keys
+	}
+
+	creds, err := mgr.Load()
+	if err != nil {
+		return keys
+	}
+
+	for provider, pc := range creds.Providers {
+		if pc.APIKey != "" {
+			keys[provider] = pc.APIKey
+		}
+	}
+
+	return keys
+}
+
+// loadUserOpenCodeConfig reads the user's existing opencode.json config.
+// Returns an empty map if the file doesn't exist or can't be parsed.
+func loadUserOpenCodeConfig() map[string]any {
+	candidates := []string{}
+
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		candidates = append(candidates, filepath.Join(xdg, "opencode", "opencode.json"))
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, ".config", "opencode", "opencode.json"))
+	}
+
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var cfg map[string]any
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			continue
+		}
+		return cfg
+	}
+
+	return map[string]any{}
+}
+
 func ensureMap(target map[string]any, key string) map[string]any {
 	value, ok := target[key]
 	if ok {
@@ -971,10 +1054,61 @@ func ensureMap(target map[string]any, key string) map[string]any {
 	return newMap
 }
 
-func configureOpenCodeProvider(provider map[string]any, name, baseURL string) {
+// openCodeProviderMeta holds the default npm adapter and display name for each
+// provider that opencode needs in order to recognise the entry.
+type openCodeProviderMeta struct {
+	npm  string
+	name string
+}
+
+var openCodeProviderMetas = map[string]openCodeProviderMeta{
+	"anthropic": {npm: "@ai-sdk/anthropic", name: "Anthropic"},
+	"openai":    {npm: "@ai-sdk/openai", name: "OpenAI"},
+	"ollama":    {npm: "@ai-sdk/openai-compatible", name: "Ollama"},
+}
+
+func configureOpenCodeProvider(provider map[string]any, name, baseURL, apiKey string) {
 	entry := ensureMap(provider, name)
+
+	// Ensure npm and name are present — opencode won't recognise the provider
+	// without these fields.
+	if meta, ok := openCodeProviderMetas[name]; ok {
+		if _, exists := entry["npm"]; !exists {
+			entry["npm"] = meta.npm
+		}
+		if _, exists := entry["name"]; !exists {
+			entry["name"] = meta.name
+		}
+	}
+
 	options := ensureMap(entry, "options")
 	options["baseURL"] = baseURL
+	if apiKey != "" {
+		options["apiKey"] = apiKey
+	}
+}
+
+// resolveOpenCodeAgentRoute returns the proxy AgentRoute for opencode based on
+// the saved provider preference. Falls back to anthropic if not configured.
+func resolveOpenCodeAgentRoute(cfg *startConfig) proxy.AgentRoute {
+	provider := cfg.OpenCodeProvider
+	if provider == "" {
+		provider = "anthropic"
+	}
+
+	upstreams := map[string]string{
+		"anthropic": "https://api.anthropic.com",
+		"openai":    "https://api.openai.com/v1",
+		"ollama":    cfg.OllamaUpstream,
+	}
+
+	upstream, ok := upstreams[provider]
+	if !ok {
+		upstream = "https://api.anthropic.com"
+		provider = "anthropic"
+	}
+
+	return proxy.AgentRoute{ProviderType: provider, UpstreamURL: upstream}
 }
 
 func resolveOllamaUpstream(provider, upstream string) string {

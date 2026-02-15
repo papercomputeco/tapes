@@ -15,6 +15,7 @@ type Config struct {
 	Client      ClientConfig      `toml:"client"`
 	VectorStore VectorStoreConfig `toml:"vector_store"`
 	Embedding   EmbeddingConfig   `toml:"embedding"`
+	OpenCode    OpenCodeConfig    `toml:"opencode"`
 }
 
 // StorageConfig holds shared storage settings used by both proxy and API.
@@ -55,6 +56,12 @@ type EmbeddingConfig struct {
 	Target     string `toml:"target,omitempty"`
 	Model      string `toml:"model,omitempty"`
 	Dimensions uint   `toml:"dimensions,omitempty"`
+}
+
+// OpenCodeConfig holds OpenCode agent settings for provider and model selection.
+type OpenCodeConfig struct {
+	Provider string `toml:"provider,omitempty"`
+	Model    string `toml:"model,omitempty"`
 }
 
 // configKeyInfo maps a user-facing dotted key name to a getter and setter on *Config.
@@ -133,5 +140,13 @@ var configKeys = map[string]configKeyInfo{
 			c.Embedding.Dimensions = uint(n)
 			return nil
 		},
+	},
+	"opencode.provider": {
+		get: func(c *Config) string { return c.OpenCode.Provider },
+		set: func(c *Config, v string) error { c.OpenCode.Provider = v; return nil },
+	},
+	"opencode.model": {
+		get: func(c *Config) string { return c.OpenCode.Model },
+		set: func(c *Config, v string) error { c.OpenCode.Model = v; return nil },
 	},
 }

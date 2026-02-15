@@ -78,6 +78,8 @@ func ValidConfigKeys() []string {
 		"embedding.target",
 		"embedding.model",
 		"embedding.dimensions",
+		"opencode.provider",
+		"opencode.model",
 	}
 
 	// Sanity: only return keys that actually exist in the map.

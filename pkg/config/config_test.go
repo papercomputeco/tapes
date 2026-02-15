@@ -304,6 +304,30 @@ provider = "openai"
 			Expect(cfg.Client.APITarget).To(Equal("http://remote:9091"))
 		})
 
+		It("sets opencode.provider", func() {
+			c, err := config.NewConfiger(tmpDir)
+			Expect(err).NotTo(HaveOccurred())
+
+			err = c.SetConfigValue("opencode.provider", "ollama")
+			Expect(err).NotTo(HaveOccurred())
+
+			cfg, err := c.LoadConfig()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.OpenCode.Provider).To(Equal("ollama"))
+		})
+
+		It("sets opencode.model", func() {
+			c, err := config.NewConfiger(tmpDir)
+			Expect(err).NotTo(HaveOccurred())
+
+			err = c.SetConfigValue("opencode.model", "claude-sonnet-4-5")
+			Expect(err).NotTo(HaveOccurred())
+
+			cfg, err := c.LoadConfig()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.OpenCode.Model).To(Equal("claude-sonnet-4-5"))
+		})
+
 		It("preserves existing values when setting a new key", func() {
 			c, err := config.NewConfiger(tmpDir)
 			Expect(err).NotTo(HaveOccurred())
@@ -404,6 +428,8 @@ provider = "openai"
 				"embedding.target",
 				"embedding.model",
 				"embedding.dimensions",
+				"opencode.provider",
+				"opencode.model",
 			))
 		})
 
@@ -420,6 +446,8 @@ provider = "openai"
 			Expect(config.IsValidConfigKey("embedding.dimensions")).To(BeTrue())
 			Expect(config.IsValidConfigKey("client.proxy_target")).To(BeTrue())
 			Expect(config.IsValidConfigKey("client.api_target")).To(BeTrue())
+			Expect(config.IsValidConfigKey("opencode.provider")).To(BeTrue())
+			Expect(config.IsValidConfigKey("opencode.model")).To(BeTrue())
 		})
 
 		It("returns false for invalid keys", func() {
