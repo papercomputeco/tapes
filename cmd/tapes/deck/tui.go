@@ -20,17 +20,55 @@ import (
 	"github.com/papercomputeco/tapes/pkg/deck"
 )
 
+// themeOverride is set by the CLI --theme flag before the TUI starts.
+// Valid values: "", "dark", "light".
+var themeOverride string
+
 func init() {
-	// Force TrueColor profile to fix lipgloss color detection issue
-	// See: https://github.com/charmbracelet/lipgloss/issues/439
-	renderer := lipgloss.NewRenderer(os.Stdout, termenv.WithProfile(termenv.TrueColor))
-	renderer.SetColorProfile(termenv.TrueColor)
+	profile := detectColorProfile()
+
+	renderer := lipgloss.NewRenderer(os.Stdout, termenv.WithProfile(profile))
+	renderer.SetColorProfile(profile)
 	lipgloss.SetDefaultRenderer(renderer)
 
-	if termenv.HasDarkBackground() {
+	if isDarkTheme() {
 		applyPalette(darkPalette)
 	} else {
 		applyPalette(lightPalette)
+	}
+}
+
+// detectColorProfile returns the best color profile the terminal supports.
+// It respects the NO_COLOR convention (https://no-color.org) and COLORTERM.
+func detectColorProfile() termenv.Profile {
+	if _, ok := os.LookupEnv("NO_COLOR"); ok {
+		return termenv.Ascii
+	}
+
+	// COLORTERM=truecolor or 24bit is a reliable signal for TrueColor.
+	if ct := os.Getenv("COLORTERM"); ct == "truecolor" || ct == "24bit" {
+		return termenv.TrueColor
+	}
+
+	// Fall back to what termenv auto-detects from the terminal.
+	detected := termenv.ColorProfile()
+	// Upgrade Ascii to ANSI256 as a minimum so colors degrade gracefully.
+	if detected == termenv.Ascii {
+		return termenv.ANSI256
+	}
+	return detected
+}
+
+// isDarkTheme returns true when the dark palette should be used.
+// The --theme flag takes priority over terminal background detection.
+func isDarkTheme() bool {
+	switch themeOverride {
+	case "dark":
+		return true
+	case "light":
+		return false
+	default:
+		return termenv.HasDarkBackground()
 	}
 }
 
@@ -59,7 +97,7 @@ const (
 // Concrete hex strings for OSC 11 background color (AdaptiveColor is a struct,
 // can't be passed to termenv.RGBColor directly).
 const (
-	baseBgDark  = "#1B1B1C"
+	baseBgDark  = "#000000"
 	baseBgLight = "#E2E0DB"
 )
 
@@ -128,18 +166,18 @@ const (
 )
 
 type deckPalette struct {
-	foreground         lipgloss.Color
-	red                lipgloss.Color
-	green              lipgloss.Color
-	yellow             lipgloss.Color
-	blue               lipgloss.Color
-	magenta            lipgloss.Color
-	brightBlack        lipgloss.Color
-	dimmed             lipgloss.Color
-	highlightBg        lipgloss.Color
-	panelBg            lipgloss.Color
-	label              lipgloss.Color
-	baseBg             lipgloss.Color
+	foreground         lipgloss.TerminalColor
+	red                lipgloss.TerminalColor
+	green              lipgloss.TerminalColor
+	yellow             lipgloss.TerminalColor
+	blue               lipgloss.TerminalColor
+	magenta            lipgloss.TerminalColor
+	brightBlack        lipgloss.TerminalColor
+	dimmed             lipgloss.TerminalColor
+	highlightBg        lipgloss.TerminalColor
+	panelBg            lipgloss.TerminalColor
+	label              lipgloss.TerminalColor
+	baseBg             lipgloss.TerminalColor
 	costOrangeGradient []string
 	claudeColors       map[string]string
 	openaiColors       map[string]string
@@ -147,18 +185,18 @@ type deckPalette struct {
 }
 
 var (
-	colorForeground  lipgloss.Color
-	colorRed         lipgloss.Color
-	colorGreen       lipgloss.Color
-	colorYellow      lipgloss.Color
-	colorBlue        lipgloss.Color
-	colorMagenta     lipgloss.Color
-	colorBrightBlack lipgloss.Color
-	colorDimmed      lipgloss.Color
-	colorHighlightBg lipgloss.Color
-	colorPanelBg     lipgloss.Color
-	colorLabel       lipgloss.Color
-	colorBaseBg      lipgloss.Color
+	colorForeground  lipgloss.TerminalColor
+	colorRed         lipgloss.TerminalColor
+	colorGreen       lipgloss.TerminalColor
+	colorYellow      lipgloss.TerminalColor
+	colorBlue        lipgloss.TerminalColor
+	colorMagenta     lipgloss.TerminalColor
+	colorBrightBlack lipgloss.TerminalColor
+	colorDimmed      lipgloss.TerminalColor
+	colorHighlightBg lipgloss.TerminalColor
+	colorPanelBg     lipgloss.TerminalColor
+	colorLabel       lipgloss.TerminalColor
+	colorBaseBg      lipgloss.TerminalColor
 
 	costOrangeGradient []string
 
@@ -197,11 +235,11 @@ var darkPalette = deckPalette{
 	blue:        lipgloss.Color("#4EB1E9"),
 	magenta:     lipgloss.Color("#B656B1"),
 	brightBlack: lipgloss.Color("#4A4A4A"),
-	dimmed:      lipgloss.Color("#2A2A2B"),
-	highlightBg: lipgloss.Color("#252526"),
-	panelBg:     lipgloss.Color("#212122"),
+	dimmed:      lipgloss.CompleteColor{TrueColor: "#2A2A2B", ANSI256: "236", ANSI: "0"},
+	highlightBg: lipgloss.CompleteColor{TrueColor: "#252526", ANSI256: "235", ANSI: "0"},
+	panelBg:     lipgloss.CompleteColor{TrueColor: "#212122", ANSI256: "235", ANSI: "0"},
 	label:       lipgloss.Color("#8A8079"),
-	baseBg:      lipgloss.Color("#1B1B1C"),
+	baseBg:      lipgloss.CompleteColor{TrueColor: "#000000", ANSI256: "16", ANSI: "0"},
 	costOrangeGradient: []string{
 		"#B6512B",
 		"#D96840",
@@ -236,11 +274,11 @@ var lightPalette = deckPalette{
 	blue:        lipgloss.Color("#1B6EA8"),
 	magenta:     lipgloss.Color("#8F3F8F"),
 	brightBlack: lipgloss.Color("#5F564D"),
-	dimmed:      lipgloss.Color("#A3988D"),
-	highlightBg: lipgloss.Color("#EFE6D8"),
-	panelBg:     lipgloss.Color("#F5EFE6"),
+	dimmed:      lipgloss.CompleteColor{TrueColor: "#A3988D", ANSI256: "248", ANSI: "7"},
+	highlightBg: lipgloss.CompleteColor{TrueColor: "#EFE6D8", ANSI256: "255", ANSI: "7"},
+	panelBg:     lipgloss.CompleteColor{TrueColor: "#F5EFE6", ANSI256: "255", ANSI: "7"},
 	label:       lipgloss.Color("#7A6F64"),
-	baseBg:      lipgloss.Color("#E2E0DB"),
+	baseBg:      lipgloss.CompleteColor{TrueColor: "#E2E0DB", ANSI256: "254", ANSI: "7"},
 	costOrangeGradient: []string{
 		"#9C3C1E",
 		"#B64A28",
@@ -405,17 +443,21 @@ func RunDeckTUI(ctx context.Context, query deck.Querier, filters deck.Filters, r
 
 	// Set the terminal's default background color so the entire alt-screen
 	// (including padding and empty regions) uses our base background.
-	// Detect dark/light terminal and pick the matching shade.
-	out := termenv.NewOutput(os.Stdout, termenv.WithProfile(termenv.TrueColor))
-	if out.HasDarkBackground() {
-		out.SetBackgroundColor(termenv.RGBColor(baseBgDark))
-	} else {
-		out.SetBackgroundColor(termenv.RGBColor(baseBgLight))
+	// Only emit OSC 11 when the terminal supports color (skip for NO_COLOR
+	// and terminals that don't understand these escape sequences).
+	profile := detectColorProfile()
+	if profile != termenv.Ascii {
+		out := termenv.NewOutput(os.Stdout, termenv.WithProfile(profile))
+		if isDarkTheme() {
+			out.SetBackgroundColor(termenv.RGBColor(baseBgDark))
+		} else {
+			out.SetBackgroundColor(termenv.RGBColor(baseBgLight))
+		}
+		defer func() {
+			// OSC 111: reset the default background color to the terminal's original.
+			fmt.Fprint(os.Stdout, "\033]111\007")
+		}()
 	}
-	defer func() {
-		// OSC 111: reset the default background color to the terminal's original.
-		fmt.Fprint(os.Stdout, "\033]111\007")
-	}()
 
 	program := bubbletea.NewProgram(model,
 		bubbletea.WithContext(ctx),
@@ -3004,7 +3046,7 @@ func (m deckModel) renderFacetSummariesTab(width int) []string {
 
 const facetCollapsedLimit = 5
 
-func (m deckModel) renderFacetDistribution(dist map[string]int, label string, color lipgloss.Color, width int, labels map[string]facetLabel) []string {
+func (m deckModel) renderFacetDistribution(dist map[string]int, label string, color lipgloss.TerminalColor, width int, labels map[string]facetLabel) []string {
 	lines := []string{renderAnalyticsSectionHeader(label, width)}
 
 	if len(dist) == 0 {
@@ -3080,7 +3122,7 @@ func (m deckModel) renderFacetOutcomes(dist map[string]int, width int) []string 
 		return lines
 	}
 
-	outcomeColors := map[string]lipgloss.Color{
+	outcomeColors := map[string]lipgloss.TerminalColor{
 		"fully_achieved":     colorGreen,
 		"mostly_achieved":    colorBlue,
 		"partially_achieved": colorYellow,
