@@ -146,10 +146,13 @@ func (p *Provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 
 	var usage *llm.Usage
 	if resp.Usage != nil {
+		totalInput := resp.Usage.InputTokens + resp.Usage.CacheCreationInputTokens + resp.Usage.CacheReadInputTokens
 		usage = &llm.Usage{
-			PromptTokens:     resp.Usage.InputTokens,
-			CompletionTokens: resp.Usage.OutputTokens,
-			TotalTokens:      resp.Usage.InputTokens + resp.Usage.OutputTokens,
+			PromptTokens:             totalInput,
+			CompletionTokens:         resp.Usage.OutputTokens,
+			TotalTokens:              totalInput + resp.Usage.OutputTokens,
+			CacheCreationInputTokens: resp.Usage.CacheCreationInputTokens,
+			CacheReadInputTokens:     resp.Usage.CacheReadInputTokens,
 		}
 	}
 

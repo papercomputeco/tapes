@@ -191,6 +191,9 @@ func (o *Provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 			CompletionTokens: resp.Usage.CompletionTokens,
 			TotalTokens:      resp.Usage.TotalTokens,
 		}
+		if resp.Usage.PromptTokensDetails != nil {
+			usage.CacheReadInputTokens = resp.Usage.PromptTokensDetails.CachedTokens
+		}
 	}
 
 	result := &llm.ChatResponse{

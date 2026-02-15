@@ -38,6 +38,10 @@ const (
 	FieldCompletionTokens = "completion_tokens"
 	// FieldTotalTokens holds the string denoting the total_tokens field in the database.
 	FieldTotalTokens = "total_tokens"
+	// FieldCacheCreationInputTokens holds the string denoting the cache_creation_input_tokens field in the database.
+	FieldCacheCreationInputTokens = "cache_creation_input_tokens"
+	// FieldCacheReadInputTokens holds the string denoting the cache_read_input_tokens field in the database.
+	FieldCacheReadInputTokens = "cache_read_input_tokens"
 	// FieldTotalDurationNs holds the string denoting the total_duration_ns field in the database.
 	FieldTotalDurationNs = "total_duration_ns"
 	// FieldPromptDurationNs holds the string denoting the prompt_duration_ns field in the database.
@@ -77,6 +81,8 @@ var Columns = []string{
 	FieldPromptTokens,
 	FieldCompletionTokens,
 	FieldTotalTokens,
+	FieldCacheCreationInputTokens,
+	FieldCacheReadInputTokens,
 	FieldTotalDurationNs,
 	FieldPromptDurationNs,
 	FieldProject,
@@ -156,6 +162,16 @@ func ByCompletionTokens(opts ...sql.OrderTermOption) OrderOption {
 // ByTotalTokens orders the results by the total_tokens field.
 func ByTotalTokens(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldTotalTokens, opts...).ToFunc()
+}
+
+// ByCacheCreationInputTokens orders the results by the cache_creation_input_tokens field.
+func ByCacheCreationInputTokens(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCacheCreationInputTokens, opts...).ToFunc()
+}
+
+// ByCacheReadInputTokens orders the results by the cache_read_input_tokens field.
+func ByCacheReadInputTokens(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCacheReadInputTokens, opts...).ToFunc()
 }
 
 // ByTotalDurationNs orders the results by the total_duration_ns field.

@@ -88,6 +88,12 @@ func (ed *EntDriver) Put(ctx context.Context, n *merkle.Node) (bool, error) {
 		if n.Usage.TotalTokens > 0 {
 			create.SetTotalTokens(n.Usage.TotalTokens)
 		}
+		if n.Usage.CacheCreationInputTokens > 0 {
+			create.SetCacheCreationInputTokens(n.Usage.CacheCreationInputTokens)
+		}
+		if n.Usage.CacheReadInputTokens > 0 {
+			create.SetCacheReadInputTokens(n.Usage.CacheReadInputTokens)
+		}
 		if n.Usage.TotalDurationNs > 0 {
 			create.SetTotalDurationNs(n.Usage.TotalDurationNs)
 		}
@@ -252,6 +258,8 @@ func (ed *EntDriver) entNodeToMerkleNode(entNode *ent.Node) (*merkle.Node, error
 	if entNode.PromptTokens != nil ||
 		entNode.CompletionTokens != nil ||
 		entNode.TotalTokens != nil ||
+		entNode.CacheCreationInputTokens != nil ||
+		entNode.CacheReadInputTokens != nil ||
 		entNode.TotalDurationNs != nil ||
 		entNode.PromptDurationNs != nil {
 		node.Usage = &llm.Usage{}
@@ -266,6 +274,14 @@ func (ed *EntDriver) entNodeToMerkleNode(entNode *ent.Node) (*merkle.Node, error
 
 		if entNode.TotalTokens != nil {
 			node.Usage.TotalTokens = *entNode.TotalTokens
+		}
+
+		if entNode.CacheCreationInputTokens != nil {
+			node.Usage.CacheCreationInputTokens = *entNode.CacheCreationInputTokens
+		}
+
+		if entNode.CacheReadInputTokens != nil {
+			node.Usage.CacheReadInputTokens = *entNode.CacheReadInputTokens
 		}
 
 		if entNode.TotalDurationNs != nil {

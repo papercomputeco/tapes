@@ -353,6 +353,7 @@ func (p *Proxy) handleHTTPRespToPipeWriter(httpResp *http.Response, pw *io.PipeW
 func (p *Proxy) handleSSEStream(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
 	var allChunks [][]byte
 	var fullContent strings.Builder
+	var streamUsage llm.Usage
 
 	tr := sse.NewTeeReader(httpResp.Body, pw)
 
@@ -377,9 +378,12 @@ func (p *Proxy) handleSSEStream(httpResp *http.Response, pw *io.PipeWriter, pars
 
 		// Best-effort content extraction from the JSON payload
 		p.extractContentFromJSON([]byte(ev.Data), prov.Name(), &fullContent)
+
+		// Accumulate usage from SSE events (Anthropic splits usage across events)
+		p.extractUsageFromSSE([]byte(ev.Data), prov.Name(), &streamUsage)
 	}
 
-	p.enqueueStreamedResponse(allChunks, fullContent.String(), parsedReq, prov, agentName, startTime)
+	p.enqueueStreamedResponse(allChunks, fullContent.String(), &streamUsage, parsedReq, prov, agentName, startTime)
 }
 
 // handleNDJSONStream reads a newline-delimited JSON upstream response (used by
@@ -388,6 +392,7 @@ func (p *Proxy) handleSSEStream(httpResp *http.Response, pw *io.PipeWriter, pars
 func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
 	var allChunks [][]byte
 	var fullContent strings.Builder
+	var streamUsage llm.Usage
 
 	scanner := bufio.NewScanner(httpResp.Body)
 	// Increase buffer size for large chunks
@@ -407,6 +412,9 @@ func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, p
 		// Best-effort content extraction from the raw chunk
 		p.extractContentFromJSON(line, prov.Name(), &fullContent)
 
+		// Accumulate usage from NDJSON events
+		p.extractUsageFromSSE(line, prov.Name(), &streamUsage)
+
 		// Write chunk to client — pw.Write blocks until fasthttp reads
 		// from the pipe reader and flushes to the TCP socket.
 		// This ensures transparent streaming of chunks.
@@ -424,7 +432,7 @@ func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, p
 		p.logger.Error("error reading NDJSON stream", zap.Error(err))
 	}
 
-	p.enqueueStreamedResponse(allChunks, fullContent.String(), parsedReq, prov, agentName, startTime)
+	p.enqueueStreamedResponse(allChunks, fullContent.String(), &streamUsage, parsedReq, prov, agentName, startTime)
 }
 
 // extractContentFromJSON performs best-effort content extraction from a JSON
@@ -464,9 +472,63 @@ func (p *Proxy) extractContentFromJSON(data []byte, providerName string, content
 	}
 }
 
+// extractUsageFromSSE extracts token usage from SSE event data.
+// Anthropic splits usage across message_start (input tokens) and message_delta (output tokens).
+// OpenAI includes usage in the final chunk. Ollama includes it in the final NDJSON line.
+func (p *Proxy) extractUsageFromSSE(data []byte, providerName string, usage *llm.Usage) {
+	var chunkData map[string]any
+	if err := json.Unmarshal(data, &chunkData); err != nil {
+		return
+	}
+
+	switch providerName {
+	case "anthropic":
+		chunkType, _ := chunkData["type"].(string)
+		switch chunkType {
+		case "message_start":
+			// message_start contains: message.usage.{input_tokens, cache_creation_input_tokens, cache_read_input_tokens}
+			if msg, ok := chunkData["message"].(map[string]any); ok {
+				if u, ok := msg["usage"].(map[string]any); ok {
+					inputTokens := jsonInt(u, "input_tokens")
+					cacheCreation := jsonInt(u, "cache_creation_input_tokens")
+					cacheRead := jsonInt(u, "cache_read_input_tokens")
+					usage.PromptTokens = inputTokens + cacheCreation + cacheRead
+					usage.CacheCreationInputTokens = cacheCreation
+					usage.CacheReadInputTokens = cacheRead
+				}
+			}
+		case "message_delta":
+			// message_delta contains: usage.output_tokens
+			if u, ok := chunkData["usage"].(map[string]any); ok {
+				usage.CompletionTokens = jsonInt(u, "output_tokens")
+			}
+		}
+	case providerOpenAI:
+		// OpenAI includes usage in the final chunk
+		if u, ok := chunkData["usage"].(map[string]any); ok {
+			usage.PromptTokens = jsonInt(u, "prompt_tokens")
+			usage.CompletionTokens = jsonInt(u, "completion_tokens")
+		}
+	case "ollama":
+		// Ollama includes usage in the final NDJSON line (done=true)
+		if done, ok := chunkData["done"].(bool); ok && done {
+			usage.PromptTokens = jsonInt(chunkData, "prompt_eval_count")
+			usage.CompletionTokens = jsonInt(chunkData, "eval_count")
+		}
+	}
+}
+
+// jsonInt extracts an integer from a JSON map, handling float64 JSON number representation.
+func jsonInt(m map[string]any, key string) int {
+	if v, ok := m[key].(float64); ok {
+		return int(v)
+	}
+	return 0
+}
+
 // enqueueStreamedResponse handles post-stream telemetry: logging and
 // enqueuing the reconstructed response for async storage.
-func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
+func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, streamUsage *llm.Usage, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
 	if parsedReq != nil && len(allChunks) > 0 {
 		p.logger.Debug("streaming complete",
 			zap.String("content_preview", fullContent),
@@ -475,7 +537,7 @@ func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, 
 			zap.Duration("duration", time.Since(startTime)),
 		)
 
-		finalResp := p.reconstructStreamedResponse(allChunks, fullContent, prov)
+		finalResp := p.reconstructStreamedResponse(allChunks, fullContent, streamUsage, prov)
 		if finalResp != nil {
 			p.workerPool.Enqueue(worker.Job{
 				Provider:  prov.Name(),
@@ -488,7 +550,7 @@ func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, 
 }
 
 // reconstructStreamedResponse attempts to build a ChatResponse from accumulated stream chunks.
-func (p *Proxy) reconstructStreamedResponse(chunks [][]byte, fullContent string, prov provider.Provider) *llm.ChatResponse {
+func (p *Proxy) reconstructStreamedResponse(chunks [][]byte, fullContent string, streamUsage *llm.Usage, prov provider.Provider) *llm.ChatResponse {
 	// Try parsing the last chunk as it often contains final metadata
 	if len(chunks) > 0 {
 		lastChunk := chunks[len(chunks)-1]
@@ -498,17 +560,27 @@ func (p *Proxy) reconstructStreamedResponse(chunks [][]byte, fullContent string,
 			if resp.Message.GetText() == "" && fullContent != "" {
 				resp.Message = llm.NewTextMessage("assistant", fullContent)
 			}
+			// Prefer accumulated stream usage over last-chunk usage (which is often empty)
+			if streamUsage != nil && (streamUsage.PromptTokens > 0 || streamUsage.CompletionTokens > 0) {
+				streamUsage.TotalTokens = streamUsage.PromptTokens + streamUsage.CompletionTokens
+				resp.Usage = streamUsage
+			}
 			return resp
 		}
 	}
 
 	// Fallback: construct a minimal response from accumulated content
 	if fullContent != "" {
-		return &llm.ChatResponse{
+		resp := &llm.ChatResponse{
 			Message:   llm.NewTextMessage("assistant", fullContent),
 			Done:      true,
 			CreatedAt: time.Now(),
 		}
+		if streamUsage != nil && (streamUsage.PromptTokens > 0 || streamUsage.CompletionTokens > 0) {
+			streamUsage.TotalTokens = streamUsage.PromptTokens + streamUsage.CompletionTokens
+			resp.Usage = streamUsage
+		}
+		return resp
 	}
 
 	return nil

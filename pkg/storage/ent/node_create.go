@@ -172,6 +172,34 @@ func (_c *NodeCreate) SetNillableTotalTokens(v *int) *NodeCreate {
 	return _c
 }
 
+// SetCacheCreationInputTokens sets the "cache_creation_input_tokens" field.
+func (_c *NodeCreate) SetCacheCreationInputTokens(v int) *NodeCreate {
+	_c.mutation.SetCacheCreationInputTokens(v)
+	return _c
+}
+
+// SetNillableCacheCreationInputTokens sets the "cache_creation_input_tokens" field if the given value is not nil.
+func (_c *NodeCreate) SetNillableCacheCreationInputTokens(v *int) *NodeCreate {
+	if v != nil {
+		_c.SetCacheCreationInputTokens(*v)
+	}
+	return _c
+}
+
+// SetCacheReadInputTokens sets the "cache_read_input_tokens" field.
+func (_c *NodeCreate) SetCacheReadInputTokens(v int) *NodeCreate {
+	_c.mutation.SetCacheReadInputTokens(v)
+	return _c
+}
+
+// SetNillableCacheReadInputTokens sets the "cache_read_input_tokens" field if the given value is not nil.
+func (_c *NodeCreate) SetNillableCacheReadInputTokens(v *int) *NodeCreate {
+	if v != nil {
+		_c.SetCacheReadInputTokens(*v)
+	}
+	return _c
+}
+
 // SetTotalDurationNs sets the "total_duration_ns" field.
 func (_c *NodeCreate) SetTotalDurationNs(v int64) *NodeCreate {
 	_c.mutation.SetTotalDurationNs(v)
@@ -397,6 +425,14 @@ func (_c *NodeCreate) createSpec() (*Node, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.TotalTokens(); ok {
 		_spec.SetField(node.FieldTotalTokens, field.TypeInt, value)
 		_node.TotalTokens = &value
+	}
+	if value, ok := _c.mutation.CacheCreationInputTokens(); ok {
+		_spec.SetField(node.FieldCacheCreationInputTokens, field.TypeInt, value)
+		_node.CacheCreationInputTokens = &value
+	}
+	if value, ok := _c.mutation.CacheReadInputTokens(); ok {
+		_spec.SetField(node.FieldCacheReadInputTokens, field.TypeInt, value)
+		_node.CacheReadInputTokens = &value
 	}
 	if value, ok := _c.mutation.TotalDurationNs(); ok {
 		_spec.SetField(node.FieldTotalDurationNs, field.TypeInt64, value)

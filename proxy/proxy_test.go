@@ -13,6 +13,7 @@ import (
 	. "github.com/onsi/gomega"
 	"go.uber.org/zap"
 
+	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	"github.com/papercomputeco/tapes/proxy/header"
 )
@@ -651,7 +652,7 @@ var _ = Describe("reconstructStreamedResponse", func() {
 			[]byte(`{"model":"test-model","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":10,"eval_count":5}`),
 		}
 
-		resp := p.reconstructStreamedResponse(chunks, "Hello", p.defaultProv)
+		resp := p.reconstructStreamedResponse(chunks, "Hello", &llm.Usage{}, p.defaultProv)
 		Expect(resp).NotTo(BeNil())
 		Expect(resp.Message.GetText()).To(Equal("Hello"))
 		Expect(resp.Done).To(BeTrue())
@@ -664,7 +665,7 @@ var _ = Describe("reconstructStreamedResponse", func() {
 			[]byte(`{"model":"test-model","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop"}`),
 		}
 
-		resp := p.reconstructStreamedResponse(chunks, "partial content here", p.defaultProv)
+		resp := p.reconstructStreamedResponse(chunks, "partial content here", &llm.Usage{}, p.defaultProv)
 		Expect(resp).NotTo(BeNil())
 		Expect(resp.Message.GetText()).To(Equal("partial content here"))
 	})
@@ -675,7 +676,7 @@ var _ = Describe("reconstructStreamedResponse", func() {
 			[]byte(`also-not-json`),
 		}
 
-		resp := p.reconstructStreamedResponse(chunks, "fallback content", p.defaultProv)
+		resp := p.reconstructStreamedResponse(chunks, "fallback content", &llm.Usage{}, p.defaultProv)
 		Expect(resp).NotTo(BeNil())
 		Expect(resp.Message.GetText()).To(Equal("fallback content"))
 		Expect(resp.Done).To(BeTrue())
@@ -683,7 +684,7 @@ var _ = Describe("reconstructStreamedResponse", func() {
 	})
 
 	It("returns nil when there are no chunks and no content", func() {
-		resp := p.reconstructStreamedResponse(nil, "", p.defaultProv)
+		resp := p.reconstructStreamedResponse(nil, "", &llm.Usage{}, p.defaultProv)
 		Expect(resp).To(BeNil())
 	})
 
@@ -691,7 +692,7 @@ var _ = Describe("reconstructStreamedResponse", func() {
 		chunks := [][]byte{
 			[]byte(`not-json`),
 		}
-		resp := p.reconstructStreamedResponse(chunks, "", p.defaultProv)
+		resp := p.reconstructStreamedResponse(chunks, "", &llm.Usage{}, p.defaultProv)
 		Expect(resp).To(BeNil())
 	})
 })

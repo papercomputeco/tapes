@@ -42,6 +42,8 @@ var (
 		{Name: "prompt_tokens", Type: field.TypeInt, Nullable: true},
 		{Name: "completion_tokens", Type: field.TypeInt, Nullable: true},
 		{Name: "total_tokens", Type: field.TypeInt, Nullable: true},
+		{Name: "cache_creation_input_tokens", Type: field.TypeInt, Nullable: true},
+		{Name: "cache_read_input_tokens", Type: field.TypeInt, Nullable: true},
 		{Name: "total_duration_ns", Type: field.TypeInt64, Nullable: true},
 		{Name: "prompt_duration_ns", Type: field.TypeInt64, Nullable: true},
 		{Name: "project", Type: field.TypeString, Nullable: true},
@@ -56,7 +58,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "nodes_nodes_parent",
-				Columns:    []*schema.Column{NodesColumns[16]},
+				Columns:    []*schema.Column{NodesColumns[18]},
 				RefColumns: []*schema.Column{NodesColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
@@ -65,7 +67,7 @@ var (
 			{
 				Name:    "node_parent_hash",
 				Unique:  false,
-				Columns: []*schema.Column{NodesColumns[16]},
+				Columns: []*schema.Column{NodesColumns[18]},
 			},
 			{
 				Name:    "node_role",
@@ -95,7 +97,7 @@ var (
 			{
 				Name:    "node_project",
 				Unique:  false,
-				Columns: []*schema.Column{NodesColumns[14]},
+				Columns: []*schema.Column{NodesColumns[16]},
 			},
 		},
 	}

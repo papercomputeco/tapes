@@ -494,39 +494,43 @@ func (m *FacetMutation) ResetEdge(name string) error {
 // NodeMutation represents an operation that mutates the Node nodes in the graph.
 type NodeMutation struct {
 	config
-	op                    Op
-	typ                   string
-	id                    *string
-	bucket                *map[string]interface{}
-	_type                 *string
-	role                  *string
-	content               *[]map[string]interface{}
-	appendcontent         []map[string]interface{}
-	model                 *string
-	provider              *string
-	agent_name            *string
-	stop_reason           *string
-	prompt_tokens         *int
-	addprompt_tokens      *int
-	completion_tokens     *int
-	addcompletion_tokens  *int
-	total_tokens          *int
-	addtotal_tokens       *int
-	total_duration_ns     *int64
-	addtotal_duration_ns  *int64
-	prompt_duration_ns    *int64
-	addprompt_duration_ns *int64
-	project               *string
-	created_at            *time.Time
-	clearedFields         map[string]struct{}
-	parent                *string
-	clearedparent         bool
-	children              map[string]struct{}
-	removedchildren       map[string]struct{}
-	clearedchildren       bool
-	done                  bool
-	oldValue              func(context.Context) (*Node, error)
-	predicates            []predicate.Node
+	op                             Op
+	typ                            string
+	id                             *string
+	bucket                         *map[string]interface{}
+	_type                          *string
+	role                           *string
+	content                        *[]map[string]interface{}
+	appendcontent                  []map[string]interface{}
+	model                          *string
+	provider                       *string
+	agent_name                     *string
+	stop_reason                    *string
+	prompt_tokens                  *int
+	addprompt_tokens               *int
+	completion_tokens              *int
+	addcompletion_tokens           *int
+	total_tokens                   *int
+	addtotal_tokens                *int
+	cache_creation_input_tokens    *int
+	addcache_creation_input_tokens *int
+	cache_read_input_tokens        *int
+	addcache_read_input_tokens     *int
+	total_duration_ns              *int64
+	addtotal_duration_ns           *int64
+	prompt_duration_ns             *int64
+	addprompt_duration_ns          *int64
+	project                        *string
+	created_at                     *time.Time
+	clearedFields                  map[string]struct{}
+	parent                         *string
+	clearedparent                  bool
+	children                       map[string]struct{}
+	removedchildren                map[string]struct{}
+	clearedchildren                bool
+	done                           bool
+	oldValue                       func(context.Context) (*Node, error)
+	predicates                     []predicate.Node
 }
 
 var _ ent.Mutation = (*NodeMutation)(nil)
@@ -1300,6 +1304,146 @@ func (m *NodeMutation) ResetTotalTokens() {
 	delete(m.clearedFields, node.FieldTotalTokens)
 }
 
+// SetCacheCreationInputTokens sets the "cache_creation_input_tokens" field.
+func (m *NodeMutation) SetCacheCreationInputTokens(i int) {
+	m.cache_creation_input_tokens = &i
+	m.addcache_creation_input_tokens = nil
+}
+
+// CacheCreationInputTokens returns the value of the "cache_creation_input_tokens" field in the mutation.
+func (m *NodeMutation) CacheCreationInputTokens() (r int, exists bool) {
+	v := m.cache_creation_input_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCacheCreationInputTokens returns the old "cache_creation_input_tokens" field's value of the Node entity.
+// If the Node object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *NodeMutation) OldCacheCreationInputTokens(ctx context.Context) (v *int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCacheCreationInputTokens is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCacheCreationInputTokens requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCacheCreationInputTokens: %w", err)
+	}
+	return oldValue.CacheCreationInputTokens, nil
+}
+
+// AddCacheCreationInputTokens adds i to the "cache_creation_input_tokens" field.
+func (m *NodeMutation) AddCacheCreationInputTokens(i int) {
+	if m.addcache_creation_input_tokens != nil {
+		*m.addcache_creation_input_tokens += i
+	} else {
+		m.addcache_creation_input_tokens = &i
+	}
+}
+
+// AddedCacheCreationInputTokens returns the value that was added to the "cache_creation_input_tokens" field in this mutation.
+func (m *NodeMutation) AddedCacheCreationInputTokens() (r int, exists bool) {
+	v := m.addcache_creation_input_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearCacheCreationInputTokens clears the value of the "cache_creation_input_tokens" field.
+func (m *NodeMutation) ClearCacheCreationInputTokens() {
+	m.cache_creation_input_tokens = nil
+	m.addcache_creation_input_tokens = nil
+	m.clearedFields[node.FieldCacheCreationInputTokens] = struct{}{}
+}
+
+// CacheCreationInputTokensCleared returns if the "cache_creation_input_tokens" field was cleared in this mutation.
+func (m *NodeMutation) CacheCreationInputTokensCleared() bool {
+	_, ok := m.clearedFields[node.FieldCacheCreationInputTokens]
+	return ok
+}
+
+// ResetCacheCreationInputTokens resets all changes to the "cache_creation_input_tokens" field.
+func (m *NodeMutation) ResetCacheCreationInputTokens() {
+	m.cache_creation_input_tokens = nil
+	m.addcache_creation_input_tokens = nil
+	delete(m.clearedFields, node.FieldCacheCreationInputTokens)
+}
+
+// SetCacheReadInputTokens sets the "cache_read_input_tokens" field.
+func (m *NodeMutation) SetCacheReadInputTokens(i int) {
+	m.cache_read_input_tokens = &i
+	m.addcache_read_input_tokens = nil
+}
+
+// CacheReadInputTokens returns the value of the "cache_read_input_tokens" field in the mutation.
+func (m *NodeMutation) CacheReadInputTokens() (r int, exists bool) {
+	v := m.cache_read_input_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCacheReadInputTokens returns the old "cache_read_input_tokens" field's value of the Node entity.
+// If the Node object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *NodeMutation) OldCacheReadInputTokens(ctx context.Context) (v *int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCacheReadInputTokens is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCacheReadInputTokens requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCacheReadInputTokens: %w", err)
+	}
+	return oldValue.CacheReadInputTokens, nil
+}
+
+// AddCacheReadInputTokens adds i to the "cache_read_input_tokens" field.
+func (m *NodeMutation) AddCacheReadInputTokens(i int) {
+	if m.addcache_read_input_tokens != nil {
+		*m.addcache_read_input_tokens += i
+	} else {
+		m.addcache_read_input_tokens = &i
+	}
+}
+
+// AddedCacheReadInputTokens returns the value that was added to the "cache_read_input_tokens" field in this mutation.
+func (m *NodeMutation) AddedCacheReadInputTokens() (r int, exists bool) {
+	v := m.addcache_read_input_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearCacheReadInputTokens clears the value of the "cache_read_input_tokens" field.
+func (m *NodeMutation) ClearCacheReadInputTokens() {
+	m.cache_read_input_tokens = nil
+	m.addcache_read_input_tokens = nil
+	m.clearedFields[node.FieldCacheReadInputTokens] = struct{}{}
+}
+
+// CacheReadInputTokensCleared returns if the "cache_read_input_tokens" field was cleared in this mutation.
+func (m *NodeMutation) CacheReadInputTokensCleared() bool {
+	_, ok := m.clearedFields[node.FieldCacheReadInputTokens]
+	return ok
+}
+
+// ResetCacheReadInputTokens resets all changes to the "cache_read_input_tokens" field.
+func (m *NodeMutation) ResetCacheReadInputTokens() {
+	m.cache_read_input_tokens = nil
+	m.addcache_read_input_tokens = nil
+	delete(m.clearedFields, node.FieldCacheReadInputTokens)
+}
+
 // SetTotalDurationNs sets the "total_duration_ns" field.
 func (m *NodeMutation) SetTotalDurationNs(i int64) {
 	m.total_duration_ns = &i
@@ -1653,7 +1797,7 @@ func (m *NodeMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *NodeMutation) Fields() []string {
-	fields := make([]string, 0, 16)
+	fields := make([]string, 0, 18)
 	if m.parent != nil {
 		fields = append(fields, node.FieldParentHash)
 	}
@@ -1689,6 +1833,12 @@ func (m *NodeMutation) Fields() []string {
 	}
 	if m.total_tokens != nil {
 		fields = append(fields, node.FieldTotalTokens)
+	}
+	if m.cache_creation_input_tokens != nil {
+		fields = append(fields, node.FieldCacheCreationInputTokens)
+	}
+	if m.cache_read_input_tokens != nil {
+		fields = append(fields, node.FieldCacheReadInputTokens)
 	}
 	if m.total_duration_ns != nil {
 		fields = append(fields, node.FieldTotalDurationNs)
@@ -1734,6 +1884,10 @@ func (m *NodeMutation) Field(name string) (ent.Value, bool) {
 		return m.CompletionTokens()
 	case node.FieldTotalTokens:
 		return m.TotalTokens()
+	case node.FieldCacheCreationInputTokens:
+		return m.CacheCreationInputTokens()
+	case node.FieldCacheReadInputTokens:
+		return m.CacheReadInputTokens()
 	case node.FieldTotalDurationNs:
 		return m.TotalDurationNs()
 	case node.FieldPromptDurationNs:
@@ -1775,6 +1929,10 @@ func (m *NodeMutation) OldField(ctx context.Context, name string) (ent.Value, er
 		return m.OldCompletionTokens(ctx)
 	case node.FieldTotalTokens:
 		return m.OldTotalTokens(ctx)
+	case node.FieldCacheCreationInputTokens:
+		return m.OldCacheCreationInputTokens(ctx)
+	case node.FieldCacheReadInputTokens:
+		return m.OldCacheReadInputTokens(ctx)
 	case node.FieldTotalDurationNs:
 		return m.OldTotalDurationNs(ctx)
 	case node.FieldPromptDurationNs:
@@ -1876,6 +2034,20 @@ func (m *NodeMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetTotalTokens(v)
 		return nil
+	case node.FieldCacheCreationInputTokens:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCacheCreationInputTokens(v)
+		return nil
+	case node.FieldCacheReadInputTokens:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCacheReadInputTokens(v)
+		return nil
 	case node.FieldTotalDurationNs:
 		v, ok := value.(int64)
 		if !ok {
@@ -1921,6 +2093,12 @@ func (m *NodeMutation) AddedFields() []string {
 	if m.addtotal_tokens != nil {
 		fields = append(fields, node.FieldTotalTokens)
 	}
+	if m.addcache_creation_input_tokens != nil {
+		fields = append(fields, node.FieldCacheCreationInputTokens)
+	}
+	if m.addcache_read_input_tokens != nil {
+		fields = append(fields, node.FieldCacheReadInputTokens)
+	}
 	if m.addtotal_duration_ns != nil {
 		fields = append(fields, node.FieldTotalDurationNs)
 	}
@@ -1941,6 +2119,10 @@ func (m *NodeMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedCompletionTokens()
 	case node.FieldTotalTokens:
 		return m.AddedTotalTokens()
+	case node.FieldCacheCreationInputTokens:
+		return m.AddedCacheCreationInputTokens()
+	case node.FieldCacheReadInputTokens:
+		return m.AddedCacheReadInputTokens()
 	case node.FieldTotalDurationNs:
 		return m.AddedTotalDurationNs()
 	case node.FieldPromptDurationNs:
@@ -1974,6 +2156,20 @@ func (m *NodeMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddTotalTokens(v)
+		return nil
+	case node.FieldCacheCreationInputTokens:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddCacheCreationInputTokens(v)
+		return nil
+	case node.FieldCacheReadInputTokens:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddCacheReadInputTokens(v)
 		return nil
 	case node.FieldTotalDurationNs:
 		v, ok := value.(int64)
@@ -2032,6 +2228,12 @@ func (m *NodeMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(node.FieldTotalTokens) {
 		fields = append(fields, node.FieldTotalTokens)
+	}
+	if m.FieldCleared(node.FieldCacheCreationInputTokens) {
+		fields = append(fields, node.FieldCacheCreationInputTokens)
+	}
+	if m.FieldCleared(node.FieldCacheReadInputTokens) {
+		fields = append(fields, node.FieldCacheReadInputTokens)
 	}
 	if m.FieldCleared(node.FieldTotalDurationNs) {
 		fields = append(fields, node.FieldTotalDurationNs)
@@ -2092,6 +2294,12 @@ func (m *NodeMutation) ClearField(name string) error {
 	case node.FieldTotalTokens:
 		m.ClearTotalTokens()
 		return nil
+	case node.FieldCacheCreationInputTokens:
+		m.ClearCacheCreationInputTokens()
+		return nil
+	case node.FieldCacheReadInputTokens:
+		m.ClearCacheReadInputTokens()
+		return nil
 	case node.FieldTotalDurationNs:
 		m.ClearTotalDurationNs()
 		return nil
@@ -2144,6 +2352,12 @@ func (m *NodeMutation) ResetField(name string) error {
 		return nil
 	case node.FieldTotalTokens:
 		m.ResetTotalTokens()
+		return nil
+	case node.FieldCacheCreationInputTokens:
+		m.ResetCacheCreationInputTokens()
+		return nil
+	case node.FieldCacheReadInputTokens:
+		m.ResetCacheReadInputTokens()
 		return nil
 	case node.FieldTotalDurationNs:
 		m.ResetTotalDurationNs()
