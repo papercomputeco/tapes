@@ -1,20 +1,20 @@
-name: Vouch Check PR
+name: Vouch Check Issue
 
 on:
-  pull_request_target:
+  issues:
     types: [opened, reopened]
 
 permissions:
   contents: read
-  pull-requests: write
+  issues: write
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: mitchellh/vouch/action/check-pr@v1
+      - uses: mitchellh/vouch/action/check-issue@v1
         with:
-          pr-number: ${{ github.event.pull_request.number }}
+          issue-number: ${{ github.event.issue.number }}
           auto-close: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
