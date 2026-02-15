@@ -10,28 +10,47 @@ import (
 
 type PricingTable map[string]Pricing
 
+// DefaultPricing returns hardcoded pricing per million tokens for supported models.
+//
+// Last verified: 2026-02-15
+// Sources:
+//   - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
+//   - OpenAI:    https://platform.openai.com/docs/pricing
+//   - DeepSeek:  https://api-docs.deepseek.com/quick_start/pricing
+//
+// Anthropic cache multipliers: CacheWrite = 1.25x input, CacheRead = 0.10x input.
+// OpenAI cache: CacheWrite = 1x input (no surcharge), CacheRead = 0.50x input (except o3-mini).
+//
+// To override at runtime, use --pricing with a JSON file. See LoadPricing.
 func DefaultPricing() PricingTable {
 	return PricingTable{
+		// Anthropic
 		"claude-opus-4.6":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25},
 		"claude-opus-4.5":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25},
 		"claude-opus-4.1":   {Input: 15.00, Output: 75.00, CacheRead: 1.50, CacheWrite: 18.75},
 		"claude-opus-4":     {Input: 15.00, Output: 75.00, CacheRead: 1.50, CacheWrite: 18.75},
 		"claude-sonnet-4.5": {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite: 3.75},
 		"claude-sonnet-4":   {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite: 3.75},
+		"claude-sonnet-3.7": {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite: 3.75},
 		"claude-haiku-4.5":  {Input: 1.00, Output: 5.00, CacheRead: 0.10, CacheWrite: 1.25},
 		"claude-3.5-sonnet": {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite: 3.75},
 		"claude-3.5-haiku":  {Input: 0.80, Output: 4.00, CacheRead: 0.08, CacheWrite: 1.00},
 		"claude-3-opus":     {Input: 15.00, Output: 75.00, CacheRead: 1.50, CacheWrite: 18.75},
-		"gpt-4o":            {Input: 2.50, Output: 10.00, CacheRead: 1.25, CacheWrite: 2.50},
-		"gpt-4o-mini":       {Input: 0.15, Output: 0.60, CacheRead: 0.075, CacheWrite: 0.15},
-		"gpt-4.1":           {Input: 2.00, Output: 8.00, CacheRead: 0.50, CacheWrite: 2.00},
-		"gpt-4.1-mini":      {Input: 0.40, Output: 1.60, CacheRead: 0.10, CacheWrite: 0.40},
-		"gpt-4.1-nano":      {Input: 0.10, Output: 0.40, CacheRead: 0.025, CacheWrite: 0.10},
-		"o3":                {Input: 2.00, Output: 8.00, CacheRead: 0.50, CacheWrite: 2.00},
-		"o3-mini":           {Input: 1.10, Output: 4.40, CacheRead: 0.55, CacheWrite: 1.10},
-		"o4-mini":           {Input: 1.10, Output: 4.40, CacheRead: 0.275, CacheWrite: 1.10},
-		"o1":                {Input: 15.00, Output: 60.00, CacheRead: 7.50, CacheWrite: 15.00},
-		"deepseek-r1":       {Input: 0.55, Output: 2.19},
+		"claude-3-haiku":    {Input: 0.25, Output: 1.25, CacheRead: 0.03, CacheWrite: 0.30},
+
+		// OpenAI
+		"gpt-4o":       {Input: 2.50, Output: 10.00, CacheRead: 1.25, CacheWrite: 2.50},
+		"gpt-4o-mini":  {Input: 0.15, Output: 0.60, CacheRead: 0.075, CacheWrite: 0.15},
+		"gpt-4.1":      {Input: 2.00, Output: 8.00, CacheRead: 0.50, CacheWrite: 2.00},
+		"gpt-4.1-mini": {Input: 0.40, Output: 1.60, CacheRead: 0.10, CacheWrite: 0.40},
+		"gpt-4.1-nano": {Input: 0.10, Output: 0.40, CacheRead: 0.025, CacheWrite: 0.10},
+		"o3":           {Input: 2.00, Output: 8.00, CacheRead: 0.50, CacheWrite: 2.00},
+		"o3-mini":      {Input: 1.10, Output: 4.40, CacheRead: 0.55, CacheWrite: 1.10},
+		"o4-mini":      {Input: 1.10, Output: 4.40, CacheRead: 0.275, CacheWrite: 1.10},
+		"o1":           {Input: 15.00, Output: 60.00, CacheRead: 7.50, CacheWrite: 15.00},
+
+		// DeepSeek
+		"deepseek-r1": {Input: 0.55, Output: 2.19, CacheRead: 0.14},
 	}
 }
 
@@ -113,6 +132,7 @@ func normalizeModel(model string) string {
 	normalized = strings.ReplaceAll(normalized, "-4-6", "-4.6")
 	normalized = strings.ReplaceAll(normalized, "-4-5", "-4.5")
 	normalized = strings.ReplaceAll(normalized, "-4-1", "-4.1")
+	normalized = strings.ReplaceAll(normalized, "-3-7", "-3.7")
 	normalized = strings.ReplaceAll(normalized, "-3-5", "-3.5")
 	return normalized
 }
