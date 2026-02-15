@@ -267,17 +267,17 @@ var darkPalette = deckPalette{
 }
 
 var lightPalette = deckPalette{
-	foreground:  lipgloss.Color("#1F1B17"),
-	red:         lipgloss.Color("#C04A32"),
-	green:       lipgloss.Color("#1F7A48"),
-	yellow:      lipgloss.Color("#B6801A"),
-	blue:        lipgloss.Color("#1B6EA8"),
-	magenta:     lipgloss.Color("#8F3F8F"),
-	brightBlack: lipgloss.Color("#5F564D"),
-	dimmed:      lipgloss.CompleteColor{TrueColor: "#A3988D", ANSI256: "248", ANSI: "7"},
+	foreground:  lipgloss.Color("#1A1612"),
+	red:         lipgloss.Color("#A8371F"),
+	green:       lipgloss.Color("#16653A"),
+	yellow:      lipgloss.Color("#996B0F"),
+	blue:        lipgloss.Color("#155D91"),
+	magenta:     lipgloss.Color("#7A2E7A"),
+	brightBlack: lipgloss.Color("#4A4239"),
+	dimmed:      lipgloss.CompleteColor{TrueColor: "#8A7E72", ANSI256: "245", ANSI: "8"},
 	highlightBg: lipgloss.CompleteColor{TrueColor: "#EFE6D8", ANSI256: "255", ANSI: "7"},
 	panelBg:     lipgloss.CompleteColor{TrueColor: "#F5EFE6", ANSI256: "255", ANSI: "7"},
-	label:       lipgloss.Color("#7A6F64"),
+	label:       lipgloss.Color("#3D352C"),
 	baseBg:      lipgloss.CompleteColor{TrueColor: "#E2E0DB", ANSI256: "254", ANSI: "7"},
 	costOrangeGradient: []string{
 		"#9C3C1E",
