@@ -279,6 +279,60 @@ func (_u *NodeUpdate) ClearTotalTokens() *NodeUpdate {
 	return _u
 }
 
+// SetCacheCreationInputTokens sets the "cache_creation_input_tokens" field.
+func (_u *NodeUpdate) SetCacheCreationInputTokens(v int) *NodeUpdate {
+	_u.mutation.ResetCacheCreationInputTokens()
+	_u.mutation.SetCacheCreationInputTokens(v)
+	return _u
+}
+
+// SetNillableCacheCreationInputTokens sets the "cache_creation_input_tokens" field if the given value is not nil.
+func (_u *NodeUpdate) SetNillableCacheCreationInputTokens(v *int) *NodeUpdate {
+	if v != nil {
+		_u.SetCacheCreationInputTokens(*v)
+	}
+	return _u
+}
+
+// AddCacheCreationInputTokens adds value to the "cache_creation_input_tokens" field.
+func (_u *NodeUpdate) AddCacheCreationInputTokens(v int) *NodeUpdate {
+	_u.mutation.AddCacheCreationInputTokens(v)
+	return _u
+}
+
+// ClearCacheCreationInputTokens clears the value of the "cache_creation_input_tokens" field.
+func (_u *NodeUpdate) ClearCacheCreationInputTokens() *NodeUpdate {
+	_u.mutation.ClearCacheCreationInputTokens()
+	return _u
+}
+
+// SetCacheReadInputTokens sets the "cache_read_input_tokens" field.
+func (_u *NodeUpdate) SetCacheReadInputTokens(v int) *NodeUpdate {
+	_u.mutation.ResetCacheReadInputTokens()
+	_u.mutation.SetCacheReadInputTokens(v)
+	return _u
+}
+
+// SetNillableCacheReadInputTokens sets the "cache_read_input_tokens" field if the given value is not nil.
+func (_u *NodeUpdate) SetNillableCacheReadInputTokens(v *int) *NodeUpdate {
+	if v != nil {
+		_u.SetCacheReadInputTokens(*v)
+	}
+	return _u
+}
+
+// AddCacheReadInputTokens adds value to the "cache_read_input_tokens" field.
+func (_u *NodeUpdate) AddCacheReadInputTokens(v int) *NodeUpdate {
+	_u.mutation.AddCacheReadInputTokens(v)
+	return _u
+}
+
+// ClearCacheReadInputTokens clears the value of the "cache_read_input_tokens" field.
+func (_u *NodeUpdate) ClearCacheReadInputTokens() *NodeUpdate {
+	_u.mutation.ClearCacheReadInputTokens()
+	return _u
+}
+
 // SetTotalDurationNs sets the "total_duration_ns" field.
 func (_u *NodeUpdate) SetTotalDurationNs(v int64) *NodeUpdate {
 	_u.mutation.ResetTotalDurationNs()
@@ -534,6 +588,24 @@ func (_u *NodeUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.TotalTokensCleared() {
 		_spec.ClearField(node.FieldTotalTokens, field.TypeInt)
+	}
+	if value, ok := _u.mutation.CacheCreationInputTokens(); ok {
+		_spec.SetField(node.FieldCacheCreationInputTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedCacheCreationInputTokens(); ok {
+		_spec.AddField(node.FieldCacheCreationInputTokens, field.TypeInt, value)
+	}
+	if _u.mutation.CacheCreationInputTokensCleared() {
+		_spec.ClearField(node.FieldCacheCreationInputTokens, field.TypeInt)
+	}
+	if value, ok := _u.mutation.CacheReadInputTokens(); ok {
+		_spec.SetField(node.FieldCacheReadInputTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedCacheReadInputTokens(); ok {
+		_spec.AddField(node.FieldCacheReadInputTokens, field.TypeInt, value)
+	}
+	if _u.mutation.CacheReadInputTokensCleared() {
+		_spec.ClearField(node.FieldCacheReadInputTokens, field.TypeInt)
 	}
 	if value, ok := _u.mutation.TotalDurationNs(); ok {
 		_spec.SetField(node.FieldTotalDurationNs, field.TypeInt64, value)
@@ -904,6 +976,60 @@ func (_u *NodeUpdateOne) ClearTotalTokens() *NodeUpdateOne {
 	return _u
 }
 
+// SetCacheCreationInputTokens sets the "cache_creation_input_tokens" field.
+func (_u *NodeUpdateOne) SetCacheCreationInputTokens(v int) *NodeUpdateOne {
+	_u.mutation.ResetCacheCreationInputTokens()
+	_u.mutation.SetCacheCreationInputTokens(v)
+	return _u
+}
+
+// SetNillableCacheCreationInputTokens sets the "cache_creation_input_tokens" field if the given value is not nil.
+func (_u *NodeUpdateOne) SetNillableCacheCreationInputTokens(v *int) *NodeUpdateOne {
+	if v != nil {
+		_u.SetCacheCreationInputTokens(*v)
+	}
+	return _u
+}
+
+// AddCacheCreationInputTokens adds value to the "cache_creation_input_tokens" field.
+func (_u *NodeUpdateOne) AddCacheCreationInputTokens(v int) *NodeUpdateOne {
+	_u.mutation.AddCacheCreationInputTokens(v)
+	return _u
+}
+
+// ClearCacheCreationInputTokens clears the value of the "cache_creation_input_tokens" field.
+func (_u *NodeUpdateOne) ClearCacheCreationInputTokens() *NodeUpdateOne {
+	_u.mutation.ClearCacheCreationInputTokens()
+	return _u
+}
+
+// SetCacheReadInputTokens sets the "cache_read_input_tokens" field.
+func (_u *NodeUpdateOne) SetCacheReadInputTokens(v int) *NodeUpdateOne {
+	_u.mutation.ResetCacheReadInputTokens()
+	_u.mutation.SetCacheReadInputTokens(v)
+	return _u
+}
+
+// SetNillableCacheReadInputTokens sets the "cache_read_input_tokens" field if the given value is not nil.
+func (_u *NodeUpdateOne) SetNillableCacheReadInputTokens(v *int) *NodeUpdateOne {
+	if v != nil {
+		_u.SetCacheReadInputTokens(*v)
+	}
+	return _u
+}
+
+// AddCacheReadInputTokens adds value to the "cache_read_input_tokens" field.
+func (_u *NodeUpdateOne) AddCacheReadInputTokens(v int) *NodeUpdateOne {
+	_u.mutation.AddCacheReadInputTokens(v)
+	return _u
+}
+
+// ClearCacheReadInputTokens clears the value of the "cache_read_input_tokens" field.
+func (_u *NodeUpdateOne) ClearCacheReadInputTokens() *NodeUpdateOne {
+	_u.mutation.ClearCacheReadInputTokens()
+	return _u
+}
+
 // SetTotalDurationNs sets the "total_duration_ns" field.
 func (_u *NodeUpdateOne) SetTotalDurationNs(v int64) *NodeUpdateOne {
 	_u.mutation.ResetTotalDurationNs()
@@ -1189,6 +1315,24 @@ func (_u *NodeUpdateOne) sqlSave(ctx context.Context) (_node *Node, err error) {
 	}
 	if _u.mutation.TotalTokensCleared() {
 		_spec.ClearField(node.FieldTotalTokens, field.TypeInt)
+	}
+	if value, ok := _u.mutation.CacheCreationInputTokens(); ok {
+		_spec.SetField(node.FieldCacheCreationInputTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedCacheCreationInputTokens(); ok {
+		_spec.AddField(node.FieldCacheCreationInputTokens, field.TypeInt, value)
+	}
+	if _u.mutation.CacheCreationInputTokensCleared() {
+		_spec.ClearField(node.FieldCacheCreationInputTokens, field.TypeInt)
+	}
+	if value, ok := _u.mutation.CacheReadInputTokens(); ok {
+		_spec.SetField(node.FieldCacheReadInputTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedCacheReadInputTokens(); ok {
+		_spec.AddField(node.FieldCacheReadInputTokens, field.TypeInt, value)
+	}
+	if _u.mutation.CacheReadInputTokensCleared() {
+		_spec.ClearField(node.FieldCacheReadInputTokens, field.TypeInt)
 	}
 	if value, ok := _u.mutation.TotalDurationNs(); ok {
 		_spec.SetField(node.FieldTotalDurationNs, field.TypeInt64, value)

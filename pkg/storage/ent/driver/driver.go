@@ -88,6 +88,12 @@ func (ed *EntDriver) Put(ctx context.Context, n *merkle.Node) (bool, error) {
 		if n.Usage.TotalTokens > 0 {
 			create.SetTotalTokens(n.Usage.TotalTokens)
 		}
+		if n.Usage.CacheCreationInputTokens > 0 {
+			create.SetCacheCreationInputTokens(n.Usage.CacheCreationInputTokens)
+		}
+		if n.Usage.CacheReadInputTokens > 0 {
+			create.SetCacheReadInputTokens(n.Usage.CacheReadInputTokens)
+		}
 		if n.Usage.TotalDurationNs > 0 {
 			create.SetTotalDurationNs(n.Usage.TotalDurationNs)
 		}
@@ -219,6 +225,33 @@ func (ed *EntDriver) Depth(ctx context.Context, hash string) (int, error) {
 	return len(path) - 1, nil
 }
 
+// UpdateUsage updates only the token usage fields on an existing node by hash.
+func (ed *EntDriver) UpdateUsage(ctx context.Context, hash string, usage *llm.Usage) error {
+	if usage == nil {
+		return errors.New("cannot update with nil usage")
+	}
+
+	update := ed.Client.Node.UpdateOneID(hash)
+
+	if usage.PromptTokens > 0 {
+		update.SetPromptTokens(usage.PromptTokens)
+	}
+	if usage.CompletionTokens > 0 {
+		update.SetCompletionTokens(usage.CompletionTokens)
+	}
+	if usage.TotalTokens > 0 {
+		update.SetTotalTokens(usage.TotalTokens)
+	}
+	if usage.CacheCreationInputTokens > 0 {
+		update.SetCacheCreationInputTokens(usage.CacheCreationInputTokens)
+	}
+	if usage.CacheReadInputTokens > 0 {
+		update.SetCacheReadInputTokens(usage.CacheReadInputTokens)
+	}
+
+	return update.Exec(ctx)
+}
+
 // Close closes the database connection.
 func (ed *EntDriver) Close() error {
 	return ed.Client.Close()
@@ -252,6 +285,8 @@ func (ed *EntDriver) entNodeToMerkleNode(entNode *ent.Node) (*merkle.Node, error
 	if entNode.PromptTokens != nil ||
 		entNode.CompletionTokens != nil ||
 		entNode.TotalTokens != nil ||
+		entNode.CacheCreationInputTokens != nil ||
+		entNode.CacheReadInputTokens != nil ||
 		entNode.TotalDurationNs != nil ||
 		entNode.PromptDurationNs != nil {
 		node.Usage = &llm.Usage{}
@@ -266,6 +301,14 @@ func (ed *EntDriver) entNodeToMerkleNode(entNode *ent.Node) (*merkle.Node, error
 
 		if entNode.TotalTokens != nil {
 			node.Usage.TotalTokens = *entNode.TotalTokens
+		}
+
+		if entNode.CacheCreationInputTokens != nil {
+			node.Usage.CacheCreationInputTokens = *entNode.CacheCreationInputTokens
+		}
+
+		if entNode.CacheReadInputTokens != nil {
+			node.Usage.CacheReadInputTokens = *entNode.CacheReadInputTokens
 		}
 
 		if entNode.TotalDurationNs != nil {

@@ -42,6 +42,10 @@ type Usage struct {
 	CompletionTokens int `json:"completion_tokens,omitempty"`
 	TotalTokens      int `json:"total_tokens,omitempty"`
 
+	// Cache token counts (Anthropic-specific)
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
+
 	// Timing (provider-specific, but normalized to nanoseconds where possible)
 	TotalDurationNs  int64 `json:"total_duration_ns,omitempty"`
 	PromptDurationNs int64 `json:"prompt_duration_ns,omitempty"`

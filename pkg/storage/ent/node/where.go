@@ -115,6 +115,16 @@ func TotalTokens(v int) predicate.Node {
 	return predicate.Node(sql.FieldEQ(FieldTotalTokens, v))
 }
 
+// CacheCreationInputTokens applies equality check predicate on the "cache_creation_input_tokens" field. It's identical to CacheCreationInputTokensEQ.
+func CacheCreationInputTokens(v int) predicate.Node {
+	return predicate.Node(sql.FieldEQ(FieldCacheCreationInputTokens, v))
+}
+
+// CacheReadInputTokens applies equality check predicate on the "cache_read_input_tokens" field. It's identical to CacheReadInputTokensEQ.
+func CacheReadInputTokens(v int) predicate.Node {
+	return predicate.Node(sql.FieldEQ(FieldCacheReadInputTokens, v))
+}
+
 // TotalDurationNs applies equality check predicate on the "total_duration_ns" field. It's identical to TotalDurationNsEQ.
 func TotalDurationNs(v int64) predicate.Node {
 	return predicate.Node(sql.FieldEQ(FieldTotalDurationNs, v))
@@ -828,6 +838,106 @@ func TotalTokensIsNil() predicate.Node {
 // TotalTokensNotNil applies the NotNil predicate on the "total_tokens" field.
 func TotalTokensNotNil() predicate.Node {
 	return predicate.Node(sql.FieldNotNull(FieldTotalTokens))
+}
+
+// CacheCreationInputTokensEQ applies the EQ predicate on the "cache_creation_input_tokens" field.
+func CacheCreationInputTokensEQ(v int) predicate.Node {
+	return predicate.Node(sql.FieldEQ(FieldCacheCreationInputTokens, v))
+}
+
+// CacheCreationInputTokensNEQ applies the NEQ predicate on the "cache_creation_input_tokens" field.
+func CacheCreationInputTokensNEQ(v int) predicate.Node {
+	return predicate.Node(sql.FieldNEQ(FieldCacheCreationInputTokens, v))
+}
+
+// CacheCreationInputTokensIn applies the In predicate on the "cache_creation_input_tokens" field.
+func CacheCreationInputTokensIn(vs ...int) predicate.Node {
+	return predicate.Node(sql.FieldIn(FieldCacheCreationInputTokens, vs...))
+}
+
+// CacheCreationInputTokensNotIn applies the NotIn predicate on the "cache_creation_input_tokens" field.
+func CacheCreationInputTokensNotIn(vs ...int) predicate.Node {
+	return predicate.Node(sql.FieldNotIn(FieldCacheCreationInputTokens, vs...))
+}
+
+// CacheCreationInputTokensGT applies the GT predicate on the "cache_creation_input_tokens" field.
+func CacheCreationInputTokensGT(v int) predicate.Node {
+	return predicate.Node(sql.FieldGT(FieldCacheCreationInputTokens, v))
+}
+
+// CacheCreationInputTokensGTE applies the GTE predicate on the "cache_creation_input_tokens" field.
+func CacheCreationInputTokensGTE(v int) predicate.Node {
+	return predicate.Node(sql.FieldGTE(FieldCacheCreationInputTokens, v))
+}
+
+// CacheCreationInputTokensLT applies the LT predicate on the "cache_creation_input_tokens" field.
+func CacheCreationInputTokensLT(v int) predicate.Node {
+	return predicate.Node(sql.FieldLT(FieldCacheCreationInputTokens, v))
+}
+
+// CacheCreationInputTokensLTE applies the LTE predicate on the "cache_creation_input_tokens" field.
+func CacheCreationInputTokensLTE(v int) predicate.Node {
+	return predicate.Node(sql.FieldLTE(FieldCacheCreationInputTokens, v))
+}
+
+// CacheCreationInputTokensIsNil applies the IsNil predicate on the "cache_creation_input_tokens" field.
+func CacheCreationInputTokensIsNil() predicate.Node {
+	return predicate.Node(sql.FieldIsNull(FieldCacheCreationInputTokens))
+}
+
+// CacheCreationInputTokensNotNil applies the NotNil predicate on the "cache_creation_input_tokens" field.
+func CacheCreationInputTokensNotNil() predicate.Node {
+	return predicate.Node(sql.FieldNotNull(FieldCacheCreationInputTokens))
+}
+
+// CacheReadInputTokensEQ applies the EQ predicate on the "cache_read_input_tokens" field.
+func CacheReadInputTokensEQ(v int) predicate.Node {
+	return predicate.Node(sql.FieldEQ(FieldCacheReadInputTokens, v))
+}
+
+// CacheReadInputTokensNEQ applies the NEQ predicate on the "cache_read_input_tokens" field.
+func CacheReadInputTokensNEQ(v int) predicate.Node {
+	return predicate.Node(sql.FieldNEQ(FieldCacheReadInputTokens, v))
+}
+
+// CacheReadInputTokensIn applies the In predicate on the "cache_read_input_tokens" field.
+func CacheReadInputTokensIn(vs ...int) predicate.Node {
+	return predicate.Node(sql.FieldIn(FieldCacheReadInputTokens, vs...))
+}
+
+// CacheReadInputTokensNotIn applies the NotIn predicate on the "cache_read_input_tokens" field.
+func CacheReadInputTokensNotIn(vs ...int) predicate.Node {
+	return predicate.Node(sql.FieldNotIn(FieldCacheReadInputTokens, vs...))
+}
+
+// CacheReadInputTokensGT applies the GT predicate on the "cache_read_input_tokens" field.
+func CacheReadInputTokensGT(v int) predicate.Node {
+	return predicate.Node(sql.FieldGT(FieldCacheReadInputTokens, v))
+}
+
+// CacheReadInputTokensGTE applies the GTE predicate on the "cache_read_input_tokens" field.
+func CacheReadInputTokensGTE(v int) predicate.Node {
+	return predicate.Node(sql.FieldGTE(FieldCacheReadInputTokens, v))
+}
+
+// CacheReadInputTokensLT applies the LT predicate on the "cache_read_input_tokens" field.
+func CacheReadInputTokensLT(v int) predicate.Node {
+	return predicate.Node(sql.FieldLT(FieldCacheReadInputTokens, v))
+}
+
+// CacheReadInputTokensLTE applies the LTE predicate on the "cache_read_input_tokens" field.
+func CacheReadInputTokensLTE(v int) predicate.Node {
+	return predicate.Node(sql.FieldLTE(FieldCacheReadInputTokens, v))
+}
+
+// CacheReadInputTokensIsNil applies the IsNil predicate on the "cache_read_input_tokens" field.
+func CacheReadInputTokensIsNil() predicate.Node {
+	return predicate.Node(sql.FieldIsNull(FieldCacheReadInputTokens))
+}
+
+// CacheReadInputTokensNotNil applies the NotNil predicate on the "cache_read_input_tokens" field.
+func CacheReadInputTokensNotNil() predicate.Node {
+	return predicate.Node(sql.FieldNotNull(FieldCacheReadInputTokens))
 }
 
 // TotalDurationNsEQ applies the EQ predicate on the "total_duration_ns" field.

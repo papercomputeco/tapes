@@ -42,6 +42,10 @@ type Node struct {
 	CompletionTokens *int `json:"completion_tokens,omitempty"`
 	// TotalTokens holds the value of the "total_tokens" field.
 	TotalTokens *int `json:"total_tokens,omitempty"`
+	// CacheCreationInputTokens holds the value of the "cache_creation_input_tokens" field.
+	CacheCreationInputTokens *int `json:"cache_creation_input_tokens,omitempty"`
+	// CacheReadInputTokens holds the value of the "cache_read_input_tokens" field.
+	CacheReadInputTokens *int `json:"cache_read_input_tokens,omitempty"`
 	// TotalDurationNs holds the value of the "total_duration_ns" field.
 	TotalDurationNs *int64 `json:"total_duration_ns,omitempty"`
 	// PromptDurationNs holds the value of the "prompt_duration_ns" field.
@@ -94,7 +98,7 @@ func (*Node) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case node.FieldBucket, node.FieldContent:
 			values[i] = new([]byte)
-		case node.FieldPromptTokens, node.FieldCompletionTokens, node.FieldTotalTokens, node.FieldTotalDurationNs, node.FieldPromptDurationNs:
+		case node.FieldPromptTokens, node.FieldCompletionTokens, node.FieldTotalTokens, node.FieldCacheCreationInputTokens, node.FieldCacheReadInputTokens, node.FieldTotalDurationNs, node.FieldPromptDurationNs:
 			values[i] = new(sql.NullInt64)
 		case node.FieldID, node.FieldParentHash, node.FieldType, node.FieldRole, node.FieldModel, node.FieldProvider, node.FieldAgentName, node.FieldStopReason, node.FieldProject:
 			values[i] = new(sql.NullString)
@@ -200,6 +204,20 @@ func (_m *Node) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.TotalTokens = new(int)
 				*_m.TotalTokens = int(value.Int64)
+			}
+		case node.FieldCacheCreationInputTokens:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field cache_creation_input_tokens", values[i])
+			} else if value.Valid {
+				_m.CacheCreationInputTokens = new(int)
+				*_m.CacheCreationInputTokens = int(value.Int64)
+			}
+		case node.FieldCacheReadInputTokens:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field cache_read_input_tokens", values[i])
+			} else if value.Valid {
+				_m.CacheReadInputTokens = new(int)
+				*_m.CacheReadInputTokens = int(value.Int64)
 			}
 		case node.FieldTotalDurationNs:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -315,6 +333,16 @@ func (_m *Node) String() string {
 	builder.WriteString(", ")
 	if v := _m.TotalTokens; v != nil {
 		builder.WriteString("total_tokens=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.CacheCreationInputTokens; v != nil {
+		builder.WriteString("cache_creation_input_tokens=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.CacheReadInputTokens; v != nil {
+		builder.WriteString("cache_read_input_tokens=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")

@@ -81,6 +81,16 @@ func (Node) Fields() []ent.Field {
 			Optional().
 			Nillable(),
 
+		// cache_creation_input_tokens is the number of tokens written to cache
+		field.Int("cache_creation_input_tokens").
+			Optional().
+			Nillable(),
+
+		// cache_read_input_tokens is the number of tokens read from cache
+		field.Int("cache_read_input_tokens").
+			Optional().
+			Nillable(),
+
 		// total_duration_ns is the total duration in nanoseconds
 		field.Int64("total_duration_ns").
 			Optional().
