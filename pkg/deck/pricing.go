@@ -84,10 +84,7 @@ func CostForTokensWithCache(pricing Pricing, inputTokens, outputTokens, cacheCre
 	}
 
 	// Base input tokens = total input minus cached tokens
-	baseInput := inputTokens - cacheCreation - cacheRead
-	if baseInput < 0 {
-		baseInput = 0
-	}
+	baseInput := max(inputTokens-cacheCreation-cacheRead, 0)
 
 	inputCost := float64(baseInput) / 1_000_000.0 * pricing.Input
 	inputCost += float64(cacheCreation) / 1_000_000.0 * pricing.CacheWrite

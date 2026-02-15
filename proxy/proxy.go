@@ -27,8 +27,10 @@ import (
 )
 
 const (
-	agentPathPrefix = "/agents/"
-	providerOpenAI  = "openai"
+	agentPathPrefix   = "/agents/"
+	providerOpenAI    = "openai"
+	providerAnthropic = "anthropic"
+	providerOllama    = "ollama"
 )
 
 // Proxy is a client, LLM inference proxy that instruments storing sessions as Merkle DAGs.
@@ -444,7 +446,7 @@ func (p *Proxy) extractContentFromJSON(data []byte, providerName string, content
 	}
 
 	switch providerName {
-	case "ollama":
+	case providerOllama:
 		// Ollama NDJSON: message.content
 		if msg, ok := chunkData["message"].(map[string]any); ok {
 			if c, ok := msg["content"].(string); ok {
@@ -462,7 +464,7 @@ func (p *Proxy) extractContentFromJSON(data []byte, providerName string, content
 				}
 			}
 		}
-	case "anthropic":
+	case providerAnthropic:
 		// Anthropic SSE: content_block_delta events carry delta.text
 		if delta, ok := chunkData["delta"].(map[string]any); ok {
 			if text, ok := delta["text"].(string); ok {
@@ -482,7 +484,7 @@ func (p *Proxy) extractUsageFromSSE(data []byte, providerName string, usage *llm
 	}
 
 	switch providerName {
-	case "anthropic":
+	case providerAnthropic:
 		chunkType, _ := chunkData["type"].(string)
 		switch chunkType {
 		case "message_start":
@@ -509,7 +511,7 @@ func (p *Proxy) extractUsageFromSSE(data []byte, providerName string, usage *llm
 			usage.PromptTokens = jsonInt(u, "prompt_tokens")
 			usage.CompletionTokens = jsonInt(u, "completion_tokens")
 		}
-	case "ollama":
+	case providerOllama:
 		// Ollama includes usage in the final NDJSON line (done=true)
 		if done, ok := chunkData["done"].(bool); ok && done {
 			usage.PromptTokens = jsonInt(chunkData, "prompt_eval_count")
@@ -641,9 +643,9 @@ func (p *Proxy) providerByName(providerName, agentName, path string) (provider.P
 		case providerOpenAI:
 			upstream := p.providerUpstream(providerName, "https://api.openai.com/v1")
 			return prov, p.resolveOpenAIAuthUpstream(agentName, providerName, path, upstream)
-		case "anthropic":
+		case providerAnthropic:
 			return prov, p.providerUpstream(providerName, "https://api.anthropic.com")
-		case "ollama":
+		case providerOllama:
 			return prov, p.providerUpstream(providerName, p.config.UpstreamURL)
 		}
 
