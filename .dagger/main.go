@@ -51,6 +51,8 @@ func (t *Tapes) goContainer() *dagger.Container {
 
 // CheckGenerate verifies that generated code (e.g. ent) is up to date
 // by running go generate and diffing the result against the committed files.
+//
+//+check
 func (t *Tapes) CheckGenerate(ctx context.Context) (string, error) {
 	return t.goContainer().
 		WithExec([]string{"cp", "-r", "pkg/storage/ent", "/tmp/ent-before"}).
