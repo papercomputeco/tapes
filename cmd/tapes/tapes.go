@@ -5,7 +5,7 @@ import (
 	"github.com/spf13/cobra"
 
 	authcmder "github.com/papercomputeco/tapes/cmd/tapes/auth"
-	backfillcmder "github.com/papercomputeco/tapes/cmd/tapes/backfill"
+	synccmder "github.com/papercomputeco/tapes/cmd/tapes/sync"
 	chatcmder "github.com/papercomputeco/tapes/cmd/tapes/chat"
 	checkoutcmder "github.com/papercomputeco/tapes/cmd/tapes/checkout"
 	configcmder "github.com/papercomputeco/tapes/cmd/tapes/config"
@@ -63,7 +63,7 @@ func NewTapesCmd() *cobra.Command {
 	cmd.PersistentFlags().String("config-dir", "", "Override path to .tapes/ config directory")
 
 	// Add subcommands
-	cmd.AddCommand(backfillcmder.NewBackfillCmd())
+	cmd.AddCommand(synccmder.NewSyncCmd())
 	cmd.AddCommand(chatcmder.NewChatCmd())
 	cmd.AddCommand(checkoutcmder.NewCheckoutCmd())
 	cmd.AddCommand(configcmder.NewConfigCmd())

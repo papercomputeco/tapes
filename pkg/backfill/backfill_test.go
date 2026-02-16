@@ -183,6 +183,7 @@ var _ = Describe("Result", func() {
 		}
 
 		summary := r.Summary()
+		Expect(summary).To(ContainSubstring("Sync complete"))
 		Expect(summary).To(ContainSubstring("10 matched"))
 		Expect(summary).To(ContainSubstring("5 skipped"))
 		Expect(summary).To(ContainSubstring("3 unmatched"))

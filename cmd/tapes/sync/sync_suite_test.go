@@ -1,4 +1,4 @@
-package backfillcmder
+package synccmder
 
 import (
 	"testing"
@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func TestBackfillCommander(t *testing.T) {
+func TestSyncCommander(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Backfill Commander Suite")
+	RunSpecs(t, "Sync Commander Suite")
 }

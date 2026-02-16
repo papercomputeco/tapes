@@ -1,5 +1,5 @@
-// Package backfillcmder provides the `tapes backfill` CLI command.
-package backfillcmder
+// Package synccmder provides the `tapes sync` CLI command.
+package synccmder
 
 import (
 	"context"
@@ -14,35 +14,22 @@ import (
 	"github.com/papercomputeco/tapes/pkg/backfill"
 )
 
-const backfillLongDesc string = `Backfill token usage from Claude Code transcripts.
-
-Scans Claude Code's local JSONL transcripts for usage data and updates
-existing nodes in the tapes database that are missing token counts.
-
-Examples:
-  tapes backfill
-  tapes backfill --dry-run
-  tapes backfill --sqlite ./tapes.db --verbose
-  tapes backfill --claude-dir ~/.claude/projects`
-
-const backfillShortDesc string = "Backfill token usage from Claude Code transcripts"
-
-type backfillCommander struct {
+type syncCommander struct {
 	sqlitePath string
 	claudeDir  string
 	dryRun     bool
 	verbose    bool
 }
 
-// NewBackfillCmd creates the backfill cobra command.
-func NewBackfillCmd() *cobra.Command {
-	cmder := &backfillCommander{}
+// NewSyncCmd creates the sync cobra command.
+func NewSyncCmd() *cobra.Command {
+	cmder := &syncCommander{}
 
 	cmd := &cobra.Command{
-		Use:   "backfill",
-		Short: backfillShortDesc,
-		Long:  backfillLongDesc,
-		Args:  cobra.NoArgs,
+		Use:    "sync",
+		Short:  "Sync token usage from Claude Code transcripts",
+		Hidden: true,
+		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmder.run(cmd.Context(), cmd)
 		},
@@ -56,7 +43,7 @@ func NewBackfillCmd() *cobra.Command {
 	return cmd
 }
 
-func (c *backfillCommander) run(ctx context.Context, cmd *cobra.Command) error {
+func (c *syncCommander) run(ctx context.Context, cmd *cobra.Command) error {
 	dbPath := c.resolveSQLitePath()
 	claudeDir := c.resolveClaudeDir()
 
@@ -89,7 +76,7 @@ func (c *backfillCommander) run(ctx context.Context, cmd *cobra.Command) error {
 	return nil
 }
 
-func (c *backfillCommander) resolveSQLitePath() string {
+func (c *syncCommander) resolveSQLitePath() string {
 	if strings.TrimSpace(c.sqlitePath) != "" {
 		return c.sqlitePath
 	}
@@ -102,7 +89,7 @@ func (c *backfillCommander) resolveSQLitePath() string {
 	return "tapes.db"
 }
 
-func (c *backfillCommander) resolveClaudeDir() string {
+func (c *syncCommander) resolveClaudeDir() string {
 	if strings.TrimSpace(c.claudeDir) != "" {
 		return c.claudeDir
 	}

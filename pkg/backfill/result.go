@@ -12,12 +12,12 @@ type Result struct {
 	TranscriptEntries     int
 }
 
-// Summary returns a human-readable summary of the backfill result.
+// Summary returns a human-readable summary of the sync result.
 func (r *Result) Summary() string {
 	return fmt.Sprintf(
-		"Backfill complete: %d matched, %d skipped (already have tokens), %d unmatched\n"+
+		"Sync complete: %d matched, %d skipped (already have tokens), %d unmatched\n"+
 			"Scanned %d transcript files (%d assistant entries)\n"+
-			"Total tokens backfilled: %d",
+			"Total tokens synced: %d",
 		r.Matched, r.Skipped, r.Unmatched,
 		r.TranscriptFiles, r.TranscriptEntries,
 		r.TotalTokensBackfilled,
