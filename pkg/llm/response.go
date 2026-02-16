@@ -42,7 +42,7 @@ type Usage struct {
 	CompletionTokens int `json:"completion_tokens,omitempty"`
 	TotalTokens      int `json:"total_tokens,omitempty"`
 
-	// Cache token counts (Anthropic-specific)
+	// Cache token counts (Anthropic prompt caching)
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
 

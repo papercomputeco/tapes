@@ -81,12 +81,12 @@ func (Node) Fields() []ent.Field {
 			Optional().
 			Nillable(),
 
-		// cache_creation_input_tokens is the number of tokens written to cache
+		// cache_creation_input_tokens is the number of tokens written to prompt cache
 		field.Int("cache_creation_input_tokens").
 			Optional().
 			Nillable(),
 
-		// cache_read_input_tokens is the number of tokens read from cache
+		// cache_read_input_tokens is the number of tokens read from prompt cache
 		field.Int("cache_read_input_tokens").
 			Optional().
 			Nillable(),

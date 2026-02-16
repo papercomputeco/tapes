@@ -24,6 +24,9 @@
             pkgs.gnumake
             dagger.packages.${system}.dagger
 
+            # GCC toolchain (avoids inheriting Xcode's system clang)
+            pkgs.gcc
+
             # SQLite development headers (needed by sqlite-vec CGO bindings)
             pkgs.sqlite.dev
           ];

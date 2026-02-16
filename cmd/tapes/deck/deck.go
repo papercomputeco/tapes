@@ -61,6 +61,7 @@ type deckCommander struct {
 	insightsModel    string
 	insightsProvider string
 	insightsKey      string
+	theme            string
 }
 
 func NewDeckCmd() *cobra.Command {
@@ -96,11 +97,28 @@ func NewDeckCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cmder.insightsModel, "insights-model", "gpt-4o-mini", "Model for AI insights extraction")
 	cmd.Flags().StringVar(&cmder.insightsProvider, "insights-provider", "openai", "Provider for AI insights (openai|anthropic|ollama)")
 	cmd.Flags().StringVar(&cmder.insightsKey, "insights-key", "", "API key for AI insights provider")
+	cmd.Flags().StringVar(&cmder.theme, "theme", "", "Force color theme: dark or light (auto-detected by default)")
 
 	return cmd
 }
 
 func (c *deckCommander) run(ctx context.Context, cmd *cobra.Command) error {
+	// Apply theme override before anything renders. The init() palette
+	// is based on auto-detection; re-apply if the user explicitly chose.
+	if c.theme != "" {
+		switch c.theme {
+		case "dark", "light":
+			themeOverride = c.theme
+			if isDarkTheme() {
+				applyPalette(darkPalette)
+			} else {
+				applyPalette(lightPalette)
+			}
+		default:
+			return fmt.Errorf("invalid --theme value %q: expected dark or light", c.theme)
+		}
+	}
+
 	pricing, err := deck.LoadPricing(c.pricingPath)
 	if err != nil {
 		return err

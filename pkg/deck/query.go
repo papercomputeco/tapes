@@ -143,8 +143,8 @@ func (q *Query) SessionDetail(ctx context.Context, sessionID string) (*SessionDe
 	var lastTime time.Time
 	for i, node := range nodes {
 		blocks, _ := parseContentBlocks(node.Content)
-		inputTokens, outputTokens, totalTokens := tokenCounts(node)
-		inputCost, outputCost, totalCost := q.costForNode(node, inputTokens, outputTokens)
+		t := tokenCounts(node)
+		inputCost, outputCost, totalCost := q.costForNode(node, t)
 
 		toolCalls := extractToolCalls(blocks)
 		for _, tool := range toolCalls {
@@ -164,9 +164,9 @@ func (q *Query) SessionDetail(ctx context.Context, sessionID string) (*SessionDe
 			Model:        node.Model,
 			Timestamp:    node.CreatedAt,
 			Delta:        delta,
-			InputTokens:  inputTokens,
-			OutputTokens: outputTokens,
-			TotalTokens:  totalTokens,
+			InputTokens:  t.Input,
+			OutputTokens: t.Output,
+			TotalTokens:  t.Total,
 			InputCost:    inputCost,
 			OutputCost:   outputCost,
 			TotalCost:    totalCost,
@@ -215,9 +215,9 @@ func (q *Query) buildSessionSummaryFromNodes(nodes []*ent.Node) (SessionSummary,
 			hasToolError = true
 		}
 
-		nodeInput, nodeOutput, _ := tokenCounts(node)
-		inputTokens += nodeInput
-		outputTokens += nodeOutput
+		t := tokenCounts(node)
+		inputTokens += t.Input
+		outputTokens += t.Output
 
 		model := normalizeModel(node.Model)
 		if model == "" {
@@ -229,11 +229,11 @@ func (q *Query) buildSessionSummaryFromNodes(nodes []*ent.Node) (SessionSummary,
 			continue
 		}
 
-		inputCost, outputCost, totalCost := CostForTokens(pricing, nodeInput, nodeOutput)
+		inputCost, outputCost, totalCost := CostForTokensWithCache(pricing, t.Input, t.Output, t.CacheCreation, t.CacheRead)
 		current := modelCosts[model]
 		current.Model = model
-		current.InputTokens += nodeInput
-		current.OutputTokens += nodeOutput
+		current.InputTokens += t.Input
+		current.OutputTokens += t.Output
 		current.InputCost += inputCost
 		current.OutputCost += outputCost
 		current.TotalCost += totalCost
@@ -301,7 +301,7 @@ func (q *Query) loadAncestry(ctx context.Context, leaf *ent.Node) ([]*ent.Node, 
 	return nodes, nil
 }
 
-func (q *Query) costForNode(node *ent.Node, inputTokens, outputTokens int64) (float64, float64, float64) {
+func (q *Query) costForNode(node *ent.Node, t nodeTokens) (float64, float64, float64) {
 	model := normalizeModel(node.Model)
 	if model == "" {
 		return 0, 0, 0
@@ -312,24 +312,39 @@ func (q *Query) costForNode(node *ent.Node, inputTokens, outputTokens int64) (fl
 		return 0, 0, 0
 	}
 
-	return CostForTokens(pricing, inputTokens, outputTokens)
+	return CostForTokensWithCache(pricing, t.Input, t.Output, t.CacheCreation, t.CacheRead)
 }
 
-func tokenCounts(node *ent.Node) (int64, int64, int64) {
-	var inputTokens, outputTokens int64
+// nodeTokens holds all token counts for a node, including cache breakdown.
+type nodeTokens struct {
+	Input         int64
+	Output        int64
+	Total         int64
+	CacheCreation int64
+	CacheRead     int64
+}
+
+func tokenCounts(node *ent.Node) nodeTokens {
+	var t nodeTokens
 	if node.PromptTokens != nil {
-		inputTokens = int64(*node.PromptTokens)
+		t.Input = int64(*node.PromptTokens)
 	}
 	if node.CompletionTokens != nil {
-		outputTokens = int64(*node.CompletionTokens)
+		t.Output = int64(*node.CompletionTokens)
+	}
+	if node.CacheCreationInputTokens != nil {
+		t.CacheCreation = int64(*node.CacheCreationInputTokens)
+	}
+	if node.CacheReadInputTokens != nil {
+		t.CacheRead = int64(*node.CacheReadInputTokens)
 	}
 
-	totalTokens := inputTokens + outputTokens
+	t.Total = t.Input + t.Output
 	if node.TotalTokens != nil {
-		totalTokens = int64(*node.TotalTokens)
+		t.Total = int64(*node.TotalTokens)
 	}
 
-	return inputTokens, outputTokens, totalTokens
+	return t
 }
 
 func parseContentBlocks(raw []map[string]any) ([]llm.ContentBlock, error) {
@@ -847,8 +862,8 @@ func (q *Query) SessionAnalytics(ctx context.Context, sessionID string) (*Sessio
 		if duration.Minutes() > 0 {
 			var totalTokens int64
 			for _, n := range nodes {
-				input, output, _ := tokenCounts(n)
-				totalTokens += input + output
+				t := tokenCounts(n)
+				totalTokens += t.Input + t.Output
 			}
 			sa.TokensPerMinute = float64(totalTokens) / duration.Minutes()
 		}
