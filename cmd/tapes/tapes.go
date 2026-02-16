@@ -5,7 +5,6 @@ import (
 	"github.com/spf13/cobra"
 
 	authcmder "github.com/papercomputeco/tapes/cmd/tapes/auth"
-	synccmder "github.com/papercomputeco/tapes/cmd/tapes/sync"
 	chatcmder "github.com/papercomputeco/tapes/cmd/tapes/chat"
 	checkoutcmder "github.com/papercomputeco/tapes/cmd/tapes/checkout"
 	configcmder "github.com/papercomputeco/tapes/cmd/tapes/config"
@@ -16,6 +15,7 @@ import (
 	servecmder "github.com/papercomputeco/tapes/cmd/tapes/serve"
 	startcmder "github.com/papercomputeco/tapes/cmd/tapes/start"
 	statuscmder "github.com/papercomputeco/tapes/cmd/tapes/status"
+	synccmder "github.com/papercomputeco/tapes/cmd/tapes/sync"
 	versioncmder "github.com/papercomputeco/tapes/cmd/version"
 )
 
