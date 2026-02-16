@@ -113,7 +113,7 @@ func (q *Query) Overview(ctx context.Context, filters Filters) (*Overview, error
 		overview.SuccessRate = float64(overview.Completed) / float64(total)
 	}
 
-	sortSessions(overview.Sessions, filters.Sort, filters.SortDir)
+	SortSessions(overview.Sessions, filters.Sort, filters.SortDir)
 
 	return overview, nil
 }
@@ -573,15 +573,16 @@ func matchesFilters(summary SessionSummary, filters Filters) bool {
 	return true
 }
 
-func sortSessions(sessions []SessionSummary, sortKey, sortDir string) {
+// SortSessions sorts session summaries in place by the given key and direction.
+func SortSessions(sessions []SessionSummary, sortKey, sortDir string) {
 	ascending := strings.EqualFold(sortDir, "asc")
 	switch sortKey {
-	case "time":
+	case "date":
 		sort.Slice(sessions, func(i, j int) bool {
 			if ascending {
-				return sessions[i].EndTime.Before(sessions[j].EndTime)
+				return sessions[i].StartTime.Before(sessions[j].StartTime)
 			}
-			return sessions[i].EndTime.After(sessions[j].EndTime)
+			return sessions[i].StartTime.After(sessions[j].StartTime)
 		})
 	case "tokens":
 		sort.Slice(sessions, func(i, j int) bool {

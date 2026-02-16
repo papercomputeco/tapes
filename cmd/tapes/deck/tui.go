@@ -344,7 +344,7 @@ func applyPalette(p deckPalette) {
 }
 
 var (
-	sortOrder        = []string{sortKeyCost, "time", "tokens", "duration"}
+	sortOrder        = []string{sortKeyCost, "date", "tokens", "duration"}
 	sortDirOptions   = []string{"asc", sortDirDesc}
 	messageSortOrder = []string{"time", "tokens", sortKeyCost, "delta"}
 	statusFilters    = []string{"", deck.StatusCompleted, deck.StatusFailed, deck.StatusAbandoned}
@@ -850,7 +850,11 @@ func (m deckModel) handleModalKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubble
 					m.filters.SortDir = sortDirOptions[dirIndex]
 				}
 			}
-			return m, loadOverviewCmd(m.query, m.filters)
+			if m.overview != nil {
+				deck.SortSessions(m.overview.Sessions, m.filters.Sort, m.filters.SortDir)
+				m.cursor = 0
+			}
+			return m, nil
 		case modalFilter:
 			m.statusIndex = m.modalCursor
 			m.filters.Status = statusFilters[m.statusIndex]
@@ -1456,6 +1460,7 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 	type rowData struct {
 		label        string
 		project      string
+		date         string
 		model        string
 		modelColored string
 		dur          string
@@ -1487,6 +1492,7 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 		maxProjectW = len("project")
 	}
 	maxLabelW := len("label")
+	maxDateW := len("date")
 	maxModelW := len("model")
 	maxDurW := len("dur")
 	maxTokensW := len("tokens")
@@ -1504,6 +1510,7 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 
 		rows[rowIdx].label = session.Label
 		rows[rowIdx].project = session.Project
+		rows[rowIdx].date = session.StartTime.Format("Jan 02'06")
 		rows[rowIdx].model = session.Model
 		rows[rowIdx].modelColored = colorizeModel(session.Model)
 		rows[rowIdx].dur = formatDurationMinutes(session.Duration)
@@ -1522,6 +1529,9 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 		}
 		if hasProject && len(rows[rowIdx].project) > maxProjectW {
 			maxProjectW = len(rows[rowIdx].project)
+		}
+		if len(rows[rowIdx].date) > maxDateW {
+			maxDateW = len(rows[rowIdx].date)
 		}
 		if len(rows[rowIdx].model) > maxModelW {
 			maxModelW = len(rows[rowIdx].model)
@@ -1556,7 +1566,7 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 	// Calculate total width used by fixed columns (excluding label)
 	// Format: "  " + rowNum + " " + label + [gap + project] + gap + model + gap + dur + gap + tokens + gap + barbell + gap + costInd + " " + cost + gap + tools + gap + msgs + gap + status
 	colGap := 3
-	fixedWidth := 2 + 1 + 1 + colGap + maxModelW + colGap + maxDurW + colGap + maxTokensW + colGap + maxBarbellW + colGap + maxCostIndW + 1 + maxCostW + colGap + maxToolsW + colGap + maxMsgsW + colGap + 1 + maxStatusW
+	fixedWidth := 2 + 1 + 1 + colGap + maxDateW + colGap + maxModelW + colGap + maxDurW + colGap + maxTokensW + colGap + maxBarbellW + colGap + maxCostIndW + 1 + maxCostW + colGap + maxToolsW + colGap + maxMsgsW + colGap + 1 + maxStatusW
 	if hasProject {
 		fixedWidth += colGap + maxProjectW
 	}
@@ -1583,9 +1593,6 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 	headerParts := []string{
 		"  " + padRight("label", maxLabelW),
 	}
-	if hasProject {
-		headerParts = append(headerParts, padRight("project", maxProjectW))
-	}
 	headerParts = append(headerParts,
 		padRight("model", maxModelW),
 		padRight("dur", maxDurW),
@@ -1600,7 +1607,11 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 		padRight("tools", maxToolsW),
 		padRight("msgs", maxMsgsW),
 		"status",
+		padRight("date", maxDateW),
 	)
+	if hasProject {
+		headerParts = append(headerParts, padRight("project", maxProjectW))
+	}
 	lines = append(lines, deckMutedStyle.Render(strings.Join(headerParts, strings.Repeat(" ", colGap))))
 
 	// Second pass: render rows with consistent widths
@@ -1617,9 +1628,6 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 		parts := []string{
 			deckDimStyle.Render(rowNum) + " " + padRight(rows[rowIdx].label, maxLabelW),
 		}
-		if hasProject {
-			parts = append(parts, deckMutedStyle.Render(padRight(rows[rowIdx].project, maxProjectW)))
-		}
 		parts = append(parts,
 			padRightWithColor(rows[rowIdx].modelColored, maxModelW),
 			padRight(rows[rowIdx].dur, maxDurW),
@@ -1628,8 +1636,12 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 			costIndPadded+" "+costPadded,
 			padRight(rows[rowIdx].tools, maxToolsW),
 			padRight(rows[rowIdx].msgs, maxMsgsW),
-			rows[rowIdx].statusCircle+" "+rows[rowIdx].statusText,
+			rows[rowIdx].statusCircle+" "+padRight(rows[rowIdx].statusText, maxStatusW),
+			deckMutedStyle.Render(padRight(rows[rowIdx].date, maxDateW)),
 		)
+		if hasProject {
+			parts = append(parts, deckMutedStyle.Render(padRight(rows[rowIdx].project, maxProjectW)))
+		}
 
 		line := strings.Join(parts, strings.Repeat(" ", colGap))
 
@@ -3246,7 +3258,7 @@ func (m deckModel) viewModal() string {
 	if m.modalTab == modalSort {
 		sortLabels := map[string]string{
 			sortKeyCost: "Total Cost",
-			"time":      "End Time",
+			"date":      "Date",
 			"tokens":    "Total Tokens",
 			"duration":  "Duration",
 		}
