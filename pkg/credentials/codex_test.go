@@ -41,6 +41,28 @@ var _ = Describe("PatchCodexAuthKey", func() {
 		Expect(key).To(Equal("sk-svcacct-test"))
 	})
 
+	It("removes OAuth tokens so codex uses the API key", func() {
+		original := []byte(`{
+			"OPENAI_API_KEY": null,
+			"tokens": {
+				"access_token": "oa-abc123",
+				"refresh_token": "oa-refresh",
+				"scopes": ["openid", "profile", "email", "offline_access"]
+			}
+		}`)
+
+		updated, ok := credentials.PatchCodexAuthKey(original, "sk-svcacct-test")
+		Expect(ok).To(BeTrue())
+
+		var result map[string]json.RawMessage
+		Expect(json.Unmarshal(updated, &result)).To(Succeed())
+		Expect(result).NotTo(HaveKey("tokens"))
+
+		var key string
+		Expect(json.Unmarshal(result["OPENAI_API_KEY"], &key)).To(Succeed())
+		Expect(key).To(Equal("sk-svcacct-test"))
+	})
+
 	It("overwrites existing OPENAI_API_KEY", func() {
 		original := []byte(`{"OPENAI_API_KEY": "old-key", "other": "value"}`)
 

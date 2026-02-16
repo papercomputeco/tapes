@@ -26,6 +26,9 @@
 
             # SQLite development headers (needed by sqlite-vec CGO bindings)
             pkgs.sqlite.dev
+
+            # Version control
+            pkgs.git
           ];
 
           # Enable Go's experimental JSON v2 implementation

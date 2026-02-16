@@ -237,6 +237,19 @@ func (c *startCommander) runAgent(ctx context.Context, agent string) error {
 			return err
 		}
 		cmd.Env = append(cmd.Env, "XDG_CONFIG_HOME="+configRoot)
+
+		// Clear OpenCode's stored OAuth tokens so it uses API keys from
+		// our config/env instead. Same pattern as configureCodexAuth.
+		ocAuthCleanup := c.patchOpenCodeAuth()
+		prevCleanup := cleanup
+		cleanup = func() error {
+			err1 := ocAuthCleanup()
+			err2 := prevCleanup()
+			if err1 != nil {
+				return err1
+			}
+			return err2
+		}
 	}
 
 	cmd.Env = c.injectCredentials(cmd.Env)
@@ -760,6 +773,34 @@ func (c *startCommander) configureCodexAuth() (func() error, error) {
 	return restore, nil
 }
 
+// patchOpenCodeAuth temporarily removes OAuth entries from opencode's
+// ~/.local/share/opencode/auth.json so opencode uses API keys from
+// config/env instead of OAuth tokens that may lack required scopes.
+// Returns a cleanup function that restores the original file.
+func (c *startCommander) patchOpenCodeAuth() func() error {
+	noop := func() error { return nil }
+
+	original, authPath := credentials.ReadOpenCodeAuthFile()
+	if original == nil {
+		return noop
+	}
+
+	// Remove OAuth entries for all providers we manage.
+	updated, ok := credentials.PatchOpenCodeAuth(original, []string{"openai", "anthropic"})
+	if !ok {
+		return noop
+	}
+
+	if err := os.WriteFile(authPath, updated, 0o600); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not patch opencode auth: %v\n", err)
+		return noop
+	}
+
+	return func() error {
+		return os.WriteFile(authPath, original, 0o600)
+	}
+}
+
 // injectCredentials appends stored credential env vars to the given env slice.
 // If an env var is already set in the slice, the stored credential is skipped
 // so that shell environment takes precedence.
@@ -965,6 +1006,7 @@ func configureOpenCode(baseURL, tapesConfigDir string) (func() error, string, er
 	// /chat/completions) to baseURL — they expect /v1 to be part of it.
 	// However the tapes proxy upstream for openai already includes /v1
 	// ("https://api.openai.com/v1"), so we must not double it.
+	//
 	provider := ensureMap(existing, "provider")
 	configureOpenCodeProvider(provider, "anthropic", baseURL+"/providers/anthropic/v1", apiKeys["anthropic"])
 	configureOpenCodeProvider(provider, "openai", baseURL+"/providers/openai", apiKeys["openai"])
