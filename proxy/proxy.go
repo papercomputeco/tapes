@@ -356,6 +356,7 @@ func (p *Proxy) handleSSEStream(httpResp *http.Response, pw *io.PipeWriter, pars
 	var allChunks [][]byte
 	var fullContent strings.Builder
 	var streamUsage llm.Usage
+	var meta streamMeta
 
 	tr := sse.NewTeeReader(httpResp.Body, pw)
 
@@ -382,10 +383,10 @@ func (p *Proxy) handleSSEStream(httpResp *http.Response, pw *io.PipeWriter, pars
 		p.extractContentFromJSON([]byte(ev.Data), prov.Name(), &fullContent)
 
 		// Accumulate usage from SSE events (Anthropic splits usage across events)
-		p.extractUsageFromSSE([]byte(ev.Data), prov.Name(), &streamUsage)
+		p.extractUsageFromSSE([]byte(ev.Data), prov.Name(), &streamUsage, &meta)
 	}
 
-	p.enqueueStreamedResponse(allChunks, fullContent.String(), &streamUsage, parsedReq, prov, agentName, startTime)
+	p.enqueueStreamedResponse(allChunks, fullContent.String(), &streamUsage, &meta, parsedReq, prov, agentName, startTime)
 }
 
 // handleNDJSONStream reads a newline-delimited JSON upstream response (used by
@@ -395,6 +396,7 @@ func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, p
 	var allChunks [][]byte
 	var fullContent strings.Builder
 	var streamUsage llm.Usage
+	var meta streamMeta
 
 	scanner := bufio.NewScanner(httpResp.Body)
 	// Increase buffer size for large chunks
@@ -415,7 +417,7 @@ func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, p
 		p.extractContentFromJSON(line, prov.Name(), &fullContent)
 
 		// Accumulate usage from NDJSON events
-		p.extractUsageFromSSE(line, prov.Name(), &streamUsage)
+		p.extractUsageFromSSE(line, prov.Name(), &streamUsage, &meta)
 
 		// Write chunk to client — pw.Write blocks until fasthttp reads
 		// from the pipe reader and flushes to the TCP socket.
@@ -434,7 +436,7 @@ func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, p
 		p.logger.Error("error reading NDJSON stream", zap.Error(err))
 	}
 
-	p.enqueueStreamedResponse(allChunks, fullContent.String(), &streamUsage, parsedReq, prov, agentName, startTime)
+	p.enqueueStreamedResponse(allChunks, fullContent.String(), &streamUsage, &meta, parsedReq, prov, agentName, startTime)
 }
 
 // extractContentFromJSON performs best-effort content extraction from a JSON
@@ -474,10 +476,16 @@ func (p *Proxy) extractContentFromJSON(data []byte, providerName string, content
 	}
 }
 
+// streamMeta accumulates metadata from SSE events that lives outside llm.Usage,
+// such as the stop reason which Anthropic sends in message_delta.
+type streamMeta struct {
+	StopReason string
+}
+
 // extractUsageFromSSE extracts token usage from SSE event data.
 // Anthropic splits usage across message_start (input tokens) and message_delta (output tokens).
 // OpenAI includes usage in the final chunk. Ollama includes it in the final NDJSON line.
-func (p *Proxy) extractUsageFromSSE(data []byte, providerName string, usage *llm.Usage) {
+func (p *Proxy) extractUsageFromSSE(data []byte, providerName string, usage *llm.Usage, meta *streamMeta) {
 	var chunkData map[string]any
 	if err := json.Unmarshal(data, &chunkData); err != nil {
 		return
@@ -500,9 +508,14 @@ func (p *Proxy) extractUsageFromSSE(data []byte, providerName string, usage *llm
 				}
 			}
 		case "message_delta":
-			// message_delta contains: usage.output_tokens
+			// message_delta contains: delta.stop_reason and usage.output_tokens
 			if u, ok := chunkData["usage"].(map[string]any); ok {
 				usage.CompletionTokens = jsonInt(u, "output_tokens")
+			}
+			if delta, ok := chunkData["delta"].(map[string]any); ok {
+				if sr, ok := delta["stop_reason"].(string); ok && sr != "" {
+					meta.StopReason = sr
+				}
 			}
 		}
 	case providerOpenAI:
@@ -530,7 +543,7 @@ func jsonInt(m map[string]any, key string) int {
 
 // enqueueStreamedResponse handles post-stream telemetry: logging and
 // enqueuing the reconstructed response for async storage.
-func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, streamUsage *llm.Usage, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
+func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, streamUsage *llm.Usage, meta *streamMeta, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
 	if parsedReq != nil && len(allChunks) > 0 {
 		p.logger.Debug("streaming complete",
 			zap.String("content_preview", fullContent),
@@ -539,7 +552,7 @@ func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, 
 			zap.Duration("duration", time.Since(startTime)),
 		)
 
-		finalResp := p.reconstructStreamedResponse(allChunks, fullContent, streamUsage, prov)
+		finalResp := p.reconstructStreamedResponse(allChunks, fullContent, streamUsage, meta, prov)
 		if finalResp != nil {
 			p.workerPool.Enqueue(worker.Job{
 				Provider:  prov.Name(),
@@ -552,7 +565,7 @@ func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, 
 }
 
 // reconstructStreamedResponse attempts to build a ChatResponse from accumulated stream chunks.
-func (p *Proxy) reconstructStreamedResponse(chunks [][]byte, fullContent string, streamUsage *llm.Usage, prov provider.Provider) *llm.ChatResponse {
+func (p *Proxy) reconstructStreamedResponse(chunks [][]byte, fullContent string, streamUsage *llm.Usage, meta *streamMeta, prov provider.Provider) *llm.ChatResponse {
 	// Try parsing the last chunk as it often contains final metadata
 	if len(chunks) > 0 {
 		lastChunk := chunks[len(chunks)-1]
@@ -566,6 +579,10 @@ func (p *Proxy) reconstructStreamedResponse(chunks [][]byte, fullContent string,
 			if streamUsage != nil && (streamUsage.PromptTokens > 0 || streamUsage.CompletionTokens > 0) {
 				streamUsage.TotalTokens = streamUsage.PromptTokens + streamUsage.CompletionTokens
 				resp.Usage = streamUsage
+			}
+			// Use accumulated stop reason if the last chunk didn't have one
+			if resp.StopReason == "" && meta != nil && meta.StopReason != "" {
+				resp.StopReason = meta.StopReason
 			}
 			return resp
 		}
@@ -581,6 +598,9 @@ func (p *Proxy) reconstructStreamedResponse(chunks [][]byte, fullContent string,
 		if streamUsage != nil && (streamUsage.PromptTokens > 0 || streamUsage.CompletionTokens > 0) {
 			streamUsage.TotalTokens = streamUsage.PromptTokens + streamUsage.CompletionTokens
 			resp.Usage = streamUsage
+		}
+		if meta != nil && meta.StopReason != "" {
+			resp.StopReason = meta.StopReason
 		}
 		return resp
 	}
