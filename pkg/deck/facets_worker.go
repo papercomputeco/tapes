@@ -35,7 +35,7 @@ func (w *FacetWorker) Progress() (done, total int) {
 // with existing facets, and processes the rest with bounded concurrency.
 // It blocks until all sessions are processed or the context is cancelled.
 func (w *FacetWorker) Run(ctx context.Context) {
-	filters := Filters{Sort: "time", SortDir: "desc"}
+	filters := Filters{Sort: "date", SortDir: "desc"}
 	overview, err := w.query.Overview(ctx, filters)
 	if err != nil {
 		log.Printf("facets worker: failed to load sessions: %v", err)
