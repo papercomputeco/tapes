@@ -20,7 +20,7 @@ type openCodeProvider struct {
 var openCodeProviders = []openCodeProvider{
 	{Name: "anthropic", DefaultModel: "claude-sonnet-4-5"},
 	{Name: "openai", DefaultModel: "gpt-5.2-codex"},
-	{Name: "ollama", DefaultModel: "qwen3-coder:30b"},
+	{Name: "ollama", DefaultModel: "glm-4.7-flash"},
 }
 
 // openCodeDefaultProvider returns the default provider name.
