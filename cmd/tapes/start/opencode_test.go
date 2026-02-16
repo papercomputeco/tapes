@@ -25,7 +25,7 @@ var _ = Describe("opencode provider catalog", func() {
 		It("returns the correct default model for each provider", func() {
 			Expect(openCodeDefaultModel("anthropic")).To(Equal("claude-sonnet-4-5"))
 			Expect(openCodeDefaultModel("openai")).To(Equal("gpt-5.2-codex"))
-			Expect(openCodeDefaultModel("ollama")).To(Equal("qwen3-coder:30b"))
+			Expect(openCodeDefaultModel("ollama")).To(Equal("glm-4.7-flash"))
 		})
 
 		It("is case-insensitive", func() {
@@ -81,7 +81,7 @@ var _ = Describe("resolveOpenCodePreference", func() {
 		pref, err := resolveOpenCodePreference(tmpDir, "ollama", "", strings.NewReader(""), &bytes.Buffer{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(pref.Provider).To(Equal("ollama"))
-		Expect(pref.Model).To(Equal("qwen3-coder:30b"))
+		Expect(pref.Model).To(Equal("glm-4.7-flash"))
 	})
 
 	It("returns error for invalid provider flag", func() {
@@ -110,7 +110,7 @@ var _ = Describe("resolveOpenCodePreference", func() {
 		pref, err := resolveOpenCodePreference(tmpDir, "", "", strings.NewReader(""), &bytes.Buffer{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(pref.Provider).To(Equal("ollama"))
-		Expect(pref.Model).To(Equal("qwen3-coder:30b"))
+		Expect(pref.Model).To(Equal("glm-4.7-flash"))
 	})
 
 	It("allows model flag to override saved config model", func() {
@@ -178,7 +178,7 @@ var _ = Describe("promptOpenCodePreference", func() {
 		pref, err := promptOpenCodePreference(input, output)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(pref.Provider).To(Equal("ollama"))
-		Expect(pref.Model).To(Equal("qwen3-coder:30b"))
+		Expect(pref.Model).To(Equal("glm-4.7-flash"))
 	})
 
 	It("returns error for invalid choice", func() {
@@ -256,7 +256,7 @@ var _ = Describe("configureOpenCode config merge", func() {
 					"npm":  "ollama",
 					"name": "Ollama",
 					"models": map[string]any{
-						"qwen3-coder:30b": map[string]any{
+						"glm-4.7-flash": map[string]any{
 							"name": "Qwen3 Coder 30B",
 						},
 					},
