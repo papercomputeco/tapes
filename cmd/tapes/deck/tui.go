@@ -1535,7 +1535,7 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 			renderRule(m.width),
 		}
 		if m.searchInput.Value() != "" {
-			lines = append(lines, deckMutedStyle.Render(fmt.Sprintf("no sessions found: %s", m.searchInput.Value())))
+			lines = append(lines, deckMutedStyle.Render("no sessions found: "+m.searchInput.Value()))
 		} else {
 			lines = append(lines, deckMutedStyle.Render("sessions: no data"))
 		}
