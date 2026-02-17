@@ -38,8 +38,8 @@ func newGenerateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "generate [hash...]",
 		Short: "Extract a skill from conversation(s)",
-		Long: `Generate a Claude Code SKILL.md file by extracting reusable patterns
-from one or more tapes conversations using an LLM.
+		Long: `Generate a skill file by extracting reusable patterns from one or
+more tapes conversations using an LLM.
 
 Hash resolution (in order):
   1. Positional hash arguments
@@ -160,7 +160,7 @@ func (c *generateCommander) run(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Skill written to %s\n", path)
-	fmt.Fprintf(cmd.OutOrStdout(), "Run 'tapes skill sync %s' to install it for Claude Code\n", c.name)
+	fmt.Fprintf(cmd.OutOrStdout(), "Run 'tapes skill sync %s' to install it\n", c.name)
 	return nil
 }
 
