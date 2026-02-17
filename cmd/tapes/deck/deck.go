@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/papercomputeco/tapes/cmd/tapes/sqlitepath"
 	"github.com/papercomputeco/tapes/pkg/credentials"
 	"github.com/papercomputeco/tapes/pkg/deck"
+	"github.com/papercomputeco/tapes/pkg/logger"
 )
 
 const (
@@ -62,6 +64,7 @@ type deckCommander struct {
 	insightsProvider string
 	insightsKey      string
 	theme            string
+	debug            bool
 }
 
 func NewDeckCmd() *cobra.Command {
@@ -98,6 +101,7 @@ func NewDeckCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cmder.insightsProvider, "insights-provider", "openai", "Provider for AI insights (openai|anthropic|ollama)")
 	cmd.Flags().StringVar(&cmder.insightsKey, "insights-key", "", "API key for AI insights provider")
 	cmd.Flags().StringVar(&cmder.theme, "theme", "", "Force color theme: dark or light (auto-detected by default)")
+	cmd.Flags().BoolVar(&cmder.debug, "debug", false, "Enable debug logging")
 
 	return cmd
 }
@@ -186,11 +190,14 @@ func (c *deckCommander) buildFacetDeps(cmd *cobra.Command, query *deck.Query) (*
 		credMgr = nil
 	}
 
+	log := logger.New(logger.WithDebug(c.debug), logger.WithWriter(os.Stderr))
+
 	cfg := deck.LLMCallerConfig{
 		Provider: c.insightsProvider,
 		Model:    c.insightsModel,
 		APIKey:   c.insightsKey,
 		CredMgr:  credMgr,
+		Logger:   log,
 	}
 
 	// If not explicitly enabled, check whether any API key can be resolved.
@@ -207,8 +214,8 @@ func (c *deckCommander) buildFacetDeps(cmd *cobra.Command, query *deck.Query) (*
 	}
 
 	store := deck.NewEntFacetStore(query.EntClient())
-	extractor := deck.NewFacetExtractor(query, llmCaller, store)
-	worker := deck.NewFacetWorker(extractor, store, query)
+	extractor := deck.NewFacetExtractor(query, llmCaller, store, log)
+	worker := deck.NewFacetWorker(extractor, store, query, log)
 
 	fmt.Fprintf(cmd.OutOrStdout(), "AI insights enabled (%s/%s)\n", c.insightsProvider, c.insightsModel)
 

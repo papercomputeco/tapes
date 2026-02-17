@@ -3,10 +3,10 @@ package mcp
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/embeddings"
 	"github.com/papercomputeco/tapes/pkg/merkle"
@@ -28,8 +28,8 @@ type Config struct {
 	// Noop for empty MCP server
 	Noop bool
 
-	// Logger is the configured zap logger
-	Logger *zap.Logger
+	// Logger is the configured logger
+	Logger *slog.Logger
 }
 
 type Server struct {

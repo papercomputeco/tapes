@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/papercomputeco/tapes/pkg/logger"
 )
 
 const maxExtractRetries = 3
@@ -63,14 +65,19 @@ type FacetExtractor struct {
 	query   Querier
 	llmCall LLMCallFunc
 	store   FacetStore
+	logger  *slog.Logger
 }
 
 // NewFacetExtractor creates a new FacetExtractor.
-func NewFacetExtractor(query Querier, llmCall LLMCallFunc, store FacetStore) *FacetExtractor {
+func NewFacetExtractor(query Querier, llmCall LLMCallFunc, store FacetStore, log *slog.Logger) *FacetExtractor {
+	if log == nil {
+		log = logger.NewNoop()
+	}
 	return &FacetExtractor{
 		query:   query,
 		llmCall: llmCall,
 		store:   store,
+		logger:  log,
 	}
 }
 
@@ -97,7 +104,7 @@ func (f *FacetExtractor) Extract(ctx context.Context, sessionID string) (*Sessio
 		prompt := basePrompt
 		if attempt > 0 {
 			prompt += "\n\nReturn ONLY valid JSON, no markdown."
-			log.Printf("facets: retrying extraction for session %s (attempt %d/%d)", sessionID, attempt+1, maxExtractRetries)
+			f.logger.Info("facets: retrying extraction", "session", sessionID, "attempt", attempt+1, "max", maxExtractRetries)
 		}
 
 		response, err := f.llmCall(ctx, prompt)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -13,7 +14,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 
 	apisearch "github.com/papercomputeco/tapes/api/search"
 	"github.com/papercomputeco/tapes/pkg/cliui"
@@ -30,7 +30,7 @@ type searchCommander struct {
 	apiTarget string
 	debug     bool
 
-	logger *zap.Logger
+	logger *slog.Logger
 }
 
 var searchFlags = config.FlagSet{
@@ -103,8 +103,7 @@ func NewSearchCmd() *cobra.Command {
 }
 
 func (c *searchCommander) run() error {
-	c.logger = logger.NewLogger(c.debug)
-	defer func() { _ = c.logger.Sync() }()
+	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
 
 	output, err := SearchAPI(c.apiTarget, c.query, c.topK)
 	if err != nil {

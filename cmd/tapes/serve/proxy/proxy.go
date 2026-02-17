@@ -4,9 +4,9 @@ package proxycmder
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/config"
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
@@ -37,7 +37,7 @@ type proxyCommander struct {
 	embeddingModel      string
 	embeddingDimensions uint
 
-	logger *zap.Logger
+	logger *slog.Logger
 }
 
 // proxyFlags defines the flags for the standalone proxy subcommand.
@@ -144,8 +144,7 @@ func NewProxyCmd() *cobra.Command {
 }
 
 func (c *proxyCommander) run() error {
-	c.logger = logger.NewLogger(c.debug)
-	defer func() { _ = c.logger.Sync() }()
+	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
 
 	driver, err := c.newStorageDriver()
 	if err != nil {
@@ -183,11 +182,11 @@ func (c *proxyCommander) run() error {
 		defer config.VectorDriver.Close()
 
 		c.logger.Info("vector storage enabled",
-			zap.String("vector_store_provider", c.vectorStoreProvider),
-			zap.String("vector_store_target", c.vectorStoreTarget),
-			zap.String("embedding_provider", c.embeddingProvider),
-			zap.String("embedding_target", c.embeddingTarget),
-			zap.String("embedding_model", c.embeddingModel),
+			"vector_store_provider", c.vectorStoreProvider,
+			"vector_store_target", c.vectorStoreTarget,
+			"embedding_provider", c.embeddingProvider,
+			"embedding_target", c.embeddingTarget,
+			"embedding_model", c.embeddingModel,
 		)
 	}
 
@@ -198,9 +197,9 @@ func (c *proxyCommander) run() error {
 	defer p.Close()
 
 	c.logger.Info("starting proxy server",
-		zap.String("listen", c.listen),
-		zap.String("upstream", c.upstream),
-		zap.String("provider", c.providerType),
+		"listen", c.listen,
+		"upstream", c.upstream,
+		"provider", c.providerType,
 	)
 
 	return p.Run()
@@ -212,7 +211,7 @@ func (c *proxyCommander) newStorageDriver() (storage.Driver, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
 		}
-		c.logger.Info("using SQLite storage", zap.String("path", c.sqlitePath))
+		c.logger.Info("using SQLite storage", "path", c.sqlitePath)
 		return driver, nil
 	}
 
