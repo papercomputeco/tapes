@@ -11,12 +11,25 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
 	apisearch "github.com/papercomputeco/tapes/api/search"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/logger"
+)
+
+var (
+	rankStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Bold(true)
+	scoreStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	hashStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+	roleStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	previewStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	matchedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Bold(true)
+	branchStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	headerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
+	dimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 )
 
 type searchCommander struct {
@@ -120,9 +133,10 @@ func (c *searchCommander) run() error {
 		return nil
 	}
 
-	// Print results header
-	fmt.Printf("\nSearch Results for: %q\n", output.Query)
-	fmt.Println(strings.Repeat("=", 60))
+	fmt.Printf("\n%s %s\n\n",
+		headerStyle.Render("Search Results for:"),
+		hashStyle.Render(fmt.Sprintf("%q", output.Query)),
+	)
 
 	for i, result := range output.Results {
 		c.printResult(i+1, result)
@@ -132,31 +146,53 @@ func (c *searchCommander) run() error {
 }
 
 func (c *searchCommander) printResult(rank int, result apisearch.Result) {
-	fmt.Printf("\n[%d] Score: %.4f\n", rank, result.Score)
-	fmt.Printf("    Hash: %s\n", result.Hash)
+	fmt.Printf("  %s  %s  %s\n",
+		rankStyle.Render(fmt.Sprintf("#%d", rank)),
+		scoreStyle.Render(fmt.Sprintf("score: %.4f", result.Score)),
+		hashStyle.Render(result.Hash),
+	)
 
 	if result.Turns == 0 {
-		fmt.Println("    (No session found)")
+		fmt.Printf("  %s\n\n", dimStyle.Render("(no session found)"))
 		return
 	}
 
-	fmt.Printf("    Role: %s\n", result.Role)
-	fmt.Printf("    Preview: %s\n", result.Preview)
+	preview := result.Preview
+	if len(preview) > 80 {
+		preview = preview[:77] + "..."
+	}
+	preview = strings.ReplaceAll(preview, "\n", " ")
 
-	fmt.Printf("\n    Session (%d turns):\n", result.Turns)
+	fmt.Printf("  %s %s\n", roleStyle.Render(result.Role+":"), previewStyle.Render(preview))
+	fmt.Printf("  %s\n", dimStyle.Render(fmt.Sprintf("%d turns", result.Turns)))
 
-	for _, turn := range result.Branch {
-		prefix := "    |-- "
-		if turn.Matched {
-			prefix = "    >>> " // Mark the matched node
+	if len(result.Branch) > 0 {
+		for _, turn := range result.Branch {
+			text := turn.Text
+			if text == "" {
+				text = "(no text content)"
+			}
+			if len(text) > 60 {
+				text = text[:57] + "..."
+			}
+			text = strings.ReplaceAll(text, "\n", " ")
+
+			if turn.Matched {
+				fmt.Printf("  %s %s %s %s\n",
+					matchedStyle.Render(">>>"),
+					roleStyle.Render("["+turn.Role+"]"),
+					previewStyle.Render(text),
+					dimStyle.Render(turn.Hash[:12]),
+				)
+			} else {
+				fmt.Printf("  %s %s %s %s\n",
+					branchStyle.Render(" ├─"),
+					roleStyle.Render("["+turn.Role+"]"),
+					branchStyle.Render(text),
+					dimStyle.Render(turn.Hash[:12]),
+				)
+			}
 		}
-
-		text := turn.Text
-		if text == "" {
-			text = "(no text content)"
-		}
-
-		fmt.Printf("%s[%s] %s - %s\n", prefix, turn.Role, text, turn.Hash)
 	}
 
 	fmt.Println()
