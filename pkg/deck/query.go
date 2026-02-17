@@ -61,6 +61,11 @@ func NewQuery(ctx context.Context, dbPath string, pricing PricingTable) (*Query,
 		return nil, nil, err
 	}
 
+	if err := driver.Migrate(ctx); err != nil {
+		driver.Close()
+		return nil, nil, fmt.Errorf("running migrations: %w", err)
+	}
+
 	closeFn := func() error {
 		return driver.Close()
 	}

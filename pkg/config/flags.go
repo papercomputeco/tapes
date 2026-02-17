@@ -39,6 +39,7 @@ const (
 	FlagUpstream        = "upstream"
 	FlagProvider        = "provider"
 	FlagSQLite          = "sqlite"
+	FlagPostgres        = "postgres"
 	FlagProject         = "project"
 	FlagVectorStoreProv = "vector-store-provider"
 	FlagVectorStoreTgt  = "vector-store-target"

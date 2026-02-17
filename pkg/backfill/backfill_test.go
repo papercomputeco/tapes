@@ -125,6 +125,7 @@ var _ = Describe("Backfiller", func() {
 		var err error
 		driver, err = sqlite.NewDriver(ctx, ":memory:")
 		Expect(err).NotTo(HaveOccurred())
+		Expect(driver.Migrate(ctx)).To(Succeed())
 		tmpDir = GinkgoT().TempDir()
 	})
 
@@ -176,6 +177,7 @@ var _ = Describe("Backfiller", func() {
 		sharedDriver, err := sqlite.NewDriver(ctx, dbPath)
 		Expect(err).NotTo(HaveOccurred())
 		defer sharedDriver.Close()
+		Expect(sharedDriver.Migrate(ctx)).To(Succeed())
 
 		now := time.Now().UTC()
 		ts := now.Format("2006-01-02T15:04:05.000Z")
@@ -213,6 +215,7 @@ var _ = Describe("Backfiller", func() {
 		sharedDriver, err := sqlite.NewDriver(ctx, dbPath)
 		Expect(err).NotTo(HaveOccurred())
 		defer sharedDriver.Close()
+		Expect(sharedDriver.Migrate(ctx)).To(Succeed())
 
 		now := time.Now().UTC()
 		ts := now.Format("2006-01-02T15:04:05.000Z")

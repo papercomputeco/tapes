@@ -48,6 +48,7 @@ var _ = Describe("seed command", func() {
 		dbPath := filepath.Join(baseDir, "tapes.db")
 		driver, err := sqlite.NewDriver(ctx, dbPath)
 		Expect(err).NotTo(HaveOccurred())
+		Expect(driver.Migrate(ctx)).To(Succeed())
 		Expect(driver.Client.Node.Create().
 			SetID("seeded-node").
 			Exec(ctx)).To(Succeed())

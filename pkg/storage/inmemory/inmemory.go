@@ -180,6 +180,11 @@ func (s *Driver) Count() int {
 	return len(s.nodes)
 }
 
+// Migrate is a no-op for the in-memory storer.
+func (s *Driver) Migrate(_ context.Context) error {
+	return nil
+}
+
 // Close is a no-op for the in-memory storer.
 func (s *Driver) Close() error {
 	return nil

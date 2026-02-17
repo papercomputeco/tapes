@@ -37,6 +37,11 @@ type Driver interface {
 	// Depth returns the depth of a node (0 for roots).
 	Depth(ctx context.Context, hash string) (int, error)
 
+	// Migrate applies any pending schema migrations for the storage backend.
+	// Implementations must be safe to call concurrently from multiple processes.
+	// For backends that don't require migrations (e.g. in-memory), this is a no-op.
+	Migrate(ctx context.Context) error
+
 	// Close closes the store and releases any resources.
 	Close() error
 }

@@ -1,5 +1,5 @@
-// Package sqlite provides a SQLite-backed storage driver using ent ORM.
-package sqlite
+// Package postgres provides a PostgreSQL-backed storage driver using ent ORM.
+package postgres
 
 import (
 	"context"
@@ -7,11 +7,10 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
-	"strings"
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
-	_ "github.com/mattn/go-sqlite3" // load up the sqlite3 CGO libs
+	_ "github.com/jackc/pgx/v5/stdlib" // register the pgx PostgreSQL driver as "pgx"
 
 	"github.com/papercomputeco/tapes/pkg/storage/ent"
 	entdriver "github.com/papercomputeco/tapes/pkg/storage/ent/driver"
@@ -21,35 +20,33 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-// Driver implements storage.Driver using SQLite via the ent driver
+// Driver implements storage.Driver using PostgreSQL via the ent driver.
 type Driver struct {
 	*entdriver.EntDriver
 	db *sql.DB
 }
 
-// NewDriver creates a new SQLite-backed storer.
-// The dbPath can be a file path or ":memory:" for an in-memory database.
+// NewDriver creates a new PostgreSQL-backed storer.
+// The connStr is a PostgreSQL connection string, e.g.
+// "host=localhost port=5432 user=tapes password=tapes dbname=tapes sslmode=disable"
+// or a connection URI like "postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable".
 //
 // NewDriver does not run schema migrations. Call Migrate() after construction
 // to apply any pending migrations.
-func NewDriver(_ context.Context, dbPath string) (*Driver, error) {
-	// Enable foreign keys via DSN query parameter so that every pooled
-	// connection has the pragma applied (not just the first one).
-	dsn := dbPath
-	if !strings.Contains(dsn, "?") {
-		dsn += "?_foreign_keys=on"
-	} else {
-		dsn += "&_foreign_keys=on"
-	}
-
-	// Open the database using the github.com/mattn/go-sqlite3 driver (registered as "sqlite3")
-	db, err := sql.Open("sqlite3", dsn)
+func NewDriver(ctx context.Context, connStr string) (*Driver, error) {
+	db, err := sql.Open("pgx", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
+	// Verify the connection is reachable
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
 	// Wrap the database connection with ent's SQL driver
-	drv := entsql.OpenDB(dialect.SQLite, db)
+	drv := entsql.OpenDB(dialect.Postgres, db)
 	client := ent.NewClient(ent.Driver(drv))
 
 	return &Driver{
@@ -61,6 +58,8 @@ func NewDriver(_ context.Context, dbPath string) (*Driver, error) {
 }
 
 // Migrate applies any pending schema migrations using the versioned migration engine.
+// It is safe to call concurrently from multiple processes — a Postgres advisory lock
+// serializes concurrent migrators.
 func (d *Driver) Migrate(ctx context.Context) error {
 	subFS, err := fs.Sub(migrationsFS, "migrations")
 	if err != nil {
@@ -72,7 +71,7 @@ func (d *Driver) Migrate(ctx context.Context) error {
 		return fmt.Errorf("loading embedded migrations: %w", err)
 	}
 
-	migrator, err := migrate.NewMigrator(d.db, migrate.DialectSQLite, migrations)
+	migrator, err := migrate.NewMigrator(d.db, migrate.DialectPostgres, migrations)
 	if err != nil {
 		return fmt.Errorf("creating migrator: %w", err)
 	}

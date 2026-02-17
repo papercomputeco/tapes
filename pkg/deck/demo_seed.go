@@ -57,6 +57,10 @@ func SeedDemo(ctx context.Context, path string, overwrite bool) (int, int, error
 	}
 	defer func() { _ = driver.Close() }()
 
+	if err := driver.Migrate(ctx); err != nil {
+		return 0, 0, fmt.Errorf("running migrations: %w", err)
+	}
+
 	if !overwrite {
 		hasData, err := hasExistingData(ctx, driver.Client)
 		if err != nil {
