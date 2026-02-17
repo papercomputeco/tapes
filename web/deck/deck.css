@@ -508,6 +508,25 @@ body {
   font-size: 11px;
 }
 
+.filter-control input[type="text"] {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 8px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  outline: none;
+  width: 180px;
+}
+
+.filter-control input[type="text"]:focus {
+  border-color: var(--primary);
+}
+
+.filter-control input[type="text"]::placeholder {
+  color: var(--dim);
+}
+
 /* ── Sessions table ── */
 .sessions-table {
   border: 1px solid var(--border);

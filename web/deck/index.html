@@ -64,10 +64,15 @@
             <div class="sessions-controls">
               <span class="sessions-control">[<span class="sessions-control__key">S</span>] sort</span>
               <span class="sessions-control">[<span class="sessions-control__key">F</span>] filter</span>
+              <span class="sessions-control">[<span class="sessions-control__key">/</span>] search</span>
               <span class="sessions-control">status: <span class="sessions-control__value" id="status-label">all</span></span>
             </div>
           </div>
           <div class="sessions-filters" id="sessions-filters" hidden>
+            <label class="filter-control">
+              <span>search</span>
+              <input type="text" id="search-input" placeholder="filter by label..." autocomplete="off" />
+            </label>
             <label class="filter-control">
               <span>sort</span>
               <select id="sort-select">
@@ -290,6 +295,7 @@
         <div class="footer__key"><span class="footer__key-label">H</span> back</div>
         <div class="footer__key"><span class="footer__key-label">S</span> sort</div>
         <div class="footer__key"><span class="footer__key-label">F</span> filter</div>
+        <div class="footer__key"><span class="footer__key-label">/</span> search</div>
         <div class="footer__key"><span class="footer__key-label">P</span> period</div>
         <div class="footer__key"><span class="footer__key-label">A</span> analytics</div>
         <div class="footer__key"><span class="footer__key-label">R</span> replay</div>

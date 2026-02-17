@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	bubbletea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -146,6 +147,8 @@ type deckModel struct {
 	spinner          spinner.Model
 	keys             deckKeyMap
 	help             help.Model
+	searchInput      textinput.Model
+	searchActive     bool
 }
 
 type modalTab int
@@ -357,17 +360,18 @@ type deckKeyMap struct {
 	Back   key.Binding
 	Sort   key.Binding
 	Filter key.Binding
+	Search key.Binding
 	Period key.Binding
 	Replay key.Binding
 	Quit   key.Binding
 }
 
 func (k deckKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Down, k.Up, k.Enter, k.Back, k.Sort, k.Filter, k.Period, k.Replay, k.Quit}
+	return []key.Binding{k.Down, k.Up, k.Enter, k.Back, k.Sort, k.Filter, k.Search, k.Period, k.Replay, k.Quit}
 }
 
 func (k deckKeyMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.Down, k.Up, k.Enter, k.Back}, {k.Sort, k.Filter, k.Period, k.Replay, k.Quit}}
+	return [][]key.Binding{{k.Down, k.Up, k.Enter, k.Back}, {k.Sort, k.Filter, k.Search, k.Period, k.Replay, k.Quit}}
 }
 
 func defaultKeyMap() deckKeyMap {
@@ -378,6 +382,7 @@ func defaultKeyMap() deckKeyMap {
 		Back:   key.NewBinding(key.WithKeys("h", "esc"), key.WithHelp("h", "back")),
 		Sort:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
 		Filter: key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "status")),
+		Search: key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
 		Period: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "period")),
 		Replay: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "replay")),
 		Quit:   key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
@@ -503,6 +508,15 @@ func newDeckModel(query deck.Querier, filters deck.Filters, overview *deck.Overv
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(colorGreen)
 
+	ti := textinput.New()
+	ti.Placeholder = "filter by label..."
+	ti.CharLimit = 64
+	ti.Prompt = "/ "
+	ti.Width = 30
+	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorBrightBlack)
+	ti.TextStyle = lipgloss.NewStyle().Foreground(colorForeground)
+	ti.PromptStyle = lipgloss.NewStyle().Foreground(colorRed)
+
 	return deckModel{
 		query:        query,
 		filters:      filters,
@@ -517,6 +531,7 @@ func newDeckModel(query deck.Querier, filters deck.Filters, overview *deck.Overv
 		spinner:      s,
 		keys:         defaultKeyMap(),
 		help:         help.New(),
+		searchInput:  ti,
 	}
 }
 
@@ -684,6 +699,31 @@ func (m deckModel) View() string {
 }
 
 func (m deckModel) handleKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.Cmd) {
+	// Handle search input mode
+	if m.searchActive {
+		switch msg.Type { //nolint:exhaustive // only specific keys need handling
+		case bubbletea.KeyEscape:
+			m.searchActive = false
+			m.searchInput.SetValue("")
+			m.searchInput.Blur()
+			m.cursor = 0
+			m.scrollOffset = 0
+			return m, nil
+		case bubbletea.KeyEnter:
+			m.searchActive = false
+			m.searchInput.Blur()
+			m.cursor = 0
+			m.scrollOffset = 0
+			return m, nil
+		}
+		var cmd bubbletea.Cmd
+		m.searchInput, cmd = m.searchInput.Update(msg)
+		// Reset cursor when search term changes
+		m.cursor = 0
+		m.scrollOffset = 0
+		return m, cmd
+	}
+
 	// Handle modal views
 	if m.view == viewModal {
 		return m.handleModalKey(msg)
@@ -719,6 +759,12 @@ func (m deckModel) handleKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.C
 				return m, nil
 			}
 			m.view = viewOverview
+		}
+	case "/":
+		if m.view == viewOverview {
+			m.searchActive = true
+			m.searchInput.Focus()
+			return m, m.searchInput.Cursor.BlinkCmd()
 		}
 	case "s":
 		if m.view == viewOverview {
@@ -788,7 +834,7 @@ func (m deckModel) handleKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.C
 			return m, replayTick()
 		}
 		if m.view == viewOverview {
-			if len(m.overview.Sessions) == 0 {
+			if len(m.filteredSessions()) == 0 {
 				return m, nil
 			}
 			m.replayOnLoad = true
@@ -867,14 +913,15 @@ func (m deckModel) handleModalKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubble
 
 func (m deckModel) moveCursor(delta int) (bubbletea.Model, bubbletea.Cmd) {
 	if m.view == viewOverview {
-		if len(m.overview.Sessions) == 0 {
+		sessions := m.filteredSessions()
+		if len(sessions) == 0 {
 			return m, nil
 		}
-		m.cursor = clamp(m.cursor+delta, len(m.overview.Sessions)-1)
+		m.cursor = clamp(m.cursor+delta, len(sessions)-1)
 		// Update scroll offset to keep cursor visible without jumping
-		visibleRows := sessionListVisibleRows(len(m.overview.Sessions), m.sessionListHeight())
+		visibleRows := sessionListVisibleRows(len(sessions), m.sessionListHeight())
 		_, _, m.scrollOffset = stableVisibleRange(
-			len(m.overview.Sessions), m.cursor, visibleRows, m.scrollOffset,
+			len(sessions), m.cursor, visibleRows, m.scrollOffset,
 		)
 		return m, nil
 	}
@@ -905,12 +952,31 @@ func (m deckModel) moveCursor(delta int) (bubbletea.Model, bubbletea.Cmd) {
 	return m, nil
 }
 
+func (m deckModel) filteredSessions() []deck.SessionSummary {
+	if m.overview == nil {
+		return nil
+	}
+	term := strings.TrimSpace(m.searchInput.Value())
+	if term == "" {
+		return m.overview.Sessions
+	}
+	lower := strings.ToLower(term)
+	var result []deck.SessionSummary
+	for _, s := range m.overview.Sessions {
+		if strings.Contains(strings.ToLower(s.Label), lower) {
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
 func (m deckModel) enterSession() (bubbletea.Model, bubbletea.Cmd) {
-	if len(m.overview.Sessions) == 0 {
+	sessions := m.filteredSessions()
+	if len(sessions) == 0 {
 		return m, nil
 	}
 
-	session := m.overview.Sessions[m.cursor]
+	session := sessions[m.cursor]
 	return m, loadSessionCmd(m.query, session.ID, false)
 }
 
@@ -969,8 +1035,10 @@ func (m deckModel) overviewChrome() (above string, footer string) {
 
 	lastWindow := formatDuration(stats.TotalDuration)
 	headerLeft := deckTitleStyle.Render("tapes deck")
-	filtered := len(selected) != len(m.overview.Sessions)
-	sessionCount := deckMutedStyle.Render(m.headerSessionCount(lastWindow, len(selected), len(m.overview.Sessions), filtered))
+	// Show filtered count in header when search is active
+	searchFiltered := m.filteredSessions()
+	isFiltered := len(searchFiltered) != len(m.overview.Sessions)
+	sessionCount := deckMutedStyle.Render(m.headerSessionCount(lastWindow, len(searchFiltered), len(m.overview.Sessions), isFiltered))
 
 	cassetteLines := renderCassetteTape()
 
@@ -1428,14 +1496,7 @@ func (m deckModel) viewInsights(stats deckOverviewStats) string {
 }
 
 func (m deckModel) viewSessionList(availableHeight int) string {
-	if len(m.overview.Sessions) == 0 {
-		return deckMutedStyle.Render("sessions: no data")
-	}
-
-	visibleRows := sessionListVisibleRows(len(m.overview.Sessions), availableHeight)
-	// Calculate which sessions to show using stable scrolling
-	start, end, _ := stableVisibleRange(len(m.overview.Sessions), m.cursor, visibleRows, m.scrollOffset)
-	maxVisible := end - start
+	sessions := m.filteredSessions()
 
 	status := m.filters.Status
 	if status == "" {
@@ -1449,10 +1510,38 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 	// Action buttons
 	sortBtn := deckAccentStyle.Render("[s]") + " sort"
 	filterBtn := deckAccentStyle.Render("[f]") + " filter"
-	actions := "  " + sortBtn + "  " + filterBtn
+	searchBtn := deckAccentStyle.Render("[/]") + " search"
+	actions := "  " + sortBtn + "  " + filterBtn + "  " + searchBtn
+
+	// Build session header with search indicator
+	sessionHeader := fmt.Sprintf("sessions (sort: %s %s, status: %s)", m.filters.Sort, sortDir, status)
+	if m.searchActive {
+		actions = "  " + m.searchInput.View()
+	} else if m.searchInput.Value() != "" {
+		searchLabel := deckAccentStyle.Render("search:") + " " + m.searchInput.Value()
+		actions = "  " + searchLabel + "  " + sortBtn + "  " + filterBtn + "  " + searchBtn
+	}
+
+	if len(sessions) == 0 {
+		lines := []string{
+			deckSectionStyle.Render(sessionHeader) + actions,
+			renderRule(m.width),
+		}
+		if m.searchInput.Value() != "" {
+			lines = append(lines, deckMutedStyle.Render(fmt.Sprintf("no sessions found: %s", m.searchInput.Value())))
+		} else {
+			lines = append(lines, deckMutedStyle.Render("sessions: no data"))
+		}
+		return strings.Join(lines, "\n")
+	}
+
+	visibleRows := sessionListVisibleRows(len(sessions), availableHeight)
+	// Calculate which sessions to show using stable scrolling
+	start, end, _ := stableVisibleRange(len(sessions), m.cursor, visibleRows, m.scrollOffset)
+	maxVisible := end - start
 
 	lines := []string{
-		deckSectionStyle.Render(fmt.Sprintf("sessions (sort: %s %s, status: %s)", m.filters.Sort, sortDir, status)) + actions,
+		deckSectionStyle.Render(sessionHeader) + actions,
 		renderRule(m.width),
 	}
 
@@ -1479,7 +1568,7 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 
 	// Determine if any session has a project set
 	hasProject := false
-	for _, session := range m.overview.Sessions {
+	for _, session := range sessions {
 		if session.Project != "" {
 			hasProject = true
 			break
@@ -1505,7 +1594,7 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 
 	// First pass: collect data and measure widths
 	for i := start; i < end; i++ {
-		session := m.overview.Sessions[i]
+		session := sessions[i]
 		rowIdx := i - start
 
 		rows[rowIdx].label = session.Label
@@ -1656,9 +1745,12 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 	}
 
 	// Show position indicator if not all sessions are visible
-	totalSessions := len(m.overview.Sessions)
+	totalSessions := len(sessions)
 	if totalSessions > maxVisible {
 		position := fmt.Sprintf("showing %d-%d of %d", start+1, end, totalSessions)
+		if m.searchInput.Value() != "" {
+			position += fmt.Sprintf(" (filtered from %d)", len(m.overview.Sessions))
+		}
 		lines = append(lines, "", deckMutedStyle.Render(position))
 	}
 
@@ -1906,7 +1998,7 @@ func (m deckModel) renderSessionMetrics() []string {
 }
 
 func (m deckModel) viewFooter() string {
-	helpText := "j down • k up • enter drill • h back • s sort • f status • p period • r replay • a analytics • q quit"
+	helpText := "j down • k up • enter drill • h back • s sort • f status • / search • p period • r replay • a analytics • q quit"
 	return deckMutedStyle.Render(helpText)
 }
 
@@ -4368,7 +4460,8 @@ func (m deckModel) selectedSessions() []deck.SessionSummary {
 		return nil
 	}
 
-	// Return all sessions without filtering
+	// Always return all sessions for metrics/chrome calculations.
+	// Search filtering only applies to the session list view.
 	return m.overview.Sessions
 }
 
