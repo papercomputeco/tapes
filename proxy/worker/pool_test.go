@@ -5,16 +5,16 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
+	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
 // newTestPool creates a worker pool backed by an in-memory driver.
 // Callers should "wp.Close()" to drain enqueued jobs before asserting storage state.
 func newTestPool() (*Pool, *inmemory.Driver) {
-	logger, _ := zap.NewDevelopment()
+	logger := tapeslogger.Nop()
 	driver := inmemory.NewDriver()
 
 	wp, err := NewPool(&Config{

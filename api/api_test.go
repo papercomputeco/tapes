@@ -5,9 +5,9 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
+	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
@@ -34,7 +34,7 @@ var _ = Describe("buildHistory", func() {
 
 	BeforeEach(func() {
 		var err error
-		logger, _ := zap.NewDevelopment()
+		logger := tapeslogger.Nop()
 		inMem := inmemory.NewDriver()
 		driver = inMem
 		dagLoader = inMem

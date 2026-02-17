@@ -3,9 +3,9 @@ package mcp_test
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/api/mcp"
+	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	testutils "github.com/papercomputeco/tapes/pkg/utils/test"
 )
@@ -19,7 +19,7 @@ var _ = Describe("MCP Server", func() {
 	)
 
 	BeforeEach(func() {
-		logger, _ := zap.NewDevelopment()
+		logger := tapeslogger.Nop()
 		driver = inmemory.NewDriver()
 		vectorDriver = testutils.NewMockVectorDriver()
 		embedder = testutils.NewMockEmbedder()
@@ -36,7 +36,7 @@ var _ = Describe("MCP Server", func() {
 
 	Describe("NewServer", func() {
 		It("returns an error when storage driver is nil", func() {
-			logger, _ := zap.NewDevelopment()
+			logger := tapeslogger.Nop()
 			_, err := mcp.NewServer(mcp.Config{
 				VectorDriver: vectorDriver,
 				Embedder:     embedder,
@@ -47,7 +47,7 @@ var _ = Describe("MCP Server", func() {
 		})
 
 		It("returns an error when vector driver is nil", func() {
-			logger, _ := zap.NewDevelopment()
+			logger := tapeslogger.Nop()
 			_, err := mcp.NewServer(mcp.Config{
 				DagLoader: driver,
 				Embedder:  embedder,
@@ -58,7 +58,7 @@ var _ = Describe("MCP Server", func() {
 		})
 
 		It("returns an error when embedder is nil", func() {
-			logger, _ := zap.NewDevelopment()
+			logger := tapeslogger.Nop()
 			_, err := mcp.NewServer(mcp.Config{
 				DagLoader:    driver,
 				VectorDriver: vectorDriver,

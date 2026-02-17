@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -16,7 +17,6 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"
-	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/llm/provider"
@@ -40,7 +40,7 @@ type Proxy struct {
 	config        Config
 	driver        storage.Driver
 	workerPool    *worker.Pool
-	logger        *zap.Logger
+	logger        *slog.Logger
 	httpClient    *http.Client
 	server        *fiber.App
 	providers     map[string]provider.Provider
@@ -51,7 +51,7 @@ type Proxy struct {
 // New creates a new Proxy.
 // The storer is injected to handle async persistence of conversation turns.
 // Returns an error if the configured provider type is not recognized.
-func New(config Config, driver storage.Driver, logger *zap.Logger) (*Proxy, error) {
+func New(config Config, driver storage.Driver, log *slog.Logger) (*Proxy, error) {
 	if config.ProviderType == "" {
 		return nil, errors.New("provider type is required")
 	}
@@ -92,7 +92,7 @@ func New(config Config, driver storage.Driver, logger *zap.Logger) (*Proxy, erro
 		VectorDriver: config.VectorDriver,
 		Embedder:     config.Embedder,
 		Project:      config.Project,
-		Logger:       logger,
+		Logger:       log,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("could not create worker pool: %w", err)
@@ -102,7 +102,7 @@ func New(config Config, driver storage.Driver, logger *zap.Logger) (*Proxy, erro
 		config:        config,
 		driver:        driver,
 		workerPool:    wp,
-		logger:        logger,
+		logger:        log,
 		server:        app,
 		providers:     providers,
 		defaultProv:   defaultProv,
@@ -122,8 +122,8 @@ func New(config Config, driver storage.Driver, logger *zap.Logger) (*Proxy, erro
 // Run starts the proxy server on the given listening address
 func (p *Proxy) Run() error {
 	p.logger.Info("starting proxy server",
-		zap.String("listen", p.config.ListenAddr),
-		zap.String("upstream", p.config.UpstreamURL),
+		"listen", p.config.ListenAddr,
+		"upstream", p.config.UpstreamURL,
 	)
 
 	return p.server.Listen(p.config.ListenAddr)
@@ -132,8 +132,8 @@ func (p *Proxy) Run() error {
 // RunWithListener starts the proxy server using the provided listener.
 func (p *Proxy) RunWithListener(listener net.Listener) error {
 	p.logger.Info("starting proxy server",
-		zap.String("listen", listener.Addr().String()),
-		zap.String("upstream", p.config.UpstreamURL),
+		"listen", listener.Addr().String(),
+		"upstream", p.config.UpstreamURL,
 	)
 
 	return p.server.Listener(listener)
@@ -166,16 +166,16 @@ func (p *Proxy) handleProxy(c *fiber.Ctx) error {
 		parsedReq, err = prov.ParseRequest(body)
 		if err != nil {
 			p.logger.Warn("failed to parse request",
-				zap.Error(err),
-				zap.String("provider", prov.Name()),
-				zap.String("agent", agentName),
+				"error", err,
+				"provider", prov.Name(),
+				"agent", agentName,
 			)
 		} else {
 			p.logger.Debug("parsed request",
-				zap.String("provider", prov.Name()),
-				zap.String("agent", agentName),
-				zap.String("model", parsedReq.Model),
-				zap.Int("message_count", len(parsedReq.Messages)),
+				"provider", prov.Name(),
+				"agent", agentName,
+				"model", parsedReq.Model,
+				"message_count", len(parsedReq.Messages),
 			)
 		}
 	}
@@ -218,21 +218,21 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL 
 
 	httpReq, err := http.NewRequestWithContext(c.Context(), method, upstreamURL, reqBody)
 	if err != nil {
-		p.logger.Error("failed to create upstream request", zap.Error(err))
+		p.logger.Error("failed to create upstream request", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "internal error"})
 	}
 
 	p.headerHandler.SetUpstreamRequestHeaders(c, httpReq)
 
 	p.logger.Debug("forwarding request to upstream",
-		zap.String("method", method),
-		zap.String("url", upstreamURL),
+		"method", method,
+		"url", upstreamURL,
 	)
 
 	// Make the request
 	httpResp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		p.logger.Error("upstream request failed", zap.Error(err))
+		p.logger.Error("upstream request failed", "error", err)
 		return c.Status(fiber.StatusBadGateway).JSON(llm.ErrorResponse{Error: "upstream request failed"})
 	}
 	defer httpResp.Body.Close()
@@ -240,7 +240,7 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL 
 	// Read response body
 	respBody, err := io.ReadAll(httpResp.Body)
 	if err != nil {
-		p.logger.Error("failed to read upstream response", zap.Error(err))
+		p.logger.Error("failed to read upstream response", "error", err)
 		return c.Status(fiber.StatusBadGateway).JSON(llm.ErrorResponse{Error: "failed to read upstream response"})
 	}
 
@@ -251,16 +251,16 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL 
 		parsedResp, err := prov.ParseResponse(respBody)
 		if err != nil {
 			p.logger.Warn("failed to parse response",
-				zap.Error(err),
-				zap.String("provider", prov.Name()),
-				zap.String("agent", agentName),
+				"error", err,
+				"provider", prov.Name(),
+				"agent", agentName,
 			)
 		} else {
 			p.logger.Debug("received response from upstream",
-				zap.String("model", parsedResp.Model),
-				zap.String("provider", prov.Name()),
-				zap.String("agent", agentName),
-				zap.Duration("duration", time.Since(startTime)),
+				"model", parsedResp.Model,
+				"provider", prov.Name(),
+				"agent", agentName,
+				"duration", time.Since(startTime),
 			)
 
 			// Non-blocking enqueue for async storage
@@ -288,28 +288,28 @@ func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path, upstreamURL string, pro
 	// to remain open.
 	httpReq, err := http.NewRequestWithContext(context.Background(), http.MethodPost, upstreamURL, bytes.NewReader(body))
 	if err != nil {
-		p.logger.Error("failed to create upstream request", zap.Error(err))
+		p.logger.Error("failed to create upstream request", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "internal error"})
 	}
 
 	p.headerHandler.SetUpstreamRequestHeaders(c, httpReq)
 
 	p.logger.Debug("forwarding streaming request to upstream",
-		zap.String("url", upstreamURL),
+		"url", upstreamURL,
 	)
 
 	// Make the request
 	httpResp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		p.logger.Error("upstream request failed", zap.Error(err))
+		p.logger.Error("upstream request failed", "error", err)
 		return c.Status(fiber.StatusBadGateway).JSON(llm.ErrorResponse{Error: "upstream request failed"})
 	}
 	if httpResp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(httpResp.Body)
 		httpResp.Body.Close()
 		p.logger.Error("upstream returned error",
-			zap.Int("status", httpResp.StatusCode),
-			zap.String("body", string(respBody)),
+			"status", httpResp.StatusCode,
+			"body", string(respBody),
 		)
 		return c.Status(httpResp.StatusCode).Send(respBody)
 	}
@@ -363,7 +363,7 @@ func (p *Proxy) handleSSEStream(httpResp *http.Response, pw *io.PipeWriter, pars
 	for {
 		ev, err := tr.Next()
 		if err != nil {
-			p.logger.Error("error reading SSE stream", zap.Error(err))
+			p.logger.Error("error reading SSE stream", "error", err)
 			return
 		}
 		if ev == nil {
@@ -423,17 +423,17 @@ func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, p
 		// from the pipe reader and flushes to the TCP socket.
 		// This ensures transparent streaming of chunks.
 		if _, err := pw.Write(line); err != nil {
-			p.logger.Error("error writing chunk to pipe", zap.Error(err))
+			p.logger.Error("error writing chunk to pipe", "error", err)
 			return
 		}
 		if _, err := pw.Write([]byte("\n")); err != nil {
-			p.logger.Error("error writing newline to pipe", zap.Error(err))
+			p.logger.Error("error writing newline to pipe", "error", err)
 			return
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		p.logger.Error("error reading NDJSON stream", zap.Error(err))
+		p.logger.Error("error reading NDJSON stream", "error", err)
 	}
 
 	p.enqueueStreamedResponse(allChunks, fullContent.String(), &streamUsage, &meta, parsedReq, prov, agentName, startTime)
@@ -546,10 +546,10 @@ func jsonInt(m map[string]any, key string) int {
 func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, streamUsage *llm.Usage, meta *streamMeta, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
 	if parsedReq != nil && len(allChunks) > 0 {
 		p.logger.Debug("streaming complete",
-			zap.String("content_preview", fullContent),
-			zap.Int("chunk_count", len(allChunks)),
-			zap.String("agent", agentName),
-			zap.Duration("duration", time.Since(startTime)),
+			"content_preview", fullContent,
+			"chunk_count", len(allChunks),
+			"agent", agentName,
+			"duration", time.Since(startTime),
 		)
 
 		finalResp := p.reconstructStreamedResponse(allChunks, fullContent, streamUsage, meta, prov)

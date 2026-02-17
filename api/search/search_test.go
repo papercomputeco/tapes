@@ -2,13 +2,14 @@ package search_test
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/api/search"
+	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	testutils "github.com/papercomputeco/tapes/pkg/utils/test"
@@ -25,18 +26,18 @@ var _ = Describe("Search", func() {
 		driver       *inmemory.Driver
 		vectorDriver *testutils.MockVectorDriver
 		embedder     *testutils.MockEmbedder
-		logger       *zap.Logger
+		log          *slog.Logger
 		ctx          context.Context
 		searcher     *search.Searcher
 	)
 
 	BeforeEach(func() {
-		logger, _ = zap.NewDevelopment()
+		log = logger.Nop()
 		driver = inmemory.NewDriver()
 		vectorDriver = testutils.NewMockVectorDriver()
 		embedder = testutils.NewMockEmbedder()
 		ctx = context.Background()
-		searcher = search.NewSearcher(ctx, embedder, vectorDriver, driver, logger)
+		searcher = search.NewSearcher(ctx, embedder, vectorDriver, driver, log)
 	})
 
 	Describe("Search function", func() {

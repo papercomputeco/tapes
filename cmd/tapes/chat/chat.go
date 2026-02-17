@@ -9,13 +9,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/dotdir"
@@ -29,7 +29,7 @@ type chatCommander struct {
 	model       string
 	debug       bool
 
-	logger *zap.Logger
+	logger *slog.Logger
 }
 
 // @jpmcb: TODO - we should adopt other providers with a -p --provider
@@ -126,8 +126,7 @@ func NewChatCmd() *cobra.Command {
 }
 
 func (c *chatCommander) run() error {
-	c.logger = logger.NewLogger(c.debug)
-	defer func() { _ = c.logger.Sync() }()
+	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
 
 	// Load checkout state
 	dotdirManager := dotdir.NewManager()
@@ -221,9 +220,9 @@ func (c *chatCommander) sendAndStream(messages []ollamaMessage) (string, error) 
 	}
 
 	c.logger.Debug("sending chat request",
-		zap.String("proxy_target", c.proxyTarget),
-		zap.String("model", c.model),
-		zap.Int("message_count", len(messages)),
+		"proxy_target", c.proxyTarget,
+		"model", c.model,
+		"message_count", len(messages),
 	)
 
 	// POST to the proxy's Ollama-compatible chat endpoint
@@ -266,8 +265,8 @@ func (c *chatCommander) sendAndStream(messages []ollamaMessage) (string, error) 
 		var chunk ollamaStreamChunk
 		if err := json.Unmarshal(line, &chunk); err != nil {
 			c.logger.Debug("failed to parse stream chunk",
-				zap.Error(err),
-				zap.String("line", string(line)),
+				"error", err,
+				"line", string(line),
 			)
 			continue
 		}

@@ -2,6 +2,7 @@ package chroma_test
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -9,17 +10,17 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"go.uber.org/zap"
 
+	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/vector"
 	"github.com/papercomputeco/tapes/pkg/vector/chroma"
 )
 
 var _ = Describe("Driver", func() {
-	var logger *zap.Logger
+	var logger *slog.Logger
 
 	BeforeEach(func() {
-		logger = zap.NewNop()
+		logger = tapeslogger.Nop()
 	})
 
 	Describe("NewDriver", func() {

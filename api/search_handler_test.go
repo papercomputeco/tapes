@@ -9,9 +9,9 @@ import (
 	"github.com/gofiber/fiber/v2"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"go.uber.org/zap"
 
 	apisearch "github.com/papercomputeco/tapes/api/search"
+	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	testutils "github.com/papercomputeco/tapes/pkg/utils/test"
@@ -28,7 +28,7 @@ var _ = Describe("handleSearchEndpoint", func() {
 	)
 
 	BeforeEach(func() {
-		logger, _ := zap.NewDevelopment()
+		logger := tapeslogger.Nop()
 		inMem = inmemory.NewDriver()
 		vectorDriver = testutils.NewMockVectorDriver()
 		embedder = testutils.NewMockEmbedder()
@@ -50,7 +50,7 @@ var _ = Describe("handleSearchEndpoint", func() {
 
 	Context("when search is not configured", func() {
 		It("returns 503 when vector driver and embedder are nil", func() {
-			logger, _ := zap.NewDevelopment()
+			logger := tapeslogger.Nop()
 			noSearchServer, err := NewServer(
 				Config{ListenAddr: ":0"},
 				inMem,

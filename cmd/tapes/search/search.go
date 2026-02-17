@@ -6,13 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 
 	apisearch "github.com/papercomputeco/tapes/api/search"
 	"github.com/papercomputeco/tapes/pkg/config"
@@ -26,7 +26,7 @@ type searchCommander struct {
 	apiTarget string
 
 	debug  bool
-	logger *zap.Logger
+	logger *slog.Logger
 }
 
 const searchLongDesc string = `Search session data via the Tapes API.
@@ -91,14 +91,13 @@ func NewSearchCmd() *cobra.Command {
 }
 
 func (c *searchCommander) run() error {
-	c.logger = logger.NewLogger(c.debug)
-	defer func() { _ = c.logger.Sync() }()
+	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
 	client := &http.Client{}
 
 	c.logger.Debug("searching via API",
-		zap.String("api_target", c.apiTarget),
-		zap.String("query", c.query),
-		zap.Int("topK", c.topK),
+		"api_target", c.apiTarget,
+		"query", c.query,
+		"topK", c.topK,
 	)
 
 	// Build the request URL
@@ -112,7 +111,7 @@ func (c *searchCommander) run() error {
 	q.Set("top_k", strconv.Itoa(c.topK))
 	searchURL.RawQuery = q.Encode()
 
-	c.logger.Debug("requesting search", zap.String("url", searchURL.String()))
+	c.logger.Debug("requesting search", "url", searchURL.String())
 
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, searchURL.String(), nil)
 	if err != nil {

@@ -2,11 +2,11 @@ package api
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 
 	"github.com/gofiber/adaptor/v2"
 	"github.com/gofiber/fiber/v2"
-	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/api/mcp"
 	"github.com/papercomputeco/tapes/pkg/merkle"
@@ -18,7 +18,7 @@ type Server struct {
 	config    Config
 	driver    storage.Driver
 	dagLoader merkle.DagLoader
-	logger    *zap.Logger
+	logger    *slog.Logger
 	app       *fiber.App
 	mcpServer *mcp.Server
 }
@@ -26,7 +26,7 @@ type Server struct {
 // NewServer creates a new API server.
 // The storer is injected to allow sharing with other components
 // (e.g., the proxy when not run as a singleton).
-func NewServer(config Config, driver storage.Driver, dagLoader merkle.DagLoader, logger *zap.Logger) (*Server, error) {
+func NewServer(config Config, driver storage.Driver, dagLoader merkle.DagLoader, log *slog.Logger) (*Server, error) {
 	var err error
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
@@ -36,7 +36,7 @@ func NewServer(config Config, driver storage.Driver, dagLoader merkle.DagLoader,
 		config:    config,
 		driver:    driver,
 		dagLoader: dagLoader,
-		logger:    logger,
+		logger:    log,
 		app:       app,
 	}
 
@@ -55,7 +55,7 @@ func NewServer(config Config, driver storage.Driver, dagLoader merkle.DagLoader,
 			DagLoader:    dagLoader,
 			VectorDriver: config.VectorDriver,
 			Embedder:     config.Embedder,
-			Logger:       logger,
+			Logger:       log,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create MCP server: %w", err)
@@ -82,7 +82,7 @@ func NewServer(config Config, driver storage.Driver, dagLoader merkle.DagLoader,
 // Run starts the API server on the configured address.
 func (s *Server) Run() error {
 	s.logger.Info("starting API server",
-		zap.String("listen", s.config.ListenAddr),
+		"listen", s.config.ListenAddr,
 	)
 	return s.app.Listen(s.config.ListenAddr)
 }
@@ -90,7 +90,7 @@ func (s *Server) Run() error {
 // RunWithListener starts the API server using the provided listener.
 func (s *Server) RunWithListener(listener net.Listener) error {
 	s.logger.Info("starting API server",
-		zap.String("listen", listener.Addr().String()),
+		"listen", listener.Addr().String(),
 	)
 	return s.app.Listener(listener)
 }
