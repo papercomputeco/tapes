@@ -3,6 +3,8 @@
 ### Do
 
 - Always use the Ginkgo/Gomega testing frameworks
+- Be careful adding anything to `Bucket` since that's the content addressing unit —
+  changing that changes everything for the DAG.
 - Always use `make` operations for development: use `make help` to understand
   the various operations available.
 - Run `make format` to format and organize imports using `goimports` and `golangci-lint`
