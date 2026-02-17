@@ -92,6 +92,22 @@ const getFilteredSessions = (sessions) => {
   return sessions.filter((s) => s.label.toLowerCase().includes(term));
 };
 
+const updateSessionCount = (data) => {
+  const filtered = getFilteredSessions(data.sessions);
+  const countText = filters.search
+    ? `${filtered.length} of ${data.sessions.length} sessions`
+    : `${data.sessions.length} sessions`;
+  const filterBits = [];
+  if (filters.status) filterBits.push(`status ${filters.status}`);
+  if (filters.project) filterBits.push(`project ${filters.project}`);
+  if (filters.periodEnabled) {
+    const label = filters.period === "90d" ? "3M" : filters.period === "180d" ? "6M" : "30d";
+    filterBits.push(`period ${label}`);
+  }
+  const filterText = filterBits.length ? ` \u00B7 ${filterBits.join(" \u00B7 ")}` : "";
+  sessionCountEl.textContent = `${countText} \u00B7 ${formatDuration(data.total_duration_ns)} total time${filterText}`;
+};
+
 let overviewState = null;
 let sessionDetailState = null;
 let analyticsState = null;
@@ -1662,19 +1678,7 @@ const loadOverview = async () => {
   const res = await fetch(`/api/overview?${buildParams()}`);
   const data = await res.json();
   overviewState = data;
-  const filterBits = [];
-  if (filters.status) filterBits.push(`status ${filters.status}`);
-  if (filters.project) filterBits.push(`project ${filters.project}`);
-  if (filters.periodEnabled) {
-    const label = filters.period === "90d" ? "3M" : filters.period === "180d" ? "6M" : "30d";
-    filterBits.push(`period ${label}`);
-  }
-  const filterText = filterBits.length ? ` \u00B7 ${filterBits.join(" \u00B7 ")}` : "";
-  const filtered = getFilteredSessions(data.sessions);
-  const countText = filters.search
-    ? `${filtered.length} of ${data.sessions.length} sessions`
-    : `${data.sessions.length} sessions`;
-  sessionCountEl.textContent = `${countText} \u00B7 ${formatDuration(data.total_duration_ns)} total time${filterText}`;
+  updateSessionCount(data);
   statusLabelEl.textContent = filters.status || "all";
 
   // Populate project dropdown from session data
@@ -1952,19 +1956,7 @@ const applySearch = debounce(() => {
   if (overviewState) {
     sessionIndex = 0;
     renderSessions(overviewState);
-    const filtered = getFilteredSessions(overviewState.sessions);
-    const countText = filters.search
-      ? `${filtered.length} of ${overviewState.sessions.length} sessions`
-      : `${overviewState.sessions.length} sessions`;
-    const filterBits = [];
-    if (filters.status) filterBits.push(`status ${filters.status}`);
-    if (filters.project) filterBits.push(`project ${filters.project}`);
-    if (filters.periodEnabled) {
-      const label = filters.period === "90d" ? "3M" : filters.period === "180d" ? "6M" : "30d";
-      filterBits.push(`period ${label}`);
-    }
-    const filterText = filterBits.length ? ` \u00B7 ${filterBits.join(" \u00B7 ")}` : "";
-    sessionCountEl.textContent = `${countText} \u00B7 ${formatDuration(overviewState.total_duration_ns)} total time${filterText}`;
+    updateSessionCount(overviewState);
   }
 }, 150);
 

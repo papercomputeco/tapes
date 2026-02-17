@@ -560,24 +560,28 @@ func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
 
 		m.overview = msg.overview
 
-		// Try to find the previously selected session in the new list
+		// Try to find the previously selected session in the filtered list
+		// so the cursor stays valid when search is active.
+		filtered := m.filteredSessions()
 		if selectedSessionID != "" {
-			for i, session := range m.overview.Sessions {
+			for i, session := range filtered {
 				if session.ID == selectedSessionID {
 					m.cursor = i
 					// Clamp scroll offset to keep cursor visible
-					visibleRows := sessionListVisibleRows(len(m.overview.Sessions), m.sessionListHeight())
+					visibleRows := sessionListVisibleRows(len(filtered), m.sessionListHeight())
 					_, _, m.scrollOffset = stableVisibleRange(
-						len(m.overview.Sessions), m.cursor, visibleRows, m.scrollOffset,
+						len(filtered), m.cursor, visibleRows, m.scrollOffset,
 					)
 					return m, nil
 				}
 			}
 		}
 
-		// If session not found or no previous selection, clamp cursor and reset scroll
-		if m.cursor >= len(m.overview.Sessions) {
-			m.cursor = clamp(m.cursor, len(m.overview.Sessions)-1)
+		// If session not found or no previous selection, clamp cursor and reset scroll.
+		if len(filtered) == 0 {
+			m.cursor = 0
+		} else if m.cursor >= len(filtered) {
+			m.cursor = clamp(m.cursor, len(filtered)-1)
 		}
 		m.scrollOffset = 0
 		return m, nil
@@ -1030,15 +1034,18 @@ func countWrappedLines(s string, width int) int {
 // returns the joined string plus the total line count (including blank
 // separator lines and footer).
 func (m deckModel) overviewChrome() (above string, footer string) {
-	selected := m.selectedSessions()
-	stats := summarizeSessions(selected)
+	allSessions := m.overview.Sessions
+	stats := summarizeSessions(allSessions)
 
 	lastWindow := formatDuration(stats.TotalDuration)
 	headerLeft := deckTitleStyle.Render("tapes deck")
 	// Show filtered count in header when search is active
-	searchFiltered := m.filteredSessions()
-	isFiltered := len(searchFiltered) != len(m.overview.Sessions)
-	sessionCount := deckMutedStyle.Render(m.headerSessionCount(lastWindow, len(searchFiltered), len(m.overview.Sessions), isFiltered))
+	filteredCount := len(allSessions)
+	if term := strings.TrimSpace(m.searchInput.Value()); term != "" {
+		filteredCount = len(m.filteredSessions())
+	}
+	isFiltered := filteredCount != len(allSessions)
+	sessionCount := deckMutedStyle.Render(m.headerSessionCount(lastWindow, filteredCount, len(allSessions), isFiltered))
 
 	cassetteLines := renderCassetteTape()
 
