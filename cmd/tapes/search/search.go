@@ -22,6 +22,7 @@ import (
 type searchCommander struct {
 	query string
 	topK  int
+	quiet bool
 
 	apiTarget string
 
@@ -38,10 +39,15 @@ query text. Requires a running Tapes API server with search configured
 For each result, the full session branch is displayed, including all ancestors
 (from root to matched node) and all descendants (from matched node to leaves).
 
+Use --quiet to output only leaf hashes, one per line. This is useful for piping
+into other commands like tapes skill generate.
+
 Example:
   tapes search "how to configure logging"
   tapes search "error handling patterns" --api-target http://localhost:8081
-  tapes search "how to configure logging" --top 10`
+  tapes search "how to configure logging" --top 10
+  tapes search "gum glow charm" --quiet
+  tapes skill generate $(tapes search "charm CLI" --quiet --top 1) --name charm-patterns`
 
 const searchShortDesc string = "Search session data"
 
@@ -85,6 +91,7 @@ func NewSearchCmd() *cobra.Command {
 
 	defaults := config.NewDefaultConfig()
 	cmd.Flags().IntVarP(&cmder.topK, "top", "k", 5, "Number of results to return")
+	cmd.Flags().BoolVarP(&cmder.quiet, "quiet", "q", false, "Output only leaf hashes, one per line (for piping)")
 	cmd.Flags().StringVar(&cmder.apiTarget, "api-target", defaults.Client.APITarget, "Tapes API server URL")
 
 	return cmd
@@ -93,53 +100,23 @@ func NewSearchCmd() *cobra.Command {
 func (c *searchCommander) run() error {
 	c.logger = logger.NewLogger(c.debug)
 	defer func() { _ = c.logger.Sync() }()
-	client := &http.Client{}
 
-	c.logger.Debug("searching via API",
-		zap.String("api_target", c.apiTarget),
-		zap.String("query", c.query),
-		zap.Int("topK", c.topK),
-	)
-
-	// Build the request URL
-	searchURL, err := url.Parse(c.apiTarget)
+	output, err := SearchAPI(c.apiTarget, c.query, c.topK)
 	if err != nil {
-		return fmt.Errorf("invalid API target URL: %w", err)
-	}
-	searchURL.Path = "/v1/search"
-	q := searchURL.Query()
-	q.Set("query", c.query)
-	q.Set("top_k", strconv.Itoa(c.topK))
-	searchURL.RawQuery = q.Encode()
-
-	c.logger.Debug("requesting search", zap.String("url", searchURL.String()))
-
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, searchURL.String(), nil)
-	if err != nil {
-		return fmt.Errorf("creating search request: %w", err)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to connect to Tapes API at %s: %w", c.apiTarget, err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("search request failed (HTTP %d): %s", resp.StatusCode, string(body))
-	}
-
-	var output apisearch.Output
-	if err := json.Unmarshal(body, &output); err != nil {
-		return fmt.Errorf("failed to parse search response: %w", err)
+		return err
 	}
 
 	if output.Count == 0 {
-		fmt.Println("No results found.")
+		if !c.quiet {
+			fmt.Println("No results found.")
+		}
+		return nil
+	}
+
+	if c.quiet {
+		for _, result := range output.Results {
+			fmt.Println(LeafHash(result))
+		}
 		return nil
 	}
 
@@ -183,4 +160,54 @@ func (c *searchCommander) printResult(rank int, result apisearch.Result) {
 	}
 
 	fmt.Println()
+}
+
+// SearchAPI calls the tapes search API and returns the parsed output.
+// Exported so other commands (e.g. skill generate --search) can reuse it.
+func SearchAPI(apiTarget, query string, topK int) (*apisearch.Output, error) {
+	searchURL, err := url.Parse(apiTarget)
+	if err != nil {
+		return nil, fmt.Errorf("invalid API target URL: %w", err)
+	}
+	searchURL.Path = "/v1/search"
+	q := searchURL.Query()
+	q.Set("query", query)
+	q.Set("top_k", strconv.Itoa(topK))
+	searchURL.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, searchURL.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating search request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to Tapes API at %s: %w", apiTarget, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("search request failed (HTTP %d): %s", resp.StatusCode, string(body))
+	}
+
+	var output apisearch.Output
+	if err := json.Unmarshal(body, &output); err != nil {
+		return nil, fmt.Errorf("failed to parse search response: %w", err)
+	}
+
+	return &output, nil
+}
+
+// LeafHash returns the leaf (last) hash from a search result's branch.
+// Falls back to the matched node hash if the branch is empty.
+func LeafHash(result apisearch.Result) string {
+	if len(result.Branch) > 0 {
+		return result.Branch[len(result.Branch)-1].Hash
+	}
+	return result.Hash
 }

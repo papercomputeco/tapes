@@ -13,6 +13,7 @@ import (
 	searchcmder "github.com/papercomputeco/tapes/cmd/tapes/search"
 	seedcmder "github.com/papercomputeco/tapes/cmd/tapes/seed"
 	servecmder "github.com/papercomputeco/tapes/cmd/tapes/serve"
+	skillcmder "github.com/papercomputeco/tapes/cmd/tapes/skill"
 	startcmder "github.com/papercomputeco/tapes/cmd/tapes/start"
 	statuscmder "github.com/papercomputeco/tapes/cmd/tapes/status"
 	synccmder "github.com/papercomputeco/tapes/cmd/tapes/sync"
@@ -73,6 +74,7 @@ func NewTapesCmd() *cobra.Command {
 	cmd.AddCommand(searchcmder.NewSearchCmd())
 	cmd.AddCommand(seedcmder.NewSeedCmd())
 	cmd.AddCommand(servecmder.NewServeCmd())
+	cmd.AddCommand(skillcmder.NewSkillCmd())
 	cmd.AddCommand(startcmder.NewStartCmd())
 	cmd.AddCommand(statuscmder.NewStatusCmd())
 	cmd.AddCommand(versioncmder.NewVersionCmd())
