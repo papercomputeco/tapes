@@ -9,24 +9,23 @@ import (
 	"time"
 )
 
-// Write persists a Skill as a SKILL.md file at <dir>/<name>/SKILL.md.
+// Write persists a Skill as <dir>/<name>.md.
 func Write(sk *Skill, dir string) (string, error) {
-	skillDir := filepath.Join(dir, sk.Name)
-	if err := os.MkdirAll(skillDir, 0o755); err != nil {
-		return "", fmt.Errorf("create skill directory: %w", err)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create skills directory: %w", err)
 	}
 
-	path := filepath.Join(skillDir, "SKILL.md")
+	path := filepath.Join(dir, sk.Name+".md")
 	content := renderSkillMD(sk)
 
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		return "", fmt.Errorf("write SKILL.md: %w", err)
+		return "", fmt.Errorf("write skill: %w", err)
 	}
 
 	return path, nil
 }
 
-// List scans a directory for skills and returns summaries.
+// List scans a directory for skill .md files and returns summaries.
 func List(dir string) ([]*Skill, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -38,41 +37,40 @@ func List(dir string) ([]*Skill, error) {
 
 	var skills []*Skill
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 			continue
 		}
 
-		skillPath := filepath.Join(dir, entry.Name(), "SKILL.md")
+		skillPath := filepath.Join(dir, entry.Name())
 		data, err := os.ReadFile(skillPath)
 		if err != nil {
-			continue // skip directories without SKILL.md
+			continue
 		}
 
 		sk, err := parseSkillMD(string(data))
 		if err != nil {
 			continue
 		}
-		sk.Name = entry.Name()
+		sk.Name = strings.TrimSuffix(entry.Name(), ".md")
 		skills = append(skills, sk)
 	}
 
 	return skills, nil
 }
 
-// Sync copies a skill directory from source to target.
+// Sync copies a skill file from source to target directory.
 func Sync(name, sourceDir, targetDir string) (string, error) {
-	srcPath := filepath.Join(sourceDir, name, "SKILL.md")
+	srcPath := filepath.Join(sourceDir, name+".md")
 	data, err := os.ReadFile(srcPath)
 	if err != nil {
 		return "", fmt.Errorf("read source skill: %w", err)
 	}
 
-	dstDir := filepath.Join(targetDir, name)
-	if err := os.MkdirAll(dstDir, 0o755); err != nil {
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
 		return "", fmt.Errorf("create target directory: %w", err)
 	}
 
-	dstPath := filepath.Join(dstDir, "SKILL.md")
+	dstPath := filepath.Join(targetDir, name+".md")
 	if err := os.WriteFile(dstPath, data, 0o600); err != nil {
 		return "", fmt.Errorf("write target skill: %w", err)
 	}

@@ -28,7 +28,7 @@ var _ = Describe("Write", func() {
 
 		path, err := skill.Write(sk, tmpDir)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(path).To(Equal(filepath.Join(tmpDir, "debug-react-hooks", "SKILL.md")))
+		Expect(path).To(Equal(filepath.Join(tmpDir, "debug-react-hooks.md")))
 
 		data, err := os.ReadFile(path)
 		Expect(err).NotTo(HaveOccurred())
@@ -104,7 +104,7 @@ var _ = Describe("Sync", func() {
 
 		path, err := skill.Sync("test-skill", sourceDir, targetDir)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(path).To(Equal(filepath.Join(targetDir, "test-skill", "SKILL.md")))
+		Expect(path).To(Equal(filepath.Join(targetDir, "test-skill.md")))
 
 		// Verify the file was copied
 		data, err := os.ReadFile(path)
