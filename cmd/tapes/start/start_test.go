@@ -186,6 +186,54 @@ var _ = Describe("injectCredentials", func() {
 	})
 })
 
+var _ = Describe("loadConfig project resolution", func() {
+	var tmpDir string
+
+	BeforeEach(func() {
+		var err error
+		tmpDir, err = os.MkdirTemp("", "tapes-start-project-*")
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	AfterEach(func() {
+		Expect(os.RemoveAll(tmpDir)).To(Succeed())
+	})
+
+	It("uses the --project flag when set", func() {
+		cmder := &startCommander{configDir: tmpDir, project: "my-flag-project"}
+		cfg, err := cmder.loadConfig()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Project).To(Equal("my-flag-project"))
+	})
+
+	It("falls back to config file proxy.project", func() {
+		configPath := filepath.Join(tmpDir, "config.toml")
+		Expect(os.WriteFile(configPath, []byte("[proxy]\nproject = \"my-config-project\"\n"), 0o600)).To(Succeed())
+
+		cmder := &startCommander{configDir: tmpDir}
+		cfg, err := cmder.loadConfig()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Project).To(Equal("my-config-project"))
+	})
+
+	It("prefers --project flag over config file", func() {
+		configPath := filepath.Join(tmpDir, "config.toml")
+		Expect(os.WriteFile(configPath, []byte("[proxy]\nproject = \"from-config\"\n"), 0o600)).To(Succeed())
+
+		cmder := &startCommander{configDir: tmpDir, project: "from-flag"}
+		cfg, err := cmder.loadConfig()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Project).To(Equal("from-flag"))
+	})
+
+	It("returns empty project when no flag or config (git fallback is in runServices)", func() {
+		cmder := &startCommander{configDir: tmpDir}
+		cfg, err := cmder.loadConfig()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Project).To(BeEmpty())
+	})
+})
+
 func appendToFile(path string, data []byte) error {
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {

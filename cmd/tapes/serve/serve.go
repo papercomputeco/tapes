@@ -133,7 +133,7 @@ func NewServeCmd() *cobra.Command {
 				cmder.project = cfg.Proxy.Project
 			}
 			if cmder.project == "" {
-				cmder.project = git.RepoName()
+				cmder.project = git.RepoName(cmd.Context())
 			}
 			return nil
 		},

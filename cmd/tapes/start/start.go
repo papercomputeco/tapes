@@ -27,6 +27,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/dotdir"
 	"github.com/papercomputeco/tapes/pkg/embeddings"
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
+	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/start"
@@ -64,6 +65,7 @@ type startCommander struct {
 	daemon    bool
 	provider  string
 	model     string
+	project   string
 }
 
 type startConfig struct {
@@ -78,6 +80,7 @@ type startConfig struct {
 	DefaultUpstream     string
 	OllamaUpstream      string
 	OpenCodeProvider    string
+	Project             string
 }
 
 func NewStartCmd() *cobra.Command {
@@ -130,6 +133,7 @@ func NewStartCmd() *cobra.Command {
 	_ = cmd.Flags().MarkHidden("daemon")
 	cmd.Flags().StringVar(&cmder.provider, "provider", "", "LLM provider for opencode (anthropic, openai, ollama)")
 	cmd.Flags().StringVar(&cmder.model, "model", "", "Model for opencode (e.g. claude-sonnet-4-5)")
+	cmd.Flags().StringVar(&cmder.project, "project", "", "Project name to tag sessions (default: auto-detect from git)")
 
 	return cmd
 }
@@ -323,6 +327,10 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 		return err
 	}
 
+	if startCfg.Project == "" {
+		startCfg.Project = git.RepoName(ctx)
+	}
+
 	lock, err := manager.Lock()
 	if err != nil {
 		return err
@@ -385,6 +393,7 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 		ListenAddr:   proxyListener.Addr().String(),
 		UpstreamURL:  startCfg.DefaultUpstream,
 		ProviderType: startCfg.DefaultProvider,
+		Project:      startCfg.Project,
 		AgentRoutes: map[string]proxy.AgentRoute{
 			agentClaude:   {ProviderType: "anthropic", UpstreamURL: "https://api.anthropic.com"},
 			agentOpenCode: openCodeRoute,
@@ -659,6 +668,11 @@ func (c *startCommander) loadConfig() (*startConfig, error) {
 		vectorTarget = defaultTargetSqliteFile
 	}
 
+	project := c.project
+	if project == "" {
+		project = cfg.Proxy.Project
+	}
+
 	return &startConfig{
 		SQLitePath:          sqlitePath,
 		VectorStoreProvider: cfg.VectorStore.Provider,
@@ -671,6 +685,7 @@ func (c *startCommander) loadConfig() (*startConfig, error) {
 		DefaultUpstream:     cfg.Proxy.Upstream,
 		OllamaUpstream:      resolveOllamaUpstream(cfg.Proxy.Provider, cfg.Proxy.Upstream),
 		OpenCodeProvider:    cfg.OpenCode.Provider,
+		Project:             project,
 	}, nil
 }
 
