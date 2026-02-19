@@ -12,6 +12,7 @@ import (
 
 	"github.com/papercomputeco/tapes/cmd/tapes/sqlitepath"
 	"github.com/papercomputeco/tapes/pkg/backfill"
+	"github.com/papercomputeco/tapes/pkg/cliui"
 )
 
 type syncCommander struct {
@@ -31,7 +32,7 @@ func NewSyncCmd() *cobra.Command {
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmder.run(cmd.Context(), cmd)
+			return cmder.run(cmd.Context())
 		},
 	}
 
@@ -43,36 +44,40 @@ func NewSyncCmd() *cobra.Command {
 	return cmd
 }
 
-func (c *syncCommander) run(ctx context.Context, cmd *cobra.Command) error {
+func (c *syncCommander) run(ctx context.Context) error {
 	dbPath := c.resolveSQLitePath()
 	claudeDir := c.resolveClaudeDir()
 
 	if c.dryRun {
-		fmt.Fprintln(cmd.OutOrStdout(), "Dry run mode — no changes will be written")
+		fmt.Printf("  %s Dry run mode — no changes will be written\n\n", cliui.DimStyle.Render("●"))
 	}
 
 	if c.verbose {
-		fmt.Fprintf(cmd.OutOrStdout(), "Database: %s\n", dbPath)
-		fmt.Fprintf(cmd.OutOrStdout(), "Transcripts: %s\n", claudeDir)
+		fmt.Printf("  %s %s\n", cliui.KeyStyle.Render("Database:"), cliui.DimStyle.Render(dbPath))
+		fmt.Printf("  %s %s\n\n", cliui.KeyStyle.Render("Transcripts:"), cliui.DimStyle.Render(claudeDir))
 	}
 
-	opts := backfill.Options{
-		DryRun:  c.dryRun,
-		Verbose: c.verbose,
-	}
+	var result *backfill.Result
+	if err := cliui.Step(os.Stdout, "Syncing token usage", func() error {
+		opts := backfill.Options{
+			DryRun:  c.dryRun,
+			Verbose: c.verbose,
+		}
 
-	b, cleanup, err := backfill.NewBackfiller(ctx, dbPath, opts)
-	if err != nil {
+		b, cleanup, err := backfill.NewBackfiller(ctx, dbPath, opts)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = cleanup() }()
+
+		var runErr error
+		result, runErr = b.Run(ctx, claudeDir)
+		return runErr
+	}); err != nil {
 		return err
 	}
-	defer func() { _ = cleanup() }()
 
-	result, err := b.Run(ctx, claudeDir)
-	if err != nil {
-		return err
-	}
-
-	fmt.Fprintln(cmd.OutOrStdout(), result.Summary())
+	fmt.Printf("\n  %s %s\n\n", cliui.SuccessMark, result.Summary())
 	return nil
 }
 

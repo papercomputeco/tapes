@@ -4,9 +4,11 @@ package statuscmder
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/spf13/cobra"
 
+	"github.com/papercomputeco/tapes/pkg/cliui"
 	"github.com/papercomputeco/tapes/pkg/dotdir"
 	"github.com/papercomputeco/tapes/pkg/utils"
 )
@@ -47,18 +49,22 @@ func runStatus() error {
 	}
 
 	if state == nil {
-		fmt.Println("No checkout state. Next chat will start a new conversation.")
+		fmt.Printf("  %s No checkout state. Next chat will start a new conversation.\n", cliui.DimStyle.Render("●"))
 		return nil
 	}
 
-	fmt.Printf("Checked out: %s\n", state.Hash)
-	fmt.Printf("Messages:    %d\n", len(state.Messages))
-	fmt.Println()
+	fmt.Printf("\n  %s  %s\n", cliui.KeyStyle.Render("Checked out:"), cliui.HashStyle.Render(state.Hash))
+	fmt.Printf("  %s  %s\n\n", cliui.KeyStyle.Render("Messages:   "), cliui.NameStyle.Render(strconv.Itoa(len(state.Messages))))
 
 	for i, msg := range state.Messages {
 		preview := utils.Truncate(msg.Content, 72)
-		fmt.Printf("  %d. [%s] %s\n", i+1, msg.Role, preview)
+		fmt.Printf("  %s %s %s\n",
+			cliui.DimStyle.Render(fmt.Sprintf("%d.", i+1)),
+			cliui.RoleStyle.Render("["+msg.Role+"]"),
+			cliui.PreviewStyle.Render(preview),
+		)
 	}
 
+	fmt.Println()
 	return nil
 }

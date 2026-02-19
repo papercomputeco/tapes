@@ -30,6 +30,9 @@ var (
 	BranchStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	HeaderStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
 	RankStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Bold(true)
+	WarnStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	KeyStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	ValueStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 )
 
 // spinnerFrames matches bubbletea's spinner.Dot pattern used in the deck TUI.

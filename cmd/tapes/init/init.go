@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/papercomputeco/tapes/pkg/cliui"
 	"github.com/papercomputeco/tapes/pkg/config"
 )
 
@@ -93,11 +94,16 @@ func runInit(preset, configDir string) error {
 		return fmt.Errorf("writing config.toml: %w", err)
 	}
 
+	configLabel := "Default configuration"
 	if preset != "" {
-		fmt.Printf("Configuration written: %s\n", filepath.Join(dir, "config.toml"))
-	} else {
-		fmt.Printf("Default configuration written: %s\n", filepath.Join(dir, "config.toml"))
+		configLabel = "Configuration"
 	}
+
+	fmt.Printf("\n  %s %s written: %s\n\n",
+		cliui.SuccessMark,
+		configLabel,
+		cliui.DimStyle.Render(filepath.Join(dir, "config.toml")),
+	)
 
 	return nil
 }

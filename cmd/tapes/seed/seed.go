@@ -3,11 +3,14 @@ package seedcmder
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/papercomputeco/tapes/cmd/tapes/sqlitepath"
+	"github.com/papercomputeco/tapes/pkg/cliui"
 	"github.com/papercomputeco/tapes/pkg/deck"
 )
 
@@ -36,7 +39,7 @@ func NewSeedCmd() *cobra.Command {
 		Long:  seedLongDesc,
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmder.run(cmd.Context(), cmd)
+			return cmder.run(cmd.Context())
 		},
 	}
 
@@ -47,14 +50,24 @@ func NewSeedCmd() *cobra.Command {
 	return cmd
 }
 
-func (c *seedCommander) run(ctx context.Context, cmd *cobra.Command) error {
+func (c *seedCommander) run(ctx context.Context) error {
 	sqlitePath := c.resolveSQLitePath()
-	sessionCount, messageCount, err := deck.SeedDemo(ctx, sqlitePath, c.overwrite)
-	if err != nil {
+
+	var sessionCount, messageCount int
+	if err := cliui.Step(os.Stdout, "Seeding demo data", func() error {
+		var seedErr error
+		sessionCount, messageCount, seedErr = deck.SeedDemo(ctx, sqlitePath, c.overwrite)
+		return seedErr
+	}); err != nil {
 		return err
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Seeded %d demo sessions (%d messages) into %s\n", sessionCount, messageCount, sqlitePath)
+	fmt.Printf("\n  %s Seeded %s sessions %s into %s\n\n",
+		cliui.SuccessMark,
+		cliui.NameStyle.Render(strconv.Itoa(sessionCount)),
+		cliui.DimStyle.Render(fmt.Sprintf("(%d messages)", messageCount)),
+		cliui.DimStyle.Render(sqlitePath),
+	)
 	return nil
 }
 

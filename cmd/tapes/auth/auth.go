@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/papercomputeco/tapes/pkg/cliui"
 	"github.com/papercomputeco/tapes/pkg/credentials"
 )
 
@@ -102,16 +103,24 @@ func runAuth(provider, configDir string) error {
 	}
 
 	envVar := credentials.EnvVarForProvider(provider)
-	fmt.Printf("Stored %s credentials (will be injected as %s)\n", provider, envVar)
+	fmt.Printf("\n  %s Stored %s credentials %s\n",
+		cliui.SuccessMark,
+		cliui.NameStyle.Render(provider),
+		cliui.DimStyle.Render("(injected as "+envVar+")"),
+	)
 
 	if provider == "openai" {
 		if strings.HasPrefix(apiKey, "sk-proj-") {
-			fmt.Println("Warning: project keys (sk-proj-...) may lack required API scopes for codex.")
-			fmt.Println("Consider using a service account key (sk-svcacct-...) from platform.openai.com/api-keys.")
+			fmt.Printf("\n  %s Project keys (sk-proj-...) may lack required API scopes for codex.\n",
+				cliui.WarnStyle.Render("!"))
+			fmt.Printf("  %s Consider using a service account key (sk-svcacct-...) from platform.openai.com/api-keys.\n",
+				cliui.WarnStyle.Render(" "))
 		}
-		fmt.Println("Codex auth.json will be temporarily configured when running 'tapes start codex'.")
+		fmt.Printf("  %s Codex auth.json will be temporarily configured when running 'tapes start codex'.\n",
+			cliui.DimStyle.Render(" "))
 	}
 
+	fmt.Println()
 	return nil
 }
 
@@ -127,21 +136,26 @@ func runList(configDir string) error {
 	}
 
 	if len(providers) == 0 {
-		fmt.Println("No stored credentials.")
-		fmt.Printf("\nUse 'tapes auth <provider>' to store credentials.\nSupported providers: %s\n",
-			strings.Join(credentials.SupportedProviders(), ", "))
+		fmt.Printf("\n  %s No stored credentials.\n", cliui.DimStyle.Render("●"))
+		fmt.Printf("  Use 'tapes auth <provider>' to store credentials.\n")
+		fmt.Printf("  Supported providers: %s\n\n", strings.Join(credentials.SupportedProviders(), ", "))
 		return nil
 	}
 
-	fmt.Println("Stored credentials:")
+	fmt.Printf("\n  %s\n\n", cliui.HeaderStyle.Render("Stored credentials"))
 	for _, p := range providers {
 		envVar := credentials.EnvVarForProvider(p)
 		if envVar != "" {
-			fmt.Printf("  %s → %s\n", p, envVar)
+			fmt.Printf("  %s  %s  %s\n",
+				cliui.SuccessMark,
+				cliui.NameStyle.Render(p),
+				cliui.DimStyle.Render("→ "+envVar),
+			)
 		} else {
-			fmt.Printf("  %s\n", p)
+			fmt.Printf("  %s  %s\n", cliui.SuccessMark, cliui.NameStyle.Render(p))
 		}
 	}
+	fmt.Println()
 
 	return nil
 }
@@ -158,7 +172,7 @@ func runRemove(provider, configDir string) error {
 		return err
 	}
 
-	fmt.Printf("Removed %s credentials.\n", provider)
+	fmt.Printf("\n  %s Removed %s credentials.\n\n", cliui.SuccessMark, cliui.NameStyle.Render(provider))
 
 	return nil
 }
