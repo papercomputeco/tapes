@@ -1,5 +1,5 @@
 // Package skillcmder provides the `tapes skill` CLI commands for generating,
-// listing, and syncing Claude Code skills from session data.
+// listing, and syncing agent skills from session data.
 package skillcmder
 
 import "github.com/spf13/cobra"
@@ -8,15 +8,17 @@ import "github.com/spf13/cobra"
 func NewSkillCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "skill",
-		Short: "Generate, list, and sync Claude Code skills from sessions",
+		Short: "Generate, list, and sync agent skills from sessions",
 		Long: `Extract reusable patterns from tapes sessions and output them as
-Claude Code SKILL.md files.
+agent skill files. By default, skills sync to .agents/skills/ for use with any
+coding agent. Use --claude to sync to Claude Code's .claude/skills/ directory.
 
 Examples:
   tapes skill generate abc123 --name debug-react-hooks
   tapes skill generate --name my-skill   (uses current checkout)
   tapes skill list
-  tapes skill sync debug-react-hooks --global`,
+  tapes skill sync debug-react-hooks
+  tapes skill sync debug-react-hooks --claude`,
 	}
 
 	cmd.AddCommand(newGenerateCmd())

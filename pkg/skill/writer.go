@@ -87,6 +87,20 @@ func SkillsDir() (string, error) {
 	return filepath.Join(home, ".tapes", "skills"), nil
 }
 
+// GlobalAgentsSkillsDir returns ~/.agents/skills/.
+func GlobalAgentsSkillsDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	return filepath.Join(home, ".agents", "skills"), nil
+}
+
+// LocalAgentsSkillsDir returns .agents/skills/ relative to the current directory.
+func LocalAgentsSkillsDir() string {
+	return filepath.Join(".agents", "skills")
+}
+
 // GlobalClaudeSkillsDir returns ~/.claude/skills/.
 func GlobalClaudeSkillsDir() (string, error) {
 	home, err := os.UserHomeDir()
