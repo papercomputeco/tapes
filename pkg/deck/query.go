@@ -21,12 +21,14 @@ import (
 )
 
 const (
-	blockTypeToolUse = "tool_use"
-	roleAssistant    = "assistant"
-	roleUser         = "user"
-	groupIDPrefix    = "group:"
-	groupWindow      = time.Hour
-	sessionCacheTTL  = 10 * time.Second
+	blockTypeToolUse    = "tool_use"
+	roleAssistant       = "assistant"
+	roleUser            = "user"
+	groupIDPrefix       = "group:"
+	groupWindow         = time.Hour
+	sessionCacheTTL     = 10 * time.Second
+	messageGroupWindow  = 5 * time.Second
+	maxGroupedTextChars = 4000
 )
 
 // Querier is an interface for querying session data.
@@ -102,7 +104,7 @@ func (q *Query) loadSessionCandidates(ctx context.Context, allowCache bool) ([]s
 	for _, leaf := range leaves {
 		nodes, err := q.loadAncestry(ctx, leaf)
 		if err != nil {
-			return nil, err
+			continue
 		}
 
 		summary, modelCosts, status, err := q.buildSessionSummaryFromNodes(nodes)
@@ -436,10 +438,12 @@ func (q *Query) SessionDetail(ctx context.Context, sessionID string) (*SessionDe
 	}
 
 	messages, toolFrequency := q.buildSessionMessages(nodes)
+	grouped := buildGroupedMessages(messages)
 	detail := &SessionDetail{
-		Summary:       summary,
-		Messages:      messages,
-		ToolFrequency: toolFrequency,
+		Summary:         summary,
+		Messages:        messages,
+		GroupedMessages: grouped,
+		ToolFrequency:   toolFrequency,
 	}
 
 	return detail, nil
@@ -459,6 +463,7 @@ func (q *Query) groupSessionDetail(ctx context.Context, sessionID string) (*Sess
 
 	nodes := groupNodes(target.members)
 	messages, toolFrequency := q.buildSessionMessages(nodes)
+	grouped := buildGroupedMessages(messages)
 
 	subSessions := make([]SessionSummary, 0, len(target.members))
 	for _, member := range target.members {
@@ -469,10 +474,11 @@ func (q *Query) groupSessionDetail(ctx context.Context, sessionID string) (*Sess
 	})
 
 	detail := &SessionDetail{
-		Summary:       target.summary,
-		Messages:      messages,
-		ToolFrequency: toolFrequency,
-		SubSessions:   subSessions,
+		Summary:         target.summary,
+		Messages:        messages,
+		GroupedMessages: grouped,
+		ToolFrequency:   toolFrequency,
+		SubSessions:     subSessions,
 	}
 
 	return detail, nil
@@ -539,6 +545,146 @@ func (q *Query) buildSessionMessages(nodes []*ent.Node) ([]SessionMessage, map[s
 	}
 
 	return messages, toolFrequency
+}
+
+func buildGroupedMessages(messages []SessionMessage) []SessionMessageGroup {
+	if len(messages) == 0 {
+		return nil
+	}
+
+	groups := make([]SessionMessageGroup, 0, len(messages))
+	current := SessionMessageGroup{
+		Role:         messages[0].Role,
+		StartTime:    messages[0].Timestamp,
+		EndTime:      messages[0].Timestamp,
+		InputTokens:  messages[0].InputTokens,
+		OutputTokens: messages[0].OutputTokens,
+		TotalTokens:  messages[0].TotalTokens,
+		InputCost:    messages[0].InputCost,
+		OutputCost:   messages[0].OutputCost,
+		TotalCost:    messages[0].TotalCost,
+		ToolCalls:    uniqueToolCalls(messages[0].ToolCalls),
+		Text:         truncateGroupedText(messages[0].Text),
+		Count:        1,
+		StartIndex:   0,
+		EndIndex:     1,
+	}
+
+	for i := 1; i < len(messages); i++ {
+		msg := messages[i]
+		gap := msg.Timestamp.Sub(current.EndTime)
+		if msg.Role == current.Role && gap <= messageGroupWindow {
+			current.EndTime = msg.Timestamp
+			current.InputTokens += msg.InputTokens
+			current.OutputTokens += msg.OutputTokens
+			current.TotalTokens += msg.TotalTokens
+			current.InputCost += msg.InputCost
+			current.OutputCost += msg.OutputCost
+			current.TotalCost += msg.TotalCost
+			current.ToolCalls = mergeToolCalls(current.ToolCalls, msg.ToolCalls)
+			current.Text = appendGroupedText(current.Text, msg.Text)
+			current.Count++
+			current.EndIndex = i + 1
+			continue
+		}
+
+		groups = append(groups, current)
+		current = SessionMessageGroup{
+			Role:         msg.Role,
+			StartTime:    msg.Timestamp,
+			EndTime:      msg.Timestamp,
+			InputTokens:  msg.InputTokens,
+			OutputTokens: msg.OutputTokens,
+			TotalTokens:  msg.TotalTokens,
+			InputCost:    msg.InputCost,
+			OutputCost:   msg.OutputCost,
+			TotalCost:    msg.TotalCost,
+			ToolCalls:    uniqueToolCalls(msg.ToolCalls),
+			Text:         truncateGroupedText(msg.Text),
+			Count:        1,
+			StartIndex:   i,
+			EndIndex:     i + 1,
+		}
+	}
+
+	groups = append(groups, current)
+	for i := 1; i < len(groups); i++ {
+		groups[i].Delta = groups[i].StartTime.Sub(groups[i-1].EndTime)
+	}
+
+	return groups
+}
+
+func uniqueToolCalls(calls []string) []string {
+	if len(calls) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	unique := make([]string, 0, len(calls))
+	for _, call := range calls {
+		if call == "" || seen[call] {
+			continue
+		}
+		seen[call] = true
+		unique = append(unique, call)
+	}
+	return unique
+}
+
+func mergeToolCalls(existing, next []string) []string {
+	if len(next) == 0 {
+		return existing
+	}
+	if len(existing) == 0 {
+		return uniqueToolCalls(next)
+	}
+	seen := map[string]bool{}
+	for _, call := range existing {
+		seen[call] = true
+	}
+	for _, call := range next {
+		if call == "" || seen[call] {
+			continue
+		}
+		seen[call] = true
+		existing = append(existing, call)
+	}
+	return existing
+}
+
+func truncateGroupedText(text string) string {
+	if text == "" {
+		return ""
+	}
+	if len(text) <= maxGroupedTextChars {
+		return text
+	}
+	return text[:maxGroupedTextChars] + "..."
+}
+
+func appendGroupedText(current, next string) string {
+	if next == "" {
+		return current
+	}
+	if current == "" {
+		return truncateGroupedText(next)
+	}
+	if len(current) >= maxGroupedTextChars {
+		return current
+	}
+	remaining := maxGroupedTextChars - len(current)
+	separator := "\n\n"
+	if remaining <= len(separator) {
+		return current
+	}
+	remaining -= len(separator)
+	if remaining <= 0 {
+		return current
+	}
+	if len(next) > remaining {
+		next = next[:remaining] + "..."
+	}
+	return current + separator + next
 }
 
 func (q *Query) buildSessionSummaryFromNodes(nodes []*ent.Node) (SessionSummary, map[string]ModelCost, string, error) {

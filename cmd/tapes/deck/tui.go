@@ -149,6 +149,14 @@ type deckModel struct {
 	help             help.Model
 	searchInput      textinput.Model
 	searchActive     bool
+	sortedCache      *sortedMessagesCache
+}
+
+type sortedMessagesCache struct {
+	key      string
+	id       string
+	count    int
+	messages []deck.SessionMessage
 }
 
 type modalTab int
@@ -532,6 +540,7 @@ func newDeckModel(query deck.Querier, filters deck.Filters, overview *deck.Overv
 		keys:         defaultKeyMap(),
 		help:         help.New(),
 		searchInput:  ti,
+		sortedCache:  &sortedMessagesCache{},
 	}
 }
 
@@ -590,9 +599,10 @@ func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
 			return m, nil
 		}
 		m.detail = msg.detail
+		m.resetSortedCache()
 		m.view = viewSession
 		if msg.keepUI {
-			maxCursor := len(m.sortedMessages()) - 1
+			maxCursor := m.currentConversationLength() - 1
 			if maxCursor >= 0 {
 				m.messageCursor = clamp(m.messageCursor, maxCursor)
 			} else {
@@ -612,7 +622,7 @@ func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
 		if !m.replayActive || m.detail == nil {
 			return m, nil
 		}
-		if m.messageCursor >= len(m.sortedMessages())-1 {
+		if m.messageCursor >= m.currentConversationLength()-1 {
 			m.replayActive = false
 			return m, nil
 		}
@@ -952,7 +962,12 @@ func (m deckModel) moveCursor(delta int) (bubbletea.Model, bubbletea.Cmd) {
 	if m.detail == nil || len(m.detail.Messages) == 0 {
 		return m, nil
 	}
-	m.messageCursor = clamp(m.messageCursor+delta, len(m.detail.Messages)-1)
+	length := m.currentConversationLength()
+	if length == 0 {
+		m.messageCursor = 0
+		return m, nil
+	}
+	m.messageCursor = clamp(m.messageCursor+delta, length-1)
 	return m, nil
 }
 
@@ -998,11 +1013,13 @@ func (m deckModel) cyclePeriod() (bubbletea.Model, bubbletea.Cmd) {
 
 func (m deckModel) cycleMessageSort() (bubbletea.Model, bubbletea.Cmd) {
 	m.messageSort = (m.messageSort + 1) % len(messageSortOrder)
-	if len(m.sortedMessages()) == 0 {
+	m.resetSortedCache()
+	length := m.currentConversationLength()
+	if length == 0 {
 		m.messageCursor = 0
 		return m, nil
 	}
-	m.messageCursor = clamp(m.messageCursor, len(m.sortedMessages())-1)
+	m.messageCursor = clamp(m.messageCursor, length-1)
 	return m, nil
 }
 
@@ -1791,11 +1808,6 @@ func (m deckModel) viewSession() string {
 
 	// 1. METRICS SECTION
 	lines = append(lines, m.renderSessionMetrics()...)
-	groupedLines := m.renderGroupedSessions()
-	if len(groupedLines) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, groupedLines...)
-	}
 	lines = append(lines, "", renderRule(m.width), "")
 
 	// 2. CONVERSATION TIMELINE (waveform visualization)
@@ -2011,32 +2023,6 @@ func (m deckModel) renderSessionMetrics() []string {
 			}
 		}
 		lines = append(lines, strings.Join(row, ""))
-	}
-
-	return lines
-}
-
-func (m deckModel) renderGroupedSessions() []string {
-	if m.detail == nil || len(m.detail.SubSessions) <= 1 {
-		return nil
-	}
-
-	subsessions := m.detail.SubSessions
-	lines := []string{deckSectionStyle.Render(fmt.Sprintf("grouped sessions (%d)", len(subsessions)))}
-
-	maxVisible := min(len(subsessions), 8)
-	for i := range maxVisible {
-		session := subsessions[i]
-		statusCircle, statusText := formatStatusWithCircle(session.Status)
-		timestamp := session.StartTime.Format("Jan 02 15:04")
-		duration := formatDurationMinutes(session.Duration)
-		tokens := formatTokens(session.InputTokens + session.OutputTokens)
-		line := fmt.Sprintf("  %02d %s %s · %s · %s tok · %s", i+1, statusCircle, timestamp, duration, tokens, statusText)
-		lines = append(lines, line)
-	}
-
-	if len(subsessions) > maxVisible {
-		lines = append(lines, deckMutedStyle.Render(fmt.Sprintf("  and %d more", len(subsessions)-maxVisible)))
 	}
 
 	return lines
@@ -4070,8 +4056,8 @@ func (m deckModel) renderConversationTimeline() []string {
 		return lines
 	}
 
-	messages := m.sortedMessages()
-	if len(messages) == 0 {
+	groups := m.timelineGroups()
+	if len(groups) == 0 {
 		lines = append(lines, deckSectionStyle.Render("timeline"))
 		lines = append(lines, deckMutedStyle.Render("no messages"))
 		return lines
@@ -4080,17 +4066,106 @@ func (m deckModel) renderConversationTimeline() []string {
 	// Header with sort info
 	sortLabel := messageSortOrder[m.messageSort%len(messageSortOrder)]
 	headerLeft := deckSectionStyle.Render("conversation timeline") + "  " +
-		deckMutedStyle.Render(fmt.Sprintf("(sort: %s, %d messages)", sortLabel, len(messages)))
+		deckMutedStyle.Render(fmt.Sprintf("(sort: %s, %d groups, %d messages)", sortLabel, len(groups), len(m.detail.Messages)))
 	lines = append(lines, headerLeft)
 
 	// Build waveform visualization
-	waveformLines := m.buildWaveform(messages)
+	waveformLines := m.buildWaveform(groups)
 	lines = append(lines, waveformLines...)
 
 	return lines
 }
 
-func (m deckModel) buildWaveform(messages []deck.SessionMessage) []string {
+type waveformPoint struct {
+	tokens    int64
+	role      string
+	hasTools  bool
+	start     int
+	end       int
+	isCurrent bool
+}
+
+func sampleWaveformPoints(groups []deck.SessionMessageGroup, maxBars, cursor int) []waveformPoint {
+	if len(groups) == 0 {
+		return nil
+	}
+	if maxBars <= 0 {
+		maxBars = 1
+	}
+	if len(groups) <= maxBars {
+		points := make([]waveformPoint, 0, len(groups))
+		for i, group := range groups {
+			points = append(points, waveformPoint{
+				tokens:    group.TotalTokens,
+				role:      group.Role,
+				hasTools:  len(group.ToolCalls) > 0,
+				start:     group.StartIndex,
+				end:       group.EndIndex,
+				isCurrent: i == cursor,
+			})
+		}
+		return points
+	}
+
+	windowMultiplier := 10
+	windowSize := min(len(groups), maxBars*windowMultiplier)
+	if windowSize <= 0 {
+		windowSize = len(groups)
+	}
+	groupSize := windowSize / maxBars
+	if windowSize%maxBars != 0 {
+		groupSize++
+	}
+	if groupSize <= 0 {
+		groupSize = 1
+	}
+	startIndex := clamp(cursor-windowSize/2, max(0, len(groups)-windowSize))
+	endIndex := min(startIndex+windowSize, len(groups))
+	points := make([]waveformPoint, 0, maxBars)
+	for start := startIndex; start < endIndex; start += groupSize {
+		end := min(start+groupSize, endIndex)
+		var maxTokens int64
+		userCount := 0
+		asstCount := 0
+		hasTools := false
+		isCurrent := false
+		startMessage := groups[start].StartIndex
+		endMessage := groups[end-1].EndIndex
+		for i := start; i < end; i++ {
+			group := groups[i]
+			if group.TotalTokens > maxTokens {
+				maxTokens = group.TotalTokens
+			}
+			if group.Role == roleUser {
+				userCount++
+			} else {
+				asstCount++
+			}
+			if len(group.ToolCalls) > 0 {
+				hasTools = true
+			}
+			if i == cursor {
+				isCurrent = true
+			}
+		}
+		role := roleAssistant
+		if userCount > asstCount {
+			role = roleUser
+		}
+		points = append(points, waveformPoint{
+			tokens:    maxTokens,
+			role:      role,
+			hasTools:  hasTools,
+			start:     startMessage,
+			end:       endMessage,
+			isCurrent: isCurrent,
+		})
+	}
+
+	return points
+}
+
+func (m deckModel) buildWaveform(groups []deck.SessionMessageGroup) []string {
 	// Calculate available width for waveform
 	availWidth := m.width
 	if availWidth <= 0 {
@@ -4100,42 +4175,44 @@ func (m deckModel) buildWaveform(messages []deck.SessionMessage) []string {
 	// Reserve space for labels and padding
 	axisWidth := 8
 
+	maxBarHeight := 5
+	gap := " "
+	barWidth := max(1, (availWidth-axisWidth)/2)
+	points := sampleWaveformPoints(groups, barWidth, m.messageCursor)
+
 	// Find max tokens for scaling
 	var maxTokens int64
-	for _, msg := range messages {
-		if msg.TotalTokens > maxTokens {
-			maxTokens = msg.TotalTokens
+	for _, point := range points {
+		if point.tokens > maxTokens {
+			maxTokens = point.tokens
 		}
 	}
-
 	if maxTokens == 0 {
 		maxTokens = 1
 	}
 
 	// Waveform bars (multi-line) to represent token volume
-	maxBarHeight := 5
 	lines := make([]string, 0, maxBarHeight+3)
 	barLines := make([]string, maxBarHeight)
 	toolMarkers := []string{}
 	msgNumbers := []string{}
-	gap := " "
 
-	for i, msg := range messages {
+	for i, point := range points {
 		// Calculate bar height (1-maxBarHeight)
-		ratio := float64(msg.TotalTokens) / float64(maxTokens)
+		ratio := float64(point.tokens) / float64(maxTokens)
 		barHeight := int(ratio * float64(maxBarHeight))
 		barHeight = min(max(barHeight, 1), maxBarHeight)
 
 		// Choose bar style based on role
 		var barStyle lipgloss.Style
 
-		if msg.Role == roleUser {
+		if point.role == roleUser {
 			barStyle = deckRoleUserStyle // Cyan for user
 		} else {
 			barStyle = deckRoleAsstStyle // Orange for assistant
 		}
 
-		isCurrent := i == m.messageCursor
+		isCurrent := point.isCurrent
 		// Highlight current message with a subtle background
 		if isCurrent {
 			barStyle = barStyle.Bold(true).Background(colorHighlightBg)
@@ -4160,8 +4237,8 @@ func (m deckModel) buildWaveform(messages []deck.SessionMessage) []string {
 
 		// Tool marker
 		switch {
-		case len(msg.ToolCalls) > 0:
-			icon := toolUsageIcon(msg.ToolCalls)
+		case point.hasTools:
+			icon := toolUsageIcon([]string{"tool"})
 			toolMarkers = append(toolMarkers, lipgloss.NewStyle().Foreground(colorYellow).Render(icon)+gap)
 		default:
 			toolMarkers = append(toolMarkers, " "+gap)
@@ -4169,8 +4246,8 @@ func (m deckModel) buildWaveform(messages []deck.SessionMessage) []string {
 
 		// Message number (show every 5 or at current position)
 		switch {
-		case i%5 == 0 || i == m.messageCursor:
-			msgNumbers = append(msgNumbers, deckMutedStyle.Render(strconv.Itoa(i+1))+gap)
+		case i%5 == 0 || isCurrent:
+			msgNumbers = append(msgNumbers, deckMutedStyle.Render(strconv.Itoa(point.start+1))+gap)
 		default:
 			msgNumbers = append(msgNumbers, " "+gap)
 		}
@@ -4187,7 +4264,7 @@ func (m deckModel) buildWaveform(messages []deck.SessionMessage) []string {
 	for len(legendLines) < maxBarHeight {
 		legendLines = append(legendLines, "")
 	}
-	barWidth := lipgloss.Width(barLines[0])
+	barLineWidth := lipgloss.Width(barLines[0])
 	for i := range maxBarHeight {
 		label := ""
 		switch i {
@@ -4203,7 +4280,7 @@ func (m deckModel) buildWaveform(messages []deck.SessionMessage) []string {
 		axis := axisStyle.Render(padRight(label, axisWidth))
 		legendLine := legendLines[i]
 		legendWidth := lipgloss.Width(legendLine)
-		legendPad := max(1, availWidth-axisWidth-barWidth-legendWidth)
+		legendPad := max(1, availWidth-axisWidth-barLineWidth-legendWidth)
 		lines = append(lines, axis+barLines[i]+strings.Repeat(" ", legendPad)+legendLine)
 	}
 	toolLine := strings.Repeat(" ", axisWidth) + strings.Join(toolMarkers, "")
@@ -4228,6 +4305,9 @@ func (m deckModel) renderConversationTable(width, height int) []string {
 	header := deckSectionStyle.Render("conversation") + "  " +
 		deckAccentStyle.Render("[s]") + deckMutedStyle.Render(" sort  ") +
 		deckAccentStyle.Render("[↑↓]") + deckMutedStyle.Render(" navigate")
+	if m.useGroupedConversations() {
+		header += deckMutedStyle.Render("  (grouped)")
+	}
 	lines = append(lines, header)
 
 	if m.detail == nil || len(m.detail.Messages) == 0 {
@@ -4237,6 +4317,80 @@ func (m deckModel) renderConversationTable(width, height int) []string {
 
 	if height < 3 {
 		height = 3
+	}
+
+	if m.useGroupedConversations() {
+		groups := m.detail.GroupedMessages
+		if len(groups) == 0 {
+			lines = append(lines, deckMutedStyle.Render("no messages"))
+			return padLines(lines, width, height)
+		}
+
+		// Table header
+		headerRow := fmt.Sprintf("%-3s %-8s %-9s %9s %8s %8s",
+			"#", "role", "time", "tokens", sortKeyCost, "delta")
+		lines = append(lines, deckMutedStyle.Render(headerRow))
+
+		maxVisible := max(height-2, 5)
+		start, end, _ := stableVisibleRange(len(groups), m.messageCursor, maxVisible, max(m.messageCursor-(maxVisible/2), 0))
+
+		for i := start; i < end; i++ {
+			group := groups[i]
+			cursor := "   "
+			if i == m.messageCursor {
+				cursor = " > "
+			}
+
+			roleText := roleUser
+			roleStyle := deckRoleUserStyle
+			if group.Role == roleAssistant {
+				roleText = "asst"
+				roleStyle = deckRoleAsstStyle
+			}
+			if group.Count > 1 {
+				roleText = fmt.Sprintf("%s x%d", roleText, group.Count)
+			}
+			roleText = fitCell(roleText, 8)
+
+			toolIndicator := ""
+			if len(group.ToolCalls) > 0 {
+				icon := toolUsageIcon(group.ToolCalls)
+				toolIndicator = " " + lipgloss.NewStyle().Foreground(colorYellow).Render(icon)
+			}
+
+			msgNum := strconv.Itoa(group.StartIndex + 1)
+			timeStr := group.StartTime.Format("15:04:05")
+			tokensStr := formatTokensCompact(group.TotalTokens)
+			costStr := formatCost(group.TotalCost)
+			deltaStr := ""
+			if group.Delta > 0 {
+				deltaStr = formatDuration(group.Delta)
+			}
+
+			row := fmt.Sprintf("%s%-3s %s %-9s %9s %8s %8s%s",
+				cursor,
+				msgNum,
+				roleStyle.Render(roleText),
+				timeStr,
+				tokensStr,
+				costStr,
+				deltaStr,
+				toolIndicator,
+			)
+
+			if i == m.messageCursor {
+				row = deckHighlightStyle.Render(row)
+			}
+
+			lines = append(lines, row)
+		}
+
+		if len(groups) > maxVisible {
+			position := fmt.Sprintf("showing %d-%d of %d", start+1, end, len(groups))
+			lines = append(lines, "", deckMutedStyle.Render(position))
+		}
+
+		return padLines(lines, width, height)
 	}
 
 	messages := m.sortedMessages()
@@ -4356,6 +4510,98 @@ func (m deckModel) renderMessageDetailPane(width, height int) []string {
 		return padLines(lines, width, height)
 	}
 
+	if m.useGroupedConversations() {
+		group := m.detail.GroupedMessages[m.messageCursor]
+		contentLines := []string{}
+
+		roleLabel := "User"
+		roleStyle := deckRoleUserStyle
+		if group.Role == roleAssistant {
+			roleLabel = "Assistant"
+			roleStyle = deckRoleAsstStyle
+		}
+		contentLines = append(contentLines, deckMutedStyle.Render("Role: ")+roleStyle.Render(roleLabel))
+
+		timeInfo := "Time: " + group.StartTime.Format("15:04:05")
+		if group.EndTime.After(group.StartTime) {
+			timeInfo += " - " + group.EndTime.Format("15:04:05")
+		}
+		if group.Delta > 0 {
+			timeInfo += fmt.Sprintf("  (+%s)", formatDuration(group.Delta))
+		}
+		contentLines = append(contentLines, timeInfo)
+		if group.Count > 1 {
+			contentLines = append(contentLines, deckMutedStyle.Render(fmt.Sprintf("Messages: %d", group.Count)))
+		}
+		contentLines = append(contentLines, "")
+
+		contentLines = append(contentLines, deckMutedStyle.Render("Tokens: ")+fmt.Sprintf(
+			"In %s  Out %s  Total %s",
+			formatTokensDetail(group.InputTokens),
+			formatTokensDetail(group.OutputTokens),
+			formatTokensDetail(group.TotalTokens),
+		))
+		contentLines = append(contentLines, deckMutedStyle.Render("Cost:   ")+fmt.Sprintf(
+			"In %s  Out %s  Total %s",
+			formatCost(group.InputCost),
+			formatCost(group.OutputCost),
+			deckAccentStyle.Render(formatCost(group.TotalCost)),
+		))
+		contentLines = append(contentLines, "")
+
+		if len(group.ToolCalls) > 0 {
+			contentLines = append(contentLines, deckMutedStyle.Render("Tools:"))
+			toolsList := strings.Join(group.ToolCalls, ", ")
+			wrappedTools := wrapText(toolsList, max(20, boxWidth-4))
+			for _, line := range wrappedTools {
+				contentLines = append(contentLines, "  "+lipgloss.NewStyle().Foreground(colorYellow).Render(line))
+			}
+			contentLines = append(contentLines, "")
+		}
+
+		text := strings.TrimSpace(group.Text)
+		if text != "" {
+			contentLines = append(contentLines, deckMutedStyle.Render("Message:"))
+			wrappedText := wrapText(text, max(20, boxWidth-4))
+			maxPreview := max(height-len(contentLines)-4, 3)
+			for i, line := range wrappedText {
+				if i >= maxPreview {
+					contentLines = append(contentLines, deckMutedStyle.Render("  ..."))
+					break
+				}
+				contentLines = append(contentLines, "  "+line)
+			}
+		}
+
+		maxContentWidth := boxWidth - 2
+		maxContentLines := max(height-2, 0)
+		if maxContentLines > 0 && len(contentLines) > maxContentLines {
+			contentLines = append(contentLines[:maxContentLines-1], deckMutedStyle.Render("  ..."))
+		}
+		for _, contentLine := range contentLines {
+			visualWidth := lipgloss.Width(contentLine)
+			if visualWidth > maxContentWidth {
+				contentLine = truncateString(contentLine, maxContentWidth-3) + "..."
+				visualWidth = lipgloss.Width(contentLine)
+			}
+			padding := ""
+			if visualWidth < maxContentWidth {
+				padding = strings.Repeat(" ", maxContentWidth-visualWidth)
+			}
+			boxedLine := deckDimStyle.Render("│") + " " + contentLine + padding + " " + deckDimStyle.Render("│")
+			lines = append(lines, boxedLine)
+		}
+
+		for len(lines) < height-1 {
+			emptyLine := deckDimStyle.Render("│") + strings.Repeat(" ", boxWidth) + deckDimStyle.Render("│")
+			lines = append(lines, emptyLine)
+		}
+
+		bottomBorder := deckDimStyle.Render("└" + strings.Repeat("─", boxWidth) + "┘")
+		lines = append(lines, bottomBorder)
+		return lines
+	}
+
 	msg := messages[m.messageCursor]
 	contentLines := []string{}
 
@@ -4412,6 +4658,10 @@ func (m deckModel) renderMessageDetailPane(width, height int) []string {
 
 	// Wrap each content line in box borders
 	maxContentWidth := boxWidth - 2 // Account for 1 space padding on each side
+	maxContentLines := max(height-2, 0)
+	if maxContentLines > 0 && len(contentLines) > maxContentLines {
+		contentLines = append(contentLines[:maxContentLines-1], deckMutedStyle.Render("  ..."))
+	}
 	for _, contentLine := range contentLines {
 		visualWidth := lipgloss.Width(contentLine)
 
@@ -4521,9 +4771,30 @@ func (m deckModel) sortedMessages() []deck.SessionMessage {
 	if m.detail == nil || len(m.detail.Messages) == 0 {
 		return nil
 	}
+
+	sortKey := messageSortOrder[m.messageSort%len(messageSortOrder)]
+	cacheKey := fmt.Sprintf("%s:%s", sortKey, m.detail.Summary.ID)
+	cache := m.sortedCache
+	if cache != nil &&
+		cache.key == cacheKey &&
+		cache.id == m.detail.Summary.ID &&
+		cache.count == len(m.detail.Messages) &&
+		len(cache.messages) > 0 {
+		return cache.messages
+	}
+
+	if sortKey == "time" {
+		if cache != nil {
+			cache.messages = m.detail.Messages
+			cache.key = cacheKey
+			cache.id = m.detail.Summary.ID
+			cache.count = len(m.detail.Messages)
+		}
+		return m.detail.Messages
+	}
+
 	messages := make([]deck.SessionMessage, len(m.detail.Messages))
 	copy(messages, m.detail.Messages)
-	sortKey := messageSortOrder[m.messageSort%len(messageSortOrder)]
 	sort.SliceStable(messages, func(i, j int) bool {
 		switch sortKey {
 		case "tokens":
@@ -4546,7 +4817,75 @@ func (m deckModel) sortedMessages() []deck.SessionMessage {
 		}
 	})
 
+	if cache != nil {
+		cache.messages = messages
+		cache.key = cacheKey
+		cache.id = m.detail.Summary.ID
+		cache.count = len(m.detail.Messages)
+	}
 	return messages
+}
+
+func (m deckModel) resetSortedCache() {
+	if m.sortedCache == nil {
+		return
+	}
+	m.sortedCache.messages = nil
+	m.sortedCache.key = ""
+	m.sortedCache.id = ""
+	m.sortedCache.count = 0
+}
+
+func (m deckModel) useGroupedConversations() bool {
+	if m.detail == nil || len(m.detail.GroupedMessages) == 0 {
+		return false
+	}
+	sortKey := messageSortOrder[m.messageSort%len(messageSortOrder)]
+	return sortKey == "time"
+}
+
+func (m deckModel) currentConversationLength() int {
+	if m.useGroupedConversations() {
+		return len(m.detail.GroupedMessages)
+	}
+	return len(m.sortedMessages())
+}
+
+func (m deckModel) timelineGroups() []deck.SessionMessageGroup {
+	if m.detail == nil {
+		return nil
+	}
+	if len(m.detail.GroupedMessages) > 0 {
+		return m.detail.GroupedMessages
+	}
+	return messageGroupsFromMessages(m.detail.Messages)
+}
+
+func messageGroupsFromMessages(messages []deck.SessionMessage) []deck.SessionMessageGroup {
+	if len(messages) == 0 {
+		return nil
+	}
+	groups := make([]deck.SessionMessageGroup, 0, len(messages))
+	for i, msg := range messages {
+		groups = append(groups, deck.SessionMessageGroup{
+			Role:         msg.Role,
+			StartTime:    msg.Timestamp,
+			EndTime:      msg.Timestamp,
+			Delta:        msg.Delta,
+			InputTokens:  msg.InputTokens,
+			OutputTokens: msg.OutputTokens,
+			TotalTokens:  msg.TotalTokens,
+			InputCost:    msg.InputCost,
+			OutputCost:   msg.OutputCost,
+			TotalCost:    msg.TotalCost,
+			ToolCalls:    msg.ToolCalls,
+			Text:         msg.Text,
+			Count:        1,
+			StartIndex:   i,
+			EndIndex:     i + 1,
+		})
+	}
+	return groups
 }
 
 func padLines(lines []string, width, height int) []string {
