@@ -16,7 +16,6 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/storage/ent"
-	"github.com/papercomputeco/tapes/pkg/storage/ent/node"
 	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
 )
 
@@ -95,19 +94,31 @@ func (q *Query) loadSessionCandidates(ctx context.Context, allowCache bool) ([]s
 		}
 	}
 
-	leaves, err := q.client.Node.Query().Where(node.Not(node.HasChildren())).All(ctx)
+	// Bulk-load all nodes in a single query and build ancestry chains
+	// in memory. This replaces the previous N+1 pattern where each leaf
+	// called loadAncestry with individual parent queries.
+	allNodes, err := q.client.Node.Query().All(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list leaves: %w", err)
+		return nil, fmt.Errorf("load nodes: %w", err)
 	}
 
-	candidates := make([]sessionCandidate, 0, len(leaves))
-	for _, leaf := range leaves {
-		nodes, err := q.loadAncestry(ctx, leaf)
-		if err != nil {
+	byID := make(map[string]*ent.Node, len(allNodes))
+	hasChildren := make(map[string]bool)
+	for _, n := range allNodes {
+		byID[n.ID] = n
+		if n.ParentHash != nil && *n.ParentHash != "" {
+			hasChildren[*n.ParentHash] = true
+		}
+	}
+
+	candidates := make([]sessionCandidate, 0)
+	for _, n := range allNodes {
+		if hasChildren[n.ID] {
 			continue
 		}
 
-		summary, modelCosts, status, err := q.buildSessionSummaryFromNodes(nodes)
+		chain := buildAncestryChain(n, byID)
+		summary, modelCosts, status, err := q.buildSessionSummaryFromNodes(chain)
 		if err != nil {
 			continue
 		}
@@ -116,12 +127,35 @@ func (q *Query) loadSessionCandidates(ctx context.Context, allowCache bool) ([]s
 			summary:    summary,
 			modelCosts: modelCosts,
 			status:     status,
-			nodes:      nodes,
+			nodes:      chain,
 		})
 	}
 
 	q.storeSessionCandidates(candidates)
 	return candidates, nil
+}
+
+// buildAncestryChain walks from a leaf to root using the in-memory node map,
+// returning nodes in root-first order.
+func buildAncestryChain(leaf *ent.Node, byID map[string]*ent.Node) []*ent.Node {
+	chain := []*ent.Node{}
+	seen := map[string]bool{}
+	current := leaf
+	for current != nil {
+		if seen[current.ID] {
+			break
+		}
+		seen[current.ID] = true
+		chain = append(chain, current)
+		if current.ParentHash == nil || *current.ParentHash == "" {
+			break
+		}
+		current = byID[*current.ParentHash]
+	}
+	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
+		chain[i], chain[j] = chain[j], chain[i]
+	}
+	return chain
 }
 
 func (q *Query) cachedSessionCandidates() []sessionCandidate {
@@ -156,12 +190,16 @@ func copySessionCandidates(candidates []sessionCandidate) []sessionCandidate {
 }
 
 func groupSessionCandidates(candidates []sessionCandidate) []*sessionGroup {
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].summary.StartTime.Equal(candidates[j].summary.StartTime) {
-			return candidates[i].summary.EndTime.Before(candidates[j].summary.EndTime)
+	// Sort a copy to avoid mutating the cached input slice.
+	sorted := make([]sessionCandidate, len(candidates))
+	copy(sorted, candidates)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].summary.StartTime.Equal(sorted[j].summary.StartTime) {
+			return sorted[i].summary.EndTime.Before(sorted[j].summary.EndTime)
 		}
-		return candidates[i].summary.StartTime.Before(candidates[j].summary.StartTime)
+		return sorted[i].summary.StartTime.Before(sorted[j].summary.StartTime)
 	})
+	candidates = sorted
 
 	groups := []*sessionGroup{}
 	byKey := map[string]*sessionGroup{}
@@ -264,7 +302,7 @@ func normalizeSessionLabel(label string) string {
 
 func makeGroupID(key string, start time.Time) string {
 	sum := sha256.Sum256([]byte(key))
-	return fmt.Sprintf("%s%x:%d", groupIDPrefix, sum, start.Unix())
+	return groupIDPrefix + hex.EncodeToString(sum[:]) + ":" + strconv.FormatInt(start.Unix(), 10)
 }
 
 func groupIDKeyHash(summary SessionSummary) string {

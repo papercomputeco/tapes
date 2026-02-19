@@ -103,11 +103,13 @@ const (
 )
 
 const (
-	sortKeyCost   = "cost"
-	roleUser      = "user"
-	roleAssistant = "assistant"
-	circleLarge   = "⬤"
-	labelTokens   = "tokens"
+	sortKeyCost              = "cost"
+	roleUser                 = "user"
+	roleAssistant            = "assistant"
+	circleLarge              = "⬤"
+	labelTokens              = "tokens"
+	maxCostByModelEntries    = 5
+	waveformWindowMultiplier = 10
 )
 
 const (
@@ -1359,9 +1361,8 @@ func (m deckModel) renderCostByModelChart(stats deckOverviewStats, width int) []
 	rightDash := max(0, width-titleLen-leftDash)
 	topBorder := deckDimStyle.Render("┌"+strings.Repeat("─", leftDash)) + deckMutedStyle.Render(title) + deckDimStyle.Render(strings.Repeat("─", rightDash)+"┐")
 	costs := sortedModelCosts(stats.CostByModel)
-	maxModels := 5
-	if len(costs) > maxModels {
-		costs = costs[:maxModels]
+	if len(costs) > maxCostByModelEntries {
+		costs = costs[:maxCostByModelEntries]
 	}
 	lines := make([]string, 0, len(costs)+2)
 	lines = append(lines, topBorder)
@@ -4092,6 +4093,7 @@ type waveformPoint struct {
 	tokens    int64
 	role      string
 	hasTools  bool
+	toolCalls []string
 	start     int
 	end       int
 	isCurrent bool
@@ -4111,6 +4113,7 @@ func sampleWaveformPoints(groups []deck.SessionMessageGroup, maxBars int, select
 				tokens:    group.TotalTokens,
 				role:      group.Role,
 				hasTools:  len(group.ToolCalls) > 0,
+				toolCalls: group.ToolCalls,
 				start:     group.StartIndex,
 				end:       group.EndIndex,
 				isCurrent: isSelectedGroup(selected, &group),
@@ -4119,8 +4122,7 @@ func sampleWaveformPoints(groups []deck.SessionMessageGroup, maxBars int, select
 		return points
 	}
 
-	windowMultiplier := 10
-	windowSize := min(len(groups), maxBars*windowMultiplier)
+	windowSize := min(len(groups), maxBars*waveformWindowMultiplier)
 	if windowSize <= 0 {
 		windowSize = len(groups)
 	}
@@ -4141,6 +4143,7 @@ func sampleWaveformPoints(groups []deck.SessionMessageGroup, maxBars int, select
 		userCount := 0
 		asstCount := 0
 		hasTools := false
+		var mergedTools []string
 		isCurrent := false
 		startMessage := groups[start].StartIndex
 		endMessage := groups[end-1].EndIndex
@@ -4156,6 +4159,7 @@ func sampleWaveformPoints(groups []deck.SessionMessageGroup, maxBars int, select
 			}
 			if len(group.ToolCalls) > 0 {
 				hasTools = true
+				mergedTools = append(mergedTools, group.ToolCalls...)
 			}
 			if isSelectedGroup(selected, &group) {
 				isCurrent = true
@@ -4169,6 +4173,7 @@ func sampleWaveformPoints(groups []deck.SessionMessageGroup, maxBars int, select
 			tokens:    maxTokens,
 			role:      role,
 			hasTools:  hasTools,
+			toolCalls: mergedTools,
 			start:     startMessage,
 			end:       endMessage,
 			isCurrent: isCurrent,
@@ -4251,7 +4256,7 @@ func (m deckModel) buildWaveform(groups []deck.SessionMessageGroup, selected *de
 		// Tool marker
 		switch {
 		case point.hasTools:
-			icon := toolUsageIcon([]string{"tool"})
+			icon := toolUsageIcon(point.toolCalls)
 			toolMarkers = append(toolMarkers, lipgloss.NewStyle().Foreground(colorYellow).Render(icon)+gap)
 		default:
 			toolMarkers = append(toolMarkers, " "+gap)
