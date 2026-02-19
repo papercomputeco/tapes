@@ -208,11 +208,15 @@ func (q *Query) buildSessionSummaryFromNodes(nodes []*ent.Node) (SessionSummary,
 	outputTokens := int64(0)
 
 	hasToolError := false
+	hasGitActivity := false
 	for _, node := range nodes {
 		blocks, _ := parseContentBlocks(node.Content)
 		toolCalls += countToolCalls(blocks)
 		if blocksHaveToolError(blocks) {
 			hasToolError = true
+		}
+		if blocksHaveGitActivity(blocks) {
+			hasGitActivity = true
 		}
 
 		t := tokenCounts(node)
@@ -247,7 +251,7 @@ func (q *Query) buildSessionSummaryFromNodes(nodes []*ent.Node) (SessionSummary,
 	}
 	inputCost, outputCost, totalCost := sumModelCosts(modelCosts)
 
-	status := determineStatus(nodes[len(nodes)-1], hasToolError)
+	status := determineStatus(nodes[len(nodes)-1], hasToolError, hasGitActivity)
 
 	// Extract project from the first node that has one set
 	project := ""
@@ -389,6 +393,32 @@ func blocksHaveToolError(blocks []llm.ContentBlock) bool {
 	for _, block := range blocks {
 		if block.Type == "tool_result" && block.IsError {
 			return true
+		}
+	}
+	return false
+}
+
+// gitCommandPattern matches common git commit and push invocations inside
+// shell command strings captured from Bash tool calls.
+var gitCommandPatterns = []string{
+	"git commit",
+	"git push",
+}
+
+func blocksHaveGitActivity(blocks []llm.ContentBlock) bool {
+	for _, block := range blocks {
+		if block.Type != blockTypeToolUse || block.ToolName != "Bash" {
+			continue
+		}
+		cmd, _ := block.ToolInput["command"].(string)
+		if cmd == "" {
+			continue
+		}
+		lower := strings.ToLower(cmd)
+		for _, pattern := range gitCommandPatterns {
+			if strings.Contains(lower, pattern) {
+				return true
+			}
 		}
 	}
 	return false
@@ -936,9 +966,15 @@ func buildCostBucketsFromSummaries(summaries []SessionSummary) []Bucket {
 	return buckets
 }
 
-func determineStatus(leaf *ent.Node, hasToolError bool) string {
+func determineStatus(leaf *ent.Node, hasToolError, hasGitActivity bool) string {
 	if hasToolError {
 		return StatusFailed
+	}
+
+	// Git commits/pushes are a strong signal the session achieved its goal,
+	// regardless of who sent the last message or the stop reason.
+	if hasGitActivity {
+		return StatusCompleted
 	}
 
 	role := strings.ToLower(leaf.Role)
