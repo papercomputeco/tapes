@@ -1695,7 +1695,8 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 	// Calculate total width used by fixed columns (excluding label)
 	// Format: "  " + rowNum + " " + label + [gap + project] + gap + model + gap + dur + gap + tokens + gap + barbell + gap + costInd + " " + cost + gap + tools + gap + msgs + gap + status
 	colGap := 3
-	fixedWidth := 2 + 1 + 1 + colGap + maxDateW + colGap + maxModelW + colGap + maxDurW + colGap + maxTokensW + colGap + maxBarbellW + colGap + maxCostIndW + 1 + maxCostW + colGap + maxToolsW + colGap + maxMsgsW + colGap + 1 + maxStatusW
+	statusColW := 2 + maxStatusW // circle + space + text
+	fixedWidth := 2 + 1 + 1 + colGap + maxDateW + colGap + maxModelW + colGap + maxDurW + colGap + maxTokensW + colGap + maxBarbellW + colGap + maxCostIndW + 1 + maxCostW + colGap + maxToolsW + colGap + maxMsgsW + colGap + statusColW
 	if hasProject {
 		fixedWidth += colGap + maxProjectW
 	}
@@ -1735,7 +1736,7 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 		}(), maxCostIndW+1+maxCostW),
 		padRight("tools", maxToolsW),
 		padRight("msgs", maxMsgsW),
-		"status",
+		padRight("status", statusColW),
 		padRight("date", maxDateW),
 	)
 	if hasProject {
@@ -1765,7 +1766,7 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 			costIndPadded+" "+costPadded,
 			padRight(rows[rowIdx].tools, maxToolsW),
 			padRight(rows[rowIdx].msgs, maxMsgsW),
-			rows[rowIdx].statusCircle+" "+padRight(rows[rowIdx].statusText, maxStatusW),
+			padRightWithColor(rows[rowIdx].statusCircle+" "+rows[rowIdx].statusText, statusColW),
 			deckMutedStyle.Render(padRight(rows[rowIdx].date, maxDateW)),
 		)
 		if hasProject {
@@ -4344,9 +4345,21 @@ func (m deckModel) renderConversationTable(width, height int) []string {
 			return padLines(lines, width, height)
 		}
 
+		// Column widths for conversation table
+		const colNum = 4
+		const colRole = 9
+		const colTime = 9
+		const colTokens = 9
+		const colCost = 8
+		const colDelta = 8
+
 		// Table header
-		headerRow := fmt.Sprintf("%-3s %-8s %-9s %9s %8s %8s",
-			"#", "role", "time", "tokens", sortKeyCost, "delta")
+		headerRow := fitCell("#", colNum) +
+			fitCell("role", colRole) +
+			fitCell("time", colTime) +
+			fitCellRight("tokens", colTokens) + " " +
+			fitCellRight(sortKeyCost, colCost) + " " +
+			fitCellRight("delta", colDelta)
 		lines = append(lines, deckMutedStyle.Render(headerRow))
 
 		maxVisible := max(height-2, 5)
@@ -4354,9 +4367,9 @@ func (m deckModel) renderConversationTable(width, height int) []string {
 
 		for i := start; i < end; i++ {
 			group := groups[i]
-			cursor := "   "
+			cursor := "  "
 			if i == m.messageCursor {
-				cursor = " > "
+				cursor = "> "
 			}
 
 			roleText := roleUser
@@ -4368,7 +4381,6 @@ func (m deckModel) renderConversationTable(width, height int) []string {
 			if group.Count > 1 {
 				roleText = fmt.Sprintf("%s x%d", roleText, group.Count)
 			}
-			roleText = fitCell(roleText, 8)
 
 			toolIndicator := ""
 			if len(group.ToolCalls) > 0 {
@@ -4385,16 +4397,14 @@ func (m deckModel) renderConversationTable(width, height int) []string {
 				deltaStr = formatDuration(group.Delta)
 			}
 
-			row := fmt.Sprintf("%s%-3s %s %-9s %9s %8s %8s%s",
-				cursor,
-				msgNum,
-				roleStyle.Render(roleText),
-				timeStr,
-				tokensStr,
-				costStr,
-				deltaStr,
-				toolIndicator,
-			)
+			row := cursor +
+				fitCell(msgNum, colNum) +
+				padRightWithColor(roleStyle.Render(fitCell(roleText, colRole)), colRole) +
+				fitCell(timeStr, colTime) +
+				fitCellRight(tokensStr, colTokens) + " " +
+				fitCellRight(costStr, colCost) + " " +
+				fitCellRight(deltaStr, colDelta) +
+				toolIndicator
 
 			if i == m.messageCursor {
 				row = deckHighlightStyle.Render(row)
@@ -4417,9 +4427,21 @@ func (m deckModel) renderConversationTable(width, height int) []string {
 		return padLines(lines, width, height)
 	}
 
+	// Column widths for conversation table
+	const colNum = 4
+	const colRole = 9
+	const colTime = 9
+	const colTokens = 9
+	const colCost = 8
+	const colDelta = 8
+
 	// Table header
-	headerRow := fmt.Sprintf("%-3s %-8s %-9s %9s %8s %8s",
-		"#", "role", "time", "tokens", sortKeyCost, "delta")
+	headerRow := fitCell("#", colNum) +
+		fitCell("role", colRole) +
+		fitCell("time", colTime) +
+		fitCellRight("tokens", colTokens) + " " +
+		fitCellRight(sortKeyCost, colCost) + " " +
+		fitCellRight("delta", colDelta)
 	lines = append(lines, deckMutedStyle.Render(headerRow))
 
 	// Calculate visible range (show current message and surrounding context)
@@ -4430,9 +4452,9 @@ func (m deckModel) renderConversationTable(width, height int) []string {
 	for i := start; i < end; i++ {
 		msg := messages[i]
 
-		cursor := "   "
+		cursor := "  "
 		if i == m.messageCursor {
-			cursor = " > "
+			cursor = "> "
 		}
 
 		// Format role
@@ -4460,16 +4482,14 @@ func (m deckModel) renderConversationTable(width, height int) []string {
 			deltaStr = formatDuration(msg.Delta)
 		}
 
-		row := fmt.Sprintf("%s%-3s %-8s %-9s %9s %8s %8s%s",
-			cursor,
-			msgNum,
-			roleStyle.Render(roleText),
-			timeStr,
-			tokensStr,
-			costStr,
-			deltaStr,
-			toolIndicator,
-		)
+		row := cursor +
+			fitCell(msgNum, colNum) +
+			padRightWithColor(roleStyle.Render(fitCell(roleText, colRole)), colRole) +
+			fitCell(timeStr, colTime) +
+			fitCellRight(tokensStr, colTokens) + " " +
+			fitCellRight(costStr, colCost) + " " +
+			fitCellRight(deltaStr, colDelta) +
+			toolIndicator
 
 		if i == m.messageCursor {
 			row = deckHighlightStyle.Render(row)
