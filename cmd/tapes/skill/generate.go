@@ -133,7 +133,10 @@ func (c *generateCommander) run(cmd *cobra.Command, args []string) error {
 	// Step 2: Configure LLM
 	var llmCaller deck.LLMCallFunc
 	if err := step(w, "Configuring LLM provider", func() error {
-		credMgr, _ := credentials.NewManager("")
+		credMgr, credErr := credentials.NewManager("")
+		if credErr != nil {
+			return fmt.Errorf("loading credentials: %w", credErr)
+		}
 		var llmErr error
 		llmCaller, llmErr = deck.NewLLMCaller(deck.LLMCallerConfig{
 			Provider: c.provider,
@@ -159,7 +162,7 @@ func (c *generateCommander) run(cmd *cobra.Command, args []string) error {
 
 	// Render the generated SKILL.md through glamour
 	fmt.Fprintln(w)
-	md := renderPreview(sk)
+	md := skill.RenderSkillMD(sk)
 	rendered, err := renderMarkdown(md)
 	if err != nil {
 		// Fall back to plain text if glamour fails
@@ -279,22 +282,4 @@ func parseTime(value string) (time.Time, error) {
 	}
 
 	return time.Time{}, errors.New("expected RFC3339 or YYYY-MM-DD")
-}
-
-func renderPreview(sk *skill.Skill) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "---\n")
-	fmt.Fprintf(&b, "name: %s\n", sk.Name)
-	fmt.Fprintf(&b, "description: %s\n", sk.Description)
-	fmt.Fprintf(&b, "version: %s\n", sk.Version)
-	if len(sk.Tags) > 0 {
-		fmt.Fprintf(&b, "tags: [%s]\n", strings.Join(sk.Tags, ", "))
-	}
-	fmt.Fprintf(&b, "type: %s\n", sk.Type)
-	fmt.Fprintf(&b, "---\n\n")
-	b.WriteString(sk.Content)
-	if !strings.HasSuffix(sk.Content, "\n") {
-		b.WriteString("\n")
-	}
-	return b.String()
 }

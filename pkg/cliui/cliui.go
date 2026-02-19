@@ -17,6 +17,19 @@ var (
 	FailMark     = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("✗")
 	StepStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	spinnerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("82"))
+
+	// Shared styles for CLI output formatting.
+	NameStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Bold(true)
+	DimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	HashStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+	TagStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+	ScoreStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	RoleStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	PreviewStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	MatchedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Bold(true)
+	BranchStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	HeaderStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
+	RankStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Bold(true)
 )
 
 // spinnerFrames matches bubbletea's spinner.Dot pattern used in the deck TUI.
@@ -26,21 +39,19 @@ var spinnerFrames = []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "�
 // a ✓ or ✗ checkmark and elapsed time.
 func Step(w io.Writer, msg string, fn func() error) error {
 	done := make(chan struct{})
-	var mu sync.Mutex
+	var wg sync.WaitGroup
 
 	// Run spinner animation in background
-	go func() {
+	wg.Go(func() {
 		frame := 0
 		ticker := time.NewTicker(80 * time.Millisecond)
 		defer ticker.Stop()
 
 		for {
-			mu.Lock()
 			fmt.Fprintf(w, "\r  %s %s",
 				spinnerStyle.Render(spinnerFrames[frame%len(spinnerFrames)]),
 				msg,
 			)
-			mu.Unlock()
 
 			select {
 			case <-done:
@@ -49,22 +60,21 @@ func Step(w io.Writer, msg string, fn func() error) error {
 				frame++
 			}
 		}
-	}()
+	})
 
 	start := time.Now()
 	err := fn()
 	elapsed := time.Since(start)
 
 	close(done)
+	wg.Wait()
 
 	// Clear the spinner line and print final result
-	mu.Lock()
 	fmt.Fprintf(w, "\r  %s %s %s\n",
 		Mark(err),
 		msg,
 		StepStyle.Render(fmt.Sprintf("(%s)", FormatDuration(elapsed))),
 	)
-	mu.Unlock()
 
 	return err
 }

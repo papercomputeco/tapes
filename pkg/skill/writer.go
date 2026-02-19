@@ -16,7 +16,7 @@ func Write(sk *Skill, dir string) (string, error) {
 	}
 
 	path := filepath.Join(dir, sk.Name+".md")
-	content := renderSkillMD(sk)
+	content := RenderSkillMD(sk)
 
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		return "", fmt.Errorf("write skill: %w", err)
@@ -115,7 +115,9 @@ func LocalClaudeSkillsDir() string {
 	return filepath.Join(".claude", "skills")
 }
 
-func renderSkillMD(sk *Skill) string {
+// RenderSkillMD renders a Skill as its on-disk markdown representation
+// (frontmatter + body).
+func RenderSkillMD(sk *Skill) string {
 	var b strings.Builder
 
 	b.WriteString("---\n")

@@ -79,7 +79,7 @@ func (c *syncCommander) run(cmd *cobra.Command, name string) error {
 
 	// Step 3: Copy skill
 	var path string
-	if err := step(w, "Copying skill to Claude Code", func() error {
+	if err := step(w, "Copying skill", func() error {
 		var err error
 		path, err = skill.Sync(name, sourceDir, targetDir)
 		return err

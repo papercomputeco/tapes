@@ -10,26 +10,15 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
 	apisearch "github.com/papercomputeco/tapes/api/search"
+	"github.com/papercomputeco/tapes/pkg/cliui"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/logger"
-)
-
-var (
-	rankStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Bold(true)
-	scoreStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	hashStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
-	roleStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	previewStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	matchedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Bold(true)
-	branchStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	headerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
-	dimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 )
 
 type searchCommander struct {
@@ -134,8 +123,8 @@ func (c *searchCommander) run() error {
 	}
 
 	fmt.Printf("\n%s %s\n\n",
-		headerStyle.Render("Search Results for:"),
-		hashStyle.Render(fmt.Sprintf("%q", output.Query)),
+		cliui.HeaderStyle.Render("Search Results for:"),
+		cliui.HashStyle.Render(fmt.Sprintf("%q", output.Query)),
 	)
 
 	for i, result := range output.Results {
@@ -147,13 +136,13 @@ func (c *searchCommander) run() error {
 
 func (c *searchCommander) printResult(rank int, result apisearch.Result) {
 	fmt.Printf("  %s  %s  %s\n",
-		rankStyle.Render(fmt.Sprintf("#%d", rank)),
-		scoreStyle.Render(fmt.Sprintf("score: %.4f", result.Score)),
-		hashStyle.Render(result.Hash),
+		cliui.RankStyle.Render(fmt.Sprintf("#%d", rank)),
+		cliui.ScoreStyle.Render(fmt.Sprintf("score: %.4f", result.Score)),
+		cliui.HashStyle.Render(result.Hash),
 	)
 
 	if result.Turns == 0 {
-		fmt.Printf("  %s\n\n", dimStyle.Render("(no session found)"))
+		fmt.Printf("  %s\n\n", cliui.DimStyle.Render("(no session found)"))
 		return
 	}
 
@@ -163,8 +152,8 @@ func (c *searchCommander) printResult(rank int, result apisearch.Result) {
 	}
 	preview = strings.ReplaceAll(preview, "\n", " ")
 
-	fmt.Printf("  %s %s\n", roleStyle.Render(result.Role+":"), previewStyle.Render(preview))
-	fmt.Printf("  %s\n", dimStyle.Render(fmt.Sprintf("%d turns", result.Turns)))
+	fmt.Printf("  %s %s\n", cliui.RoleStyle.Render(result.Role+":"), cliui.PreviewStyle.Render(preview))
+	fmt.Printf("  %s\n", cliui.DimStyle.Render(fmt.Sprintf("%d turns", result.Turns)))
 
 	if len(result.Branch) > 0 {
 		for _, turn := range result.Branch {
@@ -179,17 +168,17 @@ func (c *searchCommander) printResult(rank int, result apisearch.Result) {
 
 			if turn.Matched {
 				fmt.Printf("  %s %s %s %s\n",
-					matchedStyle.Render(">>>"),
-					roleStyle.Render("["+turn.Role+"]"),
-					previewStyle.Render(text),
-					dimStyle.Render(turn.Hash[:12]),
+					cliui.MatchedStyle.Render(">>>"),
+					cliui.RoleStyle.Render("["+turn.Role+"]"),
+					cliui.PreviewStyle.Render(text),
+					cliui.DimStyle.Render(turn.Hash[:12]),
 				)
 			} else {
 				fmt.Printf("  %s %s %s %s\n",
-					branchStyle.Render(" ├─"),
-					roleStyle.Render("["+turn.Role+"]"),
-					branchStyle.Render(text),
-					dimStyle.Render(turn.Hash[:12]),
+					cliui.BranchStyle.Render(" ├─"),
+					cliui.RoleStyle.Render("["+turn.Role+"]"),
+					cliui.BranchStyle.Render(text),
+					cliui.DimStyle.Render(turn.Hash[:12]),
 				)
 			}
 		}
@@ -201,6 +190,9 @@ func (c *searchCommander) printResult(rank int, result apisearch.Result) {
 // SearchAPI calls the tapes search API and returns the parsed output.
 // Exported so other commands (e.g. skill generate --search) can reuse it.
 func SearchAPI(apiTarget, query string, topK int) (*apisearch.Output, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	searchURL, err := url.Parse(apiTarget)
 	if err != nil {
 		return nil, fmt.Errorf("invalid API target URL: %w", err)
@@ -211,7 +203,7 @@ func SearchAPI(apiTarget, query string, topK int) (*apisearch.Output, error) {
 	q.Set("top_k", strconv.Itoa(topK))
 	searchURL.RawQuery = q.Encode()
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, searchURL.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating search request: %w", err)
 	}

@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
+	"github.com/papercomputeco/tapes/pkg/cliui"
 	"github.com/papercomputeco/tapes/pkg/skill"
 )
 
@@ -64,11 +64,6 @@ func (c *listCommander) run(cmd *cobra.Command) error {
 		return nil
 	}
 
-	nameStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Bold(true)
-	typeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	tagStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
-
 	fmt.Fprintf(w, "\nSkills (%d)\n\n", len(skills))
 
 	for _, sk := range skills {
@@ -79,13 +74,13 @@ func (c *listCommander) run(cmd *cobra.Command) error {
 		desc = strings.ReplaceAll(desc, "\n", " ")
 
 		fmt.Fprintf(w, "  %s  %s  %s\n",
-			nameStyle.Render(sk.Name),
-			typeStyle.Render(sk.Type),
-			typeStyle.Render("v"+sk.Version),
+			cliui.NameStyle.Render(sk.Name),
+			cliui.ScoreStyle.Render(sk.Type),
+			cliui.ScoreStyle.Render("v"+sk.Version),
 		)
-		fmt.Fprintf(w, "  %s\n", descStyle.Render(desc))
+		fmt.Fprintf(w, "  %s\n", cliui.PreviewStyle.Render(desc))
 		if len(sk.Tags) > 0 {
-			fmt.Fprintf(w, "  %s\n", tagStyle.Render("["+strings.Join(sk.Tags, ", ")+"]"))
+			fmt.Fprintf(w, "  %s\n", cliui.TagStyle.Render("["+strings.Join(sk.Tags, ", ")+"]"))
 		}
 		fmt.Fprintln(w)
 	}

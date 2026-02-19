@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -61,13 +61,23 @@ func (g *Generator) Generate(ctx context.Context, hashes []string, name, skillTy
 		transcripts = append(transcripts, buildTranscript(messages))
 	}
 
-	combined := strings.Join(transcripts, "\n---\n")
-
-	// Truncate large transcripts
+	// Truncate large transcripts at message boundary
 	const maxChars = 30000
-	if len(combined) > maxChars {
-		combined = combined[:maxChars]
+	var totalLen int
+	for i, t := range transcripts {
+		totalLen += len(t)
+		if i > 0 {
+			totalLen += 5 // len("\n---\n")
+		}
+		if totalLen > maxChars {
+			transcripts = transcripts[:i]
+			fmt.Fprintf(os.Stderr, "warning: transcript truncated to %d of %d conversation(s) to fit within %d char limit\n",
+				len(transcripts), len(hashes), maxChars)
+			break
+		}
 	}
+
+	combined := strings.Join(transcripts, "\n---\n")
 
 	basePrompt := buildSkillPrompt(combined, name, skillType)
 
@@ -76,7 +86,6 @@ func (g *Generator) Generate(ctx context.Context, hashes []string, name, skillTy
 		prompt := basePrompt
 		if attempt > 0 {
 			prompt += "\n\nReturn ONLY valid JSON, no markdown."
-			log.Printf("skill: retrying generation for %q (attempt %d/%d)", name, attempt+1, maxGenerateRetries)
 		}
 
 		response, err := g.llmCall(ctx, prompt)
