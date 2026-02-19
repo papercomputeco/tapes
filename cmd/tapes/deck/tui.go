@@ -107,6 +107,7 @@ const (
 	roleUser      = "user"
 	roleAssistant = "assistant"
 	circleLarge   = "⬤"
+	labelTokens   = "tokens"
 )
 
 const (
@@ -150,6 +151,7 @@ type deckModel struct {
 	searchInput      textinput.Model
 	searchActive     bool
 	sortedCache      *sortedMessagesCache
+	sortedGroupCache *sortedGroupCache
 }
 
 type sortedMessagesCache struct {
@@ -157,6 +159,13 @@ type sortedMessagesCache struct {
 	id       string
 	count    int
 	messages []deck.SessionMessage
+}
+
+type sortedGroupCache struct {
+	key    string
+	id     string
+	count  int
+	groups []deck.SessionMessageGroup
 }
 
 type modalTab int
@@ -526,21 +535,22 @@ func newDeckModel(query deck.Querier, filters deck.Filters, overview *deck.Overv
 	ti.PromptStyle = lipgloss.NewStyle().Foreground(colorRed)
 
 	return deckModel{
-		query:        query,
-		filters:      filters,
-		overview:     overview,
-		view:         viewOverview,
-		sortIndex:    sortIndex,
-		statusIndex:  statusIndex,
-		messageSort:  0,
-		timePeriod:   period,
-		modalTab:     modalSort,
-		refreshEvery: refreshEvery,
-		spinner:      s,
-		keys:         defaultKeyMap(),
-		help:         help.New(),
-		searchInput:  ti,
-		sortedCache:  &sortedMessagesCache{},
+		query:            query,
+		filters:          filters,
+		overview:         overview,
+		view:             viewOverview,
+		sortIndex:        sortIndex,
+		statusIndex:      statusIndex,
+		messageSort:      0,
+		timePeriod:       period,
+		modalTab:         modalSort,
+		refreshEvery:     refreshEvery,
+		spinner:          s,
+		keys:             defaultKeyMap(),
+		help:             help.New(),
+		searchInput:      ti,
+		sortedCache:      &sortedMessagesCache{},
+		sortedGroupCache: &sortedGroupCache{},
 	}
 }
 
@@ -1014,6 +1024,7 @@ func (m deckModel) cyclePeriod() (bubbletea.Model, bubbletea.Cmd) {
 func (m deckModel) cycleMessageSort() (bubbletea.Model, bubbletea.Cmd) {
 	m.messageSort = (m.messageSort + 1) % len(messageSortOrder)
 	m.resetSortedCache()
+	m.resetSortedGroupCache()
 	length := m.currentConversationLength()
 	if length == 0 {
 		m.messageCursor = 0
@@ -4070,7 +4081,8 @@ func (m deckModel) renderConversationTimeline() []string {
 	lines = append(lines, headerLeft)
 
 	// Build waveform visualization
-	waveformLines := m.buildWaveform(groups)
+	selected := m.selectedGroup()
+	waveformLines := m.buildWaveform(groups, selected)
 	lines = append(lines, waveformLines...)
 
 	return lines
@@ -4085,7 +4097,7 @@ type waveformPoint struct {
 	isCurrent bool
 }
 
-func sampleWaveformPoints(groups []deck.SessionMessageGroup, maxBars, cursor int) []waveformPoint {
+func sampleWaveformPoints(groups []deck.SessionMessageGroup, maxBars int, selected *deck.SessionMessageGroup) []waveformPoint {
 	if len(groups) == 0 {
 		return nil
 	}
@@ -4094,14 +4106,14 @@ func sampleWaveformPoints(groups []deck.SessionMessageGroup, maxBars, cursor int
 	}
 	if len(groups) <= maxBars {
 		points := make([]waveformPoint, 0, len(groups))
-		for i, group := range groups {
+		for _, group := range groups {
 			points = append(points, waveformPoint{
 				tokens:    group.TotalTokens,
 				role:      group.Role,
 				hasTools:  len(group.ToolCalls) > 0,
 				start:     group.StartIndex,
 				end:       group.EndIndex,
-				isCurrent: i == cursor,
+				isCurrent: isSelectedGroup(selected, &group),
 			})
 		}
 		return points
@@ -4119,7 +4131,8 @@ func sampleWaveformPoints(groups []deck.SessionMessageGroup, maxBars, cursor int
 	if groupSize <= 0 {
 		groupSize = 1
 	}
-	startIndex := clamp(cursor-windowSize/2, max(0, len(groups)-windowSize))
+	selectedIndex := findSelectedGroupIndex(groups, selected)
+	startIndex := clamp(selectedIndex-windowSize/2, max(0, len(groups)-windowSize))
 	endIndex := min(startIndex+windowSize, len(groups))
 	points := make([]waveformPoint, 0, maxBars)
 	for start := startIndex; start < endIndex; start += groupSize {
@@ -4144,7 +4157,7 @@ func sampleWaveformPoints(groups []deck.SessionMessageGroup, maxBars, cursor int
 			if len(group.ToolCalls) > 0 {
 				hasTools = true
 			}
-			if i == cursor {
+			if isSelectedGroup(selected, &group) {
 				isCurrent = true
 			}
 		}
@@ -4165,7 +4178,7 @@ func sampleWaveformPoints(groups []deck.SessionMessageGroup, maxBars, cursor int
 	return points
 }
 
-func (m deckModel) buildWaveform(groups []deck.SessionMessageGroup) []string {
+func (m deckModel) buildWaveform(groups []deck.SessionMessageGroup, selected *deck.SessionMessageGroup) []string {
 	// Calculate available width for waveform
 	availWidth := m.width
 	if availWidth <= 0 {
@@ -4178,7 +4191,7 @@ func (m deckModel) buildWaveform(groups []deck.SessionMessageGroup) []string {
 	maxBarHeight := 5
 	gap := " "
 	barWidth := max(1, (availWidth-axisWidth)/2)
-	points := sampleWaveformPoints(groups, barWidth, m.messageCursor)
+	points := sampleWaveformPoints(groups, barWidth, selected)
 
 	// Find max tokens for scaling
 	var maxTokens int64
@@ -4269,7 +4282,7 @@ func (m deckModel) buildWaveform(groups []deck.SessionMessageGroup) []string {
 		label := ""
 		switch i {
 		case 0:
-			label = "tokens"
+			label = labelTokens
 		case 1:
 			label = formatTokens(maxTokens)
 		case maxBarHeight / 2:
@@ -4320,7 +4333,7 @@ func (m deckModel) renderConversationTable(width, height int) []string {
 	}
 
 	if m.useGroupedConversations() {
-		groups := m.detail.GroupedMessages
+		groups := m.sortedGroupedMessages()
 		if len(groups) == 0 {
 			lines = append(lines, deckMutedStyle.Render("no messages"))
 			return padLines(lines, width, height)
@@ -4511,7 +4524,11 @@ func (m deckModel) renderMessageDetailPane(width, height int) []string {
 	}
 
 	if m.useGroupedConversations() {
-		group := m.detail.GroupedMessages[m.messageCursor]
+		groups := m.sortedGroupedMessages()
+		if len(groups) == 0 {
+			return padLines(lines, width, height)
+		}
+		group := groups[clamp(m.messageCursor, len(groups)-1)]
 		contentLines := []string{}
 
 		roleLabel := "User"
@@ -4836,17 +4853,86 @@ func (m deckModel) resetSortedCache() {
 	m.sortedCache.count = 0
 }
 
-func (m deckModel) useGroupedConversations() bool {
-	if m.detail == nil || len(m.detail.GroupedMessages) == 0 {
-		return false
+func (m deckModel) sortedGroupedMessages() []deck.SessionMessageGroup {
+	if m.detail == nil {
+		return nil
 	}
+	groups := m.timelineGroups()
+	if len(groups) == 0 {
+		return nil
+	}
+
 	sortKey := messageSortOrder[m.messageSort%len(messageSortOrder)]
-	return sortKey == "time"
+	cacheKey := fmt.Sprintf("%s:%s", sortKey, m.detail.Summary.ID)
+	cache := m.sortedGroupCache
+	if cache != nil &&
+		cache.key == cacheKey &&
+		cache.id == m.detail.Summary.ID &&
+		cache.count == len(groups) &&
+		len(cache.groups) > 0 {
+		return cache.groups
+	}
+
+	if sortKey == "time" {
+		if cache != nil {
+			cache.groups = groups
+			cache.key = cacheKey
+			cache.id = m.detail.Summary.ID
+			cache.count = len(groups)
+		}
+		return groups
+	}
+
+	sorted := make([]deck.SessionMessageGroup, len(groups))
+	copy(sorted, groups)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		switch sortKey {
+		case "tokens":
+			if sorted[i].TotalTokens == sorted[j].TotalTokens {
+				return sorted[i].StartTime.Before(sorted[j].StartTime)
+			}
+			return sorted[i].TotalTokens > sorted[j].TotalTokens
+		case sortKeyCost:
+			if sorted[i].TotalCost == sorted[j].TotalCost {
+				return sorted[i].StartTime.Before(sorted[j].StartTime)
+			}
+			return sorted[i].TotalCost > sorted[j].TotalCost
+		case "delta":
+			if sorted[i].Delta == sorted[j].Delta {
+				return sorted[i].StartTime.Before(sorted[j].StartTime)
+			}
+			return sorted[i].Delta > sorted[j].Delta
+		default:
+			return sorted[i].StartTime.Before(sorted[j].StartTime)
+		}
+	})
+
+	if cache != nil {
+		cache.groups = sorted
+		cache.key = cacheKey
+		cache.id = m.detail.Summary.ID
+		cache.count = len(groups)
+	}
+	return sorted
+}
+
+func (m deckModel) resetSortedGroupCache() {
+	if m.sortedGroupCache == nil {
+		return
+	}
+	m.sortedGroupCache.groups = nil
+	m.sortedGroupCache.key = ""
+	m.sortedGroupCache.id = ""
+	m.sortedGroupCache.count = 0
+}
+
+func (m deckModel) useGroupedConversations() bool {
+	return m.detail != nil && len(m.detail.GroupedMessages) > 0
 }
 
 func (m deckModel) currentConversationLength() int {
 	if m.useGroupedConversations() {
-		return len(m.detail.GroupedMessages)
+		return len(m.sortedGroupedMessages())
 	}
 	return len(m.sortedMessages())
 }
@@ -4859,6 +4945,37 @@ func (m deckModel) timelineGroups() []deck.SessionMessageGroup {
 		return m.detail.GroupedMessages
 	}
 	return messageGroupsFromMessages(m.detail.Messages)
+}
+
+func (m deckModel) selectedGroup() *deck.SessionMessageGroup {
+	if !m.useGroupedConversations() {
+		return nil
+	}
+	groups := m.sortedGroupedMessages()
+	if len(groups) == 0 {
+		return nil
+	}
+	index := clamp(m.messageCursor, len(groups)-1)
+	return &groups[index]
+}
+
+func isSelectedGroup(selected *deck.SessionMessageGroup, candidate *deck.SessionMessageGroup) bool {
+	if selected == nil || candidate == nil {
+		return false
+	}
+	return selected.StartIndex == candidate.StartIndex && selected.EndIndex == candidate.EndIndex
+}
+
+func findSelectedGroupIndex(groups []deck.SessionMessageGroup, selected *deck.SessionMessageGroup) int {
+	if selected == nil {
+		return 0
+	}
+	for i := range groups {
+		if isSelectedGroup(selected, &groups[i]) {
+			return i
+		}
+	}
+	return 0
 }
 
 func messageGroupsFromMessages(messages []deck.SessionMessage) []deck.SessionMessageGroup {
