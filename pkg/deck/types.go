@@ -14,6 +14,7 @@ type SessionSummary struct {
 	Label        string        `json:"label"`
 	Model        string        `json:"model"`
 	Project      string        `json:"project"`
+	AgentName    string        `json:"agent_name,omitempty"`
 	Status       string        `json:"status"`
 	StartTime    time.Time     `json:"start_time"`
 	EndTime      time.Time     `json:"end_time"`
@@ -25,6 +26,7 @@ type SessionSummary struct {
 	TotalCost    float64       `json:"total_cost"`
 	ToolCalls    int           `json:"tool_calls"`
 	MessageCount int           `json:"message_count"`
+	SessionCount int           `json:"session_count,omitempty"`
 }
 
 type SessionMessage struct {
@@ -47,6 +49,7 @@ type SessionDetail struct {
 	Summary       SessionSummary   `json:"summary"`
 	Messages      []SessionMessage `json:"messages"`
 	ToolFrequency map[string]int   `json:"tool_frequency"`
+	SubSessions   []SessionSummary `json:"sub_sessions,omitempty"`
 }
 
 type ModelCost struct {

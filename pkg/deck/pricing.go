@@ -29,6 +29,7 @@ func DefaultPricing() PricingTable {
 		"claude-opus-4.5":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25},
 		"claude-opus-4.1":   {Input: 15.00, Output: 75.00, CacheRead: 1.50, CacheWrite: 18.75},
 		"claude-opus-4":     {Input: 15.00, Output: 75.00, CacheRead: 1.50, CacheWrite: 18.75},
+		"claude-sonnet-4.6": {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite: 3.75},
 		"claude-sonnet-4.5": {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite: 3.75},
 		"claude-sonnet-4":   {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite: 3.75},
 		"claude-sonnet-3.7": {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite: 3.75},

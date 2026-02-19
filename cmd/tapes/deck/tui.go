@@ -1331,6 +1331,10 @@ func (m deckModel) renderCostByModelChart(stats deckOverviewStats, width int) []
 	rightDash := max(0, width-titleLen-leftDash)
 	topBorder := deckDimStyle.Render("┌"+strings.Repeat("─", leftDash)) + deckMutedStyle.Render(title) + deckDimStyle.Render(strings.Repeat("─", rightDash)+"┐")
 	costs := sortedModelCosts(stats.CostByModel)
+	maxModels := 5
+	if len(costs) > maxModels {
+		costs = costs[:maxModels]
+	}
 	lines := make([]string, 0, len(costs)+2)
 	lines = append(lines, topBorder)
 
@@ -1778,12 +1782,20 @@ func (m deckModel) viewSession() string {
 	}
 	breadcrumb += deckMutedStyle.Render(" > ") + deckTitleStyle.Render(m.detail.Summary.Label)
 	headerRight := deckMutedStyle.Render(fmt.Sprintf("%s · %s %s", m.detail.Summary.ID, statusDot, m.detail.Summary.Status))
+	if len(m.detail.SubSessions) > 1 {
+		headerRight = deckMutedStyle.Render(fmt.Sprintf("%d sessions · %s %s", len(m.detail.SubSessions), statusDot, m.detail.Summary.Status))
+	}
 	header := renderHeaderLine(m.width, breadcrumb, headerRight)
 	lines := make([]string, 0, 30)
 	lines = append(lines, header, renderRule(m.width), "")
 
 	// 1. METRICS SECTION
 	lines = append(lines, m.renderSessionMetrics()...)
+	groupedLines := m.renderGroupedSessions()
+	if len(groupedLines) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, groupedLines...)
+	}
 	lines = append(lines, "", renderRule(m.width), "")
 
 	// 2. CONVERSATION TIMELINE (waveform visualization)
@@ -1999,6 +2011,32 @@ func (m deckModel) renderSessionMetrics() []string {
 			}
 		}
 		lines = append(lines, strings.Join(row, ""))
+	}
+
+	return lines
+}
+
+func (m deckModel) renderGroupedSessions() []string {
+	if m.detail == nil || len(m.detail.SubSessions) <= 1 {
+		return nil
+	}
+
+	subsessions := m.detail.SubSessions
+	lines := []string{deckSectionStyle.Render(fmt.Sprintf("grouped sessions (%d)", len(subsessions)))}
+
+	maxVisible := min(len(subsessions), 8)
+	for i := range maxVisible {
+		session := subsessions[i]
+		statusCircle, statusText := formatStatusWithCircle(session.Status)
+		timestamp := session.StartTime.Format("Jan 02 15:04")
+		duration := formatDurationMinutes(session.Duration)
+		tokens := formatTokens(session.InputTokens + session.OutputTokens)
+		line := fmt.Sprintf("  %02d %s %s · %s · %s tok · %s", i+1, statusCircle, timestamp, duration, tokens, statusText)
+		lines = append(lines, line)
+	}
+
+	if len(subsessions) > maxVisible {
+		lines = append(lines, deckMutedStyle.Render(fmt.Sprintf("  and %d more", len(subsessions)-maxVisible)))
 	}
 
 	return lines
@@ -3828,7 +3866,7 @@ func formatStatusWithCircle(status string) (string, string) {
 }
 
 func formatCost(value float64) string {
-	return fmt.Sprintf("$%.3f", value)
+	return fmt.Sprintf("$%.2f", value)
 }
 
 func formatTokens(value int64) string {
