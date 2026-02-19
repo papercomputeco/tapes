@@ -3,8 +3,8 @@ package skillcmder
 import (
 	"fmt"
 	"strings"
-	"text/tabwriter"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
 	"github.com/papercomputeco/tapes/pkg/skill"
@@ -31,6 +31,8 @@ func newListCmd() *cobra.Command {
 }
 
 func (c *listCommander) run(cmd *cobra.Command) error {
+	w := cmd.OutOrStdout()
+
 	skillsDir, err := skill.SkillsDir()
 	if err != nil {
 		return err
@@ -42,7 +44,7 @@ func (c *listCommander) run(cmd *cobra.Command) error {
 	}
 
 	if len(skills) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "No skills found. Generate one with: tapes skill generate --from <session-id> --name <name>")
+		fmt.Fprintln(w, "No skills found. Generate one with: tapes skill generate <hash> --name <name>")
 		return nil
 	}
 
@@ -58,19 +60,35 @@ func (c *listCommander) run(cmd *cobra.Command) error {
 	}
 
 	if len(skills) == 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "No skills found with type %q\n", c.skillType)
+		fmt.Fprintf(w, "No skills found with type %q\n", c.skillType)
 		return nil
 	}
 
-	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tTYPE\tVERSION\tDESCRIPTION")
+	nameStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Bold(true)
+	typeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	tagStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+
+	fmt.Fprintf(w, "\nSkills (%d)\n\n", len(skills))
+
 	for _, sk := range skills {
 		desc := sk.Description
-		if len(desc) > 60 {
-			desc = desc[:57] + "..."
+		if len(desc) > 80 {
+			desc = desc[:77] + "..."
 		}
 		desc = strings.ReplaceAll(desc, "\n", " ")
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", sk.Name, sk.Type, sk.Version, desc)
+
+		fmt.Fprintf(w, "  %s  %s  %s\n",
+			nameStyle.Render(sk.Name),
+			typeStyle.Render(sk.Type),
+			typeStyle.Render("v"+sk.Version),
+		)
+		fmt.Fprintf(w, "  %s\n", descStyle.Render(desc))
+		if len(sk.Tags) > 0 {
+			fmt.Fprintf(w, "  %s\n", tagStyle.Render("["+strings.Join(sk.Tags, ", ")+"]"))
+		}
+		fmt.Fprintln(w)
 	}
-	return w.Flush()
+
+	return nil
 }

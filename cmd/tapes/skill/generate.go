@@ -97,6 +97,8 @@ Examples:
 }
 
 func (c *generateCommander) run(cmd *cobra.Command, args []string) error {
+	w := cmd.OutOrStdout()
+
 	hashes, err := c.resolveHashes(cmd, args)
 	if err != nil {
 		return err
@@ -111,56 +113,81 @@ func (c *generateCommander) run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	dbPath, err := sqlitepath.ResolveSQLitePath(c.sqlitePath)
-	if err != nil {
-		return err
-	}
+	fmt.Fprintf(w, "\nGenerating skill %q from %d conversation(s)\n\n", c.name, len(hashes))
 
-	query, closeFn, err := deck.NewQuery(cmd.Context(), dbPath, nil)
-	if err != nil {
-		return fmt.Errorf("open database: %w", err)
+	// Step 1: Open database
+	var query *deck.Query
+	var closeFn func() error
+	if err := step(w, "Opening database", func() error {
+		dbPath, dbErr := sqlitepath.ResolveSQLitePath(c.sqlitePath)
+		if dbErr != nil {
+			return dbErr
+		}
+		query, closeFn, dbErr = deck.NewQuery(cmd.Context(), dbPath, nil)
+		return dbErr
+	}); err != nil {
+		return err
 	}
 	defer func() { _ = closeFn() }()
 
-	credMgr, _ := credentials.NewManager("")
-
-	llmCaller, err := deck.NewLLMCaller(deck.LLMCallerConfig{
-		Provider: c.provider,
-		Model:    c.model,
-		APIKey:   c.apiKey,
-		CredMgr:  credMgr,
-	})
-	if err != nil {
-		return fmt.Errorf("create LLM caller: %w", err)
-	}
-
-	gen := skill.NewGenerator(query, llmCaller)
-
-	fmt.Fprintf(cmd.OutOrStdout(), "Generating skill %q from %d conversation(s)...\n", c.name, len(hashes))
-
-	sk, err := gen.Generate(cmd.Context(), hashes, c.name, c.skillType, opts)
-	if err != nil {
-		return fmt.Errorf("generate skill: %w", err)
-	}
-
-	if c.preview {
-		fmt.Fprintln(cmd.OutOrStdout(), "--- SKILL.md preview ---")
-		fmt.Fprintln(cmd.OutOrStdout(), renderPreview(sk))
-		return nil
-	}
-
-	skillsDir, err := skill.SkillsDir()
-	if err != nil {
+	// Step 2: Configure LLM
+	var llmCaller deck.LLMCallFunc
+	if err := step(w, "Configuring LLM provider", func() error {
+		credMgr, _ := credentials.NewManager("")
+		var llmErr error
+		llmCaller, llmErr = deck.NewLLMCaller(deck.LLMCallerConfig{
+			Provider: c.provider,
+			Model:    c.model,
+			APIKey:   c.apiKey,
+			CredMgr:  credMgr,
+		})
+		return llmErr
+	}); err != nil {
 		return err
 	}
 
-	path, err := skill.Write(sk, skillsDir)
-	if err != nil {
-		return fmt.Errorf("write skill: %w", err)
+	// Step 3: Extract skill via LLM
+	gen := skill.NewGenerator(query, llmCaller)
+	var sk *skill.Skill
+	if err := step(w, "Extracting skill from session transcript(s)", func() error {
+		var genErr error
+		sk, genErr = gen.Generate(cmd.Context(), hashes, c.name, c.skillType, opts)
+		return genErr
+	}); err != nil {
+		return err
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Skill written to %s\n", path)
-	fmt.Fprintf(cmd.OutOrStdout(), "Run 'tapes skill sync %s' to install it\n", c.name)
+	// Render the generated SKILL.md through glamour
+	fmt.Fprintln(w)
+	md := renderPreview(sk)
+	rendered, err := renderMarkdown(md)
+	if err != nil {
+		// Fall back to plain text if glamour fails
+		fmt.Fprintln(w, md)
+	} else {
+		fmt.Fprint(w, rendered)
+	}
+
+	if c.preview {
+		return nil
+	}
+
+	// Step 4: Write to disk
+	var path string
+	if err := step(w, "Writing SKILL.md", func() error {
+		skillsDir, dirErr := skill.SkillsDir()
+		if dirErr != nil {
+			return dirErr
+		}
+		var writeErr error
+		path, writeErr = skill.Write(sk, skillsDir)
+		return writeErr
+	}); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(w, "\n  Saved to %s\n", path)
+	fmt.Fprintf(w, "  Run 'tapes skill sync %s' to install for Claude Code\n\n", c.name)
 	return nil
 }
 

@@ -46,27 +46,48 @@ Examples:
 }
 
 func (c *syncCommander) run(cmd *cobra.Command, name string) error {
-	sourceDir, err := skill.SkillsDir()
-	if err != nil {
+	w := cmd.OutOrStdout()
+
+	var sourceDir string
+	var targetDir string
+	var label string
+
+	fmt.Fprintf(w, "\nSyncing skill %q\n\n", name)
+
+	// Step 1: Resolve source
+	if err := step(w, "Resolving source skill", func() error {
+		var err error
+		sourceDir, err = skill.SkillsDir()
+		return err
+	}); err != nil {
 		return err
 	}
 
-	targetDir, label, err := c.resolveTarget()
-	if err != nil {
+	// Step 2: Resolve target
+	if err := step(w, "Resolving target directory", func() error {
+		var err error
+		targetDir, label, err = c.resolveTarget()
+		return err
+	}); err != nil {
 		return err
 	}
 
 	if c.dryRun {
-		fmt.Fprintf(cmd.OutOrStdout(), "Would sync skill %q to %s (%s)\n", name, targetDir, label)
+		fmt.Fprintf(w, "\n  Would sync to %s (%s)\n\n", targetDir, label)
 		return nil
 	}
 
-	path, err := skill.Sync(name, sourceDir, targetDir)
-	if err != nil {
+	// Step 3: Copy skill
+	var path string
+	if err := step(w, "Copying skill to Claude Code", func() error {
+		var err error
+		path, err = skill.Sync(name, sourceDir, targetDir)
+		return err
+	}); err != nil {
 		return fmt.Errorf("sync skill: %w", err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Synced skill %q to %s (%s)\n", name, path, label)
+	fmt.Fprintf(w, "\n  Synced to %s (%s)\n\n", path, label)
 	return nil
 }
 
