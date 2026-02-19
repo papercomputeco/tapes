@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -69,7 +69,7 @@ func NewLLMCaller(cfg LLMCallerConfig) (LLMCallFunc, error) {
 
 	// If no key found and provider is not explicitly ollama, fall back to ollama
 	if apiKey == "" && provider != providerOllama {
-		log.Printf("facets: no API key found for %s, falling back to ollama", provider)
+		slog.Warn("facets: no API key found, falling back to ollama", "provider", provider)
 		provider = providerOllama
 	}
 

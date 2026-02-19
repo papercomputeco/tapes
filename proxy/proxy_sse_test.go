@@ -10,8 +10,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"go.uber.org/zap"
 
+	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
@@ -30,7 +30,7 @@ type openaiTestMsgEntry struct {
 // newOpenAITestProxy creates a Proxy pointed at the given upstream URL,
 // using an in-memory storage driver and the openai provider.
 func newOpenAITestProxy(upstreamURL string) (*Proxy, *inmemory.Driver) {
-	logger, _ := zap.NewDevelopment()
+	logger := tapeslogger.Nop()
 	driver := inmemory.NewDriver()
 
 	p, err := New(

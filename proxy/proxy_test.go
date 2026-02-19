@@ -11,9 +11,9 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
+	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	"github.com/papercomputeco/tapes/proxy/header"
 )
@@ -48,7 +48,7 @@ func boolPtr(b bool) *bool { return &b }
 // newTestProxy creates a Proxy pointed at the given upstream URL,
 // using an in-memory storage driver and the ollama provider.
 func newTestProxy(upstreamURL string) (*Proxy, *inmemory.Driver) {
-	logger, _ := zap.NewDevelopment()
+	logger := tapeslogger.Nop()
 	driver := inmemory.NewDriver()
 
 	p, err := New(
@@ -699,7 +699,7 @@ var _ = Describe("reconstructStreamedResponse", func() {
 
 var _ = Describe("New", func() {
 	It("returns an error for unrecognized provider type", func() {
-		logger, _ := zap.NewDevelopment()
+		logger := tapeslogger.Nop()
 		driver := inmemory.NewDriver()
 
 		_, err := New(Config{
@@ -712,7 +712,7 @@ var _ = Describe("New", func() {
 	})
 
 	It("creates a proxy with a valid provider type", func() {
-		logger, _ := zap.NewDevelopment()
+		logger := tapeslogger.Nop()
 		driver := inmemory.NewDriver()
 
 		p, err := New(Config{

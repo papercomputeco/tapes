@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -19,7 +20,6 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/api"
 	"github.com/papercomputeco/tapes/pkg/config"
@@ -297,10 +297,11 @@ func (c *startCommander) runForeground(ctx context.Context) error {
 	}
 	defer logFile.Close()
 
-	logger := logger.NewLoggerWithWriters(c.debug, os.Stdout, logFile)
-	defer func() { _ = logger.Sync() }()
+	prettyLogger := logger.New(logger.WithDebug(c.debug), logger.WithPretty(true), logger.WithWriter(os.Stdout))
+	jsonLogger := logger.New(logger.WithDebug(c.debug), logger.WithJSON(true), logger.WithWriter(logFile))
+	log := logger.Multi(prettyLogger, jsonLogger)
 
-	return c.runServices(ctx, manager, logger, false)
+	return c.runServices(ctx, manager, log, false)
 }
 
 func (c *startCommander) runDaemon(ctx context.Context) error {
@@ -315,13 +316,12 @@ func (c *startCommander) runDaemon(ctx context.Context) error {
 	}
 	defer logFile.Close()
 
-	logger := logger.NewLoggerWithWriters(c.debug, logFile)
-	defer func() { _ = logger.Sync() }()
+	log := logger.New(logger.WithDebug(c.debug), logger.WithJSON(true), logger.WithWriter(logFile))
 
-	return c.runServices(ctx, manager, logger, true)
+	return c.runServices(ctx, manager, log, true)
 }
 
-func (c *startCommander) runServices(ctx context.Context, manager *start.Manager, zapLogger *zap.Logger, shutdownWhenIdle bool) error {
+func (c *startCommander) runServices(ctx context.Context, manager *start.Manager, log *slog.Logger, shutdownWhenIdle bool) error {
 	startCfg, err := c.loadConfig()
 	if err != nil {
 		return err
@@ -365,18 +365,18 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 		return err
 	}
 
-	driver, err := c.newStorageDriver(ctx, startCfg, zapLogger)
+	driver, err := c.newStorageDriver(ctx, startCfg, log)
 	if err != nil {
 		return err
 	}
 	defer driver.Close()
 
-	dagLoader, err := c.newDagLoader(ctx, startCfg, zapLogger, driver)
+	dagLoader, err := c.newDagLoader(ctx, startCfg, log, driver)
 	if err != nil {
 		return err
 	}
 
-	vectorDriver, embedder, err := c.newVectorAndEmbedder(startCfg, zapLogger)
+	vectorDriver, embedder, err := c.newVectorAndEmbedder(startCfg, log)
 	if err != nil {
 		return err
 	}
@@ -409,7 +409,7 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 	}
 
 	//nolint:contextcheck // Proxy lifecycle manages its own background context.
-	proxyServer, err := proxy.New(proxyConfig, driver, zapLogger)
+	proxyServer, err := proxy.New(proxyConfig, driver, log)
 	if err != nil {
 		return fmt.Errorf("creating proxy: %w", err)
 	}
@@ -420,7 +420,7 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 		VectorDriver: vectorDriver,
 		Embedder:     embedder,
 	}
-	apiServer, err := api.NewServer(apiConfig, driver, dagLoader, zapLogger)
+	apiServer, err := api.NewServer(apiConfig, driver, dagLoader, log)
 	if err != nil {
 		return fmt.Errorf("creating api server: %w", err)
 	}
@@ -441,7 +441,7 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 	}()
 
 	if shutdownWhenIdle {
-		go c.monitorIdle(manager, zapLogger, errChan)
+		go c.monitorIdle(manager, log, errChan)
 	}
 
 	sigChan := make(chan os.Signal, 1)
@@ -457,21 +457,21 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 	}
 }
 
-func (c *startCommander) monitorIdle(manager *start.Manager, zapLogger *zap.Logger, errChan chan<- error) {
+func (c *startCommander) monitorIdle(manager *start.Manager, log *slog.Logger, errChan chan<- error) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
 		lock, err := manager.Lock()
 		if err != nil {
-			zapLogger.Warn("failed to lock state", zap.Error(err))
+			log.Warn("failed to lock state", "error", err)
 			continue
 		}
 
 		state, err := manager.LoadState()
 		if err != nil {
 			_ = lock.Release()
-			zapLogger.Warn("failed to load state", zap.Error(err))
+			log.Warn("failed to load state", "error", err)
 			continue
 		}
 
@@ -689,21 +689,21 @@ func (c *startCommander) loadConfig() (*startConfig, error) {
 	}, nil
 }
 
-func (c *startCommander) newStorageDriver(ctx context.Context, cfg *startConfig, zapLogger *zap.Logger) (storage.Driver, error) {
+func (c *startCommander) newStorageDriver(ctx context.Context, cfg *startConfig, log *slog.Logger) (storage.Driver, error) {
 	if cfg.SQLitePath != "" {
 		driver, err := sqlite.NewDriver(ctx, cfg.SQLitePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
 		}
-		zapLogger.Info("using SQLite storage", zap.String("path", cfg.SQLitePath))
+		log.Info("using SQLite storage", "path", cfg.SQLitePath)
 		return driver, nil
 	}
 
-	zapLogger.Info("using in-memory storage")
+	log.Info("using in-memory storage")
 	return inmemory.NewDriver(), nil
 }
 
-func (c *startCommander) newDagLoader(ctx context.Context, cfg *startConfig, zapLogger *zap.Logger, driver storage.Driver) (merkle.DagLoader, error) {
+func (c *startCommander) newDagLoader(ctx context.Context, cfg *startConfig, log *slog.Logger, driver storage.Driver) (merkle.DagLoader, error) {
 	if driver != nil {
 		if loader, ok := driver.(merkle.DagLoader); ok {
 			return loader, nil
@@ -715,20 +715,20 @@ func (c *startCommander) newDagLoader(ctx context.Context, cfg *startConfig, zap
 		if err != nil {
 			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
 		}
-		zapLogger.Info("using SQLite storage", zap.String("path", cfg.SQLitePath))
+		log.Info("using SQLite storage", "path", cfg.SQLitePath)
 		return loader, nil
 	}
 
-	zapLogger.Info("using in-memory storage")
+	log.Info("using in-memory storage")
 	return inmemory.NewDriver(), nil
 }
 
-func (c *startCommander) newVectorAndEmbedder(cfg *startConfig, zapLogger *zap.Logger) (vector.Driver, embeddings.Embedder, error) {
+func (c *startCommander) newVectorAndEmbedder(cfg *startConfig, log *slog.Logger) (vector.Driver, embeddings.Embedder, error) {
 	vectorDriver, err := vectorutils.NewVectorDriver(&vectorutils.NewVectorDriverOpts{
 		ProviderType: cfg.VectorStoreProvider,
 		Target:       cfg.VectorStoreTarget,
 		Dimensions:   cfg.EmbeddingDimensions,
-		Logger:       zapLogger,
+		Logger:       log,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating vector driver: %w", err)

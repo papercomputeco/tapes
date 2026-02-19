@@ -4,9 +4,9 @@ package apicmder
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/api"
 	"github.com/papercomputeco/tapes/pkg/config"
@@ -21,7 +21,7 @@ type apiCommander struct {
 	listen     string
 	debug      bool
 	sqlitePath string
-	logger     *zap.Logger
+	logger     *slog.Logger
 }
 
 const apiLongDesc string = `Run the Tapes API server for inspecting, managing, and query agent sessions.`
@@ -74,8 +74,7 @@ func NewAPICmd() *cobra.Command {
 }
 
 func (c *apiCommander) run() error {
-	c.logger = logger.NewLogger(c.debug)
-	defer func() { _ = c.logger.Sync() }()
+	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
 
 	driver, err := c.newStorageDriver()
 	if err != nil {
@@ -99,7 +98,7 @@ func (c *apiCommander) run() error {
 	}
 
 	c.logger.Info("starting API server",
-		zap.String("listen", c.listen),
+		"listen", c.listen,
 	)
 
 	return server.Run()
@@ -111,7 +110,7 @@ func (c *apiCommander) newStorageDriver() (storage.Driver, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
 		}
-		c.logger.Info("using SQLite storage", zap.String("path", c.sqlitePath))
+		c.logger.Info("using SQLite storage", "path", c.sqlitePath)
 		return driver, nil
 	}
 
@@ -125,7 +124,7 @@ func (c *apiCommander) newDagLoader() (merkle.DagLoader, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
 		}
-		c.logger.Info("using SQLite storage", zap.String("path", c.sqlitePath))
+		c.logger.Info("using SQLite storage", "path", c.sqlitePath)
 		return driver, nil
 	}
 

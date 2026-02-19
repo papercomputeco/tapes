@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -97,7 +97,7 @@ func (f *FacetExtractor) Extract(ctx context.Context, sessionID string) (*Sessio
 		prompt := basePrompt
 		if attempt > 0 {
 			prompt += "\n\nReturn ONLY valid JSON, no markdown."
-			log.Printf("facets: retrying extraction for session %s (attempt %d/%d)", sessionID, attempt+1, maxExtractRetries)
+			slog.Info("facets: retrying extraction", "session", sessionID, "attempt", attempt+1, "max", maxExtractRetries)
 		}
 
 		response, err := f.llmCall(ctx, prompt)

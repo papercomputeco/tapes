@@ -7,12 +7,12 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 
 	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
 	_ "github.com/mattn/go-sqlite3" // load up the sqlite3 CGO libs
-	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/vector"
 )
@@ -20,7 +20,7 @@ import (
 // Driver implements vector.Driver using SQLite with sqlite-vec.
 type Driver struct {
 	db     *sql.DB
-	logger *zap.Logger
+	logger *slog.Logger
 }
 
 // Config holds configuration for the SQLite vec driver.
@@ -35,7 +35,7 @@ type Config struct {
 }
 
 // NewDriver creates a new SQLite vector driver backed by sqlite-vec.
-func NewDriver(c Config, logger *zap.Logger) (*Driver, error) {
+func NewDriver(c Config, log *slog.Logger) (*Driver, error) {
 	// enable connection to have sqlite-vec extension
 	sqlite_vec.Auto()
 
@@ -85,15 +85,15 @@ func NewDriver(c Config, logger *zap.Logger) (*Driver, error) {
 		return nil, fmt.Errorf("creating vec0 table: %w", err)
 	}
 
-	logger.Info("sqlite-vec vector driver initialized",
-		zap.String("db_path", c.DBPath),
-		zap.Uint("dimensions", dimensions),
-		zap.String("vec_version", vecVersion),
+	log.Info("sqlite-vec vector driver initialized",
+		"db_path", c.DBPath,
+		"dimensions", dimensions,
+		"vec_version", vecVersion,
 	)
 
 	return &Driver{
 		db:     db,
-		logger: logger,
+		logger: log,
 	}, nil
 }
 
@@ -174,7 +174,7 @@ func (d *Driver) Add(ctx context.Context, docs []vector.Document) error {
 	}
 
 	d.logger.Debug("added documents to sqlite-vec",
-		zap.Int("count", len(docs)),
+		"count", len(docs),
 	)
 
 	return nil
@@ -228,7 +228,7 @@ func (d *Driver) Query(ctx context.Context, embedding []float32, topK int) ([]ve
 	}
 
 	d.logger.Debug("queried sqlite-vec",
-		zap.Int("results", len(results)),
+		"results", len(results),
 	)
 
 	return results, nil
@@ -373,7 +373,7 @@ func (d *Driver) Delete(ctx context.Context, ids []string) error {
 	}
 
 	d.logger.Debug("deleted documents from sqlite-vec",
-		zap.Int("count", len(ids)),
+		"count", len(ids),
 	)
 
 	return nil

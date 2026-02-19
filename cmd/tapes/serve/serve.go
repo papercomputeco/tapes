@@ -4,13 +4,13 @@ package servecmder
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
 
 	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/api"
 	apicmder "github.com/papercomputeco/tapes/cmd/tapes/serve/api"
@@ -46,7 +46,7 @@ type ServeCommander struct {
 	embeddingModel      string
 	embeddingDimensions uint
 
-	logger *zap.Logger
+	logger *slog.Logger
 }
 
 const serveLongDesc string = `Run Tapes services.
@@ -168,8 +168,7 @@ func NewServeCmd() *cobra.Command {
 }
 
 func (c *ServeCommander) run() error {
-	c.logger = logger.NewLogger(c.debug)
-	defer func() { _ = c.logger.Sync() }()
+	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
 
 	// Create shared driver
 	driver, err := c.newStorageDriver()
@@ -213,11 +212,11 @@ func (c *ServeCommander) run() error {
 	defer proxyConfig.Embedder.Close()
 
 	c.logger.Info("vector storage enabled",
-		zap.String("vector_store_provider", c.vectorStoreProvider),
-		zap.String("vector_store_target", c.vectorStoreTarget),
-		zap.String("embedding_provider", c.embeddingProvider),
-		zap.String("embedding_target", c.embeddingTarget),
-		zap.String("embedding_model", c.embeddingModel),
+		"vector_store_provider", c.vectorStoreProvider,
+		"vector_store_target", c.vectorStoreTarget,
+		"embedding_provider", c.embeddingProvider,
+		"embedding_target", c.embeddingTarget,
+		"embedding_model", c.embeddingModel,
 	)
 
 	// Create proxy
@@ -228,9 +227,9 @@ func (c *ServeCommander) run() error {
 	defer p.Close()
 
 	c.logger.Info("starting proxy",
-		zap.String("proxy_addr", c.proxyListen),
-		zap.String("upstream", c.upstream),
-		zap.String("provider", c.providerType),
+		"proxy_addr", c.proxyListen,
+		"upstream", c.upstream,
+		"provider", c.providerType,
 	)
 
 	// Create API server
@@ -245,7 +244,7 @@ func (c *ServeCommander) run() error {
 	}
 
 	c.logger.Info("starting api server",
-		zap.String("api_addr", c.apiListen),
+		"api_addr", c.apiListen,
 	)
 
 	// Channel to capture errors from goroutines
@@ -273,7 +272,7 @@ func (c *ServeCommander) run() error {
 	case err := <-errChan:
 		return err
 	case sig := <-sigChan:
-		c.logger.Info("received signal, shutting down", zap.String("signal", sig.String()))
+		c.logger.Info("received signal, shutting down", "signal", sig.String())
 		return nil
 	}
 }
@@ -284,7 +283,7 @@ func (c *ServeCommander) newStorageDriver() (storage.Driver, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
 		}
-		c.logger.Info("using SQLite storage", zap.String("path", c.sqlitePath))
+		c.logger.Info("using SQLite storage", "path", c.sqlitePath)
 		return driver, nil
 	}
 
@@ -298,7 +297,7 @@ func (c *ServeCommander) newDagLoader() (merkle.DagLoader, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
 		}
-		c.logger.Info("using SQLite storage", zap.String("path", c.sqlitePath))
+		c.logger.Info("using SQLite storage", "path", c.sqlitePath)
 		return driver, nil
 	}
 

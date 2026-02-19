@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/gofiber/fiber/v2"
-	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 )
@@ -93,8 +92,8 @@ func (s *Server) handleListHistories(c *fiber.Ctx) error {
 		history, err := s.buildHistory(ctx, leaf.Hash)
 		if err != nil {
 			s.logger.Warn("failed to build history for leaf",
-				zap.String("hash", leaf.Hash),
-				zap.Error(err),
+				"hash", leaf.Hash,
+				"error", err,
 			)
 			continue
 		}

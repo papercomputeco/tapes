@@ -9,10 +9,9 @@ package worker
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math"
 	"sync"
-
-	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/embeddings"
 	"github.com/papercomputeco/tapes/pkg/llm"
@@ -55,8 +54,8 @@ type Config struct {
 	// Project is the git repository or project name to tag on stored nodes.
 	Project string
 
-	// Logger is the provided zap logger
-	Logger *zap.Logger
+	// Logger is the provided logger
+	Logger *slog.Logger
 }
 
 // Pool processes storage jobs asynchronously via a worker pool.
@@ -64,7 +63,7 @@ type Pool struct {
 	config *Config
 	queue  chan Job
 	wg     sync.WaitGroup
-	logger *zap.Logger
+	logger *slog.Logger
 }
 
 // NewPool creates a new Storer and starts its worker goroutines.
@@ -101,14 +100,14 @@ func (p *Pool) Enqueue(job Job) bool {
 	select {
 	case p.queue <- job:
 		p.logger.Debug("job queued",
-			zap.String("provider", job.Provider),
-			zap.String("model", job.Req.Model),
+			"provider", job.Provider,
+			"model", job.Req.Model,
 		)
 		return true
 	default:
 		p.logger.Error("job not queued, queue full, job dropped",
-			zap.String("provider", job.Provider),
-			zap.String("model", job.Req.Model),
+			"provider", job.Provider,
+			"model", job.Req.Model,
 		)
 		return false
 	}
@@ -124,13 +123,13 @@ func (p *Pool) Close() {
 // worker is the inner worker thread that continuously pulls jobs off the jobs queue
 func (p *Pool) worker(id uint) {
 	defer p.wg.Done()
-	p.logger.Debug("worker started", zap.Uint("worker_id", id))
+	p.logger.Debug("worker started", "worker_id", id)
 
 	for job := range p.queue {
 		p.processJob(job)
 	}
 
-	p.logger.Debug("storage worker stopped", zap.Uint("worker_id", id))
+	p.logger.Debug("storage worker stopped", "worker_id", id)
 }
 
 // processJob processes a Job, storing the conversation turn and setting the
@@ -141,21 +140,21 @@ func (p *Pool) processJob(job Job) {
 	head, newNodes, err := p.storeConversationTurn(ctx, job)
 	if err != nil {
 		p.logger.Error("async DAG storage failed",
-			zap.String("provider", job.Provider),
-			zap.Error(err),
+			"provider", job.Provider,
+			"error", err,
 		)
 		return
 	}
 
 	p.logger.Info("conversation stored",
-		zap.String("head", head),
-		zap.String("provider", job.Provider),
+		"head", head,
+		"provider", job.Provider,
 	)
 
 	// If the vector store is configured, process newly inserted nodes
 	if p.config.VectorDriver != nil && p.config.Embedder != nil && len(newNodes) > 0 {
 		p.logger.Debug("storing embeddings for new nodes",
-			zap.Int("new_node_count", len(newNodes)),
+			"new_node_count", len(newNodes),
 		)
 		p.storeEmbeddings(ctx, newNodes)
 	}
@@ -186,10 +185,10 @@ func (p *Pool) storeConversationTurn(ctx context.Context, job Job) (string, []*m
 		}
 
 		p.logger.Debug("stored message in DAG",
-			zap.String("hash", node.Hash),
-			zap.String("role", msg.Role),
-			zap.String("content", msg.GetText()),
-			zap.Bool("is_new", isNew),
+			"hash", node.Hash,
+			"role", msg.Role,
+			"content", msg.GetText(),
+			"is_new", isNew,
 		)
 
 		if isNew {
@@ -223,9 +222,9 @@ func (p *Pool) storeConversationTurn(ctx context.Context, job Job) (string, []*m
 	}
 
 	p.logger.Debug("stored response in DAG",
-		zap.String("hash", responseNode.Hash),
-		zap.String("content_preview", job.Resp.Message.GetText()),
-		zap.Bool("is_new", isNew),
+		"hash", responseNode.Hash,
+		"content_preview", job.Resp.Message.GetText(),
+		"is_new", isNew,
 	)
 
 	if isNew {
@@ -243,7 +242,7 @@ func (p *Pool) storeEmbeddings(ctx context.Context, nodes []*merkle.Node) {
 		text := node.Bucket.ExtractText()
 		if text == "" {
 			p.logger.Debug("skipping embedding for node with no text content",
-				zap.String("hash", node.Hash),
+				"hash", node.Hash,
 			)
 			continue
 		}
@@ -251,8 +250,8 @@ func (p *Pool) storeEmbeddings(ctx context.Context, nodes []*merkle.Node) {
 		embedding, err := p.config.Embedder.Embed(ctx, text)
 		if err != nil {
 			p.logger.Warn("failed to generate embedding",
-				zap.String("hash", node.Hash),
-				zap.Error(err),
+				"hash", node.Hash,
+				"error", err,
 			)
 			continue
 		}
@@ -265,15 +264,15 @@ func (p *Pool) storeEmbeddings(ctx context.Context, nodes []*merkle.Node) {
 
 		if err := p.config.VectorDriver.Add(ctx, []vector.Document{doc}); err != nil {
 			p.logger.Warn("failed to store embedding",
-				zap.String("hash", node.Hash),
-				zap.Error(err),
+				"hash", node.Hash,
+				"error", err,
 			)
 			continue
 		}
 
 		p.logger.Debug("stored embedding",
-			zap.String("hash", node.Hash),
-			zap.Int("embedding_dim", len(embedding)),
+			"hash", node.Hash,
+			"embedding_dim", len(embedding),
 		)
 	}
 }

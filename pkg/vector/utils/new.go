@@ -3,8 +3,7 @@ package vectorutils
 import (
 	"errors"
 	"fmt"
-
-	"go.uber.org/zap"
+	"log/slog"
 
 	"github.com/papercomputeco/tapes/pkg/vector"
 	"github.com/papercomputeco/tapes/pkg/vector/chroma"
@@ -15,7 +14,7 @@ type NewVectorDriverOpts struct {
 	ProviderType string
 	Target       string
 	Dimensions   uint
-	Logger       *zap.Logger
+	Logger       *slog.Logger
 }
 
 func NewVectorDriver(o *NewVectorDriverOpts) (vector.Driver, error) {

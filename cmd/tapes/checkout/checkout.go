@@ -7,12 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/dotdir"
@@ -26,7 +26,7 @@ type checkoutCommander struct {
 	apiTarget string
 	debug     bool
 
-	logger *zap.Logger
+	logger *slog.Logger
 }
 
 // historyResponse mirrors the API's HistoryResponse type for JSON deserialization.
@@ -110,8 +110,7 @@ func NewCheckoutCmd() *cobra.Command {
 
 func (c *checkoutCommander) run() error {
 	dotdirManager := dotdir.NewManager()
-	c.logger = logger.NewLogger(c.debug)
-	defer func() { _ = c.logger.Sync() }()
+	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
 
 	// If no hash provided, clear checkout state
 	if c.hash == "" {
@@ -123,8 +122,8 @@ func (c *checkoutCommander) run() error {
 	}
 
 	c.logger.Debug("checking out conversation",
-		zap.String("hash", c.hash),
-		zap.String("api_target", c.apiTarget),
+		"hash", c.hash,
+		"api_target", c.apiTarget,
 	)
 
 	// Fetch the conversation history from the API

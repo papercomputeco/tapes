@@ -2,7 +2,7 @@ package deck
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 )
@@ -38,7 +38,7 @@ func (w *FacetWorker) Run(ctx context.Context) {
 	filters := Filters{Sort: "date", SortDir: "desc"}
 	overview, err := w.query.Overview(ctx, filters)
 	if err != nil {
-		log.Printf("facets worker: failed to load sessions: %v", err)
+		slog.Warn("facets worker: failed to load sessions", "error", err)
 		return
 	}
 
@@ -85,7 +85,7 @@ func (w *FacetWorker) Run(ctx context.Context) {
 
 			_, err := w.extractor.Extract(ctx, sid)
 			if err != nil {
-				log.Printf("facets worker: extraction failed for session %s: %v", sid, err)
+				slog.Warn("facets worker: extraction failed", "session", sid, "error", err)
 			}
 			w.done.Add(1)
 		}(sessionID)
