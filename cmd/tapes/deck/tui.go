@@ -146,6 +146,8 @@ type deckModel struct {
 	replayActive     bool
 	replayOnLoad     bool
 	insightsExpanded bool
+	metricsReady     bool
+	overviewStats    *deckOverviewStats
 	refreshEvery     time.Duration
 	spinner          spinner.Model
 	keys             deckKeyMap
@@ -437,17 +439,16 @@ type facetAnalyticsLoadedMsg struct {
 	err       error
 }
 
+type metricsReadyMsg struct {
+	stats deckOverviewStats
+}
+
 type refreshTickMsg time.Time
 
 // RunDeckTUI starts the deck TUI with the provided query implementation.
 // This function is exported to allow sandbox and testing environments to inject mock data.
 func RunDeckTUI(ctx context.Context, query deck.Querier, filters deck.Filters, refreshEvery time.Duration, facetWorker *deck.FacetWorker, facetLoadFn func(context.Context) (*deck.FacetAnalytics, error)) error {
-	overview, err := query.Overview(ctx, filters)
-	if err != nil {
-		return err
-	}
-
-	model := newDeckModel(query, filters, overview, refreshEvery)
+	model := newDeckModel(query, filters, nil, refreshEvery)
 	model.facetWorker = facetWorker
 	model.facetLoadFn = facetLoadFn
 
@@ -487,7 +488,7 @@ func RunDeckTUI(ctx context.Context, query deck.Querier, filters deck.Filters, r
 		bubbletea.WithContext(ctx),
 		bubbletea.WithAltScreen(),
 	)
-	_, err = program.Run()
+	_, err := program.Run()
 	return err
 }
 
@@ -557,10 +558,14 @@ func newDeckModel(query deck.Querier, filters deck.Filters, overview *deck.Overv
 }
 
 func (m deckModel) Init() bubbletea.Cmd {
-	if m.refreshEvery <= 0 {
-		return nil
+	cmds := []bubbletea.Cmd{
+		m.spinner.Tick,
+		loadOverviewCmd(m.query, m.filters),
 	}
-	return refreshTick(m.refreshEvery)
+	if m.refreshEvery > 0 {
+		cmds = append(cmds, refreshTick(m.refreshEvery))
+	}
+	return bubbletea.Batch(cmds...)
 }
 
 func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
@@ -580,6 +585,10 @@ func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
 		}
 
 		m.overview = msg.overview
+		m.metricsReady = false
+		m.overviewStats = nil
+
+		metricsCmd := computeMetricsCmd(m.overview.Sessions)
 
 		// Try to find the previously selected session in the filtered list
 		// so the cursor stays valid when search is active.
@@ -593,7 +602,7 @@ func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
 					_, _, m.scrollOffset = stableVisibleRange(
 						len(filtered), m.cursor, visibleRows, m.scrollOffset,
 					)
-					return m, nil
+					return m, metricsCmd
 				}
 			}
 		}
@@ -605,6 +614,10 @@ func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
 			m.cursor = clamp(m.cursor, len(filtered)-1)
 		}
 		m.scrollOffset = 0
+		return m, metricsCmd
+	case metricsReadyMsg:
+		m.metricsReady = true
+		m.overviewStats = &msg.stats
 		return m, nil
 	case sessionLoadedMsg:
 		if msg.err != nil {
@@ -682,9 +695,10 @@ func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
 		m.analyticsDay = msg.overview
 		return m, nil
 	case spinner.TickMsg:
+		overviewLoading := m.overview == nil || !m.metricsReady
 		analyticsLoading := m.analytics == nil || (m.analyticsDaySel != "" && m.analyticsDay == nil)
 		facetLoading := m.facetLoadFn != nil && m.facetAnalytics == nil
-		if m.view == viewAnalytics && (analyticsLoading || facetLoading) {
+		if (m.view == viewOverview && overviewLoading) || (m.view == viewAnalytics && (analyticsLoading || facetLoading)) {
 			var cmd bubbletea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
@@ -1065,35 +1079,49 @@ func countWrappedLines(s string, width int) int {
 // separator lines and footer).
 func (m deckModel) overviewChrome() (above string, footer string) {
 	allSessions := m.overview.Sessions
-	stats := summarizeSessions(allSessions)
 
-	lastWindow := formatDuration(stats.TotalDuration)
 	headerLeft := deckTitleStyle.Render("tapes deck")
-	// Show filtered count in header when search is active
-	filteredCount := len(allSessions)
-	if term := strings.TrimSpace(m.searchInput.Value()); term != "" {
-		filteredCount = len(m.filteredSessions())
-	}
-	isFiltered := filteredCount != len(allSessions)
-	sessionCount := deckMutedStyle.Render(m.headerSessionCount(lastWindow, filteredCount, len(allSessions), isFiltered))
-
 	cassetteLines := renderCassetteTape()
 
-	header1 := renderHeaderLine(m.width, headerLeft, cassetteLines[0])
-	header2 := renderHeaderLine(m.width, "", cassetteLines[1])
-	header3 := renderHeaderLine(m.width, sessionCount, cassetteLines[2])
-
-	metrics := m.viewMetrics(stats)
-	insights := m.viewInsights(stats)
-	costByModel := m.viewCostByModel(stats)
-
 	lines := make([]string, 0, 10)
-	lines = append(lines, header1, header2, header3, renderRule(m.width), "")
-	lines = append(lines, metrics)
-	if insights != "" {
-		lines = append(lines, "", insights)
+
+	if m.metricsReady && m.overviewStats != nil {
+		stats := *m.overviewStats
+
+		lastWindow := formatDuration(stats.TotalDuration)
+		filteredCount := len(allSessions)
+		if term := strings.TrimSpace(m.searchInput.Value()); term != "" {
+			filteredCount = len(m.filteredSessions())
+		}
+		isFiltered := filteredCount != len(allSessions)
+		sessionCount := deckMutedStyle.Render(m.headerSessionCount(lastWindow, filteredCount, len(allSessions), isFiltered))
+
+		header1 := renderHeaderLine(m.width, headerLeft, cassetteLines[0])
+		header2 := renderHeaderLine(m.width, "", cassetteLines[1])
+		header3 := renderHeaderLine(m.width, sessionCount, cassetteLines[2])
+
+		metrics := m.viewMetrics(stats)
+		insights := m.viewInsights(stats)
+		costByModel := m.viewCostByModel(stats)
+
+		lines = append(lines, header1, header2, header3, renderRule(m.width), "")
+		lines = append(lines, metrics)
+		if insights != "" {
+			lines = append(lines, "", insights)
+		}
+		lines = append(lines, "", costByModel, "")
+	} else {
+		sessionCount := deckMutedStyle.Render(fmt.Sprintf("%d sessions", len(allSessions)))
+
+		header1 := renderHeaderLine(m.width, headerLeft, cassetteLines[0])
+		header2 := renderHeaderLine(m.width, "", cassetteLines[1])
+		header3 := renderHeaderLine(m.width, sessionCount, cassetteLines[2])
+
+		loadingLine := m.spinner.View() + " loading metrics..."
+
+		lines = append(lines, header1, header2, header3, renderRule(m.width), "")
+		lines = append(lines, deckMutedStyle.Render(loadingLine), "")
 	}
-	lines = append(lines, "", costByModel, "")
 
 	return strings.Join(lines, "\n"), m.viewFooter()
 }
@@ -1113,7 +1141,8 @@ func (m deckModel) sessionListHeight() int {
 
 func (m deckModel) viewOverview() string {
 	if m.overview == nil {
-		return deckMutedStyle.Render("no data")
+		loading := m.spinner.View() + " loading sessions..."
+		return deckMutedStyle.Render(loading)
 	}
 
 	above, footer := m.overviewChrome()
@@ -3546,6 +3575,13 @@ func loadOverviewCmd(query deck.Querier, filters deck.Filters) bubbletea.Cmd {
 	return func() bubbletea.Msg {
 		overview, err := query.Overview(context.Background(), filters)
 		return overviewLoadedMsg{overview: overview, err: err}
+	}
+}
+
+func computeMetricsCmd(sessions []deck.SessionSummary) bubbletea.Cmd {
+	return func() bubbletea.Msg {
+		stats := summarizeSessions(sessions)
+		return metricsReadyMsg{stats: stats}
 	}
 }
 

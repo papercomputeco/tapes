@@ -16,6 +16,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/storage/ent"
+	"github.com/papercomputeco/tapes/pkg/storage/ent/node"
 	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
 )
 
@@ -67,6 +68,12 @@ func NewQuery(ctx context.Context, dbPath string, pricing PricingTable) (*Query,
 	return &Query{client: driver.Client, pricing: pricing}, closeFn, nil
 }
 
+// userLabelCandidate holds pre-extracted label text from a user-role node,
+// avoiding a second parseContentBlocks call during label building.
+type userLabelCandidate struct {
+	text string
+}
+
 type sessionCandidate struct {
 	summary    SessionSummary
 	modelCosts map[string]ModelCost
@@ -97,7 +104,13 @@ func (q *Query) loadSessionCandidates(ctx context.Context, allowCache bool) ([]s
 	// Bulk-load all nodes in a single query and build ancestry chains
 	// in memory. This replaces the previous N+1 pattern where each leaf
 	// called loadAncestry with individual parent queries.
-	allNodes, err := q.client.Node.Query().All(ctx)
+	allNodes, err := q.client.Node.Query().Select(
+		node.FieldParentHash, node.FieldRole, node.FieldContent,
+		node.FieldModel, node.FieldProvider, node.FieldAgentName,
+		node.FieldStopReason, node.FieldPromptTokens, node.FieldCompletionTokens,
+		node.FieldTotalTokens, node.FieldCacheCreationInputTokens,
+		node.FieldCacheReadInputTokens, node.FieldProject, node.FieldCreatedAt,
+	).All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load nodes: %w", err)
 	}
@@ -734,16 +747,20 @@ func (q *Query) buildSessionSummaryFromNodes(nodes []*ent.Node) (SessionSummary,
 	end := nodes[len(nodes)-1].CreatedAt
 	duration := max(end.Sub(start), 0)
 
-	label := buildLabel(nodes)
 	toolCalls := 0
 	modelCosts := map[string]ModelCost{}
 	inputTokens := int64(0)
 	outputTokens := int64(0)
 
+	// Parse content blocks once per node and collect label candidates
+	// from user-role nodes (in forward order). Label building reverses
+	// these later to pick the most recent prompts.
+	var userLabels []userLabelCandidate
+
 	hasToolError := false
 	hasGitActivity := false
-	for _, node := range nodes {
-		blocks, _ := parseContentBlocks(node.Content)
+	for _, n := range nodes {
+		blocks, _ := parseContentBlocks(n.Content)
 		toolCalls += countToolCalls(blocks)
 		if blocksHaveToolError(blocks) {
 			hasToolError = true
@@ -752,11 +769,19 @@ func (q *Query) buildSessionSummaryFromNodes(nodes []*ent.Node) (SessionSummary,
 			hasGitActivity = true
 		}
 
-		t := tokenCounts(node)
+		// Collect label text from user-role nodes in the same pass
+		if n.Role == roleUser {
+			text := strings.TrimSpace(extractLabelText(blocks))
+			if text != "" {
+				userLabels = append(userLabels, userLabelCandidate{text: text})
+			}
+		}
+
+		t := tokenCounts(n)
 		inputTokens += t.Input
 		outputTokens += t.Output
 
-		model := normalizeModel(node.Model)
+		model := normalizeModel(n.Model)
 		if model == "" {
 			continue
 		}
@@ -777,6 +802,9 @@ func (q *Query) buildSessionSummaryFromNodes(nodes []*ent.Node) (SessionSummary,
 		current.SessionCount = 1
 		modelCosts[model] = current
 	}
+
+	// Build label from collected user prompts (most recent first)
+	label := buildLabelFromCandidates(userLabels, nodes[len(nodes)-1].ID)
 
 	model := dominantModel(modelCosts)
 	if model == "" {
@@ -1009,6 +1037,36 @@ func buildLabel(nodes []*ent.Node) string {
 
 	if len(labelLines) == 0 {
 		return truncate(nodes[len(nodes)-1].ID, 12)
+	}
+
+	for i, j := 0, len(labelLines)-1; i < j; i, j = i+1, j-1 {
+		labelLines[i], labelLines[j] = labelLines[j], labelLines[i]
+	}
+
+	label := strings.Join(labelLines, " / ")
+	return truncate(label, labelLimit)
+}
+
+// buildLabelFromCandidates builds a label from pre-extracted user prompt texts
+// (collected in forward order). This avoids re-parsing content blocks.
+func buildLabelFromCandidates(candidates []userLabelCandidate, fallbackID string) string {
+	const labelLimit = 36
+	const labelPrompts = 3
+
+	labelLines := make([]string, 0, labelPrompts)
+	for i := len(candidates) - 1; i >= 0; i-- {
+		line := firstLabelLine(candidates[i].text)
+		if line == "" {
+			continue
+		}
+		labelLines = append(labelLines, line)
+		if len(labelLines) >= labelPrompts {
+			break
+		}
+	}
+
+	if len(labelLines) == 0 {
+		return truncate(fallbackID, 12)
 	}
 
 	for i, j := 0, len(labelLines)-1; i < j; i, j = i+1, j-1 {
