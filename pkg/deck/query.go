@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
@@ -25,6 +26,7 @@ const (
 	roleUser         = "user"
 	groupIDPrefix    = "group:"
 	groupWindow      = time.Hour
+	sessionCacheTTL  = 10 * time.Second
 )
 
 // Querier is an interface for querying session data.
@@ -39,6 +41,7 @@ type Querier interface {
 type Query struct {
 	client  *ent.Client
 	pricing PricingTable
+	cache   sessionCache
 }
 
 // Ensure Query implements Querier
@@ -77,7 +80,19 @@ type sessionGroup struct {
 	members      []sessionCandidate
 }
 
-func (q *Query) loadSessionCandidates(ctx context.Context) ([]sessionCandidate, error) {
+type sessionCache struct {
+	mu         sync.RWMutex
+	candidates []sessionCandidate
+	loadedAt   time.Time
+}
+
+func (q *Query) loadSessionCandidates(ctx context.Context, allowCache bool) ([]sessionCandidate, error) {
+	if allowCache {
+		if cached := q.cachedSessionCandidates(); cached != nil {
+			return cached, nil
+		}
+	}
+
 	leaves, err := q.client.Node.Query().Where(node.Not(node.HasChildren())).All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list leaves: %w", err)
@@ -103,7 +118,39 @@ func (q *Query) loadSessionCandidates(ctx context.Context) ([]sessionCandidate, 
 		})
 	}
 
+	q.storeSessionCandidates(candidates)
 	return candidates, nil
+}
+
+func (q *Query) cachedSessionCandidates() []sessionCandidate {
+	q.cache.mu.RLock()
+	defer q.cache.mu.RUnlock()
+
+	if len(q.cache.candidates) == 0 {
+		return nil
+	}
+	if time.Since(q.cache.loadedAt) > sessionCacheTTL {
+		return nil
+	}
+
+	return copySessionCandidates(q.cache.candidates)
+}
+
+func (q *Query) storeSessionCandidates(candidates []sessionCandidate) {
+	q.cache.mu.Lock()
+	defer q.cache.mu.Unlock()
+	q.cache.candidates = copySessionCandidates(candidates)
+	q.cache.loadedAt = time.Now()
+}
+
+func copySessionCandidates(candidates []sessionCandidate) []sessionCandidate {
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	cloned := make([]sessionCandidate, len(candidates))
+	copy(cloned, candidates)
+	return cloned
 }
 
 func groupSessionCandidates(candidates []sessionCandidate) []*sessionGroup {
@@ -311,7 +358,7 @@ func firstNonEmptyModel(members []sessionCandidate) string {
 }
 
 func (q *Query) Overview(ctx context.Context, filters Filters) (*Overview, error) {
-	candidates, err := q.loadSessionCandidates(ctx)
+	candidates, err := q.loadSessionCandidates(ctx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -399,7 +446,7 @@ func (q *Query) SessionDetail(ctx context.Context, sessionID string) (*SessionDe
 }
 
 func (q *Query) groupSessionDetail(ctx context.Context, sessionID string) (*SessionDetail, error) {
-	candidates, err := q.loadSessionCandidates(ctx)
+	candidates, err := q.loadSessionCandidates(ctx, true)
 	if err != nil {
 		return nil, err
 	}
@@ -923,7 +970,7 @@ func SortSessions(sessions []SessionSummary, sortKey, sortDir string) {
 }
 
 func (q *Query) AnalyticsOverview(ctx context.Context, filters Filters) (*AnalyticsOverview, error) {
-	candidates, err := q.loadSessionCandidates(ctx)
+	candidates, err := q.loadSessionCandidates(ctx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -1095,7 +1142,7 @@ func (q *Query) SessionAnalytics(ctx context.Context, sessionID string) (*Sessio
 }
 
 func (q *Query) groupSessionAnalytics(ctx context.Context, sessionID string) (*SessionAnalytics, error) {
-	candidates, err := q.loadSessionCandidates(ctx)
+	candidates, err := q.loadSessionCandidates(ctx, true)
 	if err != nil {
 		return nil, err
 	}
