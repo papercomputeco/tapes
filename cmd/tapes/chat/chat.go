@@ -14,13 +14,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
+	"github.com/papercomputeco/tapes/pkg/cliui"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/dotdir"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/utils"
+)
+
+var (
+	userPrompt      = lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Bold(true).Render("you> ")
+	assistantPrompt = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("assistant> ")
 )
 
 type chatCommander struct {
@@ -138,28 +145,33 @@ func (c *chatCommander) run() error {
 
 	// Build initial message history from checkout
 	var messages []ollamaMessage
+	fmt.Println()
 	if checkout != nil {
-		fmt.Printf("Resuming from checkout %s (%d messages)\n",
-			utils.Truncate(checkout.Hash, 16), len(checkout.Messages))
+		fmt.Printf("  %s Resuming from %s %s\n",
+			cliui.SuccessMark,
+			cliui.HashStyle.Render(utils.Truncate(checkout.Hash, 16)),
+			cliui.DimStyle.Render(fmt.Sprintf("(%d messages)", len(checkout.Messages))),
+		)
 		for _, msg := range checkout.Messages {
 			messages = append(messages, ollamaMessage{
 				Role:    msg.Role,
 				Content: msg.Content,
 			})
 		}
-		fmt.Println()
 	} else {
-		fmt.Println("Starting new conversation (no checkout)")
-		fmt.Println()
+		fmt.Printf("  %s New conversation\n", cliui.DimStyle.Render("●"))
 	}
 
-	fmt.Println("Type your message and press Enter. Type /exit or Ctrl+D to quit.")
-	fmt.Println()
+	fmt.Printf("  %s %s\n\n",
+		cliui.KeyStyle.Render("Model:"),
+		cliui.NameStyle.Render(c.model),
+	)
+	fmt.Printf("  %s\n\n", cliui.DimStyle.Render("Type your message and press Enter. /exit or Ctrl+D to quit."))
 
 	scanner := bufio.NewScanner(os.Stdin)
 
 	for {
-		fmt.Print("you> ")
+		fmt.Print(userPrompt)
 		if !scanner.Scan() {
 			// EOF or error
 			break
@@ -182,7 +194,7 @@ func (c *chatCommander) run() error {
 		// Send to proxy and stream response
 		assistantContent, err := c.sendAndStream(messages)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "  %s %v\n", cliui.FailMark, err)
 			// Remove the failed user message so we can retry
 			messages = messages[:len(messages)-1]
 			continue
@@ -251,7 +263,7 @@ func (c *chatCommander) sendAndStream(messages []ollamaMessage) (string, error) 
 	}
 
 	// Stream the response
-	fmt.Print("assistant> ")
+	fmt.Print(assistantPrompt)
 
 	var fullContent strings.Builder
 	scanner := bufio.NewScanner(resp.Body)
