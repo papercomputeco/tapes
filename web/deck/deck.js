@@ -124,7 +124,7 @@ let sessionEntryView = null;
 let heatmapSelectableDays = [];
 let activeAnalyticsTab = "activity";
 
-const formatCost = (value) => `$${value.toFixed(3)}`;
+const formatCost = (value) => `$${value.toFixed(2)}`;
 const formatTokens = (value) => {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
@@ -308,8 +308,10 @@ const renderModels = (data) => {
     return;
   }
 
-  const max = models[0].total_cost || 1;
-  models.forEach((model) => {
+  const maxModels = 5;
+  const topModels = models.slice(0, maxModels);
+  const max = topModels[0].total_cost || 1;
+  topModels.forEach((model) => {
     const row = document.createElement("div");
     row.className = "model-row";
 
@@ -1712,7 +1714,8 @@ const loadSession = async (sessionId, keepMessage) => {
     sessionEntryView = currentView;
   }
   selectedSessionId = sessionId;
-  const res = await fetch(`/api/session/${sessionId}`);
+  const encodedSessionId = encodeURIComponent(sessionId);
+  const res = await fetch(`/api/session/${encodedSessionId}`);
   const data = await res.json();
   sessionDetailState = data;
   if (!keepMessage) {
@@ -1724,8 +1727,8 @@ const loadSession = async (sessionId, keepMessage) => {
   }
   sessionBreadcrumbEl.textContent = data.summary.label;
   setView("session");
-  if (window.location.pathname !== `/session/${sessionId}`) {
-    window.history.pushState({}, "", `/session/${sessionId}`);
+  if (window.location.pathname !== `/session/${encodedSessionId}`) {
+    window.history.pushState({}, "", `/session/${encodedSessionId}`);
   }
 };
 
@@ -2139,7 +2142,7 @@ document.querySelectorAll(".analytics-tab").forEach((btn) => {
 
 window.addEventListener("popstate", () => {
   if (window.location.pathname.startsWith("/session/")) {
-    const sessionId = window.location.pathname.replace("/session/", "");
+    const sessionId = decodeURIComponent(window.location.pathname.replace("/session/", ""));
     if (sessionId) {
       loadSession(sessionId, true);
       return;
@@ -2155,7 +2158,7 @@ window.addEventListener("popstate", () => {
 });
 
 if (window.location.pathname.startsWith("/session/")) {
-  const sessionId = window.location.pathname.replace("/session/", "");
+  const sessionId = decodeURIComponent(window.location.pathname.replace("/session/", ""));
   if (sessionId) {
     loadSession(sessionId);
   }

@@ -14,6 +14,7 @@ type SessionSummary struct {
 	Label        string        `json:"label"`
 	Model        string        `json:"model"`
 	Project      string        `json:"project"`
+	AgentName    string        `json:"agent_name,omitempty"`
 	Status       string        `json:"status"`
 	StartTime    time.Time     `json:"start_time"`
 	EndTime      time.Time     `json:"end_time"`
@@ -25,6 +26,7 @@ type SessionSummary struct {
 	TotalCost    float64       `json:"total_cost"`
 	ToolCalls    int           `json:"tool_calls"`
 	MessageCount int           `json:"message_count"`
+	SessionCount int           `json:"session_count,omitempty"`
 }
 
 type SessionMessage struct {
@@ -43,10 +45,30 @@ type SessionMessage struct {
 	Text         string        `json:"text"`
 }
 
+type SessionMessageGroup struct {
+	Role         string        `json:"role"`
+	StartTime    time.Time     `json:"start_time"`
+	EndTime      time.Time     `json:"end_time"`
+	Delta        time.Duration `json:"delta_ns"`
+	InputTokens  int64         `json:"input_tokens"`
+	OutputTokens int64         `json:"output_tokens"`
+	TotalTokens  int64         `json:"total_tokens"`
+	InputCost    float64       `json:"input_cost"`
+	OutputCost   float64       `json:"output_cost"`
+	TotalCost    float64       `json:"total_cost"`
+	ToolCalls    []string      `json:"tool_calls"`
+	Text         string        `json:"text"`
+	Count        int           `json:"count"`
+	StartIndex   int           `json:"start_index"`
+	EndIndex     int           `json:"end_index"`
+}
+
 type SessionDetail struct {
-	Summary       SessionSummary   `json:"summary"`
-	Messages      []SessionMessage `json:"messages"`
-	ToolFrequency map[string]int   `json:"tool_frequency"`
+	Summary         SessionSummary        `json:"summary"`
+	Messages        []SessionMessage      `json:"messages"`
+	GroupedMessages []SessionMessageGroup `json:"grouped_messages,omitempty"`
+	ToolFrequency   map[string]int        `json:"tool_frequency"`
+	SubSessions     []SessionSummary      `json:"sub_sessions,omitempty"`
 }
 
 type ModelCost struct {

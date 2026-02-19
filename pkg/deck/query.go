@@ -2,23 +2,32 @@ package deck
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/storage/ent"
-	"github.com/papercomputeco/tapes/pkg/storage/ent/node"
 	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
 )
 
 const (
-	blockTypeToolUse = "tool_use"
-	roleAssistant    = "assistant"
-	roleUser         = "user"
+	blockTypeToolUse    = "tool_use"
+	roleAssistant       = "assistant"
+	roleUser            = "user"
+	groupIDPrefix       = "group:"
+	groupWindow         = time.Hour
+	sessionCacheTTL     = 10 * time.Second
+	messageGroupWindow  = 5 * time.Second
+	maxGroupedTextChars = 4000
 )
 
 // Querier is an interface for querying session data.
@@ -33,6 +42,7 @@ type Querier interface {
 type Query struct {
 	client  *ent.Client
 	pricing PricingTable
+	cache   sessionCache
 }
 
 // Ensure Query implements Querier
@@ -57,23 +67,350 @@ func NewQuery(ctx context.Context, dbPath string, pricing PricingTable) (*Query,
 	return &Query{client: driver.Client, pricing: pricing}, closeFn, nil
 }
 
-func (q *Query) Overview(ctx context.Context, filters Filters) (*Overview, error) {
-	leaves, err := q.client.Node.Query().Where(node.Not(node.HasChildren())).All(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("list leaves: %w", err)
+type sessionCandidate struct {
+	summary    SessionSummary
+	modelCosts map[string]ModelCost
+	status     string
+	nodes      []*ent.Node
+}
+
+type sessionGroup struct {
+	summary      SessionSummary
+	modelCosts   map[string]ModelCost
+	statusCounts map[string]int
+	members      []sessionCandidate
+}
+
+type sessionCache struct {
+	mu         sync.RWMutex
+	candidates []sessionCandidate
+	loadedAt   time.Time
+}
+
+func (q *Query) loadSessionCandidates(ctx context.Context, allowCache bool) ([]sessionCandidate, error) {
+	if allowCache {
+		if cached := q.cachedSessionCandidates(); cached != nil {
+			return cached, nil
+		}
 	}
 
+	// Bulk-load all nodes in a single query and build ancestry chains
+	// in memory. This replaces the previous N+1 pattern where each leaf
+	// called loadAncestry with individual parent queries.
+	allNodes, err := q.client.Node.Query().All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load nodes: %w", err)
+	}
+
+	byID := make(map[string]*ent.Node, len(allNodes))
+	hasChildren := make(map[string]bool)
+	for _, n := range allNodes {
+		byID[n.ID] = n
+		if n.ParentHash != nil && *n.ParentHash != "" {
+			hasChildren[*n.ParentHash] = true
+		}
+	}
+
+	candidates := make([]sessionCandidate, 0)
+	for _, n := range allNodes {
+		if hasChildren[n.ID] {
+			continue
+		}
+
+		chain := buildAncestryChain(n, byID)
+		summary, modelCosts, status, err := q.buildSessionSummaryFromNodes(chain)
+		if err != nil {
+			continue
+		}
+
+		candidates = append(candidates, sessionCandidate{
+			summary:    summary,
+			modelCosts: modelCosts,
+			status:     status,
+			nodes:      chain,
+		})
+	}
+
+	q.storeSessionCandidates(candidates)
+	return candidates, nil
+}
+
+// buildAncestryChain walks from a leaf to root using the in-memory node map,
+// returning nodes in root-first order.
+func buildAncestryChain(leaf *ent.Node, byID map[string]*ent.Node) []*ent.Node {
+	chain := []*ent.Node{}
+	seen := map[string]bool{}
+	current := leaf
+	for current != nil {
+		if seen[current.ID] {
+			break
+		}
+		seen[current.ID] = true
+		chain = append(chain, current)
+		if current.ParentHash == nil || *current.ParentHash == "" {
+			break
+		}
+		current = byID[*current.ParentHash]
+	}
+	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
+		chain[i], chain[j] = chain[j], chain[i]
+	}
+	return chain
+}
+
+func (q *Query) cachedSessionCandidates() []sessionCandidate {
+	q.cache.mu.RLock()
+	defer q.cache.mu.RUnlock()
+
+	if len(q.cache.candidates) == 0 {
+		return nil
+	}
+	if time.Since(q.cache.loadedAt) > sessionCacheTTL {
+		return nil
+	}
+
+	return copySessionCandidates(q.cache.candidates)
+}
+
+func (q *Query) storeSessionCandidates(candidates []sessionCandidate) {
+	q.cache.mu.Lock()
+	defer q.cache.mu.Unlock()
+	q.cache.candidates = copySessionCandidates(candidates)
+	q.cache.loadedAt = time.Now()
+}
+
+func copySessionCandidates(candidates []sessionCandidate) []sessionCandidate {
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	cloned := make([]sessionCandidate, len(candidates))
+	copy(cloned, candidates)
+	return cloned
+}
+
+func groupSessionCandidates(candidates []sessionCandidate) []*sessionGroup {
+	// Sort a copy to avoid mutating the cached input slice.
+	sorted := make([]sessionCandidate, len(candidates))
+	copy(sorted, candidates)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].summary.StartTime.Equal(sorted[j].summary.StartTime) {
+			return sorted[i].summary.EndTime.Before(sorted[j].summary.EndTime)
+		}
+		return sorted[i].summary.StartTime.Before(sorted[j].summary.StartTime)
+	})
+	candidates = sorted
+
+	groups := []*sessionGroup{}
+	byKey := map[string]*sessionGroup{}
+
+	for _, candidate := range candidates {
+		key := sessionGroupKey(candidate.summary)
+		group := byKey[key]
+
+		if group == nil || candidate.summary.StartTime.Sub(group.summary.EndTime) > groupWindow {
+			groupID := makeGroupID(key, candidate.summary.StartTime)
+			group = &sessionGroup{
+				summary: SessionSummary{
+					ID:           groupID,
+					Label:        candidate.summary.Label,
+					Model:        candidate.summary.Model,
+					Project:      candidate.summary.Project,
+					AgentName:    candidate.summary.AgentName,
+					Status:       candidate.summary.Status,
+					StartTime:    candidate.summary.StartTime,
+					EndTime:      candidate.summary.EndTime,
+					Duration:     candidate.summary.Duration,
+					InputTokens:  candidate.summary.InputTokens,
+					OutputTokens: candidate.summary.OutputTokens,
+					InputCost:    candidate.summary.InputCost,
+					OutputCost:   candidate.summary.OutputCost,
+					TotalCost:    candidate.summary.TotalCost,
+					ToolCalls:    candidate.summary.ToolCalls,
+					MessageCount: candidate.summary.MessageCount,
+					SessionCount: 1,
+				},
+				modelCosts:   copyModelCosts(candidate.modelCosts),
+				statusCounts: map[string]int{candidate.summary.Status: 1},
+				members:      []sessionCandidate{candidate},
+			}
+			groups = append(groups, group)
+			byKey[key] = group
+			continue
+		}
+
+		group.members = append(group.members, candidate)
+		group.summary.EndTime = maxTime(group.summary.EndTime, candidate.summary.EndTime)
+		group.summary.Duration = max(group.summary.EndTime.Sub(group.summary.StartTime), 0)
+		group.summary.InputTokens += candidate.summary.InputTokens
+		group.summary.OutputTokens += candidate.summary.OutputTokens
+		group.summary.InputCost += candidate.summary.InputCost
+		group.summary.OutputCost += candidate.summary.OutputCost
+		group.summary.TotalCost += candidate.summary.TotalCost
+		group.summary.ToolCalls += candidate.summary.ToolCalls
+		group.summary.MessageCount += candidate.summary.MessageCount
+		group.summary.SessionCount++
+		group.statusCounts[candidate.summary.Status]++
+		mergeModelCosts(group.modelCosts, candidate.modelCosts)
+	}
+
+	for _, group := range groups {
+		group.summary.Status = summarizeGroupStatus(group.statusCounts)
+		group.summary.Model = dominantModel(group.modelCosts)
+		if group.summary.Model == "" {
+			group.summary.Model = firstNonEmptyModel(group.members)
+		}
+	}
+
+	return groups
+}
+
+func maxTime(left, right time.Time) time.Time {
+	if right.After(left) {
+		return right
+	}
+	return left
+}
+
+func summarizeGroupStatus(counts map[string]int) string {
+	if counts[StatusFailed] > 0 {
+		return StatusFailed
+	}
+	if counts[StatusAbandoned] > 0 {
+		return StatusAbandoned
+	}
+	if counts[StatusCompleted] > 0 {
+		return StatusCompleted
+	}
+	return StatusUnknown
+}
+
+func sessionGroupKey(summary SessionSummary) string {
+	label := normalizeSessionLabel(summary.Label)
+	if label == "" {
+		label = summary.ID
+	}
+	agent := strings.ToLower(strings.TrimSpace(summary.AgentName))
+	project := strings.ToLower(strings.TrimSpace(summary.Project))
+	return strings.Join([]string{label, agent, project}, "|")
+}
+
+func normalizeSessionLabel(label string) string {
+	parts := strings.Fields(strings.ToLower(strings.TrimSpace(label)))
+	return strings.Join(parts, " ")
+}
+
+func makeGroupID(key string, start time.Time) string {
+	sum := sha256.Sum256([]byte(key))
+	return groupIDPrefix + hex.EncodeToString(sum[:]) + ":" + strconv.FormatInt(start.Unix(), 10)
+}
+
+func groupIDKeyHash(summary SessionSummary) string {
+	key := sessionGroupKey(summary)
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:])
+}
+
+func parseGroupID(sessionID string) (string, int64, bool) {
+	if !isGroupID(sessionID) {
+		return "", 0, false
+	}
+	trimmed := strings.TrimPrefix(sessionID, groupIDPrefix)
+	parts := strings.SplitN(trimmed, ":", 2)
+	if len(parts) != 2 {
+		return "", 0, false
+	}
+	startUnix, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return "", 0, false
+	}
+	return parts[0], startUnix, true
+}
+
+func findGroupByID(groups []*sessionGroup, sessionID string) *sessionGroup {
+	for _, group := range groups {
+		if group.summary.ID == sessionID {
+			return group
+		}
+	}
+
+	hash, startUnix, ok := parseGroupID(sessionID)
+	if !ok {
+		return nil
+	}
+
+	var best *sessionGroup
+	var bestDelta int64
+	for _, group := range groups {
+		if groupIDKeyHash(group.summary) != hash {
+			continue
+		}
+		delta := group.summary.StartTime.Unix() - startUnix
+		if delta < 0 {
+			delta = -delta
+		}
+		if best == nil || delta < bestDelta {
+			best = group
+			bestDelta = delta
+		}
+	}
+
+	return best
+}
+
+func isGroupID(sessionID string) bool {
+	return strings.HasPrefix(sessionID, groupIDPrefix)
+}
+
+func copyModelCosts(costs map[string]ModelCost) map[string]ModelCost {
+	if costs == nil {
+		return map[string]ModelCost{}
+	}
+	copied := make(map[string]ModelCost, len(costs))
+	maps.Copy(copied, costs)
+	return copied
+}
+
+func mergeModelCosts(target map[string]ModelCost, costs map[string]ModelCost) {
+	if target == nil {
+		return
+	}
+	for model, cost := range costs {
+		current := target[model]
+		current.Model = model
+		current.InputTokens += cost.InputTokens
+		current.OutputTokens += cost.OutputTokens
+		current.InputCost += cost.InputCost
+		current.OutputCost += cost.OutputCost
+		current.TotalCost += cost.TotalCost
+		current.SessionCount += cost.SessionCount
+		target[model] = current
+	}
+}
+
+func firstNonEmptyModel(members []sessionCandidate) string {
+	for _, member := range members {
+		if member.summary.Model != "" {
+			return member.summary.Model
+		}
+	}
+	return ""
+}
+
+func (q *Query) Overview(ctx context.Context, filters Filters) (*Overview, error) {
+	candidates, err := q.loadSessionCandidates(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+
+	groups := groupSessionCandidates(candidates)
 	overview := &Overview{
-		Sessions:    make([]SessionSummary, 0, len(leaves)),
+		Sessions:    make([]SessionSummary, 0, len(groups)),
 		CostByModel: map[string]ModelCost{},
 	}
 
-	for _, leaf := range leaves {
-		summary, modelCosts, status, err := q.buildSessionSummary(ctx, leaf)
-		if err != nil {
-			return nil, err
-		}
-
+	for _, group := range groups {
+		summary := group.summary
 		if !matchesFilters(summary, filters) {
 			continue
 		}
@@ -87,7 +424,7 @@ func (q *Query) Overview(ctx context.Context, filters Filters) (*Overview, error
 		overview.TotalDuration += summary.Duration
 		overview.TotalToolCalls += summary.ToolCalls
 
-		switch status {
+		switch summary.Status {
 		case StatusCompleted:
 			overview.Completed++
 		case StatusFailed:
@@ -96,7 +433,7 @@ func (q *Query) Overview(ctx context.Context, filters Filters) (*Overview, error
 			overview.Abandoned++
 		}
 
-		for model, cost := range modelCosts {
+		for model, cost := range group.modelCosts {
 			aggregate := overview.CostByModel[model]
 			aggregate.Model = model
 			aggregate.InputTokens += cost.InputTokens
@@ -119,6 +456,10 @@ func (q *Query) Overview(ctx context.Context, filters Filters) (*Overview, error
 }
 
 func (q *Query) SessionDetail(ctx context.Context, sessionID string) (*SessionDetail, error) {
+	if isGroupID(sessionID) {
+		return q.groupSessionDetail(ctx, sessionID)
+	}
+
 	leaf, err := q.client.Node.Get(ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("get session: %w", err)
@@ -134,11 +475,77 @@ func (q *Query) SessionDetail(ctx context.Context, sessionID string) (*SessionDe
 		return nil, err
 	}
 
+	messages, toolFrequency := q.buildSessionMessages(nodes)
+	grouped := buildGroupedMessages(messages)
 	detail := &SessionDetail{
-		Summary:       summary,
-		Messages:      make([]SessionMessage, 0, len(nodes)),
-		ToolFrequency: map[string]int{},
+		Summary:         summary,
+		Messages:        messages,
+		GroupedMessages: grouped,
+		ToolFrequency:   toolFrequency,
 	}
+
+	return detail, nil
+}
+
+func (q *Query) groupSessionDetail(ctx context.Context, sessionID string) (*SessionDetail, error) {
+	candidates, err := q.loadSessionCandidates(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+
+	groups := groupSessionCandidates(candidates)
+	target := findGroupByID(groups, sessionID)
+	if target == nil {
+		return nil, fmt.Errorf("get session group: %s", sessionID)
+	}
+
+	nodes := groupNodes(target.members)
+	messages, toolFrequency := q.buildSessionMessages(nodes)
+	grouped := buildGroupedMessages(messages)
+
+	subSessions := make([]SessionSummary, 0, len(target.members))
+	for _, member := range target.members {
+		subSessions = append(subSessions, member.summary)
+	}
+	sort.Slice(subSessions, func(i, j int) bool {
+		return subSessions[i].StartTime.Before(subSessions[j].StartTime)
+	})
+
+	detail := &SessionDetail{
+		Summary:         target.summary,
+		Messages:        messages,
+		GroupedMessages: grouped,
+		ToolFrequency:   toolFrequency,
+		SubSessions:     subSessions,
+	}
+
+	return detail, nil
+}
+
+func groupNodes(members []sessionCandidate) []*ent.Node {
+	total := 0
+	for _, member := range members {
+		total += len(member.nodes)
+	}
+
+	nodes := make([]*ent.Node, 0, total)
+	for _, member := range members {
+		nodes = append(nodes, member.nodes...)
+	}
+
+	sort.Slice(nodes, func(i, j int) bool {
+		if nodes[i].CreatedAt.Equal(nodes[j].CreatedAt) {
+			return nodes[i].ID < nodes[j].ID
+		}
+		return nodes[i].CreatedAt.Before(nodes[j].CreatedAt)
+	})
+
+	return nodes
+}
+
+func (q *Query) buildSessionMessages(nodes []*ent.Node) ([]SessionMessage, map[string]int) {
+	messages := make([]SessionMessage, 0, len(nodes))
+	toolFrequency := map[string]int{}
 
 	var lastTime time.Time
 	for i, node := range nodes {
@@ -148,7 +555,7 @@ func (q *Query) SessionDetail(ctx context.Context, sessionID string) (*SessionDe
 
 		toolCalls := extractToolCalls(blocks)
 		for _, tool := range toolCalls {
-			detail.ToolFrequency[tool]++
+			toolFrequency[tool]++
 		}
 
 		text := extractText(blocks)
@@ -158,7 +565,7 @@ func (q *Query) SessionDetail(ctx context.Context, sessionID string) (*SessionDe
 		}
 		lastTime = node.CreatedAt
 
-		detail.Messages = append(detail.Messages, SessionMessage{
+		messages = append(messages, SessionMessage{
 			Hash:         node.ID,
 			Role:         node.Role,
 			Model:        node.Model,
@@ -175,21 +582,147 @@ func (q *Query) SessionDetail(ctx context.Context, sessionID string) (*SessionDe
 		})
 	}
 
-	return detail, nil
+	return messages, toolFrequency
 }
 
-func (q *Query) buildSessionSummary(ctx context.Context, leaf *ent.Node) (SessionSummary, map[string]ModelCost, string, error) {
-	nodes, err := q.loadAncestry(ctx, leaf)
-	if err != nil {
-		return SessionSummary{}, nil, "", err
+func buildGroupedMessages(messages []SessionMessage) []SessionMessageGroup {
+	if len(messages) == 0 {
+		return nil
 	}
 
-	summary, modelCosts, status, err := q.buildSessionSummaryFromNodes(nodes)
-	if err != nil {
-		return SessionSummary{}, nil, "", err
+	groups := make([]SessionMessageGroup, 0, len(messages))
+	current := SessionMessageGroup{
+		Role:         messages[0].Role,
+		StartTime:    messages[0].Timestamp,
+		EndTime:      messages[0].Timestamp,
+		InputTokens:  messages[0].InputTokens,
+		OutputTokens: messages[0].OutputTokens,
+		TotalTokens:  messages[0].TotalTokens,
+		InputCost:    messages[0].InputCost,
+		OutputCost:   messages[0].OutputCost,
+		TotalCost:    messages[0].TotalCost,
+		ToolCalls:    uniqueToolCalls(messages[0].ToolCalls),
+		Text:         truncateGroupedText(messages[0].Text),
+		Count:        1,
+		StartIndex:   0,
+		EndIndex:     1,
 	}
 
-	return summary, modelCosts, status, nil
+	for i := 1; i < len(messages); i++ {
+		msg := messages[i]
+		gap := msg.Timestamp.Sub(current.EndTime)
+		if msg.Role == current.Role && gap <= messageGroupWindow {
+			current.EndTime = msg.Timestamp
+			current.InputTokens += msg.InputTokens
+			current.OutputTokens += msg.OutputTokens
+			current.TotalTokens += msg.TotalTokens
+			current.InputCost += msg.InputCost
+			current.OutputCost += msg.OutputCost
+			current.TotalCost += msg.TotalCost
+			current.ToolCalls = mergeToolCalls(current.ToolCalls, msg.ToolCalls)
+			current.Text = appendGroupedText(current.Text, msg.Text)
+			current.Count++
+			current.EndIndex = i + 1
+			continue
+		}
+
+		groups = append(groups, current)
+		current = SessionMessageGroup{
+			Role:         msg.Role,
+			StartTime:    msg.Timestamp,
+			EndTime:      msg.Timestamp,
+			InputTokens:  msg.InputTokens,
+			OutputTokens: msg.OutputTokens,
+			TotalTokens:  msg.TotalTokens,
+			InputCost:    msg.InputCost,
+			OutputCost:   msg.OutputCost,
+			TotalCost:    msg.TotalCost,
+			ToolCalls:    uniqueToolCalls(msg.ToolCalls),
+			Text:         truncateGroupedText(msg.Text),
+			Count:        1,
+			StartIndex:   i,
+			EndIndex:     i + 1,
+		}
+	}
+
+	groups = append(groups, current)
+	for i := 1; i < len(groups); i++ {
+		groups[i].Delta = groups[i].StartTime.Sub(groups[i-1].EndTime)
+	}
+
+	return groups
+}
+
+func uniqueToolCalls(calls []string) []string {
+	if len(calls) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	unique := make([]string, 0, len(calls))
+	for _, call := range calls {
+		if call == "" || seen[call] {
+			continue
+		}
+		seen[call] = true
+		unique = append(unique, call)
+	}
+	return unique
+}
+
+func mergeToolCalls(existing, next []string) []string {
+	if len(next) == 0 {
+		return existing
+	}
+	if len(existing) == 0 {
+		return uniqueToolCalls(next)
+	}
+	seen := map[string]bool{}
+	for _, call := range existing {
+		seen[call] = true
+	}
+	for _, call := range next {
+		if call == "" || seen[call] {
+			continue
+		}
+		seen[call] = true
+		existing = append(existing, call)
+	}
+	return existing
+}
+
+func truncateGroupedText(text string) string {
+	if text == "" {
+		return ""
+	}
+	if len(text) <= maxGroupedTextChars {
+		return text
+	}
+	return text[:maxGroupedTextChars] + "..."
+}
+
+func appendGroupedText(current, next string) string {
+	if next == "" {
+		return current
+	}
+	if current == "" {
+		return truncateGroupedText(next)
+	}
+	if len(current) >= maxGroupedTextChars {
+		return current
+	}
+	remaining := maxGroupedTextChars - len(current)
+	separator := "\n\n"
+	if remaining <= len(separator) {
+		return current
+	}
+	remaining -= len(separator)
+	if remaining <= 0 {
+		return current
+	}
+	if len(next) > remaining {
+		next = next[:remaining] + "..."
+	}
+	return current + separator + next
 }
 
 func (q *Query) buildSessionSummaryFromNodes(nodes []*ent.Node) (SessionSummary, map[string]ModelCost, string, error) {
@@ -258,11 +791,20 @@ func (q *Query) buildSessionSummaryFromNodes(nodes []*ent.Node) (SessionSummary,
 		}
 	}
 
+	agentName := ""
+	for _, n := range nodes {
+		if n.AgentName != "" {
+			agentName = n.AgentName
+			break
+		}
+	}
+
 	summary := SessionSummary{
 		ID:           nodes[len(nodes)-1].ID,
 		Label:        label,
 		Model:        model,
 		Project:      project,
+		AgentName:    agentName,
 		Status:       status,
 		StartTime:    start,
 		EndTime:      end,
@@ -274,6 +816,7 @@ func (q *Query) buildSessionSummaryFromNodes(nodes []*ent.Node) (SessionSummary,
 		TotalCost:    totalCost,
 		ToolCalls:    toolCalls,
 		MessageCount: len(nodes),
+		SessionCount: 1,
 	}
 
 	return summary, modelCosts, status, nil
@@ -611,11 +1154,12 @@ func SortSessions(sessions []SessionSummary, sortKey, sortDir string) {
 }
 
 func (q *Query) AnalyticsOverview(ctx context.Context, filters Filters) (*AnalyticsOverview, error) {
-	leaves, err := q.client.Node.Query().Where(node.Not(node.HasChildren())).All(ctx)
+	candidates, err := q.loadSessionCandidates(ctx, false)
 	if err != nil {
-		return nil, fmt.Errorf("list leaves: %w", err)
+		return nil, err
 	}
 
+	groups := groupSessionCandidates(candidates)
 	analytics := &AnalyticsOverview{
 		ProviderBreakdown: map[string]int{},
 	}
@@ -627,17 +1171,8 @@ func (q *Query) AnalyticsOverview(ctx context.Context, filters Filters) (*Analyt
 	modelMap := map[string]*modelAccumulator{}
 	var filteredSummaries []SessionSummary
 
-	for _, leaf := range leaves {
-		nodes, err := q.loadAncestry(ctx, leaf)
-		if err != nil {
-			return nil, err
-		}
-
-		summary, _, status, err := q.buildSessionSummaryFromNodes(nodes)
-		if err != nil {
-			continue
-		}
-
+	for _, group := range groups {
+		summary := group.summary
 		if !matchesFilters(summary, filters) {
 			continue
 		}
@@ -660,22 +1195,28 @@ func (q *Query) AnalyticsOverview(ctx context.Context, filters Filters) (*Analyt
 
 		// Tool and provider aggregation per session
 		sessionTools := map[string]bool{}
-		for _, n := range nodes {
-			blocks, _ := parseContentBlocks(n.Content)
-			for _, tool := range extractToolCalls(blocks) {
-				if _, ok := toolGlobal[tool]; !ok {
-					toolGlobal[tool] = &ToolMetric{Name: tool}
-				}
-				toolGlobal[tool].Count++
-				sessionTools[tool] = true
-			}
-			if blocksHaveToolError(blocks) {
+		provider := ""
+		for _, member := range group.members {
+			for _, n := range member.nodes {
+				blocks, _ := parseContentBlocks(n.Content)
 				for _, tool := range extractToolCalls(blocks) {
-					toolErrors[tool]++
+					if _, ok := toolGlobal[tool]; !ok {
+						toolGlobal[tool] = &ToolMetric{Name: tool}
+					}
+					toolGlobal[tool].Count++
+					sessionTools[tool] = true
 				}
-			}
-			if n.Provider != "" {
-				analytics.ProviderBreakdown[n.Provider]++
+				if blocksHaveToolError(blocks) {
+					for _, tool := range extractToolCalls(blocks) {
+						toolErrors[tool]++
+					}
+				}
+				if n.Provider != "" {
+					analytics.ProviderBreakdown[n.Provider]++
+					if provider == "" {
+						provider = n.Provider
+					}
+				}
 			}
 		}
 		for tool := range sessionTools {
@@ -690,13 +1231,6 @@ func (q *Query) AnalyticsOverview(ctx context.Context, filters Filters) (*Analyt
 		if model != "" {
 			acc, ok := modelMap[model]
 			if !ok {
-				provider := ""
-				for _, n := range nodes {
-					if n.Provider != "" {
-						provider = n.Provider
-						break
-					}
-				}
 				acc = &modelAccumulator{provider: provider}
 				modelMap[model] = acc
 			}
@@ -704,7 +1238,7 @@ func (q *Query) AnalyticsOverview(ctx context.Context, filters Filters) (*Analyt
 			acc.totalCost += summary.TotalCost
 			acc.totalDurationNs += int64(summary.Duration)
 			acc.totalTokens += summary.InputTokens + summary.OutputTokens
-			if status == StatusCompleted {
+			if summary.Status == StatusCompleted {
 				acc.completedCount++
 			}
 		}
@@ -774,6 +1308,10 @@ func (q *Query) AnalyticsOverview(ctx context.Context, filters Filters) (*Analyt
 }
 
 func (q *Query) SessionAnalytics(ctx context.Context, sessionID string) (*SessionAnalytics, error) {
+	if isGroupID(sessionID) {
+		return q.groupSessionAnalytics(ctx, sessionID)
+	}
+
 	leaf, err := q.client.Node.Get(ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("get session: %w", err)
@@ -784,6 +1322,26 @@ func (q *Query) SessionAnalytics(ctx context.Context, sessionID string) (*Sessio
 		return nil, err
 	}
 
+	return buildSessionAnalytics(sessionID, nodes), nil
+}
+
+func (q *Query) groupSessionAnalytics(ctx context.Context, sessionID string) (*SessionAnalytics, error) {
+	candidates, err := q.loadSessionCandidates(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+
+	groups := groupSessionCandidates(candidates)
+	target := findGroupByID(groups, sessionID)
+	if target == nil {
+		return nil, fmt.Errorf("get session group: %s", sessionID)
+	}
+
+	nodes := groupNodes(target.members)
+	return buildSessionAnalytics(sessionID, nodes), nil
+}
+
+func buildSessionAnalytics(sessionID string, nodes []*ent.Node) *SessionAnalytics {
 	sa := &SessionAnalytics{SessionID: sessionID}
 	uniqueTools := map[string]bool{}
 
@@ -870,7 +1428,7 @@ func (q *Query) SessionAnalytics(ctx context.Context, sessionID string) (*Sessio
 		}
 	}
 
-	return sa, nil
+	return sa
 }
 
 type modelAccumulator struct {
