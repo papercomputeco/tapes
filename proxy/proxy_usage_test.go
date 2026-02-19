@@ -30,6 +30,16 @@ var _ = Describe("extractUsageFromSSE", func() {
 			Expect(usage.CacheReadInputTokens).To(Equal(0))
 		})
 
+		It("extracts model from message_start event", func() {
+			usage := &llm.Usage{}
+			meta := &streamMeta{}
+			data := []byte(`{"type":"message_start","message":{"model":"claude-opus-4-6","usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`)
+			p.extractUsageFromSSE(data, providerAnthropic, usage, meta)
+
+			Expect(meta.Model).To(Equal("claude-opus-4-6"))
+			Expect(usage.PromptTokens).To(Equal(100))
+		})
+
 		It("extracts cache tokens from message_start event", func() {
 			usage := &llm.Usage{}
 			meta := &streamMeta{}
@@ -60,11 +70,11 @@ var _ = Describe("extractUsageFromSSE", func() {
 			Expect(meta.StopReason).To(Equal("end_turn"))
 		})
 
-		It("accumulates usage across message_start and message_delta events", func() {
+		It("accumulates usage and model across message_start and message_delta events", func() {
 			usage := &llm.Usage{}
 			meta := &streamMeta{}
 
-			start := []byte(`{"type":"message_start","message":{"usage":{"input_tokens":100,"cache_creation_input_tokens":500,"cache_read_input_tokens":3000}}}`)
+			start := []byte(`{"type":"message_start","message":{"model":"claude-opus-4-6","usage":{"input_tokens":100,"cache_creation_input_tokens":500,"cache_read_input_tokens":3000}}}`)
 			p.extractUsageFromSSE(start, providerAnthropic, usage, meta)
 
 			delta := []byte(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":200}}`)
@@ -75,6 +85,7 @@ var _ = Describe("extractUsageFromSSE", func() {
 			Expect(usage.CacheCreationInputTokens).To(Equal(500))
 			Expect(usage.CacheReadInputTokens).To(Equal(3000))
 			Expect(meta.StopReason).To(Equal("end_turn"))
+			Expect(meta.Model).To(Equal("claude-opus-4-6"))
 		})
 
 		It("ignores content_block_delta events", func() {
@@ -224,5 +235,30 @@ var _ = Describe("reconstructStreamedResponse with stream usage", func() {
 		resp := p.reconstructStreamedResponse(chunks, "content", streamUsage, meta, p.defaultProv)
 		Expect(resp).NotTo(BeNil())
 		Expect(resp.StopReason).To(Equal("end_turn"))
+	})
+
+	It("applies accumulated model to response when last chunk has no model", func() {
+		chunks := [][]byte{
+			[]byte(`not-json`),
+		}
+		streamUsage := &llm.Usage{PromptTokens: 100, CompletionTokens: 50}
+		meta := &streamMeta{Model: "claude-opus-4-6", StopReason: "end_turn"}
+
+		resp := p.reconstructStreamedResponse(chunks, "content", streamUsage, meta, p.defaultProv)
+		Expect(resp).NotTo(BeNil())
+		Expect(resp.Model).To(Equal("claude-opus-4-6"))
+	})
+
+	It("preserves model from last chunk when available", func() {
+		chunks := [][]byte{
+			[]byte(`{"model":"llama3","message":{"role":"assistant","content":"Hi"},"done":true,"done_reason":"stop"}`),
+		}
+		streamUsage := &llm.Usage{PromptTokens: 100, CompletionTokens: 50}
+		meta := &streamMeta{Model: "override-model"}
+
+		resp := p.reconstructStreamedResponse(chunks, "Hi", streamUsage, meta, p.defaultProv)
+		Expect(resp).NotTo(BeNil())
+		// The last chunk has model "llama3", so that should be preserved
+		Expect(resp.Model).To(Equal("llama3"))
 	})
 })

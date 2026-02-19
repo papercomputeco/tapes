@@ -477,9 +477,11 @@ func (p *Proxy) extractContentFromJSON(data []byte, providerName string, content
 }
 
 // streamMeta accumulates metadata from SSE events that lives outside llm.Usage,
-// such as the stop reason which Anthropic sends in message_delta.
+// such as the stop reason which Anthropic sends in message_delta and the model
+// name from message_start.
 type streamMeta struct {
 	StopReason string
+	Model      string
 }
 
 // extractUsageFromSSE extracts token usage from SSE event data.
@@ -496,8 +498,11 @@ func (p *Proxy) extractUsageFromSSE(data []byte, providerName string, usage *llm
 		chunkType, _ := chunkData["type"].(string)
 		switch chunkType {
 		case "message_start":
-			// message_start contains: message.usage.{input_tokens, cache_creation_input_tokens, cache_read_input_tokens}
+			// message_start contains: message.{model, usage.{input_tokens, cache_creation_input_tokens, cache_read_input_tokens}}
 			if msg, ok := chunkData["message"].(map[string]any); ok {
+				if model, ok := msg["model"].(string); ok && model != "" {
+					meta.Model = model
+				}
 				if u, ok := msg["usage"].(map[string]any); ok {
 					inputTokens := jsonInt(u, "input_tokens")
 					cacheCreation := jsonInt(u, "cache_creation_input_tokens")
@@ -584,13 +589,22 @@ func (p *Proxy) reconstructStreamedResponse(chunks [][]byte, fullContent string,
 			if resp.StopReason == "" && meta != nil && meta.StopReason != "" {
 				resp.StopReason = meta.StopReason
 			}
+			// Use accumulated model from message_start if the last chunk didn't have one
+			if resp.Model == "" && meta != nil && meta.Model != "" {
+				resp.Model = meta.Model
+			}
 			return resp
 		}
 	}
 
 	// Fallback: construct a minimal response from accumulated content
 	if fullContent != "" {
+		model := ""
+		if meta != nil && meta.Model != "" {
+			model = meta.Model
+		}
 		resp := &llm.ChatResponse{
+			Model:     model,
 			Message:   llm.NewTextMessage("assistant", fullContent),
 			Done:      true,
 			CreatedAt: time.Now(),

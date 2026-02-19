@@ -161,10 +161,16 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 		}
 
 		matched[bestMatch.ID] = true
+		// PromptTokens follows the proxy convention: total input tokens including
+		// base input, cache creation, and cache read. The Anthropic API reports
+		// input_tokens as only the non-cached portion, so we must sum all three.
+		totalInput := entry.Message.Usage.InputTokens +
+			entry.Message.Usage.CacheCreationInputTokens +
+			entry.Message.Usage.CacheReadInputTokens
 		usage := &llm.Usage{
-			PromptTokens:             entry.Message.Usage.InputTokens,
+			PromptTokens:             totalInput,
 			CompletionTokens:         entry.Message.Usage.OutputTokens,
-			TotalTokens:              entry.Message.Usage.InputTokens + entry.Message.Usage.OutputTokens,
+			TotalTokens:              totalInput + entry.Message.Usage.OutputTokens,
 			CacheCreationInputTokens: entry.Message.Usage.CacheCreationInputTokens,
 			CacheReadInputTokens:     entry.Message.Usage.CacheReadInputTokens,
 		}
