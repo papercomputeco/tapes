@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/papercomputeco/tapes/pkg/cliui"
 	"github.com/papercomputeco/tapes/pkg/config"
 )
 
@@ -64,9 +65,12 @@ func runSet(key, value, configDir string) error {
 
 	target := cfger.GetTarget()
 	if target != "" {
-		fmt.Printf("Using config file: %s\n\n", cfger.GetTarget())
+		fmt.Printf("\n  %s %s\n\n",
+			cliui.KeyStyle.Render("Config file:"),
+			cliui.DimStyle.Render(target),
+		)
 	} else {
-		fmt.Print("No config file found. Using default config.\n\n")
+		fmt.Printf("\n  %s\n\n", cliui.DimStyle.Render("No config file found. Using defaults."))
 	}
 
 	err = cfger.SetConfigValue(key, value)
@@ -74,6 +78,10 @@ func runSet(key, value, configDir string) error {
 		return err
 	}
 
-	fmt.Printf("Set %s = %q\n", key, value)
+	fmt.Printf("  %s Set %s = %s\n\n",
+		cliui.SuccessMark,
+		cliui.KeyStyle.Render(key),
+		cliui.ValueStyle.Render(value),
+	)
 	return nil
 }

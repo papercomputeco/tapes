@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
+	"github.com/papercomputeco/tapes/pkg/cliui"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/dotdir"
 	"github.com/papercomputeco/tapes/pkg/llm"
@@ -118,7 +120,7 @@ func (c *checkoutCommander) run() error {
 		if err := dotdirManager.ClearCheckout(""); err != nil {
 			return fmt.Errorf("clearing checkout: %w", err)
 		}
-		fmt.Println("Checkout cleared. Next chat will start a new conversation.")
+		fmt.Printf("\n  %s Checkout cleared. Next chat will start a new conversation.\n\n", cliui.SuccessMark)
 		return nil
 	}
 
@@ -128,9 +130,13 @@ func (c *checkoutCommander) run() error {
 	)
 
 	// Fetch the conversation history from the API
-	history, err := c.fetchHistory(c.hash)
-	if err != nil {
-		return fmt.Errorf("fetching history: %w", err)
+	var history *historyResponse
+	if err := cliui.Step(os.Stdout, "Fetching conversation history", func() error {
+		var fetchErr error
+		history, fetchErr = c.fetchHistory(c.hash)
+		return fetchErr
+	}); err != nil {
+		return err
 	}
 
 	// Convert API messages to checkout messages
@@ -152,12 +158,21 @@ func (c *checkoutCommander) run() error {
 		return fmt.Errorf("saving checkout: %w", err)
 	}
 
-	fmt.Printf("Checked out %s (%d messages)\n", utils.Truncate(history.HeadHash, 16), len(messages))
+	fmt.Printf("\n  %s Checked out %s %s\n\n",
+		cliui.SuccessMark,
+		cliui.HashStyle.Render(utils.Truncate(history.HeadHash, 16)),
+		cliui.DimStyle.Render(fmt.Sprintf("(%d messages)", len(messages))),
+	)
+
 	for _, msg := range messages {
 		preview := utils.Truncate(msg.Content, 60)
-		fmt.Printf("  [%s] %s\n", msg.Role, preview)
+		fmt.Printf("  %s %s\n",
+			cliui.RoleStyle.Render("["+msg.Role+"]"),
+			cliui.PreviewStyle.Render(preview),
+		)
 	}
 
+	fmt.Println()
 	return nil
 }
 
