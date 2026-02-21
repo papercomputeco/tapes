@@ -2,11 +2,15 @@ package worker
 
 import (
 	"context"
+	"errors"
+	"sync"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"go.uber.org/zap"
 
+	"github.com/papercomputeco/tapes/pkg/eventstream"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
@@ -14,16 +18,48 @@ import (
 // newTestPool creates a worker pool backed by an in-memory driver.
 // Callers should "wp.Close()" to drain enqueued jobs before asserting storage state.
 func newTestPool() (*Pool, *inmemory.Driver) {
+	return newTestPoolWithPublisher(nil)
+}
+
+func newTestPoolWithPublisher(publisher eventstream.Publisher) (*Pool, *inmemory.Driver) {
 	logger, _ := zap.NewDevelopment()
 	driver := inmemory.NewDriver()
 
 	wp, err := NewPool(&Config{
-		Driver: driver,
-		Logger: logger,
+		Driver:    driver,
+		Logger:    logger,
+		Publisher: publisher,
 	})
 	Expect(err).NotTo(HaveOccurred())
 
 	return wp, driver
+}
+
+type mockPublisher struct {
+	mu         sync.Mutex
+	events     []*eventstream.TurnPersistedEvent
+	publishErr error
+}
+
+func (m *mockPublisher) PublishTurn(_ context.Context, event *eventstream.TurnPersistedEvent) error {
+	if m.publishErr != nil {
+		return m.publishErr
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.events = append(m.events, event)
+	return nil
+}
+
+func (m *mockPublisher) Close() error {
+	return nil
+}
+
+func (m *mockPublisher) Events() []*eventstream.TurnPersistedEvent {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]*eventstream.TurnPersistedEvent(nil), m.events...)
 }
 
 var _ = Describe("Worker Pool", func() {
@@ -58,6 +94,101 @@ var _ = Describe("Worker Pool", func() {
 			})
 			Expect(ok).To(BeTrue())
 			wp.Close()
+		})
+	})
+
+	Describe("Publisher Hook", func() {
+		It("publishes a turn persisted event after storage succeeds", func() {
+			mockPub := &mockPublisher{}
+			wp, driver = newTestPoolWithPublisher(mockPub)
+
+			startedAt := time.Now().Add(-250 * time.Millisecond).UTC()
+			completedAt := startedAt.Add(250 * time.Millisecond).UTC()
+			ok := wp.Enqueue(Job{
+				Provider:    "test-provider",
+				AgentName:   "codex",
+				Path:        "/v1/chat/completions",
+				StartedAt:   startedAt,
+				CompletedAt: completedAt,
+				Streaming:   true,
+				HTTPStatus:  200,
+				Req: &llm.ChatRequest{
+					Model: "test-model",
+					Messages: []llm.Message{
+						{Role: "user", Content: []llm.ContentBlock{{Type: "text", Text: "hello"}}},
+					},
+				},
+				Resp: &llm.ChatResponse{
+					Model:      "test-model",
+					StopReason: "stop",
+					Message: llm.Message{
+						Role:    "assistant",
+						Content: []llm.ContentBlock{{Type: "text", Text: "hi"}},
+					},
+				},
+			})
+			Expect(ok).To(BeTrue())
+
+			wp.Close()
+
+			events := mockPub.Events()
+			Expect(events).To(HaveLen(1))
+
+			event := events[0]
+			Expect(event.SchemaVersion).To(Equal(eventstream.SchemaVersionV1))
+			Expect(event.EventType).To(Equal(eventstream.EventTypeTurnPersisted))
+			Expect(event.Source.Provider).To(Equal("test-provider"))
+			Expect(event.Source.AgentName).To(Equal("codex"))
+			Expect(event.RequestMeta.Path).To(Equal("/v1/chat/completions"))
+			Expect(event.RequestMeta.Streaming).To(BeTrue())
+			Expect(event.RequestMeta.HTTPStatus).To(Equal(200))
+			Expect(event.RequestMeta.DurationMs).To(Equal(int64(250)))
+
+			Expect(event.DAG.HeadHash).NotTo(BeEmpty())
+			Expect(event.EventID).To(Equal(event.DAG.HeadHash))
+			Expect(event.DAG.TurnNodeHashes).To(HaveLen(2))
+			Expect(event.DAG.NewNodeHashes).To(HaveLen(2))
+			Expect(event.DAG.RootHash).To(Equal(event.DAG.TurnNodeHashes[0]))
+			Expect(event.DAG.HeadHash).To(Equal(event.DAG.TurnNodeHashes[1]))
+
+			Expect(event.Turn.Provider).To(Equal("test-provider"))
+			Expect(event.Turn.Request).NotTo(BeNil())
+			Expect(event.Turn.Response).NotTo(BeNil())
+
+			nodes, err := driver.List(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nodes).To(HaveLen(2))
+		})
+
+		It("continues storage when publisher returns an error", func() {
+			mockPub := &mockPublisher{publishErr: errors.New("publish failed")}
+			wp, driver = newTestPoolWithPublisher(mockPub)
+
+			ok := wp.Enqueue(Job{
+				Provider: "test-provider",
+				Req: &llm.ChatRequest{
+					Model: "test-model",
+					Messages: []llm.Message{
+						{Role: "user", Content: []llm.ContentBlock{{Type: "text", Text: "hello"}}},
+					},
+				},
+				Resp: &llm.ChatResponse{
+					Model: "test-model",
+					Message: llm.Message{
+						Role:    "assistant",
+						Content: []llm.ContentBlock{{Type: "text", Text: "hi"}},
+					},
+				},
+			})
+			Expect(ok).To(BeTrue())
+
+			wp.Close()
+
+			nodes, err := driver.List(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nodes).To(HaveLen(2))
+
+			Expect(mockPub.Events()).To(BeEmpty())
 		})
 	})
 

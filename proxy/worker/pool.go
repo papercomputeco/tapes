@@ -11,10 +11,13 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/embeddings"
+	"github.com/papercomputeco/tapes/pkg/eventstream"
+	eventstreamnop "github.com/papercomputeco/tapes/pkg/eventstream/nop"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
@@ -32,6 +35,13 @@ type Job struct {
 	AgentName string
 	Req       *llm.ChatRequest
 	Resp      *llm.ChatResponse
+
+	// Request metadata captured by the proxy.
+	Path        string
+	StartedAt   time.Time
+	CompletedAt time.Time
+	Streaming   bool
+	HTTPStatus  int
 }
 
 // Config is the configuration options for the worker pool.
@@ -45,6 +55,10 @@ type Config struct {
 	// Embedder generates optional text embeddings.
 	// A configured Embedder is required if VectorDriver is set.
 	Embedder embeddings.Embedder
+
+	// Publisher publishes persisted turn events.
+	// If nil, a no-op publisher is used.
+	Publisher eventstream.Publisher
 
 	// NumWorkers is the number of background workers in the pool.
 	NumWorkers uint
@@ -79,6 +93,10 @@ func NewPool(c *Config) (*Pool, error) {
 
 	if c.NumWorkers > uint(math.MaxInt) {
 		return nil, fmt.Errorf("NumWorkers %d exceeds max int", c.NumWorkers)
+	}
+
+	if c.Publisher == nil {
+		c.Publisher = eventstreamnop.NewPublisher()
 	}
 
 	wp := &Pool{
@@ -138,7 +156,7 @@ func (p *Pool) worker(id uint) {
 func (p *Pool) processJob(job Job) {
 	ctx := context.Background()
 
-	head, newNodes, err := p.storeConversationTurn(ctx, job)
+	result, err := p.storeConversationTurn(ctx, job)
 	if err != nil {
 		p.logger.Error("async DAG storage failed",
 			zap.String("provider", job.Provider),
@@ -148,24 +166,45 @@ func (p *Pool) processJob(job Job) {
 	}
 
 	p.logger.Info("conversation stored",
-		zap.String("head", head),
+		zap.String("head", result.HeadHash),
 		zap.String("provider", job.Provider),
 	)
 
-	// If the vector store is configured, process newly inserted nodes
-	if p.config.VectorDriver != nil && p.config.Embedder != nil && len(newNodes) > 0 {
-		p.logger.Debug("storing embeddings for new nodes",
-			zap.Int("new_node_count", len(newNodes)),
+	event := p.buildTurnPersistedEvent(job, result)
+	if err := p.config.Publisher.PublishTurn(ctx, event); err != nil {
+		p.logger.Warn("failed to publish turn event",
+			zap.String("provider", job.Provider),
+			zap.String("event_type", eventstream.EventTypeTurnPersisted),
+			zap.Error(err),
 		)
-		p.storeEmbeddings(ctx, newNodes)
+	}
+
+	// If the vector store is configured, process newly inserted nodes
+	if p.config.VectorDriver != nil && p.config.Embedder != nil && len(result.NewNodes) > 0 {
+		p.logger.Debug("storing embeddings for new nodes",
+			zap.Int("new_node_count", len(result.NewNodes)),
+		)
+		p.storeEmbeddings(ctx, result.NewNodes)
 	}
 }
 
+type conversationPersistResult struct {
+	RootHash       string
+	HeadHash       string
+	ParentHash     *string
+	TurnNodeHashes []string
+	NewNodeHashes  []string
+	NewNodes       []*merkle.Node
+}
+
 // storeConversationTurn stores a request-response pair in the merkle dag.
-// Returns the head hash and the slice of nodes that were newly Put.
-func (p *Pool) storeConversationTurn(ctx context.Context, job Job) (string, []*merkle.Node, error) {
+// Returns metadata about the persisted turn.
+func (p *Pool) storeConversationTurn(ctx context.Context, job Job) (*conversationPersistResult, error) {
 	var parent *merkle.Node
+	var root *merkle.Node
 	var newNodes []*merkle.Node
+	var turnNodeHashes []string
+	var newNodeHashes []string
 
 	// Store each message from the request as nodes.
 	for _, msg := range job.Req.Messages {
@@ -182,7 +221,7 @@ func (p *Pool) storeConversationTurn(ctx context.Context, job Job) (string, []*m
 
 		isNew, err := p.config.Driver.Put(ctx, node)
 		if err != nil {
-			return "", nil, fmt.Errorf("storing message node: %w", err)
+			return nil, fmt.Errorf("storing message node: %w", err)
 		}
 
 		p.logger.Debug("stored message in DAG",
@@ -192,8 +231,14 @@ func (p *Pool) storeConversationTurn(ctx context.Context, job Job) (string, []*m
 			zap.Bool("is_new", isNew),
 		)
 
+		turnNodeHashes = append(turnNodeHashes, node.Hash)
+		if root == nil {
+			root = node
+		}
+
 		if isNew {
 			newNodes = append(newNodes, node)
+			newNodeHashes = append(newNodeHashes, node.Hash)
 		}
 		parent = node
 	}
@@ -219,7 +264,7 @@ func (p *Pool) storeConversationTurn(ctx context.Context, job Job) (string, []*m
 
 	isNew, err := p.config.Driver.Put(ctx, responseNode)
 	if err != nil {
-		return "", nil, fmt.Errorf("storing response node: %w", err)
+		return nil, fmt.Errorf("storing response node: %w", err)
 	}
 
 	p.logger.Debug("stored response in DAG",
@@ -228,11 +273,69 @@ func (p *Pool) storeConversationTurn(ctx context.Context, job Job) (string, []*m
 		zap.Bool("is_new", isNew),
 	)
 
-	if isNew {
-		newNodes = append(newNodes, responseNode)
+	turnNodeHashes = append(turnNodeHashes, responseNode.Hash)
+	if root == nil {
+		root = responseNode
 	}
 
-	return responseNode.Hash, newNodes, nil
+	if isNew {
+		newNodes = append(newNodes, responseNode)
+		newNodeHashes = append(newNodeHashes, responseNode.Hash)
+	}
+
+	return &conversationPersistResult{
+		RootHash:       root.Hash,
+		HeadHash:       responseNode.Hash,
+		ParentHash:     responseNode.ParentHash,
+		TurnNodeHashes: turnNodeHashes,
+		NewNodeHashes:  newNodeHashes,
+		NewNodes:       newNodes,
+	}, nil
+}
+
+func (p *Pool) buildTurnPersistedEvent(job Job, result *conversationPersistResult) *eventstream.TurnPersistedEvent {
+	completedAt := job.CompletedAt.UTC()
+	if completedAt.IsZero() {
+		completedAt = time.Now().UTC()
+	}
+
+	startedAt := job.StartedAt.UTC()
+	var durationMs int64
+	if !startedAt.IsZero() && !completedAt.Before(startedAt) {
+		durationMs = completedAt.Sub(startedAt).Milliseconds()
+	}
+
+	return &eventstream.TurnPersistedEvent{
+		SchemaVersion: eventstream.SchemaVersionV1,
+		EventType:     eventstream.EventTypeTurnPersisted,
+		EventID:       result.HeadHash,
+		EmittedAt:     completedAt,
+		Source: eventstream.EventSource{
+			Project:   p.config.Project,
+			AgentName: job.AgentName,
+			Provider:  job.Provider,
+		},
+		RequestMeta: eventstream.TurnRequestMeta{
+			Path:        job.Path,
+			StartedAt:   startedAt,
+			CompletedAt: completedAt,
+			DurationMs:  durationMs,
+			Streaming:   job.Streaming,
+			HTTPStatus:  job.HTTPStatus,
+		},
+		DAG: eventstream.TurnDAGMeta{
+			RootHash:       result.RootHash,
+			HeadHash:       result.HeadHash,
+			ParentHash:     result.ParentHash,
+			TurnNodeHashes: append([]string(nil), result.TurnNodeHashes...),
+			NewNodeHashes:  append([]string(nil), result.NewNodeHashes...),
+		},
+		Turn: llm.ConversationTurn{
+			Provider: job.Provider,
+			Request:  job.Req,
+			Response: job.Resp,
+		},
+	}
 }
 
 // storeEmbeddings generates and stores embeddings for the given nodes.
