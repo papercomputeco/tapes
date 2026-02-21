@@ -13,7 +13,7 @@ type Config struct {
 	// UpstreamURL is the upstream LLM provider URL (e.g., "http://localhost:11434")
 	UpstreamURL string
 
-	// ProviderType specifies the LLM provider type (e.g., "anthropic", "openai", "ollama")
+	// ProviderType specifies the LLM provider type (e.g., "anthropic", "openai", "ollama", "vertex")
 	// This determines how requests and responses are parsed.
 	ProviderType string
 
