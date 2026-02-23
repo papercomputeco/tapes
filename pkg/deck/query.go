@@ -759,6 +759,7 @@ func (q *Query) buildSessionSummaryFromNodes(nodes []*ent.Node) (SessionSummary,
 
 	hasToolError := false
 	hasGitActivity := false
+	var lastModel string
 	for _, n := range nodes {
 		blocks, _ := parseContentBlocks(n.Content)
 		toolCalls += countToolCalls(blocks)
@@ -783,8 +784,12 @@ func (q *Query) buildSessionSummaryFromNodes(nodes []*ent.Node) (SessionSummary,
 
 		model := normalizeModel(n.Model)
 		if model == "" {
+			model = lastModel
+		}
+		if model == "" {
 			continue
 		}
+		lastModel = model
 
 		pricing, ok := PricingForModel(q.pricing, model)
 		if !ok {

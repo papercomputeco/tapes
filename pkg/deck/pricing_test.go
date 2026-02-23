@@ -193,6 +193,19 @@ var _ = Describe("PricingForModel", func() {
 		Expect(p.CacheRead).To(Equal(0.14))
 	})
 
+	It("resolves claude-haiku-4.6", func() {
+		p, ok := PricingForModel(pricing, "claude-haiku-4.6")
+		Expect(ok).To(BeTrue())
+		Expect(p.Input).To(Equal(1.00))
+		Expect(p.Output).To(Equal(5.00))
+	})
+
+	It("resolves claude-haiku-4-6 with date suffix", func() {
+		p, ok := PricingForModel(pricing, "claude-haiku-4-6-20260219")
+		Expect(ok).To(BeTrue())
+		Expect(p.Input).To(Equal(1.00))
+	})
+
 	It("returns false for unknown models", func() {
 		_, ok := PricingForModel(pricing, "totally-unknown-model")
 		Expect(ok).To(BeFalse())

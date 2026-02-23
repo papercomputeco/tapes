@@ -71,6 +71,66 @@ var _ = Describe("Session labels", func() {
 	})
 })
 
+var _ = Describe("Empty-model cost fallback", func() {
+	intPtr := func(v int) *int { return &v }
+
+	It("uses last-seen model for response nodes with empty model", func() {
+		pricing := DefaultPricing()
+		q := &Query{pricing: pricing}
+
+		nodes := []*ent.Node{
+			{
+				ID:    "node-1",
+				Role:  "user",
+				Model: "claude-opus-4-6-20260219",
+				Content: []map[string]any{{
+					"text": "Hello",
+					"type": "text",
+				}},
+				PromptTokens:     intPtr(100),
+				CompletionTokens: intPtr(0),
+			},
+			{
+				ID:               "node-2",
+				Role:             "assistant",
+				Model:            "", // empty model — the bug
+				Content:          []map[string]any{{"text": "Hi!", "type": "text"}},
+				PromptTokens:     intPtr(0),
+				CompletionTokens: intPtr(50),
+			},
+		}
+
+		summary, modelCosts, _, err := q.buildSessionSummaryFromNodes(nodes)
+		Expect(err).NotTo(HaveOccurred())
+
+		// The assistant node should have been costed using the user node's model
+		Expect(summary.TotalCost).To(BeNumerically(">", 0))
+		Expect(modelCosts).To(HaveKey("claude-opus-4.6"))
+		cost := modelCosts["claude-opus-4.6"]
+		Expect(cost.OutputTokens).To(Equal(int64(50)))
+		Expect(cost.TotalCost).To(BeNumerically(">", 0))
+	})
+
+	It("skips nodes when no model has been seen yet", func() {
+		pricing := DefaultPricing()
+		q := &Query{pricing: pricing}
+
+		nodes := []*ent.Node{
+			{
+				ID:               "node-1",
+				Role:             "assistant",
+				Model:            "", // no model, and no prior model
+				Content:          []map[string]any{{"text": "orphan", "type": "text"}},
+				CompletionTokens: intPtr(50),
+			},
+		}
+
+		_, modelCosts, _, err := q.buildSessionSummaryFromNodes(nodes)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(modelCosts).To(BeEmpty())
+	})
+})
+
 var _ = Describe("Analytics helper functions", func() {
 	Describe("buildDurationBuckets", func() {
 		It("distributes sessions into correct duration buckets", func() {

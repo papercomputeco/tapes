@@ -559,6 +559,9 @@ func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, 
 
 		finalResp := p.reconstructStreamedResponse(allChunks, fullContent, streamUsage, meta, prov)
 		if finalResp != nil {
+			if finalResp.Model == "" && parsedReq.Model != "" {
+				finalResp.Model = parsedReq.Model
+			}
 			p.workerPool.Enqueue(worker.Job{
 				Provider:  prov.Name(),
 				AgentName: agentName,
