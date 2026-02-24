@@ -4,14 +4,12 @@ package publisher
 
 import (
 	"context"
-
-	"github.com/papercomputeco/tapes/pkg/merkle"
 )
 
-// Publisher publishes Merkle nodes to an external sink.
+// Publisher publishes events to an external sink.
 type Publisher interface {
-	// Publish publishes one node.
-	Publish(ctx context.Context, node *merkle.Node) error
+	// Publish publishes one event.
+	Publish(ctx context.Context, event *Event) error
 
 	// Close releases any resources held by the publisher.
 	Close() error

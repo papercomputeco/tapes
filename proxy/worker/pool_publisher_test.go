@@ -12,23 +12,24 @@ import (
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/publisher"
+	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
 type mockPublisher struct {
 	mu sync.Mutex
 
-	published  []*merkle.Node
+	published  []*publisher.Event
 	publishErr error
 	closeCalls int
 }
 
-func (m *mockPublisher) Publish(_ context.Context, node *merkle.Node) error {
+func (m *mockPublisher) Publish(_ context.Context, event *publisher.Event) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if node != nil {
-		copied := *node
+	if event != nil {
+		copied := *event
 		m.published = append(m.published, &copied)
 	}
 
@@ -48,13 +49,25 @@ func (m *mockPublisher) publishCalls() int {
 	return len(m.published)
 }
 
-func (m *mockPublisher) publishedHashes() []string {
+func (m *mockPublisher) publishedNodeHashes() []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	hashes := make([]string, 0, len(m.published))
-	for _, node := range m.published {
-		hashes = append(hashes, node.Hash)
+	for _, event := range m.published {
+		hashes = append(hashes, event.Node.Hash)
+	}
+
+	return hashes
+}
+
+func (m *mockPublisher) publishedRootHashes() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	hashes := make([]string, 0, len(m.published))
+	for _, event := range m.published {
+		hashes = append(hashes, event.RootHash)
 	}
 
 	return hashes
@@ -64,6 +77,15 @@ func (m *mockPublisher) closeCallCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.closeCalls
+}
+
+type ancestryFailDriver struct {
+	*inmemory.Driver
+	ancestryErr error
+}
+
+func (d *ancestryFailDriver) Ancestry(_ context.Context, _ string) ([]*merkle.Node, error) {
+	return nil, d.ancestryErr
 }
 
 func newPublisherTestPool(pub publisher.Publisher) (*Pool, *inmemory.Driver) {
@@ -79,6 +101,20 @@ func newPublisherTestPool(pub publisher.Publisher) (*Pool, *inmemory.Driver) {
 	Expect(err).NotTo(HaveOccurred())
 
 	return wp, driver
+}
+
+func newPublisherTestPoolWithDriver(pub publisher.Publisher, driver storage.Driver) *Pool {
+	logger, _ := zap.NewDevelopment()
+
+	wp, err := NewPool(&Config{
+		Driver:     driver,
+		Publisher:  pub,
+		Logger:     logger,
+		NumWorkers: 1,
+	})
+	Expect(err).NotTo(HaveOccurred())
+
+	return wp
 }
 
 func buildTurnOneJob() Job {
@@ -128,7 +164,7 @@ func buildTurnTwoJob() Job {
 }
 
 var _ = Describe("Worker Pool Publisher Integration", func() {
-	It("publishes only nodes that were newly inserted", func() {
+	It("publishes only newly inserted nodes keyed to the conversation root", func() {
 		pub := &mockPublisher{}
 		wp, driver := newPublisherTestPool(pub)
 		ctx := context.Background()
@@ -141,15 +177,30 @@ var _ = Describe("Worker Pool Publisher Integration", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(nodes).To(HaveLen(5))
 
-		hashes := pub.publishedHashes()
-		Expect(hashes).To(HaveLen(5))
-		Expect(hashes).To(ConsistOf(
+		leaves, err := driver.Leaves(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(leaves).To(HaveLen(1))
+
+		ancestry, err := driver.Ancestry(ctx, leaves[0].Hash)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ancestry).NotTo(BeEmpty())
+		rootHash := ancestry[len(ancestry)-1].Hash
+
+		nodeHashes := pub.publishedNodeHashes()
+		Expect(nodeHashes).To(HaveLen(5))
+		Expect(nodeHashes).To(ConsistOf(
 			nodes[0].Hash,
 			nodes[1].Hash,
 			nodes[2].Hash,
 			nodes[3].Hash,
 			nodes[4].Hash,
 		))
+
+		rootHashes := pub.publishedRootHashes()
+		Expect(rootHashes).To(HaveLen(5))
+		for _, publishedRootHash := range rootHashes {
+			Expect(publishedRootHash).To(Equal(rootHash))
+		}
 	})
 
 	It("continues storing when Publish returns an error", func() {
@@ -166,6 +217,25 @@ var _ = Describe("Worker Pool Publisher Integration", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(nodes).To(HaveLen(3))
 		Expect(pub.publishCalls()).To(Equal(3))
+	})
+
+	It("skips publishing for a turn when root derivation fails", func() {
+		pub := &mockPublisher{}
+		backing := inmemory.NewDriver()
+		driver := &ancestryFailDriver{
+			Driver:      backing,
+			ancestryErr: errors.New("ancestry failed"),
+		}
+		wp := newPublisherTestPoolWithDriver(pub, driver)
+		ctx := context.Background()
+
+		Expect(wp.Enqueue(buildTurnOneJob())).To(BeTrue())
+		wp.Close()
+
+		nodes, err := backing.List(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(nodes).To(HaveLen(3))
+		Expect(pub.publishCalls()).To(Equal(0))
 	})
 
 	It("closes the configured publisher when the pool closes", func() {

@@ -8,6 +8,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -174,14 +175,53 @@ func (p *Pool) processJob(job Job) {
 
 	// Publish only nodes that were newly inserted into the content-addressed DAG.
 	// Publish errors are best-effort and do not fail storage.
+	if len(newNodes) == 0 {
+		return
+	}
+
+	rootHash, err := p.deriveRootHash(ctx, head)
+	if err != nil {
+		p.logger.Error("failed to derive root hash for publish",
+			zap.String("head", head),
+			zap.Error(err),
+		)
+		return
+	}
+
 	for _, node := range newNodes {
-		if err := p.config.Publisher.Publish(ctx, node); err != nil {
+		event, err := publisher.NewEvent(rootHash, node)
+		if err != nil {
+			p.logger.Error("failed to build publish event",
+				zap.String("hash", node.Hash),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		if err := p.config.Publisher.Publish(ctx, event); err != nil {
 			p.logger.Error("failed to publish node",
 				zap.String("hash", node.Hash),
 				zap.Error(err),
 			)
 		}
 	}
+}
+
+func (p *Pool) deriveRootHash(ctx context.Context, head string) (string, error) {
+	ancestry, err := p.config.Driver.Ancestry(ctx, head)
+	if err != nil {
+		return "", fmt.Errorf("get ancestry: %w", err)
+	}
+	if len(ancestry) == 0 {
+		return "", errors.New("empty ancestry")
+	}
+
+	root := ancestry[len(ancestry)-1]
+	if root == nil || root.Hash == "" {
+		return "", errors.New("empty root hash")
+	}
+
+	return root.Hash, nil
 }
 
 // storeConversationTurn stores a request-response pair in the merkle dag.

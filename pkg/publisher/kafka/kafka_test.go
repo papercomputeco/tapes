@@ -80,16 +80,21 @@ var _ = Describe("Publisher", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		node := buildKafkaTestNode()
-		err = pub.Publish(context.Background(), node)
+		rootHash := "root-hash-123"
+		event, err := basepublisher.NewEvent(rootHash, node)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = pub.Publish(context.Background(), event)
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(writer.writes).To(HaveLen(1))
-		Expect(string(writer.writes[0].Key)).To(Equal(node.Hash))
+		Expect(string(writer.writes[0].Key)).To(Equal(rootHash))
 
-		var event basepublisher.Event
-		Expect(json.Unmarshal(writer.writes[0].Value, &event)).To(Succeed())
-		Expect(event.Schema).To(Equal(basepublisher.SchemaNodeV1))
-		Expect(event.Node.Hash).To(Equal(node.Hash))
+		var got basepublisher.Event
+		Expect(json.Unmarshal(writer.writes[0].Value, &got)).To(Succeed())
+		Expect(got.Schema).To(Equal(basepublisher.SchemaNodeV1))
+		Expect(got.RootHash).To(Equal(rootHash))
+		Expect(got.Node.Hash).To(Equal(node.Hash))
 	})
 
 	It("returns writer errors from Publish", func() {
@@ -101,11 +106,14 @@ var _ = Describe("Publisher", func() {
 		}, writer)
 		Expect(err).NotTo(HaveOccurred())
 
-		err = pub.Publish(context.Background(), buildKafkaTestNode())
+		event, err := basepublisher.NewEvent("root-hash-123", buildKafkaTestNode())
+		Expect(err).NotTo(HaveOccurred())
+
+		err = pub.Publish(context.Background(), event)
 		Expect(err).To(MatchError(ContainSubstring("write failed")))
 	})
 
-	It("returns an error from Publish for nil nodes", func() {
+	It("returns an error from Publish for nil events", func() {
 		writer := &mockWriter{}
 		pub, err := newPublisherWithWriter(Config{
 			Topic: "tapes.nodes.v1",
@@ -113,7 +121,22 @@ var _ = Describe("Publisher", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		err = pub.Publish(context.Background(), nil)
-		Expect(err).To(MatchError(basepublisher.ErrNilNode))
+		Expect(err).To(MatchError(errNilEvent))
+	})
+
+	It("returns an error from Publish for events with empty root hash", func() {
+		writer := &mockWriter{}
+		pub, err := newPublisherWithWriter(Config{
+			Topic: "tapes.nodes.v1",
+		}, writer)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = pub.Publish(context.Background(), &basepublisher.Event{
+			Schema:     basepublisher.SchemaNodeV1,
+			OccurredAt: time.Now(),
+			Node:       *buildKafkaTestNode(),
+		})
+		Expect(err).To(MatchError(basepublisher.ErrEmptyRootHash))
 	})
 
 	It("delegates Close to the underlying writer", func() {

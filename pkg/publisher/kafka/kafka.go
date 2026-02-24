@@ -10,7 +10,6 @@ import (
 
 	skafka "github.com/segmentio/kafka-go"
 
-	"github.com/papercomputeco/tapes/pkg/merkle"
 	basepublisher "github.com/papercomputeco/tapes/pkg/publisher"
 )
 
@@ -21,6 +20,7 @@ const (
 var (
 	errMissingBrokers = errors.New("kafka brokers are required")
 	errMissingTopic   = errors.New("kafka topic is required")
+	errNilEvent       = errors.New("event is required")
 )
 
 // Message is the writer message type used by this publisher.
@@ -91,11 +91,13 @@ func newPublisherWithWriter(c Config, w writer) (*Publisher, error) {
 	}, nil
 }
 
-// Publish publishes a single node event to Kafka.
-func (p *Publisher) Publish(ctx context.Context, node *merkle.Node) error {
-	event, err := basepublisher.NewEvent(node)
-	if err != nil {
-		return err
+// Publish publishes a single event to Kafka.
+func (p *Publisher) Publish(ctx context.Context, event *basepublisher.Event) error {
+	if event == nil {
+		return errNilEvent
+	}
+	if event.RootHash == "" {
+		return basepublisher.ErrEmptyRootHash
 	}
 
 	value, err := json.Marshal(event)
@@ -107,7 +109,7 @@ func (p *Publisher) Publish(ctx context.Context, node *merkle.Node) error {
 	defer cancel()
 
 	err = p.writer.WriteMessages(publishCtx, Message{
-		Key:   []byte(node.Hash),
+		Key:   []byte(event.RootHash),
 		Value: value,
 		Time:  event.OccurredAt,
 	})

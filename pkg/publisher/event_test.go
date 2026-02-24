@@ -25,9 +25,17 @@ func buildNodeForEvent() *merkle.Node {
 }
 
 var _ = Describe("NewEvent", func() {
+	const rootHash = "root-hash-123"
+
 	It("returns an error when node is nil", func() {
-		event, err := NewEvent(nil)
-		Expect(err).To(HaveOccurred())
+		event, err := NewEvent(rootHash, nil)
+		Expect(err).To(MatchError(ErrNilNode))
+		Expect(event).To(BeNil())
+	})
+
+	It("returns an error when root hash is empty", func() {
+		event, err := NewEvent("", buildNodeForEvent())
+		Expect(err).To(MatchError(ErrEmptyRootHash))
 		Expect(event).To(BeNil())
 	})
 
@@ -35,12 +43,13 @@ var _ = Describe("NewEvent", func() {
 		node := buildNodeForEvent()
 
 		before := time.Now()
-		event, err := NewEvent(node)
+		event, err := NewEvent(rootHash, node)
 		after := time.Now()
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(event).NotTo(BeNil())
 		Expect(event.Schema).To(Equal(SchemaNodeV1))
+		Expect(event.RootHash).To(Equal(rootHash))
 		Expect(event.OccurredAt).To(BeTemporally(">=", before))
 		Expect(event.OccurredAt).To(BeTemporally("<=", after.Add(50*time.Millisecond)))
 		Expect(event.Node).To(Equal(*node))

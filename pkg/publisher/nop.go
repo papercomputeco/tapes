@@ -2,8 +2,6 @@ package publisher
 
 import (
 	"context"
-
-	"github.com/papercomputeco/tapes/pkg/merkle"
 )
 
 // NopPublisher is a no-op publisher intended for tests and disabled publishing.
@@ -15,7 +13,7 @@ func NewNopPublisher() *NopPublisher {
 }
 
 // Publish is a no-op.
-func (n *NopPublisher) Publish(_ context.Context, _ *merkle.Node) error {
+func (n *NopPublisher) Publish(_ context.Context, _ *Event) error {
 	return nil
 }
 

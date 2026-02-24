@@ -15,7 +15,10 @@ var _ = Describe("NopPublisher", func() {
 
 	It("returns nil from Publish", func() {
 		p := NewNopPublisher()
-		err := p.Publish(context.Background(), buildNodeForEvent())
+		event, err := NewEvent("root-hash-123", buildNodeForEvent())
+		Expect(err).NotTo(HaveOccurred())
+
+		err = p.Publish(context.Background(), event)
 		Expect(err).NotTo(HaveOccurred())
 	})
 
