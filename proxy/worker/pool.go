@@ -16,6 +16,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/embeddings"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/publisher"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/vector"
 )
@@ -37,6 +38,10 @@ type Job struct {
 type Config struct {
 	// Driver is the storage backend for persisting nodes.
 	Driver storage.Driver
+
+	// Publisher is an optional event publisher for newly inserted nodes.
+	// If nil, a no-op publisher is used.
+	Publisher publisher.Publisher
 
 	// VectorDriver is the optional vector store driver for embeddings.
 	VectorDriver vector.Driver
@@ -80,6 +85,10 @@ func NewPool(c *Config) (*Pool, error) {
 		return nil, fmt.Errorf("NumWorkers %d exceeds max int", c.NumWorkers)
 	}
 
+	if c.Publisher == nil {
+		c.Publisher = publisher.NewNopPublisher()
+	}
+
 	wp := &Pool{
 		config: c,
 		queue:  make(chan Job, c.QueueSize),
@@ -118,6 +127,10 @@ func (p *Pool) Enqueue(job Job) bool {
 func (p *Pool) Close() {
 	close(p.queue)
 	p.wg.Wait()
+
+	if err := p.config.Publisher.Close(); err != nil {
+		p.logger.Warn("failed to close publisher", zap.Error(err))
+	}
 }
 
 // worker is the inner worker thread that continuously pulls jobs off the jobs queue
@@ -157,6 +170,17 @@ func (p *Pool) processJob(job Job) {
 			"new_node_count", len(newNodes),
 		)
 		p.storeEmbeddings(ctx, newNodes)
+	}
+
+	// Publish only nodes that were newly inserted into the content-addressed DAG.
+	// Publish errors are best-effort and do not fail storage.
+	for _, node := range newNodes {
+		if err := p.config.Publisher.Publish(ctx, node); err != nil {
+			p.logger.Error("failed to publish node",
+				zap.String("hash", node.Hash),
+				zap.Error(err),
+			)
+		}
 	}
 }
 
