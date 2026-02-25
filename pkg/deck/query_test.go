@@ -111,6 +111,42 @@ var _ = Describe("Empty-model cost fallback", func() {
 		Expect(cost.TotalCost).To(BeNumerically(">", 0))
 	})
 
+	It("keeps summary and message totals consistent", func() {
+		pricing := DefaultPricing()
+		q := &Query{pricing: pricing}
+
+		nodes := []*ent.Node{
+			{
+				ID:    "node-1",
+				Role:  "user",
+				Model: "claude-opus-4-6-20260219",
+				Content: []map[string]any{{
+					"text": "Hello",
+					"type": "text",
+				}},
+				PromptTokens: intPtr(100),
+			},
+			{
+				ID:               "node-2",
+				Role:             "assistant",
+				Model:            "",
+				Content:          []map[string]any{{"text": "Hi!", "type": "text"}},
+				CompletionTokens: intPtr(500000),
+			},
+		}
+
+		summary, _, _, err := q.buildSessionSummaryFromNodes(nodes)
+		Expect(err).NotTo(HaveOccurred())
+
+		messages, _ := q.buildSessionMessages(nodes)
+		messageTotal := 0.0
+		for _, msg := range messages {
+			messageTotal += msg.TotalCost
+		}
+
+		Expect(summary.TotalCost).To(BeNumerically("~", messageTotal, 1e-12))
+	})
+
 	It("skips nodes when no model has been seen yet", func() {
 		pricing := DefaultPricing()
 		q := &Query{pricing: pricing}
