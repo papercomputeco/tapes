@@ -403,7 +403,7 @@ var _ = Describe("sessionCache", func() {
 			q.storeSessionCandidates(makeCandidates("s1", "s2"))
 
 			var wg sync.WaitGroup
-			for i := 0; i < 50; i++ {
+			for range 50 {
 				wg.Add(2)
 				go func() {
 					defer wg.Done()
@@ -415,12 +415,10 @@ var _ = Describe("sessionCache", func() {
 				}()
 			}
 			// Also do some writes concurrently
-			for i := 0; i < 10; i++ {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
+			for range 10 {
+				wg.Go(func() {
 					q.storeSessionCandidates(makeCandidates("s1", "s2"))
-				}()
+				})
 			}
 			wg.Wait()
 		})
