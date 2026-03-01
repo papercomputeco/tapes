@@ -229,7 +229,7 @@ func (c *startCommander) runAgent(ctx context.Context, agent string, passthrough
 
 	// Resolve opencode provider/model before building the command,
 	// since we need to pass --model as a CLI argument.
-	var agentArgs []string
+	agentArgs := make([]string, 0, len(passthroughArgs))
 	if agent == agentOpenCode {
 		pref, prefErr := resolveOpenCodePreference(c.configDir, c.provider, c.model, os.Stdin, os.Stdout)
 		if prefErr != nil {
