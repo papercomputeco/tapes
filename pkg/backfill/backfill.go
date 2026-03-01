@@ -10,6 +10,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage/ent"
 	"github.com/papercomputeco/tapes/pkg/storage/ent/node"
 	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
+	"github.com/papercomputeco/tapes/pkg/utils"
 )
 
 // Options configures backfill behavior.
@@ -148,7 +149,7 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 
 			// Verify by content prefix if we have text content.
 			if entryText != "" && len(ci.node.Content) > 0 {
-				nodeText := extractTextFromContent(ci.node.Content)
+				nodeText := utils.ExtractTextFromContent(ci.node.Content)
 				if !contentPrefixMatch(entryText, nodeText, 200) {
 					continue
 				}
