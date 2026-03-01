@@ -131,6 +131,8 @@ func NewStartCmd() *cobra.Command {
 				return cmder.runLogs(cmd.Context(), cmd.OutOrStdout())
 			case cmder.daemon:
 				return cmder.runDaemon(cmd.Context())
+			case agent == "" && len(passthroughArgs) > 0:
+				return fmt.Errorf("passthrough flags require an agent argument (e.g. tapes start claude -- %s)", strings.Join(passthroughArgs, " "))
 			case agent == "":
 				return cmder.runForeground(cmd.Context())
 			default:
@@ -235,7 +237,7 @@ func (c *startCommander) runAgent(ctx context.Context, agent string, passthrough
 		if prefErr != nil {
 			return prefErr
 		}
-		agentArgs = []string{"--model", pref.Provider + "/" + pref.Model}
+		agentArgs = append(agentArgs, "--model", pref.Provider+"/"+pref.Model)
 		fmt.Fprintf(os.Stderr, "Note: tapes will capture telemetry for %s/%s. Switching models inside opencode will not be captured by tapes.\n", pref.Provider, pref.Model)
 	}
 

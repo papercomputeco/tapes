@@ -255,6 +255,9 @@ var _ = Describe("parseStartArgs", func() {
 		Entry("agent with single passthrough flag",
 			[]string{"codex", "--full-auto"}, 1,
 			"codex", []string{"--full-auto"}),
+		Entry("uppercase agent with passthrough flags",
+			[]string{"  Claude  ", "--dangerously-skip-permissions"}, 1,
+			"claude", []string{"--dangerously-skip-permissions"}),
 	)
 })
 
