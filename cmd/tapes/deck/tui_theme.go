@@ -1,0 +1,245 @@
+package deckcmder
+
+import (
+	"os"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
+)
+
+// themeOverride is set by the CLI --theme flag before the TUI starts.
+// Valid values: "", "dark", "light".
+var themeOverride string
+
+func init() {
+	profile := detectColorProfile()
+
+	renderer := lipgloss.NewRenderer(os.Stdout, termenv.WithProfile(profile))
+	renderer.SetColorProfile(profile)
+	lipgloss.SetDefaultRenderer(renderer)
+
+	if isDarkTheme() {
+		applyPalette(darkPalette)
+	} else {
+		applyPalette(lightPalette)
+	}
+}
+
+// detectColorProfile returns the best color profile the terminal supports.
+// It respects the NO_COLOR convention (https://no-color.org) and COLORTERM.
+func detectColorProfile() termenv.Profile {
+	if _, ok := os.LookupEnv("NO_COLOR"); ok {
+		return termenv.Ascii
+	}
+
+	// COLORTERM=truecolor or 24bit is a reliable signal for TrueColor.
+	if ct := os.Getenv("COLORTERM"); ct == "truecolor" || ct == "24bit" {
+		return termenv.TrueColor
+	}
+
+	// Fall back to what termenv auto-detects from the terminal.
+	detected := termenv.ColorProfile()
+	// Upgrade Ascii to ANSI256 as a minimum so colors degrade gracefully.
+	if detected == termenv.Ascii {
+		return termenv.ANSI256
+	}
+	return detected
+}
+
+// isDarkTheme returns true when the dark palette should be used.
+// The --theme flag takes priority over terminal background detection.
+func isDarkTheme() bool {
+	switch themeOverride {
+	case "dark":
+		return true
+	case "light":
+		return false
+	default:
+		return termenv.HasDarkBackground()
+	}
+}
+
+// Concrete hex strings for OSC 11 background color (AdaptiveColor is a struct,
+// can't be passed to termenv.RGBColor directly).
+const (
+	baseBgDark  = "#000000"
+	baseBgLight = "#E2E0DB"
+)
+
+type deckPalette struct {
+	foreground         lipgloss.TerminalColor
+	red                lipgloss.TerminalColor
+	green              lipgloss.TerminalColor
+	yellow             lipgloss.TerminalColor
+	blue               lipgloss.TerminalColor
+	magenta            lipgloss.TerminalColor
+	brightBlack        lipgloss.TerminalColor
+	dimmed             lipgloss.TerminalColor
+	highlightBg        lipgloss.TerminalColor
+	panelBg            lipgloss.TerminalColor
+	label              lipgloss.TerminalColor
+	baseBg             lipgloss.TerminalColor
+	costOrangeGradient []string
+	claudeColors       map[string]string
+	openaiColors       map[string]string
+	googleColors       map[string]string
+}
+
+var (
+	colorForeground  lipgloss.TerminalColor
+	colorRed         lipgloss.TerminalColor
+	colorGreen       lipgloss.TerminalColor
+	colorYellow      lipgloss.TerminalColor
+	colorBlue        lipgloss.TerminalColor
+	colorMagenta     lipgloss.TerminalColor
+	colorBrightBlack lipgloss.TerminalColor
+	colorDimmed      lipgloss.TerminalColor
+	colorHighlightBg lipgloss.TerminalColor
+	colorPanelBg     lipgloss.TerminalColor
+	colorLabel       lipgloss.TerminalColor
+	colorBaseBg      lipgloss.TerminalColor
+
+	costOrangeGradient []string
+
+	deckTitleStyle       lipgloss.Style
+	deckMutedStyle       lipgloss.Style
+	deckAccentStyle      lipgloss.Style
+	deckDimStyle         lipgloss.Style
+	deckSectionStyle     lipgloss.Style
+	deckDividerStyle     lipgloss.Style
+	deckHighlightStyle   lipgloss.Style
+	deckStatusOKStyle    lipgloss.Style
+	deckStatusFailStyle  lipgloss.Style
+	deckStatusWarnStyle  lipgloss.Style
+	deckRoleUserStyle    lipgloss.Style
+	deckRoleAsstStyle    lipgloss.Style
+	deckModalBgStyle     lipgloss.Style
+	deckTabBoxStyle      lipgloss.Style
+	deckTabActiveStyle   lipgloss.Style
+	deckTabInactiveStyle lipgloss.Style
+	deckBackgroundStyle  lipgloss.Style
+	facetDescStyle       lipgloss.Style
+)
+
+// Model color schemes by provider — dark and light variants per tier.
+var (
+	claudeColors map[string]string
+	openaiColors map[string]string
+	googleColors map[string]string
+)
+
+var darkPalette = deckPalette{
+	foreground:  lipgloss.Color("#E6E4D9"),
+	red:         lipgloss.Color("#FF6B4A"),
+	green:       lipgloss.Color("#4DA667"),
+	yellow:      lipgloss.Color("#F2B84B"),
+	blue:        lipgloss.Color("#4EB1E9"),
+	magenta:     lipgloss.Color("#B656B1"),
+	brightBlack: lipgloss.Color("#4A4A4A"),
+	dimmed:      lipgloss.CompleteColor{TrueColor: "#2A2A2B", ANSI256: "236", ANSI: "0"},
+	highlightBg: lipgloss.CompleteColor{TrueColor: "#252526", ANSI256: "235", ANSI: "0"},
+	panelBg:     lipgloss.CompleteColor{TrueColor: "#212122", ANSI256: "235", ANSI: "0"},
+	label:       lipgloss.Color("#8A8079"),
+	baseBg:      lipgloss.CompleteColor{TrueColor: "#000000", ANSI256: "16", ANSI: "0"},
+	costOrangeGradient: []string{
+		"#B6512B",
+		"#D96840",
+		"#FF7A45",
+		"#FF8F4D",
+		"#FFB25A",
+	},
+	claudeColors: map[string]string{
+		"opus":   "#D97BC1",
+		"sonnet": "#B656B1",
+		"haiku":  "#8E3F8A",
+	},
+	openaiColors: map[string]string{
+		"gpt-4o":      "#7DD9FF",
+		"gpt-4":       "#4EB1E9",
+		"gpt-4o-mini": "#3889B8",
+		"gpt-3.5":     "#2A6588",
+	},
+	googleColors: map[string]string{
+		"gemini-2.0":     "#7DD9FF",
+		"gemini-1.5-pro": "#4EB1E9",
+		"gemini-1.5":     "#3889B8",
+		"gemma":          "#2A6588",
+	},
+}
+
+var lightPalette = deckPalette{
+	foreground:  lipgloss.Color("#1A1612"),
+	red:         lipgloss.Color("#A8371F"),
+	green:       lipgloss.Color("#16653A"),
+	yellow:      lipgloss.Color("#996B0F"),
+	blue:        lipgloss.Color("#155D91"),
+	magenta:     lipgloss.Color("#7A2E7A"),
+	brightBlack: lipgloss.Color("#4A4239"),
+	dimmed:      lipgloss.CompleteColor{TrueColor: "#8A7E72", ANSI256: "245", ANSI: "8"},
+	highlightBg: lipgloss.CompleteColor{TrueColor: "#EFE6D8", ANSI256: "255", ANSI: "7"},
+	panelBg:     lipgloss.CompleteColor{TrueColor: "#F5EFE6", ANSI256: "255", ANSI: "7"},
+	label:       lipgloss.Color("#3D352C"),
+	baseBg:      lipgloss.CompleteColor{TrueColor: "#E2E0DB", ANSI256: "254", ANSI: "7"},
+	costOrangeGradient: []string{
+		"#9C3C1E",
+		"#B64A28",
+		"#CF5A33",
+		"#E06A3F",
+		"#F08B57",
+	},
+	claudeColors: map[string]string{
+		"opus":   "#B24B9C",
+		"sonnet": "#8F3B85",
+		"haiku":  "#6E2D66",
+	},
+	openaiColors: map[string]string{
+		"gpt-4o":      "#2F89C6",
+		"gpt-4":       "#1B6EA8",
+		"gpt-4o-mini": "#185A87",
+		"gpt-3.5":     "#134466",
+	},
+	googleColors: map[string]string{
+		"gemini-2.0":     "#2F89C6",
+		"gemini-1.5-pro": "#1B6EA8",
+		"gemini-1.5":     "#185A87",
+		"gemma":          "#134466",
+	},
+}
+
+func applyPalette(p deckPalette) {
+	colorForeground = p.foreground
+	colorRed = p.red
+	colorGreen = p.green
+	colorYellow = p.yellow
+	colorBlue = p.blue
+	colorMagenta = p.magenta
+	colorBrightBlack = p.brightBlack
+	colorDimmed = p.dimmed
+	colorHighlightBg = p.highlightBg
+	colorPanelBg = p.panelBg
+	colorLabel = p.label
+	colorBaseBg = p.baseBg
+	costOrangeGradient = p.costOrangeGradient
+	claudeColors = p.claudeColors
+	openaiColors = p.openaiColors
+	googleColors = p.googleColors
+
+	deckTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(colorYellow)
+	deckMutedStyle = lipgloss.NewStyle().Foreground(colorBrightBlack)
+	deckAccentStyle = lipgloss.NewStyle().Foreground(colorRed)
+	deckDimStyle = lipgloss.NewStyle().Foreground(colorDimmed)
+	deckSectionStyle = lipgloss.NewStyle().Bold(true).Foreground(colorForeground)
+	deckDividerStyle = lipgloss.NewStyle().Foreground(colorDimmed)
+	deckHighlightStyle = lipgloss.NewStyle().Background(colorHighlightBg)
+	deckStatusOKStyle = lipgloss.NewStyle().Foreground(colorGreen)
+	deckStatusFailStyle = lipgloss.NewStyle().Foreground(colorRed)
+	deckStatusWarnStyle = lipgloss.NewStyle().Foreground(colorYellow)
+	deckRoleUserStyle = lipgloss.NewStyle().Foreground(colorBlue)
+	deckRoleAsstStyle = lipgloss.NewStyle().Foreground(colorRed)
+	deckModalBgStyle = lipgloss.NewStyle().Background(colorPanelBg).Foreground(colorForeground).Padding(1, 2)
+	deckTabBoxStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorDimmed).Padding(0, 1)
+	deckTabActiveStyle = lipgloss.NewStyle().Bold(true).Foreground(colorForeground)
+	deckTabInactiveStyle = lipgloss.NewStyle().Foreground(colorBrightBlack)
+	deckBackgroundStyle = lipgloss.NewStyle().Background(colorBaseBg)
+	facetDescStyle = lipgloss.NewStyle().Foreground(colorLabel).Italic(true)
+}
