@@ -130,7 +130,7 @@ func (p *Pool) Close() {
 	p.wg.Wait()
 
 	if err := p.config.Publisher.Close(); err != nil {
-		p.logger.Warn("failed to close publisher", zap.Error(err))
+		p.logger.Warn("failed to close publisher", "error", err)
 	}
 }
 
@@ -182,8 +182,8 @@ func (p *Pool) processJob(job Job) {
 	rootHash, err := p.deriveRootHash(ctx, head)
 	if err != nil {
 		p.logger.Error("failed to derive root hash for publish",
-			zap.String("head", head),
-			zap.Error(err),
+			"head", head,
+			"error", err,
 		)
 		return
 	}
@@ -192,16 +192,16 @@ func (p *Pool) processJob(job Job) {
 		event, err := publisher.NewEvent(rootHash, node)
 		if err != nil {
 			p.logger.Error("failed to build publish event",
-				zap.String("hash", node.Hash),
-				zap.Error(err),
+				"hash", node.Hash,
+				"error", err,
 			)
 			continue
 		}
 
 		if err := p.config.Publisher.Publish(ctx, event); err != nil {
 			p.logger.Error("failed to publish node",
-				zap.String("hash", node.Hash),
-				zap.Error(err),
+				"hash", node.Hash,
+				"error", err,
 			)
 		}
 	}

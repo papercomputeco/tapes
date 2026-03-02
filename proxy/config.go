@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"github.com/papercomputeco/tapes/pkg/embeddings"
+	"github.com/papercomputeco/tapes/pkg/publisher"
 	"github.com/papercomputeco/tapes/pkg/vector"
 )
 
@@ -30,6 +31,10 @@ type Config struct {
 	// Embedder is an optional embedder for generating embeddings.
 	// Required if VectorDriver is set.
 	Embedder embeddings.Embedder
+
+	// Publisher is an optional event publisher for new DAG nodes.
+	// If nil, the worker pool defaults to a no-op publisher.
+	Publisher publisher.Publisher
 
 	// Project is the git repository or project name to tag on stored nodes.
 	Project string

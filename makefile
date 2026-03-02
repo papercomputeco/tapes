@@ -119,6 +119,11 @@ unit-test: ## Runs unit tests via "go test"
 	$(call print-target)
 	dagger call test
 
+.PHONY: kafka-e2e-test
+kafka-e2e-test: ## Runs Kafka e2e proxy publish test
+	$(call print-target)
+	dagger call test-kafka-e-2-e
+
 .PHONY: help
 .DEFAULT_GOAL := help
 help: ## Prints this help message

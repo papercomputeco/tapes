@@ -7,9 +7,9 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
+	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/publisher"
 	"github.com/papercomputeco/tapes/pkg/storage"
@@ -89,7 +89,7 @@ func (d *ancestryFailDriver) Ancestry(_ context.Context, _ string) ([]*merkle.No
 }
 
 func newPublisherTestPool(pub publisher.Publisher) (*Pool, *inmemory.Driver) {
-	logger, _ := zap.NewDevelopment()
+	logger := tapeslogger.NewNoop()
 	driver := inmemory.NewDriver()
 
 	wp, err := NewPool(&Config{
@@ -104,7 +104,7 @@ func newPublisherTestPool(pub publisher.Publisher) (*Pool, *inmemory.Driver) {
 }
 
 func newPublisherTestPoolWithDriver(pub publisher.Publisher, driver storage.Driver) *Pool {
-	logger, _ := zap.NewDevelopment()
+	logger := tapeslogger.NewNoop()
 
 	wp, err := NewPool(&Config{
 		Driver:     driver,

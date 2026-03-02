@@ -89,6 +89,7 @@ func New(config Config, driver storage.Driver, log *slog.Logger) (*Proxy, error)
 
 	wp, err := worker.NewPool(&worker.Config{
 		Driver:       driver,
+		Publisher:    config.Publisher,
 		VectorDriver: config.VectorDriver,
 		Embedder:     config.Embedder,
 		Project:      config.Project,

@@ -3,8 +3,10 @@ package proxycmder
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -12,11 +14,18 @@ import (
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
+	"github.com/papercomputeco/tapes/pkg/publisher"
+	kafkapublisher "github.com/papercomputeco/tapes/pkg/publisher/kafka"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
 	vectorutils "github.com/papercomputeco/tapes/pkg/vector/utils"
 	"github.com/papercomputeco/tapes/proxy"
+)
+
+const (
+	publisherTypeNop   = "nop"
+	publisherTypeKafka = "kafka"
 )
 
 type proxyCommander struct {
@@ -28,6 +37,11 @@ type proxyCommander struct {
 	debug        bool
 	sqlitePath   string
 	project      string
+
+	publisherType string
+	kafkaBrokers  string
+	kafkaTopic    string
+	kafkaClientID string
 
 	vectorStoreProvider string
 	vectorStoreTarget   string
@@ -55,6 +69,10 @@ var proxyFlags = config.FlagSet{
 	config.FlagEmbeddingTgt:          {Name: "embedding-target", ViperKey: "embedding.target", Description: "Embedding provider URL"},
 	config.FlagEmbeddingModel:        {Name: "embedding-model", ViperKey: "embedding.model", Description: "Embedding model name (e.g., nomic-embed-text)"},
 	config.FlagEmbeddingDims:         {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Embedding dimensionality"},
+	config.FlagPublisherType:         {Name: "publisher", ViperKey: "publisher.type", Description: "Publisher backend (nop, kafka)"},
+	config.FlagKafkaBrokers:          {Name: "kafka-brokers", ViperKey: "publisher.kafka.brokers", Description: "Comma separated list of broker ip:port pairs"},
+	config.FlagKafkaClientID:         {Name: "kafka-client-id", ViperKey: "publisher.kafka.client_id", Description: "Optional Kafka client.id"},
+	config.FlagKafkaTopic:            {Name: "kafka-topic", ViperKey: "publisher.kafka.topic", Description: "Name of topic to publish session events (e.g. tapes.nodes.v1)"},
 }
 
 const proxyLongDesc string = `Run the proxy server.
@@ -97,6 +115,10 @@ func NewProxyCmd() *cobra.Command {
 				config.FlagEmbeddingTgt,
 				config.FlagEmbeddingModel,
 				config.FlagEmbeddingDims,
+				config.FlagPublisherType,
+				config.FlagKafkaBrokers,
+				config.FlagKafkaClientID,
+				config.FlagKafkaTopic,
 			})
 
 			cmder.listen = v.GetString("proxy.listen")
@@ -110,6 +132,10 @@ func NewProxyCmd() *cobra.Command {
 			cmder.embeddingModel = v.GetString("embedding.model")
 			cmder.embeddingDimensions = v.GetUint("embedding.dimensions")
 			cmder.project = v.GetString("proxy.project")
+			cmder.publisherType = v.GetString("publisher.type")
+			cmder.kafkaBrokers = v.GetString("publisher.kafka.brokers")
+			cmder.kafkaClientID = v.GetString("publisher.kafka.client_id")
+			cmder.kafkaTopic = v.GetString("publisher.kafka.topic")
 
 			if cmder.project == "" {
 				cmder.project = git.RepoName(cmd.Context())
@@ -139,12 +165,31 @@ func NewProxyCmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingTgt, &cmder.embeddingTarget)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingModel, &cmder.embeddingModel)
 	config.AddUintFlag(cmd, cmder.flags, config.FlagEmbeddingDims, &cmder.embeddingDimensions)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagPublisherType, &cmder.publisherType)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagKafkaBrokers, &cmder.kafkaBrokers)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagKafkaClientID, &cmder.kafkaClientID)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagKafkaTopic, &cmder.kafkaTopic)
 
 	return cmd
 }
 
 func (c *proxyCommander) run() error {
 	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
+
+	if err := c.validatePublisherConfig(); err != nil {
+		return err
+	}
+
+	pub, err := c.newPublisher()
+	if err != nil {
+		return fmt.Errorf("creating publisher: %w", err)
+	}
+	pubOwned := true
+	defer func() {
+		if pubOwned {
+			_ = pub.Close()
+		}
+	}()
 
 	driver, err := c.newStorageDriver()
 	if err != nil {
@@ -156,6 +201,7 @@ func (c *proxyCommander) run() error {
 		ListenAddr:   c.listen,
 		UpstreamURL:  c.upstream,
 		ProviderType: c.providerType,
+		Publisher:    pub,
 		Project:      c.project,
 	}
 
@@ -194,6 +240,7 @@ func (c *proxyCommander) run() error {
 	if err != nil {
 		return fmt.Errorf("creating proxy: %w", err)
 	}
+	pubOwned = false
 	defer p.Close()
 
 	c.logger.Info("starting proxy server",
@@ -203,6 +250,51 @@ func (c *proxyCommander) run() error {
 	)
 
 	return p.Run()
+}
+
+func (c *proxyCommander) validatePublisherConfig() error {
+	switch c.publisherType {
+	case publisherTypeNop:
+		return nil
+	case publisherTypeKafka:
+		if len(splitKafkaBrokers(c.kafkaBrokers)) == 0 {
+			return errors.New("kafka brokers are required when --publisher=kafka")
+		}
+		if strings.TrimSpace(c.kafkaTopic) == "" {
+			return errors.New("kafka topic is required when --publisher=kafka")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported publisher type %q (supported: %s, %s)", c.publisherType, publisherTypeNop, publisherTypeKafka)
+	}
+}
+
+func splitKafkaBrokers(raw string) []string {
+	parts := strings.Split(raw, ",")
+	brokers := make([]string, 0, len(parts))
+	for _, part := range parts {
+		broker := strings.TrimSpace(part)
+		if broker != "" {
+			brokers = append(brokers, broker)
+		}
+	}
+
+	return brokers
+}
+
+func (c *proxyCommander) newPublisher() (publisher.Publisher, error) {
+	switch c.publisherType {
+	case publisherTypeNop:
+		return publisher.NewNopPublisher(), nil
+	case publisherTypeKafka:
+		return kafkapublisher.NewPublisher(kafkapublisher.Config{
+			Brokers:  splitKafkaBrokers(c.kafkaBrokers),
+			Topic:    strings.TrimSpace(c.kafkaTopic),
+			ClientID: strings.TrimSpace(c.kafkaClientID),
+		})
+	default:
+		return nil, fmt.Errorf("unsupported publisher type %q", c.publisherType)
+	}
 }
 
 func (c *proxyCommander) newStorageDriver() (storage.Driver, error) {
