@@ -42,9 +42,13 @@ import (
 const (
 	startLongDesc = `Start tapes and optionally launch an agent.
 
+Use -- to pass additional flags directly to the agent binary.
+
 Examples:
   tapes start
   tapes start claude
+  tapes start claude -- --dangerously-skip-permissions
+  tapes start claude -- --worktree
   tapes start opencode
   tapes start opencode --provider anthropic --model claude-sonnet-4-5
   tapes start opencode --provider ollama --model qwen3-coder:30b
@@ -87,10 +91,20 @@ func NewStartCmd() *cobra.Command {
 	cmder := &startCommander{}
 
 	cmd := &cobra.Command{
-		Use:   "start [agent]",
+		Use:   "start [agent] [-- <agent-flags>...]",
 		Short: startShortDesc,
 		Long:  startLongDesc,
-		Args:  cobra.MaximumNArgs(1),
+		Args: func(cmd *cobra.Command, args []string) error {
+			dashAt := cmd.ArgsLenAtDash()
+			positionalCount := len(args)
+			if dashAt >= 0 {
+				positionalCount = dashAt
+			}
+			if positionalCount > 1 {
+				return fmt.Errorf("accepts at most 1 arg(s), received %d", positionalCount)
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var err error
 			cmder.debug, err = cmd.Flags().GetBool("debug")
@@ -110,20 +124,19 @@ func NewStartCmd() *cobra.Command {
 				return fmt.Errorf("could not get daemon flag: %w", err)
 			}
 
-			agent := ""
-			if len(args) == 1 {
-				agent = strings.ToLower(strings.TrimSpace(args[0]))
-			}
+			agent, passthroughArgs := parseStartArgs(args, cmd.ArgsLenAtDash())
 
 			switch {
 			case cmder.logs:
 				return cmder.runLogs(cmd.Context(), cmd.OutOrStdout())
 			case cmder.daemon:
 				return cmder.runDaemon(cmd.Context())
+			case agent == "" && len(passthroughArgs) > 0:
+				return fmt.Errorf("passthrough flags require an agent argument (e.g. tapes start claude -- %s)", strings.Join(passthroughArgs, " "))
 			case agent == "":
 				return cmder.runForeground(cmd.Context())
 			default:
-				return cmder.runAgent(cmd.Context(), agent)
+				return cmder.runAgent(cmd.Context(), agent, passthroughArgs)
 			}
 		},
 	}
@@ -136,6 +149,30 @@ func NewStartCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cmder.project, "project", "", "Project name to tag sessions (default: auto-detect from git)")
 
 	return cmd
+}
+
+// parseStartArgs splits cobra args into the agent name and any passthrough
+// flags supplied after "--". dashAt should be cmd.ArgsLenAtDash().
+func parseStartArgs(args []string, dashAt int) (string, []string) {
+	var agent string
+	var passthrough []string
+
+	switch {
+	case dashAt < 0:
+		// No "--" separator — all args are positional.
+		if len(args) > 0 {
+			agent = strings.ToLower(strings.TrimSpace(args[0]))
+		}
+	case dashAt == 0:
+		// "--" before any positional arg — no agent, everything is passthrough.
+		passthrough = args
+	default:
+		// dashAt > 0 — first arg is the agent, rest are passthrough.
+		agent = strings.ToLower(strings.TrimSpace(args[0]))
+		passthrough = args[dashAt:]
+	}
+
+	return agent, passthrough
 }
 
 func (c *startCommander) runLogs(ctx context.Context, out io.Writer) error {
@@ -174,7 +211,7 @@ func (c *startCommander) runLogs(ctx context.Context, out io.Writer) error {
 	return followLog(ctx, logPath, out)
 }
 
-func (c *startCommander) runAgent(ctx context.Context, agent string) error {
+func (c *startCommander) runAgent(ctx context.Context, agent string, passthroughArgs []string) error {
 	if !isSupportedAgent(agent) {
 		return fmt.Errorf("unsupported agent: %s", agent)
 	}
@@ -194,15 +231,17 @@ func (c *startCommander) runAgent(ctx context.Context, agent string) error {
 
 	// Resolve opencode provider/model before building the command,
 	// since we need to pass --model as a CLI argument.
-	var agentArgs []string
+	agentArgs := make([]string, 0, len(passthroughArgs))
 	if agent == agentOpenCode {
 		pref, prefErr := resolveOpenCodePreference(c.configDir, c.provider, c.model, os.Stdin, os.Stdout)
 		if prefErr != nil {
 			return prefErr
 		}
-		agentArgs = []string{"--model", pref.Provider + "/" + pref.Model}
+		agentArgs = append(agentArgs, "--model", pref.Provider+"/"+pref.Model)
 		fmt.Fprintf(os.Stderr, "Note: tapes will capture telemetry for %s/%s. Switching models inside opencode will not be captured by tapes.\n", pref.Provider, pref.Model)
 	}
+
+	agentArgs = append(agentArgs, passthroughArgs...)
 
 	// #nosec G204 -- agent commands are restricted to known binaries.
 	cmd := exec.CommandContext(ctx, agentCommand(agent), agentArgs...)

@@ -234,6 +234,33 @@ var _ = Describe("loadConfig project resolution", func() {
 	})
 })
 
+var _ = Describe("parseStartArgs", func() {
+	DescribeTable("splits args correctly",
+		func(args []string, dashAt int, expectedAgent string, expectedPassthrough []string) {
+			agent, passthrough := parseStartArgs(args, dashAt)
+			Expect(agent).To(Equal(expectedAgent))
+			Expect(passthrough).To(Equal(expectedPassthrough))
+		},
+		Entry("no args, no dash",
+			[]string{}, -1, "", []string(nil)),
+		Entry("agent only, no dash",
+			[]string{"claude"}, -1, "claude", []string(nil)),
+		Entry("agent with passthrough flags",
+			[]string{"claude", "--dangerously-skip-permissions", "--worktree"}, 1,
+			"claude", []string{"--dangerously-skip-permissions", "--worktree"}),
+		Entry("no agent, passthrough only (dash at 0)",
+			[]string{"--some-flag"}, 0, "", []string{"--some-flag"}),
+		Entry("agent name is trimmed and lowercased",
+			[]string{"  Claude  "}, -1, "claude", []string(nil)),
+		Entry("agent with single passthrough flag",
+			[]string{"codex", "--full-auto"}, 1,
+			"codex", []string{"--full-auto"}),
+		Entry("uppercase agent with passthrough flags",
+			[]string{"  Claude  ", "--dangerously-skip-permissions"}, 1,
+			"claude", []string{"--dangerously-skip-permissions"}),
+	)
+})
+
 func appendToFile(path string, data []byte) error {
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
