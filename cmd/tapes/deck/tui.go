@@ -258,6 +258,9 @@ func newDeckModel(query deck.Querier, filters deck.Filters, overview *deck.Overv
 	styles.Blurred.Prompt = lipgloss.NewStyle().Foreground(colorRed)
 	ti.SetStyles(styles)
 
+	h := help.New()
+	h.Styles = help.DefaultStyles(isDarkTheme())
+
 	return deckModel{
 		query:            query,
 		filters:          filters,
@@ -271,7 +274,7 @@ func newDeckModel(query deck.Querier, filters deck.Filters, overview *deck.Overv
 		refreshEvery:     refreshEvery,
 		spinner:          s,
 		keys:             defaultKeyMap(),
-		help:             help.New(),
+		help:             h,
 		searchInput:      ti,
 		sortedCache:      &sortedMessagesCache{},
 		sortedGroupCache: &sortedGroupCache{},
