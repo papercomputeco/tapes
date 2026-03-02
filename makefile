@@ -119,15 +119,15 @@ unit-test: ## Runs unit tests via "go test"
 	$(call print-target)
 	dagger call test
 
-.PHONY: kafka-e2e-test
-kafka-e2e-test: ## Runs Kafka e2e proxy publish test
+.PHONY: test-kafka-e2e
+test-kafka-e2e: ## Runs Kafka e2e proxy publish test
 	$(call print-target)
 	dagger call test-kafka-e-2-e
 
 .PHONY: help
 .DEFAULT_GOAL := help
 help: ## Prints this help message
-	@grep -h -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
+	@grep -h -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
 define print-target
     @printf "Executing target: \033[36m$@\033[0m\n"

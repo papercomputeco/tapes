@@ -42,6 +42,13 @@ var _ = Describe("serve proxy kafka e2e", func() {
 		}, 30*time.Second, 250*time.Millisecond).Should(Succeed())
 
 		topic := topicBase
+		Eventually(func() error {
+			conn, err := kafkago.DialLeader(context.Background(), "tcp", brokers[0], topic, 0)
+			if err != nil {
+				return err
+			}
+			return conn.Close()
+		}, 30*time.Second, 250*time.Millisecond).Should(Succeed())
 
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")

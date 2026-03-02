@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  kafka-e2e-test:
+  test-kafka-e2e:
     name: Kafka E2E Test
     runs-on: ubuntu-latest
 
@@ -33,7 +33,7 @@ jobs:
       - name: Run Kafka E2E tests via Dagger
         env:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-        run: make kafka-e2e-test
+        run: make test-kafka-e2e
 
   build:
     name: Build
