@@ -27,6 +27,8 @@ func (t *Tapes) lintOpts() dagger.GolangcilintOpts {
 }
 
 // CheckLint runs golangci-lint against the tapes source code without applying fixes.
+//
+// +check
 func (t *Tapes) CheckLint(ctx context.Context) (string, error) {
 	return dag.Golangcilint(t.Source, t.lintOpts()).Check(ctx)
 }

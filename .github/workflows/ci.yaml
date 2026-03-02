@@ -9,66 +9,13 @@ permissions:
   contents: read
 
 env:
-  DAGGER_VERSION: "0.19.10"
+  DAGGER_VERSION: "0.20.0"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Run tests via Dagger
-        uses: dagger/dagger-for-github@v8.2.0
-        env:
-          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-        with:
-          verb: call
-          args: test
-          version: ${{ env.DAGGER_VERSION }}
-
-  check-generate:
-    name: Check Generated Code
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Verify generated code is up to date
-        uses: dagger/dagger-for-github@v8.2.0
-        env:
-          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-        with:
-          verb: call
-          args: check-generate
-          version: ${{ env.DAGGER_VERSION }}
-
-  lint-check:
-    name: GolangCI Lint Check
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Dagger
-        uses: dagger/dagger-for-github@v8.2.0
-        with:
-          verb: version
-          version: ${{ env.DAGGER_VERSION }}
-
-      - name: Run lint check
-        env:
-          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-        run: make check
-
   build:
     name: Build
     runs-on: ubuntu-latest
