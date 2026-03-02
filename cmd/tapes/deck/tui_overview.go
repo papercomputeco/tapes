@@ -6,7 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"image/color"
+
+	"charm.land/lipgloss/v2"
 
 	"github.com/papercomputeco/tapes/pkg/deck"
 )
@@ -455,7 +457,7 @@ func (m deckModel) renderStatusPieChart(stats deckOverviewStats, width int) []st
 	return lines
 }
 
-func getModelColor(model string) lipgloss.TerminalColor {
+func getModelColor(model string) color.Color {
 	modelLower := strings.ToLower(model)
 
 	// Check for Claude models

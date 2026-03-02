@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"github.com/papercomputeco/tapes/pkg/deck"
 )
@@ -398,7 +398,7 @@ func (m deckModel) applyBackground(content string) string {
 		lipgloss.Left,
 		lipgloss.Top,
 		content,
-		lipgloss.WithWhitespaceBackground(colorBaseBg),
+		lipgloss.WithWhitespaceStyle(lipgloss.NewStyle().Background(colorBaseBg)),
 	)
 }
 

@@ -1,9 +1,11 @@
 package deckcmder
 
 import (
+	"image/color"
 	"os"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/compat"
 	"github.com/muesli/termenv"
 )
 
@@ -12,12 +14,6 @@ import (
 var themeOverride string
 
 func init() {
-	profile := detectColorProfile()
-
-	renderer := lipgloss.NewRenderer(os.Stdout, termenv.WithProfile(profile))
-	renderer.SetColorProfile(profile)
-	lipgloss.SetDefaultRenderer(renderer)
-
 	if isDarkTheme() {
 		applyPalette(darkPalette)
 	} else {
@@ -67,18 +63,18 @@ const (
 )
 
 type deckPalette struct {
-	foreground         lipgloss.TerminalColor
-	red                lipgloss.TerminalColor
-	green              lipgloss.TerminalColor
-	yellow             lipgloss.TerminalColor
-	blue               lipgloss.TerminalColor
-	magenta            lipgloss.TerminalColor
-	brightBlack        lipgloss.TerminalColor
-	dimmed             lipgloss.TerminalColor
-	highlightBg        lipgloss.TerminalColor
-	panelBg            lipgloss.TerminalColor
-	label              lipgloss.TerminalColor
-	baseBg             lipgloss.TerminalColor
+	foreground         color.Color
+	red                color.Color
+	green              color.Color
+	yellow             color.Color
+	blue               color.Color
+	magenta            color.Color
+	brightBlack        color.Color
+	dimmed             color.Color
+	highlightBg        color.Color
+	panelBg            color.Color
+	label              color.Color
+	baseBg             color.Color
 	costOrangeGradient []string
 	claudeColors       map[string]string
 	openaiColors       map[string]string
@@ -86,18 +82,18 @@ type deckPalette struct {
 }
 
 var (
-	colorForeground  lipgloss.TerminalColor
-	colorRed         lipgloss.TerminalColor
-	colorGreen       lipgloss.TerminalColor
-	colorYellow      lipgloss.TerminalColor
-	colorBlue        lipgloss.TerminalColor
-	colorMagenta     lipgloss.TerminalColor
-	colorBrightBlack lipgloss.TerminalColor
-	colorDimmed      lipgloss.TerminalColor
-	colorHighlightBg lipgloss.TerminalColor
-	colorPanelBg     lipgloss.TerminalColor
-	colorLabel       lipgloss.TerminalColor
-	colorBaseBg      lipgloss.TerminalColor
+	colorForeground  color.Color
+	colorRed         color.Color
+	colorGreen       color.Color
+	colorYellow      color.Color
+	colorBlue        color.Color
+	colorMagenta     color.Color
+	colorBrightBlack color.Color
+	colorDimmed      color.Color
+	colorHighlightBg color.Color
+	colorPanelBg     color.Color
+	colorLabel       color.Color
+	colorBaseBg      color.Color
 
 	costOrangeGradient []string
 
@@ -136,11 +132,11 @@ var darkPalette = deckPalette{
 	blue:        lipgloss.Color("#4EB1E9"),
 	magenta:     lipgloss.Color("#B656B1"),
 	brightBlack: lipgloss.Color("#4A4A4A"),
-	dimmed:      lipgloss.CompleteColor{TrueColor: "#2A2A2B", ANSI256: "236", ANSI: "0"},
-	highlightBg: lipgloss.CompleteColor{TrueColor: "#252526", ANSI256: "235", ANSI: "0"},
-	panelBg:     lipgloss.CompleteColor{TrueColor: "#212122", ANSI256: "235", ANSI: "0"},
+	dimmed:      compat.CompleteColor{TrueColor: lipgloss.Color("#2A2A2B"), ANSI256: lipgloss.ANSIColor(236), ANSI: lipgloss.ANSIColor(0)},
+	highlightBg: compat.CompleteColor{TrueColor: lipgloss.Color("#252526"), ANSI256: lipgloss.ANSIColor(235), ANSI: lipgloss.ANSIColor(0)},
+	panelBg:     compat.CompleteColor{TrueColor: lipgloss.Color("#212122"), ANSI256: lipgloss.ANSIColor(235), ANSI: lipgloss.ANSIColor(0)},
 	label:       lipgloss.Color("#8A8079"),
-	baseBg:      lipgloss.CompleteColor{TrueColor: "#000000", ANSI256: "16", ANSI: "0"},
+	baseBg:      compat.CompleteColor{TrueColor: lipgloss.Color("#000000"), ANSI256: lipgloss.ANSIColor(16), ANSI: lipgloss.ANSIColor(0)},
 	costOrangeGradient: []string{
 		"#B6512B",
 		"#D96840",
@@ -175,11 +171,11 @@ var lightPalette = deckPalette{
 	blue:        lipgloss.Color("#155D91"),
 	magenta:     lipgloss.Color("#7A2E7A"),
 	brightBlack: lipgloss.Color("#4A4239"),
-	dimmed:      lipgloss.CompleteColor{TrueColor: "#8A7E72", ANSI256: "245", ANSI: "8"},
-	highlightBg: lipgloss.CompleteColor{TrueColor: "#EFE6D8", ANSI256: "255", ANSI: "7"},
-	panelBg:     lipgloss.CompleteColor{TrueColor: "#F5EFE6", ANSI256: "255", ANSI: "7"},
+	dimmed:      compat.CompleteColor{TrueColor: lipgloss.Color("#8A7E72"), ANSI256: lipgloss.ANSIColor(245), ANSI: lipgloss.ANSIColor(8)},
+	highlightBg: compat.CompleteColor{TrueColor: lipgloss.Color("#EFE6D8"), ANSI256: lipgloss.ANSIColor(255), ANSI: lipgloss.ANSIColor(7)},
+	panelBg:     compat.CompleteColor{TrueColor: lipgloss.Color("#F5EFE6"), ANSI256: lipgloss.ANSIColor(255), ANSI: lipgloss.ANSIColor(7)},
 	label:       lipgloss.Color("#3D352C"),
-	baseBg:      lipgloss.CompleteColor{TrueColor: "#E2E0DB", ANSI256: "254", ANSI: "7"},
+	baseBg:      compat.CompleteColor{TrueColor: lipgloss.Color("#E2E0DB"), ANSI256: lipgloss.ANSIColor(254), ANSI: lipgloss.ANSIColor(7)},
 	costOrangeGradient: []string{
 		"#9C3C1E",
 		"#B64A28",

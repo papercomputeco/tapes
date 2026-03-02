@@ -1,7 +1,7 @@
 package deckcmder
 
 import (
-	"github.com/charmbracelet/bubbles/key"
+	"charm.land/bubbles/v2/key"
 
 	"github.com/papercomputeco/tapes/pkg/deck"
 )

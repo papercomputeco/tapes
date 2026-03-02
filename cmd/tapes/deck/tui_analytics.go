@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"image/color"
+
+	"charm.land/lipgloss/v2"
 
 	"github.com/papercomputeco/tapes/pkg/deck"
 )
@@ -1156,7 +1158,7 @@ func (m deckModel) renderFacetSummariesTab(width int) []string {
 
 const facetCollapsedLimit = 5
 
-func (m deckModel) renderFacetDistribution(dist map[string]int, label string, color lipgloss.TerminalColor, width int, labels map[string]facetLabel) []string {
+func (m deckModel) renderFacetDistribution(dist map[string]int, label string, color color.Color, width int, labels map[string]facetLabel) []string {
 	lines := []string{renderAnalyticsSectionHeader(label, width)}
 
 	if len(dist) == 0 {
@@ -1232,7 +1234,7 @@ func (m deckModel) renderFacetOutcomes(dist map[string]int, width int) []string 
 		return lines
 	}
 
-	outcomeColors := map[string]lipgloss.TerminalColor{
+	outcomeColors := map[string]color.Color{
 		"fully_achieved":     colorGreen,
 		"mostly_achieved":    colorBlue,
 		"partially_achieved": colorYellow,

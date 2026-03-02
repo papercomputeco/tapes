@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
-	bubbletea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
@@ -201,9 +201,8 @@ func RunDeckTUI(ctx context.Context, query deck.Querier, filters deck.Filters, r
 		}()
 	}
 
-	program := bubbletea.NewProgram(model,
-		bubbletea.WithContext(ctx),
-		bubbletea.WithAltScreen(),
+	program := tea.NewProgram(model,
+		tea.WithContext(ctx),
 	)
 	_, err := program.Run()
 	return err
@@ -249,10 +248,15 @@ func newDeckModel(query deck.Querier, filters deck.Filters, overview *deck.Overv
 	ti.Placeholder = "filter by label..."
 	ti.CharLimit = 64
 	ti.Prompt = "/ "
-	ti.Width = 30
-	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorBrightBlack)
-	ti.TextStyle = lipgloss.NewStyle().Foreground(colorForeground)
-	ti.PromptStyle = lipgloss.NewStyle().Foreground(colorRed)
+	ti.SetWidth(30)
+	styles := ti.Styles()
+	styles.Focused.Placeholder = lipgloss.NewStyle().Foreground(colorBrightBlack)
+	styles.Focused.Text = lipgloss.NewStyle().Foreground(colorForeground)
+	styles.Focused.Prompt = lipgloss.NewStyle().Foreground(colorRed)
+	styles.Blurred.Placeholder = lipgloss.NewStyle().Foreground(colorBrightBlack)
+	styles.Blurred.Text = lipgloss.NewStyle().Foreground(colorForeground)
+	styles.Blurred.Prompt = lipgloss.NewStyle().Foreground(colorRed)
+	ti.SetStyles(styles)
 
 	return deckModel{
 		query:            query,
@@ -274,20 +278,19 @@ func newDeckModel(query deck.Querier, filters deck.Filters, overview *deck.Overv
 	}
 }
 
-func (m deckModel) Init() bubbletea.Cmd {
-	cmds := []bubbletea.Cmd{
-		m.spinner.Tick,
+func (m deckModel) Init() tea.Cmd {
+	cmds := []tea.Cmd{
 		loadOverviewCmd(m.query, m.filters),
 	}
 	if m.refreshEvery > 0 {
 		cmds = append(cmds, refreshTick(m.refreshEvery))
 	}
-	return bubbletea.Batch(cmds...)
+	return tea.Batch(cmds...)
 }
 
-func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
+func (m deckModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case bubbletea.WindowSizeMsg:
+	case tea.WindowSizeMsg:
 		m.width = msg.Width - (2 * horizontalPadding)
 		m.height = msg.Height - (2 * verticalPadding)
 		return m, nil
@@ -382,7 +385,7 @@ func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
 		}
 
 		// Kick off facet analytics load if available
-		var cmds []bubbletea.Cmd
+		var cmds []tea.Cmd
 		if m.facetLoadFn != nil {
 			cmds = append(cmds, loadFacetAnalyticsCmd(m.facetLoadFn))
 		}
@@ -390,12 +393,12 @@ func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
 		if m.analyticsDaySel != "" && !analyticsDayExists(m.analytics.ActivityByDay, m.analyticsDaySel) {
 			m.analyticsDaySel = ""
 			m.analyticsDay = nil
-			return m, bubbletea.Batch(cmds...)
+			return m, tea.Batch(cmds...)
 		}
 		if m.analyticsDaySel != "" && m.analyticsDay == nil {
-			cmds = append(cmds, m.spinner.Tick, loadAnalyticsDayCmd(m.query, m.filters, m.analyticsDaySel))
+			cmds = append(cmds, loadAnalyticsDayCmd(m.query, m.filters, m.analyticsDaySel))
 		}
-		return m, bubbletea.Batch(cmds...)
+		return m, tea.Batch(cmds...)
 	case facetAnalyticsLoadedMsg:
 		if msg.err != nil {
 			return m, nil
@@ -416,7 +419,7 @@ func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
 		analyticsLoading := m.analytics == nil || (m.analyticsDaySel != "" && m.analyticsDay == nil)
 		facetLoading := m.facetLoadFn != nil && m.facetAnalytics == nil
 		if (m.view == viewOverview && overviewLoading) || (m.view == viewAnalytics && (analyticsLoading || facetLoading)) {
-			var cmd bubbletea.Cmd
+			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
 		}
@@ -429,15 +432,15 @@ func (m deckModel) Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd) {
 		if refreshCmd == nil {
 			return m, refreshTick(m.refreshEvery)
 		}
-		return m, bubbletea.Batch(refreshTick(m.refreshEvery), refreshCmd)
-	case bubbletea.KeyMsg:
+		return m, tea.Batch(refreshTick(m.refreshEvery), refreshCmd)
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
 
 	return m, nil
 }
 
-func (m deckModel) View() string {
+func (m deckModel) View() tea.View {
 	var base string
 	switch m.view {
 	case viewOverview:
@@ -446,34 +449,38 @@ func (m deckModel) View() string {
 		base = m.viewSession()
 	case viewModal:
 		base = m.viewOverview()
-		return m.applyBackground(addPadding(m.overlayModal(base, m.viewModal())))
+		v := tea.NewView(m.applyBackground(addPadding(m.overlayModal(base, m.viewModal()))))
+		v.AltScreen = true
+		return v
 	case viewAnalytics:
 		base = m.viewAnalytics()
 	default:
 		base = m.viewOverview()
 	}
-	return m.applyBackground(addPadding(base))
+	v := tea.NewView(m.applyBackground(addPadding(base)))
+	v.AltScreen = true
+	return v
 }
 
-func (m deckModel) handleKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.Cmd) {
+func (m deckModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Handle search input mode
 	if m.searchActive {
-		switch msg.Type { //nolint:exhaustive // only specific keys need handling
-		case bubbletea.KeyEscape:
+		switch msg.String() {
+		case "escape":
 			m.searchActive = false
 			m.searchInput.SetValue("")
 			m.searchInput.Blur()
 			m.cursor = 0
 			m.scrollOffset = 0
 			return m, nil
-		case bubbletea.KeyEnter:
+		case "enter":
 			m.searchActive = false
 			m.searchInput.Blur()
 			m.cursor = 0
 			m.scrollOffset = 0
 			return m, nil
 		}
-		var cmd bubbletea.Cmd
+		var cmd tea.Cmd
 		m.searchInput, cmd = m.searchInput.Update(msg)
 		// Reset cursor when search term changes
 		m.cursor = 0
@@ -488,7 +495,7 @@ func (m deckModel) handleKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.C
 
 	switch msg.String() {
 	case "ctrl+c", "q":
-		return m, bubbletea.Quit
+		return m, tea.Quit
 	case "j", "down":
 		return m.moveCursor(1)
 	case "k", "up":
@@ -520,8 +527,7 @@ func (m deckModel) handleKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.C
 	case "/":
 		if m.view == viewOverview {
 			m.searchActive = true
-			m.searchInput.Focus()
-			return m, m.searchInput.Cursor.BlinkCmd()
+			return m, m.searchInput.Focus()
 		}
 	case "s":
 		if m.view == viewOverview {
@@ -546,7 +552,7 @@ func (m deckModel) handleKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.C
 			m.analyticsDay = nil
 			m.analyticsDaySel = ""
 			m.view = viewAnalytics
-			return m, bubbletea.Batch(m.spinner.Tick, loadAnalyticsCmd(m.query, m.filters))
+			return m, loadAnalyticsCmd(m.query, m.filters)
 		}
 	case "tab":
 		if m.view == viewAnalytics {
@@ -572,7 +578,7 @@ func (m deckModel) handleKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.C
 			if selected, ok := m.selectAnalyticsDay(msg.String()); ok {
 				m.analyticsDaySel = selected
 				m.analyticsDay = nil
-				return m, bubbletea.Batch(m.spinner.Tick, loadAnalyticsDayCmd(m.query, m.filters, selected))
+				return m, loadAnalyticsDayCmd(m.query, m.filters, selected)
 			}
 			return m, nil
 		}
@@ -602,10 +608,10 @@ func (m deckModel) handleKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.C
 	return m, nil
 }
 
-func (m deckModel) handleModalKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.Cmd) {
+func (m deckModel) handleModalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
-		return m, bubbletea.Quit
+		return m, tea.Quit
 	case "esc", "h":
 		m.view = viewOverview
 		return m, nil
@@ -668,7 +674,7 @@ func (m deckModel) handleModalKey(msg bubbletea.KeyMsg) (bubbletea.Model, bubble
 	return m, nil
 }
 
-func (m deckModel) moveCursor(delta int) (bubbletea.Model, bubbletea.Cmd) {
+func (m deckModel) moveCursor(delta int) (tea.Model, tea.Cmd) {
 	if m.view == viewOverview {
 		sessions := m.filteredSessions()
 		if len(sessions) == 0 {
@@ -732,7 +738,7 @@ func (m deckModel) filteredSessions() []deck.SessionSummary {
 	return result
 }
 
-func (m deckModel) enterSession() (bubbletea.Model, bubbletea.Cmd) {
+func (m deckModel) enterSession() (tea.Model, tea.Cmd) {
 	sessions := m.filteredSessions()
 	if len(sessions) == 0 {
 		return m, nil
@@ -742,19 +748,19 @@ func (m deckModel) enterSession() (bubbletea.Model, bubbletea.Cmd) {
 	return m, loadSessionCmd(m.query, session.ID, false)
 }
 
-func (m deckModel) cyclePeriod() (bubbletea.Model, bubbletea.Cmd) {
+func (m deckModel) cyclePeriod() (tea.Model, tea.Cmd) {
 	m.timePeriod = (m.timePeriod + 1) % 3
 	m.filters.Since = periodToDuration(m.timePeriod)
 	if m.view == viewAnalytics {
 		m.analytics = nil
 		m.analyticsDay = nil
 		m.analyticsDaySel = ""
-		return m, bubbletea.Batch(m.spinner.Tick, loadAnalyticsCmd(m.query, m.filters))
+		return m, loadAnalyticsCmd(m.query, m.filters)
 	}
 	return m, loadOverviewCmd(m.query, m.filters)
 }
 
-func (m deckModel) cycleMessageSort() (bubbletea.Model, bubbletea.Cmd) {
+func (m deckModel) cycleMessageSort() (tea.Model, tea.Cmd) {
 	m.messageSort = (m.messageSort + 1) % len(messageSortOrder)
 	m.resetSortedCache()
 	m.resetSortedGroupCache()
@@ -932,36 +938,36 @@ func (m deckModel) overlayModal(base, modal string) string {
 	return strings.Join(baseLines, "\n")
 }
 
-func loadOverviewCmd(query deck.Querier, filters deck.Filters) bubbletea.Cmd {
-	return func() bubbletea.Msg {
+func loadOverviewCmd(query deck.Querier, filters deck.Filters) tea.Cmd {
+	return func() tea.Msg {
 		overview, err := query.Overview(context.Background(), filters)
 		return overviewLoadedMsg{overview: overview, err: err}
 	}
 }
 
-func computeMetricsCmd(sessions []deck.SessionSummary) bubbletea.Cmd {
-	return func() bubbletea.Msg {
+func computeMetricsCmd(sessions []deck.SessionSummary) tea.Cmd {
+	return func() tea.Msg {
 		stats := summarizeSessions(sessions)
 		return metricsReadyMsg{stats: stats}
 	}
 }
 
-func loadAnalyticsCmd(query deck.Querier, filters deck.Filters) bubbletea.Cmd {
-	return func() bubbletea.Msg {
+func loadAnalyticsCmd(query deck.Querier, filters deck.Filters) tea.Cmd {
+	return func() tea.Msg {
 		analytics, err := query.AnalyticsOverview(context.Background(), filters)
 		return analyticsLoadedMsg{analytics: analytics, err: err}
 	}
 }
 
-func loadFacetAnalyticsCmd(loadFn func(context.Context) (*deck.FacetAnalytics, error)) bubbletea.Cmd {
-	return func() bubbletea.Msg {
+func loadFacetAnalyticsCmd(loadFn func(context.Context) (*deck.FacetAnalytics, error)) tea.Cmd {
+	return func() tea.Msg {
 		analytics, err := loadFn(context.Background())
 		return facetAnalyticsLoadedMsg{analytics: analytics, err: err}
 	}
 }
 
-func loadAnalyticsDayCmd(query deck.Querier, filters deck.Filters, dateStr string) bubbletea.Cmd {
-	return func() bubbletea.Msg {
+func loadAnalyticsDayCmd(query deck.Querier, filters deck.Filters, dateStr string) tea.Cmd {
+	return func() tea.Msg {
 		dayRange, err := parseAnalyticsDay(dateStr)
 		if err != nil {
 			return analyticsDayLoadedMsg{date: dateStr, err: err}
@@ -975,26 +981,26 @@ func loadAnalyticsDayCmd(query deck.Querier, filters deck.Filters, dateStr strin
 	}
 }
 
-func loadSessionCmd(query deck.Querier, sessionID string, keepUI bool) bubbletea.Cmd {
-	return func() bubbletea.Msg {
+func loadSessionCmd(query deck.Querier, sessionID string, keepUI bool) tea.Cmd {
+	return func() tea.Msg {
 		detail, err := query.SessionDetail(context.Background(), sessionID)
 		return sessionLoadedMsg{detail: detail, err: err, keepUI: keepUI}
 	}
 }
 
-func replayTick() bubbletea.Cmd {
-	return bubbletea.Tick(300*time.Millisecond, func(t time.Time) bubbletea.Msg {
+func replayTick() tea.Cmd {
+	return tea.Tick(300*time.Millisecond, func(t time.Time) tea.Msg {
 		return replayTickMsg(t)
 	})
 }
 
-func refreshTick(interval time.Duration) bubbletea.Cmd {
-	return bubbletea.Tick(interval, func(t time.Time) bubbletea.Msg {
+func refreshTick(interval time.Duration) tea.Cmd {
+	return tea.Tick(interval, func(t time.Time) tea.Msg {
 		return refreshTickMsg(t)
 	})
 }
 
-func (m deckModel) refreshCmd() bubbletea.Cmd {
+func (m deckModel) refreshCmd() tea.Cmd {
 	if m.view == viewOverview {
 		return loadOverviewCmd(m.query, m.filters)
 	}
