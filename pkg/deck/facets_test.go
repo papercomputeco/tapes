@@ -54,7 +54,7 @@ var _ = Describe("FacetExtractor", func() {
 			}`, nil
 		}
 
-		extractor := NewFacetExtractor(&mockQuerier{detail: detail}, mockLLM, nil)
+		extractor := NewFacetExtractor(&mockQuerier{detail: detail}, mockLLM, nil, nil)
 		facet, err := extractor.Extract(context.Background(), "session-1")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(facet.SessionID).To(Equal("session-1"))
@@ -86,7 +86,7 @@ var _ = Describe("FacetExtractor", func() {
 			}` + "\n```", nil
 		}
 
-		extractor := NewFacetExtractor(&mockQuerier{detail: detail}, mockLLM, nil)
+		extractor := NewFacetExtractor(&mockQuerier{detail: detail}, mockLLM, nil, nil)
 		facet, err := extractor.Extract(context.Background(), "session-2")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(facet.GoalCategory).To(Equal("refactor_code"))

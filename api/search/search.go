@@ -6,8 +6,7 @@ package search
 import (
 	"context"
 	"fmt"
-
-	"go.uber.org/zap"
+	"log/slog"
 
 	"github.com/papercomputeco/tapes/pkg/embeddings"
 	"github.com/papercomputeco/tapes/pkg/merkle"
@@ -51,7 +50,7 @@ type Searcher struct {
 	embedder     embeddings.Embedder
 	vectorDriver vector.Driver
 	dagLoader    merkle.DagLoader
-	logger       *zap.Logger
+	logger       *slog.Logger
 }
 
 func NewSearcher(
@@ -59,14 +58,14 @@ func NewSearcher(
 	embedder embeddings.Embedder,
 	vectorDriver vector.Driver,
 	dagLoader merkle.DagLoader,
-	logger *zap.Logger,
+	log *slog.Logger,
 ) *Searcher {
 	return &Searcher{
 		ctx,
 		embedder,
 		vectorDriver,
 		dagLoader,
-		logger,
+		log,
 	}
 }
 
@@ -82,8 +81,8 @@ func (s *Searcher) Search(
 	}
 
 	s.logger.Debug("search request",
-		zap.String("query", query),
-		zap.Int("topK", topK),
+		"query", query,
+		"topK", topK,
 	)
 
 	// Embed the query
@@ -104,8 +103,8 @@ func (s *Searcher) Search(
 		dag, err := merkle.LoadDag(s.ctx, s.dagLoader, result.Hash)
 		if err != nil {
 			s.logger.Warn("failed to load branch for result",
-				zap.String("hash", result.Hash),
-				zap.Error(err),
+				"hash", result.Hash,
+				"error", err,
 			)
 			continue
 		}
@@ -147,7 +146,7 @@ func (s *Searcher) BuildResult(result vector.QueryResult, dag *merkle.Dag) Resul
 	if err != nil {
 		s.logger.Error(
 			"could not walk graph during search",
-			zap.Error(err),
+			"error", err,
 		)
 	}
 

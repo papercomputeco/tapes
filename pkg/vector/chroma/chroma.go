@@ -8,10 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
-
-	"go.uber.org/zap"
 
 	"github.com/papercomputeco/tapes/pkg/vector"
 )
@@ -37,7 +36,7 @@ type Driver struct {
 	collectionName string
 	collectionID   string
 	httpClient     *http.Client
-	logger         *zap.Logger
+	logger         *slog.Logger
 }
 
 // Config holds configuration for the Chroma driver.
@@ -64,7 +63,7 @@ type Config struct {
 
 // NewDriver creates a new Chroma vector driver.
 // It uses exponential delay retries if it cannot connect to Chroma.
-func NewDriver(c Config, logger *zap.Logger) (*Driver, error) {
+func NewDriver(c Config, log *slog.Logger) (*Driver, error) {
 	if c.URL == "" {
 		return nil, errors.New("chroma URL is required")
 	}
@@ -80,7 +79,7 @@ func NewDriver(c Config, logger *zap.Logger) (*Driver, error) {
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},
-		logger: logger,
+		logger: log,
 	}
 
 	if c.MaxRetries == 0 {
@@ -107,10 +106,10 @@ func NewDriver(c Config, logger *zap.Logger) (*Driver, error) {
 			return nil, fmt.Errorf("getting or creating collection %q after %d attempts: %w", collectionName, c.MaxRetries, err)
 		}
 
-		logger.Warn("failed to connect to Chroma, retrying...",
-			zap.Uint("attempt", attempt+1),
-			zap.Duration("delay", c.RetryDelay),
-			zap.Error(err),
+		log.Warn("failed to connect to Chroma, retrying...",
+			"attempt", attempt+1,
+			"delay", c.RetryDelay,
+			"error", err,
 		)
 
 		time.Sleep(c.RetryDelay)
@@ -121,10 +120,10 @@ func NewDriver(c Config, logger *zap.Logger) (*Driver, error) {
 	}
 	d.collectionID = collectionID
 
-	logger.Info("connected to Chroma",
-		zap.String("url", c.URL),
-		zap.String("collection", collectionName),
-		zap.String("collection_id", collectionID),
+	log.Info("connected to Chroma",
+		"url", c.URL,
+		"collection", collectionName,
+		"collection_id", collectionID,
 	)
 
 	return d, nil
@@ -233,7 +232,7 @@ func (d *Driver) Add(ctx context.Context, docs []vector.Document) error {
 	}
 
 	d.logger.Debug("added documents to chroma",
-		zap.Int("count", len(docs)),
+		"count", len(docs),
 	)
 
 	return nil
@@ -329,7 +328,7 @@ func (d *Driver) Query(ctx context.Context, embedding []float32, topK int) ([]ve
 	}
 
 	d.logger.Debug("queried chroma",
-		zap.Int("results", len(results)),
+		"results", len(results),
 	)
 
 	return results, nil
@@ -431,7 +430,7 @@ func (d *Driver) Delete(ctx context.Context, ids []string) error {
 	}
 
 	d.logger.Debug("deleted documents from chroma",
-		zap.Int("count", len(ids)),
+		"count", len(ids),
 	)
 
 	return nil

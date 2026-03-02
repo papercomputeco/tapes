@@ -90,8 +90,8 @@ var _ = Describe("FacetWorker", func() {
 			sessions:    sessions,
 		}
 
-		extractor := NewFacetExtractor(querier, mockLLM, store)
-		worker := NewFacetWorker(extractor, store, querier)
+		extractor := NewFacetExtractor(querier, mockLLM, store, nil)
+		worker := NewFacetWorker(extractor, store, querier, nil)
 
 		worker.Run(context.Background())
 
@@ -111,8 +111,8 @@ var _ = Describe("FacetWorker", func() {
 	It("reports zero progress with no sessions", func() {
 		store := newMemoryFacetStore()
 		querier := &mockQuerierWithSessions{sessions: nil}
-		extractor := NewFacetExtractor(querier, nil, store)
-		worker := NewFacetWorker(extractor, store, querier)
+		extractor := NewFacetExtractor(querier, nil, store, nil)
+		worker := NewFacetWorker(extractor, store, querier, nil)
 
 		worker.Run(context.Background())
 
@@ -144,8 +144,8 @@ var _ = Describe("FacetWorker", func() {
 			mockQuerier: mockQuerier{detail: detail},
 			sessions:    sessions,
 		}
-		extractor := NewFacetExtractor(querier, mockLLM, store)
-		worker := NewFacetWorker(extractor, store, querier)
+		extractor := NewFacetExtractor(querier, mockLLM, store, nil)
+		worker := NewFacetWorker(extractor, store, querier, nil)
 
 		worker.Run(ctx)
 

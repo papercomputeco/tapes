@@ -7,13 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/papercomputeco/tapes/pkg/credentials"
+	"github.com/papercomputeco/tapes/pkg/logger"
 )
 
 const providerOllama = "ollama"
@@ -25,6 +26,7 @@ type LLMCallerConfig struct {
 	APIKey   string               // explicit API key (highest priority)
 	BaseURL  string               // override base URL
 	CredMgr  *credentials.Manager // credentials from tapes auth
+	Logger   *slog.Logger         // optional logger; defaults to noop
 }
 
 // HasLLMCredentials checks whether an API key can be resolved from the config
@@ -55,6 +57,11 @@ func HasLLMCredentials(cfg LLMCallerConfig) bool {
 //  3. Environment variables (OPENAI_API_KEY / ANTHROPIC_API_KEY)
 //  4. Fall back to Ollama at localhost:11434
 func NewLLMCaller(cfg LLMCallerConfig) (LLMCallFunc, error) {
+	log := cfg.Logger
+	if log == nil {
+		log = logger.NewNoop()
+	}
+
 	provider := strings.ToLower(cfg.Provider)
 	model := cfg.Model
 
@@ -69,7 +76,7 @@ func NewLLMCaller(cfg LLMCallerConfig) (LLMCallFunc, error) {
 
 	// If no key found and provider is not explicitly ollama, fall back to ollama
 	if apiKey == "" && provider != providerOllama {
-		log.Printf("facets: no API key found for %s, falling back to ollama", provider)
+		log.Warn("facets: no API key found, falling back to ollama", "provider", provider)
 		provider = providerOllama
 	}
 

@@ -2,9 +2,11 @@ package deck
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"sync"
 	"sync/atomic"
+
+	"github.com/papercomputeco/tapes/pkg/logger"
 )
 
 // FacetWorker processes sessions in the background to extract facets.
@@ -12,17 +14,22 @@ type FacetWorker struct {
 	extractor *FacetExtractor
 	store     FacetStore
 	query     Querier
+	logger    *slog.Logger
 
 	done  atomic.Int64
 	total atomic.Int64
 }
 
 // NewFacetWorker creates a new FacetWorker.
-func NewFacetWorker(extractor *FacetExtractor, store FacetStore, query Querier) *FacetWorker {
+func NewFacetWorker(extractor *FacetExtractor, store FacetStore, query Querier, log *slog.Logger) *FacetWorker {
+	if log == nil {
+		log = logger.NewNoop()
+	}
 	return &FacetWorker{
 		extractor: extractor,
 		store:     store,
 		query:     query,
+		logger:    log,
 	}
 }
 
@@ -38,7 +45,7 @@ func (w *FacetWorker) Run(ctx context.Context) {
 	filters := Filters{Sort: "date", SortDir: "desc"}
 	overview, err := w.query.Overview(ctx, filters)
 	if err != nil {
-		log.Printf("facets worker: failed to load sessions: %v", err)
+		w.logger.Warn("facets worker: failed to load sessions", "error", err)
 		return
 	}
 
@@ -85,7 +92,7 @@ func (w *FacetWorker) Run(ctx context.Context) {
 
 			_, err := w.extractor.Extract(ctx, sid)
 			if err != nil {
-				log.Printf("facets worker: extraction failed for session %s: %v", sid, err)
+				w.logger.Warn("facets worker: extraction failed", "session", sid, "error", err)
 			}
 			w.done.Add(1)
 		}(sessionID)

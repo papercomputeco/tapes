@@ -1,44 +1,29 @@
-// Package logger provides opinionated logging capabilities for the tapes system
+// Package logger provides opinionated logging capabilities for the tapes system.
+//
+// It builds on Go's log/slog, with pluggable handlers for pretty CLI output
+// (via charmbracelet/log) and structured JSON for services. All public
+// constructors return *slog.Logger directly — no custom interface.
 package logger
 
 import (
 	"io"
+	"log/slog"
 	"os"
-
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
-func NewLogger(debug bool) *zap.Logger {
-	return NewLoggerWithWriters(debug, os.Stdout)
-}
-
-func NewLoggerWithWriters(debug bool, writers ...io.Writer) *zap.Logger {
-	encoderConfig := zap.NewProductionEncoderConfig()
-	encoderConfig.TimeKey = "time"
-	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-	encoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
-
-	// Set log level
-	level := zap.InfoLevel
-	if debug {
-		level = zap.DebugLevel
+// New creates a *slog.Logger configured by the given options.
+//
+// Defaults: Info level, writes to os.Stdout, slog.TextHandler.
+func New(opts ...Option) *slog.Logger {
+	cfg := &config{
+		level:   slog.LevelInfo,
+		writers: []io.Writer{os.Stdout},
 	}
 
-	if len(writers) == 0 {
-		writers = []io.Writer{os.Stdout}
+	for _, opt := range opts {
+		opt(cfg)
 	}
 
-	syncers := make([]zapcore.WriteSyncer, 0, len(writers))
-	for _, writer := range writers {
-		syncers = append(syncers, zapcore.AddSync(writer))
-	}
-
-	core := zapcore.NewCore(
-		zapcore.NewConsoleEncoder(encoderConfig),
-		zapcore.NewMultiWriteSyncer(syncers...),
-		level,
-	)
-
-	return zap.New(core, zap.AddCaller())
+	handler := cfg.buildHandler()
+	return slog.New(handler)
 }
