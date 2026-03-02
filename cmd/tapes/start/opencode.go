@@ -75,13 +75,12 @@ func resolveOpenCodePreference(configDir, flagProvider, flagModel string, stdin 
 		return &openCodePreference{Provider: provider, Model: model}, nil
 	}
 
-	// 2. Saved config values.
-	cfger, err := config.NewConfiger(configDir)
-	if err == nil {
-		cfg, err := cfger.LoadConfig()
-		if err == nil && cfg.OpenCode.Provider != "" {
-			provider := cfg.OpenCode.Provider
-			model := cfg.OpenCode.Model
+	// 2. Saved config values (via viper: env > config file > defaults).
+	v, viperErr := config.InitViper(configDir)
+	if viperErr == nil {
+		provider := v.GetString("opencode.provider")
+		if provider != "" {
+			model := v.GetString("opencode.model")
 			if model == "" {
 				model = openCodeDefaultModel(provider)
 			}
