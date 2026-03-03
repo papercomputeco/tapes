@@ -38,7 +38,7 @@ func defaultKeyMap() deckKeyMap {
 	return deckKeyMap{
 		Up:     key.NewBinding(key.WithKeys("k", "up"), key.WithHelp("k", "up")),
 		Down:   key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("j", "down")),
-		Enter:  key.NewBinding(key.WithKeys("enter", "l"), key.WithHelp("enter", "drill")),
+		Enter:  key.NewBinding(key.WithKeys(keyEnter, "l"), key.WithHelp(keyEnter, "drill")),
 		Back:   key.NewBinding(key.WithKeys("h", "esc"), key.WithHelp("h", "back")),
 		Sort:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
 		Filter: key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "status")),

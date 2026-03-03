@@ -2,12 +2,11 @@ package deckcmder
 
 import (
 	"fmt"
+	"image/color"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
-
-	"image/color"
 
 	"charm.land/lipgloss/v2"
 

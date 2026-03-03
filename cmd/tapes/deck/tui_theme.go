@@ -2,7 +2,6 @@ package deckcmder
 
 import (
 	"image/color"
-	"os"
 
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/compat"
@@ -21,27 +20,6 @@ func init() {
 	}
 }
 
-// detectColorProfile returns the best color profile the terminal supports.
-// It respects the NO_COLOR convention (https://no-color.org) and COLORTERM.
-func detectColorProfile() termenv.Profile {
-	if _, ok := os.LookupEnv("NO_COLOR"); ok {
-		return termenv.Ascii
-	}
-
-	// COLORTERM=truecolor or 24bit is a reliable signal for TrueColor.
-	if ct := os.Getenv("COLORTERM"); ct == "truecolor" || ct == "24bit" {
-		return termenv.TrueColor
-	}
-
-	// Fall back to what termenv auto-detects from the terminal.
-	detected := termenv.ColorProfile()
-	// Upgrade Ascii to ANSI256 as a minimum so colors degrade gracefully.
-	if detected == termenv.Ascii {
-		return termenv.ANSI256
-	}
-	return detected
-}
-
 // isDarkTheme returns true when the dark palette should be used.
 // The --theme flag takes priority over terminal background detection.
 func isDarkTheme() bool {
@@ -54,13 +32,6 @@ func isDarkTheme() bool {
 		return termenv.HasDarkBackground()
 	}
 }
-
-// Concrete hex strings for OSC 11 background color (AdaptiveColor is a struct,
-// can't be passed to termenv.RGBColor directly).
-const (
-	baseBgDark  = "#000000"
-	baseBgLight = "#E2E0DB"
-)
 
 type deckPalette struct {
 	foreground         color.Color

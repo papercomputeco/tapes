@@ -2,8 +2,6 @@ package deckcmder
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -13,7 +11,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/muesli/termenv"
 
 	"github.com/papercomputeco/tapes/pkg/deck"
 )
@@ -46,6 +43,7 @@ const (
 	roleAssistant            = "assistant"
 	circleLarge              = "⬤"
 	labelTokens              = "tokens"
+	keyEnter                 = "enter"
 	maxCostByModelEntries    = 5
 	waveformWindowMultiplier = 10
 )
@@ -183,24 +181,6 @@ func RunDeckTUI(ctx context.Context, query deck.Querier, filters deck.Filters, r
 		model.detail = detail
 	}
 
-	// Set the terminal's default background color so the entire alt-screen
-	// (including padding and empty regions) uses our base background.
-	// Only emit OSC 11 when the terminal supports color (skip for NO_COLOR
-	// and terminals that don't understand these escape sequences).
-	profile := detectColorProfile()
-	if profile != termenv.Ascii {
-		out := termenv.NewOutput(os.Stdout, termenv.WithProfile(profile))
-		if isDarkTheme() {
-			out.SetBackgroundColor(termenv.RGBColor(baseBgDark))
-		} else {
-			out.SetBackgroundColor(termenv.RGBColor(baseBgLight))
-		}
-		defer func() {
-			// OSC 111: reset the default background color to the terminal's original.
-			fmt.Fprint(os.Stdout, "\033]111\007")
-		}()
-	}
-
 	program := tea.NewProgram(model,
 		tea.WithContext(ctx),
 	)
@@ -283,6 +263,7 @@ func newDeckModel(query deck.Querier, filters deck.Filters, overview *deck.Overv
 
 func (m deckModel) Init() tea.Cmd {
 	cmds := []tea.Cmd{
+		m.spinnerTickCmd(),
 		loadOverviewCmd(m.query, m.filters),
 	}
 	if m.refreshEvery > 0 {
@@ -399,7 +380,7 @@ func (m deckModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 		if m.analyticsDaySel != "" && m.analyticsDay == nil {
-			cmds = append(cmds, loadAnalyticsDayCmd(m.query, m.filters, m.analyticsDaySel))
+			cmds = append(cmds, m.spinnerTickCmd(), loadAnalyticsDayCmd(m.query, m.filters, m.analyticsDaySel))
 		}
 		return m, tea.Batch(cmds...)
 	case facetAnalyticsLoadedMsg:
@@ -454,6 +435,7 @@ func (m deckModel) View() tea.View {
 		base = m.viewOverview()
 		v := tea.NewView(m.applyBackground(addPadding(m.overlayModal(base, m.viewModal()))))
 		v.AltScreen = true
+		v.BackgroundColor = colorBaseBg
 		return v
 	case viewAnalytics:
 		base = m.viewAnalytics()
@@ -462,6 +444,7 @@ func (m deckModel) View() tea.View {
 	}
 	v := tea.NewView(m.applyBackground(addPadding(base)))
 	v.AltScreen = true
+	v.BackgroundColor = colorBaseBg
 	return v
 }
 
@@ -476,7 +459,7 @@ func (m deckModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.cursor = 0
 			m.scrollOffset = 0
 			return m, nil
-		case "enter":
+		case keyEnter:
 			m.searchActive = false
 			m.searchInput.Blur()
 			m.cursor = 0
@@ -503,7 +486,7 @@ func (m deckModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.moveCursor(1)
 	case "k", "up":
 		return m.moveCursor(-1)
-	case "l", "enter":
+	case "l", keyEnter:
 		if m.view == viewOverview {
 			return m.enterSession()
 		}
@@ -555,7 +538,7 @@ func (m deckModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.analyticsDay = nil
 			m.analyticsDaySel = ""
 			m.view = viewAnalytics
-			return m, loadAnalyticsCmd(m.query, m.filters)
+			return m, tea.Batch(m.spinnerTickCmd(), loadAnalyticsCmd(m.query, m.filters))
 		}
 	case "tab":
 		if m.view == viewAnalytics {
@@ -581,7 +564,7 @@ func (m deckModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if selected, ok := m.selectAnalyticsDay(msg.String()); ok {
 				m.analyticsDaySel = selected
 				m.analyticsDay = nil
-				return m, loadAnalyticsDayCmd(m.query, m.filters, selected)
+				return m, tea.Batch(m.spinnerTickCmd(), loadAnalyticsDayCmd(m.query, m.filters, selected))
 			}
 			return m, nil
 		}
@@ -650,7 +633,7 @@ func (m deckModel) handleModalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.modalCursor = (m.modalCursor - 1 + len(statusFilters)) % len(statusFilters)
 		}
 		return m, nil
-	case "enter", "l":
+	case keyEnter, "l":
 		switch m.modalTab {
 		case modalSort:
 			if m.modalCursor < len(sortOrder) {
@@ -758,7 +741,7 @@ func (m deckModel) cyclePeriod() (tea.Model, tea.Cmd) {
 		m.analytics = nil
 		m.analyticsDay = nil
 		m.analyticsDaySel = ""
-		return m, loadAnalyticsCmd(m.query, m.filters)
+		return m, tea.Batch(m.spinnerTickCmd(), loadAnalyticsCmd(m.query, m.filters))
 	}
 	return m, loadOverviewCmd(m.query, m.filters)
 }
@@ -1014,4 +997,10 @@ func (m deckModel) refreshCmd() tea.Cmd {
 		return loadAnalyticsCmd(m.query, m.filters)
 	}
 	return nil
+}
+
+// spinnerTickCmd wraps the spinner's Tick() (which returns tea.Msg in v2) as a
+// tea.Cmd so it can be batched with other commands.
+func (m deckModel) spinnerTickCmd() tea.Cmd {
+	return func() tea.Msg { return m.spinner.Tick() }
 }
