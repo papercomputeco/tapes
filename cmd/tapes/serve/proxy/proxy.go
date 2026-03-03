@@ -174,9 +174,8 @@ func (c *proxyCommander) run() error {
 	if err != nil {
 		return fmt.Errorf("creating publisher: %w", err)
 	}
-	pubOwned := true
 	defer func() {
-		if pubOwned && pub != nil {
+		if pub != nil {
 			_ = pub.Close()
 		}
 	}()
@@ -230,7 +229,6 @@ func (c *proxyCommander) run() error {
 	if err != nil {
 		return fmt.Errorf("creating proxy: %w", err)
 	}
-	pubOwned = false
 	defer p.Close()
 
 	c.logger.Info("starting proxy server",

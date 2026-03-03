@@ -173,15 +173,16 @@ func (p *Pool) processJob(job Job) {
 		p.storeEmbeddings(ctx, newNodes)
 	}
 
-	// Publish only nodes that were newly inserted into the content-addressed DAG.
-	// Publish errors are best-effort and do not fail storage.
-	if p.config.Publisher == nil || len(newNodes) == 0 {
-		return
+	// If Kafka is configured, publish newly inserted nodes
+	if p.config.Publisher != nil && len(newNodes) > 0 {
+		p.publishConversationTurn(ctx, head, newNodes)
 	}
+}
 
+func (p *Pool) publishConversationTurn(ctx context.Context, head string, newNodes []*merkle.Node) {
 	rootHash, err := p.deriveRootHash(ctx, head)
 	if err != nil {
-		p.logger.Error("failed to derive root hash for publish",
+		p.logger.Error("failed to derive root hash for event publishing",
 			"head", head,
 			"error", err,
 		)
@@ -191,7 +192,7 @@ func (p *Pool) processJob(job Job) {
 	for _, node := range newNodes {
 		event, err := publisher.NewEvent(rootHash, node)
 		if err != nil {
-			p.logger.Error("failed to build publish event",
+			p.logger.Error("failed to build event",
 				"hash", node.Hash,
 				"error", err,
 			)
@@ -199,7 +200,7 @@ func (p *Pool) processJob(job Job) {
 		}
 
 		if err := p.config.Publisher.Publish(ctx, event); err != nil {
-			p.logger.Error("failed to publish node",
+			p.logger.Error("failed to publish event",
 				"hash", node.Hash,
 				"error", err,
 			)
