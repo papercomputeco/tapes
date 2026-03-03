@@ -41,7 +41,7 @@ type Config struct {
 	Driver storage.Driver
 
 	// Publisher is an optional event publisher for newly inserted nodes.
-	// If nil, a no-op publisher is used.
+	// If nil, publishing is disabled.
 	Publisher publisher.Publisher
 
 	// VectorDriver is the optional vector store driver for embeddings.
@@ -86,10 +86,6 @@ func NewPool(c *Config) (*Pool, error) {
 		return nil, fmt.Errorf("NumWorkers %d exceeds max int", c.NumWorkers)
 	}
 
-	if c.Publisher == nil {
-		c.Publisher = publisher.NewNopPublisher()
-	}
-
 	wp := &Pool{
 		config: c,
 		queue:  make(chan Job, c.QueueSize),
@@ -128,6 +124,10 @@ func (p *Pool) Enqueue(job Job) bool {
 func (p *Pool) Close() {
 	close(p.queue)
 	p.wg.Wait()
+
+	if p.config.Publisher == nil {
+		return
+	}
 
 	if err := p.config.Publisher.Close(); err != nil {
 		p.logger.Warn("failed to close publisher", "error", err)
@@ -175,7 +175,7 @@ func (p *Pool) processJob(job Job) {
 
 	// Publish only nodes that were newly inserted into the content-addressed DAG.
 	// Publish errors are best-effort and do not fail storage.
-	if len(newNodes) == 0 {
+	if p.config.Publisher == nil || len(newNodes) == 0 {
 		return
 	}
 

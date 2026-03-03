@@ -33,7 +33,7 @@ type Config struct {
 	Embedder embeddings.Embedder
 
 	// Publisher is an optional event publisher for new DAG nodes.
-	// If nil, the worker pool defaults to a no-op publisher.
+	// If nil, publishing is disabled.
 	Publisher publisher.Publisher
 
 	// Project is the git repository or project name to tag on stored nodes.

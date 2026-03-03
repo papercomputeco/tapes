@@ -25,8 +25,8 @@ import (
 var _ = Describe("serve proxy kafka e2e", func() {
 	It("publishes one-turn conversation events to kafka", func() {
 		brokersRaw := strings.TrimSpace(os.Getenv("TAPES_E2E_KAFKA_BROKERS"))
-		topicBase := strings.TrimSpace(os.Getenv("TAPES_E2E_KAFKA_TOPIC"))
-		if brokersRaw == "" || topicBase == "" {
+		topic := strings.TrimSpace(os.Getenv("TAPES_E2E_KAFKA_TOPIC"))
+		if brokersRaw == "" || topic == "" {
 			Skip("set TAPES_E2E_KAFKA_BROKERS and TAPES_E2E_KAFKA_TOPIC to run kafka e2e")
 		}
 
@@ -41,7 +41,6 @@ var _ = Describe("serve proxy kafka e2e", func() {
 			return conn.Close()
 		}, 30*time.Second, 250*time.Millisecond).Should(Succeed())
 
-		topic := topicBase
 		Eventually(func() error {
 			conn, err := kafkago.DialLeader(context.Background(), "tcp", brokers[0], topic, 0)
 			if err != nil {
@@ -74,7 +73,6 @@ var _ = Describe("serve proxy kafka e2e", func() {
 			"--provider", "ollama",
 			"--upstream", upstream.URL,
 			"--listen", listenAddr,
-			"--publisher", publisherTypeKafka,
 			"--kafka-brokers", brokersRaw,
 			"--kafka-topic", topic,
 		}

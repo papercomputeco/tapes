@@ -23,11 +23,6 @@ import (
 	"github.com/papercomputeco/tapes/proxy"
 )
 
-const (
-	publisherTypeNop   = "nop"
-	publisherTypeKafka = "kafka"
-)
-
 type proxyCommander struct {
 	flags config.FlagSet
 
@@ -38,7 +33,6 @@ type proxyCommander struct {
 	sqlitePath   string
 	project      string
 
-	publisherType string
 	kafkaBrokers  string
 	kafkaTopic    string
 	kafkaClientID string
@@ -69,7 +63,6 @@ var proxyFlags = config.FlagSet{
 	config.FlagEmbeddingTgt:          {Name: "embedding-target", ViperKey: "embedding.target", Description: "Embedding provider URL"},
 	config.FlagEmbeddingModel:        {Name: "embedding-model", ViperKey: "embedding.model", Description: "Embedding model name (e.g., nomic-embed-text)"},
 	config.FlagEmbeddingDims:         {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Embedding dimensionality"},
-	config.FlagPublisherType:         {Name: "publisher", ViperKey: "publisher.type", Description: "Publisher backend (nop, kafka)"},
 	config.FlagKafkaBrokers:          {Name: "kafka-brokers", ViperKey: "publisher.kafka.brokers", Description: "Comma separated list of broker ip:port pairs"},
 	config.FlagKafkaClientID:         {Name: "kafka-client-id", ViperKey: "publisher.kafka.client_id", Description: "Optional Kafka client.id"},
 	config.FlagKafkaTopic:            {Name: "kafka-topic", ViperKey: "publisher.kafka.topic", Description: "Name of topic to publish session events (e.g. tapes.nodes.v1)"},
@@ -115,7 +108,6 @@ func NewProxyCmd() *cobra.Command {
 				config.FlagEmbeddingTgt,
 				config.FlagEmbeddingModel,
 				config.FlagEmbeddingDims,
-				config.FlagPublisherType,
 				config.FlagKafkaBrokers,
 				config.FlagKafkaClientID,
 				config.FlagKafkaTopic,
@@ -132,7 +124,6 @@ func NewProxyCmd() *cobra.Command {
 			cmder.embeddingModel = v.GetString("embedding.model")
 			cmder.embeddingDimensions = v.GetUint("embedding.dimensions")
 			cmder.project = v.GetString("proxy.project")
-			cmder.publisherType = v.GetString("publisher.type")
 			cmder.kafkaBrokers = v.GetString("publisher.kafka.brokers")
 			cmder.kafkaClientID = v.GetString("publisher.kafka.client_id")
 			cmder.kafkaTopic = v.GetString("publisher.kafka.topic")
@@ -165,7 +156,6 @@ func NewProxyCmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingTgt, &cmder.embeddingTarget)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingModel, &cmder.embeddingModel)
 	config.AddUintFlag(cmd, cmder.flags, config.FlagEmbeddingDims, &cmder.embeddingDimensions)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagPublisherType, &cmder.publisherType)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagKafkaBrokers, &cmder.kafkaBrokers)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagKafkaClientID, &cmder.kafkaClientID)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagKafkaTopic, &cmder.kafkaTopic)
@@ -186,7 +176,7 @@ func (c *proxyCommander) run() error {
 	}
 	pubOwned := true
 	defer func() {
-		if pubOwned {
+		if pubOwned && pub != nil {
 			_ = pub.Close()
 		}
 	}()
@@ -253,20 +243,22 @@ func (c *proxyCommander) run() error {
 }
 
 func (c *proxyCommander) validatePublisherConfig() error {
-	switch c.publisherType {
-	case publisherTypeNop:
+	kafkaBrokers := splitKafkaBrokers(c.kafkaBrokers)
+	kafkaTopic := strings.TrimSpace(c.kafkaTopic)
+
+	if len(kafkaBrokers) == 0 && kafkaTopic == "" {
 		return nil
-	case publisherTypeKafka:
-		if len(splitKafkaBrokers(c.kafkaBrokers)) == 0 {
-			return errors.New("kafka brokers are required when --publisher=kafka")
-		}
-		if strings.TrimSpace(c.kafkaTopic) == "" {
-			return errors.New("kafka topic is required when --publisher=kafka")
-		}
-		return nil
-	default:
-		return fmt.Errorf("unsupported publisher type %q (supported: %s, %s)", c.publisherType, publisherTypeNop, publisherTypeKafka)
 	}
+
+	if len(kafkaBrokers) == 0 {
+		return errors.New("kafka brokers are required when kafka topic is set")
+	}
+
+	if kafkaTopic == "" {
+		return errors.New("kafka topic is required when kafka brokers are set")
+	}
+
+	return nil
 }
 
 func splitKafkaBrokers(raw string) []string {
@@ -283,18 +275,17 @@ func splitKafkaBrokers(raw string) []string {
 }
 
 func (c *proxyCommander) newPublisher() (publisher.Publisher, error) {
-	switch c.publisherType {
-	case publisherTypeNop:
-		return publisher.NewNopPublisher(), nil
-	case publisherTypeKafka:
-		return kafkapublisher.NewPublisher(kafkapublisher.Config{
-			Brokers:  splitKafkaBrokers(c.kafkaBrokers),
-			Topic:    strings.TrimSpace(c.kafkaTopic),
-			ClientID: strings.TrimSpace(c.kafkaClientID),
-		})
-	default:
-		return nil, fmt.Errorf("unsupported publisher type %q", c.publisherType)
+	kafkaBrokers := splitKafkaBrokers(c.kafkaBrokers)
+	kafkaTopic := strings.TrimSpace(c.kafkaTopic)
+	if len(kafkaBrokers) == 0 && kafkaTopic == "" {
+		return nil, nil
 	}
+
+	return kafkapublisher.NewPublisher(kafkapublisher.Config{
+		Brokers:  kafkaBrokers,
+		Topic:    kafkaTopic,
+		ClientID: strings.TrimSpace(c.kafkaClientID),
+	})
 }
 
 func (c *proxyCommander) newStorageDriver() (storage.Driver, error) {

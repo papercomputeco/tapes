@@ -39,6 +39,12 @@ var _ = Describe("Worker Pool", func() {
 	})
 
 	Describe("Enqueue", func() {
+		It("closes cleanly when publisher is nil", func() {
+			Expect(func() {
+				wp.Close()
+			}).NotTo(Panic())
+		})
+
 		It("returns true when the queue has capacity", func() {
 			ok := wp.Enqueue(Job{
 				Provider: "test-provider",

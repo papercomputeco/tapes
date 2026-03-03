@@ -48,7 +48,6 @@ const (
 	FlagEmbeddingDims   = "embedding-dimensions"
 	FlagAPITarget       = "api-target"
 	FlagProxyTarget     = "proxy-target"
-	FlagPublisherType   = "publisher"
 	FlagKafkaBrokers    = "kafka-brokers"
 	FlagKafkaTopic      = "kafka-topic"
 	FlagKafkaClientID   = "kafka-client-id"
