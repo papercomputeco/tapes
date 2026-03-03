@@ -1,5 +1,10 @@
 # AGENTS.md
 
+### Don't
+
+- Do not write design documents or implementation plans to disk (no `docs/plans/` or similar).
+  Discuss plans in conversation only.
+
 ### Do
 
 - Always use the Ginkgo/Gomega testing frameworks

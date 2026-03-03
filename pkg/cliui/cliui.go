@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
 )
 
 var (
