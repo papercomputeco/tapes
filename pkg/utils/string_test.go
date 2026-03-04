@@ -28,7 +28,7 @@ var _ = Describe("ExtractTextFromContent", func() {
 	})
 
 	It("returns empty with an irrelevant slice", func() {
-		functionCall := map[string]string {"name": "fetch", "arguments": "{\"url\": \"https://allrecipes.com/top-5-italian\"}"}
+		functionCall := map[string]string{"name": "fetch", "arguments": "{\"url\": \"https://allrecipes.com/top-5-italian\"}"}
 		irrelevantSlice := []map[string]any{
 			{"type": "image_url", "image_url": "data:image/png;ibVOR..."},
 			{"type": "function", "function": functionCall},

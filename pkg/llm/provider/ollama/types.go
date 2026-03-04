@@ -30,7 +30,7 @@ type ollamaToolCall struct {
 	Function struct {
 		Index     int            `json:"index,omitempty"`
 		Name      string         `json:"name"`
-		Arguments map[string]any `json:"parameters"`
+		Arguments map[string]any `json:"arguments"`
 	} `json:"function"`
 }
 
