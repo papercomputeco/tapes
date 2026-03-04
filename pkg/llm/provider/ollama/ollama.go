@@ -2,6 +2,7 @@ package ollama
 
 import (
 	"encoding/json"
+
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/utils"
 )
@@ -194,7 +195,7 @@ func (o *Provider) ParseStreamChunk(_ []byte) (*llm.StreamChunk, error) {
 
 // convertRawContent converts the raw content from Ollama API messages to a string.
 // The content can be either a string or an array of content blocks (maps with type/text fields).
-func convertRawContent(contentRaw interface{}) string {
+func convertRawContent(contentRaw any) string {
 	if s, ok := contentRaw.(string); ok {
 		return s
 	}
