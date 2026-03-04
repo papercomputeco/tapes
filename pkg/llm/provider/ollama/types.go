@@ -14,8 +14,8 @@ type ollamaRequest struct {
 }
 
 type ollamaMessage struct {
-	Role    string `json:"role"`
-	Content string ``
+	Role       string      `json:"role"`
+	Content    string      ``
 	ContentRaw interface{} `json:"content,omitempty"`
 
 	// Base64-encoded images

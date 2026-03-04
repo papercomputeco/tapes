@@ -22,15 +22,16 @@ var _ = Describe("truncate", func() {
 
 var _ = Describe("ExtractTextFromContent", func() {
 	It("returns empty with an empty slice", func() {
-		emptySlice := []map[string]any {}
+		emptySlice := []map[string]any{}
 		result := ExtractTextFromContent(emptySlice)
 		Expect(result).To(Equal(""))
 	})
 
 	It("returns empty with an irrelevant slice", func() {
+		functionCall := map[string]string {"name": "fetch", "arguments": "{\"url\": \"https://allrecipes.com/top-5-italian\"}"}
 		irrelevantSlice := []map[string]any{
 			{"type": "image_url", "image_url": "data:image/png;ibVOR..."},
-			{"type": "function", "function": {"name": "fetch", "arguments": "{\"url\": \"https://allrecipes.com/top-5-italian\"}"}},
+			{"type": "function", "function": functionCall},
 		}
 		result := ExtractTextFromContent(irrelevantSlice)
 		Expect(result).To(Equal(""))

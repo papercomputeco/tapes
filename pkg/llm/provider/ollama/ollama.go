@@ -7,7 +7,7 @@ import (
 )
 
 // Provider implements the Provider interface for Ollama's API.
-type Provider struct {}
+type Provider struct{}
 
 func New() *Provider { return &Provider{} }
 
@@ -191,8 +191,6 @@ func (o *Provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 func (o *Provider) ParseStreamChunk(_ []byte) (*llm.StreamChunk, error) {
 	panic("Not yet implemented")
 }
-
-
 
 // convertRawContent converts the raw content from Ollama API messages to a string.
 // The content can be either a string or an array of content blocks (maps with type/text fields).
