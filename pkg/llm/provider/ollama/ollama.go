@@ -7,12 +7,9 @@ import (
 )
 
 // Provider implements the Provider interface for Ollama's API.
-type Provider struct {
-	reqCount  int
-	respCount int
-}
+type Provider struct {}
 
-func New() *Provider { return &Provider{reqCount: 0, respCount: 0} }
+func New() *Provider { return &Provider{} }
 
 func (o *Provider) Name() string {
 	return "ollama"
