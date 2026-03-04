@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/utils"
-	"os"
 )
 
 // Provider implements the Provider interface for Ollama's API.
@@ -24,28 +23,8 @@ func (o *Provider) DefaultStreaming() bool {
 	return true
 }
 
-func (o *Provider) SavePayload(payloadType string, payload []byte) error {
-	var fileName string
-	if payloadType == "request" {
-		o.reqCount++
-		fileName = "logs/" + o.Name() + "-" + payloadType + string(o.reqCount) + ".json"
-	} else {
-		o.respCount++
-		fileName = "logs/" + o.Name() + "-" + payloadType + string(o.respCount) + ".json"
-	}
-	file, err := os.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer file.Close() // Ensure the file is closed after the function returns
-
-	// Write the string to the file
-	_, writeErr := file.WriteString(string(payload))
-	return writeErr
-}
 func (o *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 	var req ollamaRequest
-	defer o.SavePayload("request", payload)
 	if err := json.Unmarshal(payload, &req); err != nil {
 		return nil, err
 	}
@@ -136,7 +115,6 @@ func (o *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 
 func (o *Provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 	var resp ollamaResponse
-	defer o.SavePayload("response", payload)
 	if err := json.Unmarshal(payload, &resp); err != nil {
 		return nil, err
 	}
