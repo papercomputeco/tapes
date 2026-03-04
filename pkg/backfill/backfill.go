@@ -32,6 +32,11 @@ func NewBackfiller(ctx context.Context, dbPath string, opts Options) (*Backfille
 		return nil, nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
+	if err := driver.Migrate(ctx); err != nil {
+		driver.Close()
+		return nil, nil, fmt.Errorf("running migrations: %w", err)
+	}
+
 	b := &Backfiller{
 		driver:  driver,
 		options: opts,

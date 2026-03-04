@@ -15,7 +15,8 @@ type Config struct {
 
 // StorageConfig holds shared storage settings used by both proxy and API.
 type StorageConfig struct {
-	SQLitePath string `toml:"sqlite_path,omitempty" mapstructure:"sqlite_path"`
+	SQLitePath  string `toml:"sqlite_path,omitempty"  mapstructure:"sqlite_path"`
+	PostgresDSN string `toml:"postgres_dsn,omitempty" mapstructure:"postgres_dsn"`
 }
 
 // ProxyConfig holds proxy-specific settings.
@@ -78,4 +79,6 @@ var configKeySet = map[string]bool{
 	"embedding.dimensions":  true,
 	"opencode.provider":     true,
 	"opencode.model":        true,
+
+	"storage.postgres_dsn": true,
 }

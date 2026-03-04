@@ -3,6 +3,7 @@ package servecmder
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -23,6 +24,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
+	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
 	vectorutils "github.com/papercomputeco/tapes/pkg/vector/utils"
 	"github.com/papercomputeco/tapes/proxy"
@@ -36,6 +38,7 @@ type ServeCommander struct {
 	upstream    string
 	debug       bool
 	sqlitePath  string
+	postgresDSN string
 	project     string
 
 	providerType string
@@ -58,6 +61,7 @@ var ServeFlags = config.FlagSet{
 	config.FlagUpstream:        {Name: "upstream", Shorthand: "u", ViperKey: "proxy.upstream", Description: "Upstream LLM provider URL"},
 	config.FlagProvider:        {Name: "provider", ViperKey: "proxy.provider", Description: "LLM provider type (anthropic, openai, ollama)"},
 	config.FlagSQLite:          {Name: "sqlite", Shorthand: "s", ViperKey: "storage.sqlite_path", Description: "Path to SQLite database"},
+	config.FlagPostgres:        {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
 	config.FlagProject:         {Name: "project", ViperKey: "proxy.project", Description: "Project name to tag sessions (default: auto-detect from git)"},
 	config.FlagVectorStoreProv: {Name: "vector-store-provider", ViperKey: "vector_store.provider", Description: "Vector store provider type (e.g., chroma, sqlite)"},
 	config.FlagVectorStoreTgt:  {Name: "vector-store-target", ViperKey: "vector_store.target", Description: "Vector store target: filepath for sqlite or URL for remote service"},
@@ -101,6 +105,7 @@ func NewServeCmd() *cobra.Command {
 				config.FlagUpstream,
 				config.FlagProvider,
 				config.FlagSQLite,
+				config.FlagPostgres,
 				config.FlagProject,
 				config.FlagVectorStoreProv,
 				config.FlagVectorStoreTgt,
@@ -135,6 +140,7 @@ func NewServeCmd() *cobra.Command {
 				}
 			}
 
+			cmder.postgresDSN = v.GetString("storage.postgres_dsn")
 			cmder.proxyListen = v.GetString("proxy.listen")
 			cmder.apiListen = v.GetString("api.listen")
 			cmder.upstream = v.GetString("proxy.upstream")
@@ -176,6 +182,7 @@ func NewServeCmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingTgt, &cmder.embeddingTarget)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingModel, &cmder.embeddingModel)
 	config.AddUintFlag(cmd, cmder.flags, config.FlagEmbeddingDims, &cmder.embeddingDimensions)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagPostgres, &cmder.postgresDSN)
 
 	cmd.AddCommand(apicmder.NewAPICmd())
 	cmd.AddCommand(proxycmder.NewProxyCmd())
@@ -186,18 +193,22 @@ func NewServeCmd() *cobra.Command {
 func (c *ServeCommander) run() error {
 	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
 
-	// Create shared driver
+	// Create shared driver (satisfies both storage.Driver and merkle.DagLoader)
 	driver, err := c.newStorageDriver()
 	if err != nil {
 		return err
 	}
 	defer driver.Close()
 
-	dagLoader, err := c.newDagLoader()
-	if err != nil {
-		return err
+	if err := driver.Migrate(context.Background()); err != nil {
+		return fmt.Errorf("running migrations: %w", err)
 	}
-	defer driver.Close()
+
+	// cast Driver as a DagLoader
+	dagLoader, ok := driver.(merkle.DagLoader)
+	if !ok {
+		return errors.New("storage driver does not implement merkle.DagLoader")
+	}
 
 	proxyConfig := proxy.Config{
 		ListenAddr:   c.proxyListen,
@@ -294,20 +305,15 @@ func (c *ServeCommander) run() error {
 }
 
 func (c *ServeCommander) newStorageDriver() (storage.Driver, error) {
-	if c.sqlitePath != "" {
-		driver, err := sqlite.NewDriver(context.Background(), c.sqlitePath)
+	if c.postgresDSN != "" {
+		driver, err := postgres.NewDriver(context.Background(), c.postgresDSN)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
+			return nil, fmt.Errorf("failed to create PostgreSQL storer: %w", err)
 		}
-		c.logger.Info("using SQLite storage", "path", c.sqlitePath)
+		c.logger.Info("using PostgreSQL storage")
 		return driver, nil
 	}
 
-	c.logger.Info("using in-memory storage")
-	return inmemory.NewDriver(), nil
-}
-
-func (c *ServeCommander) newDagLoader() (merkle.DagLoader, error) {
 	if c.sqlitePath != "" {
 		driver, err := sqlite.NewDriver(context.Background(), c.sqlitePath)
 		if err != nil {

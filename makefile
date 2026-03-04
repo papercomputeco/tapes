@@ -119,6 +119,11 @@ unit-test: ## Runs unit tests via "go test"
 	$(call print-target)
 	dagger call test
 
+.PHONY: e2e-test
+e2e-test: ## Runs end-to-end tests with Postgres and Ollama via Dagger
+	$(call print-target)
+	dagger call test-e-2-e
+
 .PHONY: test-kafka-e2e
 test-kafka-e2e: ## Runs Kafka e2e proxy publish test
 	$(call print-target)

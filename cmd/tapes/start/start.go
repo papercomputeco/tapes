@@ -33,6 +33,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/start"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
+	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
 	"github.com/papercomputeco/tapes/pkg/vector"
 	vectorutils "github.com/papercomputeco/tapes/pkg/vector/utils"
@@ -63,16 +64,18 @@ Examples:
 )
 
 type startCommander struct {
-	debug     bool
-	configDir string
-	logs      bool
-	daemon    bool
-	provider  string
-	model     string
-	project   string
+	debug       bool
+	configDir   string
+	logs        bool
+	daemon      bool
+	provider    string
+	model       string
+	project     string
+	postgresDSN string
 }
 
 type startConfig struct {
+	PostgresDSN         string
 	SQLitePath          string
 	VectorStoreProvider string
 	VectorStoreTarget   string
@@ -147,6 +150,7 @@ func NewStartCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cmder.provider, "provider", "", "LLM provider for opencode (anthropic, openai, ollama)")
 	cmd.Flags().StringVar(&cmder.model, "model", "", "Model for opencode (e.g. claude-sonnet-4-5)")
 	cmd.Flags().StringVar(&cmder.project, "project", "", "Project name to tag sessions (default: auto-detect from git)")
+	cmd.Flags().StringVar(&cmder.postgresDSN, "postgres", "", "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)")
 
 	return cmd
 }
@@ -410,9 +414,13 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 	}
 	defer driver.Close()
 
-	dagLoader, err := c.newDagLoader(ctx, startCfg, log, driver)
-	if err != nil {
-		return err
+	if err := driver.Migrate(ctx); err != nil {
+		return fmt.Errorf("running migrations: %w", err)
+	}
+
+	dagLoader, ok := driver.(merkle.DagLoader)
+	if !ok {
+		return errors.New("storage driver does not implement merkle.DagLoader")
 	}
 
 	vectorDriver, embedder, err := c.newVectorAndEmbedder(startCfg, log)
@@ -578,6 +586,9 @@ func (c *startCommander) spawnDaemon(ctx context.Context, manager *start.Manager
 	if c.configDir != "" {
 		args = append(args, "--config-dir", c.configDir)
 	}
+	if c.postgresDSN != "" {
+		args = append(args, "--postgres", c.postgresDSN)
+	}
 
 	cmd := exec.CommandContext(ctx, execPath, args...)
 	cmd.Stdout = logFile
@@ -680,6 +691,11 @@ func (c *startCommander) loadConfig() (*startConfig, error) {
 		v.Set("proxy.project", c.project)
 	}
 
+	// Bind the --postgres CLI flag so it takes precedence.
+	if c.postgresDSN != "" {
+		v.Set("storage.postgres_dsn", c.postgresDSN)
+	}
+
 	// Resolve default sqlite path from dotdir target when not set
 	// via env or config file.
 	if v.GetString("storage.sqlite_path") == "" {
@@ -722,6 +738,7 @@ func (c *startCommander) loadConfig() (*startConfig, error) {
 	upstream := v.GetString("proxy.upstream")
 
 	return &startConfig{
+		PostgresDSN:         v.GetString("storage.postgres_dsn"),
 		SQLitePath:          v.GetString("storage.sqlite_path"),
 		VectorStoreProvider: v.GetString("vector_store.provider"),
 		VectorStoreTarget:   v.GetString("vector_store.target"),
@@ -738,6 +755,15 @@ func (c *startCommander) loadConfig() (*startConfig, error) {
 }
 
 func (c *startCommander) newStorageDriver(ctx context.Context, cfg *startConfig, log *slog.Logger) (storage.Driver, error) {
+	if cfg.PostgresDSN != "" {
+		driver, err := postgres.NewDriver(ctx, cfg.PostgresDSN)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create PostgreSQL storer: %w", err)
+		}
+		log.Info("using PostgreSQL storage")
+		return driver, nil
+	}
+
 	if cfg.SQLitePath != "" {
 		driver, err := sqlite.NewDriver(ctx, cfg.SQLitePath)
 		if err != nil {
@@ -745,26 +771,6 @@ func (c *startCommander) newStorageDriver(ctx context.Context, cfg *startConfig,
 		}
 		log.Info("using SQLite storage", "path", cfg.SQLitePath)
 		return driver, nil
-	}
-
-	log.Info("using in-memory storage")
-	return inmemory.NewDriver(), nil
-}
-
-func (c *startCommander) newDagLoader(ctx context.Context, cfg *startConfig, log *slog.Logger, driver storage.Driver) (merkle.DagLoader, error) {
-	if driver != nil {
-		if loader, ok := driver.(merkle.DagLoader); ok {
-			return loader, nil
-		}
-	}
-
-	if cfg.SQLitePath != "" {
-		loader, err := sqlite.NewDriver(ctx, cfg.SQLitePath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
-		}
-		log.Info("using SQLite storage", "path", cfg.SQLitePath)
-		return loader, nil
 	}
 
 	log.Info("using in-memory storage")

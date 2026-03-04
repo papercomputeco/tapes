@@ -18,6 +18,7 @@ import (
 	kafkapublisher "github.com/papercomputeco/tapes/pkg/publisher/kafka"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
+	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
 	vectorutils "github.com/papercomputeco/tapes/pkg/vector/utils"
 	"github.com/papercomputeco/tapes/proxy"
@@ -31,6 +32,7 @@ type proxyCommander struct {
 	providerType string
 	debug        bool
 	sqlitePath   string
+	postgresDSN  string
 	project      string
 
 	kafkaBrokers  string
@@ -56,6 +58,7 @@ var proxyFlags = config.FlagSet{
 	config.FlagUpstream:              {Name: "upstream", Shorthand: "u", ViperKey: "proxy.upstream", Description: "Upstream LLM provider URL"},
 	config.FlagProvider:              {Name: "provider", ViperKey: "proxy.provider", Description: "LLM provider type (anthropic, openai, ollama)"},
 	config.FlagSQLite:                {Name: "sqlite", Shorthand: "s", ViperKey: "storage.sqlite_path", Description: "Path to SQLite database"},
+	config.FlagPostgres:              {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
 	config.FlagProject:               {Name: "project", ViperKey: "proxy.project", Description: "Project name to tag sessions (default: auto-detect from git)"},
 	config.FlagVectorStoreProv:       {Name: "vector-store-provider", ViperKey: "vector_store.provider", Description: "Vector store provider type (e.g., chroma, sqlite)"},
 	config.FlagVectorStoreTgt:        {Name: "vector-store-target", ViperKey: "vector_store.target", Description: "Vector store target: filepath for sqlite or URL for remote service"},
@@ -101,6 +104,7 @@ func NewProxyCmd() *cobra.Command {
 				config.FlagUpstream,
 				config.FlagProvider,
 				config.FlagSQLite,
+				config.FlagPostgres,
 				config.FlagProject,
 				config.FlagVectorStoreProv,
 				config.FlagVectorStoreTgt,
@@ -124,6 +128,7 @@ func NewProxyCmd() *cobra.Command {
 			cmder.embeddingModel = v.GetString("embedding.model")
 			cmder.embeddingDimensions = v.GetUint("embedding.dimensions")
 			cmder.project = v.GetString("proxy.project")
+			cmder.postgresDSN = v.GetString("storage.postgres_dsn")
 			cmder.kafkaBrokers = v.GetString("publisher.kafka.brokers")
 			cmder.kafkaClientID = v.GetString("publisher.kafka.client_id")
 			cmder.kafkaTopic = v.GetString("publisher.kafka.topic")
@@ -156,6 +161,7 @@ func NewProxyCmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingTgt, &cmder.embeddingTarget)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingModel, &cmder.embeddingModel)
 	config.AddUintFlag(cmd, cmder.flags, config.FlagEmbeddingDims, &cmder.embeddingDimensions)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagPostgres, &cmder.postgresDSN)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagKafkaBrokers, &cmder.kafkaBrokers)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagKafkaClientID, &cmder.kafkaClientID)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagKafkaTopic, &cmder.kafkaTopic)
@@ -185,6 +191,10 @@ func (c *proxyCommander) run() error {
 		return err
 	}
 	defer driver.Close()
+
+	if err := driver.Migrate(context.Background()); err != nil {
+		return fmt.Errorf("running migrations: %w", err)
+	}
 
 	config := proxy.Config{
 		ListenAddr:   c.listen,
@@ -287,6 +297,15 @@ func (c *proxyCommander) newPublisher() (publisher.Publisher, error) {
 }
 
 func (c *proxyCommander) newStorageDriver() (storage.Driver, error) {
+	if c.postgresDSN != "" {
+		driver, err := postgres.NewDriver(context.Background(), c.postgresDSN)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create PostgreSQL storer: %w", err)
+		}
+		c.logger.Info("using PostgreSQL storage")
+		return driver, nil
+	}
+
 	if c.sqlitePath != "" {
 		driver, err := sqlite.NewDriver(context.Background(), c.sqlitePath)
 		if err != nil {

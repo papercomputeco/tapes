@@ -1,9 +1,9 @@
-package sqlite_test
+package postgres_test
 
 import (
 	"context"
+	"fmt"
 	"os"
-	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -11,11 +11,11 @@ import (
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
-	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
+	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 )
 
-// sqliteTestBucket creates a simple bucket for testing with the given text content
-func sqliteTestBucket(text string) merkle.Bucket {
+// postgresTestBucket creates a simple bucket for testing with the given text content
+func postgresTestBucket(text string) merkle.Bucket {
 	return merkle.Bucket{
 		Type:     "message",
 		Role:     "user",
@@ -25,19 +25,34 @@ func sqliteTestBucket(text string) merkle.Bucket {
 	}
 }
 
+// connStr returns the PostgreSQL connection string from environment or skips the test.
+func connStr() string {
+	dsn := os.Getenv("TAPES_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		Skip("TAPES_TEST_POSTGRES_DSN not set, skipping PostgreSQL tests")
+	}
+	return dsn
+}
+
 var _ = Describe("Driver", func() {
 	var (
-		driver *sqlite.Driver
+		driver *postgres.Driver
 		ctx    context.Context
 	)
 
 	BeforeEach(func() {
 		ctx = context.Background()
+		dsn := connStr()
+
 		var err error
-		driver, err = sqlite.NewDriver(ctx, ":memory:")
+		driver, err = postgres.NewDriver(ctx, dsn)
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(driver.Migrate(ctx)).To(Succeed())
+
+		// Clean all nodes before each test for isolation.
+		_, err = driver.Client.Node.Delete().Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
 	})
 
 	AfterEach(func() {
@@ -47,25 +62,25 @@ var _ = Describe("Driver", func() {
 	})
 
 	Describe("NewDriver", func() {
-		It("creates a driver with file database", func() {
-			tmpDir := GinkgoT().TempDir()
-			dbPath := filepath.Join(tmpDir, "test.db")
-
-			s, err := sqlite.NewDriver(context.Background(), dbPath)
+		It("creates a driver with valid connection string", func() {
+			dsn := connStr()
+			d, err := postgres.NewDriver(context.Background(), dsn)
 			Expect(err).NotTo(HaveOccurred())
-			defer s.Close()
+			defer d.Close()
 
-			Expect(s.Migrate(context.Background())).To(Succeed())
+			Expect(d.Migrate(context.Background())).To(Succeed())
+		})
 
-			// Verify file was created
-			_, err = os.Stat(dbPath)
-			Expect(err).NotTo(HaveOccurred())
+		It("returns an error for invalid connection string", func() {
+			_, err := postgres.NewDriver(context.Background(), "host=invalid port=9999 user=bad dbname=bad sslmode=disable connect_timeout=1")
+			Expect(err).To(HaveOccurred())
+			fmt.Fprintf(GinkgoWriter, "expected error: %v\n", err)
 		})
 	})
 
 	Describe("Put and Get", func() {
 		It("stores and retrieves a node", func() {
-			node := merkle.NewNode(sqliteTestBucket("test content"), nil)
+			node := merkle.NewNode(postgresTestBucket("test content"), nil)
 
 			_, err := driver.Put(ctx, node)
 			Expect(err).NotTo(HaveOccurred())
@@ -78,8 +93,8 @@ var _ = Describe("Driver", func() {
 		})
 
 		It("stores and retrieves a node with parent", func() {
-			parent := merkle.NewNode(sqliteTestBucket("parent"), nil)
-			child := merkle.NewNode(sqliteTestBucket("child"), parent)
+			parent := merkle.NewNode(postgresTestBucket("parent"), nil)
+			child := merkle.NewNode(postgresTestBucket("child"), parent)
 
 			_, err := driver.Put(ctx, parent)
 			Expect(err).NotTo(HaveOccurred())
@@ -102,7 +117,7 @@ var _ = Describe("Driver", func() {
 		})
 
 		It("is idempotent for duplicate puts", func() {
-			node := merkle.NewNode(sqliteTestBucket("test"), nil)
+			node := merkle.NewNode(postgresTestBucket("test"), nil)
 
 			isNew, err := driver.Put(ctx, node)
 			Expect(err).NotTo(HaveOccurred())
@@ -125,7 +140,7 @@ var _ = Describe("Driver", func() {
 
 	Describe("Has", func() {
 		It("returns true for existing node", func() {
-			node := merkle.NewNode(sqliteTestBucket("test"), nil)
+			node := merkle.NewNode(postgresTestBucket("test"), nil)
 			driver.Put(ctx, node)
 
 			exists, err := driver.Has(ctx, node.Hash)
@@ -142,9 +157,9 @@ var _ = Describe("Driver", func() {
 
 	Describe("GetByParent", func() {
 		It("returns children of a parent", func() {
-			parent := merkle.NewNode(sqliteTestBucket("parent"), nil)
-			child1 := merkle.NewNode(sqliteTestBucket("child1"), parent)
-			child2 := merkle.NewNode(sqliteTestBucket("child2"), parent)
+			parent := merkle.NewNode(postgresTestBucket("parent"), nil)
+			child1 := merkle.NewNode(postgresTestBucket("child1"), parent)
+			child2 := merkle.NewNode(postgresTestBucket("child2"), parent)
 
 			driver.Put(ctx, parent)
 			driver.Put(ctx, child1)
@@ -156,9 +171,9 @@ var _ = Describe("Driver", func() {
 		})
 
 		It("returns root nodes when parentHash is nil", func() {
-			root1 := merkle.NewNode(sqliteTestBucket("root1"), nil)
-			root2 := merkle.NewNode(sqliteTestBucket("root2"), nil)
-			child := merkle.NewNode(sqliteTestBucket("child"), root1)
+			root1 := merkle.NewNode(postgresTestBucket("root1"), nil)
+			root2 := merkle.NewNode(postgresTestBucket("root2"), nil)
+			child := merkle.NewNode(postgresTestBucket("child"), root1)
 
 			driver.Put(ctx, root1)
 			driver.Put(ctx, root2)
@@ -172,9 +187,9 @@ var _ = Describe("Driver", func() {
 
 	Describe("List", func() {
 		It("returns all nodes", func() {
-			node1 := merkle.NewNode(sqliteTestBucket("node1"), nil)
-			node2 := merkle.NewNode(sqliteTestBucket("node2"), node1)
-			node3 := merkle.NewNode(sqliteTestBucket("node3"), node2)
+			node1 := merkle.NewNode(postgresTestBucket("node1"), nil)
+			node2 := merkle.NewNode(postgresTestBucket("node2"), node1)
+			node3 := merkle.NewNode(postgresTestBucket("node3"), node2)
 
 			driver.Put(ctx, node1)
 			driver.Put(ctx, node2)
@@ -194,9 +209,9 @@ var _ = Describe("Driver", func() {
 
 	Describe("Roots", func() {
 		It("returns all root nodes", func() {
-			root1 := merkle.NewNode(sqliteTestBucket("root1"), nil)
-			root2 := merkle.NewNode(sqliteTestBucket("root2"), nil)
-			child := merkle.NewNode(sqliteTestBucket("child"), root1)
+			root1 := merkle.NewNode(postgresTestBucket("root1"), nil)
+			root2 := merkle.NewNode(postgresTestBucket("root2"), nil)
+			child := merkle.NewNode(postgresTestBucket("child"), root1)
 
 			driver.Put(ctx, root1)
 			driver.Put(ctx, root2)
@@ -210,9 +225,9 @@ var _ = Describe("Driver", func() {
 
 	Describe("Leaves", func() {
 		It("returns all leaf nodes", func() {
-			root := merkle.NewNode(sqliteTestBucket("root"), nil)
-			child := merkle.NewNode(sqliteTestBucket("child"), root)
-			leaf := merkle.NewNode(sqliteTestBucket("leaf"), child)
+			root := merkle.NewNode(postgresTestBucket("root"), nil)
+			child := merkle.NewNode(postgresTestBucket("child"), root)
+			leaf := merkle.NewNode(postgresTestBucket("leaf"), child)
 
 			driver.Put(ctx, root)
 			driver.Put(ctx, child)
@@ -227,9 +242,9 @@ var _ = Describe("Driver", func() {
 
 	Describe("Ancestry", func() {
 		It("returns path from node to root", func() {
-			rootBucket := sqliteTestBucket("root")
-			childBucket := sqliteTestBucket("child")
-			grandchildBucket := sqliteTestBucket("grandchild")
+			rootBucket := postgresTestBucket("root")
+			childBucket := postgresTestBucket("child")
+			grandchildBucket := postgresTestBucket("grandchild")
 
 			root := merkle.NewNode(rootBucket, nil)
 			child := merkle.NewNode(childBucket, root)
@@ -250,10 +265,9 @@ var _ = Describe("Driver", func() {
 
 	Describe("LoadDag (merkle.LoadDag with driver as BranchLoader)", func() {
 		It("returns full branch for a leaf node", func() {
-			// Linear chain: root -> child -> grandchild (leaf)
-			rootBucket := sqliteTestBucket("root")
-			childBucket := sqliteTestBucket("child")
-			grandchildBucket := sqliteTestBucket("grandchild")
+			rootBucket := postgresTestBucket("root")
+			childBucket := postgresTestBucket("child")
+			grandchildBucket := postgresTestBucket("grandchild")
 
 			root := merkle.NewNode(rootBucket, nil)
 			child := merkle.NewNode(childBucket, root)
@@ -263,22 +277,19 @@ var _ = Describe("Driver", func() {
 			driver.Put(ctx, child)
 			driver.Put(ctx, grandchild)
 
-			// Query branch from the leaf - should get all 3 nodes
 			dag, err := merkle.LoadDag(ctx, driver, grandchild.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dag.Size()).To(Equal(3))
 
-			// Verify structure using Get
 			Expect(dag.Root.Bucket).To(Equal(rootBucket))
 			Expect(dag.Get(child.Hash).Bucket).To(Equal(childBucket))
 			Expect(dag.Get(grandchild.Hash).Bucket).To(Equal(grandchildBucket))
 		})
 
 		It("returns full branch for a root node with descendants", func() {
-			// Linear chain: root -> child -> grandchild
-			rootBucket := sqliteTestBucket("root")
-			childBucket := sqliteTestBucket("child")
-			grandchildBucket := sqliteTestBucket("grandchild")
+			rootBucket := postgresTestBucket("root")
+			childBucket := postgresTestBucket("child")
+			grandchildBucket := postgresTestBucket("grandchild")
 
 			root := merkle.NewNode(rootBucket, nil)
 			child := merkle.NewNode(childBucket, root)
@@ -288,53 +299,20 @@ var _ = Describe("Driver", func() {
 			driver.Put(ctx, child)
 			driver.Put(ctx, grandchild)
 
-			// Query branch from the root - should get all 3 nodes
 			dag, err := merkle.LoadDag(ctx, driver, root.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dag.Size()).To(Equal(3))
 
-			// Verify structure using Get
-			Expect(dag.Root.Bucket).To(Equal(rootBucket))
-			Expect(dag.Get(child.Hash).Bucket).To(Equal(childBucket))
-			Expect(dag.Get(grandchild.Hash).Bucket).To(Equal(grandchildBucket))
-		})
-
-		It("returns full branch for a middle node", func() {
-			// Linear chain: root -> child -> grandchild
-			rootBucket := sqliteTestBucket("root")
-			childBucket := sqliteTestBucket("child")
-			grandchildBucket := sqliteTestBucket("grandchild")
-
-			root := merkle.NewNode(rootBucket, nil)
-			child := merkle.NewNode(childBucket, root)
-			grandchild := merkle.NewNode(grandchildBucket, child)
-
-			driver.Put(ctx, root)
-			driver.Put(ctx, child)
-			driver.Put(ctx, grandchild)
-
-			// Query branch from the middle node - should get all 3 nodes
-			dag, err := merkle.LoadDag(ctx, driver, child.Hash)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(dag.Size()).To(Equal(3))
-
-			// Verify structure using Get
 			Expect(dag.Root.Bucket).To(Equal(rootBucket))
 			Expect(dag.Get(child.Hash).Bucket).To(Equal(childBucket))
 			Expect(dag.Get(grandchild.Hash).Bucket).To(Equal(grandchildBucket))
 		})
 
 		It("returns all branches when there are multiple children", func() {
-			// Tree structure:
-			//       root
-			//      /    \
-			//   child1  child2
-			//     |
-			//  grandchild
-			rootBucket := sqliteTestBucket("root")
-			child1Bucket := sqliteTestBucket("child1")
-			child2Bucket := sqliteTestBucket("child2")
-			grandchildBucket := sqliteTestBucket("grandchild")
+			rootBucket := postgresTestBucket("root")
+			child1Bucket := postgresTestBucket("child1")
+			child2Bucket := postgresTestBucket("child2")
+			grandchildBucket := postgresTestBucket("grandchild")
 
 			root := merkle.NewNode(rootBucket, nil)
 			child1 := merkle.NewNode(child1Bucket, root)
@@ -346,15 +324,11 @@ var _ = Describe("Driver", func() {
 			driver.Put(ctx, child2)
 			driver.Put(ctx, grandchild)
 
-			// Query branch from root - should get all 4 nodes (both branches)
 			dag, err := merkle.LoadDag(ctx, driver, root.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dag.Size()).To(Equal(4))
 
-			// Root should be the DAG root
 			Expect(dag.Root.Bucket).To(Equal(rootBucket))
-
-			// All nodes should be present
 			Expect(dag.Get(root.Hash)).NotTo(BeNil())
 			Expect(dag.Get(child1.Hash)).NotTo(BeNil())
 			Expect(dag.Get(child2.Hash)).NotTo(BeNil())
@@ -362,13 +336,9 @@ var _ = Describe("Driver", func() {
 		})
 
 		It("returns only ancestors and one branch when queried from a leaf", func() {
-			// Tree structure:
-			//       root
-			//      /    \
-			//   child1  child2
-			rootBucket := sqliteTestBucket("root")
-			child1Bucket := sqliteTestBucket("child1")
-			child2Bucket := sqliteTestBucket("child2")
+			rootBucket := postgresTestBucket("root")
+			child1Bucket := postgresTestBucket("child1")
+			child2Bucket := postgresTestBucket("child2")
 
 			root := merkle.NewNode(rootBucket, nil)
 			child1 := merkle.NewNode(child1Bucket, root)
@@ -378,21 +348,19 @@ var _ = Describe("Driver", func() {
 			driver.Put(ctx, child1)
 			driver.Put(ctx, child2)
 
-			// Query branch from child1 - should only get root + child1 (not child2)
 			dag, err := merkle.LoadDag(ctx, driver, child1.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dag.Size()).To(Equal(2))
 
-			// Verify structure using Get
 			Expect(dag.Root.Bucket).To(Equal(rootBucket))
 			Expect(dag.Get(child1.Hash).Bucket).To(Equal(child1Bucket))
-			Expect(dag.Get(child2.Hash)).To(BeNil()) // child2 should not be in the DAG
+			Expect(dag.Get(child2.Hash)).To(BeNil())
 		})
 	})
 
 	Describe("Depth", func() {
 		It("returns 0 for root node", func() {
-			root := merkle.NewNode(sqliteTestBucket("root"), nil)
+			root := merkle.NewNode(postgresTestBucket("root"), nil)
 			driver.Put(ctx, root)
 
 			depth, err := driver.Depth(ctx, root.Hash)
@@ -401,9 +369,9 @@ var _ = Describe("Driver", func() {
 		})
 
 		It("returns correct depth for nested nodes", func() {
-			root := merkle.NewNode(sqliteTestBucket("root"), nil)
-			child := merkle.NewNode(sqliteTestBucket("child"), root)
-			grandchild := merkle.NewNode(sqliteTestBucket("grandchild"), child)
+			root := merkle.NewNode(postgresTestBucket("root"), nil)
+			child := merkle.NewNode(postgresTestBucket("child"), root)
+			grandchild := merkle.NewNode(postgresTestBucket("grandchild"), child)
 
 			driver.Put(ctx, root)
 			driver.Put(ctx, child)
@@ -424,7 +392,6 @@ var _ = Describe("Driver", func() {
 				Model:    "gpt-4",
 				Provider: "openai",
 			}
-			// StopReason and Usage are now on Node, not Bucket
 			node := merkle.NewNode(bucket, nil, merkle.NodeMeta{
 				StopReason: "stop",
 				Usage: &llm.Usage{
@@ -450,8 +417,7 @@ var _ = Describe("Driver", func() {
 
 	Describe("Content-addressable deduplication", func() {
 		It("deduplicates identical nodes", func() {
-			// Same content, same parent (nil) = same hash = stored once
-			bucket := sqliteTestBucket("identical")
+			bucket := postgresTestBucket("identical")
 			node1 := merkle.NewNode(bucket, nil)
 			node2 := merkle.NewNode(bucket, nil)
 
@@ -465,19 +431,17 @@ var _ = Describe("Driver", func() {
 		})
 
 		It("creates branches for different content with same parent", func() {
-			parent := merkle.NewNode(sqliteTestBucket("parent"), nil)
-			branch1 := merkle.NewNode(sqliteTestBucket("branch1"), parent)
-			branch2 := merkle.NewNode(sqliteTestBucket("branch2"), parent)
+			parent := merkle.NewNode(postgresTestBucket("parent"), nil)
+			branch1 := merkle.NewNode(postgresTestBucket("branch1"), parent)
+			branch2 := merkle.NewNode(postgresTestBucket("branch2"), parent)
 
 			driver.Put(ctx, parent)
 			driver.Put(ctx, branch1)
 			driver.Put(ctx, branch2)
 
-			// Parent should have 2 children (branches)
 			children, _ := driver.GetByParent(ctx, &parent.Hash)
 			Expect(children).To(HaveLen(2))
 
-			// Both are leaves
 			leaves, _ := driver.Leaves(ctx)
 			Expect(leaves).To(HaveLen(2))
 		})

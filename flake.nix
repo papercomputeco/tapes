@@ -35,6 +35,8 @@
 
             # Version control
             pkgs.git
+
+            pkgs.hurl
           ];
 
           # Enable Go's experimental JSON v2 implementation
