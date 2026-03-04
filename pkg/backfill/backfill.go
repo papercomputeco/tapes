@@ -3,7 +3,6 @@ package backfill
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
@@ -205,19 +204,6 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 	}
 
 	return result, nil
-}
-
-// extractTextFromContent concatenates text from content blocks.
-func extractTextFromContent(content []map[string]any) string {
-	var sb strings.Builder
-	for _, block := range content {
-		if t, ok := block["type"].(string); ok && t == "text" {
-			if text, ok := block["text"].(string); ok {
-				sb.WriteString(text)
-			}
-		}
-	}
-	return sb.String()
 }
 
 // contentPrefixMatch checks if the first n characters of two strings match.
