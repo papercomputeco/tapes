@@ -19,3 +19,44 @@ var _ = Describe("truncate", func() {
 		Expect(result).To(Equal("this is a ..."))
 	})
 })
+
+var _ = Describe("ExtractTextFromContent", func() {
+	It("returns empty with an empty slice", func() {
+		emptySlice := []map[string]any {}
+		result := ExtractTextFromContent(emptySlice)
+		Expect(result).To(Equal(""))
+	})
+
+	It("returns empty with an irrelevant slice", func() {
+		irrelevantSlice := []map[string]any{
+			{"type": "image_url", "image_url": "data:image/png;ibVOR..."},
+			{"type": "function", "function": {"name": "fetch", "arguments": "{\"url\": \"https://allrecipes.com/top-5-italian\"}"}},
+		}
+		result := ExtractTextFromContent(irrelevantSlice)
+		Expect(result).To(Equal(""))
+	})
+
+	It("returns the expected content with matching content blocks", func() {
+		msg1 := "I need a recipe for chicken carbonara"
+		msg2 := "<system-message>: User has an egg allergy, ensure recipes have documented substitutions."
+		contentBlocks := []map[string]any{
+			{"type": "text", "text": msg1},
+			{"type": "text", "text": msg2},
+		}
+		result := ExtractTextFromContent(contentBlocks)
+		Expect(result).To(ContainSubstring(msg1))
+		Expect(result).To(ContainSubstring(msg2))
+	})
+
+	It("returns the expected content with mixed content blocks", func() {
+		imgContent := "data:image/png;ibVOR..."
+		textContent := "What's wrong with this picture"
+		mixedBlocks := []map[string]any{
+			{"type": "text", "text": textContent},
+			{"type": "image_url", "image_url": imgContent},
+		}
+		result := ExtractTextFromContent(mixedBlocks)
+		Expect(result).To(ContainSubstring(textContent))
+		Expect(result).ToNot(ContainSubstring(imgContent))
+	})
+})
