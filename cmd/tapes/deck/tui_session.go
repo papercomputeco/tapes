@@ -34,10 +34,11 @@ func (m deckModel) viewSession() string {
 	header := renderHeaderLine(m.width, breadcrumb, statusRight)
 
 	sessionID := m.detail.Summary.ID
-	idLine := deckMutedStyle.Render(sessionID)
+	idText := deckMutedStyle.Render(sessionID)
 	if len(m.detail.SubSessions) > 1 {
-		idLine = deckMutedStyle.Render(fmt.Sprintf("%s · %d sessions", sessionID, len(m.detail.SubSessions)))
+		idText = deckMutedStyle.Render(fmt.Sprintf("%s · %d sessions", sessionID, len(m.detail.SubSessions)))
 	}
+	idLine := renderHeaderLine(m.width, "", idText)
 
 	lines := make([]string, 0, 30)
 	lines = append(lines, header, idLine, renderRule(m.width), "")
