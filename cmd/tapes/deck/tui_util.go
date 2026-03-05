@@ -383,6 +383,55 @@ func addPadding(content string) string {
 	return strings.Join(paddedLines, "\n")
 }
 
+// detailLabel returns the first real user prompt for the detail view
+// breadcrumb. Falls back to the summary label when no messages are available.
+func (m deckModel) detailLabel() string {
+	if m.detail == nil || len(m.detail.Messages) == 0 {
+		return m.detail.Summary.Label
+	}
+
+	for _, msg := range m.detail.Messages {
+		if msg.Role != roleUser {
+			continue
+		}
+		text := stripSystemContent(msg.Text)
+		line := firstNonEmptyLine(text)
+		if line != "" {
+			return line
+		}
+	}
+
+	return m.detail.Summary.Label
+}
+
+func firstNonEmptyLine(text string) string {
+	for line := range strings.SplitSeq(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if isSystemLine(line) {
+			continue
+		}
+		return line
+	}
+	return ""
+}
+
+func stripSystemContent(text string) string {
+	for _, tag := range []string{"system-reminder", "local-command"} {
+		text = deck.StripTaggedSection(text, tag)
+	}
+	return strings.TrimSpace(text)
+}
+
+func isSystemLine(line string) bool {
+	if strings.HasPrefix(line, "<") && strings.HasSuffix(line, ">") {
+		return true
+	}
+	return strings.HasPrefix(strings.ToLower(line), "command:")
+}
+
 func (m deckModel) applyBackground(content string) string {
 	content = deckBackgroundStyle.Render(content)
 	contentWidth := lipgloss.Width(content)

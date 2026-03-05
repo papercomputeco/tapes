@@ -23,14 +23,28 @@ func (m deckModel) viewSession() string {
 	if m.detail.Summary.Project != "" {
 		breadcrumb += deckMutedStyle.Render(" > ") + deckMutedStyle.Render(m.detail.Summary.Project)
 	}
-	breadcrumb += deckMutedStyle.Render(" > ") + deckTitleStyle.Render(m.detail.Summary.Label)
-	headerRight := deckMutedStyle.Render(fmt.Sprintf("%s · %s %s", m.detail.Summary.ID, statusDot, m.detail.Summary.Status))
-	if len(m.detail.SubSessions) > 1 {
-		headerRight = deckMutedStyle.Render(fmt.Sprintf("%d sessions · %s %s", len(m.detail.SubSessions), statusDot, m.detail.Summary.Status))
+	// Cap the title so it doesn't overflow the header line
+	titleMaxWidth := max(m.width*3/4, 40)
+	title := m.detailLabel()
+	if lipgloss.Width(title) > titleMaxWidth {
+		title = truncateText(title, titleMaxWidth)
 	}
-	header := renderHeaderLine(m.width, breadcrumb, headerRight)
+	breadcrumb += deckMutedStyle.Render(" > ") + deckTitleStyle.Render(title)
+	statusRight := statusDot + " " + deckMutedStyle.Render(m.detail.Summary.Status)
+	header := renderHeaderLine(m.width, breadcrumb, statusRight)
+
+	sessionID := m.detail.Summary.ID
+	if len(sessionID) > 7 {
+		sessionID = sessionID[:7]
+	}
+	idText := deckMutedStyle.Render(sessionID)
+	if len(m.detail.SubSessions) > 1 {
+		idText = deckMutedStyle.Render(fmt.Sprintf("%s · %d sessions", sessionID, len(m.detail.SubSessions)))
+	}
+	idLine := renderHeaderLine(m.width, "", idText)
+
 	lines := make([]string, 0, 30)
-	lines = append(lines, header, renderRule(m.width), "")
+	lines = append(lines, header, idLine, renderRule(m.width), "")
 
 	// 1. METRICS SECTION
 	lines = append(lines, m.renderSessionMetrics()...)
