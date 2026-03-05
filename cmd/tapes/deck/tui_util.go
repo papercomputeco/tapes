@@ -429,11 +429,7 @@ func isSystemLine(line string) bool {
 	if strings.HasPrefix(line, "<") && strings.HasSuffix(line, ">") {
 		return true
 	}
-	lower := strings.ToLower(line)
-	if strings.HasPrefix(lower, "command:") {
-		return true
-	}
-	return false
+	return strings.HasPrefix(strings.ToLower(line), "command:")
 }
 
 func (m deckModel) applyBackground(content string) string {
