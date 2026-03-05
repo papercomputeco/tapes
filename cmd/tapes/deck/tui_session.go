@@ -24,7 +24,7 @@ func (m deckModel) viewSession() string {
 		breadcrumb += deckMutedStyle.Render(" > ") + deckMutedStyle.Render(m.detail.Summary.Project)
 	}
 	// Cap the title so it doesn't overflow the header line
-	titleMaxWidth := max(m.width/2, 40)
+	titleMaxWidth := max(m.width*3/4, 40)
 	title := m.detailLabel()
 	if lipgloss.Width(title) > titleMaxWidth {
 		title = truncateText(title, titleMaxWidth)
