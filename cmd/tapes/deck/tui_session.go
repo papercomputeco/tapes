@@ -23,10 +23,17 @@ func (m deckModel) viewSession() string {
 	if m.detail.Summary.Project != "" {
 		breadcrumb += deckMutedStyle.Render(" > ") + deckMutedStyle.Render(m.detail.Summary.Project)
 	}
-	breadcrumb += deckMutedStyle.Render(" > ") + deckTitleStyle.Render(m.detailLabel())
-	headerRight := deckMutedStyle.Render(fmt.Sprintf("%s · %s %s", m.detail.Summary.ID, statusDot, m.detail.Summary.Status))
+	// Cap the title so it doesn't overflow the header line
+	titleMaxWidth := max(m.width/2, 40)
+	title := m.detailLabel()
+	if lipgloss.Width(title) > titleMaxWidth {
+		title = truncateText(title, titleMaxWidth)
+	}
+	breadcrumb += deckMutedStyle.Render(" > ") + deckTitleStyle.Render(title)
+	sessionID := m.detail.Summary.ID
+	headerRight := deckMutedStyle.Render(fmt.Sprintf("%s · %s %s", sessionID, statusDot, m.detail.Summary.Status))
 	if len(m.detail.SubSessions) > 1 {
-		headerRight = deckMutedStyle.Render(fmt.Sprintf("%d sessions · %s %s", len(m.detail.SubSessions), statusDot, m.detail.Summary.Status))
+		headerRight = deckMutedStyle.Render(fmt.Sprintf("%s · %d sessions · %s %s", sessionID, len(m.detail.SubSessions), statusDot, m.detail.Summary.Status))
 	}
 	header := renderHeaderLine(m.width, breadcrumb, headerRight)
 	lines := make([]string, 0, 30)
