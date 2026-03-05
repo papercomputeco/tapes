@@ -34,6 +34,9 @@ func (m deckModel) viewSession() string {
 	header := renderHeaderLine(m.width, breadcrumb, statusRight)
 
 	sessionID := m.detail.Summary.ID
+	if len(sessionID) > 7 {
+		sessionID = sessionID[:7]
+	}
 	idText := deckMutedStyle.Render(sessionID)
 	if len(m.detail.SubSessions) > 1 {
 		idText = deckMutedStyle.Render(fmt.Sprintf("%s · %d sessions", sessionID, len(m.detail.SubSessions)))
