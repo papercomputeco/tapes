@@ -47,11 +47,15 @@ const (
 	FlagEmbeddingTgt    = "embedding-target"
 	FlagEmbeddingModel  = "embedding-model"
 	FlagEmbeddingDims   = "embedding-dimensions"
-	FlagAPITarget       = "api-target"
-	FlagProxyTarget     = "proxy-target"
-	FlagKafkaBrokers    = "kafka-brokers"
-	FlagKafkaTopic      = "kafka-topic"
-	FlagKafkaClientID   = "kafka-client-id"
+	FlagAPITarget         = "api-target"
+	FlagProxyTarget       = "proxy-target"
+	FlagKafkaBrokers      = "kafka-brokers"
+	FlagKafkaTopic        = "kafka-topic"
+	FlagKafkaClientID     = "kafka-client-id"
+	FlagTurso             = "turso"
+	FlagTursoAuthToken    = "turso-auth-token"
+	FlagTursoSyncInterval = "turso-sync-interval"
+	FlagTursoLocalPath    = "turso-local-path"
 
 	// Standalone subcommand variants use "listen" as the flag name
 	// but bind to different viper keys depending on the service.

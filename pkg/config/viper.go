@@ -65,6 +65,10 @@ func setViperDefaults(v *viper.Viper) {
 	// Storage
 	v.SetDefault("storage.sqlite_path", d.Storage.SQLitePath)
 	v.SetDefault("storage.postgres_dsn", d.Storage.PostgresDSN)
+	v.SetDefault("storage.turso_dsn", d.Storage.TursoDSN)
+	v.SetDefault("storage.turso_auth_token", d.Storage.TursoAuthToken)
+	v.SetDefault("storage.turso_sync_interval", d.Storage.TursoSyncInterval)
+	v.SetDefault("storage.turso_local_path", d.Storage.TursoLocalPath)
 
 	// Proxy
 	v.SetDefault("proxy.provider", d.Proxy.Provider)

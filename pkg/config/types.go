@@ -15,8 +15,12 @@ type Config struct {
 
 // StorageConfig holds shared storage settings used by both proxy and API.
 type StorageConfig struct {
-	SQLitePath  string `toml:"sqlite_path,omitempty"  mapstructure:"sqlite_path"`
-	PostgresDSN string `toml:"postgres_dsn,omitempty" mapstructure:"postgres_dsn"`
+	SQLitePath        string `toml:"sqlite_path,omitempty"         mapstructure:"sqlite_path"`
+	PostgresDSN       string `toml:"postgres_dsn,omitempty"        mapstructure:"postgres_dsn"`
+	TursoDSN          string `toml:"turso_dsn,omitempty"           mapstructure:"turso_dsn"`
+	TursoAuthToken    string `toml:"turso_auth_token,omitempty"    mapstructure:"turso_auth_token"`
+	TursoSyncInterval string `toml:"turso_sync_interval,omitempty" mapstructure:"turso_sync_interval"`
+	TursoLocalPath    string `toml:"turso_local_path,omitempty"    mapstructure:"turso_local_path"`
 }
 
 // ProxyConfig holds proxy-specific settings.
@@ -80,5 +84,9 @@ var configKeySet = map[string]bool{
 	"opencode.provider":     true,
 	"opencode.model":        true,
 
-	"storage.postgres_dsn": true,
+	"storage.postgres_dsn":        true,
+	"storage.turso_dsn":           true,
+	"storage.turso_auth_token":    true,
+	"storage.turso_sync_interval": true,
+	"storage.turso_local_path":    true,
 }
