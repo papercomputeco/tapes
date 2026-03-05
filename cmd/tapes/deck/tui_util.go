@@ -418,32 +418,11 @@ func firstNonEmptyLine(text string) string {
 	return ""
 }
 
-// stripSystemContent removes tagged sections (like <system-reminder>)
-// and common system/hook prefixed content from message text.
 func stripSystemContent(text string) string {
 	for _, tag := range []string{"system-reminder", "local-command"} {
-		text = stripTaggedSection(text, tag)
+		text = deck.StripTaggedSection(text, tag)
 	}
 	return strings.TrimSpace(text)
-}
-
-func stripTaggedSection(text, tag string) string {
-	openTag := "<" + tag + ">"
-	closeTag := "</" + tag + ">"
-	for {
-		start := strings.Index(text, openTag)
-		if start == -1 {
-			break
-		}
-		end := strings.Index(text[start:], closeTag)
-		if end == -1 {
-			text = strings.TrimSpace(text[:start])
-			break
-		}
-		end = start + end + len(closeTag)
-		text = strings.TrimSpace(text[:start] + text[end:])
-	}
-	return text
 }
 
 func isSystemLine(line string) bool {

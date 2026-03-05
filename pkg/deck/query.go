@@ -1194,12 +1194,14 @@ func extractLabelText(blocks []llm.ContentBlock) string {
 	}
 
 	text := strings.TrimSpace(strings.Join(texts, "\n"))
-	text = stripTaggedSection(text, "system-reminder")
-	text = stripTaggedSection(text, "local-command")
+	text = StripTaggedSection(text, "system-reminder")
+	text = StripTaggedSection(text, "local-command")
 	return strings.TrimSpace(text)
 }
 
-func stripTaggedSection(text, tag string) string {
+// StripTaggedSection removes all occurrences of a given XML-like tagged
+// section (e.g. <system-reminder>…</system-reminder>) from text.
+func StripTaggedSection(text, tag string) string {
 	openTag := "<" + tag + ">"
 	closeTag := "</" + tag + ">"
 
