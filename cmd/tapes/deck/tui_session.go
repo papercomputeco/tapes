@@ -30,14 +30,17 @@ func (m deckModel) viewSession() string {
 		title = truncateText(title, titleMaxWidth)
 	}
 	breadcrumb += deckMutedStyle.Render(" > ") + deckTitleStyle.Render(title)
+	statusRight := statusDot + " " + deckMutedStyle.Render(m.detail.Summary.Status)
+	header := renderHeaderLine(m.width, breadcrumb, statusRight)
+
 	sessionID := m.detail.Summary.ID
-	headerRight := deckMutedStyle.Render(fmt.Sprintf("%s · %s %s", sessionID, statusDot, m.detail.Summary.Status))
+	idLine := deckMutedStyle.Render(sessionID)
 	if len(m.detail.SubSessions) > 1 {
-		headerRight = deckMutedStyle.Render(fmt.Sprintf("%s · %d sessions · %s %s", sessionID, len(m.detail.SubSessions), statusDot, m.detail.Summary.Status))
+		idLine = deckMutedStyle.Render(fmt.Sprintf("%s · %d sessions", sessionID, len(m.detail.SubSessions)))
 	}
-	header := renderHeaderLine(m.width, breadcrumb, headerRight)
+
 	lines := make([]string, 0, 30)
-	lines = append(lines, header, renderRule(m.width), "")
+	lines = append(lines, header, idLine, renderRule(m.width), "")
 
 	// 1. METRICS SECTION
 	lines = append(lines, m.renderSessionMetrics()...)
