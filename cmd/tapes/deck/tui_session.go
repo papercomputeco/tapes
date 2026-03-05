@@ -23,7 +23,7 @@ func (m deckModel) viewSession() string {
 	if m.detail.Summary.Project != "" {
 		breadcrumb += deckMutedStyle.Render(" > ") + deckMutedStyle.Render(m.detail.Summary.Project)
 	}
-	breadcrumb += deckMutedStyle.Render(" > ") + deckTitleStyle.Render(m.detail.Summary.Label)
+	breadcrumb += deckMutedStyle.Render(" > ") + deckTitleStyle.Render(m.detailLabel())
 	headerRight := deckMutedStyle.Render(fmt.Sprintf("%s · %s %s", m.detail.Summary.ID, statusDot, m.detail.Summary.Status))
 	if len(m.detail.SubSessions) > 1 {
 		headerRight = deckMutedStyle.Render(fmt.Sprintf("%d sessions · %s %s", len(m.detail.SubSessions), statusDot, m.detail.Summary.Status))
