@@ -1,5 +1,10 @@
 //go:build turso
 
+// The turso build tag is required because go-libsql (Turso's C driver) and
+// mattn/go-sqlite3 (used by the SQLite storage driver and sqlite-vec) both
+// bundle their own copy of the SQLite C library, causing duplicate symbol
+// errors at link time. Until the project consolidates on a single SQLite C
+// library, Turso support must be gated behind a build tag.
 package factory
 
 import (
