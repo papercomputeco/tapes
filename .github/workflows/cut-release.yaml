@@ -20,6 +20,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Create GitHub App token
+        uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.PAPER_COMPUTE_CO_BOT_APP_ID }}
+          private-key: ${{ secrets.PAPER_COMPUTE_CO_BOT_PRIVATE_KEY }}
+
       - name: Install Dagger
         uses: dagger/dagger-for-github@v8.2.0
         with:
@@ -35,5 +42,5 @@ jobs:
               --source=. \
             create
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
