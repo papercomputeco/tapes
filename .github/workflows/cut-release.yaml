@@ -28,9 +28,11 @@ jobs:
       - name: Create release via ghrelease
         run: |
           dagger call -m github.com/papercomputeco/daggerverse/ghrelease \
-              --token=env:GH_TOKEN \
-            with-repo --repo=papercomputeco/masterblaster \
-            with-source --source=. \
+              --token=env://GH_TOKEN \
+            with-repo \
+              --repo="${{ github.repository }}" \
+            with-source \
+              --source=. \
             create
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
