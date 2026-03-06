@@ -18,7 +18,7 @@ Use this skill when you need to:
 ## Prerequisites
 
 The tapes search requires:
-1. A running vector store (e.g., Chroma) with indexed session data
+1. A running vector store (e.g., Chroma, SQLite or Qdrant) with indexed session data
 2. An embedding provider (e.g., Ollama) to convert queries to vectors
 3. A SQLite database with the session storage
 
@@ -46,7 +46,7 @@ tapes search <query> [flags]
 
 | Flag | Description | Example |
 |------|-------------|---------|
-| `--vector-store-provider` | Vector store type | `chroma` |
+| `--vector-store-provider` | Vector store type | `chroma` or `sqlite` or `qdrant` |
 | `--vector-store-target` | Vector store URL | `http://localhost:8000` |
 | `--embedding-provider` | Embedding provider type | `ollama` |
 | `--embedding-target` | Embedding provider URL | `http://localhost:11434` |

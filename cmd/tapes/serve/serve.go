@@ -63,7 +63,7 @@ var ServeFlags = config.FlagSet{
 	config.FlagSQLite:          {Name: "sqlite", Shorthand: "s", ViperKey: "storage.sqlite_path", Description: "Path to SQLite database"},
 	config.FlagPostgres:        {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
 	config.FlagProject:         {Name: "project", ViperKey: "proxy.project", Description: "Project name to tag sessions (default: auto-detect from git)"},
-	config.FlagVectorStoreProv: {Name: "vector-store-provider", ViperKey: "vector_store.provider", Description: "Vector store provider type (e.g., chroma, sqlite)"},
+	config.FlagVectorStoreProv: {Name: "vector-store-provider", ViperKey: "vector_store.provider", Description: "Vector store provider type (e.g., chroma, sqlite, qdrant)"},
 	config.FlagVectorStoreTgt:  {Name: "vector-store-target", ViperKey: "vector_store.target", Description: "Vector store target: filepath for sqlite or URL for remote service"},
 	config.FlagEmbeddingProv:   {Name: "embedding-provider", ViperKey: "embedding.provider", Description: "Embedding provider type (e.g., ollama)"},
 	config.FlagEmbeddingTgt:    {Name: "embedding-target", ViperKey: "embedding.target", Description: "Embedding provider URL"},
