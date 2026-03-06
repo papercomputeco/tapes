@@ -14,19 +14,9 @@ import (
 // backed by Postgres, and uses hurl to verify the full pipeline.
 func (t *Tapes) TestE2E(ctx context.Context) (string, error) {
 	postgresSvc := t.PostgresService()
-	ollamaSvc := t.OllamaService()
-
-	// Start Ollama explicitly so we can pull the model before running tests.
-	ollamaSvc, err := ollamaSvc.Start(ctx)
+	ollamaSvc, err := t.OllamaStack(ctx)
 	if err != nil {
-		return "", fmt.Errorf("failed to start ollama service: %w", err)
-	}
-	defer ollamaSvc.Stop(ctx)
-
-	// Pull the model using a sidecar container bound to the ollama service.
-	_, err = t.OllamaPullModel(ctx, ollamaModel, ollamaSvc)
-	if err != nil {
-		return "", fmt.Errorf("failed to pull ollama model %s: %w", ollamaModel, err)
+		return "", fmt.Errorf("could not bring up ollama stack: %v", err)
 	}
 
 	// --- Build the tapes binary ---

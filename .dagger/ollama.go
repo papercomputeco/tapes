@@ -13,6 +13,24 @@ const (
 	ollamaModel = "qwen3:0.6b"
 )
 
+func (t *Tapes) OllamaStack(ctx context.Context) (*dagger.Service, error) {
+	ollamaSvc := t.OllamaService()
+
+	// Start Ollama explicitly so we can pull the model before running tests.
+	ollamaSvc, err := ollamaSvc.Start(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to start ollama service: %w", err)
+	}
+
+	// Pull the model using a sidecar container bound to the ollama service.
+	_, err = t.OllamaPullModel(ctx, ollamaModel, ollamaSvc)
+	if err != nil {
+		return nil, fmt.Errorf("failed to pull ollama model %s: %w", ollamaModel, err)
+	}
+
+	return ollamaSvc, nil
+}
+
 // OllamaService provides an Ollama ready to run service.
 // This service uses a cache volume so models are only pulled once across runs.
 // Pre-create the models/manifests directory tree so Ollama's serve
