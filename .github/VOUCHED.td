@@ -7,6 +7,7 @@
 #   - Optional platform prefix: platform:username (e.g., github:user).
 #   - Denounce with minus prefix: -username or -platform:username.
 #   - Optional details after a space following the handle.
+anush008 add @Anush008
 grouville grouville
 mtfoley add @mtfoley
 nickytonline nickytonline
