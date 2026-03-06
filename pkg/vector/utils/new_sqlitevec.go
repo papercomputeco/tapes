@@ -1,4 +1,4 @@
-//go:build !sqlitevec
+//go:build sqlitevec
 
 package vectorutils
 
@@ -9,6 +9,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/vector"
 	"github.com/papercomputeco/tapes/pkg/vector/chroma"
+	"github.com/papercomputeco/tapes/pkg/vector/sqlitevec"
 )
 
 type NewVectorDriverOpts struct {
@@ -22,6 +23,8 @@ func NewVectorDriver(o *NewVectorDriverOpts) (vector.Driver, error) {
 	switch o.ProviderType {
 	case "chroma":
 		return newChromaDriver(o)
+	case "sqlite":
+		return newSqliteVecDriver(o)
 	default:
 		return nil, fmt.Errorf("unsupported vector store provider: %s", o.ProviderType)
 	}
@@ -34,5 +37,12 @@ func newChromaDriver(o *NewVectorDriverOpts) (vector.Driver, error) {
 
 	return chroma.NewDriver(chroma.Config{
 		URL: o.Target,
+	}, o.Logger)
+}
+
+func newSqliteVecDriver(o *NewVectorDriverOpts) (vector.Driver, error) {
+	return sqlitevec.NewDriver(sqlitevec.Config{
+		DBPath:     o.Target,
+		Dimensions: o.Dimensions,
 	}, o.Logger)
 }

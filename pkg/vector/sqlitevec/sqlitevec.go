@@ -1,3 +1,5 @@
+//go:build sqlitevec
+
 // Package sqlitevec provides a SQLite-backed vector driver using sqlite-vec.
 package sqlitevec
 

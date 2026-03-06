@@ -1,5 +1,3 @@
-//go:build turso
-
 package turso_test
 
 import (

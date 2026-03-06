@@ -4,9 +4,9 @@ import (
 	"context"
 	"database/sql"
 
-	_ "github.com/mattn/go-sqlite3"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	_ "github.com/tursodatabase/go-libsql"
 
 	"github.com/papercomputeco/tapes/pkg/storage/migrate"
 )
@@ -20,7 +20,7 @@ var _ = Describe("Migrator", func() {
 	BeforeEach(func() {
 		ctx = context.Background()
 		var err error
-		db, err = sql.Open("sqlite3", ":memory:")
+		db, err = sql.Open("libsql", ":memory:")
 		Expect(err).NotTo(HaveOccurred())
 	})
 

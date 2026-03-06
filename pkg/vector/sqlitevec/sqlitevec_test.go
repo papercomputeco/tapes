@@ -1,3 +1,5 @@
+//go:build sqlitevec
+
 package sqlitevec_test
 
 import (
