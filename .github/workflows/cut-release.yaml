@@ -1,0 +1,37 @@
+name: Cut Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  DAGGER_VERSION: "0.20.1"
+
+jobs:
+  create-release:
+    name: Cut New GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Dagger
+        uses: dagger/dagger-for-github@v8.2.0
+        with:
+          version: ${{ env.DAGGER_VERSION }}
+
+      - name: Create release via ghrelease
+        run: |
+          dagger call -m github.com/papercomputeco/daggerverse/ghrelease \
+              --token=env:GH_TOKEN \
+            with-repo --repo=papercomputeco/masterblaster \
+            with-source --source=. \
+            create
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}

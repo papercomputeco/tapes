@@ -26,6 +26,17 @@ make build-local
 ./build/tapes deck --demo
 ```
 
+## Contributing a PR
+
+0. _BEFORE_ you create a PR, search for existing issues. If no issue exists,
+   create an issue and signal that you'd like to work on it.
+1. When submitting a pull request, _ALL_ titles must be labeled with one of:
+  * `⚠️ breaking:`- `:warning: feat:` - adds a breaking change. Triggers a major version bump (i.e., `1.0.0` --> `2.0.0`).
+  * `✨ feat:` - `:sparkles: feat:` - adds a new feature. Triggers a minor version bump (i.e., `0.1.0` --> `0.2.0`).
+  * `🔧 fix:` - `:wrench: fix:` - fixes a bug. Triggers a patch bump (i.e., `0.0.1` --> `0.0.2`).
+  * `🧹 chore:` - `:broom: chore` - non-feature, non-bug code changes (i.e., CICD, tests, etc.). Does _NOT_ trigger a version change.
+  * `📚 docs:` - `:books: docs:` - documentation only changes. Does _NOT_ trigger a version change.
+
 ## Local demo data
 
 Seed demo sessions for the deck UI without touching real data:
