@@ -54,6 +54,7 @@ Examples:
   tapes start opencode --provider anthropic --model claude-sonnet-4-5
   tapes start opencode --provider ollama --model qwen3-coder:30b
   tapes start codex
+  tapes start copilot
   tapes start --logs
 `
 	startShortDesc = "Start tapes services and agents"
@@ -61,6 +62,7 @@ Examples:
 	agentClaude   = "claude"
 	agentOpenCode = "opencode"
 	agentCodex    = "codex"
+	agentCopilot  = "copilot"
 )
 
 type startCommander struct {
@@ -297,6 +299,13 @@ func (c *startCommander) runAgent(ctx context.Context, agent string, passthrough
 			}
 			return err2
 		}
+	case agentCopilot:
+		var configRoot string
+		cleanup, configRoot, err = configureCopilot(agentBaseURL)
+		if err != nil {
+			return err
+		}
+		cmd.Env = append(cmd.Env, "XDG_CONFIG_HOME="+configRoot)
 	}
 
 	cmd.Env = c.injectCredentials(cmd.Env)
@@ -445,6 +454,7 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 			agentClaude:   {ProviderType: "anthropic", UpstreamURL: "https://api.anthropic.com"},
 			agentOpenCode: openCodeRoute,
 			agentCodex:    {ProviderType: "openai", UpstreamURL: "https://api.openai.com/v1"},
+			agentCopilot:  {ProviderType: "openai", UpstreamURL: "https://api.githubcopilot.com"},
 		},
 		ProviderUpstreams: map[string]string{
 			"anthropic": "https://api.anthropic.com",
@@ -913,7 +923,7 @@ func (c *startCommander) injectCredentials(env []string) []string {
 
 func isSupportedAgent(agent string) bool {
 	switch agent {
-	case agentClaude, agentOpenCode, agentCodex:
+	case agentClaude, agentOpenCode, agentCodex, agentCopilot:
 		return true
 	default:
 		return false
@@ -928,6 +938,8 @@ func agentCommand(agent string) string {
 		return "opencode"
 	case agentCodex:
 		return "codex"
+	case agentCopilot:
+		return "copilot"
 	default:
 		return agent
 	}
@@ -1100,6 +1112,74 @@ func configureOpenCode(baseURL, tapesConfigDir string) (func() error, string, er
 	}
 
 	return cleanup, configRoot, nil
+}
+
+// configureCopilot creates a temporary XDG_CONFIG_HOME with a copilot
+// config.json that overrides the Copilot API URL to route through the tapes
+// proxy. The returned cleanup function removes the temp directory.
+func configureCopilot(baseURL string) (func() error, string, error) {
+	// Copilot CLI stores config directly in XDG_CONFIG_HOME (not in a
+	// subdirectory), defaulting to ~/.copilot.
+	configRoot, err := os.MkdirTemp("", "tapes-copilot-config-")
+	if err != nil {
+		return nil, "", fmt.Errorf("creating copilot config root: %w", err)
+	}
+	configPath := filepath.Join(configRoot, "config.json")
+
+	// Start from the user's existing copilot config if available.
+	existing := loadUserCopilotConfig()
+
+	// Override the API URL to route through the tapes proxy.
+	existing["copilotApiOverrideUrl"] = baseURL
+
+	data, err := json.MarshalIndent(existing, "", "  ")
+	if err != nil {
+		_ = os.RemoveAll(configRoot)
+		return nil, "", fmt.Errorf("marshaling copilot config: %w", err)
+	}
+
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		_ = os.RemoveAll(configRoot)
+		return nil, "", fmt.Errorf("writing copilot config: %w", err)
+	}
+
+	cleanup := func() error {
+		if err := os.RemoveAll(configRoot); err != nil {
+			return fmt.Errorf("removing copilot config: %w", err)
+		}
+		return nil
+	}
+
+	return cleanup, configRoot, nil
+}
+
+// loadUserCopilotConfig reads the user's existing copilot config.json.
+// Returns an empty map if the file doesn't exist or can't be parsed.
+func loadUserCopilotConfig() map[string]any {
+	candidates := []string{}
+
+	// Copilot CLI stores config directly in XDG_CONFIG_HOME (defaulting
+	// to ~/.copilot), not in a subdirectory.
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		candidates = append(candidates, filepath.Join(xdg, "config.json"))
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, ".copilot", "config.json"))
+	}
+
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var cfg map[string]any
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			continue
+		}
+		return cfg
+	}
+
+	return map[string]any{}
 }
 
 // loadStoredAPIKeys reads all stored API keys from tapes credentials.

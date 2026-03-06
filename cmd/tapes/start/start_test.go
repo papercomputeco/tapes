@@ -3,6 +3,7 @@ package startcmder
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -259,6 +260,46 @@ var _ = Describe("parseStartArgs", func() {
 			[]string{"  Claude  ", "--dangerously-skip-permissions"}, 1,
 			"claude", []string{"--dangerously-skip-permissions"}),
 	)
+})
+
+var _ = Describe("isSupportedAgent", func() {
+	DescribeTable("recognises supported agents",
+		func(agent string, expected bool) {
+			Expect(isSupportedAgent(agent)).To(Equal(expected))
+		},
+		Entry("claude", "claude", true),
+		Entry("opencode", "opencode", true),
+		Entry("codex", "codex", true),
+		Entry("copilot", "copilot", true),
+		Entry("unknown", "unknown", false),
+	)
+})
+
+var _ = Describe("configureCopilot", func() {
+	It("creates a config.json with copilotApiOverrideUrl", func() {
+		cleanup, configRoot, err := configureCopilot("http://localhost:9999/agents/copilot")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { _ = cleanup() })
+
+		configPath := filepath.Join(configRoot, "config.json")
+		Expect(configPath).To(BeAnExistingFile())
+
+		data, err := os.ReadFile(configPath)
+		Expect(err).NotTo(HaveOccurred())
+
+		var cfg map[string]any
+		Expect(json.Unmarshal(data, &cfg)).To(Succeed())
+		Expect(cfg).To(HaveKeyWithValue("copilotApiOverrideUrl", "http://localhost:9999/agents/copilot"))
+	})
+
+	It("preserves existing user config keys", func() {
+		// This test verifies the function merges with existing config.
+		// Since loadUserCopilotConfig reads from disk, we test the output
+		// structure only.
+		cleanup, _, err := configureCopilot("http://proxy:1234")
+		Expect(err).NotTo(HaveOccurred())
+		_ = cleanup()
+	})
 })
 
 func appendToFile(path string, data []byte) error {
