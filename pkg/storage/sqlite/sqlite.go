@@ -7,11 +7,9 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
-	"strings"
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
-	_ "github.com/tursodatabase/go-libsql" // register the "libsql" database/sql driver
 
 	"github.com/papercomputeco/tapes/pkg/storage/ent"
 	entdriver "github.com/papercomputeco/tapes/pkg/storage/ent/driver"
@@ -32,23 +30,10 @@ type Driver struct {
 //
 // NewDriver does not run schema migrations. Call Migrate() after construction
 // to apply any pending migrations.
-func NewDriver(_ context.Context, dbPath string) (*Driver, error) {
-	// Format the DSN for the go-libsql driver.
-	// go-libsql accepts ":memory:" as-is, or "file:" prefixed paths.
-	dsn := dbPath
-	if dsn != ":memory:" && !strings.HasPrefix(dsn, "file:") {
-		dsn = "file:" + dsn
-	}
-
-	db, err := sql.Open("libsql", dsn)
+func NewDriver(ctx context.Context, dbPath string) (*Driver, error) {
+	db, err := openSQLiteDB(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
-	}
-
-	// Enable foreign keys via PRAGMA (go-libsql does not support DSN query parameters).
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
+		return nil, err
 	}
 
 	// Wrap the database connection with ent's SQL driver

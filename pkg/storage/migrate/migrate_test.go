@@ -6,7 +6,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	_ "github.com/tursodatabase/go-libsql"
 
 	"github.com/papercomputeco/tapes/pkg/storage/migrate"
 )
@@ -20,7 +19,7 @@ var _ = Describe("Migrator", func() {
 	BeforeEach(func() {
 		ctx = context.Background()
 		var err error
-		db, err = sql.Open("libsql", ":memory:")
+		db, err = openTestDB()
 		Expect(err).NotTo(HaveOccurred())
 	})
 

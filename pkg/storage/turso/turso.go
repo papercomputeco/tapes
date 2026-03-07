@@ -1,3 +1,5 @@
+//go:build turso
+
 // Package turso provides a Turso/libSQL-backed storage driver using ent ORM.
 //
 // Turso is built on libSQL, an open-source fork of SQLite. This driver uses

@@ -26,6 +26,7 @@ type buildTarget struct {
 	cxx        string
 	cgoFlags   string
 	cgoLdFlags string
+	buildTags  string
 }
 
 func zigArch() string {
@@ -60,11 +61,11 @@ func (t *Tapes) Build(
 // using Zig as the cross-compilation C toolchain.
 func (t *Tapes) buildLinux(outputs *dagger.Directory, ldflags string) *dagger.Directory {
 	cgoFlags := "-I/opt/sqlite -fno-sanitize=all"
-	cgoLdFlags := "-fno-sanitize=all"
+	cgoLdFlags := "-fno-sanitize=all -lunwind"
 
 	targets := []buildTarget{
-		{"linux", "amd64", "zig cc -target x86_64-linux-gnu", "zig c++ -target x86_64-linux-gnu", cgoFlags, cgoLdFlags},
-		{"linux", "arm64", "zig cc -target aarch64-linux-gnu", "zig c++ -target aarch64-linux-gnu", cgoFlags, cgoLdFlags},
+		{"linux", "amd64", "zig cc -target x86_64-linux-gnu", "zig c++ -target x86_64-linux-gnu", cgoFlags, cgoLdFlags, "turso"},
+		{"linux", "arm64", "zig cc -target aarch64-linux-gnu", "zig c++ -target aarch64-linux-gnu", cgoFlags, cgoLdFlags, "turso"},
 	}
 
 	// Build zig download URL based on host architecture
@@ -83,6 +84,14 @@ func (t *Tapes) buildLinux(outputs *dagger.Directory, ldflags string) *dagger.Di
 	for _, target := range targets {
 		path := fmt.Sprintf("%s/%s/", target.goos, target.goarch)
 
+		buildCmd := func(pkg string) []string {
+			args := []string{"go", "build"}
+			if target.buildTags != "" {
+				args = append(args, "-tags", target.buildTags)
+			}
+			return append(args, "-ldflags", ldflags, "-o", path, pkg)
+		}
+
 		build := golang.
 			WithEnvVariable("CGO_ENABLED", "1").
 			WithEnvVariable("GOEXPERIMENT", "jsonv2").
@@ -92,9 +101,9 @@ func (t *Tapes) buildLinux(outputs *dagger.Directory, ldflags string) *dagger.Di
 			WithEnvVariable("CXX", target.cxx).
 			WithEnvVariable("CGO_CFLAGS", target.cgoFlags).
 			WithEnvVariable("CGO_LDFLAGS", target.cgoLdFlags).
-			WithExec([]string{"go", "build", "-ldflags", ldflags, "-o", path, "./cli/tapes"}).
-			WithExec([]string{"go", "build", "-ldflags", ldflags, "-o", path, "./cli/tapesprox"}).
-			WithExec([]string{"go", "build", "-ldflags", ldflags, "-o", path, "./cli/tapesapi"})
+			WithExec(buildCmd("./cli/tapes")).
+			WithExec(buildCmd("./cli/tapesprox")).
+			WithExec(buildCmd("./cli/tapesapi"))
 
 		outputs = outputs.WithDirectory(path, build.Directory(path))
 	}
@@ -112,8 +121,8 @@ func (t *Tapes) buildDarwin(outputs *dagger.Directory, ldflags string) *dagger.D
 	cgoLdFlags := "-fuse-ld=lld"
 
 	targets := []buildTarget{
-		{"darwin", "amd64", "o64-clang", "o64-clang++", cgoFlags, cgoLdFlags},
-		{"darwin", "arm64", "oa64-clang", "oa64-clang++", cgoFlags, cgoLdFlags},
+		{"darwin", "amd64", "o64-clang", "o64-clang++", cgoFlags, cgoLdFlags, ""},
+		{"darwin", "arm64", "oa64-clang", "oa64-clang++", cgoFlags, cgoLdFlags, "turso"},
 	}
 
 	// Pull the osxcross toolchain (macOS SDK + clang cross-compilers)
@@ -144,6 +153,14 @@ func (t *Tapes) buildDarwin(outputs *dagger.Directory, ldflags string) *dagger.D
 	for _, target := range targets {
 		path := fmt.Sprintf("%s/%s/", target.goos, target.goarch)
 
+		buildCmd := func(pkg string) []string {
+			args := []string{"go", "build"}
+			if target.buildTags != "" {
+				args = append(args, "-tags", target.buildTags)
+			}
+			return append(args, "-ldflags", ldflags, "-o", path, pkg)
+		}
+
 		build := golang.
 			WithEnvVariable("CGO_ENABLED", "1").
 			WithEnvVariable("GOEXPERIMENT", "jsonv2").
@@ -153,9 +170,9 @@ func (t *Tapes) buildDarwin(outputs *dagger.Directory, ldflags string) *dagger.D
 			WithEnvVariable("CXX", target.cxx).
 			WithEnvVariable("CGO_CFLAGS", target.cgoFlags).
 			WithEnvVariable("CGO_LDFLAGS", target.cgoLdFlags).
-			WithExec([]string{"go", "build", "-ldflags", ldflags, "-o", path, "./cli/tapes"}).
-			WithExec([]string{"go", "build", "-ldflags", ldflags, "-o", path, "./cli/tapesprox"}).
-			WithExec([]string{"go", "build", "-ldflags", ldflags, "-o", path, "./cli/tapesapi"})
+			WithExec(buildCmd("./cli/tapes")).
+			WithExec(buildCmd("./cli/tapesprox")).
+			WithExec(buildCmd("./cli/tapesapi"))
 
 		outputs = outputs.WithDirectory(path, build.Directory(path))
 	}

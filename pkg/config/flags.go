@@ -53,7 +53,7 @@ const (
 	FlagKafkaTopic        = "kafka-topic"
 	FlagKafkaClientID     = "kafka-client-id"
 	FlagTurso             = "turso"
-	FlagTursoAuthToken    = "turso-auth-token"
+	FlagTursoAuthToken    = "turso-auth-token" //nolint:gosec // CLI flag name, not a credential value
 	FlagTursoSyncInterval = "turso-sync-interval"
 	FlagTursoLocalPath    = "turso-local-path"
 

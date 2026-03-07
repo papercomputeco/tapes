@@ -66,6 +66,6 @@ func (t *Tapes) CheckGenerate(ctx context.Context) (string, error) {
 // +check
 func (t *Tapes) Test(ctx context.Context) (string, error) {
 	return t.goContainer().
-		WithExec([]string{"go", "test", "-v", "./..."}).
+		WithExec([]string{"go", "test", "-tags", "turso", "-v", "./..."}).
 		Stdout(ctx)
 }
