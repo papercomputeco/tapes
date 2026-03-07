@@ -32,7 +32,7 @@ type Driver struct {
 //
 // NewDriver does not run schema migrations. Call Migrate() after construction
 // to apply any pending migrations.
-func NewDriver(_ context.Context, dbPath string) (*Driver, error) {
+func NewDriver(ctx context.Context, dbPath string) (*Driver, error) {
 	// Format the DSN for the go-libsql driver.
 	// go-libsql accepts ":memory:" as-is, or "file:" prefixed paths.
 	dsn := dbPath
@@ -46,7 +46,7 @@ func NewDriver(_ context.Context, dbPath string) (*Driver, error) {
 	}
 
 	// Enable foreign keys via PRAGMA (go-libsql does not support DSN query parameters).
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
 	}
