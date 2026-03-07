@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/papercomputeco/tapes/pkg/llm/provider/anthropic"
+	"github.com/papercomputeco/tapes/pkg/llm/provider/bedrock"
 	"github.com/papercomputeco/tapes/pkg/llm/provider/ollama"
 	"github.com/papercomputeco/tapes/pkg/llm/provider/openai"
 )
@@ -11,13 +12,14 @@ import (
 // Supported provider type constants
 const (
 	Anthropic = "anthropic"
+	Bedrock   = "bedrock"
 	OpenAI    = "openai"
 	Ollama    = "ollama"
 )
 
 // SupportedProviders returns the list of all supported provider type names.
 func SupportedProviders() []string {
-	return []string{Anthropic, OpenAI, Ollama}
+	return []string{Anthropic, Bedrock, OpenAI, Ollama}
 }
 
 // New creates a new Provider instance for the given provider type.
@@ -26,6 +28,8 @@ func New(providerType string) (Provider, error) {
 	switch providerType {
 	case Anthropic:
 		return anthropic.New(), nil
+	case Bedrock:
+		return bedrock.New(), nil
 	case OpenAI:
 		return openai.New(), nil
 	case Ollama:
