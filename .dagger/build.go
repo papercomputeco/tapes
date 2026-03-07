@@ -60,9 +60,7 @@ func (t *Tapes) Build(
 // using Zig as the cross-compilation C toolchain.
 func (t *Tapes) buildLinux(outputs *dagger.Directory, ldflags string) *dagger.Directory {
 	cgoFlags := "-I/opt/sqlite -fno-sanitize=all"
-	// go-libsql links a Rust static archive that needs unwind symbols
-	// when cross-compiling linux/arm64 with Zig.
-	cgoLdFlags := "-fno-sanitize=all -lunwind"
+	cgoLdFlags := "-fno-sanitize=all"
 
 	targets := []buildTarget{
 		{"linux", "amd64", "zig cc -target x86_64-linux-gnu", "zig c++ -target x86_64-linux-gnu", cgoFlags, cgoLdFlags},

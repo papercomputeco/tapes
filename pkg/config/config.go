@@ -62,11 +62,6 @@ func ValidConfigKeys() []string {
 	// Return in a stable, logical order matching the TOML section layout.
 	ordered := []string{
 		"storage.sqlite_path",
-		"storage.postgres_dsn",
-		"storage.turso_dsn",
-		"storage.turso_auth_token",
-		"storage.turso_sync_interval",
-		"storage.turso_local_path",
 		"proxy.provider",
 		"proxy.upstream",
 		"proxy.listen",
