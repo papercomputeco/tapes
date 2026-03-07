@@ -31,7 +31,7 @@ type Driver struct {
 // NewDriver does not run schema migrations. Call Migrate() after construction
 // to apply any pending migrations.
 func NewDriver(ctx context.Context, dbPath string) (*Driver, error) {
-	db, err := openSQLiteDB(dbPath)
+	db, err := openSQLiteDB(ctx, dbPath)
 	if err != nil {
 		return nil, err
 	}

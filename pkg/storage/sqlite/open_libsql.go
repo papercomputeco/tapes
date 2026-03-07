@@ -3,6 +3,7 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -11,7 +12,7 @@ import (
 )
 
 // openSQLiteDB opens a SQLite database using the go-libsql driver.
-func openSQLiteDB(dbPath string) (*sql.DB, error) {
+func openSQLiteDB(ctx context.Context, dbPath string) (*sql.DB, error) {
 	// go-libsql accepts ":memory:" as-is, or "file:" prefixed paths.
 	dsn := dbPath
 	if dsn != ":memory:" && !strings.HasPrefix(dsn, "file:") {
@@ -24,7 +25,7 @@ func openSQLiteDB(dbPath string) (*sql.DB, error) {
 	}
 
 	// Enable foreign keys via PRAGMA (go-libsql does not support DSN query parameters).
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
 	}

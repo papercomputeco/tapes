@@ -3,6 +3,7 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -11,7 +12,7 @@ import (
 )
 
 // openSQLiteDB opens a SQLite database using the mattn/go-sqlite3 driver.
-func openSQLiteDB(dbPath string) (*sql.DB, error) {
+func openSQLiteDB(_ context.Context, dbPath string) (*sql.DB, error) {
 	// Enable foreign keys via DSN query parameter so that every pooled
 	// connection has the pragma applied (not just the first one).
 	dsn := dbPath
