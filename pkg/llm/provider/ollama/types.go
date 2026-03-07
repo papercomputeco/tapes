@@ -14,8 +14,9 @@ type ollamaRequest struct {
 }
 
 type ollamaMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string `json:"role"`
+	Content    string `json:"-"`
+	ContentRaw any    `json:"content,omitempty"`
 
 	// Base64-encoded images
 	Images []string `json:"images,omitempty"`
@@ -25,7 +26,7 @@ type ollamaMessage struct {
 }
 
 type ollamaToolCall struct {
-	ID       string `json:"id"`
+	ID       string `json:"id,omitempty"`
 	Function struct {
 		Index     int            `json:"index,omitempty"`
 		Name      string         `json:"name"`
