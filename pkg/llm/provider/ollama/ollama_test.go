@@ -501,4 +501,20 @@ var _ = Describe("Ollama Provider", func() {
 			Expect(req.Messages[1].Content[0].ToolName).To(Equal("get_weather"))
 		})
 	})
+	Describe("ParseRequest with mixed content block types", func() {
+		It("parses requests with mixed data structures for content", func() {
+			payload := []byte(`{
+				"model": "llama3",
+				"messages": [
+					{"role": "user", "content": [
+						{"type": "text", "text": "What changes would you suggest to boost test coverage?"},
+						{"type": "text", "text": "<system-reminder>: In PLAN mode, you must not modify any files."}
+					]}
+				]
+			}`)
+			req, err := p.ParseRequest(payload)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(req.Messages).To(HaveLen(1))
+		})
+	})
 })
