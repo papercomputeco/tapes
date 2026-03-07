@@ -22,10 +22,6 @@ import (
 	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/merkle"
-	"github.com/papercomputeco/tapes/pkg/storage"
-	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
-	"github.com/papercomputeco/tapes/pkg/storage/postgres"
-	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
 	vectorutils "github.com/papercomputeco/tapes/pkg/vector/utils"
 	"github.com/papercomputeco/tapes/proxy"
 )
@@ -40,6 +36,11 @@ type ServeCommander struct {
 	sqlitePath  string
 	postgresDSN string
 	project     string
+
+	tursoDSN          string
+	tursoAuthToken    string
+	tursoSyncInterval string
+	tursoLocalPath    string
 
 	providerType string
 
@@ -56,19 +57,23 @@ type ServeCommander struct {
 
 // ServeFlags defines the flags for the parent "tapes serve" command.
 var ServeFlags = config.FlagSet{
-	config.FlagProxyListen:     {Name: "proxy-listen", Shorthand: "p", ViperKey: "proxy.listen", Description: "Address for proxy to listen on"},
-	config.FlagAPIListen:       {Name: "api-listen", Shorthand: "a", ViperKey: "api.listen", Description: "Address for API server to listen on"},
-	config.FlagUpstream:        {Name: "upstream", Shorthand: "u", ViperKey: "proxy.upstream", Description: "Upstream LLM provider URL"},
-	config.FlagProvider:        {Name: "provider", ViperKey: "proxy.provider", Description: "LLM provider type (anthropic, openai, ollama)"},
-	config.FlagSQLite:          {Name: "sqlite", Shorthand: "s", ViperKey: "storage.sqlite_path", Description: "Path to SQLite database"},
-	config.FlagPostgres:        {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
-	config.FlagProject:         {Name: "project", ViperKey: "proxy.project", Description: "Project name to tag sessions (default: auto-detect from git)"},
-	config.FlagVectorStoreProv: {Name: "vector-store-provider", ViperKey: "vector_store.provider", Description: "Vector store provider type (e.g., chroma, sqlite, qdrant)"},
-	config.FlagVectorStoreTgt:  {Name: "vector-store-target", ViperKey: "vector_store.target", Description: "Vector store target: filepath for sqlite or URL for remote service"},
-	config.FlagEmbeddingProv:   {Name: "embedding-provider", ViperKey: "embedding.provider", Description: "Embedding provider type (e.g., ollama)"},
-	config.FlagEmbeddingTgt:    {Name: "embedding-target", ViperKey: "embedding.target", Description: "Embedding provider URL"},
-	config.FlagEmbeddingModel:  {Name: "embedding-model", ViperKey: "embedding.model", Description: "Embedding model name (e.g., nomic-embed-text)"},
-	config.FlagEmbeddingDims:   {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Embedding dimensionality"},
+	config.FlagProxyListen:       {Name: "proxy-listen", Shorthand: "p", ViperKey: "proxy.listen", Description: "Address for proxy to listen on"},
+	config.FlagAPIListen:         {Name: "api-listen", Shorthand: "a", ViperKey: "api.listen", Description: "Address for API server to listen on"},
+	config.FlagUpstream:          {Name: "upstream", Shorthand: "u", ViperKey: "proxy.upstream", Description: "Upstream LLM provider URL"},
+	config.FlagProvider:          {Name: "provider", ViperKey: "proxy.provider", Description: "LLM provider type (anthropic, openai, ollama)"},
+	config.FlagSQLite:            {Name: "sqlite", Shorthand: "s", ViperKey: "storage.sqlite_path", Description: "Path to SQLite database"},
+	config.FlagPostgres:          {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
+	config.FlagTurso:             {Name: "turso", ViperKey: "storage.turso_dsn", Description: "Turso database URL (e.g., libsql://<name>.turso.io)"},
+	config.FlagTursoAuthToken:    {Name: "turso-auth-token", ViperKey: "storage.turso_auth_token", Description: "Turso authentication token"},
+	config.FlagTursoSyncInterval: {Name: "turso-sync-interval", ViperKey: "storage.turso_sync_interval", Description: "Turso embedded replica sync interval (e.g., 5s)"},
+	config.FlagTursoLocalPath:    {Name: "turso-local-path", ViperKey: "storage.turso_local_path", Description: "Local replica path (enables embedded replica mode)"},
+	config.FlagProject:           {Name: "project", ViperKey: "proxy.project", Description: "Project name to tag sessions (default: auto-detect from git)"},
+	config.FlagVectorStoreProv:   {Name: "vector-store-provider", ViperKey: "vector_store.provider", Description: "Vector store provider type (e.g., chroma, sqlite, qdrant)"},
+	config.FlagVectorStoreTgt:    {Name: "vector-store-target", ViperKey: "vector_store.target", Description: "Vector store target: filepath for sqlite or URL for remote service"},
+	config.FlagEmbeddingProv:     {Name: "embedding-provider", ViperKey: "embedding.provider", Description: "Embedding provider type (e.g., ollama)"},
+	config.FlagEmbeddingTgt:      {Name: "embedding-target", ViperKey: "embedding.target", Description: "Embedding provider URL"},
+	config.FlagEmbeddingModel:    {Name: "embedding-model", ViperKey: "embedding.model", Description: "Embedding model name (e.g., nomic-embed-text)"},
+	config.FlagEmbeddingDims:     {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Embedding dimensionality"},
 }
 
 const serveLongDesc string = `Run Tapes services.
@@ -106,6 +111,10 @@ func NewServeCmd() *cobra.Command {
 				config.FlagProvider,
 				config.FlagSQLite,
 				config.FlagPostgres,
+				config.FlagTurso,
+				config.FlagTursoAuthToken,
+				config.FlagTursoSyncInterval,
+				config.FlagTursoLocalPath,
 				config.FlagProject,
 				config.FlagVectorStoreProv,
 				config.FlagVectorStoreTgt,
@@ -141,6 +150,10 @@ func NewServeCmd() *cobra.Command {
 			}
 
 			cmder.postgresDSN = v.GetString("storage.postgres_dsn")
+			cmder.tursoDSN = v.GetString("storage.turso_dsn")
+			cmder.tursoAuthToken = v.GetString("storage.turso_auth_token")
+			cmder.tursoSyncInterval = v.GetString("storage.turso_sync_interval")
+			cmder.tursoLocalPath = v.GetString("storage.turso_local_path")
 			cmder.proxyListen = v.GetString("proxy.listen")
 			cmder.apiListen = v.GetString("api.listen")
 			cmder.upstream = v.GetString("proxy.upstream")
@@ -183,6 +196,10 @@ func NewServeCmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingModel, &cmder.embeddingModel)
 	config.AddUintFlag(cmd, cmder.flags, config.FlagEmbeddingDims, &cmder.embeddingDimensions)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagPostgres, &cmder.postgresDSN)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagTurso, &cmder.tursoDSN)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagTursoAuthToken, &cmder.tursoAuthToken)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagTursoSyncInterval, &cmder.tursoSyncInterval)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagTursoLocalPath, &cmder.tursoLocalPath)
 
 	cmd.AddCommand(apicmder.NewAPICmd())
 	cmd.AddCommand(proxycmder.NewProxyCmd())
@@ -304,25 +321,4 @@ func (c *ServeCommander) run() error {
 	}
 }
 
-func (c *ServeCommander) newStorageDriver() (storage.Driver, error) {
-	if c.postgresDSN != "" {
-		driver, err := postgres.NewDriver(context.Background(), c.postgresDSN)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create PostgreSQL storer: %w", err)
-		}
-		c.logger.Info("using PostgreSQL storage")
-		return driver, nil
-	}
-
-	if c.sqlitePath != "" {
-		driver, err := sqlite.NewDriver(context.Background(), c.sqlitePath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
-		}
-		c.logger.Info("using SQLite storage", "path", c.sqlitePath)
-		return driver, nil
-	}
-
-	c.logger.Info("using in-memory storage")
-	return inmemory.NewDriver(), nil
-}
+// newStorageDriver is defined in storage.go

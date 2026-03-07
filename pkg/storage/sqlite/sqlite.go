@@ -7,11 +7,9 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
-	"strings"
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
-	_ "github.com/mattn/go-sqlite3" // load up the sqlite3 CGO libs
 
 	"github.com/papercomputeco/tapes/pkg/storage/ent"
 	entdriver "github.com/papercomputeco/tapes/pkg/storage/ent/driver"
@@ -32,20 +30,10 @@ type Driver struct {
 //
 // NewDriver does not run schema migrations. Call Migrate() after construction
 // to apply any pending migrations.
-func NewDriver(_ context.Context, dbPath string) (*Driver, error) {
-	// Enable foreign keys via DSN query parameter so that every pooled
-	// connection has the pragma applied (not just the first one).
-	dsn := dbPath
-	if !strings.Contains(dsn, "?") {
-		dsn += "?_foreign_keys=on"
-	} else {
-		dsn += "&_foreign_keys=on"
-	}
-
-	// Open the database using the github.com/mattn/go-sqlite3 driver (registered as "sqlite3")
-	db, err := sql.Open("sqlite3", dsn)
+func NewDriver(ctx context.Context, dbPath string) (*Driver, error) {
+	db, err := openSQLiteDB(ctx, dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
+		return nil, err
 	}
 
 	// Wrap the database connection with ent's SQL driver

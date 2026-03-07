@@ -16,10 +16,6 @@ import (
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/publisher"
 	kafkapublisher "github.com/papercomputeco/tapes/pkg/publisher/kafka"
-	"github.com/papercomputeco/tapes/pkg/storage"
-	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
-	"github.com/papercomputeco/tapes/pkg/storage/postgres"
-	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
 	vectorutils "github.com/papercomputeco/tapes/pkg/vector/utils"
 	"github.com/papercomputeco/tapes/proxy"
 )
@@ -38,6 +34,11 @@ type proxyCommander struct {
 	kafkaBrokers  string
 	kafkaTopic    string
 	kafkaClientID string
+
+	tursoDSN          string
+	tursoAuthToken    string
+	tursoSyncInterval string
+	tursoLocalPath    string
 
 	vectorStoreProvider string
 	vectorStoreTarget   string
@@ -59,6 +60,10 @@ var proxyFlags = config.FlagSet{
 	config.FlagProvider:              {Name: "provider", ViperKey: "proxy.provider", Description: "LLM provider type (anthropic, openai, ollama)"},
 	config.FlagSQLite:                {Name: "sqlite", Shorthand: "s", ViperKey: "storage.sqlite_path", Description: "Path to SQLite database"},
 	config.FlagPostgres:              {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
+	config.FlagTurso:                 {Name: "turso", ViperKey: "storage.turso_dsn", Description: "Turso database URL (e.g., libsql://<name>.turso.io)"},
+	config.FlagTursoAuthToken:        {Name: "turso-auth-token", ViperKey: "storage.turso_auth_token", Description: "Turso authentication token"},
+	config.FlagTursoSyncInterval:     {Name: "turso-sync-interval", ViperKey: "storage.turso_sync_interval", Description: "Turso embedded replica sync interval (e.g., 5s)"},
+	config.FlagTursoLocalPath:        {Name: "turso-local-path", ViperKey: "storage.turso_local_path", Description: "Local replica path (enables embedded replica mode)"},
 	config.FlagProject:               {Name: "project", ViperKey: "proxy.project", Description: "Project name to tag sessions (default: auto-detect from git)"},
 	config.FlagVectorStoreProv:       {Name: "vector-store-provider", ViperKey: "vector_store.provider", Description: "Vector store provider type (e.g., chroma, sqlite, qdrant)"},
 	config.FlagVectorStoreTgt:        {Name: "vector-store-target", ViperKey: "vector_store.target", Description: "Vector store target: filepath for sqlite or URL for remote service"},
@@ -105,6 +110,10 @@ func NewProxyCmd() *cobra.Command {
 				config.FlagProvider,
 				config.FlagSQLite,
 				config.FlagPostgres,
+				config.FlagTurso,
+				config.FlagTursoAuthToken,
+				config.FlagTursoSyncInterval,
+				config.FlagTursoLocalPath,
 				config.FlagProject,
 				config.FlagVectorStoreProv,
 				config.FlagVectorStoreTgt,
@@ -132,6 +141,10 @@ func NewProxyCmd() *cobra.Command {
 			cmder.kafkaBrokers = v.GetString("publisher.kafka.brokers")
 			cmder.kafkaClientID = v.GetString("publisher.kafka.client_id")
 			cmder.kafkaTopic = v.GetString("publisher.kafka.topic")
+			cmder.tursoDSN = v.GetString("storage.turso_dsn")
+			cmder.tursoAuthToken = v.GetString("storage.turso_auth_token")
+			cmder.tursoSyncInterval = v.GetString("storage.turso_sync_interval")
+			cmder.tursoLocalPath = v.GetString("storage.turso_local_path")
 
 			if cmder.project == "" {
 				cmder.project = git.RepoName(cmd.Context())
@@ -165,6 +178,10 @@ func NewProxyCmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagKafkaBrokers, &cmder.kafkaBrokers)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagKafkaClientID, &cmder.kafkaClientID)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagKafkaTopic, &cmder.kafkaTopic)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagTurso, &cmder.tursoDSN)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagTursoAuthToken, &cmder.tursoAuthToken)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagTursoSyncInterval, &cmder.tursoSyncInterval)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagTursoLocalPath, &cmder.tursoLocalPath)
 
 	return cmd
 }
@@ -296,25 +313,4 @@ func (c *proxyCommander) newPublisher() (publisher.Publisher, error) {
 	})
 }
 
-func (c *proxyCommander) newStorageDriver() (storage.Driver, error) {
-	if c.postgresDSN != "" {
-		driver, err := postgres.NewDriver(context.Background(), c.postgresDSN)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create PostgreSQL storer: %w", err)
-		}
-		c.logger.Info("using PostgreSQL storage")
-		return driver, nil
-	}
-
-	if c.sqlitePath != "" {
-		driver, err := sqlite.NewDriver(context.Background(), c.sqlitePath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
-		}
-		c.logger.Info("using SQLite storage", "path", c.sqlitePath)
-		return driver, nil
-	}
-
-	c.logger.Info("using in-memory storage")
-	return inmemory.NewDriver(), nil
-}
+// newStorageDriver is defined in storage.go (default) or storage_turso.go (build tag: turso)
