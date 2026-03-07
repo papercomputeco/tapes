@@ -19,6 +19,8 @@ import (
 	statuscmder "github.com/papercomputeco/tapes/cmd/tapes/status"
 	synccmder "github.com/papercomputeco/tapes/cmd/tapes/sync"
 	versioncmder "github.com/papercomputeco/tapes/cmd/version"
+	"github.com/papercomputeco/tapes/pkg/config"
+	"github.com/papercomputeco/tapes/pkg/telemetry"
 )
 
 const tapesLongDesc string = `Tapes is automatic telemetry for your agents.
@@ -55,14 +57,17 @@ const tapesShortDesc string = "Tapes - Agent Telemetry"
 
 func NewTapesCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "tapes",
-		Short: tapesShortDesc,
-		Long:  tapesLongDesc,
+		Use:                "tapes",
+		Short:              tapesShortDesc,
+		Long:               tapesLongDesc,
+		PersistentPreRunE:  initTelemetry,
+		PersistentPostRunE: closeTelemetry,
 	}
 
 	// Global flags
 	cmd.PersistentFlags().BoolP("debug", "d", false, "Enable debug logging")
 	cmd.PersistentFlags().String("config-dir", "", "Override path to .tapes/ config directory")
+	cmd.PersistentFlags().Bool("disable-telemetry", false, "Disable anonymous usage telemetry")
 
 	// Add subcommands
 	cmd.AddCommand(synccmder.NewSyncCmd())
@@ -82,4 +87,66 @@ func NewTapesCmd() *cobra.Command {
 	cmd.AddCommand(versioncmder.NewVersionCmd())
 
 	return cmd
+}
+
+// initTelemetry initializes anonymous telemetry and stores the client in the
+// command context. Telemetry is silently skipped when disabled via config,
+// flag, or CI detection — errors during init never block command execution.
+func initTelemetry(cmd *cobra.Command, _ []string) error {
+	// Check the --disable-telemetry flag.
+	if disabled, _ := cmd.Flags().GetBool("disable-telemetry"); disabled {
+		return nil
+	}
+
+	// Check CI environment.
+	if telemetry.IsCI() {
+		return nil
+	}
+
+	// Check config file setting.
+	configDir, _ := cmd.Flags().GetString("config-dir")
+	v, err := config.InitViper(configDir)
+	if err == nil && v.GetBool("telemetry.disabled") {
+		return nil
+	}
+
+	mgr, err := telemetry.NewManager(configDir)
+	if err != nil {
+		// Silently skip telemetry on init errors.
+		return nil
+	}
+
+	state, isFirstRun, err := mgr.LoadOrCreate()
+	if err != nil {
+		return nil
+	}
+
+	client, err := telemetry.NewClient(state.UUID)
+	if err != nil {
+		return nil
+	}
+
+	if isFirstRun {
+		client.CaptureInstall()
+	}
+
+	// Capture the command run event now so it is enqueued even if
+	// PersistentPostRunE is skipped due to a command error.
+	client.CaptureCommandRun(cmd.CommandPath())
+
+	cmd.SetContext(telemetry.WithContext(cmd.Context(), client))
+
+	return nil
+}
+
+// closeTelemetry flushes pending events and shuts down the PostHog client.
+func closeTelemetry(cmd *cobra.Command, _ []string) error {
+	client := telemetry.FromContext(cmd.Context())
+	if client == nil {
+		return nil
+	}
+
+	_ = client.Close()
+
+	return nil
 }
