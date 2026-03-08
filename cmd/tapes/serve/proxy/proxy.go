@@ -12,6 +12,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/config"
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
+	"github.com/papercomputeco/tapes/pkg/telemetry"
 	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/publisher"
@@ -146,6 +147,7 @@ func NewProxyCmd() *cobra.Command {
 				return fmt.Errorf("could not get debug flag: %w", err)
 			}
 
+			telemetry.FromContext(cmd.Context()).CaptureServerStarted("proxy")
 			return cmder.run()
 		},
 	}

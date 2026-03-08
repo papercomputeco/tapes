@@ -12,6 +12,7 @@ import (
 	"github.com/papercomputeco/tapes/api"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/logger"
+	"github.com/papercomputeco/tapes/pkg/telemetry"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
@@ -75,6 +76,7 @@ func NewAPICmd() *cobra.Command {
 				return fmt.Errorf("could not get debug flag: %w", err)
 			}
 
+			telemetry.FromContext(cmd.Context()).CaptureServerStarted("api")
 			return cmder.run()
 		},
 	}

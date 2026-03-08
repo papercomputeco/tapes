@@ -18,6 +18,7 @@ import (
 	proxycmder "github.com/papercomputeco/tapes/cmd/tapes/serve/proxy"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/dotdir"
+	"github.com/papercomputeco/tapes/pkg/telemetry"
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
@@ -166,6 +167,7 @@ func NewServeCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("could not get debug flag: %w", err)
 			}
+			telemetry.FromContext(cmd.Context()).CaptureServerStarted("both")
 			return cmder.run()
 		},
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/papercomputeco/tapes/cmd/tapes/sqlitepath"
 	"github.com/papercomputeco/tapes/pkg/backfill"
 	"github.com/papercomputeco/tapes/pkg/cliui"
+	"github.com/papercomputeco/tapes/pkg/telemetry"
 )
 
 type syncCommander struct {
@@ -32,7 +33,11 @@ func NewSyncCmd() *cobra.Command {
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmder.run(cmd.Context())
+			if err := cmder.run(cmd.Context()); err != nil {
+				return err
+			}
+			telemetry.FromContext(cmd.Context()).CaptureSyncPull()
+			return nil
 		},
 	}
 
