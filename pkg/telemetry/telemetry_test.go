@@ -228,13 +228,27 @@ var _ = Describe("Telemetry", func() {
 		It("returns a fresh map each call", func() {
 			props1 := telemetry.CommonProperties()
 			props2 := telemetry.CommonProperties()
-			props1["extra"] = "mutated"
+			props1.Set("extra", "mutated")
 			Expect(props2).NotTo(HaveKey("extra"))
 		})
 	})
 
 	Describe("NewClient", func() {
-		It("creates a client with a valid distinct ID", func() {
+		It("returns nil when PostHogAPIKey is empty", func() {
+			orig := telemetry.PostHogAPIKey
+			telemetry.PostHogAPIKey = ""
+			defer func() { telemetry.PostHogAPIKey = orig }()
+
+			client, err := telemetry.NewClient("test-uuid-1234")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(client).To(BeNil())
+		})
+
+		It("creates a client when PostHogAPIKey is set", func() {
+			orig := telemetry.PostHogAPIKey
+			telemetry.PostHogAPIKey = "phc_test_key"
+			defer func() { telemetry.PostHogAPIKey = orig }()
+
 			client, err := telemetry.NewClient("test-uuid-1234")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(client).NotTo(BeNil())

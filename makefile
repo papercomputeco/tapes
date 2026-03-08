@@ -5,10 +5,13 @@ VERSION ?= $(shell git describe --tags --always --dirty)
 COMMIT  := $(shell git rev-parse HEAD)
 BUILDTIME ?= $(shell date -u '+%Y-%m-%d %H:%M:%S')
 
+POSTHOG_API_KEY ?= phc_xCBFT1jetPLJIRGTqJ9Q0YuG5I1jhXtUkxYkNBEAXRY
+
 LDFLAGS := -s -w \
 	-X 'github.com/papercomputeco/tapes/pkg/utils.Version=$(VERSION)' \
 	-X 'github.com/papercomputeco/tapes/pkg/utils.Sha=$(COMMIT)' \
-	-X 'github.com/papercomputeco/tapes/pkg/utils.Buildtime=$(BUILDTIME)'
+	-X 'github.com/papercomputeco/tapes/pkg/utils.Buildtime=$(BUILDTIME)' \
+	-X 'github.com/papercomputeco/tapes/pkg/telemetry.PostHogAPIKey=$(POSTHOG_API_KEY)'
 
 .PHONY: check
 check: ## Runs all dagger checks. Auto-fixes are not automatically applied.

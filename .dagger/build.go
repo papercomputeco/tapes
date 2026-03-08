@@ -181,6 +181,7 @@ func (t *Tapes) BuildRelease(
 		fmt.Sprintf("-X 'github.com/papercomputeco/tapes/pkg/utils.Version=%s'", version),
 		fmt.Sprintf("-X 'github.com/papercomputeco/tapes/pkg/utils.Sha=%s'", commit),
 		fmt.Sprintf("-X 'github.com/papercomputeco/tapes/pkg/utils.Buildtime=%s'", buildtime),
+		"-X 'github.com/papercomputeco/tapes/pkg/telemetry.PostHogAPIKey=phc_xCBFT1jetPLJIRGTqJ9Q0YuG5I1jhXtUkxYkNBEAXRY'",
 	}
 
 	dir := t.Build(ctx, strings.Join(ldflags, " "))

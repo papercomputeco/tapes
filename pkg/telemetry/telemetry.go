@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/posthog/posthog-go"
 
 	"github.com/papercomputeco/tapes/pkg/dotdir"
 )
@@ -146,9 +147,8 @@ func FromContext(ctx context.Context) *Client {
 }
 
 // CommonProperties returns properties that are included with every event.
-func CommonProperties() map[string]interface{} {
-	return map[string]interface{}{
-		"os":   runtime.GOOS,
-		"arch": runtime.GOARCH,
-	}
+func CommonProperties() posthog.Properties {
+	return posthog.NewProperties().
+		Set("os", runtime.GOOS).
+		Set("arch", runtime.GOARCH)
 }

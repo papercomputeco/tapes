@@ -115,19 +115,8 @@ func initTelemetry(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	mgr, err := telemetry.NewManager(configDir)
-	if err != nil {
-		// Silently skip telemetry on init errors.
-		return nil
-	}
-
-	state, isFirstRun, err := mgr.LoadOrCreate()
-	if err != nil {
-		return nil
-	}
-
-	client, err := telemetry.NewClient(state.UUID)
-	if err != nil {
+	client, isFirstRun := newTelemetryClient(configDir)
+	if client == nil {
 		return nil
 	}
 
@@ -142,6 +131,28 @@ func initTelemetry(cmd *cobra.Command, _ []string) error {
 	cmd.SetContext(telemetry.WithContext(cmd.Context(), client))
 
 	return nil
+}
+
+// newTelemetryClient creates the PostHog telemetry client and loads or creates
+// the persistent identity. Returns (nil, false) if any step fails — telemetry
+// setup errors are intentionally non-fatal.
+func newTelemetryClient(configDir string) (client *telemetry.Client, isFirstRun bool) {
+	mgr, err := telemetry.NewManager(configDir)
+	if err != nil {
+		return nil, false
+	}
+
+	state, isFirstRun, err := mgr.LoadOrCreate()
+	if err != nil {
+		return nil, false
+	}
+
+	client, err = telemetry.NewClient(state.UUID)
+	if err != nil {
+		return nil, false
+	}
+
+	return client, isFirstRun
 }
 
 // closeTelemetry flushes pending events and shuts down the PostHog client.
