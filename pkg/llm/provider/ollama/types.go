@@ -1,10 +1,7 @@
 // Package ollama
 package ollama
 
-import (
-	"encoding/json"
-	"time"
-)
+import "time"
 
 // ollamaRequest represents Ollama's request format.
 type ollamaRequest struct {
@@ -17,9 +14,8 @@ type ollamaRequest struct {
 }
 
 type ollamaMessage struct {
-	Role       string `json:"role"`
-	Content    string `json:"-"`
-	ContentRaw any    `json:"content,omitempty"`
+	Role    string `json:"role"`
+	Content string `json:"content"`
 
 	// Base64-encoded images
 	Images []string `json:"images,omitempty"`
@@ -29,11 +25,11 @@ type ollamaMessage struct {
 }
 
 type ollamaToolCall struct {
-	ID       string `json:"id,omitempty"`
+	ID       string `json:"id"`
 	Function struct {
-		Index     int             `json:"index,omitempty"`
-		Name      string          `json:"name"`
-		Arguments json.RawMessage `json:"arguments"`
+		Index     int            `json:"index,omitempty"`
+		Name      string         `json:"name"`
+		Arguments map[string]any `json:"arguments"`
 	} `json:"function"`
 }
 

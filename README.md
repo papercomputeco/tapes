@@ -50,7 +50,7 @@ curl -fsSL https://download.tapes.dev/install | bash
 ```
 
 Run Ollama and the `tapes` services. By default, `tapes` targets embeddings on Ollama 
-with the `embeddinggemma:latest` model - pull this model with `ollama pull embeddinggemma`:
+with the `embeddinggema:latest` model - pull this model with `ollama pull embeddinggema`:
 
 ```bash
 ollama serve

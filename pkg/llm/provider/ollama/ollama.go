@@ -2,20 +2,12 @@ package ollama
 
 import (
 	"encoding/json"
+
 	"github.com/papercomputeco/tapes/pkg/llm"
-	"github.com/papercomputeco/tapes/pkg/utils"
 )
 
 // Provider implements the Provider interface for Ollama's API.
 type Provider struct{}
-
-func getToolArgs(arguments []byte) map[string]any {
-	var toolArgs map[string]any
-	if toolParseErr := json.Unmarshal(arguments, &toolArgs); toolParseErr != nil {
-		toolArgs = make(map[string]any, 0)
-	}
-	return toolArgs
-}
 
 func New() *Provider { return &Provider{} }
 
@@ -41,11 +33,6 @@ func (o *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 			Content: []llm.ContentBlock{},
 		}
 
-		if convertedContent := convertRawContent(msg.ContentRaw); convertedContent != "" {
-			// Set content string and clear out original
-			msg.Content = convertedContent
-			msg.ContentRaw = ""
-		}
 		// Add text content if present
 		if msg.Content != "" {
 			converted.Content = append(converted.Content, llm.ContentBlock{Type: "text", Text: msg.Content})
@@ -65,7 +52,7 @@ func (o *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 				Type:      "tool_use",
 				ToolUseID: tc.ID,
 				ToolName:  tc.Function.Name,
-				ToolInput: getToolArgs(tc.Function.Arguments),
+				ToolInput: tc.Function.Arguments,
 			})
 		}
 
@@ -126,10 +113,7 @@ func (o *Provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 
 	// Convert message content
 	var content []llm.ContentBlock
-	if convertedContent := convertRawContent(resp.Message.ContentRaw); convertedContent != "" {
-		resp.Message.Content = convertedContent
-		resp.Message.ContentRaw = ""
-	}
+
 	// Add text content if present
 	if resp.Message.Content != "" {
 		content = append(content, llm.ContentBlock{Type: "text", Text: resp.Message.Content})
@@ -149,7 +133,7 @@ func (o *Provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 			Type:      "tool_use",
 			ToolUseID: tc.ID,
 			ToolName:  tc.Function.Name,
-			ToolInput: getToolArgs(tc.Function.Arguments),
+			ToolInput: tc.Function.Arguments,
 		})
 	}
 
@@ -198,17 +182,4 @@ func (o *Provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 
 func (o *Provider) ParseStreamChunk(_ []byte) (*llm.StreamChunk, error) {
 	panic("Not yet implemented")
-}
-
-// convertRawContent converts the raw content from Ollama API messages to a string.
-// The content can be either a string or an array of content blocks (maps with type/text fields).
-func convertRawContent(contentRaw any) string {
-	if s, ok := contentRaw.(string); ok {
-		return s
-	}
-	// Next check if we are looking at a slice of maps
-	if slice, ok := contentRaw.([]map[string]any); ok {
-		return utils.ExtractTextFromContent(slice)
-	}
-	return ""
 }

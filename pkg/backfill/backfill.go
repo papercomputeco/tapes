@@ -3,13 +3,13 @@ package backfill
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/storage/ent"
 	"github.com/papercomputeco/tapes/pkg/storage/ent/node"
 	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
-	"github.com/papercomputeco/tapes/pkg/utils"
 )
 
 // Options configures backfill behavior.
@@ -148,7 +148,7 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 
 			// Verify by content prefix if we have text content.
 			if entryText != "" && len(ci.node.Content) > 0 {
-				nodeText := utils.ExtractTextFromContent(ci.node.Content)
+				nodeText := extractTextFromContent(ci.node.Content)
 				if !contentPrefixMatch(entryText, nodeText, 200) {
 					continue
 				}
@@ -204,6 +204,19 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 	}
 
 	return result, nil
+}
+
+// extractTextFromContent concatenates text from content blocks.
+func extractTextFromContent(content []map[string]any) string {
+	var sb strings.Builder
+	for _, block := range content {
+		if t, ok := block["type"].(string); ok && t == "text" {
+			if text, ok := block["text"].(string); ok {
+				sb.WriteString(text)
+			}
+		}
+	}
+	return sb.String()
 }
 
 // contentPrefixMatch checks if the first n characters of two strings match.

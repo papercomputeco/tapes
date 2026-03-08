@@ -354,12 +354,6 @@ func (p *Proxy) handleHTTPRespToPipeWriter(httpResp *http.Response, pw *io.PipeW
 // and Anthropic), forwarding raw bytes verbatim to the pipe writer while
 // parsing events for telemetry accumulation.
 func (p *Proxy) handleSSEStream(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
-	p.logger.Debug("handling SSE Stream",
-		"model", parsedReq.Model,
-		"provider", prov.Name(),
-		"agent", agentName,
-		"duration", time.Since(startTime),
-	)
 	var allChunks [][]byte
 	var fullContent strings.Builder
 	var streamUsage llm.Usage
@@ -400,12 +394,6 @@ func (p *Proxy) handleSSEStream(httpResp *http.Response, pw *io.PipeWriter, pars
 // Ollama), forwarding raw bytes to the pipe writer while accumulating chunks
 // for telemetry.
 func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
-	p.logger.Debug("handling NDJSON Stream",
-		"model", parsedReq.Model,
-		"provider", prov.Name(),
-		"agent", agentName,
-		"duration", time.Since(startTime),
-	)
 	var allChunks [][]byte
 	var fullContent strings.Builder
 	var streamUsage llm.Usage
@@ -503,7 +491,6 @@ type streamMeta struct {
 func (p *Proxy) extractUsageFromSSE(data []byte, providerName string, usage *llm.Usage, meta *streamMeta) {
 	var chunkData map[string]any
 	if err := json.Unmarshal(data, &chunkData); err != nil {
-		p.logger.Error("error parsing usage chunk", "error", err)
 		return
 	}
 
@@ -544,19 +531,10 @@ func (p *Proxy) extractUsageFromSSE(data []byte, providerName string, usage *llm
 			usage.CompletionTokens = jsonInt(u, "completion_tokens")
 		}
 	case providerOllama:
-		p.logger.Debug("providerOllama extract usage",
-			"data",
-			string(data),
-		)
 		// Ollama includes usage in the final NDJSON line (done=true)
 		if done, ok := chunkData["done"].(bool); ok && done {
 			usage.PromptTokens = jsonInt(chunkData, "prompt_eval_count")
 			usage.CompletionTokens = jsonInt(chunkData, "eval_count")
-		}
-		// If Ollama is being consumed by opencode, chat completions read more like OpenAI
-		if u, ok := chunkData["usage"].(map[string]any); ok {
-			usage.PromptTokens = jsonInt(u, "prompt_tokens")
-			usage.CompletionTokens = jsonInt(u, "completion_tokens")
 		}
 	}
 }
@@ -601,9 +579,6 @@ func (p *Proxy) reconstructStreamedResponse(chunks [][]byte, fullContent string,
 	if len(chunks) > 0 {
 		lastChunk := chunks[len(chunks)-1]
 		resp, err := prov.ParseResponse(lastChunk)
-		if err != nil {
-			p.logger.Error("response parse failed", "error", err)
-		}
 		if err == nil && resp != nil {
 			// If the last chunk has minimal content, supplement with accumulated content
 			if resp.Message.GetText() == "" && fullContent != "" {
