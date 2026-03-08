@@ -14,6 +14,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/cliui"
 	"github.com/papercomputeco/tapes/pkg/config"
+	"github.com/papercomputeco/tapes/pkg/telemetry"
 )
 
 const (
@@ -50,7 +51,11 @@ func NewInitCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			configDir, _ := cmd.Flags().GetString("config-dir")
-			return runInit(preset, configDir)
+			if err := runInit(preset, configDir); err != nil {
+				return err
+			}
+			telemetry.FromContext(cmd.Context()).CaptureInit(preset)
+			return nil
 		},
 	}
 

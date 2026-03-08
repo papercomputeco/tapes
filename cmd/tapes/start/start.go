@@ -455,8 +455,7 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 		Embedder:     embedder,
 	}
 
-	//nolint:contextcheck // Proxy lifecycle manages its own background context.
-	proxyServer, err := proxy.New(proxyConfig, driver, log)
+	proxyServer, err := proxy.New(proxyConfig, driver, log) //nolint:contextcheck // Proxy lifecycle manages its own background context.
 	if err != nil {
 		return fmt.Errorf("creating proxy: %w", err)
 	}

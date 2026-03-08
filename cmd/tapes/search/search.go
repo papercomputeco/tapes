@@ -19,16 +19,18 @@ import (
 	"github.com/papercomputeco/tapes/pkg/cliui"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/logger"
+	"github.com/papercomputeco/tapes/pkg/telemetry"
 )
 
 type searchCommander struct {
 	flags config.FlagSet
 
-	query     string
-	topK      int
-	quiet     bool
-	apiTarget string
-	debug     bool
+	query       string
+	topK        int
+	quiet       bool
+	apiTarget   string
+	debug       bool
+	resultCount int
 
 	logger *slog.Logger
 }
@@ -91,7 +93,11 @@ func NewSearchCmd() *cobra.Command {
 				return fmt.Errorf("could not get debug flag: %w", err)
 			}
 
-			return cmder.run()
+			if err := cmder.run(); err != nil {
+				return err
+			}
+			telemetry.FromContext(cmd.Context()).CaptureSearch(cmder.resultCount)
+			return nil
 		},
 	}
 
@@ -109,6 +115,7 @@ func (c *searchCommander) run() error {
 	if err != nil {
 		return err
 	}
+	c.resultCount = output.Count
 
 	if output.Count == 0 {
 		if !c.quiet {

@@ -20,6 +20,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
+	"github.com/papercomputeco/tapes/pkg/telemetry"
 	vectorutils "github.com/papercomputeco/tapes/pkg/vector/utils"
 	"github.com/papercomputeco/tapes/proxy"
 )
@@ -146,6 +147,7 @@ func NewProxyCmd() *cobra.Command {
 				return fmt.Errorf("could not get debug flag: %w", err)
 			}
 
+			telemetry.FromContext(cmd.Context()).CaptureServerStarted("proxy")
 			return cmder.run()
 		},
 	}

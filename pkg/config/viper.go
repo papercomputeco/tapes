@@ -92,4 +92,7 @@ func setViperDefaults(v *viper.Viper) {
 	// OpenCode
 	v.SetDefault("opencode.provider", d.OpenCode.Provider)
 	v.SetDefault("opencode.model", d.OpenCode.Model)
+
+	// Telemetry
+	v.SetDefault("telemetry.disabled", d.Telemetry.Disabled)
 }

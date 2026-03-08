@@ -11,6 +11,7 @@ type Config struct {
 	VectorStore VectorStoreConfig `toml:"vector_store"  mapstructure:"vector_store"`
 	Embedding   EmbeddingConfig   `toml:"embedding"     mapstructure:"embedding"`
 	OpenCode    OpenCodeConfig    `toml:"opencode"      mapstructure:"opencode"`
+	Telemetry   TelemetryConfig   `toml:"telemetry"     mapstructure:"telemetry"`
 }
 
 // StorageConfig holds shared storage settings used by both proxy and API.
@@ -60,6 +61,11 @@ type OpenCodeConfig struct {
 	Model    string `toml:"model,omitempty"    mapstructure:"model"`
 }
 
+// TelemetryConfig holds anonymous telemetry settings.
+type TelemetryConfig struct {
+	Disabled bool `toml:"disabled,omitempty" mapstructure:"disabled"`
+}
+
 // configKeySet is the authoritative set of all supported user-facing config keys.
 // Keys use dotted notation matching the TOML section structure.
 var configKeySet = map[string]bool{
@@ -81,4 +87,6 @@ var configKeySet = map[string]bool{
 	"opencode.model":        true,
 
 	"storage.postgres_dsn": true,
+
+	"telemetry.disabled": true,
 }

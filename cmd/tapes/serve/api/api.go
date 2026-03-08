@@ -17,6 +17,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
+	"github.com/papercomputeco/tapes/pkg/telemetry"
 )
 
 type apiCommander struct {
@@ -75,6 +76,7 @@ func NewAPICmd() *cobra.Command {
 				return fmt.Errorf("could not get debug flag: %w", err)
 			}
 
+			telemetry.FromContext(cmd.Context()).CaptureServerStarted("api")
 			return cmder.run()
 		},
 	}
