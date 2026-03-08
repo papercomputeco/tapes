@@ -99,6 +99,10 @@ var _ = Describe("Telemetry", func() {
 			})
 
 			It("returns an error when directory is not writable", func() {
+				if os.Getuid() == 0 {
+					Skip("root ignores directory permissions")
+				}
+
 				readOnlyDir := filepath.Join(tmpDir, "readonly")
 				Expect(os.MkdirAll(readOnlyDir, 0o555)).To(Succeed())
 
