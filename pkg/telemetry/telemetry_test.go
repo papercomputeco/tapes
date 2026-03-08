@@ -76,6 +76,39 @@ var _ = Describe("Telemetry", func() {
 				Expect(state.UUID).NotTo(BeEmpty())
 				Expect(state.FirstRun).NotTo(BeEmpty())
 			})
+
+			It("generates a valid UUID v4", func() {
+				mgr, err := telemetry.NewManager(filepath.Join(tmpDir, ".tapes"))
+				Expect(err).NotTo(HaveOccurred())
+
+				state, _, err := mgr.LoadOrCreate()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(state.UUID).To(MatchRegexp(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`))
+			})
+
+			It("returns an error for corrupt JSON", func() {
+				statePath := filepath.Join(tmpDir, ".tapes", "telemetry.json")
+				Expect(os.WriteFile(statePath, []byte("{invalid json"), 0o600)).To(Succeed())
+
+				mgr, err := telemetry.NewManager(filepath.Join(tmpDir, ".tapes"))
+				Expect(err).NotTo(HaveOccurred())
+
+				_, _, err = mgr.LoadOrCreate()
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("parsing telemetry state"))
+			})
+
+			It("returns an error when directory is not writable", func() {
+				readOnlyDir := filepath.Join(tmpDir, "readonly")
+				Expect(os.MkdirAll(readOnlyDir, 0o555)).To(Succeed())
+
+				mgr, err := telemetry.NewManager(readOnlyDir)
+				Expect(err).NotTo(HaveOccurred())
+
+				_, _, err = mgr.LoadOrCreate()
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("writing telemetry state"))
+			})
 		})
 	})
 
@@ -90,12 +123,59 @@ var _ = Describe("Telemetry", func() {
 			Expect(telemetry.IsCI()).To(BeTrue())
 		})
 
+		It("returns true when GITLAB_CI is set", func() {
+			GinkgoT().Setenv("GITLAB_CI", "true")
+			Expect(telemetry.IsCI()).To(BeTrue())
+		})
+
+		It("returns true when BUILDKITE is set", func() {
+			GinkgoT().Setenv("BUILDKITE", "true")
+			Expect(telemetry.IsCI()).To(BeTrue())
+		})
+
 		It("returns false when no CI env vars are set", func() {
-			// Clear all CI env vars to ensure clean state.
 			for _, env := range []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "TRAVIS", "JENKINS_URL", "BUILDKITE", "CODEBUILD_BUILD_ID"} {
 				GinkgoT().Setenv(env, "")
 			}
 			Expect(telemetry.IsCI()).To(BeFalse())
+		})
+	})
+
+	Describe("DisabledByEnv", func() {
+		It("returns true when TAPES_TELEMETRY_DISABLED is '1'", func() {
+			GinkgoT().Setenv("TAPES_TELEMETRY_DISABLED", "1")
+			Expect(telemetry.DisabledByEnv()).To(BeTrue())
+		})
+
+		It("returns true when TAPES_TELEMETRY_DISABLED is 'true'", func() {
+			GinkgoT().Setenv("TAPES_TELEMETRY_DISABLED", "true")
+			Expect(telemetry.DisabledByEnv()).To(BeTrue())
+		})
+
+		It("returns true when TAPES_TELEMETRY_DISABLED is 'yes'", func() {
+			GinkgoT().Setenv("TAPES_TELEMETRY_DISABLED", "yes")
+			Expect(telemetry.DisabledByEnv()).To(BeTrue())
+		})
+
+		It("returns false when TAPES_TELEMETRY_DISABLED is empty", func() {
+			GinkgoT().Setenv("TAPES_TELEMETRY_DISABLED", "")
+			Expect(telemetry.DisabledByEnv()).To(BeFalse())
+		})
+
+		It("returns false when TAPES_TELEMETRY_DISABLED is not set", func() {
+			GinkgoT().Setenv("TAPES_TELEMETRY_DISABLED", "")
+			Expect(telemetry.DisabledByEnv()).To(BeFalse())
+		})
+
+		It("returns false for unrecognized values", func() {
+			GinkgoT().Setenv("TAPES_TELEMETRY_DISABLED", "0")
+			Expect(telemetry.DisabledByEnv()).To(BeFalse())
+
+			GinkgoT().Setenv("TAPES_TELEMETRY_DISABLED", "false")
+			Expect(telemetry.DisabledByEnv()).To(BeFalse())
+
+			GinkgoT().Setenv("TAPES_TELEMETRY_DISABLED", "no")
+			Expect(telemetry.DisabledByEnv()).To(BeFalse())
 		})
 	})
 
@@ -104,9 +184,12 @@ var _ = Describe("Telemetry", func() {
 			ctx := context.Background()
 			Expect(telemetry.FromContext(ctx)).To(BeNil())
 
-			// A nil client can be stored and retrieved.
 			ctx = telemetry.WithContext(ctx, nil)
 			Expect(telemetry.FromContext(ctx)).To(BeNil())
+		})
+
+		It("returns nil from a plain background context", func() {
+			Expect(telemetry.FromContext(context.Background())).To(BeNil())
 		})
 	})
 
@@ -138,6 +221,24 @@ var _ = Describe("Telemetry", func() {
 			props := telemetry.CommonProperties()
 			Expect(props).To(HaveKey("os"))
 			Expect(props).To(HaveKey("arch"))
+			Expect(props["os"]).NotTo(BeEmpty())
+			Expect(props["arch"]).NotTo(BeEmpty())
+		})
+
+		It("returns a fresh map each call", func() {
+			props1 := telemetry.CommonProperties()
+			props2 := telemetry.CommonProperties()
+			props1["extra"] = "mutated"
+			Expect(props2).NotTo(HaveKey("extra"))
+		})
+	})
+
+	Describe("NewClient", func() {
+		It("creates a client with a valid distinct ID", func() {
+			client, err := telemetry.NewClient("test-uuid-1234")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(client).NotTo(BeNil())
+			Expect(client.Close()).To(Succeed())
 		})
 	})
 })

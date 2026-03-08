@@ -1,8 +1,9 @@
 // Package telemetry provides anonymous usage tracking for the tapes CLI using
 // PostHog. A persistent UUID is stored in ~/.tapes/telemetry.json and all
 // events are anonymous by default. Telemetry can be disabled through the
-// config.toml telemetry.disabled key, the --disable-telemetry flag, or by
-// running in a detected CI environment.
+// config.toml telemetry.disabled key, the --disable-telemetry flag, the
+// TAPES_TELEMETRY_DISABLED environment variable, or by running in a detected
+// CI environment.
 package telemetry
 
 import (
@@ -115,6 +116,19 @@ func IsCI() bool {
 		}
 	}
 	return false
+}
+
+// DisabledByEnv returns true if the TAPES_TELEMETRY_DISABLED environment
+// variable is set to a truthy value. This gives developers an easy way to
+// disable telemetry without touching config files or passing flags.
+func DisabledByEnv() bool {
+	v := os.Getenv("TAPES_TELEMETRY_DISABLED")
+	switch v {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 // contextKey is an unexported type for context keys in this package.

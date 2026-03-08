@@ -98,6 +98,11 @@ func initTelemetry(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	// Check TAPES_TELEMETRY_DISABLED env var.
+	if telemetry.DisabledByEnv() {
+		return nil
+	}
+
 	// Check CI environment.
 	if telemetry.IsCI() {
 		return nil
