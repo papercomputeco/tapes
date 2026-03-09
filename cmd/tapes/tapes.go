@@ -55,6 +55,15 @@ Search sessions:
 
 const tapesShortDesc string = "Tapes - Agent Telemetry"
 
+// tapesFlags defines flags registered on the root tapes command.
+var tapesFlags = config.FlagSet{
+	config.FlagTelemetryDisabled: {
+		Name:        "disable-telemetry",
+		ViperKey:    "telemetry.disabled",
+		Description: "Disable anonymous usage telemetry",
+	},
+}
+
 func NewTapesCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                "tapes",
@@ -91,27 +100,30 @@ func NewTapesCmd() *cobra.Command {
 
 // initTelemetry initializes anonymous telemetry and stores the client in the
 // command context. Telemetry is silently skipped when disabled via config,
-// flag, or CI detection — errors during init never block command execution.
+// flag, env var, or CI detection — errors during init never block command
+// execution. Viper handles the flag > env > config file precedence for the
+// telemetry.disabled setting.
 func initTelemetry(cmd *cobra.Command, _ []string) error {
-	// Check the --disable-telemetry flag.
-	if disabled, _ := cmd.Flags().GetBool("disable-telemetry"); disabled {
+	configDir, _ := cmd.Flags().GetString("config-dir")
+
+	v, err := config.InitViper(configDir)
+	if err != nil {
+		// Can't load config — skip telemetry silently.
 		return nil
 	}
 
-	// Check TAPES_TELEMETRY_DISABLED env var.
-	if telemetry.DisabledByEnv() {
+	config.BindRegisteredFlags(v, cmd, tapesFlags, []string{
+		config.FlagTelemetryDisabled,
+	})
+
+	// Single check covers --disable-telemetry flag, TAPES_TELEMETRY_DISABLED
+	// env var, and config.toml [telemetry] disabled setting.
+	if v.GetBool("telemetry.disabled") {
 		return nil
 	}
 
 	// Check CI environment.
 	if telemetry.IsCI() {
-		return nil
-	}
-
-	// Check config file setting.
-	configDir, _ := cmd.Flags().GetString("config-dir")
-	v, err := config.InitViper(configDir)
-	if err == nil && v.GetBool("telemetry.disabled") {
 		return nil
 	}
 

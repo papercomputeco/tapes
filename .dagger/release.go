@@ -80,6 +80,10 @@ func (t *Tapes) ReleaseLatest(
 	// Git commit SHA
 	commit string,
 
+	// PostHog telemetry public API key (write-only)
+	// +optional
+	postHogPublicKey string,
+
 	// Bucket endpoint URL
 	endpoint *dagger.Secret,
 
@@ -92,7 +96,7 @@ func (t *Tapes) ReleaseLatest(
 	// Bucket secret access key
 	secretAccessKey *dagger.Secret,
 ) (*dagger.Directory, error) {
-	artifacts := t.BuildRelease(ctx, version, commit)
+	artifacts := t.BuildRelease(ctx, version, commit, postHogPublicKey, "")
 	err := t.upload(
 		ctx,
 		&uploadOpts{
@@ -135,6 +139,10 @@ func (t *Tapes) Nightly(
 	// Git commit SHA
 	commit string,
 
+	// PostHog telemetry public API key (write-only)
+	// +optional
+	postHogPublicKey string,
+
 	// Bucket endpoint URL
 	endpoint *dagger.Secret,
 
@@ -148,7 +156,7 @@ func (t *Tapes) Nightly(
 	secretAccessKey *dagger.Secret,
 ) (*dagger.Directory, error) {
 	prefix := "nightly"
-	artifacts := t.BuildRelease(ctx, prefix, commit)
+	artifacts := t.BuildRelease(ctx, prefix, commit, postHogPublicKey, "")
 	err := t.upload(
 		ctx,
 		&uploadOpts{

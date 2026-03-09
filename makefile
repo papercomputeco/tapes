@@ -5,13 +5,15 @@ VERSION ?= $(shell git describe --tags --always --dirty)
 COMMIT  := $(shell git rev-parse HEAD)
 BUILDTIME ?= $(shell date -u '+%Y-%m-%d %H:%M:%S')
 
-POSTHOG_API_KEY ?= phc_xCBFT1jetPLJIRGTqJ9Q0YuG5I1jhXtUkxYkNBEAXRY
+POSTHOG_API_KEY ?=
+POSTHOG_ENDPOINT ?= https://us.i.posthog.com
 
 LDFLAGS := -s -w \
 	-X 'github.com/papercomputeco/tapes/pkg/utils.Version=$(VERSION)' \
 	-X 'github.com/papercomputeco/tapes/pkg/utils.Sha=$(COMMIT)' \
 	-X 'github.com/papercomputeco/tapes/pkg/utils.Buildtime=$(BUILDTIME)' \
-	-X 'github.com/papercomputeco/tapes/pkg/telemetry.PostHogAPIKey=$(POSTHOG_API_KEY)'
+	-X 'github.com/papercomputeco/tapes/pkg/telemetry.PostHogAPIKey=$(POSTHOG_API_KEY)' \
+	-X 'github.com/papercomputeco/tapes/pkg/telemetry.PostHogEndpoint=$(POSTHOG_ENDPOINT)'
 
 .PHONY: check
 check: ## Runs all dagger checks. Auto-fixes are not automatically applied.
@@ -48,6 +50,7 @@ build: ## Builds all cross-platform artifacts - Warning! MacOS may fail cross co
 		build-release \
 			--version ${VERSION} \
 			--commit ${COMMIT} \
+			--post-hog-public-key $(POSTHOG_API_KEY) \
 		export \
 			--path ./build
 
@@ -56,6 +59,7 @@ nightly: ## Builds and releases nightly tapes artifacts
 	dagger call \
 		nightly \
 			--commit=${COMMIT} \
+			--post-hog-public-key=$(POSTHOG_API_KEY) \
 			--endpoint=env://BUCKET_ENDPOINT \
 			--bucket=env://BUCKET_NAME \
 			--access-key-id=env://BUCKET_ACCESS_KEY_ID \
@@ -76,6 +80,7 @@ release: ## Builds and releases tapes artifacts
 		release-latest \
 			--version=${VERSION} \
 			--commit=${COMMIT} \
+			--post-hog-public-key=$(POSTHOG_API_KEY) \
 			--endpoint=env://BUCKET_ENDPOINT \
 			--bucket=env://BUCKET_NAME \
 			--access-key-id=env://BUCKET_ACCESS_KEY_ID \

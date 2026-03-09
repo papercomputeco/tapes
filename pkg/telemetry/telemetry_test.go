@@ -145,44 +145,6 @@ var _ = Describe("Telemetry", func() {
 		})
 	})
 
-	Describe("DisabledByEnv", func() {
-		It("returns true when TAPES_TELEMETRY_DISABLED is '1'", func() {
-			GinkgoT().Setenv("TAPES_TELEMETRY_DISABLED", "1")
-			Expect(telemetry.DisabledByEnv()).To(BeTrue())
-		})
-
-		It("returns true when TAPES_TELEMETRY_DISABLED is 'true'", func() {
-			GinkgoT().Setenv("TAPES_TELEMETRY_DISABLED", "true")
-			Expect(telemetry.DisabledByEnv()).To(BeTrue())
-		})
-
-		It("returns true when TAPES_TELEMETRY_DISABLED is 'yes'", func() {
-			GinkgoT().Setenv("TAPES_TELEMETRY_DISABLED", "yes")
-			Expect(telemetry.DisabledByEnv()).To(BeTrue())
-		})
-
-		It("returns false when TAPES_TELEMETRY_DISABLED is empty", func() {
-			GinkgoT().Setenv("TAPES_TELEMETRY_DISABLED", "")
-			Expect(telemetry.DisabledByEnv()).To(BeFalse())
-		})
-
-		It("returns false when TAPES_TELEMETRY_DISABLED is not set", func() {
-			GinkgoT().Setenv("TAPES_TELEMETRY_DISABLED", "")
-			Expect(telemetry.DisabledByEnv()).To(BeFalse())
-		})
-
-		It("returns false for unrecognized values", func() {
-			GinkgoT().Setenv("TAPES_TELEMETRY_DISABLED", "0")
-			Expect(telemetry.DisabledByEnv()).To(BeFalse())
-
-			GinkgoT().Setenv("TAPES_TELEMETRY_DISABLED", "false")
-			Expect(telemetry.DisabledByEnv()).To(BeFalse())
-
-			GinkgoT().Setenv("TAPES_TELEMETRY_DISABLED", "no")
-			Expect(telemetry.DisabledByEnv()).To(BeFalse())
-		})
-	})
-
 	Describe("Context", func() {
 		It("round-trips a client through context", func() {
 			ctx := context.Background()
