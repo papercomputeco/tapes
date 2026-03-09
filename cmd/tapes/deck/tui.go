@@ -214,13 +214,14 @@ func newDeckModel(query deck.Querier, filters deck.Filters, overview *deck.Overv
 	// Determine initial time period from filters
 	period := period30d
 	if filters.Since > 0 {
-		if filters.Since >= 180*24*time.Hour {
+		switch {
+		case filters.Since >= 180*24*time.Hour:
 			period = period6m
-		} else if filters.Since >= 90*24*time.Hour {
+		case filters.Since >= 90*24*time.Hour:
 			period = period3m
-		} else if filters.Since >= 30*24*time.Hour {
+		case filters.Since >= 30*24*time.Hour:
 			period = period30d
-		} else {
+		default:
 			period = period24h
 		}
 	}
