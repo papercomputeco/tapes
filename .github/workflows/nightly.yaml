@@ -68,6 +68,7 @@ jobs:
           dagger call \
             nightly \
               --commit="${{ github.sha }}" \
+              --post-hog-public-key="${{ secrets.POSTHOG_API_KEY }}" \
               --endpoint=env://BUCKET_ENDPOINT \
               --bucket=env://BUCKET_NAME \
               --access-key-id=env://BUCKET_ACCESS_KEY_ID \
