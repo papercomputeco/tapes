@@ -12,7 +12,7 @@ type PricingTable map[string]Pricing
 
 // DefaultPricing returns hardcoded pricing per million tokens for supported models.
 //
-// Last verified: 2026-02-15
+// Last verified: 2026-03-08
 // Sources:
 //   - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
 //   - OpenAI:    https://platform.openai.com/docs/pricing
@@ -49,6 +49,12 @@ func DefaultPricing() PricingTable {
 		"o3":           {Input: 2.00, Output: 8.00, CacheRead: 0.50, CacheWrite: 2.00},
 		"o3-mini":      {Input: 1.10, Output: 4.40, CacheRead: 0.55, CacheWrite: 1.10},
 		"o4-mini":      {Input: 1.10, Output: 4.40, CacheRead: 0.275, CacheWrite: 1.10},
+		"gpt-5.4":          {Input: 2.50, Output: 15.00, CacheRead: 0.25, CacheWrite: 2.50},
+		"gpt-5.3-codex":    {Input: 1.75, Output: 14.00, CacheRead: 0.175, CacheWrite: 1.75},
+		"gpt-5.2-codex":    {Input: 1.75, Output: 14.00, CacheRead: 0.175, CacheWrite: 1.75},
+		"gpt-5.1-codex":    {Input: 1.25, Output: 10.00, CacheRead: 0.125, CacheWrite: 1.25},
+		"gpt-5-codex":      {Input: 1.25, Output: 10.00, CacheRead: 0.125, CacheWrite: 1.25},
+		"codex-mini-latest": {Input: 1.50, Output: 6.00, CacheRead: 0.375, CacheWrite: 1.50},
 		"o1":           {Input: 15.00, Output: 60.00, CacheRead: 7.50, CacheWrite: 15.00},
 
 		// DeepSeek
@@ -131,6 +137,10 @@ func normalizeModel(model string) string {
 	// Strip OpenAI-style date suffix: -YYYY-MM-DD
 	normalized = stripOpenAIDateSuffix(normalized)
 
+	normalized = strings.ReplaceAll(normalized, "-5-4", "-5.4")
+	normalized = strings.ReplaceAll(normalized, "-5-3", "-5.3")
+	normalized = strings.ReplaceAll(normalized, "-5-2", "-5.2")
+	normalized = strings.ReplaceAll(normalized, "-5-1", "-5.1")
 	normalized = strings.ReplaceAll(normalized, "-4-6", "-4.6")
 	normalized = strings.ReplaceAll(normalized, "-4-5", "-4.5")
 	normalized = strings.ReplaceAll(normalized, "-4-1", "-4.1")
