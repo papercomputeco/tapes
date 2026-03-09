@@ -160,6 +160,7 @@ func (t *Tapes) Nightly(
 			secretAccessKey: secretAccessKey,
 		},
 	)
+
 	return artifacts, err
 }
 

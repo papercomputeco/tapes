@@ -12,6 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
 
     steps:
       - name: Checkout
@@ -21,6 +22,29 @@ jobs:
         uses: dagger/dagger-for-github@v8.2.0
         with:
           version: ${{ env.DAGGER_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push image
+        run: |
+          dagger call \
+            build-push-image \
+              --registry=env://REGISTRY \
+              --tags="${{ github.even.release.tag_name }}" \
+              --tags="latest" \
+              --version="${{ github.event.release.tag_name }}" \
+              --commit="${{ github.sha }}" \
+        env:
+          REGISTRY: ${{ secrets.REGISTRY }}
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
       - name: Build upload release artifacts
         run: |
@@ -32,6 +56,9 @@ jobs:
               --bucket=env://BUCKET_NAME \
               --access-key-id=env://BUCKET_ACCESS_KEY_ID \
               --secret-access-key=env://BUCKET_SECRET_ACCESS_KEY \
+              --registry="${{ vars.CONTAINER_REGISTRY }}" \
+              --registry-username=AWS \
+              --registry-password=env://REGISTRY_PASSWORD \
             export \
               --path=./build
         env:
@@ -39,6 +66,7 @@ jobs:
           BUCKET_NAME: ${{ secrets.BUCKET_NAME }}
           BUCKET_ACCESS_KEY_ID: ${{ secrets.BUCKET_ACCESS_KEY_ID }}
           BUCKET_SECRET_ACCESS_KEY: ${{ secrets.BUCKET_SECRET_ACCESS_KEY }}
+          REGISTRY_PASSWORD: ${{ steps.ecr-login.outputs.password }}
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
       - name: Upload artifacts to release
