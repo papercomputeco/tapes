@@ -78,6 +78,16 @@ release: ## Builds and releases tapes artifacts
 			--access-key-id=env://BUCKET_ACCESS_KEY_ID \
 			--secret-access-key=env://BUCKET_SECRET_ACCESS_KEY
 
+.PHONY: build-push-image
+build-push-image: ## Builds and publishes multi-arch container images to ECR
+	dagger call \
+		build-push-image \
+			--registry=${REGISTRY} \
+			--tags=${VERSION} \
+			--tags=latest \
+			--version=${VERSION} \
+			--commit=${COMMIT}
+
 .PHONY: up
 up:
 	docker compose up --build
