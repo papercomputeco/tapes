@@ -179,7 +179,6 @@ func (t *Tapes) BuildRelease(
 
 	// PostHog ingestion endpoint
 	// +optional
-	// +default="https://us.i.posthog.com"
 	postHogEndpoint string,
 ) *dagger.Directory {
 	buildtime := time.Now()
@@ -195,6 +194,7 @@ func (t *Tapes) BuildRelease(
 	if postHogPublicKey != "" {
 		ldflags = append(ldflags, fmt.Sprintf("-X 'github.com/papercomputeco/tapes/pkg/telemetry.PostHogAPIKey=%s'", postHogPublicKey))
 	}
+
 	if postHogEndpoint != "" {
 		ldflags = append(ldflags, fmt.Sprintf("-X 'github.com/papercomputeco/tapes/pkg/telemetry.PostHogEndpoint=%s'", postHogEndpoint))
 	}
