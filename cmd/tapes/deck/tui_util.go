@@ -40,6 +40,8 @@ func clamp(value, upper int) int {
 
 func periodToDuration(p timePeriod) time.Duration {
 	switch p {
+	case period24h:
+		return 24 * time.Hour
 	case period30d:
 		return 30 * 24 * time.Hour
 	case period3m:
@@ -53,6 +55,8 @@ func periodToDuration(p timePeriod) time.Duration {
 
 func periodToLabel(p timePeriod) string {
 	switch p {
+	case period24h:
+		return "24h"
 	case period30d:
 		return "30d"
 	case period3m:
