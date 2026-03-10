@@ -3,12 +3,14 @@ package telemetry_test
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/telemetry"
 )
 
@@ -200,12 +202,18 @@ var _ = Describe("Telemetry", func() {
 	})
 
 	Describe("NewClient", func() {
+		var l *slog.Logger
+
+		BeforeEach(func() {
+			l = logger.NewNoop()
+		})
+
 		It("returns nil when PostHogAPIKey is empty", func() {
 			orig := telemetry.PostHogAPIKey
 			telemetry.PostHogAPIKey = ""
 			defer func() { telemetry.PostHogAPIKey = orig }()
 
-			client, err := telemetry.NewClient("test-uuid-1234")
+			client, err := telemetry.NewClient("test-uuid-1234", l)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(client).To(BeNil())
 		})
@@ -215,7 +223,7 @@ var _ = Describe("Telemetry", func() {
 			telemetry.PostHogAPIKey = "phc_test_key"
 			defer func() { telemetry.PostHogAPIKey = orig }()
 
-			client, err := telemetry.NewClient("test-uuid-1234")
+			client, err := telemetry.NewClient("test-uuid-1234", l)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(client).NotTo(BeNil())
 			Expect(client.Close()).To(Succeed())
