@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/posthog/posthog-go"
 
@@ -37,13 +38,14 @@ const (
 type Client struct {
 	ph         posthog.Client
 	distinctID string
+	logger     *slog.Logger
 }
 
 // NewClient creates a new telemetry Client that sends events to PostHog.
 // The distinctID should be the persistent UUID from the telemetry Manager.
 // Returns nil (not an error) when PostHogAPIKey is empty so callers can
 // treat a nil *Client as "telemetry disabled" without extra checks.
-func NewClient(distinctID string) (*Client, error) {
+func NewClient(distinctID string, l *slog.Logger) (*Client, error) {
 	if PostHogAPIKey == "" {
 		return nil, nil
 	}
@@ -61,6 +63,7 @@ func NewClient(distinctID string) (*Client, error) {
 	return &Client{
 		ph:         ph,
 		distinctID: distinctID,
+		logger:     l,
 	}, nil
 }
 
@@ -73,9 +76,9 @@ func (c *Client) Close() error {
 }
 
 // capture sends an event with the given name and properties merged with common properties.
-func (c *Client) capture(event string, props posthog.Properties) {
+func (c *Client) capture(event string, props posthog.Properties) error {
 	if c == nil {
-		return
+		return nil
 	}
 
 	p := CommonProperties().
@@ -83,7 +86,7 @@ func (c *Client) capture(event string, props posthog.Properties) {
 		Set("$lib", "tapes-cli").
 		Merge(props)
 
-	_ = c.ph.Enqueue(posthog.Capture{
+	return c.ph.Enqueue(posthog.Capture{
 		DistinctId: c.distinctID,
 		Event:      event,
 		Properties: p,
@@ -92,52 +95,70 @@ func (c *Client) capture(event string, props posthog.Properties) {
 
 // CaptureInstall records a first-run install event.
 func (c *Client) CaptureInstall() {
-	c.capture(EventInstall, nil)
+	if err := c.capture(EventInstall, nil); err != nil {
+		c.logger.Debug("could not capture install telemetry", "error", err)
+	}
 }
 
 // CaptureCommandRun records a CLI command execution.
 func (c *Client) CaptureCommandRun(command string) {
-	c.capture(EventCommandRun, posthog.NewProperties().Set("command", command))
+	if err := c.capture(EventCommandRun, posthog.NewProperties().Set("command", command)); err != nil {
+		c.logger.Debug("could not capture event run telemetry", "error", err)
+	}
 }
 
 // CaptureInit records a tapes init event.
 func (c *Client) CaptureInit(preset string) {
-	c.capture(EventInit, posthog.NewProperties().Set("preset", preset))
+	if err := c.capture(EventInit, posthog.NewProperties().Set("preset", preset)); err != nil {
+		c.logger.Debug("could not capture init telemetry", "error", err)
+	}
 }
 
 // CaptureSessionCreated records a new recording session.
 func (c *Client) CaptureSessionCreated(provider string) {
-	c.capture(EventSessionCreated, posthog.NewProperties().Set("provider", provider))
+	if err := c.capture(EventSessionCreated, posthog.NewProperties().Set("provider", provider)); err != nil {
+		c.logger.Debug("could not capture session creation telemetry", "error", err)
+	}
 }
 
 // CaptureSearch records a search operation.
 func (c *Client) CaptureSearch(resultCount int) {
-	c.capture(EventSearch, posthog.NewProperties().Set("result_count", resultCount))
+	if err := c.capture(EventSearch, posthog.NewProperties().Set("result_count", resultCount)); err != nil {
+		c.logger.Debug("could not capture search telemetry", "error", err)
+	}
 }
 
 // CaptureServerStarted records a server startup event.
 func (c *Client) CaptureServerStarted(mode string) {
-	c.capture(EventServerStarted, posthog.NewProperties().Set("mode", mode))
+	if err := c.capture(EventServerStarted, posthog.NewProperties().Set("mode", mode)); err != nil {
+		c.logger.Debug("could not capture serve telemetry", "error", err)
+	}
 }
 
 // CaptureMCPTool records an MCP tool invocation.
 func (c *Client) CaptureMCPTool(tool string) {
-	c.capture(EventMCPTool, posthog.NewProperties().Set("tool", tool))
+	if err := c.capture(EventMCPTool, posthog.NewProperties().Set("tool", tool)); err != nil {
+		c.logger.Debug("could not capture mcp telemetry", "error", err)
+	}
 }
 
 // CaptureSyncPush records a sync push event.
 func (c *Client) CaptureSyncPush() {
-	c.capture(EventSyncPush, nil)
+	if err := c.capture(EventSyncPush, nil); err != nil {
+		c.logger.Debug("could not capture sync push telemetry", "error", err)
+	}
 }
 
 // CaptureSyncPull records a sync pull event.
 func (c *Client) CaptureSyncPull() {
-	c.capture(EventSyncPull, nil)
+	if err := c.capture(EventSyncPull, nil); err != nil {
+		c.logger.Debug("could not capture sync pull telemetry", "error", err)
+	}
 }
 
 // CaptureError records an error event.
 func (c *Client) CaptureError(command, errType string) {
-	c.capture(EventError, posthog.NewProperties().
-		Set("command", command).
-		Set("error_type", errType))
+	if err := c.capture(EventError, posthog.NewProperties().Set("command", command).Set("error_type", errType)); err != nil {
+		c.logger.Debug("could not capture error telemetry", "error", err)
+	}
 }

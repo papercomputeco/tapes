@@ -2,6 +2,8 @@
 package tapescmder
 
 import (
+	"log/slog"
+
 	"github.com/spf13/cobra"
 
 	authcmder "github.com/papercomputeco/tapes/cmd/tapes/auth"
@@ -20,6 +22,7 @@ import (
 	synccmder "github.com/papercomputeco/tapes/cmd/tapes/sync"
 	versioncmder "github.com/papercomputeco/tapes/cmd/version"
 	"github.com/papercomputeco/tapes/pkg/config"
+	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/telemetry"
 )
 
@@ -104,11 +107,12 @@ func NewTapesCmd() *cobra.Command {
 // execution. Viper handles the flag > env > config file precedence for the
 // telemetry.disabled setting.
 func initTelemetry(cmd *cobra.Command, _ []string) error {
+	initTelemLogger := logger.New(logger.WithDebug(true), logger.WithPretty(true))
 	configDir, _ := cmd.Flags().GetString("config-dir")
 
 	v, err := config.InitViper(configDir)
 	if err != nil {
-		// Can't load config — skip telemetry silently.
+		initTelemLogger.Warn("Could not initiate telemetry, continuing", "error", err)
 		return nil
 	}
 
@@ -127,7 +131,7 @@ func initTelemetry(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	client, isFirstRun := newTelemetryClient(configDir)
+	client, isFirstRun := newTelemetryClient(configDir, initTelemLogger)
 	if client == nil {
 		return nil
 	}
@@ -148,7 +152,7 @@ func initTelemetry(cmd *cobra.Command, _ []string) error {
 // newTelemetryClient creates the PostHog telemetry client and loads or creates
 // the persistent identity. Returns (nil, false) if any step fails — telemetry
 // setup errors are intentionally non-fatal.
-func newTelemetryClient(configDir string) (client *telemetry.Client, isFirstRun bool) {
+func newTelemetryClient(configDir string, l *slog.Logger) (client *telemetry.Client, isFirstRun bool) {
 	mgr, err := telemetry.NewManager(configDir)
 	if err != nil {
 		return nil, false
@@ -159,7 +163,7 @@ func newTelemetryClient(configDir string) (client *telemetry.Client, isFirstRun 
 		return nil, false
 	}
 
-	client, err = telemetry.NewClient(state.UUID)
+	client, err = telemetry.NewClient(state.UUID, l)
 	if err != nil {
 		return nil, false
 	}

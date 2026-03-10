@@ -50,7 +50,7 @@ build: ## Builds all cross-platform artifacts - Warning! MacOS may fail cross co
 		build-release \
 			--version ${VERSION} \
 			--commit ${COMMIT} \
-			--post-hog-public-key $(POSTHOG_API_KEY) \
+			--post-hog-public-key="${POSTHOG_API_KEY}" \
 		export \
 			--path ./build
 
@@ -59,7 +59,7 @@ nightly: ## Builds and releases nightly tapes artifacts
 	dagger call \
 		nightly \
 			--commit=${COMMIT} \
-			--post-hog-public-key=$(POSTHOG_API_KEY) \
+			--post-hog-public-key="${POSTHOG_API_KEY}" \
 			--endpoint=env://BUCKET_ENDPOINT \
 			--bucket=env://BUCKET_NAME \
 			--access-key-id=env://BUCKET_ACCESS_KEY_ID \
