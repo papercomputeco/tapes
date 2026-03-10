@@ -79,12 +79,11 @@ jobs:
         run: |
           dagger call \
             build-push-image \
-              --registry=env://REGISTRY \
+              --registry=${{ vars.REGISTRY }} \
               --tags="nightly" \
               --version="nightly" \
               --commit="${{ github.sha }}" \
         env:
-          REGISTRY: ${{ secrets.REGISTRY }}
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
       - name: Build upload nightly release artifacts

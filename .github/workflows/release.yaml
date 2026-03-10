@@ -37,13 +37,12 @@ jobs:
         run: |
           dagger call \
             build-push-image \
-              --registry=env://REGISTRY \
+              --registry=${{ vars.REGISTRY }} \
               --tags="${{ github.even.release.tag_name }}" \
               --tags="latest" \
               --version="${{ github.event.release.tag_name }}" \
               --commit="${{ github.sha }}" \
         env:
-          REGISTRY: ${{ secrets.REGISTRY }}
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
       - name: Build upload release artifacts
