@@ -120,6 +120,31 @@ func CostForTokensWithCache(pricing Pricing, inputTokens, outputTokens, cacheCre
 	return inputCost, outputCost, inputCost + outputCost
 }
 
+// CacheSavings returns the dollar amount saved by prompt caching.
+// It compares the actual cost (with cache rates) against the hypothetical
+// cost of pricing all input tokens at the base input rate.
+func CacheSavings(pricing Pricing, inputTokens, cacheCreation, cacheRead int64) float64 {
+	if cacheCreation == 0 && cacheRead == 0 {
+		return 0
+	}
+
+	// What it would have cost without caching
+	uncachedCost := float64(inputTokens) / 1_000_000.0 * pricing.Input
+
+	// What it actually cost
+	baseInput := max(inputTokens-cacheCreation-cacheRead, 0)
+	actualCost := float64(baseInput) / 1_000_000.0 * pricing.Input
+	actualCost += float64(cacheCreation) / 1_000_000.0 * pricing.CacheWrite
+	actualCost += float64(cacheRead) / 1_000_000.0 * pricing.CacheRead
+
+	return max(uncachedCost-actualCost, 0)
+}
+
+// IsClaudeModel returns true if the normalized model name is a Claude model.
+func IsClaudeModel(model string) bool {
+	return strings.HasPrefix(normalizeModel(model), "claude")
+}
+
 func normalizeModel(model string) string {
 	normalized := strings.ToLower(strings.TrimSpace(model))
 	if normalized == "" {

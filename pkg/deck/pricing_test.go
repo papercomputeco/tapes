@@ -81,6 +81,62 @@ var _ = Describe("CostForTokensWithCache", func() {
 	})
 })
 
+var _ = Describe("CacheSavings", func() {
+	pricing := Pricing{Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25}
+
+	It("returns zero when no cache tokens are present", func() {
+		savings := CacheSavings(pricing, 1_000_000, 0, 0)
+		Expect(savings).To(Equal(0.0))
+	})
+
+	It("calculates savings from cache reads", func() {
+		// 1M input, 800k cache reads, 0 cache writes
+		// Uncached: 1M/1M * 5.00 = 5.00
+		// Actual: 200k/1M * 5.00 + 800k/1M * 0.50 = 1.00 + 0.40 = 1.40
+		// Savings: 5.00 - 1.40 = 3.60
+		savings := CacheSavings(pricing, 1_000_000, 0, 800_000)
+		Expect(savings).To(BeNumerically("~", 3.60, 0.001))
+	})
+
+	It("accounts for cache write overhead reducing savings", func() {
+		// 1M input, 0 cache reads, 500k cache writes
+		// Uncached: 1M/1M * 5.00 = 5.00
+		// Actual: 500k/1M * 5.00 + 500k/1M * 6.25 = 2.50 + 3.125 = 5.625
+		// Savings: max(5.00 - 5.625, 0) = 0 (writes are more expensive)
+		savings := CacheSavings(pricing, 1_000_000, 500_000, 0)
+		Expect(savings).To(Equal(0.0))
+	})
+
+	It("calculates net savings with both reads and writes", func() {
+		// 1M input, 300k cache writes, 500k cache reads
+		// Uncached: 1M/1M * 5.00 = 5.00
+		// Actual: 200k/1M * 5.00 + 300k/1M * 6.25 + 500k/1M * 0.50
+		//       = 1.00 + 1.875 + 0.25 = 3.125
+		// Savings: 5.00 - 3.125 = 1.875
+		savings := CacheSavings(pricing, 1_000_000, 300_000, 500_000)
+		Expect(savings).To(BeNumerically("~", 1.875, 0.001))
+	})
+})
+
+var _ = Describe("IsClaudeModel", func() {
+	It("returns true for Claude models", func() {
+		Expect(IsClaudeModel("claude-opus-4.6")).To(BeTrue())
+		Expect(IsClaudeModel("claude-sonnet-4-5-20250514")).To(BeTrue())
+		Expect(IsClaudeModel("claude-haiku-4.5")).To(BeTrue())
+		Expect(IsClaudeModel("claude-3-opus")).To(BeTrue())
+	})
+
+	It("returns false for non-Claude models", func() {
+		Expect(IsClaudeModel("gpt-4o")).To(BeFalse())
+		Expect(IsClaudeModel("o3-mini")).To(BeFalse())
+		Expect(IsClaudeModel("deepseek-r1")).To(BeFalse())
+	})
+
+	It("returns false for empty string", func() {
+		Expect(IsClaudeModel("")).To(BeFalse())
+	})
+})
+
 var _ = Describe("normalizeModel", func() {
 	It("lowercases and trims whitespace", func() {
 		Expect(normalizeModel("  Claude-Opus-4.5  ")).To(Equal("claude-opus-4.5"))

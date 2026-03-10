@@ -178,7 +178,7 @@ func (c *deckCommander) run(ctx context.Context, cmd *cobra.Command) error {
 		return err
 	}
 
-	return RunDeckTUI(ctx, query, filters, refreshDuration, facetWorker, facetAnalyticsFunc)
+	return RunDeckTUI(ctx, query, pricing, filters, refreshDuration, facetWorker, facetAnalyticsFunc)
 }
 
 // buildFacetDeps auto-detects API credentials and creates facet extraction

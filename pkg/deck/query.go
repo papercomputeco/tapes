@@ -307,6 +307,8 @@ func groupSessionCandidates(candidates []sessionCandidate) []*sessionGroup {
 		group.summary.Duration = max(group.summary.EndTime.Sub(group.summary.StartTime), 0)
 		group.summary.InputTokens += candidate.summary.InputTokens
 		group.summary.OutputTokens += candidate.summary.OutputTokens
+		group.summary.CacheReadTokens += candidate.summary.CacheReadTokens
+		group.summary.CacheWriteTokens += candidate.summary.CacheWriteTokens
 		group.summary.InputCost += candidate.summary.InputCost
 		group.summary.OutputCost += candidate.summary.OutputCost
 		group.summary.TotalCost += candidate.summary.TotalCost
@@ -838,6 +840,8 @@ func (q *Query) buildSessionSummaryFromNodes(nodes []*ent.Node) (SessionSummary,
 	modelCosts := map[string]ModelCost{}
 	inputTokens := int64(0)
 	outputTokens := int64(0)
+	cacheReadTokens := int64(0)
+	cacheWriteTokens := int64(0)
 
 	// Parse content blocks once per node and collect label candidates
 	// from user-role nodes (in forward order). Label building reverses
@@ -868,6 +872,8 @@ func (q *Query) buildSessionSummaryFromNodes(nodes []*ent.Node) (SessionSummary,
 		t := tokenCounts(n)
 		inputTokens += t.Input
 		outputTokens += t.Output
+		cacheReadTokens += t.CacheRead
+		cacheWriteTokens += t.CacheCreation
 
 		model := normalizeModel(n.Model)
 		if model == "" {
@@ -924,23 +930,25 @@ func (q *Query) buildSessionSummaryFromNodes(nodes []*ent.Node) (SessionSummary,
 	}
 
 	summary := SessionSummary{
-		ID:           nodes[len(nodes)-1].ID,
-		Label:        label,
-		Model:        model,
-		Project:      project,
-		AgentName:    agentName,
-		Status:       status,
-		StartTime:    start,
-		EndTime:      end,
-		Duration:     duration,
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
-		InputCost:    inputCost,
-		OutputCost:   outputCost,
-		TotalCost:    totalCost,
-		ToolCalls:    toolCalls,
-		MessageCount: len(nodes),
-		SessionCount: 1,
+		ID:               nodes[len(nodes)-1].ID,
+		Label:            label,
+		Model:            model,
+		Project:          project,
+		AgentName:        agentName,
+		Status:           status,
+		StartTime:        start,
+		EndTime:          end,
+		Duration:         duration,
+		InputTokens:      inputTokens,
+		OutputTokens:     outputTokens,
+		CacheReadTokens:  cacheReadTokens,
+		CacheWriteTokens: cacheWriteTokens,
+		InputCost:        inputCost,
+		OutputCost:       outputCost,
+		TotalCost:        totalCost,
+		ToolCalls:        toolCalls,
+		MessageCount:     len(nodes),
+		SessionCount:     1,
 	}
 
 	return summary, modelCosts, status, nil

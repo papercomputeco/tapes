@@ -10,23 +10,25 @@ type Pricing struct {
 }
 
 type SessionSummary struct {
-	ID           string        `json:"id"`
-	Label        string        `json:"label"`
-	Model        string        `json:"model"`
-	Project      string        `json:"project"`
-	AgentName    string        `json:"agent_name,omitempty"`
-	Status       string        `json:"status"`
-	StartTime    time.Time     `json:"start_time"`
-	EndTime      time.Time     `json:"end_time"`
-	Duration     time.Duration `json:"duration_ns"`
-	InputTokens  int64         `json:"input_tokens"`
-	OutputTokens int64         `json:"output_tokens"`
-	InputCost    float64       `json:"input_cost"`
-	OutputCost   float64       `json:"output_cost"`
-	TotalCost    float64       `json:"total_cost"`
-	ToolCalls    int           `json:"tool_calls"`
-	MessageCount int           `json:"message_count"`
-	SessionCount int           `json:"session_count,omitempty"`
+	ID               string        `json:"id"`
+	Label            string        `json:"label"`
+	Model            string        `json:"model"`
+	Project          string        `json:"project"`
+	AgentName        string        `json:"agent_name,omitempty"`
+	Status           string        `json:"status"`
+	StartTime        time.Time     `json:"start_time"`
+	EndTime          time.Time     `json:"end_time"`
+	Duration         time.Duration `json:"duration_ns"`
+	InputTokens      int64         `json:"input_tokens"`
+	OutputTokens     int64         `json:"output_tokens"`
+	CacheReadTokens  int64         `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int64         `json:"cache_write_tokens,omitempty"`
+	InputCost        float64       `json:"input_cost"`
+	OutputCost       float64       `json:"output_cost"`
+	TotalCost        float64       `json:"total_cost"`
+	ToolCalls        int           `json:"tool_calls"`
+	MessageCount     int           `json:"message_count"`
+	SessionCount     int           `json:"session_count,omitempty"`
 }
 
 type SessionMessage struct {

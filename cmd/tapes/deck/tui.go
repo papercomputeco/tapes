@@ -55,6 +55,7 @@ const (
 
 type deckModel struct {
 	query            deck.Querier
+	pricing          deck.PricingTable
 	filters          deck.Filters
 	overview         *deck.Overview
 	detail           *deck.SessionDetail
@@ -162,8 +163,8 @@ type refreshTickMsg time.Time
 
 // RunDeckTUI starts the deck TUI with the provided query implementation.
 // This function is exported to allow sandbox and testing environments to inject mock data.
-func RunDeckTUI(ctx context.Context, query deck.Querier, filters deck.Filters, refreshEvery time.Duration, facetWorker *deck.FacetWorker, facetLoadFn func(context.Context) (*deck.FacetAnalytics, error)) error {
-	model := newDeckModel(query, filters, nil, refreshEvery)
+func RunDeckTUI(ctx context.Context, query deck.Querier, pricing deck.PricingTable, filters deck.Filters, refreshEvery time.Duration, facetWorker *deck.FacetWorker, facetLoadFn func(context.Context) (*deck.FacetAnalytics, error)) error {
+	model := newDeckModel(query, pricing, filters, nil, refreshEvery)
 	model.facetWorker = facetWorker
 	model.facetLoadFn = facetLoadFn
 
@@ -188,7 +189,7 @@ func RunDeckTUI(ctx context.Context, query deck.Querier, filters deck.Filters, r
 	return err
 }
 
-func newDeckModel(query deck.Querier, filters deck.Filters, overview *deck.Overview, refreshEvery time.Duration) deckModel {
+func newDeckModel(query deck.Querier, pricing deck.PricingTable, filters deck.Filters, overview *deck.Overview, refreshEvery time.Duration) deckModel {
 	if filters.Sort == "" {
 		filters.Sort = sortKeyCost
 	}
@@ -243,6 +244,7 @@ func newDeckModel(query deck.Querier, filters deck.Filters, overview *deck.Overv
 
 	return deckModel{
 		query:            query,
+		pricing:          pricing,
 		filters:          filters,
 		overview:         overview,
 		view:             viewOverview,

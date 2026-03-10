@@ -48,6 +48,9 @@ func (m deckModel) viewSession() string {
 
 	// 1. METRICS SECTION
 	lines = append(lines, m.renderSessionMetrics()...)
+	if cacheLine := m.renderCacheSavings(); cacheLine != "" {
+		lines = append(lines, "", cacheLine)
+	}
 	lines = append(lines, "", renderRule(m.width), "")
 
 	// 2. CONVERSATION TIMELINE (waveform visualization)
@@ -266,6 +269,38 @@ func (m deckModel) renderSessionMetrics() []string {
 	}
 
 	return lines
+}
+
+func (m deckModel) renderCacheSavings() string {
+	if m.detail == nil {
+		return ""
+	}
+	s := m.detail.Summary
+	if !deck.IsClaudeModel(s.Model) {
+		return ""
+	}
+	if s.CacheReadTokens == 0 && s.CacheWriteTokens == 0 {
+		return ""
+	}
+
+	pricing, ok := deck.PricingForModel(m.pricing, s.Model)
+	if !ok {
+		return ""
+	}
+
+	savings := deck.CacheSavings(pricing, s.InputTokens, s.CacheWriteTokens, s.CacheReadTokens)
+	if savings <= 0 {
+		return ""
+	}
+
+	// Cache read hit rate: cache reads as a percentage of total input tokens
+	hitRate := float64(s.CacheReadTokens) / float64(max(s.InputTokens, 1)) * 100
+
+	label := lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render("claude prompt cache")
+	hit := fmt.Sprintf("%.0f%% read", hitRate)
+	saved := fmt.Sprintf("saved %s", formatCost(savings))
+
+	return label + "  " + deckMutedStyle.Render(hit+" · "+saved)
 }
 
 func (m deckModel) viewFooter() string {
