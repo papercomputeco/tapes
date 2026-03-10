@@ -123,19 +123,16 @@ func CostForTokensWithCache(pricing Pricing, inputTokens, outputTokens, cacheCre
 // CacheSavings returns the dollar amount saved by prompt caching.
 // It compares the actual cost (with cache rates) against the hypothetical
 // cost of pricing all input tokens at the base input rate.
+//
+// Note: for mixed-model sessions the caller should use the dominant model's
+// pricing. Per-model cache breakdown is not yet tracked at the summary level.
 func CacheSavings(pricing Pricing, inputTokens, cacheCreation, cacheRead int64) float64 {
 	if cacheCreation == 0 && cacheRead == 0 {
 		return 0
 	}
 
-	// What it would have cost without caching
-	uncachedCost := float64(inputTokens) / 1_000_000.0 * pricing.Input
-
-	// What it actually cost
-	baseInput := max(inputTokens-cacheCreation-cacheRead, 0)
-	actualCost := float64(baseInput) / 1_000_000.0 * pricing.Input
-	actualCost += float64(cacheCreation) / 1_000_000.0 * pricing.CacheWrite
-	actualCost += float64(cacheRead) / 1_000_000.0 * pricing.CacheRead
+	uncachedCost, _, _ := CostForTokens(pricing, inputTokens, 0)
+	actualCost, _, _ := CostForTokensWithCache(pricing, inputTokens, 0, cacheCreation, cacheRead)
 
 	return max(uncachedCost-actualCost, 0)
 }
