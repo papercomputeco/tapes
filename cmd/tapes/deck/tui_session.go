@@ -269,7 +269,7 @@ func (m deckModel) renderSessionMetrics() []string {
 }
 
 func (m deckModel) viewFooter() string {
-	helpText := "j down • k up • enter drill • h back • s sort • f status • / search • p period • r replay • a analytics • q quit"
+	helpText := "j down • k up • enter drill • h back • s sort • f status • / search • p period • r replay • q quit"
 	return deckMutedStyle.Render(helpText)
 }
 

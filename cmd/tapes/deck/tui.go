@@ -21,7 +21,6 @@ const (
 	viewOverview deckView = iota
 	viewSession
 	viewModal
-	viewAnalytics
 )
 
 type timePeriod int
@@ -59,19 +58,10 @@ type deckModel struct {
 	filters          deck.Filters
 	overview         *deck.Overview
 	detail           *deck.SessionDetail
-	analytics        *deck.AnalyticsOverview
-	analyticsDay     *deck.Overview
-	facetAnalytics   *deck.FacetAnalytics
-	facetWorker      *deck.FacetWorker
-	facetLoadFn      func(context.Context) (*deck.FacetAnalytics, error)
 	view             deckView
 	cursor           int
 	scrollOffset     int
 	messageCursor    int
-	analyticsScroll  int
-	analyticsTabSel  analyticsTab
-	analyticsDaySel  string
-	summaryCursor    int
 	width            int
 	height           int
 	sortIndex        int
@@ -82,7 +72,6 @@ type deckModel struct {
 	modalTab         modalTab
 	replayActive     bool
 	replayOnLoad     bool
-	insightsExpanded bool
 	metricsReady     bool
 	overviewStats    *deckOverviewStats
 	refreshEvery     time.Duration
@@ -116,16 +105,6 @@ const (
 	modalFilter
 )
 
-type analyticsTab int
-
-const (
-	analyticsTabActivity analyticsTab = iota
-	analyticsTabDistribution
-	analyticsTabInsights
-	analyticsTabSummaries
-	analyticsTabCount = 4
-)
-
 type sessionLoadedMsg struct {
 	detail *deck.SessionDetail
 	err    error
@@ -139,22 +118,6 @@ type overviewLoadedMsg struct {
 
 type replayTickMsg time.Time
 
-type analyticsLoadedMsg struct {
-	analytics *deck.AnalyticsOverview
-	err       error
-}
-
-type analyticsDayLoadedMsg struct {
-	date     string
-	overview *deck.Overview
-	err      error
-}
-
-type facetAnalyticsLoadedMsg struct {
-	analytics *deck.FacetAnalytics
-	err       error
-}
-
 type metricsReadyMsg struct {
 	stats deckOverviewStats
 }
@@ -163,15 +126,8 @@ type refreshTickMsg time.Time
 
 // RunDeckTUI starts the deck TUI with the provided query implementation.
 // This function is exported to allow sandbox and testing environments to inject mock data.
-func RunDeckTUI(ctx context.Context, query deck.Querier, filters deck.Filters, refreshEvery time.Duration, facetWorker *deck.FacetWorker, facetLoadFn func(context.Context) (*deck.FacetAnalytics, error)) error {
+func RunDeckTUI(ctx context.Context, query deck.Querier, filters deck.Filters, refreshEvery time.Duration) error {
 	model := newDeckModel(query, filters, nil, refreshEvery)
-	model.facetWorker = facetWorker
-	model.facetLoadFn = facetLoadFn
-
-	// Start background facet worker if provided
-	if facetWorker != nil {
-		go facetWorker.Run(ctx)
-	}
 
 	if filters.Session != "" {
 		detail, err := query.SessionDetail(ctx, filters.Session)
@@ -363,52 +319,9 @@ func (m deckModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.messageCursor++
 		return m, replayTick()
-	case analyticsLoadedMsg:
-		if msg.err != nil {
-			return m, nil
-		}
-		isRefresh := m.analytics != nil
-		m.analytics = msg.analytics
-		m.view = viewAnalytics
-		if !isRefresh {
-			m.analyticsScroll = 0
-		}
-
-		// Kick off facet analytics load if available
-		var cmds []tea.Cmd
-		if m.facetLoadFn != nil {
-			cmds = append(cmds, loadFacetAnalyticsCmd(m.facetLoadFn))
-		}
-
-		if m.analyticsDaySel != "" && !analyticsDayExists(m.analytics.ActivityByDay, m.analyticsDaySel) {
-			m.analyticsDaySel = ""
-			m.analyticsDay = nil
-			return m, tea.Batch(cmds...)
-		}
-		if m.analyticsDaySel != "" && m.analyticsDay == nil {
-			cmds = append(cmds, m.spinnerTickCmd(), loadAnalyticsDayCmd(m.query, m.filters, m.analyticsDaySel))
-		}
-		return m, tea.Batch(cmds...)
-	case facetAnalyticsLoadedMsg:
-		if msg.err != nil {
-			return m, nil
-		}
-		m.facetAnalytics = msg.analytics
-		return m, nil
-	case analyticsDayLoadedMsg:
-		if msg.err != nil {
-			return m, nil
-		}
-		if msg.date != m.analyticsDaySel {
-			return m, nil
-		}
-		m.analyticsDay = msg.overview
-		return m, nil
 	case spinner.TickMsg:
 		overviewLoading := m.overview == nil || !m.metricsReady
-		analyticsLoading := m.analytics == nil || (m.analyticsDaySel != "" && m.analyticsDay == nil)
-		facetLoading := m.facetLoadFn != nil && m.facetAnalytics == nil
-		if (m.view == viewOverview && overviewLoading) || (m.view == viewAnalytics && (analyticsLoading || facetLoading)) {
+		if m.view == viewOverview && overviewLoading {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
@@ -443,8 +356,6 @@ func (m deckModel) View() tea.View {
 		v.AltScreen = true
 		v.BackgroundColor = colorBaseBg
 		return v
-	case viewAnalytics:
-		base = m.viewAnalytics()
 	default:
 		base = m.viewOverview()
 	}
@@ -508,14 +419,6 @@ func (m deckModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				)
 			}
 		}
-		if m.view == viewAnalytics {
-			if m.analyticsDaySel != "" {
-				m.analyticsDaySel = ""
-				m.analyticsDay = nil
-				return m, nil
-			}
-			m.view = viewOverview
-		}
 	case "/":
 		if m.view == viewOverview {
 			m.searchActive = true
@@ -538,44 +441,8 @@ func (m deckModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.modalCursor = m.statusIndex
 			return m, nil
 		}
-	case "a":
-		if m.view == viewOverview {
-			m.analytics = nil
-			m.analyticsDay = nil
-			m.analyticsDaySel = ""
-			m.view = viewAnalytics
-			return m, tea.Batch(m.spinnerTickCmd(), loadAnalyticsCmd(m.query, m.filters))
-		}
-	case "tab":
-		if m.view == viewAnalytics {
-			m.analyticsTabSel = (m.analyticsTabSel + 1) % analyticsTabCount
-			m.analyticsScroll = 0
-			m.summaryCursor = 0
-			return m, nil
-		}
-	case "shift+tab":
-		if m.view == viewAnalytics {
-			m.analyticsTabSel = (m.analyticsTabSel + analyticsTabCount - 1) % analyticsTabCount
-			m.analyticsScroll = 0
-			m.summaryCursor = 0
-			return m, nil
-		}
-	case "e":
-		if m.view == viewAnalytics {
-			m.insightsExpanded = !m.insightsExpanded
-			return m, nil
-		}
-	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-		if m.view == viewAnalytics && m.analyticsTabSel == analyticsTabActivity {
-			if selected, ok := m.selectAnalyticsDay(msg.String()); ok {
-				m.analyticsDaySel = selected
-				m.analyticsDay = nil
-				return m, tea.Batch(m.spinnerTickCmd(), loadAnalyticsDayCmd(m.query, m.filters, selected))
-			}
-			return m, nil
-		}
 	case "p":
-		if m.view == viewOverview || m.view == viewAnalytics {
+		if m.view == viewOverview {
 			return m.cyclePeriod()
 		}
 	case "r":
@@ -681,25 +548,6 @@ func (m deckModel) moveCursor(delta int) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.view == viewAnalytics {
-		if m.analytics == nil {
-			return m, nil
-		}
-		if m.analyticsTabSel == analyticsTabSummaries && m.facetAnalytics != nil && len(m.facetAnalytics.RecentSummaries) > 0 {
-			count := min(len(m.facetAnalytics.RecentSummaries), summariesDisplayLimit)
-			m.summaryCursor = clamp(m.summaryCursor+delta, count-1)
-			return m, nil
-		}
-		content := m.buildAnalyticsContent()
-		visibleHeight := m.height - 2*verticalPadding
-		if visibleHeight <= 0 {
-			visibleHeight = 20
-		}
-		maxScroll := max(0, len(content)-visibleHeight)
-		m.analyticsScroll = clamp(m.analyticsScroll+delta, maxScroll)
-		return m, nil
-	}
-
 	if m.detail == nil || len(m.detail.Messages) == 0 {
 		return m, nil
 	}
@@ -743,12 +591,6 @@ func (m deckModel) enterSession() (tea.Model, tea.Cmd) {
 func (m deckModel) cyclePeriod() (tea.Model, tea.Cmd) {
 	m.timePeriod = (m.timePeriod + 1) % 4
 	m.filters.Since = periodToDuration(m.timePeriod)
-	if m.view == viewAnalytics {
-		m.analytics = nil
-		m.analyticsDay = nil
-		m.analyticsDaySel = ""
-		return m, tea.Batch(m.spinnerTickCmd(), loadAnalyticsCmd(m.query, m.filters))
-	}
 	return m, loadOverviewCmd(m.query, m.filters)
 }
 
@@ -944,35 +786,6 @@ func computeMetricsCmd(sessions []deck.SessionSummary) tea.Cmd {
 	}
 }
 
-func loadAnalyticsCmd(query deck.Querier, filters deck.Filters) tea.Cmd {
-	return func() tea.Msg {
-		analytics, err := query.AnalyticsOverview(context.Background(), filters)
-		return analyticsLoadedMsg{analytics: analytics, err: err}
-	}
-}
-
-func loadFacetAnalyticsCmd(loadFn func(context.Context) (*deck.FacetAnalytics, error)) tea.Cmd {
-	return func() tea.Msg {
-		analytics, err := loadFn(context.Background())
-		return facetAnalyticsLoadedMsg{analytics: analytics, err: err}
-	}
-}
-
-func loadAnalyticsDayCmd(query deck.Querier, filters deck.Filters, dateStr string) tea.Cmd {
-	return func() tea.Msg {
-		dayRange, err := parseAnalyticsDay(dateStr)
-		if err != nil {
-			return analyticsDayLoadedMsg{date: dateStr, err: err}
-		}
-		filtered := filters
-		filtered.Since = 0
-		filtered.From = &dayRange.from
-		filtered.To = &dayRange.to
-		overview, err := query.Overview(context.Background(), filtered)
-		return analyticsDayLoadedMsg{date: dateStr, overview: overview, err: err}
-	}
-}
-
 func loadSessionCmd(query deck.Querier, sessionID string, keepUI bool) tea.Cmd {
 	return func() tea.Msg {
 		detail, err := query.SessionDetail(context.Background(), sessionID)
@@ -998,9 +811,6 @@ func (m deckModel) refreshCmd() tea.Cmd {
 	}
 	if m.view == viewSession && m.detail != nil {
 		return loadSessionCmd(m.query, m.detail.Summary.ID, true)
-	}
-	if m.view == viewAnalytics {
-		return loadAnalyticsCmd(m.query, m.filters)
 	}
 	return nil
 }

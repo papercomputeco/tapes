@@ -19,6 +19,9 @@ import (
 
 const providerOllama = "ollama"
 
+// LLMCallFunc is the signature for an LLM inference call.
+type LLMCallFunc func(ctx context.Context, prompt string) (string, error)
+
 // LLMCallerConfig holds configuration for creating an LLM caller.
 type LLMCallerConfig struct {
 	Provider string               // "openai", "anthropic", or "ollama"
@@ -76,7 +79,7 @@ func NewLLMCaller(cfg LLMCallerConfig) (LLMCallFunc, error) {
 
 	// If no key found and provider is not explicitly ollama, fall back to ollama
 	if apiKey == "" && provider != providerOllama {
-		log.Warn("facets: no API key found, falling back to ollama", "provider", provider)
+		log.Warn("llm: no API key found, falling back to ollama", "provider", provider)
 		provider = providerOllama
 	}
 

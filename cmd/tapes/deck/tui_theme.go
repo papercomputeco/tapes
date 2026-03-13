@@ -85,7 +85,6 @@ var (
 	deckTabActiveStyle   lipgloss.Style
 	deckTabInactiveStyle lipgloss.Style
 	deckBackgroundStyle  lipgloss.Style
-	facetDescStyle       lipgloss.Style
 )
 
 // Model color schemes by provider — dark and light variants per tier.
@@ -208,5 +207,4 @@ func applyPalette(p deckPalette) {
 	deckTabActiveStyle = lipgloss.NewStyle().Bold(true).Foreground(colorForeground)
 	deckTabInactiveStyle = lipgloss.NewStyle().Foreground(colorBrightBlack)
 	deckBackgroundStyle = lipgloss.NewStyle().Background(colorBaseBg)
-	facetDescStyle = lipgloss.NewStyle().Foreground(colorLabel).Italic(true)
 }

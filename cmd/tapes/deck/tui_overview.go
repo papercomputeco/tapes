@@ -63,14 +63,10 @@ func (m deckModel) overviewChrome() (above string, footer string) {
 		header3 := renderHeaderLine(m.width, sessionCount, cassetteLines[2])
 
 		metrics := m.viewMetrics(stats)
-		insights := m.viewInsights(stats)
 		costByModel := m.viewCostByModel(stats)
 
 		lines = append(lines, header1, header2, header3, renderRule(m.width), "")
 		lines = append(lines, metrics)
-		if insights != "" {
-			lines = append(lines, "", insights)
-		}
 		lines = append(lines, "", costByModel, "")
 	} else {
 		sessionCount := deckMutedStyle.Render(fmt.Sprintf("%d sessions", len(allSessions)))
@@ -492,38 +488,6 @@ func countByStatusInStats(stats deckOverviewStats, status string) int {
 	default:
 		return 0
 	}
-}
-
-func (m deckModel) viewInsights(stats deckOverviewStats) string {
-	if stats.TotalSessions == 0 {
-		return deckMutedStyle.Render("insights: no data")
-	}
-
-	total := max(1, stats.TotalSessions)
-	completedPct := safeDivide(float64(stats.Completed), float64(total))
-	failedPct := safeDivide(float64(stats.Failed), float64(total))
-	abandonedPct := safeDivide(float64(stats.Abandoned), float64(total))
-
-	completedLabel := fmt.Sprintf("%s %s (%d)", statusStyleFor(deck.StatusCompleted).Render("●"), formatPercent(completedPct), stats.Completed)
-	failedLabel := fmt.Sprintf("%s %s (%d)", statusStyleFor(deck.StatusFailed).Render("●"), formatPercent(failedPct), stats.Failed)
-	abandonedLabel := fmt.Sprintf("%s %s (%d)", statusStyleFor(deck.StatusAbandoned).Render("●"), formatPercent(abandonedPct), stats.Abandoned)
-	outcomes := fmt.Sprintf("outcomes: %s · %s · %s", completedLabel, failedLabel, abandonedLabel)
-
-	costPerSession := safeDivide(stats.TotalCost, float64(total))
-	costPerMin := costPerMinute(stats.TotalCost, stats.TotalDuration)
-	tokensPerMin := tokensPerMinute(stats.InputTokens+stats.OutputTokens, stats.TotalDuration)
-	efficiency := fmt.Sprintf("efficiency: %s/session · %s/min · %s tok/min", formatCost(costPerSession), formatCost(costPerMin), formatTokens(tokensPerMin))
-
-	avgTools := safeDivide(float64(stats.TotalToolCalls), float64(total))
-	tools := fmt.Sprintf("tools: %d total · %.1f avg/session", stats.TotalToolCalls, avgTools)
-
-	lines := []string{
-		deckMutedStyle.Render(outcomes),
-		deckMutedStyle.Render(efficiency),
-		deckMutedStyle.Render(tools),
-	}
-
-	return strings.Join(lines, "\n")
 }
 
 func (m deckModel) viewSessionList(availableHeight int) string {

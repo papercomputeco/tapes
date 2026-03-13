@@ -24,14 +24,6 @@ func (m *mockQuerier) SessionDetail(_ context.Context, id string) (*deck.Session
 	return m.details[id], nil
 }
 
-func (m *mockQuerier) AnalyticsOverview(_ context.Context, _ deck.Filters) (*deck.AnalyticsOverview, error) {
-	return &deck.AnalyticsOverview{ProviderBreakdown: map[string]int{}}, nil
-}
-
-func (m *mockQuerier) SessionAnalytics(_ context.Context, _ string) (*deck.SessionAnalytics, error) {
-	return &deck.SessionAnalytics{}, nil
-}
-
 var _ = Describe("Generator", func() {
 	It("generates a skill from a single conversation hash", func() {
 		querier := &mockQuerier{
