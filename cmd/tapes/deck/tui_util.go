@@ -831,14 +831,6 @@ func padRight(value string, width int) string {
 	return value + strings.Repeat(" ", width-visualWidth)
 }
 
-// padPanelLines pads every line in-place to a consistent visual width.
-// This ensures joinColumns aligns right panels correctly.
-func padPanelLines(lines []string, width int) {
-	for i, line := range lines {
-		lines[i] = padRight(line, width)
-	}
-}
-
 func padRightWithColor(coloredValue string, width int) string {
 	// Use lipgloss.Width to get the visual width (without ANSI codes)
 	visualWidth := lipgloss.Width(coloredValue)
@@ -915,22 +907,6 @@ func safeDivide(value, divisor float64) float64 {
 		return 0
 	}
 	return value / divisor
-}
-
-func costPerMinute(totalCost float64, duration time.Duration) float64 {
-	minutes := duration.Minutes()
-	if minutes <= 0 {
-		return 0
-	}
-	return totalCost / minutes
-}
-
-func tokensPerMinute(tokens int64, duration time.Duration) int64 {
-	minutes := duration.Minutes()
-	if minutes <= 0 {
-		return 0
-	}
-	return int64(float64(tokens) / minutes)
 }
 
 func formatTokensDetail(value int64) string {

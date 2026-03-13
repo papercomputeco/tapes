@@ -38,23 +38,23 @@ Examples:
 )
 
 type deckCommander struct {
-	sqlitePath       string
-	pricingPath      string
-	since            string
-	from             string
-	to               string
-	sort             string
-	sortDir          string
-	model            string
-	status           string
-	project          string
-	session          string
-	refresh          uint
-	web              bool
-	port             int
-	demo      bool
-	overwrite bool
-	theme string
+	sqlitePath  string
+	pricingPath string
+	since       string
+	from        string
+	to          string
+	sort        string
+	sortDir     string
+	model       string
+	status      string
+	project     string
+	session     string
+	refresh     uint
+	web         bool
+	port        int
+	demo        bool
+	overwrite   bool
+	theme       string
 }
 
 func NewDeckCmd() *cobra.Command {

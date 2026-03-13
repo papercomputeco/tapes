@@ -168,7 +168,6 @@ var _ = Describe("Empty-model cost fallback", func() {
 	})
 })
 
-
 var _ = Describe("buildCandidateIndex", func() {
 	It("indexes candidates by session ID", func() {
 		candidates := []sessionCandidate{
