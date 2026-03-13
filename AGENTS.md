@@ -49,3 +49,27 @@ The project uses a Makefile for all build and dev operations. Utilize `make help
 to see all available commands.
 
 Build artifacts land in the `build/` directory.
+
+### PR and Commit Conventions
+
+PR titles are validated by CI (`ghcontrib check-pull-request`) and feed into
+auto-generated release notes. Use this format:
+
+```
+<emoji> <type>: <Short description>
+```
+
+| Type    | Emoji | When to use                        |
+|---------|-------|------------------------------------|
+| `feat`  | ✨    | New functionality                  |
+| `fix`   | 🐛    | Bug fix                            |
+| `chore` | 🧹    | Maintenance, CI, deps, cleanup     |
+| `perf`  | ⚡    | Performance improvement            |
+
+Examples:
+- `✨ feat: Add 24h time period to tapes deck`
+- `🐛 fix: Correct streaming model loss`
+- `🧹 chore: Add GPT Codex model pricing`
+
+Squash-merge commits inherit the PR title, so the PR title **is** the commit
+message that lands on `main`.
