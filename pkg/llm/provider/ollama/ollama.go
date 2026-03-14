@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
+	"github.com/papercomputeco/tapes/pkg/llm/provider/openai"
 )
 
 // Provider implements the Provider interface for Ollama's API.
@@ -22,8 +23,9 @@ func (o *Provider) DefaultStreaming() bool {
 
 func (o *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 	var req ollamaRequest
+	// If we have trouble decoding the Parse Request initially, let's try falling back to OpenAI format
 	if err := json.Unmarshal(payload, &req); err != nil {
-		return nil, err
+		return openai.ParseRequestPayload(payload)
 	}
 
 	messages := make([]llm.Message, 0, len(req.Messages))
@@ -107,8 +109,9 @@ func (o *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 
 func (o *Provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 	var resp ollamaResponse
+	// If we have trouble decoding the Parse Request initially, let's try falling back to OpenAI format
 	if err := json.Unmarshal(payload, &resp); err != nil {
-		return nil, err
+		return openai.ParseResponsePayload(payload)
 	}
 
 	// Convert message content

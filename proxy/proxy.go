@@ -536,6 +536,11 @@ func (p *Proxy) extractUsageFromSSE(data []byte, providerName string, usage *llm
 			usage.PromptTokens = jsonInt(chunkData, "prompt_eval_count")
 			usage.CompletionTokens = jsonInt(chunkData, "eval_count")
 		}
+		// In some cases, Ollama matches openAI formats (e.g. with OpenCode)
+		if u, ok := chunkData["usage"].(map[string]any); ok {
+			usage.PromptTokens = jsonInt(u, "prompt_tokens")
+			usage.CompletionTokens = jsonInt(u, "completion_tokens")
+		}
 	}
 }
 
