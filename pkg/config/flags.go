@@ -54,10 +54,13 @@ const (
 	FlagKafkaClientID     = "kafka-client-id"
 	FlagTelemetryDisabled = "telemetry-disabled"
 
+	FlagIngestListen = "ingest-listen"
+
 	// Standalone subcommand variants use "listen" as the flag name
 	// but bind to different viper keys depending on the service.
-	FlagProxyListenStandalone = "proxy-listen-standalone"
-	FlagAPIListenStandalone   = "api-listen-standalone"
+	FlagProxyListenStandalone  = "proxy-listen-standalone"
+	FlagAPIListenStandalone    = "api-listen-standalone"
+	FlagIngestListenStandalone = "ingest-listen-standalone"
 )
 
 // AddStringFlag registers a string flag on cmd from the given FlagSet.
