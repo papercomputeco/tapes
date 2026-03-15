@@ -10,6 +10,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/vector"
 	"github.com/papercomputeco/tapes/pkg/vector/chroma"
+	"github.com/papercomputeco/tapes/pkg/vector/pgvector"
 	"github.com/papercomputeco/tapes/pkg/vector/qdrant"
 	"github.com/papercomputeco/tapes/pkg/vector/sqlitevec"
 )
@@ -29,6 +30,8 @@ func NewVectorDriver(o *NewVectorDriverOpts) (vector.Driver, error) {
 		return newSqliteVecDriver(o)
 	case "qdrant":
 		return newQdrantDriver(o)
+	case "pgvector":
+		return newPgvectorDriver(o)
 	default:
 		return nil, fmt.Errorf("unsupported vector store provider: %s", o.ProviderType)
 	}
@@ -91,5 +94,16 @@ func newQdrantDriver(o *NewVectorDriverOpts) (vector.Driver, error) {
 		APIKey:     apiKey,
 		UseTLS:     useTLS,
 		Dimensions: uint64(o.Dimensions),
+	}, o.Logger)
+}
+
+func newPgvectorDriver(o *NewVectorDriverOpts) (vector.Driver, error) {
+	if o.Target == "" {
+		return nil, errors.New("pgvector target connection string must be provided")
+	}
+
+	return pgvector.NewDriver(pgvector.Config{
+		ConnString: o.Target,
+		Dimensions: o.Dimensions,
 	}, o.Logger)
 }
