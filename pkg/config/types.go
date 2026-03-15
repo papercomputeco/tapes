@@ -7,6 +7,7 @@ type Config struct {
 	Storage     StorageConfig     `toml:"storage"       mapstructure:"storage"`
 	Proxy       ProxyConfig       `toml:"proxy"         mapstructure:"proxy"`
 	API         APIConfig         `toml:"api"           mapstructure:"api"`
+	Ingest      IngestConfig      `toml:"ingest"        mapstructure:"ingest"`
 	Client      ClientConfig      `toml:"client"        mapstructure:"client"`
 	VectorStore VectorStoreConfig `toml:"vector_store"  mapstructure:"vector_store"`
 	Embedding   EmbeddingConfig   `toml:"embedding"     mapstructure:"embedding"`
@@ -30,6 +31,11 @@ type ProxyConfig struct {
 
 // APIConfig holds API server settings.
 type APIConfig struct {
+	Listen string `toml:"listen,omitempty" mapstructure:"listen"`
+}
+
+// IngestConfig holds ingest server settings for sidecar mode.
+type IngestConfig struct {
 	Listen string `toml:"listen,omitempty" mapstructure:"listen"`
 }
 
@@ -75,6 +81,7 @@ var configKeySet = map[string]bool{
 	"proxy.listen":          true,
 	"proxy.project":         true,
 	"api.listen":            true,
+	"ingest.listen":         true,
 	"client.proxy_target":   true,
 	"client.api_target":     true,
 	"vector_store.provider": true,

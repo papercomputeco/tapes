@@ -1,10 +1,11 @@
 package config
 
 const (
-	defaultProvider    = "ollama"
-	defaultUpstream    = "http://localhost:11434"
-	defaultProxyListen = ":8080"
-	defaultAPIListen   = ":8081"
+	defaultProvider     = "ollama"
+	defaultUpstream     = "http://localhost:11434"
+	defaultProxyListen  = ":8080"
+	defaultAPIListen    = ":8081"
+	defaultIngestListen = ":8090"
 
 	defaultClientProxyTarget = "http://localhost:8080"
 	defaultClientAPITarget   = "http://localhost:8081"
@@ -28,6 +29,9 @@ func NewDefaultConfig() *Config {
 		},
 		API: APIConfig{
 			Listen: defaultAPIListen,
+		},
+		Ingest: IngestConfig{
+			Listen: defaultIngestListen,
 		},
 		Client: ClientConfig{
 			ProxyTarget: defaultClientProxyTarget,

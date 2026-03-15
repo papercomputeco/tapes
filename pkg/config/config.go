@@ -67,6 +67,7 @@ func ValidConfigKeys() []string {
 		"proxy.listen",
 		"proxy.project",
 		"api.listen",
+		"ingest.listen",
 		"client.proxy_target",
 		"client.api_target",
 		"vector_store.provider",
