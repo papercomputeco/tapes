@@ -38,7 +38,7 @@ jobs:
           dagger call \
             build-push-image \
               --registry=${{ vars.REGISTRY }} \
-              --tags="${{ github.even.release.tag_name }}" \
+              --tags="${{ github.event.release.tag_name }}" \
               --tags="latest" \
               --version="${{ github.event.release.tag_name }}" \
               --commit="${{ github.sha }}" \
