@@ -30,24 +30,24 @@ func ResolveSQLitePath(override string) (string, error) {
 
 func sqliteCandidates() []string {
 	candidates := []string{
-		"tapes.db",
 		"tapes.sqlite",
-		filepath.Join(".tapes", "tapes.db"),
+		"tapes.db",
 		filepath.Join(".tapes", "tapes.sqlite"),
+		filepath.Join(".tapes", "tapes.db"),
 	}
 
 	home, err := os.UserHomeDir()
 	if err == nil {
 		candidates = append([]string{
-			filepath.Join(home, ".tapes", "tapes.db"),
 			filepath.Join(home, ".tapes", "tapes.sqlite"),
+			filepath.Join(home, ".tapes", "tapes.db"),
 		}, candidates...)
 	}
 
 	if xdgHome := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); xdgHome != "" {
 		candidates = append([]string{
-			filepath.Join(xdgHome, "tapes", "tapes.db"),
 			filepath.Join(xdgHome, "tapes", "tapes.sqlite"),
+			filepath.Join(xdgHome, "tapes", "tapes.db"),
 		}, candidates...)
 	}
 

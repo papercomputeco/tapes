@@ -96,7 +96,7 @@ func (c *syncCommander) resolveSQLitePath() string {
 		return path
 	}
 
-	return "tapes.db"
+	return "tapes.sqlite"
 }
 
 func (c *syncCommander) resolveClaudeDir() string {

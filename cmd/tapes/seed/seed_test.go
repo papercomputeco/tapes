@@ -45,7 +45,7 @@ var _ = Describe("seed command", func() {
 		Expect(os.Setenv("TAPES_SQLITE", "")).To(Succeed())
 		Expect(os.Chdir(baseDir)).To(Succeed())
 
-		dbPath := filepath.Join(baseDir, "tapes.db")
+		dbPath := filepath.Join(baseDir, "tapes.sqlite")
 		driver, err := sqlite.NewDriver(ctx, dbPath)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(driver.Migrate(ctx)).To(Succeed())

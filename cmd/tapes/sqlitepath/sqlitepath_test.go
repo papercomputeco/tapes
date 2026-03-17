@@ -44,6 +44,35 @@ var _ = Describe("ResolveSQLitePath", func() {
 		Expect(path).To(Equal("/tmp/custom.db"))
 	})
 
+	It("prefers ~/.tapes/tapes.sqlite over tapes.db when both exist", func() {
+		homeDir, err := os.MkdirTemp("", "tapes-home-*")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			_ = os.RemoveAll(homeDir)
+		})
+
+		tmpDir, err := os.MkdirTemp("", "tapes-cwd-*")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			_ = os.RemoveAll(tmpDir)
+		})
+
+		Expect(os.Setenv("HOME", homeDir)).To(Succeed())
+		Expect(os.Setenv("XDG_DATA_HOME", "")).To(Succeed())
+		Expect(os.Setenv("TAPES_DB", "")).To(Succeed())
+		Expect(os.Setenv("TAPES_SQLITE", "")).To(Succeed())
+		Expect(os.Chdir(tmpDir)).To(Succeed())
+
+		tapesDir := filepath.Join(homeDir, ".tapes")
+		Expect(os.MkdirAll(tapesDir, 0o755)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(tapesDir, "tapes.db"), []byte("demo"), 0o644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(tapesDir, "tapes.sqlite"), []byte("real"), 0o644)).To(Succeed())
+
+		path, err := ResolveSQLitePath("")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(path).To(Equal(filepath.Join(tapesDir, "tapes.sqlite")))
+	})
+
 	It("resolves ~/.tapes/tapes.db when present", func() {
 		homeDir, err := os.MkdirTemp("", "tapes-home-*")
 		Expect(err).NotTo(HaveOccurred())

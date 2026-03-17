@@ -28,7 +28,7 @@ services:
     command: >-
       serve
       --upstream http://ollama:11434
-      --sqlite /data/tapes.db
+      --sqlite /data/tapes.sqlite
       --vector-store-provider chroma
       --vector-store-target http://chromadb:8000
       --embedding-provider ollama
