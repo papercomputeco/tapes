@@ -84,10 +84,6 @@ Use subcommands to run individual services or all services together:
   tapes serve proxy      Run just the proxy server
   tapes serve ingest     Run just the ingest server (sidecar mode)
 
-Pass --ingest-listen/-i to also start the ingest server alongside the proxy and API.
-The ingest server accepts completed LLM conversation turns from an external gateway
-(e.g., Envoy AI Gateway) for storage in the Merkle DAG.
-
 Optionally configure vector storage and embeddings of text content for "tapes search"
 agentic functionality.`
 
@@ -290,31 +286,24 @@ func (c *ServeCommander) run() error {
 	)
 
 	// Optionally create ingest server for sidecar mode
-	var ingestServer *ingest.Server
-	if c.ingestListen != "" {
-		ingestConfig := ingest.Config{
-			ListenAddr:   c.ingestListen,
-			VectorDriver: proxyConfig.VectorDriver,
-			Embedder:     proxyConfig.Embedder,
-			Project:      c.project,
-		}
-		ingestServer, err = ingest.New(ingestConfig, driver, c.logger)
-		if err != nil {
-			return fmt.Errorf("creating ingest server: %w", err)
-		}
-		defer ingestServer.Close()
-
-		c.logger.Info("starting ingest server",
-			"ingest_addr", c.ingestListen,
-		)
+	ingestConfig := ingest.Config{
+		ListenAddr:   c.ingestListen,
+		VectorDriver: proxyConfig.VectorDriver,
+		Embedder:     proxyConfig.Embedder,
+		Project:      c.project,
 	}
+	ingestServer, err := ingest.New(ingestConfig, driver, c.logger)
+	if err != nil {
+		return fmt.Errorf("creating ingest server: %w", err)
+	}
+	defer ingestServer.Close()
+
+	c.logger.Info("starting ingest server",
+		"ingest_addr", c.ingestListen,
+	)
 
 	// Channel to capture errors from goroutines
-	serverCount := 2
-	if ingestServer != nil {
-		serverCount = 3
-	}
-	errChan := make(chan error, serverCount)
+	errChan := make(chan error, 3)
 
 	// Start proxy in goroutine
 	go func() {
@@ -330,14 +319,11 @@ func (c *ServeCommander) run() error {
 		}
 	}()
 
-	// Start ingest server in goroutine if configured
-	if ingestServer != nil {
-		go func() {
-			if err := ingestServer.Run(); err != nil {
-				errChan <- fmt.Errorf("ingest server error: %w", err)
-			}
-		}()
-	}
+	go func() {
+		if err := ingestServer.Run(); err != nil {
+			errChan <- fmt.Errorf("ingest server error: %w", err)
+		}
+	}()
 
 	// Wait for interrupt signal or error
 	sigChan := make(chan os.Signal, 1)

@@ -12,7 +12,7 @@ import (
 
 // Config is the ingest server configuration.
 type Config struct {
-	// ListenAddr is the address to listen on (e.g., ":8090")
+	// ListenAddr is the address to listen on (e.g., ":8082")
 	ListenAddr string
 
 	// VectorDriver is an optional vector store for storing embeddings.

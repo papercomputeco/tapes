@@ -75,6 +75,9 @@ func setViperDefaults(v *viper.Viper) {
 	// API
 	v.SetDefault("api.listen", d.API.Listen)
 
+	// Ingest
+	v.SetDefault("ingest.listen", d.Ingest.Listen)
+
 	// Client
 	v.SetDefault("client.proxy_target", d.Client.ProxyTarget)
 	v.SetDefault("client.api_target", d.Client.APITarget)

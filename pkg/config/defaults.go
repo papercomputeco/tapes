@@ -5,7 +5,7 @@ const (
 	defaultUpstream     = "http://localhost:11434"
 	defaultProxyListen  = ":8080"
 	defaultAPIListen    = ":8081"
-	defaultIngestListen = ":8090"
+	defaultIngestListen = ":8082"
 
 	defaultClientProxyTarget = "http://localhost:8080"
 	defaultClientAPITarget   = "http://localhost:8081"

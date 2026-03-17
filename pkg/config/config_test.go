@@ -508,6 +508,9 @@ listen = ":7070"
 				API: config.APIConfig{
 					Listen: ":9091",
 				},
+				Ingest: config.IngestConfig{
+					Listen: ":8090",
+				},
 				Client: config.ClientConfig{
 					ProxyTarget: "http://myhost:9090",
 					APITarget:   "http://myhost:9091",
