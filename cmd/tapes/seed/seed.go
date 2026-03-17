@@ -80,10 +80,5 @@ func (c *seedCommander) resolveSQLitePath() string {
 		return deck.DemoSQLitePath
 	}
 
-	path, err := sqlitepath.ResolveSQLitePath("")
-	if err == nil {
-		return path
-	}
-
-	return "tapes.sqlite"
+	return sqlitepath.ResolveSQLitePathWithFallback("")
 }

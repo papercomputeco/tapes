@@ -7,6 +7,17 @@ import (
 	"strings"
 )
 
+// ResolveSQLitePathWithFallback resolves the SQLite path with a default
+// fallback of "tapes.sqlite" when no database is found.
+func ResolveSQLitePathWithFallback(override string) string {
+	path, err := ResolveSQLitePath(override)
+	if err == nil {
+		return path
+	}
+
+	return "tapes.sqlite"
+}
+
 func ResolveSQLitePath(override string) (string, error) {
 	if override != "" {
 		return override, nil
