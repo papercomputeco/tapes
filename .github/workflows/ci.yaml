@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  DAGGER_VERSION: "0.20.0"
+  DAGGER_VERSION: "0.20.1"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

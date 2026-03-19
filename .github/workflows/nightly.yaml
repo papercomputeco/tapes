@@ -11,7 +11,7 @@ permissions:
   id-token: write
 
 env:
-  DAGGER_VERSION: "0.20.0"
+  DAGGER_VERSION: "0.20.1"
 
 jobs:
   check:
