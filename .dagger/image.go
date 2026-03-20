@@ -3,18 +3,16 @@ package main
 import (
 	"context"
 	"fmt"
-	"strings"
-	"time"
 
 	"dagger/tapes/internal/dagger"
 )
 
 const (
-	dockerfile = "dockerfiles/tapes.Dockerfile"
-	imageName  = "tapes"
+	imageName    = "tapes"
+	runtimeImage = "gcr.io/distroless/base-debian12:nonroot"
 )
 
-// BuildImages returns just in time images, ready for publishing or exporting to host.
+// BuildImages builds multi-arch container images for tapes using "BuildRelease"
 func (t *Tapes) BuildImages(
 	ctx context.Context,
 
@@ -23,39 +21,53 @@ func (t *Tapes) BuildImages(
 
 	// Git commit SHA for ldflags
 	commit string,
+
+	// PostHog telemetry public API key (write-only). Empty disables telemetry.
+	// +optional
+	postHogPublicKey string,
 ) []*dagger.Container {
-	buildtime := time.Now()
-	ldflags := strings.Join([]string{
-		"-s",
-		"-w",
-		fmt.Sprintf("-X 'github.com/papercomputeco/tapes/pkg/utils.Version=%s'", version),
-		fmt.Sprintf("-X 'github.com/papercomputeco/tapes/pkg/utils.Sha=%s'", commit),
-		fmt.Sprintf("-X 'github.com/papercomputeco/tapes/pkg/utils.Buildtime=%s'", buildtime),
-	}, " ")
+	artifacts := t.BuildRelease(ctx, version, commit, postHogPublicKey, "")
 
-	amd64 := t.Source.DockerBuild(dagger.DirectoryDockerBuildOpts{
-		Dockerfile: dockerfile,
-		Platform:   "linux/amd64",
-		BuildArgs: []dagger.BuildArg{
-			{Name: "LDFLAGS", Value: ldflags},
-		},
-	})
-	arm64 := t.Source.DockerBuild(dagger.DirectoryDockerBuildOpts{
-		Dockerfile: dockerfile,
-		Platform:   "linux/arm64",
-		BuildArgs: []dagger.BuildArg{
-			{Name: "LDFLAGS", Value: ldflags},
-		},
-	})
-
-	return []*dagger.Container{
-		amd64,
-		arm64,
+	platforms := []struct {
+		platform dagger.Platform
+		path     string
+	}{
+		{"linux/amd64", "linux/amd64/tapes"},
+		{"linux/arm64", "linux/arm64/tapes"},
 	}
+
+	images := make([]*dagger.Container, 0, len(platforms))
+	for _, p := range platforms {
+		image := t.packageTapesImage(artifacts.File(p.path), p.platform)
+		images = append(images, image)
+	}
+
+	return images
 }
 
-// BuildPushImage builds a multi-arch image for tapes
-// using the existing Dockerfile and publishes to the provided registry.
+// packageTapesImage wraps a compiled tapes binary into a distroless runtime
+// container tagged for the correct platform.
+//
+// gcr.io/distroless/base-debian12:nonroot provides glibc + CA certs without a
+// shell. The :nonroot variant sets the default user to uid/gid 65532.
+// No -static linking is required because glibc is present at runtime.
+func (t *Tapes) packageTapesImage(binary *dagger.File, platform dagger.Platform) *dagger.Container {
+	return dag.Container(dagger.ContainerOpts{Platform: platform}).
+		From(runtimeImage).
+		// Pre-create /data owned by nonroot so SQLite has a writable home.
+		WithDirectory("/data", dag.Directory(), dagger.ContainerWithDirectoryOpts{
+			Owner: "65532:65532",
+		}).
+		WithFile("/app/tapes", binary, dagger.ContainerWithFileOpts{
+			Permissions: 0755,
+			Owner:       "65532:65532",
+		}).
+		WithExposedPort(8080).
+		WithEntrypoint([]string{"/app/tapes"})
+}
+
+// BuildPushImage builds a multi-arch image for tapes and publishes to the
+// provided registry.
 //
 // Image naming convention: <registry>/tapes:<tag>
 // For example: 123.dkr.ecr.us-east-1.amazonaws.com/paper/tapes:v1.0.0
@@ -73,9 +85,13 @@ func (t *Tapes) BuildPushImage(
 
 	// Git commit SHA for ldflags
 	commit string,
+
+	// PostHog telemetry public API key (write-only). Empty disables telemetry.
+	// +optional
+	postHogPublicKey string,
 ) ([]string, error) {
 	published := []string{}
-	images := t.BuildImages(ctx, version, commit)
+	images := t.BuildImages(ctx, version, commit, postHogPublicKey)
 
 	for _, tag := range tags {
 		ref := fmt.Sprintf("%s/%s:%s", registry, imageName, tag)

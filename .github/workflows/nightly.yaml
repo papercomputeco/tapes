@@ -83,6 +83,7 @@ jobs:
               --tags="nightly" \
               --version="nightly" \
               --commit="${{ github.sha }}" \
+              --post-hog-public-key="${{ secrets.POSTHOG_API_KEY }}" \
         env:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
