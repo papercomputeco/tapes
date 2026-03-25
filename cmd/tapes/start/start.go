@@ -64,14 +64,16 @@ Examples:
 )
 
 type startCommander struct {
-	debug       bool
-	configDir   string
-	logs        bool
-	daemon      bool
-	provider    string
-	model       string
-	project     string
-	postgresDSN string
+	debug         bool
+	configDir     string
+	logs          bool
+	daemon        bool
+	provider      string
+	model         string
+	project       string
+	postgresDSN   string
+	daemonTimeout time.Duration   // timeout for waitForDaemon; 0 means 30s default
+	daemonDone    <-chan struct{} // closed when daemon child process exits; nil if not tracking
 }
 
 type startConfig struct {
@@ -597,21 +599,40 @@ func (c *startCommander) spawnDaemon(ctx context.Context, manager *start.Manager
 		_ = logFile.Close()
 		return fmt.Errorf("starting daemon: %w", err)
 	}
+
+	done := make(chan struct{})
 	go func() {
 		_ = cmd.Wait()
+		close(done)
 	}()
+	c.daemonDone = done
+
 	return logFile.Close()
 }
 
 func (c *startCommander) waitForDaemon(ctx context.Context, manager *start.Manager) (*start.State, error) {
-	deadline := time.After(15 * time.Second)
+	timeout := c.daemonTimeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	deadline := time.After(timeout)
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-deadline:
-			return nil, errors.New("timed out waiting for daemon")
+			return nil, errors.New("timed out waiting for daemon: the daemon process did not become healthy within 30 seconds; check logs with 'tapes start --logs'")
 		default:
+		}
+
+		// Channel-based crash detection: if the daemon child exited, fail fast
+		// instead of polling until timeout.
+		if c.daemonDone != nil {
+			select {
+			case <-c.daemonDone:
+				return nil, errors.New("daemon process exited during startup; check logs with 'tapes start --logs'")
+			default:
+			}
 		}
 
 		lock, err := manager.Lock()

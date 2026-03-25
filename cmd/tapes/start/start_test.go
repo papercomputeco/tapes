@@ -261,6 +261,89 @@ var _ = Describe("parseStartArgs", func() {
 	)
 })
 
+var _ = Describe("waitForDaemon", func() {
+	var (
+		tmpDir  string
+		manager *start.Manager
+	)
+
+	BeforeEach(func() {
+		var err error
+		tmpDir, err = os.MkdirTemp("", "tapes-wait-daemon-*")
+		Expect(err).NotTo(HaveOccurred())
+		manager, err = start.NewManager(tmpDir)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	AfterEach(func() {
+		Expect(os.RemoveAll(tmpDir)).To(Succeed())
+	})
+
+	It("returns state when daemon becomes healthy within timeout", func() {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		DeferCleanup(server.Close)
+
+		// Simulate daemon writing state after a short delay.
+		go func() {
+			defer GinkgoRecover()
+			time.Sleep(200 * time.Millisecond)
+			lock, lockErr := manager.Lock()
+			Expect(lockErr).NotTo(HaveOccurred())
+			saveErr := manager.SaveState(&start.State{
+				DaemonPID: os.Getpid(),
+				APIURL:    server.URL,
+				ProxyURL:  server.URL,
+			})
+			Expect(saveErr).NotTo(HaveOccurred())
+			Expect(lock.Release()).To(Succeed())
+		}()
+
+		cmder := &startCommander{configDir: tmpDir, daemonTimeout: 5 * time.Second}
+		state, err := cmder.waitForDaemon(context.Background(), manager)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(state).NotTo(BeNil())
+		Expect(state.APIURL).To(Equal(server.URL))
+	})
+
+	It("times out when daemon never becomes healthy", func() {
+		cmder := &startCommander{configDir: tmpDir, daemonTimeout: 1 * time.Second}
+		began := time.Now()
+		_, err := cmder.waitForDaemon(context.Background(), manager)
+		elapsed := time.Since(began)
+
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("timed out"))
+		Expect(err.Error()).To(ContainSubstring("tapes start --logs"))
+		Expect(elapsed).To(BeNumerically("<", 3*time.Second))
+	})
+
+	It("returns error quickly when daemonDone channel is closed", func() {
+		done := make(chan struct{})
+		close(done)
+
+		cmder := &startCommander{configDir: tmpDir, daemonTimeout: 10 * time.Second, daemonDone: done}
+		began := time.Now()
+		_, err := cmder.waitForDaemon(context.Background(), manager)
+		elapsed := time.Since(began)
+
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("daemon process exited"))
+		Expect(err.Error()).To(ContainSubstring("tapes start --logs"))
+		Expect(elapsed).To(BeNumerically("<", 2*time.Second))
+	})
+
+	It("respects context cancellation", func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		cmder := &startCommander{configDir: tmpDir, daemonTimeout: 10 * time.Second}
+		_, err := cmder.waitForDaemon(ctx, manager)
+		Expect(err).To(MatchError(context.Canceled))
+	})
+})
+
 var _ = Describe("stateHealthy", func() {
 	It("returns false when state is nil", func() {
 		Expect(stateHealthy(context.Background(), nil)).To(BeFalse())
