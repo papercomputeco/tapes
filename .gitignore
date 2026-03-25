@@ -17,3 +17,6 @@
 
 # HumanLayer
 .humanlayer/
+
+# Claude Code
+.claude/
