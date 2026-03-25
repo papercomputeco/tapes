@@ -395,17 +395,9 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 	proxyURL := "http://" + proxyListener.Addr().String()
 	apiURL := "http://" + apiListener.Addr().String()
 
-	state := &start.State{
-		DaemonPID:        os.Getpid(),
-		ProxyURL:         proxyURL,
-		APIURL:           apiURL,
-		ShutdownWhenIdle: shutdownWhenIdle,
-		LogPath:          manager.LogPath,
-	}
-	if err := manager.SaveState(state); err != nil {
-		return err
-	}
-
+	// Release the lock after binding listeners. We only needed exclusive access
+	// to prevent duplicate daemon spawns. The defer on lock.Release is kept as
+	// a safety net (double-release is safe).
 	if err := lock.Release(); err != nil {
 		return err
 	}
@@ -487,6 +479,22 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 			errChan <- fmt.Errorf("api error: %w", err)
 		}
 	}()
+
+	// Write state AFTER server goroutines are launched — this is the fix for PCC-281.
+	// The listeners are already bound (ports allocated), so the kernel TCP backlog
+	// accepts incoming connections even before the goroutines call Accept(). This
+	// means /ping requests from waitForDaemon will queue and be served once the
+	// event loop starts, rather than getting "connection refused."
+	state := &start.State{
+		DaemonPID:        os.Getpid(),
+		ProxyURL:         proxyURL,
+		APIURL:           apiURL,
+		ShutdownWhenIdle: shutdownWhenIdle,
+		LogPath:          manager.LogPath,
+	}
+	if err := manager.SaveState(state); err != nil {
+		return err
+	}
 
 	if shutdownWhenIdle {
 		go c.monitorIdle(manager, log, errChan)
