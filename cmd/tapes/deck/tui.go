@@ -28,8 +28,6 @@ type timePeriod int
 const (
 	period24h timePeriod = iota
 	period30d
-	period3m
-	period6m
 )
 
 const (
@@ -171,10 +169,6 @@ func newDeckModel(query deck.Querier, filters deck.Filters, overview *deck.Overv
 	period := period30d
 	if filters.Since > 0 {
 		switch {
-		case filters.Since >= 180*24*time.Hour:
-			period = period6m
-		case filters.Since >= 90*24*time.Hour:
-			period = period3m
 		case filters.Since >= 30*24*time.Hour:
 			period = period30d
 		default:
@@ -589,7 +583,7 @@ func (m deckModel) enterSession() (tea.Model, tea.Cmd) {
 }
 
 func (m deckModel) cyclePeriod() (tea.Model, tea.Cmd) {
-	m.timePeriod = (m.timePeriod + 1) % 4
+	m.timePeriod = (m.timePeriod + 1) % 2
 	m.filters.Since = periodToDuration(m.timePeriod)
 	return m, loadOverviewCmd(m.query, m.filters)
 }

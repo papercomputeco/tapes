@@ -44,10 +44,6 @@ func periodToDuration(p timePeriod) time.Duration {
 		return 24 * time.Hour
 	case period30d:
 		return 30 * 24 * time.Hour
-	case period3m:
-		return 90 * 24 * time.Hour
-	case period6m:
-		return 180 * 24 * time.Hour
 	default:
 		return 30 * 24 * time.Hour
 	}
@@ -59,10 +55,6 @@ func periodToLabel(p timePeriod) string {
 		return "24h"
 	case period30d:
 		return "30d"
-	case period3m:
-		return "3M"
-	case period6m:
-		return "6M"
 	default:
 		return "30d"
 	}

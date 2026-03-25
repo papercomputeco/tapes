@@ -122,28 +122,39 @@ func applyWebFilters(base deck.Filters, r *http.Request) (deck.Filters, error) {
 	return filters, nil
 }
 
+const maxSinceDuration = 30 * 24 * time.Hour
+
 func parseSince(value string) (time.Duration, error) {
 	value = strings.TrimSpace(strings.ToLower(value))
 	if value == "" {
 		return 0, nil
 	}
+	var d time.Duration
 	if before, ok := strings.CutSuffix(value, "d"); ok {
 		number := before
 		days, err := strconv.Atoi(number)
 		if err != nil {
 			return 0, fmt.Errorf("invalid since days: %w", err)
 		}
-		return time.Duration(days) * 24 * time.Hour, nil
-	}
-	if strings.HasSuffix(value, "m") && !strings.HasSuffix(value, "ms") {
+		d = time.Duration(days) * 24 * time.Hour
+	} else if strings.HasSuffix(value, "m") && !strings.HasSuffix(value, "ms") {
 		number := strings.TrimSuffix(value, "m")
 		months, err := strconv.Atoi(number)
 		if err != nil {
 			return 0, fmt.Errorf("invalid since months: %w", err)
 		}
-		return time.Duration(months*30) * 24 * time.Hour, nil
+		d = time.Duration(months*30) * 24 * time.Hour
+	} else {
+		var err error
+		d, err = time.ParseDuration(value)
+		if err != nil {
+			return 0, err
+		}
 	}
-	return time.ParseDuration(value)
+	if d > maxSinceDuration {
+		d = maxSinceDuration
+	}
+	return d, nil
 }
 
 func writeJSON(w http.ResponseWriter, payload any) {

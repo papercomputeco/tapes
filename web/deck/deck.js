@@ -72,7 +72,7 @@ const updateSessionCount = (data) => {
   if (filters.status) filterBits.push(`status ${filters.status}`);
   if (filters.project) filterBits.push(`project ${filters.project}`);
   if (filters.periodEnabled) {
-    const label = filters.period === "90d" ? "3M" : filters.period === "180d" ? "6M" : "30d";
+    const label = filters.period === "24h" ? "24h" : "30d";
     filterBits.push(`period ${label}`);
   }
   const filterText = filterBits.length ? ` \u00B7 ${filterBits.join(" \u00B7 ")}` : "";
@@ -152,9 +152,8 @@ const buildParams = () => {
 const renderPeriodControls = () => {
   periodEl.innerHTML = "";
   const periods = [
+    { label: "24h", value: "24h" },
     { label: "30d", value: "30d" },
-    { label: "3M", value: "90d" },
-    { label: "6M", value: "180d" },
   ];
   periods.forEach((period) => {
     const button = document.createElement("button");
@@ -932,7 +931,7 @@ const handleKey = (event) => {
     case "p":
       if (currentView === "overview") {
         filters.periodEnabled = true;
-        filters.period = filters.period === "30d" ? "90d" : filters.period === "90d" ? "180d" : "30d";
+        filters.period = filters.period === "30d" ? "24h" : "30d";
         renderPeriodControls();
         loadOverview();
       }
