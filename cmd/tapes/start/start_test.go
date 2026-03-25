@@ -261,6 +261,42 @@ var _ = Describe("parseStartArgs", func() {
 	)
 })
 
+var _ = Describe("stateHealthy", func() {
+	It("returns false when state is nil", func() {
+		Expect(stateHealthy(context.Background(), nil)).To(BeFalse())
+	})
+
+	It("returns false when DaemonPID is zero", func() {
+		state := &start.State{APIURL: "http://localhost:1234"}
+		Expect(stateHealthy(context.Background(), state)).To(BeFalse())
+	})
+
+	It("returns false when APIURL is empty", func() {
+		state := &start.State{DaemonPID: os.Getpid()}
+		Expect(stateHealthy(context.Background(), state)).To(BeFalse())
+	})
+
+	It("returns false when process is dead", func() {
+		state := &start.State{DaemonPID: 999999999, APIURL: "http://localhost:1234"}
+		Expect(stateHealthy(context.Background(), state)).To(BeFalse())
+	})
+
+	It("returns true when process alive and API reachable", func() {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		DeferCleanup(server.Close)
+
+		state := &start.State{DaemonPID: os.Getpid(), APIURL: server.URL}
+		Expect(stateHealthy(context.Background(), state)).To(BeTrue())
+	})
+
+	It("returns false when process alive but API unreachable", func() {
+		state := &start.State{DaemonPID: os.Getpid(), APIURL: "http://127.0.0.1:1"}
+		Expect(stateHealthy(context.Background(), state)).To(BeFalse())
+	})
+})
+
 func appendToFile(path string, data []byte) error {
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
