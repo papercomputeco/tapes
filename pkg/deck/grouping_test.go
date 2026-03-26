@@ -300,6 +300,49 @@ var _ = Describe("Session grouping", func() {
 		})
 	})
 
+	Describe("preFilterCandidatesByTime", func() {
+		It("filters candidates outside the Since window", func() {
+			// Since uses time.Now() internally, so use real-time-relative values.
+			realNow := time.Now()
+			candidates := []sessionCandidate{
+				{summary: SessionSummary{ID: "old", EndTime: realNow.Add(-48 * time.Hour)}},
+				{summary: SessionSummary{ID: "recent", EndTime: realNow.Add(-12 * time.Hour)}},
+				{summary: SessionSummary{ID: "new", EndTime: realNow.Add(-1 * time.Hour)}},
+			}
+
+			filters := Filters{Since: 24 * time.Hour}
+			result := preFilterCandidatesByTime(candidates, filters)
+			Expect(result).To(HaveLen(2))
+			Expect(result[0].summary.ID).To(Equal("recent"))
+			Expect(result[1].summary.ID).To(Equal("new"))
+		})
+
+		It("returns all candidates when no time filters are set", func() {
+			candidates := []sessionCandidate{
+				{summary: SessionSummary{ID: "a", EndTime: now}},
+				{summary: SessionSummary{ID: "b", EndTime: now.Add(-72 * time.Hour)}},
+			}
+
+			result := preFilterCandidatesByTime(candidates, Filters{})
+			Expect(result).To(HaveLen(2))
+		})
+
+		It("filters candidates outside the From/To range", func() {
+			from := now.Add(-2 * time.Hour)
+			to := now.Add(-1 * time.Hour)
+			candidates := []sessionCandidate{
+				{summary: SessionSummary{ID: "before", StartTime: now.Add(-5 * time.Hour), EndTime: now.Add(-3 * time.Hour)}},
+				{summary: SessionSummary{ID: "inside", StartTime: now.Add(-2 * time.Hour), EndTime: now.Add(-90 * time.Minute)}},
+				{summary: SessionSummary{ID: "after", StartTime: now.Add(-30 * time.Minute), EndTime: now.Add(-10 * time.Minute)}},
+			}
+
+			filters := Filters{From: &from, To: &to}
+			result := preFilterCandidatesByTime(candidates, filters)
+			Expect(result).To(HaveLen(1))
+			Expect(result[0].summary.ID).To(Equal("inside"))
+		})
+	})
+
 	Describe("truncateGroupedText", func() {
 		It("returns text unchanged when under the limit", func() {
 			Expect(truncateGroupedText("short")).To(Equal("short"))

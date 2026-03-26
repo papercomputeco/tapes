@@ -458,6 +458,10 @@ func (q *Query) Overview(ctx context.Context, filters Filters) (*Overview, error
 		return nil, err
 	}
 
+	// Pre-filter candidates by time before the expensive sort+group step.
+	// This avoids O(N log N) sorting of all 30d data when only 24h is needed.
+	candidates = preFilterCandidatesByTime(candidates, filters)
+
 	groups := groupSessionCandidates(candidates)
 	overview := &Overview{
 		Sessions:    make([]SessionSummary, 0, len(groups)),
@@ -1260,6 +1264,39 @@ func sumModelCosts(costs map[string]ModelCost) (float64, float64, float64) {
 		totalCost += cost.TotalCost
 	}
 	return inputCost, outputCost, totalCost
+}
+
+// preFilterCandidatesByTime reduces the candidate set using time-based filters
+// before the O(N log N) grouping step. This is the hot path when switching
+// between 24h and 30d periods — avoiding a full sort of all candidates.
+func preFilterCandidatesByTime(candidates []sessionCandidate, filters Filters) []sessionCandidate {
+	var cutoff time.Time
+	hasCutoff := false
+
+	if filters.Since > 0 {
+		cutoff = time.Now().Add(-filters.Since)
+		hasCutoff = true
+	}
+	if filters.From != nil && (!hasCutoff || filters.From.After(cutoff)) {
+		cutoff = *filters.From
+		hasCutoff = true
+	}
+
+	if !hasCutoff && filters.To == nil {
+		return candidates
+	}
+
+	filtered := make([]sessionCandidate, 0, len(candidates))
+	for _, c := range candidates {
+		if hasCutoff && c.summary.EndTime.Before(cutoff) {
+			continue
+		}
+		if filters.To != nil && c.summary.StartTime.After(*filters.To) {
+			continue
+		}
+		filtered = append(filtered, c)
+	}
+	return filtered
 }
 
 func matchesFilters(summary SessionSummary, filters Filters) bool {
