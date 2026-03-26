@@ -153,6 +153,7 @@ const renderPeriodControls = () => {
   periodEl.innerHTML = "";
   const periods = [
     { label: "24h", value: "24h" },
+    { label: "7d", value: "7d" },
     { label: "30d", value: "30d" },
   ];
   periods.forEach((period) => {
@@ -931,7 +932,9 @@ const handleKey = (event) => {
     case "p":
       if (currentView === "overview") {
         filters.periodEnabled = true;
-        filters.period = filters.period === "30d" ? "24h" : "30d";
+        const periodCycle = ["24h", "7d", "30d"];
+        const idx = periodCycle.indexOf(filters.period);
+        filters.period = periodCycle[(idx + 1) % periodCycle.length];
         renderPeriodControls();
         loadOverview();
       }

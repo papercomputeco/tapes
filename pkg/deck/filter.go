@@ -6,6 +6,39 @@ import (
 	"time"
 )
 
+// preFilterCandidatesByTime reduces the candidate set using time-based filters
+// before the O(N log N) grouping step. This is the hot path when switching
+// between 24h and 30d periods — avoiding a full sort of all candidates.
+func preFilterCandidatesByTime(candidates []sessionCandidate, filters Filters) []sessionCandidate {
+	var cutoff time.Time
+	hasCutoff := false
+
+	if filters.Since > 0 {
+		cutoff = time.Now().Add(-filters.Since)
+		hasCutoff = true
+	}
+	if filters.From != nil && (!hasCutoff || filters.From.After(cutoff)) {
+		cutoff = *filters.From
+		hasCutoff = true
+	}
+
+	if !hasCutoff && filters.To == nil {
+		return candidates
+	}
+
+	filtered := make([]sessionCandidate, 0, len(candidates))
+	for _, c := range candidates {
+		if hasCutoff && c.summary.EndTime.Before(cutoff) {
+			continue
+		}
+		if filters.To != nil && c.summary.StartTime.After(*filters.To) {
+			continue
+		}
+		filtered = append(filtered, c)
+	}
+	return filtered
+}
+
 func matchesFilters(summary SessionSummary, filters Filters) bool {
 	if filters.Model != "" {
 		if normalizeModel(summary.Model) != normalizeModel(filters.Model) {

@@ -136,6 +136,10 @@ func (q *Query) Overview(ctx context.Context, filters Filters) (*Overview, error
 		return nil, err
 	}
 
+	// Pre-filter candidates by time before the expensive sort+group step.
+	// This avoids O(N log N) sorting of all 30d data when only 24h is needed.
+	candidates = preFilterCandidatesByTime(candidates, filters)
+
 	groups := groupSessionCandidates(candidates)
 	overview := &Overview{
 		Sessions:    make([]SessionSummary, 0, len(groups)),
