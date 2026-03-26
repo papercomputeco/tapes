@@ -172,8 +172,6 @@ var _ = Describe("Telemetry", func() {
 				client.CaptureSearch(5)
 				client.CaptureServerStarted("api")
 				client.CaptureMCPTool("tool")
-				client.CaptureSyncPush()
-				client.CaptureSyncPull()
 				client.CaptureError("test", "runtime")
 			}).NotTo(Panic())
 		})

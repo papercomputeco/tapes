@@ -28,8 +28,6 @@ const (
 	EventSearch         = "tapes_cli_search"
 	EventServerStarted  = "tapes_cli_server_started"
 	EventMCPTool        = "tapes_cli_mcp_tool"
-	EventSyncPush       = "tapes_cli_sync_push"
-	EventSyncPull       = "tapes_cli_sync_pull"
 	EventError          = "tapes_cli_error"
 )
 
@@ -139,20 +137,6 @@ func (c *Client) CaptureServerStarted(mode string) {
 func (c *Client) CaptureMCPTool(tool string) {
 	if err := c.capture(EventMCPTool, posthog.NewProperties().Set("tool", tool)); err != nil {
 		c.logger.Debug("could not capture mcp telemetry", "error", err)
-	}
-}
-
-// CaptureSyncPush records a sync push event.
-func (c *Client) CaptureSyncPush() {
-	if err := c.capture(EventSyncPush, nil); err != nil {
-		c.logger.Debug("could not capture sync push telemetry", "error", err)
-	}
-}
-
-// CaptureSyncPull records a sync pull event.
-func (c *Client) CaptureSyncPull() {
-	if err := c.capture(EventSyncPull, nil); err != nil {
-		c.logger.Debug("could not capture sync pull telemetry", "error", err)
 	}
 }
 

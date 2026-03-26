@@ -19,7 +19,6 @@ import (
 	skillcmder "github.com/papercomputeco/tapes/cmd/tapes/skill"
 	startcmder "github.com/papercomputeco/tapes/cmd/tapes/start"
 	statuscmder "github.com/papercomputeco/tapes/cmd/tapes/status"
-	synccmder "github.com/papercomputeco/tapes/cmd/tapes/sync"
 	versioncmder "github.com/papercomputeco/tapes/cmd/version"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/logger"
@@ -82,7 +81,6 @@ func NewTapesCmd() *cobra.Command {
 	cmd.PersistentFlags().Bool("disable-telemetry", false, "Disable anonymous usage telemetry")
 
 	// Add subcommands
-	cmd.AddCommand(synccmder.NewSyncCmd())
 	cmd.AddCommand(chatcmder.NewChatCmd())
 	cmd.AddCommand(checkoutcmder.NewCheckoutCmd())
 	cmd.AddCommand(configcmder.NewConfigCmd())
