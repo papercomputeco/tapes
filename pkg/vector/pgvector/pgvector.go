@@ -6,11 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	pgvec "github.com/pgvector/pgvector-go"
+	pgvectorgo "github.com/pgvector/pgvector-go"
 
 	"github.com/papercomputeco/tapes/pkg/vector"
 )
@@ -23,7 +22,7 @@ const (
 // Driver implements vector.Driver using PostgreSQL with the pgvector extension.
 type Driver struct {
 	pool       *pgxpool.Pool
-	tableName  string
+	table      pgx.Identifier
 	dimensions uint
 	logger     *slog.Logger
 }
@@ -69,7 +68,7 @@ func NewDriver(c Config, log *slog.Logger) (*Driver, error) {
 
 	d := &Driver{
 		pool:       pool,
-		tableName:  tableName,
+		table:      pgx.Identifier{tableName},
 		dimensions: c.Dimensions,
 		logger:     log,
 	}
@@ -88,31 +87,36 @@ func NewDriver(c Config, log *slog.Logger) (*Driver, error) {
 }
 
 func (d *Driver) ensureSchema(ctx context.Context) error {
+	table := d.table.Sanitize()
+
 	// Enable the pgvector extension
 	if _, err := d.pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector`); err != nil {
 		return fmt.Errorf("enabling vector extension: %w", err)
 	}
 
-	// Create the embeddings table
+	// Create the embeddings table with a vector column sized to the configured dimensions.
+	// The dimension must be embedded in the DDL since PostgreSQL does not support
+	// parameterized type definitions.
 	createTable := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
 			id TEXT PRIMARY KEY,
 			hash TEXT NOT NULL DEFAULT '',
 			embedding vector(%d) NOT NULL
 		)
-	`, d.tableName, d.dimensions)
+	`, table, d.dimensions)
 
 	if _, err := d.pool.Exec(ctx, createTable); err != nil {
 		return fmt.Errorf("creating table: %w", err)
 	}
 
-	// Create a cosine distance index for efficient similarity search.
-	// IVFFlat requires rows to exist for training, so use HNSW which works on empty tables.
+	// Create a HNSW cosine distance index for efficient similarity search.
+	indexName := pgx.Identifier{d.table[0] + "_embedding_idx"}.Sanitize()
+
 	createIndex := fmt.Sprintf(`
-		CREATE INDEX IF NOT EXISTS %s_embedding_idx
+		CREATE INDEX IF NOT EXISTS %s
 		ON %s
 		USING hnsw (embedding vector_cosine_ops)
-	`, d.tableName, d.tableName)
+	`, indexName, table)
 
 	if _, err := d.pool.Exec(ctx, createIndex); err != nil {
 		return fmt.Errorf("creating index: %w", err)
@@ -128,17 +132,24 @@ func (d *Driver) Add(ctx context.Context, docs []vector.Document) error {
 		return nil
 	}
 
+	table := d.table.Sanitize()
+
+	// Upsert: insert or update on conflict by primary key.
 	query := fmt.Sprintf(`
 		INSERT INTO %s (id, hash, embedding)
-		VALUES ($1, $2, $3)
+		VALUES (@id, @hash, @embedding)
 		ON CONFLICT (id) DO UPDATE SET
 			hash = EXCLUDED.hash,
 			embedding = EXCLUDED.embedding
-	`, d.tableName)
+	`, table)
 
 	batch := &pgx.Batch{}
 	for _, doc := range docs {
-		batch.Queue(query, doc.ID, doc.Hash, pgvec.NewVector(doc.Embedding))
+		batch.Queue(query, pgx.NamedArgs{
+			"id":        doc.ID,
+			"hash":      doc.Hash,
+			"embedding": pgvectorgo.NewVector(doc.Embedding),
+		})
 	}
 
 	br := d.pool.SendBatch(ctx, batch)
@@ -161,16 +172,21 @@ func (d *Driver) Query(ctx context.Context, embedding []float32, topK int) ([]ve
 		topK = 10
 	}
 
+	table := d.table.Sanitize()
+
 	// Cosine distance: 0 = identical, 2 = opposite.
 	// Convert to similarity score: 1 - distance gives [−1, 1] range.
 	query := fmt.Sprintf(`
-		SELECT id, hash, embedding, 1 - (embedding <=> $1) AS score
+		SELECT id, hash, embedding, 1 - (embedding <=> @embedding) AS score
 		FROM %s
-		ORDER BY embedding <=> $1
-		LIMIT $2
-	`, d.tableName)
+		ORDER BY embedding <=> @embedding
+		LIMIT @topk
+	`, table)
 
-	rows, err := d.pool.Query(ctx, query, pgvec.NewVector(embedding), topK)
+	rows, err := d.pool.Query(ctx, query, pgx.NamedArgs{
+		"embedding": pgvectorgo.NewVector(embedding),
+		"topk":      topK,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("querying vectors: %w", err)
 	}
@@ -181,7 +197,7 @@ func (d *Driver) Query(ctx context.Context, embedding []float32, topK int) ([]ve
 		var (
 			id    string
 			hash  string
-			emb   pgvec.Vector
+			emb   pgvectorgo.Vector
 			score float32
 		)
 		if err := rows.Scan(&id, &hash, &emb, &score); err != nil {
@@ -212,21 +228,16 @@ func (d *Driver) Get(ctx context.Context, ids []string) ([]vector.Document, erro
 		return nil, nil
 	}
 
-	// Build parameterized query with positional args
-	placeholders := make([]string, len(ids))
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		placeholders[i] = fmt.Sprintf("$%d", i+1)
-		args[i] = id
-	}
+	table := d.table.Sanitize()
 
+	// Use ANY with a single array parameter instead of building dynamic IN (...) placeholders.
 	query := fmt.Sprintf(`
 		SELECT id, hash, embedding
 		FROM %s
-		WHERE id IN (%s)
-	`, d.tableName, strings.Join(placeholders, ","))
+		WHERE id = ANY(@ids)
+	`, table)
 
-	rows, err := d.pool.Query(ctx, query, args...)
+	rows, err := d.pool.Query(ctx, query, pgx.NamedArgs{"ids": ids})
 	if err != nil {
 		return nil, fmt.Errorf("querying documents: %w", err)
 	}
@@ -237,7 +248,7 @@ func (d *Driver) Get(ctx context.Context, ids []string) ([]vector.Document, erro
 		var (
 			id   string
 			hash string
-			emb  pgvec.Vector
+			emb  pgvectorgo.Vector
 		)
 		if err := rows.Scan(&id, &hash, &emb); err != nil {
 			return nil, fmt.Errorf("scanning document: %w", err)
@@ -262,16 +273,12 @@ func (d *Driver) Delete(ctx context.Context, ids []string) error {
 		return nil
 	}
 
-	placeholders := make([]string, len(ids))
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		placeholders[i] = fmt.Sprintf("$%d", i+1)
-		args[i] = id
-	}
+	table := d.table.Sanitize()
 
-	query := fmt.Sprintf(`DELETE FROM %s WHERE id IN (%s)`, d.tableName, strings.Join(placeholders, ","))
+	// Use ANY with a single array parameter instead of building dynamic IN (...) placeholders.
+	query := fmt.Sprintf(`DELETE FROM %s WHERE id = ANY(@ids)`, table)
 
-	if _, err := d.pool.Exec(ctx, query, args...); err != nil {
+	if _, err := d.pool.Exec(ctx, query, pgx.NamedArgs{"ids": ids}); err != nil {
 		return fmt.Errorf("deleting documents: %w", err)
 	}
 
