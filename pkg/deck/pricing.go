@@ -6,6 +6,8 @@ import (
 	"maps"
 	"os"
 	"strings"
+
+	"github.com/papercomputeco/tapes/pkg/storage/ent"
 )
 
 type PricingTable map[string]Pricing
@@ -175,4 +177,108 @@ func isDigits(value string) bool {
 		}
 	}
 	return true
+}
+
+func (q *Query) costForModel(model string, t nodeTokens) (float64, float64, float64) {
+	if model == "" {
+		return 0, 0, 0
+	}
+
+	pricing, ok := PricingForModel(q.pricing, model)
+	if !ok {
+		return 0, 0, 0
+	}
+
+	return CostForTokensWithCache(pricing, t.Input, t.Output, t.CacheCreation, t.CacheRead)
+}
+
+// nodeTokens holds all token counts for a node, including cache breakdown.
+type nodeTokens struct {
+	Input         int64
+	Output        int64
+	Total         int64
+	CacheCreation int64
+	CacheRead     int64
+}
+
+func tokenCounts(node *ent.Node) nodeTokens {
+	var t nodeTokens
+	if node.PromptTokens != nil {
+		t.Input = int64(*node.PromptTokens)
+	}
+	if node.CompletionTokens != nil {
+		t.Output = int64(*node.CompletionTokens)
+	}
+	if node.CacheCreationInputTokens != nil {
+		t.CacheCreation = int64(*node.CacheCreationInputTokens)
+	}
+	if node.CacheReadInputTokens != nil {
+		t.CacheRead = int64(*node.CacheReadInputTokens)
+	}
+
+	t.Total = t.Input + t.Output
+	if node.TotalTokens != nil {
+		t.Total = int64(*node.TotalTokens)
+	}
+
+	return t
+}
+
+func dominantModel(costs map[string]ModelCost) string {
+	var model string
+	maxCost := float64(0)
+	for name, cost := range costs {
+		if cost.TotalCost > maxCost {
+			maxCost = cost.TotalCost
+			model = name
+		}
+	}
+	return model
+}
+
+func firstModel(nodes []*ent.Node) string {
+	for _, node := range nodes {
+		if node.Model != "" {
+			return normalizeModel(node.Model)
+		}
+	}
+	return ""
+}
+
+func sumModelCosts(costs map[string]ModelCost) (float64, float64, float64) {
+	inputCost := 0.0
+	outputCost := 0.0
+	totalCost := 0.0
+	for _, cost := range costs {
+		inputCost += cost.InputCost
+		outputCost += cost.OutputCost
+		totalCost += cost.TotalCost
+	}
+	return inputCost, outputCost, totalCost
+}
+
+func copyModelCosts(costs map[string]ModelCost) map[string]ModelCost {
+	if costs == nil {
+		return map[string]ModelCost{}
+	}
+	copied := make(map[string]ModelCost, len(costs))
+	maps.Copy(copied, costs)
+	return copied
+}
+
+func mergeModelCosts(target map[string]ModelCost, costs map[string]ModelCost) {
+	if target == nil {
+		return
+	}
+	for model, cost := range costs {
+		current := target[model]
+		current.Model = model
+		current.InputTokens += cost.InputTokens
+		current.OutputTokens += cost.OutputTokens
+		current.InputCost += cost.InputCost
+		current.OutputCost += cost.OutputCost
+		current.TotalCost += cost.TotalCost
+		current.SessionCount += cost.SessionCount
+		target[model] = current
+	}
 }

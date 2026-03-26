@@ -123,4 +123,8 @@ const (
 	StatusFailed    = "failed"
 	StatusAbandoned = "abandoned"
 	StatusUnknown   = "unknown"
+
+	blockTypeToolUse = "tool_use"
+	roleAssistant    = "assistant"
+	roleUser         = "user"
 )
