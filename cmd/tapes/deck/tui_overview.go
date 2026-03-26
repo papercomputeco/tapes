@@ -113,7 +113,7 @@ func (m deckModel) viewOverview() string {
 func (m deckModel) viewMetrics(stats deckOverviewStats) string {
 	// Period selector header with box background for active
 	periodLabel := periodToLabel(m.timePeriod)
-	periods := []string{"24h", "30d"}
+	periods := []string{"24h", "7d", "30d"}
 	periodParts := []string{}
 	for _, p := range periods {
 		if p == periodLabel {
