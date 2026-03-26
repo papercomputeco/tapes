@@ -129,6 +129,27 @@ func (t *Tapes) ReleaseLatest(
 		return artifacts, fmt.Errorf("could not upload latest release artifacts: %w", err)
 	}
 
+	// Upload a plain-text version file so the CLI can check for updates.
+	// This lands at latest/version and contains just the semver tag.
+	versionDir := dag.Directory().
+		WithNewFile("version", version+"\n")
+
+	err = t.upload(
+		ctx,
+		&uploadOpts{
+			artifacts:       versionDir,
+			prefix:          "latest",
+			endpoint:        endpoint,
+			bucket:          bucket,
+			accessKeyId:     accessKeyId,
+			secretAccessKey: secretAccessKey,
+		},
+	)
+
+	if err != nil {
+		return artifacts, fmt.Errorf("could not upload latest version file: %w", err)
+	}
+
 	return artifacts, nil
 }
 

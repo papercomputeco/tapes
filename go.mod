@@ -28,6 +28,7 @@ require (
 	github.com/segmentio/kafka-go v0.4.50
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
+	golang.org/x/mod v0.32.0
 	golang.org/x/term v0.40.0
 )
 
@@ -97,7 +98,6 @@ require (
 	github.com/zclconf/go-cty-yaml v1.1.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/exp v0.0.0-20231006140011-7918f672742d // indirect
-	golang.org/x/mod v0.32.0 // indirect
 	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/oauth2 v0.32.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect

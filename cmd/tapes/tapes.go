@@ -24,6 +24,8 @@ import (
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/telemetry"
+	"github.com/papercomputeco/tapes/pkg/update"
+	"github.com/papercomputeco/tapes/pkg/utils"
 )
 
 const tapesLongDesc string = `Tapes is automatic telemetry for your agents.
@@ -65,6 +67,11 @@ var tapesFlags = config.FlagSet{
 		ViperKey:    "telemetry.disabled",
 		Description: "Disable anonymous usage telemetry",
 	},
+	config.FlagUpdateCheckDisabled: {
+		Name:        "disable-update-check",
+		ViperKey:    "update.disabled",
+		Description: "Disable checking for new versions",
+	},
 }
 
 func NewTapesCmd() *cobra.Command {
@@ -72,7 +79,7 @@ func NewTapesCmd() *cobra.Command {
 		Use:                "tapes",
 		Short:              tapesShortDesc,
 		Long:               tapesLongDesc,
-		PersistentPreRunE:  initTelemetry,
+		PersistentPreRunE:  preRun,
 		PersistentPostRunE: closeTelemetry,
 	}
 
@@ -80,6 +87,8 @@ func NewTapesCmd() *cobra.Command {
 	cmd.PersistentFlags().BoolP("debug", "d", false, "Enable debug logging")
 	cmd.PersistentFlags().String("config-dir", "", "Override path to .tapes/ config directory")
 	cmd.PersistentFlags().Bool("disable-telemetry", false, "Disable anonymous usage telemetry")
+	cmd.PersistentFlags().Bool("disable-update-check", false, "Disable checking for new versions")
+	_ = cmd.PersistentFlags().MarkHidden("disable-update-check")
 
 	// Add subcommands
 	cmd.AddCommand(synccmder.NewSyncCmd())
@@ -99,6 +108,34 @@ func NewTapesCmd() *cobra.Command {
 	cmd.AddCommand(versioncmder.NewVersionCmd())
 
 	return cmd
+}
+
+// preRun prints an update notice (if available) before the command starts,
+// then initializes telemetry. The HTTP call has a 2s timeout cap, so
+// worst-case startup delay is bounded. The check can be disabled via the
+// hidden --disable-update-check flag, TAPES_UPDATE_DISABLED env var, or
+// [update] disabled = true in config.toml.
+func preRun(cmd *cobra.Command, args []string) error {
+	configDir, _ := cmd.Flags().GetString("config-dir")
+	v, err := config.InitViper(configDir)
+
+	updateDisabled := false
+	if err == nil {
+		config.BindRegisteredFlags(v, cmd, tapesFlags, []string{
+			config.FlagUpdateCheckDisabled,
+		})
+		updateDisabled = v.GetBool("update.disabled")
+	}
+
+	if !updateDisabled {
+		if msg := update.CheckForUpdate(utils.Version); msg != "" {
+			println("\033[33;1mTapes Update Available!\033[0m")
+			println("\033[34m" + utils.Version + " → " + msg + "\033[0m")
+			println("\033[37mRun: curl -sSfL https://download.tapes.dev/install | bash\033[0m")
+		}
+	}
+
+	return initTelemetry(cmd, args)
 }
 
 // initTelemetry initializes anonymous telemetry and stores the client in the
