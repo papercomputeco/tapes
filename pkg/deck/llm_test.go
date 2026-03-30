@@ -5,21 +5,43 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("NewLLMCaller", func() {
-	It("returns an ollama caller when no key is available", func() {
+	It("returns an error when no key is available for openai", func() {
+		original := os.Getenv("OPENAI_API_KEY")
+		os.Unsetenv("OPENAI_API_KEY")
+		defer os.Setenv("OPENAI_API_KEY", original)
+
 		cfg := LLMCallerConfig{
 			Provider: "openai",
 			Model:    "gpt-4o-mini",
 			APIKey:   "", // no key
 		}
-		caller, err := NewLLMCaller(cfg)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(caller).NotTo(BeNil())
+		_, err := NewLLMCaller(cfg)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("no API key found for provider"))
+		Expect(err.Error()).To(ContainSubstring("OPENAI_API_KEY"))
+	})
+
+	It("returns an error when no key is available for anthropic", func() {
+		original := os.Getenv("ANTHROPIC_API_KEY")
+		os.Unsetenv("ANTHROPIC_API_KEY")
+		defer os.Setenv("ANTHROPIC_API_KEY", original)
+
+		cfg := LLMCallerConfig{
+			Provider: "anthropic",
+			Model:    "claude-haiku-4-5-20251001",
+			APIKey:   "", // no key
+		}
+		_, err := NewLLMCaller(cfg)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("no API key found for provider"))
+		Expect(err.Error()).To(ContainSubstring("ANTHROPIC_API_KEY"))
 	})
 
 	It("returns an error for unsupported provider", func() {

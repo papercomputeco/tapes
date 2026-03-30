@@ -58,7 +58,6 @@ func HasLLMCredentials(cfg LLMCallerConfig) bool {
 //  1. Explicit APIKey in config
 //  2. credentials.Manager (from tapes auth)
 //  3. Environment variables (OPENAI_API_KEY / ANTHROPIC_API_KEY)
-//  4. Fall back to Ollama at localhost:11434
 func NewLLMCaller(cfg LLMCallerConfig) (LLMCallFunc, error) {
 	log := cfg.Logger
 	if log == nil {
@@ -77,10 +76,10 @@ func NewLLMCaller(cfg LLMCallerConfig) (LLMCallFunc, error) {
 		apiKey = resolveAPIKeyFromEnv(provider)
 	}
 
-	// If no key found and provider is not explicitly ollama, fall back to ollama
+	// Require an API key for non-ollama providers
 	if apiKey == "" && provider != providerOllama {
-		log.Warn("llm: no API key found, falling back to ollama", "provider", provider)
-		provider = providerOllama
+		envVar := envVarForProvider(provider)
+		return nil, fmt.Errorf("no API key found for provider %q — set %s, use --api-key, or run 'tapes auth'", provider, envVar)
 	}
 
 	switch provider {
@@ -153,6 +152,17 @@ func resolveAPIKeyFromEnv(provider string) string {
 			return key
 		}
 		return os.Getenv("ANTHROPIC_API_KEY")
+	}
+}
+
+func envVarForProvider(provider string) string {
+	switch provider {
+	case providerAnthropic:
+		return "ANTHROPIC_API_KEY"
+	case providerOpenAI, "":
+		return "OPENAI_API_KEY"
+	default:
+		return "OPENAI_API_KEY or ANTHROPIC_API_KEY"
 	}
 }
 
