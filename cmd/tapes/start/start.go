@@ -829,29 +829,29 @@ func (c *startCommander) newVectorAndEmbedder(cfg *startConfig, log *slog.Logger
 	return vectorDriver, embedder, nil
 }
 
-// configureCodexAuth temporarily writes the stored OpenAI API key into codex's
-// ~/.codex/auth.json so that codex uses it instead of its OAuth token when
-// routing through the tapes proxy. The returned cleanup function restores the
-// original auth.json contents.
+// configureCodexAuth lets Codex use OAuth tokens from `codex login` when they
+// are present. If no OAuth tokens exist, it temporarily writes the stored OpenAI
+// API key into codex's ~/.codex/auth.json. The returned cleanup function
+// restores the original auth.json contents when a patch is applied.
 func (c *startCommander) configureCodexAuth() (func() error, error) {
 	noop := func() error { return nil }
 
+	original, authPath := credentials.ReadCodexAuthFile()
+	if credentials.HasCodexOAuthTokens(original) {
+		return noop, nil
+	}
+
 	mgr, err := credentials.NewManager(c.configDir)
 	if err != nil {
-		return noop, errors.New("run 'tapes auth openai' with a service account key (sk-svcacct-...) before starting codex")
+		return noop, errors.New("run 'codex login' or 'tapes auth openai' with a service account key (sk-svcacct-...) before starting codex")
 	}
 
 	apiKey, err := mgr.GetKey("openai")
 	if err != nil {
-		return noop, errors.New("run 'tapes auth openai' with a service account key (sk-svcacct-...) before starting codex")
+		return noop, errors.New("run 'codex login' or 'tapes auth openai' with a service account key (sk-svcacct-...) before starting codex")
 	}
 	if apiKey == "" {
-		return noop, errors.New("no OpenAI API key found — run 'tapes auth openai' with a service account key first")
-	}
-
-	original, authPath := credentials.ReadCodexAuthFile()
-	if original == nil {
-		return noop, nil
+		return noop, errors.New("no Codex OAuth tokens or OpenAI API key found — run 'codex login' or 'tapes auth openai' with a service account key first")
 	}
 
 	updated, ok := credentials.PatchCodexAuthKey(original, apiKey)

@@ -23,9 +23,27 @@ func ReadCodexAuthFile() ([]byte, string) {
 	return data, authPath
 }
 
+// HasCodexOAuthTokens returns true when the Codex auth JSON contains OAuth
+// tokens from `codex login`.
+func HasCodexOAuthTokens(data []byte) bool {
+	var auth struct {
+		Tokens *struct {
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+		} `json:"tokens"`
+	}
+	if err := json.Unmarshal(data, &auth); err != nil {
+		return false
+	}
+	if auth.Tokens == nil {
+		return false
+	}
+	return auth.Tokens.AccessToken != "" || auth.Tokens.RefreshToken != ""
+}
+
 // PatchCodexAuthKey sets OPENAI_API_KEY in the codex auth JSON and returns the
-// updated bytes. It also removes OAuth "tokens" so codex falls back to the API
-// key instead of using OAuth tokens that may lack required scopes.
+// updated bytes. OAuth "tokens" are preserved so users who authenticated with
+// `codex login` keep their native Codex OAuth flow available.
 // Returns nil, false if the JSON cannot be processed.
 func PatchCodexAuthKey(data []byte, apiKey string) ([]byte, bool) {
 	var auth map[string]json.RawMessage
@@ -38,10 +56,6 @@ func PatchCodexAuthKey(data []byte, apiKey string) ([]byte, bool) {
 		return nil, false
 	}
 	auth["OPENAI_API_KEY"] = keyJSON
-
-	// Remove OAuth tokens so codex uses the API key instead of OAuth
-	// credentials that may lack required scopes (e.g. api.responses.write).
-	delete(auth, "tokens")
 
 	updated, err := json.MarshalIndent(auth, "", "  ")
 	if err != nil {
