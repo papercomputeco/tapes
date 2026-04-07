@@ -160,6 +160,10 @@ func (p *Proxy) handleProxy(c *fiber.Ctx) error {
 	body := c.Body()
 	isChatRequest := method == "POST" && len(body) > 0
 
+	if isCodexRawResponsesRequest(agentName, method, path, body) {
+		return p.handleCodexRawResponses(c, path, upstreamURL, prov, agentName, body, startTime)
+	}
+
 	// Parse request using configured provider
 	var parsedReq *llm.ChatRequest
 	if isChatRequest {
@@ -198,6 +202,9 @@ func (p *Proxy) handleProxy(c *fiber.Ctx) error {
 			streaming = prov.DefaultStreaming()
 		}
 	}
+	if agentName == "codex" && isCodexResponsesPath(path) && strings.Contains(strings.ToLower(c.Get("Accept")), "text/event-stream") {
+		streaming = true
+	}
 
 	if streaming && isChatRequest {
 		return p.handleStreamingProxy(c, path, upstreamURL, prov, agentName, body, parsedReq, startTime)
@@ -209,7 +216,7 @@ func (p *Proxy) handleProxy(c *fiber.Ctx) error {
 // handleNonStreamingProxy handles non-streaming requests.
 func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL string, prov provider.Provider, agentName string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
 	// Build upstream URL
-	upstreamURL += path
+	upstreamURL += rewriteUpstreamPath(agentName, path)
 
 	// Create upstream request
 	var reqBody io.Reader
@@ -281,7 +288,7 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL 
 // handleStreamingProxy handles streaming requests.
 func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path, upstreamURL string, prov provider.Provider, agentName string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
 	// Build upstream URL
-	upstreamURL += path
+	upstreamURL += rewriteUpstreamPath(agentName, path)
 
 	// Use context.Background() instead of c.Context() because fasthttp recycles
 	// its RequestCtx after the handler returns, but the streaming callback runs
@@ -467,6 +474,15 @@ func (p *Proxy) extractContentFromJSON(data []byte, providerName string, content
 				}
 			}
 		}
+		switch chunkData["type"] {
+		case "response.output_text.delta", "response.output_text.added", "output_text.delta":
+			if c, ok := chunkData["delta"].(string); ok {
+				content.WriteString(c)
+			}
+			if c, ok := chunkData["text"].(string); ok {
+				content.WriteString(c)
+			}
+		}
 	case providerAnthropic:
 		// Anthropic SSE: content_block_delta events carry delta.text
 		if delta, ok := chunkData["delta"].(map[string]any); ok {
@@ -529,6 +545,30 @@ func (p *Proxy) extractUsageFromSSE(data []byte, providerName string, usage *llm
 		if u, ok := chunkData["usage"].(map[string]any); ok {
 			usage.PromptTokens = jsonInt(u, "prompt_tokens")
 			usage.CompletionTokens = jsonInt(u, "completion_tokens")
+		}
+		if resp, ok := chunkData["response"].(map[string]any); ok {
+			if model, ok := resp["model"].(string); ok && model != "" {
+				meta.Model = model
+			}
+			if status, ok := resp["status"].(string); ok && status != "" {
+				meta.StopReason = status
+			}
+			if u, ok := resp["usage"].(map[string]any); ok {
+				promptTokens := jsonInt(u, "prompt_tokens")
+				if promptTokens == 0 {
+					promptTokens = jsonInt(u, "input_tokens")
+				}
+				completionTokens := jsonInt(u, "completion_tokens")
+				if completionTokens == 0 {
+					completionTokens = jsonInt(u, "output_tokens")
+				}
+				totalTokens := jsonInt(u, "total_tokens")
+				usage.PromptTokens = promptTokens
+				usage.CompletionTokens = completionTokens
+				if totalTokens > 0 {
+					usage.TotalTokens = totalTokens
+				}
+			}
 		}
 	case providerOllama:
 		// Ollama includes usage in the final NDJSON line (done=true)

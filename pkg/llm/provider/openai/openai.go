@@ -89,6 +89,10 @@ func (o *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 		messages = append(messages, converted)
 	}
 
+	if len(messages) == 0 {
+		messages = parseResponsesInput(req.Input)
+	}
+
 	// Parse stop sequences
 	var stop []string
 	switch s := req.Stop.(type) {
@@ -129,6 +133,54 @@ func (o *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 	}
 
 	return result, nil
+}
+
+func parseResponsesInput(input any) []llm.Message {
+	texts := extractResponsesText(input)
+	if len(texts) == 0 {
+		return nil
+	}
+
+	content := make([]llm.ContentBlock, 0, len(texts))
+	for _, text := range texts {
+		if text == "" {
+			continue
+		}
+		content = append(content, llm.ContentBlock{Type: "text", Text: text})
+	}
+	if len(content) == 0 {
+		return nil
+	}
+	return []llm.Message{{
+		Role:    "user",
+		Content: content,
+	}}
+}
+
+func extractResponsesText(value any) []string {
+	var texts []string
+	switch v := value.(type) {
+	case string:
+		if v != "" {
+			texts = append(texts, v)
+		}
+	case []any:
+		for _, item := range v {
+			texts = append(texts, extractResponsesText(item)...)
+		}
+	case map[string]any:
+		for _, key := range []string{"input_text", "text"} {
+			if text, ok := v[key].(string); ok && text != "" {
+				texts = append(texts, text)
+			}
+		}
+		for _, key := range []string{"input", "content", "message"} {
+			if child, ok := v[key]; ok {
+				texts = append(texts, extractResponsesText(child)...)
+			}
+		}
+	}
+	return texts
 }
 
 func (o *Provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {

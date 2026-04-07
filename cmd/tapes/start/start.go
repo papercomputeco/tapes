@@ -262,9 +262,14 @@ func (c *startCommander) runAgent(ctx context.Context, agent string, passthrough
 	case agentClaude:
 		cmd.Env = append(cmd.Env, "ANTHROPIC_BASE_URL="+agentBaseURL)
 	case agentCodex:
+		agentArgs = append([]string{
+			"-c", fmt.Sprintf(`chatgpt_base_url="%s"`, agentBaseURL),
+			"-c", `model_provider="openai-custom"`,
+			"-c", fmt.Sprintf(`model_providers.openai-custom={name="OpenAI Custom",base_url="%s/v1",wire_api="responses"}`, agentBaseURL),
+		}, agentArgs...)
 		cmd.Env = append(cmd.Env,
-			"OPENAI_BASE_URL="+agentBaseURL,
-			"OPENAI_API_BASE="+agentBaseURL,
+			"OPENAI_BASE_URL=",
+			"OPENAI_API_BASE=",
 		)
 		codexCleanup, err := c.configureCodexAuth()
 		if err != nil {
@@ -301,6 +306,11 @@ func (c *startCommander) runAgent(ctx context.Context, agent string, passthrough
 		}
 	}
 
+	// #nosec G204 -- agent commands are restricted to known binaries.
+	cmd = exec.CommandContext(ctx, agentCommand(agent), agentArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
 	cmd.Env = c.injectCredentials(cmd.Env)
 
 	if err := cmd.Start(); err != nil {
@@ -438,7 +448,7 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 		AgentRoutes: map[string]proxy.AgentRoute{
 			agentClaude:   {ProviderType: "anthropic", UpstreamURL: "https://api.anthropic.com"},
 			agentOpenCode: openCodeRoute,
-			agentCodex:    {ProviderType: "openai", UpstreamURL: "https://api.openai.com/v1"},
+			agentCodex:    {ProviderType: "openai", UpstreamURL: "https://chatgpt.com"},
 		},
 		ProviderUpstreams: map[string]string{
 			"anthropic": "https://api.anthropic.com",

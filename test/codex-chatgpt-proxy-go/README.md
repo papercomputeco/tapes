@@ -35,23 +35,56 @@ Client responses strip only:
 
 That is intentionally close to the Python probe behavior.
 
-## Run
+## Run Modes
+
+There are two different ways to use this work:
+
+- standalone Go probe flow
+- Tapes integration flow
+
+They are not the same test.
+
+### Standalone Go Probe Flow
+
+Use this when you want to test the raw relay itself, without Tapes in the loop.
+
+Start the Go probe:
 
 ```bash
-cd /home/alex/tapes/test/codex-chatgpt-proxy-go
-go run .
+make run-codex-proxy
 ```
 
-## Direct Codex Test
+Then launch Codex directly against it:
 
 ```bash
-env -u OPENAI_API_KEY -u OPENAI_BASE_URL -u OPENAI_API_BASE \
-  codex \
-  -c 'model_provider="openai-custom"' \
-  -c 'model_providers.openai-custom={name="OpenAI Custom",base_url="http://127.0.0.1:8765/v1",wire_api="responses"}'
+make run-codex-direct
 ```
 
-## Good Run
+### Tapes Integration Flow
+
+Use this when you want to test whether Tapes itself captures and stores Codex sessions.
+
+This does **not** use the standalone Go probe.
+
+Run:
+
+```bash
+make run-codex
+```
+
+Then inspect Tapes logs:
+
+```bash
+tail -n 120 /tmp/tapes-codex-oauth/start.log
+```
+
+and verify stored sessions in Deck:
+
+```bash
+./build/tapes deck
+```
+
+## Good Run For The Standalone Probe
 
 You want to see:
 
