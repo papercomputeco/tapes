@@ -37,27 +37,6 @@ build-local: ## Builds local artifacts with local toolchain
 	CGO_ENABLED=1 GOEXPERIMENT=jsonv2 go build -ldflags "$(LDFLAGS)" -o ./build/ ./cli/tapesprox
 	CGO_ENABLED=1 GOEXPERIMENT=jsonv2 go build -ldflags "$(LDFLAGS)" -o ./build/ ./cli/tapesapi
 
-.PHONY: run-codex
-run-codex: build-local ## Starts Tapes and launches Codex through the Codex raw relay path
-	$(call print-target)
-	rm -rf /tmp/tapes-codex-oauth
-	mkdir -p /tmp/tapes-codex-oauth
-	env -u OPENAI_API_KEY -u OPENAI_BASE_URL -u OPENAI_API_BASE \
-		./build/tapes -d --config-dir /tmp/tapes-codex-oauth start codex
-
-.PHONY: run-codex-proxy
-run-codex-proxy: ## Runs the standalone Go Codex transport probe
-	$(call print-target)
-	cd ./test/codex-chatgpt-proxy-go && clear && go run .
-
-.PHONY: run-codex-direct
-run-codex-direct: ## Launches Codex directly against the standalone Go probe
-	$(call print-target)
-	env -u OPENAI_API_KEY -u OPENAI_BASE_URL -u OPENAI_API_BASE \
-		codex \
-		-c 'model_provider="openai-custom"' \
-		-c 'model_providers.openai-custom={name="OpenAI Custom",base_url="http://127.0.0.1:8765/v1",wire_api="responses"}'
-
 .PHONY: install
 install: build-local ## Builds local artifacts and installs to configured $GOPATH
 	$(call print-target)

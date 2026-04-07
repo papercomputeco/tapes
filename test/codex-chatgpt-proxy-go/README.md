@@ -51,13 +51,17 @@ Use this when you want to test the raw relay itself, without Tapes in the loop.
 Start the Go probe:
 
 ```bash
-make run-codex-proxy
+cd /home/alex/tapes/test/codex-chatgpt-proxy-go
+go run .
 ```
 
 Then launch Codex directly against it:
 
 ```bash
-make run-codex-direct
+env -u OPENAI_API_KEY -u OPENAI_BASE_URL -u OPENAI_API_BASE \
+  codex \
+  -c 'model_provider="openai-custom"' \
+  -c 'model_providers.openai-custom={name="OpenAI Custom",base_url="http://127.0.0.1:8765/v1",wire_api="responses"}'
 ```
 
 ### Tapes Integration Flow
@@ -69,7 +73,10 @@ This does **not** use the standalone Go probe.
 Run:
 
 ```bash
-make run-codex
+rm -rf /tmp/tapes-codex-oauth
+mkdir -p /tmp/tapes-codex-oauth
+env -u OPENAI_API_KEY -u OPENAI_BASE_URL -u OPENAI_API_BASE \
+  ./build/tapes -d --config-dir /tmp/tapes-codex-oauth start codex
 ```
 
 Then inspect Tapes logs:
