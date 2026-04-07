@@ -14,16 +14,18 @@ import (
 	"github.com/papercomputeco/tapes/pkg/llm/provider"
 )
 
+const agentCodexName = "codex"
+
 func isCodexResponsesPath(path string) bool {
 	return path == "/responses" || path == "/v1/responses"
 }
 
 func isCodexRawResponsesRequest(agentName, method, path string, body []byte) bool {
-	return agentName == "codex" && method == http.MethodPost && isCodexResponsesPath(path) && len(body) > 0
+	return agentName == agentCodexName && method == http.MethodPost && isCodexResponsesPath(path) && len(body) > 0
 }
 
 func rewriteUpstreamPath(agentName, path string) string {
-	if agentName != "codex" {
+	if agentName != agentCodexName {
 		return path
 	}
 
