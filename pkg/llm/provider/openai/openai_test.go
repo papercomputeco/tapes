@@ -149,6 +149,29 @@ var _ = Describe("OpenAI Provider", func() {
 			})
 		})
 
+		Context("with Responses API input", func() {
+			It("converts input text into a user message when messages are absent", func() {
+				payload := []byte(`{
+					"model": "gpt-5.4",
+					"input": [
+						{
+							"role": "user",
+							"content": [
+								{"type": "input_text", "text": "Explain this codebase"}
+							]
+						}
+					]
+				}`)
+
+				req, err := p.ParseRequest(payload)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(req.Model).To(Equal("gpt-5.4"))
+				Expect(req.Messages).To(HaveLen(1))
+				Expect(req.Messages[0].Role).To(Equal("user"))
+				Expect(req.Messages[0].GetText()).To(ContainSubstring("Explain this codebase"))
+			})
+		})
+
 		Context("with vision/multimodal content", func() {
 			It("parses image_url content", func() {
 				payload := []byte(`{

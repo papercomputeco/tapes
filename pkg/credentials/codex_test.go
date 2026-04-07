@@ -41,7 +41,7 @@ var _ = Describe("PatchCodexAuthKey", func() {
 		Expect(key).To(Equal("sk-svcacct-test"))
 	})
 
-	It("removes OAuth tokens so codex uses the API key", func() {
+	It("preserves OAuth tokens while adding the API key", func() {
 		original := []byte(`{
 			"OPENAI_API_KEY": null,
 			"tokens": {
@@ -56,7 +56,7 @@ var _ = Describe("PatchCodexAuthKey", func() {
 
 		var result map[string]json.RawMessage
 		Expect(json.Unmarshal(updated, &result)).To(Succeed())
-		Expect(result).NotTo(HaveKey("tokens"))
+		Expect(result).To(HaveKey("tokens"))
 
 		var key string
 		Expect(json.Unmarshal(result["OPENAI_API_KEY"], &key)).To(Succeed())
