@@ -1,0 +1,234 @@
+package sessions
+
+import (
+	"encoding/json"
+	"fmt"
+	"maps"
+	"os"
+	"strings"
+)
+
+// DefaultPricing returns hardcoded pricing per million tokens for supported models.
+//
+// Last verified: 2026-03-08
+// Sources:
+//   - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
+//   - OpenAI:    https://platform.openai.com/docs/pricing
+//   - DeepSeek:  https://api-docs.deepseek.com/quick_start/pricing
+//
+// Anthropic cache multipliers: CacheWrite = 1.25x input, CacheRead = 0.10x input.
+// OpenAI cache: CacheWrite = 1x input (no surcharge), CacheRead = 0.50x input (except o3-mini).
+//
+// To override at runtime, pass a JSON file path to LoadPricing.
+func DefaultPricing() PricingTable {
+	return PricingTable{
+		// Anthropic
+		"claude-opus-4.6":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25},
+		"claude-opus-4.5":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25},
+		"claude-opus-4.1":   {Input: 15.00, Output: 75.00, CacheRead: 1.50, CacheWrite: 18.75},
+		"claude-opus-4":     {Input: 15.00, Output: 75.00, CacheRead: 1.50, CacheWrite: 18.75},
+		"claude-sonnet-4.6": {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite: 3.75},
+		"claude-sonnet-4.5": {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite: 3.75},
+		"claude-sonnet-4":   {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite: 3.75},
+		"claude-sonnet-3.7": {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite: 3.75},
+		"claude-haiku-4.5":  {Input: 1.00, Output: 5.00, CacheRead: 0.10, CacheWrite: 1.25},
+		"claude-haiku-4.6":  {Input: 1.00, Output: 5.00, CacheRead: 0.10, CacheWrite: 1.25},
+		"claude-3.5-sonnet": {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite: 3.75},
+		"claude-3.5-haiku":  {Input: 0.80, Output: 4.00, CacheRead: 0.08, CacheWrite: 1.00},
+		"claude-3-opus":     {Input: 15.00, Output: 75.00, CacheRead: 1.50, CacheWrite: 18.75},
+		"claude-3-haiku":    {Input: 0.25, Output: 1.25, CacheRead: 0.03, CacheWrite: 0.30},
+
+		// OpenAI
+		"gpt-4o":            {Input: 2.50, Output: 10.00, CacheRead: 1.25, CacheWrite: 2.50},
+		"gpt-4o-mini":       {Input: 0.15, Output: 0.60, CacheRead: 0.075, CacheWrite: 0.15},
+		"gpt-4.1":           {Input: 2.00, Output: 8.00, CacheRead: 0.50, CacheWrite: 2.00},
+		"gpt-4.1-mini":      {Input: 0.40, Output: 1.60, CacheRead: 0.10, CacheWrite: 0.40},
+		"gpt-4.1-nano":      {Input: 0.10, Output: 0.40, CacheRead: 0.025, CacheWrite: 0.10},
+		"o3":                {Input: 2.00, Output: 8.00, CacheRead: 0.50, CacheWrite: 2.00},
+		"o3-mini":           {Input: 1.10, Output: 4.40, CacheRead: 0.55, CacheWrite: 1.10},
+		"o4-mini":           {Input: 1.10, Output: 4.40, CacheRead: 0.275, CacheWrite: 1.10},
+		"gpt-5.4":           {Input: 2.50, Output: 15.00, CacheRead: 0.25, CacheWrite: 2.50},
+		"gpt-5.3-codex":     {Input: 1.75, Output: 14.00, CacheRead: 0.175, CacheWrite: 1.75},
+		"gpt-5.2-codex":     {Input: 1.75, Output: 14.00, CacheRead: 0.175, CacheWrite: 1.75},
+		"gpt-5.1-codex":     {Input: 1.25, Output: 10.00, CacheRead: 0.125, CacheWrite: 1.25},
+		"gpt-5-codex":       {Input: 1.25, Output: 10.00, CacheRead: 0.125, CacheWrite: 1.25},
+		"codex-mini-latest": {Input: 1.50, Output: 6.00, CacheRead: 0.375, CacheWrite: 1.50},
+		"o1":                {Input: 15.00, Output: 60.00, CacheRead: 7.50, CacheWrite: 15.00},
+
+		// DeepSeek
+		"deepseek-r1": {Input: 0.55, Output: 2.19, CacheRead: 0.14},
+	}
+}
+
+// LoadPricing loads a pricing table, applying JSON overrides from path if set.
+// An empty path returns DefaultPricing unchanged.
+func LoadPricing(path string) (PricingTable, error) {
+	pricing := DefaultPricing()
+	if path == "" {
+		return pricing, nil
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read pricing file: %w", err)
+	}
+
+	var overrides map[string]Pricing
+	if err := json.Unmarshal(data, &overrides); err != nil {
+		return nil, fmt.Errorf("parse pricing file: %w", err)
+	}
+
+	maps.Copy(pricing, overrides)
+	return pricing, nil
+}
+
+// PricingForModel looks up pricing for a model name, trying the normalized
+// form first and falling back to the raw string.
+func PricingForModel(pricing PricingTable, model string) (Pricing, bool) {
+	normalized := NormalizeModel(model)
+	if price, ok := pricing[normalized]; ok {
+		return price, true
+	}
+	price, ok := pricing[model]
+	return price, ok
+}
+
+// CostForTokens calculates cost using base input/output pricing.
+// For cache-aware cost calculation, use CostForTokensWithCache.
+func CostForTokens(pricing Pricing, inputTokens, outputTokens int64) (float64, float64, float64) {
+	inputCost := float64(inputTokens) / 1_000_000.0 * pricing.Input
+	outputCost := float64(outputTokens) / 1_000_000.0 * pricing.Output
+	return inputCost, outputCost, inputCost + outputCost
+}
+
+// CostForTokensWithCache calculates cost accounting for prompt caching.
+// When cache token counts are available, base input tokens are:
+//
+//	baseInput = totalInput - cacheCreation - cacheRead
+//
+// Each token type is priced at its respective rate.
+func CostForTokensWithCache(pricing Pricing, inputTokens, outputTokens, cacheCreation, cacheRead int64) (float64, float64, float64) {
+	if cacheCreation == 0 && cacheRead == 0 {
+		return CostForTokens(pricing, inputTokens, outputTokens)
+	}
+
+	baseInput := max(inputTokens-cacheCreation-cacheRead, 0)
+
+	inputCost := float64(baseInput) / 1_000_000.0 * pricing.Input
+	inputCost += float64(cacheCreation) / 1_000_000.0 * pricing.CacheWrite
+	inputCost += float64(cacheRead) / 1_000_000.0 * pricing.CacheRead
+	outputCost := float64(outputTokens) / 1_000_000.0 * pricing.Output
+	return inputCost, outputCost, inputCost + outputCost
+}
+
+// NormalizeModel canonicalizes a model name: lowercased, trimmed, date
+// suffixes stripped, and vendor-specific version markers rewritten so the
+// result can be used as a key into PricingTable.
+func NormalizeModel(model string) string {
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	if normalized == "" {
+		return normalized
+	}
+
+	// Strip Anthropic-style date suffix: -YYYYMMDD (8 consecutive digits)
+	if idx := strings.LastIndex(normalized, "-"); idx != -1 {
+		suffix := normalized[idx+1:]
+		if len(suffix) == 8 && isDigits(suffix) {
+			normalized = normalized[:idx]
+		}
+	}
+
+	// Strip OpenAI-style date suffix: -YYYY-MM-DD
+	normalized = stripOpenAIDateSuffix(normalized)
+
+	normalized = strings.ReplaceAll(normalized, "-5-4", "-5.4")
+	normalized = strings.ReplaceAll(normalized, "-5-3", "-5.3")
+	normalized = strings.ReplaceAll(normalized, "-5-2", "-5.2")
+	normalized = strings.ReplaceAll(normalized, "-5-1", "-5.1")
+	normalized = strings.ReplaceAll(normalized, "-4-6", "-4.6")
+	normalized = strings.ReplaceAll(normalized, "-4-5", "-4.5")
+	normalized = strings.ReplaceAll(normalized, "-4-1", "-4.1")
+	normalized = strings.ReplaceAll(normalized, "-3-7", "-3.7")
+	normalized = strings.ReplaceAll(normalized, "-3-5", "-3.5")
+	return normalized
+}
+
+func stripOpenAIDateSuffix(model string) string {
+	if len(model) < 12 {
+		return model
+	}
+	suffix := model[len(model)-11:]
+	if suffix[0] != '-' {
+		return model
+	}
+	date := suffix[1:]
+	if len(date) == 10 && isDigits(date[0:4]) && date[4] == '-' && isDigits(date[5:7]) && date[7] == '-' && isDigits(date[8:10]) {
+		return model[:len(model)-11]
+	}
+	return model
+}
+
+func isDigits(value string) bool {
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// DominantModel returns the model with the highest total cost in the map,
+// or the empty string if none.
+func DominantModel(costs map[string]ModelCost) string {
+	var model string
+	maxCost := float64(0)
+	for name, cost := range costs {
+		if cost.TotalCost > maxCost {
+			maxCost = cost.TotalCost
+			model = name
+		}
+	}
+	return model
+}
+
+// SumModelCosts totals input/output/total cost across all models in the map.
+func SumModelCosts(costs map[string]ModelCost) (float64, float64, float64) {
+	inputCost := 0.0
+	outputCost := 0.0
+	totalCost := 0.0
+	for _, cost := range costs {
+		inputCost += cost.InputCost
+		outputCost += cost.OutputCost
+		totalCost += cost.TotalCost
+	}
+	return inputCost, outputCost, totalCost
+}
+
+// CopyModelCosts returns a shallow copy of the map, or an empty map if nil.
+func CopyModelCosts(costs map[string]ModelCost) map[string]ModelCost {
+	if costs == nil {
+		return map[string]ModelCost{}
+	}
+	copied := make(map[string]ModelCost, len(costs))
+	maps.Copy(copied, costs)
+	return copied
+}
+
+// MergeModelCosts adds the per-model values in costs into target in place.
+// Does nothing if target is nil.
+func MergeModelCosts(target map[string]ModelCost, costs map[string]ModelCost) {
+	if target == nil {
+		return
+	}
+	for model, cost := range costs {
+		current := target[model]
+		current.Model = model
+		current.InputTokens += cost.InputTokens
+		current.OutputTokens += cost.OutputTokens
+		current.InputCost += cost.InputCost
+		current.OutputCost += cost.OutputCost
+		current.TotalCost += cost.TotalCost
+		current.SessionCount += cost.SessionCount
+		target[model] = current
+	}
+}
