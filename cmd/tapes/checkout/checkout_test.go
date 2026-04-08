@@ -38,11 +38,11 @@ var _ = Describe("NewCheckoutCmd", func() {
 	})
 })
 
-var _ = Describe("History API response parsing", func() {
+var _ = Describe("Session API response parsing", func() {
 	// This tests that the checkout command can correctly parse the
-	// API response format used by GET /dag/history/:hash
+	// API response format used by GET /v1/sessions/:hash
 
-	type historyMessage struct {
+	type turn struct {
 		Hash       string             `json:"hash"`
 		ParentHash *string            `json:"parent_hash,omitempty"`
 		Role       string             `json:"role"`
@@ -52,16 +52,18 @@ var _ = Describe("History API response parsing", func() {
 		StopReason string             `json:"stop_reason,omitempty"`
 	}
 
-	type historyResponse struct {
-		Messages []historyMessage `json:"messages"`
-		HeadHash string           `json:"head_hash"`
-		Depth    int              `json:"depth"`
+	type sessionResponse struct {
+		Hash  string `json:"hash"`
+		Depth int    `json:"depth"`
+		Turns []turn `json:"turns"`
 	}
 
-	It("parses a valid API history response", func() {
+	It("parses a valid API session response", func() {
 		parentHash := "hash1"
-		resp := historyResponse{
-			Messages: []historyMessage{
+		resp := sessionResponse{
+			Hash:  "hash2",
+			Depth: 2,
+			Turns: []turn{
 				{
 					Hash: "hash1",
 					Role: "user",
@@ -83,25 +85,23 @@ var _ = Describe("History API response parsing", func() {
 					StopReason: "stop",
 				},
 			},
-			HeadHash: "hash2",
-			Depth:    2,
 		}
 
 		data, err := json.Marshal(resp)
 		Expect(err).NotTo(HaveOccurred())
 
-		var parsed historyResponse
+		var parsed sessionResponse
 		err = json.Unmarshal(data, &parsed)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(parsed.HeadHash).To(Equal("hash2"))
+		Expect(parsed.Hash).To(Equal("hash2"))
 		Expect(parsed.Depth).To(Equal(2))
-		Expect(parsed.Messages).To(HaveLen(2))
-		Expect(parsed.Messages[0].Role).To(Equal("user"))
-		Expect(parsed.Messages[1].Role).To(Equal("assistant"))
+		Expect(parsed.Turns).To(HaveLen(2))
+		Expect(parsed.Turns[0].Role).To(Equal("user"))
+		Expect(parsed.Turns[1].Role).To(Equal("assistant"))
 
 		// Extract text from content blocks
 		var b strings.Builder
-		for _, block := range parsed.Messages[1].Content {
+		for _, block := range parsed.Turns[1].Content {
 			if block.Type == "text" {
 				b.WriteString(block.Text)
 			}
@@ -109,13 +109,15 @@ var _ = Describe("History API response parsing", func() {
 		Expect(b.String()).To(Equal("Hi there!"))
 	})
 
-	It("correctly handles a mock API server returning history", func() {
+	It("correctly handles a mock API server returning a session", func() {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			Expect(r.URL.Path).To(Equal("/dag/history/abc123"))
+			Expect(r.URL.Path).To(Equal("/v1/sessions/abc123"))
 			Expect(r.Method).To(Equal("GET"))
 
-			resp := historyResponse{
-				Messages: []historyMessage{
+			resp := sessionResponse{
+				Hash:  "abc123",
+				Depth: 2,
+				Turns: []turn{
 					{
 						Hash: "root",
 						Role: "user",
@@ -131,8 +133,6 @@ var _ = Describe("History API response parsing", func() {
 						},
 					},
 				},
-				HeadHash: "abc123",
-				Depth:    2,
 			}
 
 			w.Header().Set("Content-Type", "application/json")
@@ -141,30 +141,30 @@ var _ = Describe("History API response parsing", func() {
 		defer server.Close()
 
 		// Fetch from mock server
-		url := server.URL + "/dag/history/abc123"
+		url := server.URL + "/v1/sessions/abc123"
 		resp, err := http.Get(url)
 		Expect(err).NotTo(HaveOccurred())
 		defer resp.Body.Close()
 
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
 
-		var history historyResponse
-		err = json.NewDecoder(resp.Body).Decode(&history)
+		var session sessionResponse
+		err = json.NewDecoder(resp.Body).Decode(&session)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(history.HeadHash).To(Equal("abc123"))
-		Expect(history.Messages).To(HaveLen(2))
+		Expect(session.Hash).To(Equal("abc123"))
+		Expect(session.Turns).To(HaveLen(2))
 	})
 
 	It("handles API returning 404 for unknown hash", func() {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
 			json.NewEncoder(w).Encode(map[string]string{
-				"error": "node not found",
+				"error": "session not found",
 			})
 		}))
 		defer server.Close()
 
-		resp, err := http.Get(server.URL + "/dag/history/unknown")
+		resp, err := http.Get(server.URL + "/v1/sessions/unknown")
 		Expect(err).NotTo(HaveOccurred())
 		defer resp.Body.Close()
 

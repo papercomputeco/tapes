@@ -41,10 +41,12 @@ func NewServer(config Config, driver storage.Driver, dagLoader merkle.DagLoader,
 	}
 
 	app.Get("/ping", s.handlePing)
-	app.Get("/dag/stats", s.handleDAGStats)
-	app.Get("/dag/node/:hash", s.handleGetNode)
-	app.Get("/dag/history", s.handleListHistories)
-	app.Get("/dag/history/:hash", s.handleGetHistory)
+
+	// v1 session-oriented surface. Static paths registered before the
+	// parameterised :hash route so future additions are not shadowed.
+	app.Get("/v1/stats", s.handleStats)
+	app.Get("/v1/sessions", s.handleListSessions)
+	app.Get("/v1/sessions/:hash", s.handleGetSession)
 	app.Get("/v1/search", s.handleSearchEndpoint)
 
 	// Register MCP server if vector driver and embedder are configured

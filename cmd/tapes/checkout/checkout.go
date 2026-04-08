@@ -33,21 +33,22 @@ type checkoutCommander struct {
 	logger *slog.Logger
 }
 
-// historyResponse mirrors the API's HistoryResponse type for JSON deserialization.
-type historyResponse struct {
-	Messages []historyMessage `json:"messages"`
-	HeadHash string           `json:"head_hash"`
-	Depth    int              `json:"depth"`
+// sessionResponse mirrors the API's SessionResponse type for JSON deserialization.
+type sessionResponse struct {
+	Hash  string `json:"hash"`
+	Depth int    `json:"depth"`
+	Turns []turn `json:"turns"`
 }
 
-// historyMessage mirrors the API's HistoryMessage type.
-type historyMessage struct {
+// turn mirrors the API's Turn type.
+type turn struct {
 	Hash       string             `json:"hash"`
 	ParentHash *string            `json:"parent_hash,omitempty"`
 	Role       string             `json:"role"`
 	Content    []llm.ContentBlock `json:"content"`
 	Model      string             `json:"model,omitempty"`
 	Provider   string             `json:"provider,omitempty"`
+	AgentName  string             `json:"agent_name,omitempty"`
 	StopReason string             `json:"stop_reason,omitempty"`
 	Usage      *llm.Usage         `json:"usage,omitempty"`
 }
@@ -132,29 +133,29 @@ func (c *checkoutCommander) run() error {
 		"api_target", c.apiTarget,
 	)
 
-	// Fetch the conversation history from the API
-	var history *historyResponse
-	if err := cliui.Step(os.Stdout, "Fetching conversation history", func() error {
+	// Fetch the session from the API
+	var session *sessionResponse
+	if err := cliui.Step(os.Stdout, "Fetching session", func() error {
 		var fetchErr error
-		history, fetchErr = c.fetchHistory(c.hash)
+		session, fetchErr = c.fetchSession(c.hash)
 		return fetchErr
 	}); err != nil {
 		return err
 	}
 
-	// Convert API messages to checkout messages
-	messages := make([]dotdir.CheckoutMessage, 0, len(history.Messages))
-	for _, msg := range history.Messages {
-		text := extractText(msg.Content)
+	// Convert API turns to checkout messages
+	messages := make([]dotdir.CheckoutMessage, 0, len(session.Turns))
+	for _, t := range session.Turns {
+		text := extractText(t.Content)
 		messages = append(messages, dotdir.CheckoutMessage{
-			Role:    msg.Role,
+			Role:    t.Role,
 			Content: text,
 		})
 	}
 
 	// Save the checkout state
 	state := &dotdir.CheckoutState{
-		Hash:     history.HeadHash,
+		Hash:     session.Hash,
 		Messages: messages,
 	}
 	if err := dotdirManager.SaveCheckout(state, ""); err != nil {
@@ -163,7 +164,7 @@ func (c *checkoutCommander) run() error {
 
 	fmt.Printf("\n  %s Checked out %s %s\n\n",
 		cliui.SuccessMark,
-		cliui.HashStyle.Render(utils.Truncate(history.HeadHash, 16)),
+		cliui.HashStyle.Render(utils.Truncate(session.Hash, 16)),
 		cliui.DimStyle.Render(fmt.Sprintf("(%d messages)", len(messages))),
 	)
 
@@ -179,9 +180,9 @@ func (c *checkoutCommander) run() error {
 	return nil
 }
 
-// fetchHistory calls the API to get the conversation history for a given hash.
-func (c *checkoutCommander) fetchHistory(hash string) (*historyResponse, error) {
-	url := fmt.Sprintf("%s/dag/history/%s", c.apiTarget, hash)
+// fetchSession calls the API to get the session chain for a given hash.
+func (c *checkoutCommander) fetchSession(hash string) (*sessionResponse, error) {
+	url := fmt.Sprintf("%s/v1/sessions/%s", c.apiTarget, hash)
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
@@ -190,7 +191,7 @@ func (c *checkoutCommander) fetchHistory(hash string) (*historyResponse, error) 
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("requesting history from API: %w", err)
+		return nil, fmt.Errorf("requesting session from API: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -204,12 +205,12 @@ func (c *checkoutCommander) fetchHistory(hash string) (*historyResponse, error) 
 		return nil, fmt.Errorf("reading API response: %w", err)
 	}
 
-	var history historyResponse
-	if err := json.Unmarshal(body, &history); err != nil {
+	var session sessionResponse
+	if err := json.Unmarshal(body, &session); err != nil {
 		return nil, fmt.Errorf("parsing API response: %w", err)
 	}
 
-	return &history, nil
+	return &session, nil
 }
 
 // extractText concatenates all text content blocks from a message.
