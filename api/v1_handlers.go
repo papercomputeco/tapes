@@ -10,6 +10,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
@@ -37,6 +38,14 @@ type SessionListItem struct {
 type SessionListResponse struct {
 	Items      []SessionListItem `json:"items"`
 	NextCursor string            `json:"next_cursor,omitempty"`
+}
+
+// SessionSummaryListResponse is the response envelope for
+// GET /v1/sessions/summary. Items carry the rich per-session aggregates
+// computed by pkg/sessions.BuildSummary.
+type SessionSummaryListResponse struct {
+	Items      []sessions.SessionSummary `json:"items"`
+	NextCursor string                    `json:"next_cursor,omitempty"`
 }
 
 // SessionResponse is the response for GET /v1/sessions/:hash.
