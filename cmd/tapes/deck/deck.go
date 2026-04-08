@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/papercomputeco/tapes/cmd/tapes/inprocessapi"
 	"github.com/papercomputeco/tapes/cmd/tapes/sqlitepath"
 	"github.com/papercomputeco/tapes/pkg/deck"
 )
@@ -153,7 +154,7 @@ func (c *deckCommander) run(ctx context.Context, cmd *cobra.Command) error {
 			fmt.Fprintf(cmd.OutOrStdout(), "Seeded %d demo sessions (%d messages) into %s\n", sessionCount, messageCount, sqlitePath)
 		}
 
-		target, stop, err := startInProcessAPI(ctx, sqlitePath, pricing)
+		target, stop, err := inprocessapi.Start(ctx, sqlitePath, pricing)
 		if err != nil {
 			return err
 		}
