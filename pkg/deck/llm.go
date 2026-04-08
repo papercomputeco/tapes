@@ -7,14 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/papercomputeco/tapes/pkg/credentials"
-	"github.com/papercomputeco/tapes/pkg/logger"
 )
 
 const providerOllama = "ollama"
@@ -29,7 +27,6 @@ type LLMCallerConfig struct {
 	APIKey   string               // explicit API key (highest priority)
 	BaseURL  string               // override base URL
 	CredMgr  *credentials.Manager // credentials from tapes auth
-	Logger   *slog.Logger         // optional logger; defaults to noop
 }
 
 // HasLLMCredentials checks whether an API key can be resolved from the config
@@ -59,11 +56,6 @@ func HasLLMCredentials(cfg LLMCallerConfig) bool {
 //  2. credentials.Manager (from tapes auth)
 //  3. Environment variables (OPENAI_API_KEY / ANTHROPIC_API_KEY)
 func NewLLMCaller(cfg LLMCallerConfig) (LLMCallFunc, error) {
-	log := cfg.Logger
-	if log == nil {
-		log = logger.NewNoop()
-	}
-
 	provider := strings.ToLower(cfg.Provider)
 	model := cfg.Model
 
