@@ -9,6 +9,20 @@ const (
 	sessionCacheTTL = 30 * time.Second
 )
 
+// sessionCandidate is a cached entry in the session overview, paired with
+// its per-model cost breakdown and derived status. Used by HTTPQuery to
+// hold the results of /v1/sessions/summary calls so the grouping and
+// detail paths can look candidates up by ID without re-fetching.
+type sessionCandidate struct {
+	summary    SessionSummary
+	modelCosts map[string]ModelCost
+	status     string
+}
+
+// sessionCache is the small in-memory cache HTTPQuery uses to remember the
+// most recent session overview between TUI refreshes. Entries expire after
+// sessionCacheTTL so a stale dashboard doesn't keep showing data after the
+// underlying store has changed.
 type sessionCache struct {
 	mu         sync.RWMutex
 	candidates []sessionCandidate
@@ -16,8 +30,8 @@ type sessionCache struct {
 	loadedAt   time.Time
 }
 
-// cachedSessionCandidates is a method on *sessionCache so it can be reused
-// by both the SQLite-backed Query and HTTPQuery without duplication.
+// cachedSessionCandidates returns a copy of the cached candidate list, or
+// nil if the cache is empty or stale.
 func (c *sessionCache) cachedSessionCandidates() []sessionCandidate {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -52,37 +66,13 @@ func (c *sessionCache) cachedSessionCandidate(sessionID string) *sessionCandidat
 	return &cp
 }
 
+// storeSessionCandidates replaces the cache contents with a fresh snapshot.
 func (c *sessionCache) storeSessionCandidates(candidates []sessionCandidate) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.candidates = copySessionCandidates(candidates)
 	c.byID = buildCandidateIndex(c.candidates)
 	c.loadedAt = time.Now()
-}
-
-// Wrapper methods on *Query forwarding to the underlying cache so the
-// existing SQLite-backed code path keeps compiling unchanged.
-func (q *Query) cachedSessionCandidates() []sessionCandidate {
-	return q.cache.cachedSessionCandidates()
-}
-
-func (q *Query) cachedSessionCandidate(sessionID string) *sessionCandidate {
-	return q.cache.cachedSessionCandidate(sessionID)
-}
-
-func (q *Query) storeSessionCandidates(candidates []sessionCandidate) {
-	q.cache.storeSessionCandidates(candidates)
-}
-
-// candidateByID performs a linear scan for a session ID in a slice.
-// Used on the slow path after a fresh load before the index is populated.
-func candidateByID(candidates []sessionCandidate, sessionID string) (sessionCandidate, bool) {
-	for _, c := range candidates {
-		if c.summary.ID == sessionID {
-			return c, true
-		}
-	}
-	return sessionCandidate{}, false
 }
 
 // buildCandidateIndex returns a map keyed by session ID pointing into the
@@ -99,7 +89,6 @@ func copySessionCandidates(candidates []sessionCandidate) []sessionCandidate {
 	if len(candidates) == 0 {
 		return nil
 	}
-
 	cloned := make([]sessionCandidate, len(candidates))
 	copy(cloned, candidates)
 	return cloned

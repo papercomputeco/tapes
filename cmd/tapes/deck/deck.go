@@ -13,6 +13,7 @@ import (
 	"github.com/papercomputeco/tapes/cmd/tapes/inprocessapi"
 	"github.com/papercomputeco/tapes/cmd/tapes/sqlitepath"
 	"github.com/papercomputeco/tapes/pkg/deck"
+	"github.com/papercomputeco/tapes/pkg/sessions"
 )
 
 const (
@@ -111,7 +112,7 @@ func (c *deckCommander) run(ctx context.Context, cmd *cobra.Command) error {
 		}
 	}
 
-	pricing, err := deck.LoadPricing(c.pricingPath)
+	pricing, err := sessions.LoadPricing(c.pricingPath)
 	if err != nil {
 		return err
 	}

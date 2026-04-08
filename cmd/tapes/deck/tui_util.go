@@ -10,6 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/papercomputeco/tapes/pkg/deck"
+	"github.com/papercomputeco/tapes/pkg/sessions"
 )
 
 func sortedModelCosts(costs map[string]deck.ModelCost) []deck.ModelCost {
@@ -420,7 +421,7 @@ func firstNonEmptyLine(text string) string {
 
 func stripSystemContent(text string) string {
 	for _, tag := range []string{"system-reminder", "local-command"} {
-		text = deck.StripTaggedSection(text, tag)
+		text = sessions.StripTaggedSection(text, tag)
 	}
 	return strings.TrimSpace(text)
 }

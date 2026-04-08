@@ -1,36 +1,37 @@
 package deck
 
 import (
+	"context"
 	"time"
 
 	"github.com/papercomputeco/tapes/pkg/sessions"
 )
+
+// Querier is the interface the deck TUI and web dashboard use to fetch
+// session data. The HTTPQuery implementation in this package talks to a
+// tapes API server (in-process or remote) over HTTP.
+type Querier interface {
+	Overview(ctx context.Context, filters Filters) (*Overview, error)
+	SessionDetail(ctx context.Context, sessionID string) (*SessionDetail, error)
+}
 
 // Pricing aliases sessions.Pricing so the deck and the API both speak the
 // same model-cost type. The standalone definition was removed when pricing
 // logic moved to pkg/sessions.
 type Pricing = sessions.Pricing
 
-type SessionSummary struct {
-	ID           string        `json:"id"`
-	Label        string        `json:"label"`
-	Model        string        `json:"model"`
-	Project      string        `json:"project"`
-	AgentName    string        `json:"agent_name,omitempty"`
-	Status       string        `json:"status"`
-	StartTime    time.Time     `json:"start_time"`
-	EndTime      time.Time     `json:"end_time"`
-	Duration     time.Duration `json:"duration_ns"`
-	InputTokens  int64         `json:"input_tokens"`
-	OutputTokens int64         `json:"output_tokens"`
-	InputCost    float64       `json:"input_cost"`
-	OutputCost   float64       `json:"output_cost"`
-	TotalCost    float64       `json:"total_cost"`
-	ToolCalls    int           `json:"tool_calls"`
-	MessageCount int           `json:"message_count"`
-	SessionCount int           `json:"session_count,omitempty"`
-}
+// SessionSummary aliases sessions.SessionSummary. The deck used to define
+// its own copy with identical fields; the alias removes the duplication
+// while keeping deck.SessionSummary working for the dozens of TUI sites
+// that reference it.
+type SessionSummary = sessions.SessionSummary
 
+// ModelCost aliases sessions.ModelCost for the same reason.
+type ModelCost = sessions.ModelCost
+
+// SessionMessage is the per-turn render shape used by the deck's transcript
+// view. It is built client-side from the API's Turn objects in HTTPQuery
+// and is not part of any HTTP API surface.
 type SessionMessage struct {
 	Hash         string        `json:"hash"`
 	Role         string        `json:"role"`
@@ -47,6 +48,9 @@ type SessionMessage struct {
 	Text         string        `json:"text"`
 }
 
+// SessionMessageGroup is a batched run of adjacent same-role messages,
+// used by the deck's transcript view to collapse rapid back-and-forth
+// turns into a single visual entry.
 type SessionMessageGroup struct {
 	Role         string        `json:"role"`
 	StartTime    time.Time     `json:"start_time"`
@@ -65,6 +69,8 @@ type SessionMessageGroup struct {
 	EndIndex     int           `json:"end_index"`
 }
 
+// SessionDetail is the response a Querier returns from SessionDetail. It
+// holds the per-session SessionSummary plus its rendered transcript.
 type SessionDetail struct {
 	Summary         SessionSummary        `json:"summary"`
 	Messages        []SessionMessage      `json:"messages"`
@@ -73,16 +79,8 @@ type SessionDetail struct {
 	SubSessions     []SessionSummary      `json:"sub_sessions,omitempty"`
 }
 
-type ModelCost struct {
-	Model        string  `json:"model"`
-	InputTokens  int64   `json:"input_tokens"`
-	OutputTokens int64   `json:"output_tokens"`
-	InputCost    float64 `json:"input_cost"`
-	OutputCost   float64 `json:"output_cost"`
-	TotalCost    float64 `json:"total_cost"`
-	SessionCount int     `json:"session_count"`
-}
-
+// Overview is the response a Querier returns from Overview. It holds the
+// filtered list of session summaries plus dashboard rollups.
 type Overview struct {
 	Sessions       []SessionSummary     `json:"sessions"`
 	TotalCost      float64              `json:"total_cost"`
@@ -99,6 +97,8 @@ type Overview struct {
 	PreviousPeriod *PeriodComparison    `json:"previous_period,omitempty"`
 }
 
+// PeriodComparison holds the previous-period metrics shown alongside the
+// current period in the deck overview.
 type PeriodComparison struct {
 	TotalCost      float64       `json:"total_cost"`
 	TotalTokens    int64         `json:"total_tokens"`
@@ -108,6 +108,10 @@ type PeriodComparison struct {
 	Completed      int           `json:"completed"`
 }
 
+// Filters describes the user-facing filter set the deck applies on top
+// of the data returned by the API. Time filters are evaluated client-side
+// against SessionSummary.StartTime / EndTime; the per-field string filters
+// are also applied client-side after the rich /v1/sessions/summary fetch.
 type Filters struct {
 	Since   time.Duration
 	From    *time.Time
@@ -120,13 +124,11 @@ type Filters struct {
 	Session string
 }
 
+// Status constants re-exported from pkg/sessions so existing TUI callers
+// (`deck.StatusCompleted` etc.) keep working without an import change.
 const (
-	StatusCompleted = "completed"
-	StatusFailed    = "failed"
-	StatusAbandoned = "abandoned"
-	StatusUnknown   = "unknown"
-
-	blockTypeToolUse = "tool_use"
-	roleAssistant    = "assistant"
-	roleUser         = "user"
+	StatusCompleted = sessions.StatusCompleted
+	StatusFailed    = sessions.StatusFailed
+	StatusAbandoned = sessions.StatusAbandoned
+	StatusUnknown   = sessions.StatusUnknown
 )

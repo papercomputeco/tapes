@@ -311,7 +311,7 @@ func (q *HTTPQuery) summaryForID(sessionID string, chain []httpTurn) SessionSumm
 	leaf := chain[len(chain)-1]
 	return SessionSummary{
 		ID:           sessionID,
-		Label:        truncate(sessionID, 12),
+		Label:        truncateID(sessionID, 12),
 		Model:        leaf.Model,
 		AgentName:    leaf.AgentName,
 		StartTime:    chain[0].CreatedAt,
@@ -446,3 +446,16 @@ func turnLess(a, b httpTurn) bool {
 // ErrEmptyChain is returned when SessionDetail receives an empty chain back
 // from the API. Exported so callers can branch on it if needed.
 var ErrEmptyChain = errors.New("empty session chain")
+
+// truncateID returns a short prefix of value followed by an ellipsis when
+// value exceeds limit. Used as a label fallback when no human prompt is
+// available to derive a friendlier label from.
+func truncateID(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	if limit <= 3 {
+		return value[:limit]
+	}
+	return value[:limit-3] + "..."
+}
