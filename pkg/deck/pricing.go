@@ -7,10 +7,13 @@ import (
 	"os"
 	"strings"
 
+	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage/ent"
 )
 
-type PricingTable map[string]Pricing
+// PricingTable aliases sessions.PricingTable so the deck and the API speak
+// the same map type without conversion at every boundary.
+type PricingTable = sessions.PricingTable
 
 // DefaultPricing returns hardcoded pricing per million tokens for supported models.
 //

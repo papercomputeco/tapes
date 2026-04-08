@@ -1,13 +1,15 @@
 package deck
 
-import "time"
+import (
+	"time"
 
-type Pricing struct {
-	Input      float64 `json:"input"`
-	Output     float64 `json:"output"`
-	CacheRead  float64 `json:"cache_read"`
-	CacheWrite float64 `json:"cache_write"`
-}
+	"github.com/papercomputeco/tapes/pkg/sessions"
+)
+
+// Pricing aliases sessions.Pricing so the deck and the API both speak the
+// same model-cost type. The standalone definition was removed when pricing
+// logic moved to pkg/sessions.
+type Pricing = sessions.Pricing
 
 type SessionSummary struct {
 	ID           string        `json:"id"`

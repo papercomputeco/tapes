@@ -16,48 +16,62 @@ type sessionCache struct {
 	loadedAt   time.Time
 }
 
-func (q *Query) cachedSessionCandidates() []sessionCandidate {
-	q.cache.mu.RLock()
-	defer q.cache.mu.RUnlock()
+// cachedSessionCandidates is a method on *sessionCache so it can be reused
+// by both the SQLite-backed Query and HTTPQuery without duplication.
+func (c *sessionCache) cachedSessionCandidates() []sessionCandidate {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
-	if len(q.cache.candidates) == 0 {
+	if len(c.candidates) == 0 {
 		return nil
 	}
-	if time.Since(q.cache.loadedAt) > sessionCacheTTL {
+	if time.Since(c.loadedAt) > sessionCacheTTL {
 		return nil
 	}
-
-	return copySessionCandidates(q.cache.candidates)
+	return copySessionCandidates(c.candidates)
 }
 
 // cachedSessionCandidate returns a single candidate by session ID from the
 // cache index, or nil if the cache is stale/empty or the ID is not found.
-func (q *Query) cachedSessionCandidate(sessionID string) *sessionCandidate {
-	q.cache.mu.RLock()
-	defer q.cache.mu.RUnlock()
+func (c *sessionCache) cachedSessionCandidate(sessionID string) *sessionCandidate {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
-	if len(q.cache.byID) == 0 {
+	if len(c.byID) == 0 {
 		return nil
 	}
-	if time.Since(q.cache.loadedAt) > sessionCacheTTL {
+	if time.Since(c.loadedAt) > sessionCacheTTL {
 		return nil
 	}
 
-	c, ok := q.cache.byID[sessionID]
+	cand, ok := c.byID[sessionID]
 	if !ok {
 		return nil
 	}
-
-	cp := *c
+	cp := *cand
 	return &cp
 }
 
+func (c *sessionCache) storeSessionCandidates(candidates []sessionCandidate) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.candidates = copySessionCandidates(candidates)
+	c.byID = buildCandidateIndex(c.candidates)
+	c.loadedAt = time.Now()
+}
+
+// Wrapper methods on *Query forwarding to the underlying cache so the
+// existing SQLite-backed code path keeps compiling unchanged.
+func (q *Query) cachedSessionCandidates() []sessionCandidate {
+	return q.cache.cachedSessionCandidates()
+}
+
+func (q *Query) cachedSessionCandidate(sessionID string) *sessionCandidate {
+	return q.cache.cachedSessionCandidate(sessionID)
+}
+
 func (q *Query) storeSessionCandidates(candidates []sessionCandidate) {
-	q.cache.mu.Lock()
-	defer q.cache.mu.Unlock()
-	q.cache.candidates = copySessionCandidates(candidates)
-	q.cache.byID = buildCandidateIndex(q.cache.candidates)
-	q.cache.loadedAt = time.Now()
+	q.cache.storeSessionCandidates(candidates)
 }
 
 // candidateByID performs a linear scan for a session ID in a slice.
