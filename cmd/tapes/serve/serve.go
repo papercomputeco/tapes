@@ -3,7 +3,6 @@ package servecmder
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -23,7 +22,6 @@ import (
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
-	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
@@ -204,7 +202,7 @@ func NewServeCmd() *cobra.Command {
 func (c *ServeCommander) run() error {
 	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
 
-	// Create shared driver (satisfies both storage.Driver and merkle.DagLoader)
+	// Create shared driver (satisfies storage.Driver, which embeds merkle.DagLoader)
 	driver, err := c.newStorageDriver()
 	if err != nil {
 		return err
@@ -213,12 +211,6 @@ func (c *ServeCommander) run() error {
 
 	if err := driver.Migrate(context.Background()); err != nil {
 		return fmt.Errorf("running migrations: %w", err)
-	}
-
-	// cast Driver as a DagLoader
-	dagLoader, ok := driver.(merkle.DagLoader)
-	if !ok {
-		return errors.New("storage driver does not implement merkle.DagLoader")
 	}
 
 	proxyConfig := proxy.Config{
@@ -276,7 +268,7 @@ func (c *ServeCommander) run() error {
 		VectorDriver: proxyConfig.VectorDriver,
 		Embedder:     proxyConfig.Embedder,
 	}
-	apiServer, err := api.NewServer(apiConfig, driver, dagLoader, c.logger)
+	apiServer, err := api.NewServer(apiConfig, driver, c.logger)
 	if err != nil {
 		return fmt.Errorf("could not build new api server: %w", err)
 	}

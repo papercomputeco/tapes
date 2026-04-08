@@ -3,7 +3,6 @@ package apicmder
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 
@@ -12,7 +11,6 @@ import (
 	"github.com/papercomputeco/tapes/api"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/logger"
-	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
@@ -101,17 +99,11 @@ func (c *apiCommander) run() error {
 		return fmt.Errorf("running migrations: %w", err)
 	}
 
-	// cast the driver as a DagLoader
-	dagLoader, ok := driver.(merkle.DagLoader)
-	if !ok {
-		return errors.New("storage driver does not implement merkle.DagLoader")
-	}
-
 	config := api.Config{
 		ListenAddr: c.listen,
 	}
 
-	server, err := api.NewServer(config, driver, dagLoader, c.logger)
+	server, err := api.NewServer(config, driver, c.logger)
 	if err != nil {
 		return fmt.Errorf("could not build new api server: %w", err)
 	}

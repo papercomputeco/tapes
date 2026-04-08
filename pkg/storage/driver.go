@@ -10,14 +10,19 @@ import (
 // Driver defines the interface for persisting and retrieving nodes in a storage backend.
 // The Driver is the primary interface for working with pkg/merkle - it handles
 // storage, retrieval, and traversal of nodes per the storage implementor.
+//
+// A Driver embeds merkle.DagLoader, so any storage.Driver is also a merkle.DagLoader.
+// This avoids the need for callers to cast a Driver to a DagLoader — they can pass
+// a Driver wherever a DagLoader is expected directly.
 type Driver interface {
+	// DagLoader provides read and traversal operations on the DAG.
+	// Get, GetByParent, and Ancestry come from this embedded interface.
+	merkle.DagLoader
+
 	// Put stores a node. Returns true if the node was newly inserted,
 	// false if it already exists. If the node already exists, this should be
 	// a no-op. Put provides automatic deduplication via content-addressing in the dag.
 	Put(ctx context.Context, node *merkle.Node) (bool, error)
-
-	// Get retrieves a node by its hash.
-	Get(ctx context.Context, hash string) (*merkle.Node, error)
 
 	// Has checks if a node exists by its hash.
 	Has(ctx context.Context, hash string) (bool, error)
@@ -30,9 +35,6 @@ type Driver interface {
 
 	// Leaves returns all leaf nodes (nodes with no children).
 	Leaves(ctx context.Context) ([]*merkle.Node, error)
-
-	// Ancestry returns the path from a node back to its root (node first, root last).
-	Ancestry(ctx context.Context, hash string) ([]*merkle.Node, error)
 
 	// Depth returns the depth of a node (0 for roots).
 	Depth(ctx context.Context, hash string) (int, error)

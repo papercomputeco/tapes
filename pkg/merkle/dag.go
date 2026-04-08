@@ -10,7 +10,8 @@ import (
 // This allows the Dag to be loaded from any storage implementation
 // without creating a circular dependency.
 //
-// storage.Driver implementers must also implement this interface.
+// storage.Driver embeds this interface, so any storage.Driver
+// satisfies DagLoader automatically — no runtime cast needed.
 type DagLoader interface {
 	// Get retrieves a node by its hash.
 	Get(ctx context.Context, hash string) (*Node, error)

@@ -43,7 +43,7 @@ func (s *Server) handleSearchEndpoint(c *fiber.Ctx) error {
 		c.Context(),
 		s.config.Embedder,
 		s.config.VectorDriver,
-		s.dagLoader,
+		s.driver,
 		s.logger,
 	)
 	output, err := searcher.Search(query, topK)

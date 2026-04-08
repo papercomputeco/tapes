@@ -242,7 +242,7 @@ func (p *Pool) storeConversationTurn(ctx context.Context, job Job) (string, []*m
 			AgentName: job.AgentName,
 		}
 
-		node := merkle.NewNode(bucket, parent, merkle.NodeMeta{Project: p.config.Project})
+		node := merkle.NewNode(bucket, parent, merkle.NodeOptions{Project: p.config.Project})
 
 		isNew, err := p.config.Driver.Put(ctx, node)
 		if err != nil {
@@ -274,7 +274,7 @@ func (p *Pool) storeConversationTurn(ctx context.Context, job Job) (string, []*m
 	responseNode := merkle.NewNode(
 		responseBucket,
 		parent,
-		merkle.NodeMeta{
+		merkle.NodeOptions{
 			StopReason: job.Resp.StopReason,
 			Usage:      job.Resp.Usage,
 			Project:    p.config.Project,

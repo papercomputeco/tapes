@@ -143,7 +143,7 @@ func insertSession(ctx context.Context, client *ent.Client, session seedSession)
 		}
 
 		usage := buildUsage(message)
-		node := merkle.NewNode(bucket, parent, merkle.NodeMeta{
+		node := merkle.NewNode(bucket, parent, merkle.NodeOptions{
 			StopReason: message.StopReason,
 			Usage:      usage,
 			Project:    session.Project,

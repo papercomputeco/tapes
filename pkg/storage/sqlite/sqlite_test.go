@@ -425,7 +425,7 @@ var _ = Describe("Driver", func() {
 				Provider: "openai",
 			}
 			// StopReason and Usage are now on Node, not Bucket
-			node := merkle.NewNode(bucket, nil, merkle.NodeMeta{
+			node := merkle.NewNode(bucket, nil, merkle.NodeOptions{
 				StopReason: "stop",
 				Usage: &llm.Usage{
 					PromptTokens:     10,

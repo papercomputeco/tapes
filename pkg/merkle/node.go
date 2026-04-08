@@ -33,9 +33,9 @@ type Node struct {
 	Project string `json:"project,omitempty"`
 }
 
-// NodeMeta contains optional metadata for a node that is stored
-// but does not affect the content-addressable hash.
-type NodeMeta struct {
+// NodeOptions contains optional metadata for a new node that is stored
+// but does not affect the content-addressable hashing.
+type NodeOptions struct {
 	StopReason string
 	Usage      *llm.Usage
 	Project    string
@@ -44,7 +44,7 @@ type NodeMeta struct {
 // NewNode creates a new node with the computed hash for the provided bucket.
 // The optional NodeOptions parameter allows for setting metadata (StopReason, Usage, etc.)
 // outside of the content addressable Bucket
-func NewNode(bucket Bucket, parent *Node, metas ...NodeMeta) *Node {
+func NewNode(bucket Bucket, parent *Node, opts ...NodeOptions) *Node {
 	n := &Node{
 		Bucket: bucket,
 	}
@@ -54,10 +54,10 @@ func NewNode(bucket Bucket, parent *Node, metas ...NodeMeta) *Node {
 	}
 
 	// Apply optional metadata if provided
-	if len(metas) > 0 {
-		n.StopReason = metas[0].StopReason
-		n.Usage = metas[0].Usage
-		n.Project = metas[0].Project
+	if len(opts) > 0 {
+		n.StopReason = opts[0].StopReason
+		n.Usage = opts[0].Usage
+		n.Project = opts[0].Project
 	}
 
 	n.Hash = n.computeHash()

@@ -29,7 +29,6 @@ import (
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
-	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/start"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
@@ -412,11 +411,6 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 		return fmt.Errorf("running migrations: %w", err)
 	}
 
-	dagLoader, ok := driver.(merkle.DagLoader)
-	if !ok {
-		return errors.New("storage driver does not implement merkle.DagLoader")
-	}
-
 	vectorDriver, embedder, err := c.newVectorAndEmbedder(startCfg, log)
 	if err != nil {
 		return err
@@ -460,7 +454,7 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 		VectorDriver: vectorDriver,
 		Embedder:     embedder,
 	}
-	apiServer, err := api.NewServer(apiConfig, driver, dagLoader, log)
+	apiServer, err := api.NewServer(apiConfig, driver, log)
 	if err != nil {
 		return fmt.Errorf("creating api server: %w", err)
 	}

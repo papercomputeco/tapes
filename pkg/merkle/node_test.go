@@ -65,7 +65,7 @@ var _ = Describe("Node", func() {
 					Provider: "openai",
 				}
 				// StopReason and Usage are now on Node via NodeOptions, not Bucket
-				node := merkle.NewNode(bucket, nil, merkle.NodeMeta{
+				node := merkle.NewNode(bucket, nil, merkle.NodeOptions{
 					StopReason: "stop",
 					Usage: &llm.Usage{
 						PromptTokens:     10,
@@ -94,7 +94,7 @@ var _ = Describe("Node", func() {
 				node1 := merkle.NewNode(bucket, nil)
 
 				// Node with metadata - should have SAME hash since metadata doesn't affect hash
-				node2 := merkle.NewNode(bucket, nil, merkle.NodeMeta{
+				node2 := merkle.NewNode(bucket, nil, merkle.NodeOptions{
 					StopReason: "stop",
 					Usage: &llm.Usage{
 						PromptTokens:     10,

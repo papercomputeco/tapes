@@ -392,7 +392,7 @@ var _ = Describe("Driver", func() {
 				Model:    "gpt-4",
 				Provider: "openai",
 			}
-			node := merkle.NewNode(bucket, nil, merkle.NodeMeta{
+			node := merkle.NewNode(bucket, nil, merkle.NodeOptions{
 				StopReason: "stop",
 				Usage: &llm.Usage{
 					PromptTokens:     10,

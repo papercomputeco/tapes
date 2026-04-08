@@ -42,7 +42,6 @@ var _ = Describe("handleSearchEndpoint", func() {
 				Embedder:     embedder,
 			},
 			inMem,
-			inMem,
 			logger,
 		)
 		Expect(err).NotTo(HaveOccurred())
@@ -53,7 +52,6 @@ var _ = Describe("handleSearchEndpoint", func() {
 			logger := tapeslogger.NewNoop()
 			noSearchServer, err := NewServer(
 				Config{ListenAddr: ":0"},
-				inMem,
 				inMem,
 				logger,
 			)
