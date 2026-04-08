@@ -80,8 +80,15 @@ type httpTurn struct {
 // Overview fetches all session summaries from the API (paging through with
 // /v1/sessions/summary), then runs the existing deck-side grouping, filtering
 // and rollup logic on top of the returned data.
+//
+// Filters that the API understands natively (since/from, project, model) are
+// pushed down to the request as query params so the server can apply them at
+// the SQL level. Without this pushdown the deck would page through every
+// session in the database before filtering, which OOMs on large stores.
+// Filters that depend on derived state (status, the To bound, sort order)
+// stay client-side and are applied to the smaller filtered slice below.
 func (q *HTTPQuery) Overview(ctx context.Context, filters Filters) (*Overview, error) {
-	all, err := q.fetchAllSummaries(ctx)
+	all, err := q.fetchAllSummaries(ctx, filters)
 	if err != nil {
 		return nil, err
 	}
@@ -217,12 +224,14 @@ func (q *HTTPQuery) groupSessionDetail(ctx context.Context, sessionID string) (*
 
 // fetchAllSummaries pages through /v1/sessions/summary until the API
 // returns no NextCursor, returning every session it finds. Capped at
-// httpQueryMaxSummary to avoid pathological memory growth.
-func (q *HTTPQuery) fetchAllSummaries(ctx context.Context) ([]SessionSummary, error) {
+// httpQueryMaxSummary to avoid pathological memory growth. The filter
+// fields the API supports natively are passed through to every page so
+// the server can narrow the result set before pagination is applied.
+func (q *HTTPQuery) fetchAllSummaries(ctx context.Context, filters Filters) ([]SessionSummary, error) {
 	var all []SessionSummary
 	cursor := ""
 	for {
-		page, err := q.fetchSummaryPage(ctx, cursor)
+		page, err := q.fetchSummaryPage(ctx, cursor, filters)
 		if err != nil {
 			return nil, err
 		}
@@ -238,7 +247,7 @@ func (q *HTTPQuery) fetchAllSummaries(ctx context.Context) ([]SessionSummary, er
 	return all, nil
 }
 
-func (q *HTTPQuery) fetchSummaryPage(ctx context.Context, cursor string) (*httpSummaryResponse, error) {
+func (q *HTTPQuery) fetchSummaryPage(ctx context.Context, cursor string, filters Filters) (*httpSummaryResponse, error) {
 	u, err := url.Parse(q.apiTarget + "/v1/sessions/summary")
 	if err != nil {
 		return nil, fmt.Errorf("invalid api target: %w", err)
@@ -247,6 +256,15 @@ func (q *HTTPQuery) fetchSummaryPage(ctx context.Context, cursor string) (*httpS
 	qparams.Set("limit", strconv.Itoa(httpQueryPageLimit))
 	if cursor != "" {
 		qparams.Set("cursor", cursor)
+	}
+	if cutoff := effectiveSinceCutoff(filters); !cutoff.IsZero() {
+		qparams.Set("since", cutoff.UTC().Format(time.RFC3339))
+	}
+	if filters.Project != "" {
+		qparams.Set("project", filters.Project)
+	}
+	if filters.Model != "" {
+		qparams.Set("model", filters.Model)
 	}
 	u.RawQuery = qparams.Encode()
 
@@ -446,6 +464,26 @@ func turnLess(a, b httpTurn) bool {
 // ErrEmptyChain is returned when SessionDetail receives an empty chain back
 // from the API. Exported so callers can branch on it if needed.
 var ErrEmptyChain = errors.New("empty session chain")
+
+// effectiveSinceCutoff returns the timestamp below which sessions should
+// be excluded, derived from the deck's relative Filters.Since (a duration
+// from now) and absolute Filters.From bounds. When both are set the later
+// of the two wins, matching the existing client-side behaviour in
+// preFilterCandidatesByTime so the server-side and client-side passes
+// agree on the boundary.
+//
+// Returns the zero time when no cutoff applies; callers should treat that
+// as "do not send a since query param".
+func effectiveSinceCutoff(f Filters) time.Time {
+	var cutoff time.Time
+	if f.Since > 0 {
+		cutoff = time.Now().Add(-f.Since)
+	}
+	if f.From != nil && (cutoff.IsZero() || f.From.After(cutoff)) {
+		cutoff = *f.From
+	}
+	return cutoff
+}
 
 // truncateID returns a short prefix of value followed by an ellipsis when
 // value exceeds limit. Used as a label fallback when no human prompt is
