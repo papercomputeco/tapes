@@ -12,7 +12,16 @@ import (
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
+	"github.com/papercomputeco/tapes/pkg/storage/storagetest"
 )
+
+var _ = storagetest.RunListSessionsSpecs("sqlite", func() storage.Driver {
+	ctx := context.Background()
+	d, err := sqlite.NewDriver(ctx, ":memory:")
+	Expect(err).NotTo(HaveOccurred())
+	Expect(d.Migrate(ctx)).To(Succeed())
+	return d
+})
 
 // sqliteTestBucket creates a simple bucket for testing with the given text content
 func sqliteTestBucket(text string) merkle.Bucket {

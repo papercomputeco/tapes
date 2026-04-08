@@ -55,6 +55,12 @@ func (ed *EntDriver) Put(ctx context.Context, n *merkle.Node) (bool, error) {
 		create.SetAgentName(n.Bucket.AgentName)
 	}
 
+	// Honor an explicit CreatedAt when supplied (e.g. by tests). When zero,
+	// the schema default (CURRENT_TIMESTAMP) applies.
+	if !n.CreatedAt.IsZero() {
+		create.SetCreatedAt(n.CreatedAt)
+	}
+
 	// Marshal bucket to JSON for storage
 	bucketJSON, err := json.Marshal(n.Bucket)
 	if err != nil {
@@ -275,6 +281,7 @@ func (ed *EntDriver) entNodeToMerkleNode(entNode *ent.Node) (*merkle.Node, error
 		ParentHash: entNode.ParentHash,
 		Bucket:     bucket,
 		StopReason: entNode.StopReason,
+		CreatedAt:  entNode.CreatedAt,
 	}
 
 	if entNode.Project != nil {

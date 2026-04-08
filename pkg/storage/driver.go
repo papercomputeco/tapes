@@ -31,6 +31,19 @@ type Driver interface {
 	// Leaves returns all leaf nodes (nodes with no children).
 	Leaves(ctx context.Context) ([]*merkle.Node, error)
 
+	// ListSessions returns a page of leaf nodes ordered by created_at descending,
+	// optionally filtered by ListOpts. The returned Page.NextCursor is empty
+	// when there are no further pages.
+	//
+	// "Session" here is the API-layer concept: a leaf node identifies the head
+	// of a conversation chain. Filters apply to the leaf node itself, not to
+	// any ancestor in the chain.
+	ListSessions(ctx context.Context, opts ListOpts) (*Page[*merkle.Node], error)
+
+	// CountSessions returns aggregate counts for the slice of data matching
+	// the filter in opts. Pagination fields on opts (Limit, Cursor) are ignored.
+	CountSessions(ctx context.Context, opts ListOpts) (SessionStats, error)
+
 	// Ancestry returns the path from a node back to its root (node first, root last).
 	Ancestry(ctx context.Context, hash string) ([]*merkle.Node, error)
 

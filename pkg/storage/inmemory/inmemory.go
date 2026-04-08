@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
+	"time"
 
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
@@ -29,6 +31,9 @@ func NewDriver() *Driver {
 
 // Put stores a node. Returns true if the node was newly inserted,
 // false if it already existed (no-op due to content-addressing).
+//
+// Put stores a copy of the node so that storage-managed metadata
+// (currently CreatedAt) can be assigned without mutating the caller.
 func (s *Driver) Put(_ context.Context, node *merkle.Node) (bool, error) {
 	if node == nil {
 		return false, errors.New("cannot store nil node")
@@ -43,7 +48,11 @@ func (s *Driver) Put(_ context.Context, node *merkle.Node) (bool, error) {
 		return false, nil
 	}
 
-	s.nodes[node.Hash] = node
+	stored := *node
+	if stored.CreatedAt.IsZero() {
+		stored.CreatedAt = time.Now().UTC()
+	}
+	s.nodes[node.Hash] = &stored
 	return true, nil
 }
 
@@ -178,6 +187,130 @@ func (s *Driver) Count() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.nodes)
+}
+
+// ListSessions returns a page of leaf nodes (sessions), ordered by created_at
+// descending then hash descending, optionally filtered by opts.
+func (s *Driver) ListSessions(_ context.Context, opts storage.ListOpts) (*storage.Page[*merkle.Node], error) {
+	opts = opts.Normalize()
+
+	cursor, err := storage.DecodeCursor(opts.Cursor)
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	hasChildren := s.computeHasChildren()
+
+	var matches []*merkle.Node
+	for _, node := range s.nodes {
+		if hasChildren[node.Hash] {
+			continue
+		}
+		if !matchesFilter(node, opts) {
+			continue
+		}
+		if opts.Cursor != "" && !beforeCursor(node, cursor) {
+			continue
+		}
+		matches = append(matches, node)
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		if !matches[i].CreatedAt.Equal(matches[j].CreatedAt) {
+			return matches[i].CreatedAt.After(matches[j].CreatedAt)
+		}
+		return matches[i].Hash > matches[j].Hash
+	})
+
+	hasMore := len(matches) > opts.Limit
+	if hasMore {
+		matches = matches[:opts.Limit]
+	}
+
+	page := &storage.Page[*merkle.Node]{Items: matches}
+	if hasMore && len(matches) > 0 {
+		last := matches[len(matches)-1]
+		page.NextCursor = storage.Cursor{
+			CreatedAt: last.CreatedAt,
+			Hash:      last.Hash,
+		}.Encode()
+	}
+	return page, nil
+}
+
+// CountSessions returns aggregate counts for the slice of data matching opts.
+// Pagination fields on opts are ignored.
+func (s *Driver) CountSessions(_ context.Context, opts storage.ListOpts) (storage.SessionStats, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	hasChildren := s.computeHasChildren()
+
+	var stats storage.SessionStats
+	for _, node := range s.nodes {
+		if !matchesFilter(node, opts) {
+			continue
+		}
+		stats.TurnCount++
+		if !hasChildren[node.Hash] {
+			stats.SessionCount++
+		}
+		if node.ParentHash == nil {
+			stats.RootCount++
+		}
+	}
+	return stats, nil
+}
+
+// computeHasChildren builds a set of node hashes that are referenced as a
+// parent by some other node. Caller must hold s.mu.
+func (s *Driver) computeHasChildren() map[string]bool {
+	hasChildren := make(map[string]bool, len(s.nodes))
+	for _, node := range s.nodes {
+		if node.ParentHash != nil {
+			hasChildren[*node.ParentHash] = true
+		}
+	}
+	return hasChildren
+}
+
+// matchesFilter reports whether n matches the per-field filters in opts.
+// Pagination fields are ignored here.
+func matchesFilter(n *merkle.Node, opts storage.ListOpts) bool {
+	if opts.Project != "" && n.Project != opts.Project {
+		return false
+	}
+	if opts.Agent != "" && n.Bucket.AgentName != opts.Agent {
+		return false
+	}
+	if opts.Model != "" && n.Bucket.Model != opts.Model {
+		return false
+	}
+	if opts.Provider != "" && n.Bucket.Provider != opts.Provider {
+		return false
+	}
+	if opts.Since != nil && n.CreatedAt.Before(*opts.Since) {
+		return false
+	}
+	if opts.Until != nil && !n.CreatedAt.Before(*opts.Until) {
+		return false
+	}
+	return true
+}
+
+// beforeCursor reports whether n comes strictly after the cursor in
+// (CreatedAt DESC, Hash DESC) order — that is, n should appear on a later page.
+func beforeCursor(n *merkle.Node, c storage.Cursor) bool {
+	if n.CreatedAt.Before(c.CreatedAt) {
+		return true
+	}
+	if n.CreatedAt.Equal(c.CreatedAt) && n.Hash < c.Hash {
+		return true
+	}
+	return false
 }
 
 // Migrate is a no-op for the in-memory storer.
