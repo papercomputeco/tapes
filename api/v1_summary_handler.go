@@ -1,12 +1,21 @@
 package api
 
 import (
+	"context"
+
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/sessions"
 )
+
+// bulkAncestrier is an optional extension interface. Drivers that implement
+// it get a batched ancestry path in handleListSessionsSummary, avoiding the
+// N (leaves) * D (depth) query fan-out of the per-leaf Ancestry() loop.
+type bulkAncestrier interface {
+	BulkAncestries(ctx context.Context, leafHashes []string) (map[string][]*merkle.Node, error)
+}
 
 // handleListSessionsSummary handles GET /v1/sessions/summary.
 //
@@ -32,6 +41,43 @@ func (s *Server) handleListSessionsSummary(c *fiber.Ctx) error {
 		pricing = sessions.DefaultPricing()
 	}
 
+	// Fast path: if the driver supports bulk ancestry fetching, load all
+	// chains for this page in one batched walk instead of per-leaf.
+	if bulker, ok := s.driver.(bulkAncestrier); ok && len(page.Items) > 0 {
+		leafHashes := make([]string, 0, len(page.Items))
+		for _, leaf := range page.Items {
+			leafHashes = append(leafHashes, leaf.Hash)
+		}
+		chains, err := bulker.BulkAncestries(c.Context(), leafHashes)
+		if err != nil {
+			s.logger.Error("bulk ancestries for summary", "error", err)
+			return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load sessions"})
+		}
+
+		items := make([]sessions.SessionSummary, 0, len(page.Items))
+		for _, leaf := range page.Items {
+			chain, ok := chains[leaf.Hash]
+			if !ok || len(chain) == 0 {
+				continue
+			}
+			summary, _, _, err := sessions.BuildSummary(chain, pricing)
+			if err != nil {
+				s.logger.Warn("failed to build summary",
+					"hash", leaf.Hash,
+					"error", err,
+				)
+				continue
+			}
+			items = append(items, summary)
+		}
+		return c.JSON(SessionSummaryListResponse{
+			Items:      items,
+			NextCursor: page.NextCursor,
+		})
+	}
+
+	// Slow path: per-leaf Ancestry() loop (used by drivers that don't
+	// implement bulkAncestrier, e.g. the in-memory driver in tests).
 	items := make([]sessions.SessionSummary, 0, len(page.Items))
 	for _, leaf := range page.Items {
 		// Ancestry returns node-first, so we need to reverse for

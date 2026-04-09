@@ -222,6 +222,104 @@ func (ed *EntDriver) Ancestry(ctx context.Context, hash string) ([]*merkle.Node,
 	return path, nil
 }
 
+// BulkAncestries returns chronological (root-first) ancestry chains for each
+// of the given leaf hashes in a single batched walk. Instead of N individual
+// per-leaf walks (each of which is itself O(depth) queries), this issues one
+// IN-query per depth level across the full leaf set. Result shape mirrors
+// Ancestry (root-first, so callers do not need to reverse).
+//
+// Missing hashes are silently skipped. Cycles are defended against via the
+// seen set.
+func (ed *EntDriver) BulkAncestries(ctx context.Context, leafHashes []string) (map[string][]*merkle.Node, error) {
+	if len(leafHashes) == 0 {
+		return map[string][]*merkle.Node{}, nil
+	}
+
+	// nodesByID accumulates every node we load across all depth levels.
+	nodesByID := make(map[string]*merkle.Node, len(leafHashes)*8)
+
+	// frontier is the set of hashes whose parents we still need to fetch.
+	// Seeded with the leaves, then replaced each iteration with the unique
+	// set of parent hashes we just discovered.
+	frontier := dedupeStrings(leafHashes)
+
+	for len(frontier) > 0 {
+		entNodes, err := ed.Client.Node.Query().
+			Where(node.IDIn(frontier...)).
+			All(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("bulk ancestries fetch: %w", err)
+		}
+
+		nextFrontier := make([]string, 0, len(entNodes))
+		for _, en := range entNodes {
+			if _, ok := nodesByID[en.ID]; ok {
+				continue
+			}
+			mn, err := ed.entNodeToMerkleNode(en)
+			if err != nil {
+				return nil, err
+			}
+			nodesByID[en.ID] = mn
+			if mn.ParentHash != nil && *mn.ParentHash != "" {
+				if _, already := nodesByID[*mn.ParentHash]; !already {
+					nextFrontier = append(nextFrontier, *mn.ParentHash)
+				}
+			}
+		}
+		frontier = dedupeStrings(nextFrontier)
+	}
+
+	// Build each leaf's chain by walking parent pointers in the loaded map.
+	result := make(map[string][]*merkle.Node, len(leafHashes))
+	for _, leafHash := range leafHashes {
+		leaf, ok := nodesByID[leafHash]
+		if !ok {
+			continue
+		}
+		chain := make([]*merkle.Node, 0, 8)
+		seen := make(map[string]bool, 8)
+		current := leaf
+		for current != nil {
+			if seen[current.Hash] {
+				break
+			}
+			seen[current.Hash] = true
+			chain = append(chain, current)
+			if current.ParentHash == nil || *current.ParentHash == "" {
+				break
+			}
+			current = nodesByID[*current.ParentHash]
+		}
+		// Reverse in place to root-first.
+		for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
+			chain[i], chain[j] = chain[j], chain[i]
+		}
+		result[leafHash] = chain
+	}
+	return result, nil
+}
+
+// dedupeStrings returns a deduped copy of in, preserving first-seen order.
+func dedupeStrings(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
 // Depth returns the depth of a node (0 for roots).
 func (ed *EntDriver) Depth(ctx context.Context, hash string) (int, error) {
 	path, err := ed.Ancestry(ctx, hash)
