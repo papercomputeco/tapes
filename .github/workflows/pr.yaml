@@ -18,7 +18,7 @@ concurrency:
 jobs:
   check-pr-title:
     name: Check PR Title
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
 
     steps:
       - name: Checkout repository
