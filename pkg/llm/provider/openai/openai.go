@@ -89,6 +89,10 @@ func (o *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 		messages = append(messages, converted)
 	}
 
+	if len(messages) == 0 {
+		messages = parseResponsesInput(req.Input)
+	}
+
 	// Parse stop sequences
 	var stop []string
 	switch s := req.Stop.(type) {
@@ -129,6 +133,92 @@ func (o *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 	}
 
 	return result, nil
+}
+
+func parseResponsesInput(input any) []llm.Message {
+	items, ok := input.([]any)
+	if !ok {
+		return nil
+	}
+
+	messages := make([]llm.Message, 0, len(items))
+	for _, item := range items {
+		obj, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		role, _ := obj["role"].(string)
+		if role == "" {
+			role = "user"
+		}
+
+		content := parseResponsesContent(obj["content"])
+		if len(content) == 0 {
+			content = parseResponsesContent(obj["input"])
+		}
+		if len(content) == 0 {
+			continue
+		}
+
+		messages = append(messages, llm.Message{
+			Role:    role,
+			Content: content,
+		})
+	}
+
+	return messages
+}
+
+func parseResponsesContent(value any) []llm.ContentBlock {
+	switch v := value.(type) {
+	case string:
+		if v == "" {
+			return nil
+		}
+		return []llm.ContentBlock{{Type: "text", Text: v}}
+	case []any:
+		blocks := make([]llm.ContentBlock, 0, len(v))
+		for _, item := range v {
+			obj, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			block, ok := parseResponsesContentBlock(obj)
+			if !ok {
+				continue
+			}
+			blocks = append(blocks, block)
+		}
+		return blocks
+	default:
+		return nil
+	}
+}
+
+func parseResponsesContentBlock(part map[string]any) (llm.ContentBlock, bool) {
+	switch partType, _ := part["type"].(string); partType {
+	case "input_text", "text", "output_text":
+		text, _ := part["text"].(string)
+		if text == "" {
+			return llm.ContentBlock{}, false
+		}
+		return llm.ContentBlock{Type: "text", Text: text}, true
+	case "input_image", "image_url", "image":
+		url := ""
+		switch image := part["image_url"].(type) {
+		case string:
+			url = image
+		case map[string]any:
+			url, _ = image["url"].(string)
+		}
+		if url == "" {
+			return llm.ContentBlock{}, false
+		}
+		return llm.ContentBlock{Type: "image", ImageURL: url}, true
+	default:
+		return llm.ContentBlock{}, false
+	}
 }
 
 func (o *Provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {

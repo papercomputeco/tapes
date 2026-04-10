@@ -3,6 +3,7 @@ package openai
 // openaiRequest represents OpenAI's request format.
 type openaiRequest struct {
 	Model       string          `json:"model"`
+	Input       any             `json:"input,omitempty"`
 	Messages    []openaiMessage `json:"messages"`
 	MaxTokens   *int            `json:"max_tokens,omitempty"`
 	Temperature *float64        `json:"temperature,omitempty"`
