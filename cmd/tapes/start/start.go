@@ -249,6 +249,36 @@ func (c *startCommander) runAgent(ctx context.Context, agent string, passthrough
 
 	agentArgs = append(agentArgs, passthroughArgs...)
 
+	cleanup := func() error { return nil }
+	var configRoot string
+
+	switch agent {
+	case agentCodex:
+		agentArgs = append([]string{
+			"-c", fmt.Sprintf(`chatgpt_base_url="%s"`, agentBaseURL),
+			"-c", `model_provider="openai-custom"`,
+			"-c", fmt.Sprintf(`model_providers.openai-custom={name="OpenAI Custom",base_url="%s/v1",wire_api="responses"}`, agentBaseURL),
+		}, agentArgs...)
+	case agentOpenCode:
+		cleanup, configRoot, err = configureOpenCode(agentBaseURL, c.configDir)
+		if err != nil {
+			return err
+		}
+
+		// Clear OpenCode's stored OAuth tokens so it uses API keys from
+		// our config/env instead. Same pattern as configureCodexAuth.
+		ocAuthCleanup := c.patchOpenCodeAuth()
+		prevCleanup := cleanup
+		cleanup = func() error {
+			err1 := ocAuthCleanup()
+			err2 := prevCleanup()
+			if err1 != nil {
+				return err1
+			}
+			return err2
+		}
+	}
+
 	// #nosec G204 -- agent commands are restricted to known binaries.
 	cmd := exec.CommandContext(ctx, agentCommand(agent), agentArgs...)
 	cmd.Stdout = os.Stdout
@@ -256,15 +286,14 @@ func (c *startCommander) runAgent(ctx context.Context, agent string, passthrough
 	cmd.Stdin = os.Stdin
 	cmd.Env = os.Environ()
 
-	cleanup := func() error { return nil }
-
 	switch agent {
 	case agentClaude:
 		cmd.Env = append(cmd.Env, "ANTHROPIC_BASE_URL="+agentBaseURL)
 	case agentCodex:
 		cmd.Env = append(cmd.Env,
-			"OPENAI_BASE_URL="+agentBaseURL,
-			"OPENAI_API_BASE="+agentBaseURL,
+			"OPENAI_BASE_URL=",
+			"OPENAI_API_BASE=",
+			"OPENAI_API_KEY=",
 		)
 		codexCleanup, err := c.configureCodexAuth()
 		if err != nil {
@@ -280,25 +309,7 @@ func (c *startCommander) runAgent(ctx context.Context, agent string, passthrough
 			return err2
 		}
 	case agentOpenCode:
-		var configRoot string
-		cleanup, configRoot, err = configureOpenCode(agentBaseURL, c.configDir)
-		if err != nil {
-			return err
-		}
 		cmd.Env = append(cmd.Env, "XDG_CONFIG_HOME="+configRoot)
-
-		// Clear OpenCode's stored OAuth tokens so it uses API keys from
-		// our config/env instead. Same pattern as configureCodexAuth.
-		ocAuthCleanup := c.patchOpenCodeAuth()
-		prevCleanup := cleanup
-		cleanup = func() error {
-			err1 := ocAuthCleanup()
-			err2 := prevCleanup()
-			if err1 != nil {
-				return err1
-			}
-			return err2
-		}
 	}
 
 	cmd.Env = c.injectCredentials(cmd.Env)
@@ -438,7 +449,7 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 		AgentRoutes: map[string]proxy.AgentRoute{
 			agentClaude:   {ProviderType: "anthropic", UpstreamURL: "https://api.anthropic.com"},
 			agentOpenCode: openCodeRoute,
-			agentCodex:    {ProviderType: "openai", UpstreamURL: "https://api.openai.com/v1"},
+			agentCodex:    {ProviderType: "openai", UpstreamURL: "https://chatgpt.com"},
 		},
 		ProviderUpstreams: map[string]string{
 			"anthropic": "https://api.anthropic.com",
@@ -829,12 +840,21 @@ func (c *startCommander) newVectorAndEmbedder(cfg *startConfig, log *slog.Logger
 	return vectorDriver, embedder, nil
 }
 
-// configureCodexAuth temporarily writes the stored OpenAI API key into codex's
-// ~/.codex/auth.json so that codex uses it instead of its OAuth token when
-// routing through the tapes proxy. The returned cleanup function restores the
-// original auth.json contents.
+// configureCodexAuth prefers Codex's existing OAuth session in ~/.codex/auth.json.
+// If no OAuth tokens are present, it temporarily writes the stored OpenAI API key
+// into auth.json as a fallback. The returned cleanup function restores the
+// original auth.json contents when patching was needed.
 func (c *startCommander) configureCodexAuth() (func() error, error) {
 	noop := func() error { return nil }
+
+	original, authPath := credentials.ReadCodexAuthFile()
+	if original == nil {
+		return noop, nil
+	}
+
+	if credentials.HasCodexOAuthTokens(original) {
+		return noop, nil
+	}
 
 	mgr, err := credentials.NewManager(c.configDir)
 	if err != nil {
@@ -847,11 +867,6 @@ func (c *startCommander) configureCodexAuth() (func() error, error) {
 	}
 	if apiKey == "" {
 		return noop, errors.New("no OpenAI API key found — run 'tapes auth openai' with a service account key first")
-	}
-
-	original, authPath := credentials.ReadCodexAuthFile()
-	if original == nil {
-		return noop, nil
 	}
 
 	updated, ok := credentials.PatchCodexAuthKey(original, apiKey)

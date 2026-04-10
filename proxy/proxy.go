@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -209,7 +210,7 @@ func (p *Proxy) handleProxy(c *fiber.Ctx) error {
 // handleNonStreamingProxy handles non-streaming requests.
 func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL string, prov provider.Provider, agentName string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
 	// Build upstream URL
-	upstreamURL += path
+	upstreamURL = joinUpstreamURL(upstreamURL, path)
 
 	// Create upstream request
 	var reqBody io.Reader
@@ -281,7 +282,7 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL 
 // handleStreamingProxy handles streaming requests.
 func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path, upstreamURL string, prov provider.Provider, agentName string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
 	// Build upstream URL
-	upstreamURL += path
+	upstreamURL = joinUpstreamURL(upstreamURL, path)
 
 	// Use context.Background() instead of c.Context() because fasthttp recycles
 	// its RequestCtx after the handler returns, but the streaming callback runs
@@ -578,6 +579,24 @@ func jsonInt(m map[string]any, key string) int {
 		return int(v)
 	}
 	return 0
+}
+
+func joinUpstreamURL(baseURL, path string) string {
+	if path == "" || path == "/" {
+		return baseURL
+	}
+
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return strings.TrimRight(baseURL, "/") + path
+	}
+
+	if strings.HasSuffix(parsed.Path, path) {
+		return parsed.String()
+	}
+
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + path
+	return parsed.String()
 }
 
 // enqueueStreamedResponse handles post-stream telemetry: logging and

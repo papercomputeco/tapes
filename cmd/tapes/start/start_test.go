@@ -186,6 +186,77 @@ var _ = Describe("injectCredentials", func() {
 	})
 })
 
+var _ = Describe("configureCodexAuth", func() {
+	var (
+		tmpDir  string
+		homeDir string
+	)
+
+	BeforeEach(func() {
+		var err error
+		tmpDir, err = os.MkdirTemp("", "tapes-codex-config-*")
+		Expect(err).NotTo(HaveOccurred())
+
+		homeDir, err = os.MkdirTemp("", "tapes-codex-home-*")
+		Expect(err).NotTo(HaveOccurred())
+
+		DeferCleanup(func() {
+			Expect(os.RemoveAll(tmpDir)).To(Succeed())
+			Expect(os.RemoveAll(homeDir)).To(Succeed())
+		})
+
+		DeferCleanup(func(prev string) {
+			Expect(os.Setenv("HOME", prev)).To(Succeed())
+		}, os.Getenv("HOME"))
+		Expect(os.Setenv("HOME", homeDir)).To(Succeed())
+		Expect(os.MkdirAll(filepath.Join(homeDir, ".codex"), 0o755)).To(Succeed())
+	})
+
+	It("accepts existing Codex OAuth without requiring an OpenAI API key", func() {
+		authPath := filepath.Join(homeDir, ".codex", "auth.json")
+		original := []byte(`{
+			"tokens": {
+				"access_token": "oa-abc123",
+				"refresh_token": "oa-refresh"
+			}
+		}`)
+		Expect(os.WriteFile(authPath, original, 0o600)).To(Succeed())
+
+		cmder := &startCommander{configDir: tmpDir}
+		cleanup, err := cmder.configureCodexAuth()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cleanup()).To(Succeed())
+
+		data, readErr := os.ReadFile(authPath)
+		Expect(readErr).NotTo(HaveOccurred())
+		Expect(data).To(MatchJSON(original))
+	})
+
+	It("falls back to patching auth.json with a stored OpenAI API key", func() {
+		authPath := filepath.Join(homeDir, ".codex", "auth.json")
+		original := []byte(`{"OPENAI_API_KEY": null}`)
+		Expect(os.WriteFile(authPath, original, 0o600)).To(Succeed())
+
+		mgr, err := credentials.NewManager(tmpDir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mgr.SetKey("openai", "sk-svcacct-test")).To(Succeed())
+
+		cmder := &startCommander{configDir: tmpDir}
+		cleanup, err := cmder.configureCodexAuth()
+		Expect(err).NotTo(HaveOccurred())
+
+		patched, readErr := os.ReadFile(authPath)
+		Expect(readErr).NotTo(HaveOccurred())
+		Expect(string(patched)).To(ContainSubstring(`"OPENAI_API_KEY": "sk-svcacct-test"`))
+
+		Expect(cleanup()).To(Succeed())
+
+		restored, restoreErr := os.ReadFile(authPath)
+		Expect(restoreErr).NotTo(HaveOccurred())
+		Expect(restored).To(MatchJSON(original))
+	})
+})
+
 var _ = Describe("loadConfig project resolution", func() {
 	var tmpDir string
 

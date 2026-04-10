@@ -46,6 +46,29 @@ func newOpenAITestProxy(upstreamURL string) (*Proxy, *inmemory.Driver) {
 	return p, driver
 }
 
+func newCodexTestProxy(upstreamURL string) (*Proxy, *inmemory.Driver) {
+	logger := tapeslogger.NewNoop()
+	driver := inmemory.NewDriver()
+
+	p, err := New(
+		Config{
+			ListenAddr:   ":0",
+			UpstreamURL:  "http://unused.invalid",
+			ProviderType: "openai",
+			AgentRoutes: map[string]AgentRoute{
+				"codex": {
+					ProviderType: "openai",
+					UpstreamURL:  upstreamURL,
+				},
+			},
+		},
+		driver,
+		logger,
+	)
+	Expect(err).NotTo(HaveOccurred())
+	return p, driver
+}
+
 // makeOpenAIRequestBody builds a JSON-encoded OpenAI chat request.
 func makeOpenAIRequestBody(model string, messages []openaiTestMsgEntry, stream *bool) []byte {
 	body, err := json.Marshal(openaiTestRequest{
@@ -252,6 +275,80 @@ var _ = Describe("SSE Streaming Proxy", func() {
 
 			Expect(bodyStr).To(ContainSubstring(": keep-alive\n"))
 			Expect(bodyStr).To(ContainSubstring("data: {\"choices\""))
+		})
+	})
+
+	Context("when Codex is routed through a transparent responses endpoint", func() {
+		var (
+			requestPath   string
+			authHeader    string
+			requestAccept string
+		)
+
+		BeforeEach(func() {
+			upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requestPath = r.URL.Path
+				authHeader = r.Header.Get("Authorization")
+				requestAccept = r.Header.Get("Accept")
+
+				w.Header().Set("Content-Type", "text/event-stream")
+				flusher, ok := w.(http.Flusher)
+				Expect(ok).To(BeTrue())
+
+				events := []string{
+					"data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n",
+					"data: {\"type\":\"response.output_text.delta\",\"delta\":\" from Codex\"}\n\n",
+					"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5.1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":2,\"total_tokens\":12}}}\n\n",
+				}
+
+				for _, event := range events {
+					fmt.Fprint(w, event)
+					flusher.Flush()
+				}
+			}))
+			p, driver = newCodexTestProxy(upstream.URL + "/backend-api/codex/responses")
+		})
+
+		It("forwards Authorization transparently and avoids duplicating the configured responses path", func() {
+			payload := []byte(`{
+				"model": "gpt-5.1",
+				"input": [
+					{
+						"role": "user",
+						"content": [
+							{"type": "input_text", "text": "Say hello"}
+						]
+					}
+				],
+				"stream": true
+			}`)
+
+			req := httptest.NewRequest(http.MethodPost, "/agents/codex/responses", strings.NewReader(string(payload)))
+			req.Header.Set("Authorization", "Bearer oauth-token")
+			req.Header.Set("Accept", "text/event-stream")
+
+			resp, err := p.server.Test(req, -1)
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			Expect(requestPath).To(Equal("/backend-api/codex/responses"))
+			Expect(authHeader).To(Equal("Bearer oauth-token"))
+			Expect(requestAccept).To(Equal("text/event-stream"))
+			Expect(string(body)).To(ContainSubstring(`"delta":"Hello"`))
+			Expect(string(body)).To(ContainSubstring(`"status":"completed"`))
+
+			p.Close()
+			p = nil
+
+			ctx := GinkgoT().Context()
+			leaves, err := driver.Leaves(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(leaves).To(HaveLen(1))
+			Expect(leaves[0].Bucket.ExtractText()).To(Equal("Hello from Codex"))
 		})
 	})
 })
