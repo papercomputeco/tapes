@@ -51,7 +51,9 @@ func NewDriver(ctx context.Context, connStr string) (*Driver, error) {
 
 	return &Driver{
 		EntDriver: &entdriver.EntDriver{
-			Client: client,
+			Client:  client,
+			DB:      db,
+			Dialect: dialect.Postgres,
 		},
 		db: db,
 	}, nil

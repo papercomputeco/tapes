@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/papercomputeco/tapes/cmd/tapes/inprocessapi"
 	searchcmder "github.com/papercomputeco/tapes/cmd/tapes/search"
 	"github.com/papercomputeco/tapes/cmd/tapes/sqlitepath"
 	"github.com/papercomputeco/tapes/pkg/config"
@@ -119,20 +120,33 @@ func (c *generateCommander) run(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(w, "\nGenerating skill %q from %d conversation(s)\n\n", c.name, len(hashes))
 
-	// Step 1: Open database
-	var query *deck.Query
-	var closeFn func() error
-	if err := step(w, "Opening database", func() error {
+	// Step 1: Connect to the tapes API. With --api-target we use the
+	// remote server; otherwise we spin up an in-process API server backed
+	// by --sqlite, mirroring the pattern used by `tapes deck`.
+	var query deck.Querier
+	var closeFn func()
+	if err := step(w, "Connecting to API", func() error {
+		if strings.TrimSpace(c.apiTarget) != "" {
+			query = deck.NewHTTPQuery(c.apiTarget, nil)
+			closeFn = func() {}
+			return nil
+		}
+
 		dbPath, dbErr := sqlitepath.ResolveSQLitePath(c.sqlitePath)
 		if dbErr != nil {
 			return dbErr
 		}
-		query, closeFn, dbErr = deck.NewQuery(cmd.Context(), dbPath, nil)
-		return dbErr
+		target, stop, startErr := inprocessapi.Start(cmd.Context(), dbPath, nil)
+		if startErr != nil {
+			return startErr
+		}
+		query = deck.NewHTTPQuery(target, nil)
+		closeFn = stop
+		return nil
 	}); err != nil {
 		return err
 	}
-	defer func() { _ = closeFn() }()
+	defer closeFn()
 
 	// Step 2: Configure LLM
 	var llmCaller deck.LLMCallFunc

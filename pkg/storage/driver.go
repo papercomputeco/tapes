@@ -36,6 +36,43 @@ type Driver interface {
 	// Leaves returns all leaf nodes (nodes with no children).
 	Leaves(ctx context.Context) ([]*merkle.Node, error)
 
+	// ListSessions returns a page of leaf nodes ordered by created_at descending,
+	// optionally filtered by ListOpts. The returned Page.NextCursor is empty
+	// when there are no further pages.
+	//
+	// "Session" here is the API-layer concept: a leaf node identifies the head
+	// of a conversation chain. Filters apply to the leaf node itself, not to
+	// any ancestor in the chain.
+	ListSessions(ctx context.Context, opts ListOpts) (*Page[*merkle.Node], error)
+
+	// CountSessions returns aggregate counts for the slice of data matching
+	// the filter in opts. Pagination fields on opts (Limit, Cursor) are ignored.
+	CountSessions(ctx context.Context, opts ListOpts) (SessionStats, error)
+
+	// AncestryChain is Ancestry with a marker describing how the walk
+	// terminated. When the walk stops at a parent_hash whose target is not
+	// present in this store, the returned Chain has Incomplete=true and
+	// MissingParent set to that parent_hash. The nodes in Chain.Nodes are
+	// still valid; this state is expected on stores that trim older data or
+	// merge content from foreign sources, and is not an error.
+	AncestryChain(ctx context.Context, hash string) (*Chain, error)
+
+	// AncestryChains returns a Chain for each input hash, batched per depth
+	// level so the cost scales with maximum chain depth rather than the
+	// product of starting-node count and depth. Shared ancestors across
+	// starts are fetched once.
+	//
+	// The returned map is keyed by each starting hash. Starts that are not
+	// present in the store are omitted from the map rather than surfaced as
+	// errors — callers that need a strict "every start must resolve" check
+	// should compare the map's keys against their input slice.
+	//
+	// Use this instead of looping over AncestryChain when walking many
+	// leaves (e.g. the /v1/sessions/summary handler): the per-leaf loop
+	// issues O(N_starts × depth) queries, which on a real store with tens
+	// of thousands of leaves will not complete in any reasonable time.
+	AncestryChains(ctx context.Context, hashes []string) (map[string]*Chain, error)
+
 	// Depth returns the depth of a node (0 for roots).
 	Depth(ctx context.Context, hash string) (int, error)
 

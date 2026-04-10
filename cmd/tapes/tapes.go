@@ -20,6 +20,7 @@ import (
 	startcmder "github.com/papercomputeco/tapes/cmd/tapes/start"
 	statuscmder "github.com/papercomputeco/tapes/cmd/tapes/status"
 	synccmder "github.com/papercomputeco/tapes/cmd/tapes/sync"
+	validatecmder "github.com/papercomputeco/tapes/cmd/tapes/validate"
 	versioncmder "github.com/papercomputeco/tapes/cmd/version"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/logger"
@@ -105,6 +106,7 @@ func NewTapesCmd() *cobra.Command {
 	cmd.AddCommand(skillcmder.NewSkillCmd())
 	cmd.AddCommand(startcmder.NewStartCmd())
 	cmd.AddCommand(statuscmder.NewStatusCmd())
+	cmd.AddCommand(validatecmder.NewValidateCmd())
 	cmd.AddCommand(versioncmder.NewVersionCmd())
 
 	return cmd

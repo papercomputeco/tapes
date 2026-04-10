@@ -1,28 +1,32 @@
-package deck
+package sessions
 
 import (
 	"strings"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
-	"github.com/papercomputeco/tapes/pkg/storage/ent"
+	"github.com/papercomputeco/tapes/pkg/merkle"
 )
 
-type userLabelCandidate struct {
-	text string
-}
+const (
+	labelLimit   = 36
+	labelPrompts = 3
+)
 
-func buildLabel(nodes []*ent.Node) string {
-	const labelLimit = 36
-	const labelPrompts = 3
+// BuildLabel derives a short human-readable label for the session from the
+// most recent user-role prompts in the chain. Falls back to a truncated form
+// of the leaf hash if no usable prompts are found.
+func BuildLabel(nodes []*merkle.Node) string {
+	if len(nodes) == 0 {
+		return ""
+	}
 
 	labelLines := make([]string, 0, labelPrompts)
 	for i := len(nodes) - 1; i >= 0; i-- {
-		node := nodes[i]
-		if node.Role != roleUser {
+		n := nodes[i]
+		if n.Bucket.Role != roleUser {
 			continue
 		}
-		blocks, _ := parseContentBlocks(node.Content)
-		text := strings.TrimSpace(extractLabelText(blocks))
+		text := strings.TrimSpace(ExtractLabelText(n.Bucket.Content))
 		if text == "" {
 			continue
 		}
@@ -37,7 +41,7 @@ func buildLabel(nodes []*ent.Node) string {
 	}
 
 	if len(labelLines) == 0 {
-		return truncate(nodes[len(nodes)-1].ID, 12)
+		return truncate(nodes[len(nodes)-1].Hash, 12)
 	}
 
 	for i, j := 0, len(labelLines)-1; i < j; i, j = i+1, j-1 {
@@ -48,53 +52,10 @@ func buildLabel(nodes []*ent.Node) string {
 	return truncate(label, labelLimit)
 }
 
-// buildLabelFromCandidates builds a label from pre-extracted user prompt texts
-// (collected in forward order). This avoids re-parsing content blocks.
-func buildLabelFromCandidates(candidates []userLabelCandidate, fallbackID string) string {
-	const labelLimit = 36
-	const labelPrompts = 3
-
-	labelLines := make([]string, 0, labelPrompts)
-	for i := len(candidates) - 1; i >= 0; i-- {
-		line := firstLabelLine(candidates[i].text)
-		if line == "" {
-			continue
-		}
-		labelLines = append(labelLines, line)
-		if len(labelLines) >= labelPrompts {
-			break
-		}
-	}
-
-	if len(labelLines) == 0 {
-		return truncate(fallbackID, 12)
-	}
-
-	for i, j := 0, len(labelLines)-1; i < j; i, j = i+1, j-1 {
-		labelLines[i], labelLines[j] = labelLines[j], labelLines[i]
-	}
-
-	label := strings.Join(labelLines, " / ")
-	return truncate(label, labelLimit)
-}
-
-func firstLabelLine(text string) string {
-	for line := range strings.SplitSeq(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || isTagLine(line) || isCommandLine(line) {
-			continue
-		}
-		return line
-	}
-	return ""
-}
-
-func isCommandLine(value string) bool {
-	value = strings.TrimSpace(strings.ToLower(value))
-	return strings.HasPrefix(value, "command:")
-}
-
-func extractLabelText(blocks []llm.ContentBlock) string {
+// ExtractLabelText concatenates human-visible text from content blocks for
+// label-building purposes, stripping tagged meta sections like
+// <system-reminder>...</system-reminder>.
+func ExtractLabelText(blocks []llm.ContentBlock) string {
 	texts := []string{}
 	for _, block := range blocks {
 		if block.Text == "" {
@@ -130,6 +91,22 @@ func StripTaggedSection(text, tag string) string {
 	}
 
 	return strings.TrimSpace(text)
+}
+
+func firstLabelLine(text string) string {
+	for line := range strings.SplitSeq(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || isTagLine(line) || isCommandLine(line) {
+			continue
+		}
+		return line
+	}
+	return ""
+}
+
+func isCommandLine(value string) bool {
+	value = strings.TrimSpace(strings.ToLower(value))
+	return strings.HasPrefix(value, "command:")
 }
 
 func isTagLine(value string) bool {

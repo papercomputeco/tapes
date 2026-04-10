@@ -2,8 +2,10 @@ package sqlite_test
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -12,7 +14,32 @@ import (
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
+	"github.com/papercomputeco/tapes/pkg/storage/storagetest"
 )
+
+var _ = storagetest.RunListSessionsSpecs("sqlite", func() storage.Driver {
+	ctx := context.Background()
+	d, err := sqlite.NewDriver(ctx, ":memory:")
+	Expect(err).NotTo(HaveOccurred())
+	Expect(d.Migrate(ctx)).To(Succeed())
+	return d
+})
+
+var _ = storagetest.RunAncestryChainBasicSpecs("sqlite", func() storage.Driver {
+	ctx := context.Background()
+	d, err := sqlite.NewDriver(ctx, ":memory:")
+	Expect(err).NotTo(HaveOccurred())
+	Expect(d.Migrate(ctx)).To(Succeed())
+	return d
+})
+
+var _ = storagetest.RunAncestryChainsSpecs("sqlite", func() storage.Driver {
+	ctx := context.Background()
+	d, err := sqlite.NewDriver(ctx, ":memory:")
+	Expect(err).NotTo(HaveOccurred())
+	Expect(d.Migrate(ctx)).To(Succeed())
+	return d
+})
 
 // sqliteTestBucket creates a simple bucket for testing with the given text content
 func sqliteTestBucket(text string) merkle.Bucket {
@@ -481,5 +508,131 @@ var _ = Describe("Driver", func() {
 			leaves, _ := driver.Leaves(ctx)
 			Expect(leaves).To(HaveLen(2))
 		})
+	})
+})
+
+var _ = Describe("AncestryChain dangling parents [sqlite]", func() {
+	// These specs exercise the same path as the shared dangling conformance
+	// suite, but have to bypass referential integrity to set up the
+	// scenario because the sqlite driver enables _foreign_keys=on. The
+	// real dangling rows observed in production came from bulk imports
+	// that wrote directly to the table with FKs disabled, so we mirror
+	// that by injecting rows over a second FK-off sql.DB handle to the
+	// same file.
+	var (
+		ctx     context.Context
+		driver  *sqlite.Driver
+		rawDB   *sql.DB
+		dbPath  string
+		tempDir string
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+
+		var err error
+		tempDir, err = os.MkdirTemp("", "sqlite-dangling-*")
+		Expect(err).NotTo(HaveOccurred())
+		dbPath = filepath.Join(tempDir, "dangling.sqlite")
+
+		driver, err = sqlite.NewDriver(ctx, dbPath)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(driver.Migrate(ctx)).To(Succeed())
+
+		// Separate FK-disabled handle used only for the raw orphan insert.
+		rawDB, err = sql.Open("sqlite3", dbPath+"?_foreign_keys=off")
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	AfterEach(func() {
+		if rawDB != nil {
+			_ = rawDB.Close()
+		}
+		if driver != nil {
+			_ = driver.Close()
+		}
+		_ = os.RemoveAll(tempDir)
+	})
+
+	insertOrphan := func(hash, parentHash string) {
+		now := time.Now().UTC()
+		_, err := rawDB.ExecContext(ctx,
+			`INSERT INTO nodes (hash, parent_hash, bucket, type, role, created_at)
+			 VALUES (?, ?, '{"type":"message","role":"user"}', 'message', 'user', ?)`,
+			hash, parentHash, now)
+		Expect(err).NotTo(HaveOccurred())
+	}
+
+	It("marks the chain incomplete when a parent_hash is missing", func() {
+		phantom := "0000000000000000000000000000000000000000000000000000000000000000"
+		orphanHash := "aaaa000000000000000000000000000000000000000000000000000000000000"
+		childHash := "bbbb000000000000000000000000000000000000000000000000000000000000"
+
+		insertOrphan(orphanHash, phantom)
+		insertOrphan(childHash, orphanHash)
+
+		chain, err := driver.AncestryChain(ctx, childHash)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(chain.Nodes).To(HaveLen(2))
+		Expect(chain.Incomplete).To(BeTrue())
+		Expect(chain.MissingParent).To(Equal(phantom))
+		Expect(chain.Complete()).To(BeFalse())
+		// Node-first order: child first, orphan (last resolvable) at tail.
+		Expect(chain.Nodes[0].Hash).To(Equal(childHash))
+		Expect(chain.Nodes[1].Hash).To(Equal(orphanHash))
+	})
+
+	It("marks a single orphan node incomplete without returning an error", func() {
+		phantom := "1111111111111111111111111111111111111111111111111111111111111111"
+		orphanHash := "cccc000000000000000000000000000000000000000000000000000000000000"
+		insertOrphan(orphanHash, phantom)
+
+		chain, err := driver.AncestryChain(ctx, orphanHash)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(chain.Nodes).To(HaveLen(1))
+		Expect(chain.Incomplete).To(BeTrue())
+		Expect(chain.MissingParent).To(Equal(phantom))
+	})
+
+	It("leaves Ancestry behavior compatible with callers that ignore the marker", func() {
+		phantom := "2222222222222222222222222222222222222222222222222222222222222222"
+		orphanHash := "dddd000000000000000000000000000000000000000000000000000000000000"
+		insertOrphan(orphanHash, phantom)
+
+		nodes, err := driver.Ancestry(ctx, orphanHash)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(nodes).To(HaveLen(1))
+	})
+
+	It("stops a two-node cycle in AncestryChain instead of looping", func() {
+		hashA := "eeee000000000000000000000000000000000000000000000000000000000000"
+		hashB := "ffff000000000000000000000000000000000000000000000000000000000000"
+		// A → B → A. Neither can be inserted via Put (content addressing
+		// forbids the pair, and the FK rejects it anyway), so we drop
+		// the rows in directly over the FK-off handle.
+		insertOrphan(hashA, hashB)
+		insertOrphan(hashB, hashA)
+
+		chain, err := driver.AncestryChain(ctx, hashA)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(chain.Nodes).To(HaveLen(2))
+		Expect(chain.Incomplete).To(BeTrue())
+		Expect(chain.CycleDetected).To(BeTrue())
+		Expect(chain.MissingParent).To(BeEmpty())
+	})
+
+	It("stops a cycle in the batched AncestryChains path", func() {
+		hashA := "aaaacccc00000000000000000000000000000000000000000000000000000000"
+		hashB := "bbbbcccc00000000000000000000000000000000000000000000000000000000"
+		insertOrphan(hashA, hashB)
+		insertOrphan(hashB, hashA)
+
+		chains, err := driver.AncestryChains(ctx, []string{hashA})
+		Expect(err).NotTo(HaveOccurred())
+		cycleChain := chains[hashA]
+		Expect(cycleChain).NotTo(BeNil())
+		Expect(cycleChain.Incomplete).To(BeTrue())
+		Expect(cycleChain.CycleDetected).To(BeTrue())
+		Expect(cycleChain.Nodes).To(HaveLen(2))
 	})
 })

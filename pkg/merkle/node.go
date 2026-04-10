@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"time"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 )
@@ -31,6 +32,12 @@ type Node struct {
 
 	// Project is the git repository or project name that produced this node
 	Project string `json:"project,omitempty"`
+
+	// CreatedAt is the time the node was persisted to storage. It is populated
+	// by the storage layer (not by NewNode) and is NOT part of the content hash.
+	// Zero value means "unknown" — typically for nodes constructed in-memory
+	// that have not yet been Put.
+	CreatedAt time.Time `json:"created_at,omitzero"`
 }
 
 // NodeOptions contains optional metadata for a new node that is stored

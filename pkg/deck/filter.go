@@ -4,6 +4,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/papercomputeco/tapes/pkg/sessions"
 )
 
 // preFilterCandidatesByTime reduces the candidate set using time-based filters
@@ -41,7 +43,7 @@ func preFilterCandidatesByTime(candidates []sessionCandidate, filters Filters) [
 
 func matchesFilters(summary SessionSummary, filters Filters) bool {
 	if filters.Model != "" {
-		if normalizeModel(summary.Model) != normalizeModel(filters.Model) {
+		if sessions.NormalizeModel(summary.Model) != sessions.NormalizeModel(filters.Model) {
 			return false
 		}
 	}

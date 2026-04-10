@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/papercomputeco/tapes/pkg/storage/ent"
+	"github.com/papercomputeco/tapes/pkg/sessions"
 )
 
 const (
@@ -64,7 +64,7 @@ func groupSessionCandidates(candidates []sessionCandidate) []*sessionGroup {
 					MessageCount: candidate.summary.MessageCount,
 					SessionCount: 1,
 				},
-				modelCosts:   copyModelCosts(candidate.modelCosts),
+				modelCosts:   sessions.CopyModelCosts(candidate.modelCosts),
 				statusCounts: map[string]int{candidate.summary.Status: 1},
 				members:      []sessionCandidate{candidate},
 			}
@@ -85,12 +85,12 @@ func groupSessionCandidates(candidates []sessionCandidate) []*sessionGroup {
 		group.summary.MessageCount += candidate.summary.MessageCount
 		group.summary.SessionCount++
 		group.statusCounts[candidate.summary.Status]++
-		mergeModelCosts(group.modelCosts, candidate.modelCosts)
+		sessions.MergeModelCosts(group.modelCosts, candidate.modelCosts)
 	}
 
 	for _, group := range groups {
 		group.summary.Status = summarizeGroupStatus(group.statusCounts)
-		group.summary.Model = dominantModel(group.modelCosts)
+		group.summary.Model = sessions.DominantModel(group.modelCosts)
 		if group.summary.Model == "" {
 			group.summary.Model = firstNonEmptyModel(group.members)
 		}
@@ -203,25 +203,4 @@ func firstNonEmptyModel(members []sessionCandidate) string {
 		}
 	}
 	return ""
-}
-
-func groupNodes(members []sessionCandidate) []*ent.Node {
-	total := 0
-	for _, member := range members {
-		total += len(member.nodes)
-	}
-
-	nodes := make([]*ent.Node, 0, total)
-	for _, member := range members {
-		nodes = append(nodes, member.nodes...)
-	}
-
-	sort.Slice(nodes, func(i, j int) bool {
-		if nodes[i].CreatedAt.Equal(nodes[j].CreatedAt) {
-			return nodes[i].ID < nodes[j].ID
-		}
-		return nodes[i].CreatedAt.Before(nodes[j].CreatedAt)
-	})
-
-	return nodes
 }

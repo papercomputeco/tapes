@@ -14,6 +14,12 @@ import (
 	deckweb "github.com/papercomputeco/tapes/web/deck"
 )
 
+// runDeckWeb serves the deck web dashboard. The query interface it receives
+// is now always an *HTTPQuery (constructed in deck.go), so the /api/overview
+// and /api/session/:id handlers below transparently route through the tapes
+// API server — either an external one if --api-target is set, or the
+// in-process server started in startInProcessAPI. The web/deck JS frontend
+// keeps hitting these /api/* paths unchanged.
 func runDeckWeb(ctx context.Context, query deck.Querier, filters deck.Filters, port int) error {
 	address := fmt.Sprintf("127.0.0.1:%d", port)
 

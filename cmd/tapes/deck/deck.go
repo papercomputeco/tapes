@@ -10,8 +10,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/papercomputeco/tapes/cmd/tapes/inprocessapi"
 	"github.com/papercomputeco/tapes/cmd/tapes/sqlitepath"
 	"github.com/papercomputeco/tapes/pkg/deck"
+	"github.com/papercomputeco/tapes/pkg/sessions"
 )
 
 const (
@@ -39,6 +41,7 @@ Examples:
 
 type deckCommander struct {
 	sqlitePath  string
+	apiTarget   string
 	pricingPath string
 	since       string
 	from        string
@@ -70,7 +73,8 @@ func NewDeckCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&cmder.sqlitePath, "sqlite", "s", "", "Path to SQLite database")
+	cmd.Flags().StringVarP(&cmder.sqlitePath, "sqlite", "s", "", "Path to SQLite database (used for in-process API when --api-target is unset)")
+	cmd.Flags().StringVarP(&cmder.apiTarget, "api-target", "a", "", "URL of an external tapes API server (e.g. http://localhost:8081). When unset, an in-process API is started against --sqlite.")
 	cmd.Flags().StringVar(&cmder.pricingPath, "pricing", "", "Path to pricing JSON overrides")
 	cmd.Flags().StringVar(&cmder.since, "since", "", "Look back duration (e.g. 24h)")
 	cmd.Flags().StringVar(&cmder.from, "from", "", "Start time (YYYY-MM-DD or RFC3339)")
@@ -108,13 +112,16 @@ func (c *deckCommander) run(ctx context.Context, cmd *cobra.Command) error {
 		}
 	}
 
-	pricing, err := deck.LoadPricing(c.pricingPath)
+	pricing, err := sessions.LoadPricing(c.pricingPath)
 	if err != nil {
 		return err
 	}
 
 	if c.overwrite && !c.demo {
 		return errors.New("--overwrite requires --demo")
+	}
+	if c.demo && strings.TrimSpace(c.apiTarget) != "" {
+		return errors.New("--demo seeds local data and is incompatible with --api-target")
 	}
 	if c.demo && strings.TrimSpace(c.sqlitePath) == "" {
 		c.sqlitePath = deck.DemoSQLitePath
@@ -123,24 +130,39 @@ func (c *deckCommander) run(ctx context.Context, cmd *cobra.Command) error {
 		}
 	}
 
-	sqlitePath, err := sqlitepath.ResolveSQLitePath(c.sqlitePath)
-	if err != nil {
-		return err
-	}
+	var (
+		query   deck.Querier
+		closeFn func()
+	)
 
-	if c.demo {
-		sessionCount, messageCount, err := deck.SeedDemo(ctx, sqlitePath, c.overwrite)
+	if strings.TrimSpace(c.apiTarget) != "" {
+		// External tapes API. No local SQLite needed.
+		query = deck.NewHTTPQuery(c.apiTarget, pricing)
+		closeFn = func() {}
+	} else {
+		// Resolve the local SQLite path, optionally seed demo data, then
+		// stand up an in-process API server pointed at it.
+		sqlitePath, err := sqlitepath.ResolveSQLitePath(c.sqlitePath)
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Seeded %d demo sessions (%d messages) into %s\n", sessionCount, messageCount, sqlitePath)
-	}
 
-	query, closeFn, err := deck.NewQuery(ctx, sqlitePath, pricing)
-	if err != nil {
-		return err
+		if c.demo {
+			sessionCount, messageCount, err := deck.SeedDemo(ctx, sqlitePath, c.overwrite)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Seeded %d demo sessions (%d messages) into %s\n", sessionCount, messageCount, sqlitePath)
+		}
+
+		target, stop, err := inprocessapi.Start(ctx, sqlitePath, pricing)
+		if err != nil {
+			return err
+		}
+		query = deck.NewHTTPQuery(target, pricing)
+		closeFn = stop
 	}
-	defer func() { _ = closeFn() }()
+	defer closeFn()
 
 	filters, err := c.parseFilters()
 	if err != nil {

@@ -54,7 +54,9 @@ func NewDriver(_ context.Context, dbPath string) (*Driver, error) {
 
 	return &Driver{
 		EntDriver: &entdriver.EntDriver{
-			Client: client,
+			Client:  client,
+			DB:      db,
+			Dialect: dialect.SQLite,
 		},
 		db: db,
 	}, nil

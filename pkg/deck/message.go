@@ -1,68 +1,15 @@
 package deck
 
-import (
-	"time"
-
-	"github.com/papercomputeco/tapes/pkg/storage/ent"
-)
+import "time"
 
 const (
 	messageGroupWindow  = 5 * time.Second
 	maxGroupedTextChars = 4000
 )
 
-func (q *Query) buildSessionMessages(nodes []*ent.Node) ([]SessionMessage, map[string]int) {
-	messages := make([]SessionMessage, 0, len(nodes))
-	toolFrequency := map[string]int{}
-
-	var lastTime time.Time
-	var lastModel string
-	for i, node := range nodes {
-		blocks, _ := parseContentBlocks(node.Content)
-		t := tokenCounts(node)
-
-		model := normalizeModel(node.Model)
-		if model == "" {
-			model = lastModel
-		}
-		if model != "" {
-			lastModel = model
-		}
-
-		inputCost, outputCost, totalCost := q.costForModel(model, t)
-
-		toolCalls := extractToolCalls(blocks)
-		for _, tool := range toolCalls {
-			toolFrequency[tool]++
-		}
-
-		text := extractText(blocks)
-		delta := time.Duration(0)
-		if i > 0 {
-			delta = node.CreatedAt.Sub(lastTime)
-		}
-		lastTime = node.CreatedAt
-
-		messages = append(messages, SessionMessage{
-			Hash:         node.ID,
-			Role:         node.Role,
-			Model:        model,
-			Timestamp:    node.CreatedAt,
-			Delta:        delta,
-			InputTokens:  t.Input,
-			OutputTokens: t.Output,
-			TotalTokens:  t.Total,
-			InputCost:    inputCost,
-			OutputCost:   outputCost,
-			TotalCost:    totalCost,
-			ToolCalls:    toolCalls,
-			Text:         text,
-		})
-	}
-
-	return messages, toolFrequency
-}
-
+// buildGroupedMessages collapses adjacent same-role messages within
+// messageGroupWindow into SessionMessageGroup entries. The output is
+// chronologically ordered and consumed by the deck TUI's transcript view.
 func buildGroupedMessages(messages []SessionMessage) []SessionMessageGroup {
 	if len(messages) == 0 {
 		return nil
