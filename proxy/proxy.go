@@ -467,6 +467,15 @@ func (p *Proxy) extractContentFromJSON(data []byte, providerName string, content
 				}
 			}
 		}
+		switch chunkData["type"] {
+		case "response.output_text.delta", "response.output_text.added", "output_text.delta":
+			if c, ok := chunkData["delta"].(string); ok {
+				content.WriteString(c)
+			}
+			if c, ok := chunkData["text"].(string); ok {
+				content.WriteString(c)
+			}
+		}
 	case providerAnthropic:
 		// Anthropic SSE: content_block_delta events carry delta.text
 		if delta, ok := chunkData["delta"].(map[string]any); ok {
@@ -529,6 +538,30 @@ func (p *Proxy) extractUsageFromSSE(data []byte, providerName string, usage *llm
 		if u, ok := chunkData["usage"].(map[string]any); ok {
 			usage.PromptTokens = jsonInt(u, "prompt_tokens")
 			usage.CompletionTokens = jsonInt(u, "completion_tokens")
+		}
+		if resp, ok := chunkData["response"].(map[string]any); ok {
+			if model, ok := resp["model"].(string); ok && model != "" {
+				meta.Model = model
+			}
+			if status, ok := resp["status"].(string); ok && status != "" {
+				meta.StopReason = status
+			}
+			if u, ok := resp["usage"].(map[string]any); ok {
+				promptTokens := jsonInt(u, "prompt_tokens")
+				if promptTokens == 0 {
+					promptTokens = jsonInt(u, "input_tokens")
+				}
+				completionTokens := jsonInt(u, "completion_tokens")
+				if completionTokens == 0 {
+					completionTokens = jsonInt(u, "output_tokens")
+				}
+				totalTokens := jsonInt(u, "total_tokens")
+				usage.PromptTokens = promptTokens
+				usage.CompletionTokens = completionTokens
+				if totalTokens > 0 {
+					usage.TotalTokens = totalTokens
+				}
+			}
 		}
 	case providerOllama:
 		// Ollama includes usage in the final NDJSON line (done=true)

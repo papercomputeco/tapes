@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"strings"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -111,6 +113,31 @@ var _ = Describe("extractUsageFromSSE", func() {
 			Expect(usage.CompletionTokens).To(Equal(120))
 		})
 
+		It("extracts Codex responses usage, model, and status from nested response events", func() {
+			usage := &llm.Usage{}
+			meta := &streamMeta{}
+			data := []byte(`{
+				"type":"response.completed",
+				"response":{
+					"id":"resp_123",
+					"model":"gpt-5.1",
+					"status":"completed",
+					"usage":{
+						"input_tokens":17119,
+						"output_tokens":6,
+						"total_tokens":17125
+					}
+				}
+			}`)
+			p.extractUsageFromSSE(data, providerOpenAI, usage, meta)
+
+			Expect(meta.Model).To(Equal("gpt-5.1"))
+			Expect(meta.StopReason).To(Equal("completed"))
+			Expect(usage.PromptTokens).To(Equal(17119))
+			Expect(usage.CompletionTokens).To(Equal(6))
+			Expect(usage.TotalTokens).To(Equal(17125))
+		})
+
 		It("does not extract from chunks without usage", func() {
 			usage := &llm.Usage{}
 			meta := &streamMeta{}
@@ -119,6 +146,17 @@ var _ = Describe("extractUsageFromSSE", func() {
 
 			Expect(usage.PromptTokens).To(Equal(0))
 			Expect(usage.CompletionTokens).To(Equal(0))
+		})
+	})
+
+	Describe("extractContentFromJSON", func() {
+		It("extracts Codex responses output text deltas for OpenAI provider", func() {
+			var contentBuilder strings.Builder
+			data := []byte(`{"type":"response.output_text.delta","delta":"Hello from Codex"}`)
+
+			p.extractContentFromJSON(data, providerOpenAI, &contentBuilder)
+
+			Expect(contentBuilder.String()).To(Equal("Hello from Codex"))
 		})
 	})
 
