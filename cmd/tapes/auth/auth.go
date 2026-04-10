@@ -25,6 +25,10 @@ For OpenAI, use a service account key (sk-svcacct-...) with "All"
 permissions from platform.openai.com/api-keys. Personal project keys
 (sk-proj-...) may lack the required API scopes for codex.
 
+For Codex transparent proxying, prefer 'codex login' and point Codex
+at 'tapes serve' in '~/.codex/config.toml'. In that mode, tapes forwards the
+Authorization header it receives instead of managing the Codex session itself.
+
 Supported providers: openai, anthropic
 
 Examples:
@@ -116,7 +120,7 @@ func runAuth(provider, configDir string) error {
 			fmt.Printf("  %s Consider using a service account key (sk-svcacct-...) from platform.openai.com/api-keys.\n",
 				cliui.WarnStyle.Render(" "))
 		}
-		fmt.Printf("  %s Codex auth.json will be temporarily configured when running 'tapes start codex'.\n",
+		fmt.Printf("  %s For Codex, prefer 'codex login' and point ~/.codex/config.toml at 'tapes serve' for transparent proxying.\n",
 			cliui.DimStyle.Render(" "))
 	}
 
