@@ -4,6 +4,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/llm/provider"
 	"github.com/papercomputeco/tapes/pkg/llm/provider/openai"
 )
@@ -231,6 +232,69 @@ var _ = Describe("OpenAI Provider", func() {
 				req, err := p.ParseRequest(payload)
 				Expect(err).NotTo(HaveOccurred())
 				Expect([]byte(req.RawRequest)).To(Equal(payload))
+			})
+		})
+
+		Context("with Responses API input", func() {
+			It("preserves role boundaries across input items", func() {
+				payload := []byte(`{
+					"model": "gpt-5.1",
+					"input": [
+						{
+							"role": "system",
+							"content": [
+								{"type": "input_text", "text": "Be terse."}
+							]
+						},
+						{
+							"role": "user",
+							"content": [
+								{"type": "input_text", "text": "Summarize this branch."}
+							]
+						}
+					]
+				}`)
+
+				req, err := p.ParseRequest(payload)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(req.Messages).To(HaveLen(2))
+				Expect(req.Messages[0].Role).To(Equal("system"))
+				Expect(req.Messages[0].Content).To(ConsistOf(
+					llm.ContentBlock{Type: "text", Text: "Be terse."},
+				))
+				Expect(req.Messages[1].Role).To(Equal("user"))
+				Expect(req.Messages[1].Content).To(ConsistOf(
+					llm.ContentBlock{Type: "text", Text: "Summarize this branch."},
+				))
+			})
+
+			It("preserves multimodal content blocks from responses input", func() {
+				payload := []byte(`{
+					"model": "gpt-5.1",
+					"input": [
+						{
+							"role": "user",
+							"content": [
+								{"type": "input_text", "text": "What is in this screenshot?"},
+								{"type": "input_image", "image_url": "https://example.com/screenshot.png"}
+							]
+						}
+					]
+				}`)
+
+				req, err := p.ParseRequest(payload)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(req.Messages).To(HaveLen(1))
+				Expect(req.Messages[0].Role).To(Equal("user"))
+				Expect(req.Messages[0].Content).To(HaveLen(2))
+				Expect(req.Messages[0].Content[0]).To(Equal(llm.ContentBlock{
+					Type: "text",
+					Text: "What is in this screenshot?",
+				}))
+				Expect(req.Messages[0].Content[1]).To(Equal(llm.ContentBlock{
+					Type:     "image",
+					ImageURL: "https://example.com/screenshot.png",
+				}))
 			})
 		})
 
