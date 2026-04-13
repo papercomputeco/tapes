@@ -15,6 +15,23 @@ import (
 // label, duration, etc.) via pkg/sessions.BuildSummary.
 //
 // Pagination and filter params match /v1/sessions exactly.
+//
+//	@Summary		List derived session summaries
+//	@Description	Returns paginated per-session summaries including derived labels, status, token counts, cost, duration, and truncation metadata.
+//	@Tags			sessions
+//	@Produce		json
+//	@Param			project		query		string	false	"Filter by project name"
+//	@Param			agent_name	query		string	false	"Filter by agent name"
+//	@Param			model		query		string	false	"Filter by model name"
+//	@Param			provider	query		string	false	"Filter by provider name"
+//	@Param			since		query		string	false	"Only include sessions updated at or after this RFC3339 timestamp"	format(date-time)
+//	@Param			until		query		string	false	"Only include sessions updated before or at this RFC3339 timestamp"	format(date-time)
+//	@Param			cursor		query		string	false	"Opaque pagination cursor returned by a previous response"
+//	@Param			limit		query		int		false	"Maximum number of summaries to return"	minimum(1)
+//	@Success		200			{object}	SessionSummaryListResponse
+//	@Failure		400			{object}	llm.ErrorResponse	"Invalid query parameters"
+//	@Failure		500			{object}	llm.ErrorResponse	"Failed to list or summarize sessions"
+//	@Router			/v1/sessions/summary [get]
 func (s *Server) handleListSessionsSummary(c *fiber.Ctx) error {
 	opts, err := parseListOpts(c)
 	if err != nil {

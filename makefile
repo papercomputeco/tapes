@@ -25,6 +25,18 @@ format: ## Runs golangci-lint linters and formatters with auto-fixes applied.
 	$(call print-target)
 	dagger call fix-lint export --path .
 
+.PHONY: swag
+swag: ## Runs the swaggo/swag utility for generating the swagger yaml
+	swag init \
+		--parseDependency \
+		--parseInternal \
+		-g api/swagger.go \
+		-o docs
+
+.PHONY: swagfmt
+swagfmt: ## Runs swaggo/swag for formatting swag godoc comments
+	swag fmt
+
 .PHONY: generate
 generate: ## Regenerates ent code from schema
 	go generate ./pkg/storage/ent/...

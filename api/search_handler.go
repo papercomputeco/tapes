@@ -11,8 +11,20 @@ import (
 
 // handleSearchEndpoint handles GET /v1/search requests.
 // Query parameters:
-//   - query (required): the search query text
-//   - top_k (optional, default 5): number of results to return
+// * query (required): the search query text
+// * top_k (optional, default 5): number of results to return
+//
+//	@Summary		Semantic search over stored sessions
+//	@Description	Embeds the query text, searches the configured vector store, and returns matching sessions with their full conversation branch.
+//	@Tags			search
+//	@Produce		json
+//	@Param			query	query		string	true	"Search query"
+//	@Param			top_k	query		int		false	"Maximum number of results to return"	default(5)	minimum(1)
+//	@Success		200		{object}	apisearch.Output
+//	@Failure		400		{object}	llm.ErrorResponse	"Missing or invalid query parameters"
+//	@Failure		503		{object}	llm.ErrorResponse	"Search is not configured"
+//	@Failure		500		{object}	llm.ErrorResponse	"Search execution failed"
+//	@Router			/v1/search [get]
 func (s *Server) handleSearchEndpoint(c *fiber.Ctx) error {
 	// Verify search is configured
 	if s.config.VectorDriver == nil || s.config.Embedder == nil {
