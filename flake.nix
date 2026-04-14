@@ -22,6 +22,7 @@
             # Go toolchain
             pkgs.go_1_25
             pkgs.gotools
+            pkgs.go-swag
 
             # Build tools
             pkgs.gnumake

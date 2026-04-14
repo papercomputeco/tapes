@@ -1,0 +1,639 @@
+basePath: /
+definitions:
+  api.SessionListItem:
+    properties:
+      agent_name:
+        type: string
+      hash:
+        type: string
+      head_role:
+        type: string
+      model:
+        type: string
+      preview:
+        type: string
+      project:
+        type: string
+      provider:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  api.SessionListResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/api.SessionListItem'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  api.SessionResponse:
+    properties:
+      depth:
+        description: |-
+          Depth is the total number of turns in the full ancestry of Hash.
+          When the client passes ?depth=N, the Turns array may contain fewer
+          than Depth items.
+        type: integer
+      hash:
+        description: Hash is the head of the returned chain (== the requested hash).
+        type: string
+      missing_parent:
+        type: string
+      truncated:
+        description: |-
+          Truncated is true when the ancestry walk stopped at a parent_hash
+          that could not be resolved in the current store. MissingParent
+          names that hash. This is an expected edge case on stores that
+          trim older data, merge foreign content, or offload history to
+          another source — not an error.
+        type: boolean
+      turns:
+        description: |-
+          Turns contains the chain in chronological order (root-first).
+          When ?depth=N is supplied, only the last N turns (head + N-1 ancestors)
+          are returned, still in chronological order.
+        items:
+          $ref: '#/definitions/api.Turn'
+        type: array
+    type: object
+  api.SessionSummaryListResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_sessions.SessionSummary'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  api.StatsResponse:
+    properties:
+      root_count:
+        type: integer
+      session_count:
+        type: integer
+      turn_count:
+        type: integer
+    type: object
+  api.Turn:
+    properties:
+      agent_name:
+        type: string
+      content:
+        items:
+          $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ContentBlock'
+        type: array
+      created_at:
+        type: string
+      hash:
+        type: string
+      model:
+        type: string
+      parent_hash:
+        type: string
+      provider:
+        type: string
+      role:
+        type: string
+      stop_reason:
+        type: string
+      usage:
+        $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.Usage'
+    type: object
+  api.swaggerMCPError:
+    properties:
+      code:
+        example: -32600
+        type: integer
+      message:
+        example: invalid request
+        type: string
+    type: object
+  api.swaggerMCPRequest:
+    properties:
+      id:
+        example: "1"
+        type: string
+      jsonrpc:
+        example: "2.0"
+        type: string
+      method:
+        example: tools/call
+        type: string
+      params:
+        additionalProperties: {}
+        type: object
+    type: object
+  api.swaggerMCPResponse:
+    properties:
+      error:
+        $ref: '#/definitions/api.swaggerMCPError'
+      id:
+        example: "1"
+        type: string
+      jsonrpc:
+        example: "2.0"
+        type: string
+      result:
+        additionalProperties: {}
+        type: object
+    type: object
+  github_com_papercomputeco_tapes_api_search.Output:
+    properties:
+      count:
+        type: integer
+      query:
+        type: string
+      results:
+        items:
+          $ref: '#/definitions/github_com_papercomputeco_tapes_api_search.Result'
+        type: array
+    type: object
+  github_com_papercomputeco_tapes_api_search.Result:
+    properties:
+      branch:
+        items:
+          $ref: '#/definitions/github_com_papercomputeco_tapes_api_search.Turn'
+        type: array
+      hash:
+        type: string
+      preview:
+        type: string
+      role:
+        type: string
+      score:
+        type: number
+      turns:
+        type: integer
+    type: object
+  github_com_papercomputeco_tapes_api_search.Turn:
+    properties:
+      hash:
+        type: string
+      matched:
+        type: boolean
+      role:
+        type: string
+      text:
+        type: string
+    type: object
+  github_com_papercomputeco_tapes_pkg_llm.ContentBlock:
+    properties:
+      image_base64:
+        description: Base64-encoded image data
+        type: string
+      image_url:
+        description: Image content (type="image")
+        type: string
+      is_error:
+        type: boolean
+      media_type:
+        description: MIME type (e.g., "image/png")
+        type: string
+      text:
+        description: Text content (type="text")
+        type: string
+      tool_input:
+        additionalProperties: {}
+        type: object
+      tool_name:
+        type: string
+      tool_output:
+        type: string
+      tool_result_id:
+        description: Tool result (type="tool_result") - result from tool execution
+        type: string
+      tool_use_id:
+        description: Tool use (type="tool_use") - assistant requesting tool execution
+        type: string
+      type:
+        description: '"text", "image", "tool_use", "tool_result"'
+        type: string
+    type: object
+  github_com_papercomputeco_tapes_pkg_llm.ErrorResponse:
+    properties:
+      error:
+        type: string
+    type: object
+  github_com_papercomputeco_tapes_pkg_llm.Usage:
+    properties:
+      cache_creation_input_tokens:
+        description: Cache token counts (Anthropic prompt caching)
+        type: integer
+      cache_read_input_tokens:
+        type: integer
+      completion_tokens:
+        type: integer
+      prompt_duration_ns:
+        type: integer
+      prompt_tokens:
+        description: Token counts
+        type: integer
+      total_duration_ns:
+        description: Timing (provider-specific, but normalized to nanoseconds where
+          possible)
+        type: integer
+      total_tokens:
+        type: integer
+    type: object
+  github_com_papercomputeco_tapes_pkg_sessions.SessionSummary:
+    properties:
+      agent_name:
+        type: string
+      duration_ns:
+        $ref: '#/definitions/time.Duration'
+      end_time:
+        type: string
+      id:
+        type: string
+      input_cost:
+        type: number
+      input_tokens:
+        type: integer
+      label:
+        type: string
+      message_count:
+        type: integer
+      missing_parent:
+        type: string
+      model:
+        type: string
+      output_cost:
+        type: number
+      output_tokens:
+        type: integer
+      project:
+        type: string
+      session_count:
+        type: integer
+      start_time:
+        type: string
+      status:
+        type: string
+      tool_calls:
+        type: integer
+      total_cost:
+        type: number
+      truncated:
+        description: |-
+          Truncated is true when this summary was built from a partial chain
+          because an ancestor's parent_hash could not be resolved in the
+          current store. MissingParent names the hash that would have
+          continued the walk if the referenced node existed. Both fields are
+          informational — they signal that higher ancestors may live outside
+          this store (trimmed history, foreign chain, offloaded data) rather
+          than an error.
+        type: boolean
+    type: object
+  time.Duration:
+    enum:
+    - -9223372036854775808
+    - 9223372036854775807
+    - 1
+    - 1000
+    - 1000000
+    - 1000000000
+    - 60000000000
+    - 3600000000000
+    format: int64
+    type: integer
+    x-enum-varnames:
+    - minDuration
+    - maxDuration
+    - Nanosecond
+    - Microsecond
+    - Millisecond
+    - Second
+    - Minute
+    - Hour
+info:
+  contact: {}
+  description: |-
+    HTTP API for inspecting, querying, and searching stored Tapes sessions.
+
+    The REST surface exposes health checks, session listing and retrieval, derived session summaries, aggregate stats, semantic search, and a streamable MCP endpoint.
+  title: Tapes API
+paths:
+  /ping:
+    get:
+      description: Returns a simple JSON string confirming that the API server is
+        reachable.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: pong
+          schema:
+            type: string
+      summary: Health check
+      tags:
+      - health
+  /v1/mcp:
+    delete:
+      description: Requests termination of a streamable MCP session when a client
+        is using session-oriented transport semantics.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.swaggerMCPResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.swaggerMCPResponse'
+      summary: Close an MCP session
+      tags:
+      - mcp
+    get:
+      description: Opens the streamable MCP endpoint for server-sent events. Stateless
+        clients can use this to receive streamed MCP messages.
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: Server-sent event stream
+          schema:
+            type: string
+      summary: Open an MCP event stream
+      tags:
+      - mcp
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Sends a JSON-RPC 2.0 request to the stateless Model Context Protocol endpoint mounted at /v1/mcp.
+
+        Typical calls include initialize, tools/list, and tools/call. When search is configured, the server exposes a search tool over this transport.
+      parameters:
+      - description: JSON-RPC 2.0 request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.swaggerMCPRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.swaggerMCPResponse'
+        "400":
+          description: Invalid JSON-RPC request
+          schema:
+            $ref: '#/definitions/api.swaggerMCPResponse'
+        "500":
+          description: Server-side MCP error
+          schema:
+            $ref: '#/definitions/api.swaggerMCPResponse'
+      summary: Invoke the streamable MCP endpoint
+      tags:
+      - mcp
+  /v1/search:
+    get:
+      description: Embeds the query text, searches the configured vector store, and
+        returns matching sessions with their full conversation branch.
+      parameters:
+      - description: Search query
+        in: query
+        name: query
+        required: true
+        type: string
+      - default: 5
+        description: Maximum number of results to return
+        in: query
+        minimum: 1
+        name: top_k
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_api_search.Output'
+        "400":
+          description: Missing or invalid query parameters
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Search execution failed
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "503":
+          description: Search is not configured
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Semantic search over stored sessions
+      tags:
+      - search
+  /v1/sessions:
+    get:
+      description: Returns paginated session head records ordered from newest to oldest.
+        Filters apply to the head node of each session.
+      parameters:
+      - description: Filter by project name
+        in: query
+        name: project
+        type: string
+      - description: Filter by agent name
+        in: query
+        name: agent_name
+        type: string
+      - description: Filter by model name
+        in: query
+        name: model
+        type: string
+      - description: Filter by provider name
+        in: query
+        name: provider
+        type: string
+      - description: Only include sessions updated at or after this RFC3339 timestamp
+        format: date-time
+        in: query
+        name: since
+        type: string
+      - description: Only include sessions updated before or at this RFC3339 timestamp
+        format: date-time
+        in: query
+        name: until
+        type: string
+      - description: Opaque pagination cursor returned by a previous response
+        in: query
+        name: cursor
+        type: string
+      - description: Maximum number of sessions to return
+        in: query
+        minimum: 1
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SessionListResponse'
+        "400":
+          description: Invalid query parameters
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Failed to list sessions
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: List session heads
+      tags:
+      - sessions
+  /v1/sessions/{hash}:
+    get:
+      description: Returns a session ancestry chain in chronological order (root first).
+        When depth is provided, only the last N turns are returned while the full
+        chain depth is still reported.
+      parameters:
+      - description: Session head hash
+        in: path
+        name: hash
+        required: true
+        type: string
+      - description: Maximum number of most-recent turns to include
+        in: query
+        minimum: 1
+        name: depth
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SessionResponse'
+        "400":
+          description: Missing or invalid hash/depth
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "404":
+          description: Session not found
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Failed to load session
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Get a session chain
+      tags:
+      - sessions
+  /v1/sessions/summary:
+    get:
+      description: Returns paginated per-session summaries including derived labels,
+        status, token counts, cost, duration, and truncation metadata.
+      parameters:
+      - description: Filter by project name
+        in: query
+        name: project
+        type: string
+      - description: Filter by agent name
+        in: query
+        name: agent_name
+        type: string
+      - description: Filter by model name
+        in: query
+        name: model
+        type: string
+      - description: Filter by provider name
+        in: query
+        name: provider
+        type: string
+      - description: Only include sessions updated at or after this RFC3339 timestamp
+        format: date-time
+        in: query
+        name: since
+        type: string
+      - description: Only include sessions updated before or at this RFC3339 timestamp
+        format: date-time
+        in: query
+        name: until
+        type: string
+      - description: Opaque pagination cursor returned by a previous response
+        in: query
+        name: cursor
+        type: string
+      - description: Maximum number of summaries to return
+        in: query
+        minimum: 1
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SessionSummaryListResponse'
+        "400":
+          description: Invalid query parameters
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Failed to list or summarize sessions
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: List derived session summaries
+      tags:
+      - sessions
+  /v1/stats:
+    get:
+      description: Returns aggregate counts for sessions, turns, and roots matching
+        the supplied filters.
+      parameters:
+      - description: Filter by project name
+        in: query
+        name: project
+        type: string
+      - description: Filter by agent name
+        in: query
+        name: agent_name
+        type: string
+      - description: Filter by model name
+        in: query
+        name: model
+        type: string
+      - description: Filter by provider name
+        in: query
+        name: provider
+        type: string
+      - description: Only include records at or after this RFC3339 timestamp
+        format: date-time
+        in: query
+        name: since
+        type: string
+      - description: Only include records before or at this RFC3339 timestamp
+        format: date-time
+        in: query
+        name: until
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.StatsResponse'
+        "400":
+          description: Invalid query parameters
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Failed to compute stats
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Get aggregate session stats
+      tags:
+      - sessions
+schemes:
+- http
+- https
+swagger: "2.0"

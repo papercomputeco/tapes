@@ -94,6 +94,23 @@ type StatsResponse struct {
 }
 
 // handleListSessions handles GET /v1/sessions.
+//
+//	@Summary		List session heads
+//	@Description	Returns paginated session head records ordered from newest to oldest. Filters apply to the head node of each session.
+//	@Tags			sessions
+//	@Produce		json
+//	@Param			project		query		string	false	"Filter by project name"
+//	@Param			agent_name	query		string	false	"Filter by agent name"
+//	@Param			model		query		string	false	"Filter by model name"
+//	@Param			provider	query		string	false	"Filter by provider name"
+//	@Param			since		query		string	false	"Only include sessions updated at or after this RFC3339 timestamp"	format(date-time)
+//	@Param			until		query		string	false	"Only include sessions updated before or at this RFC3339 timestamp"	format(date-time)
+//	@Param			cursor		query		string	false	"Opaque pagination cursor returned by a previous response"
+//	@Param			limit		query		int		false	"Maximum number of sessions to return"	minimum(1)
+//	@Success		200			{object}	SessionListResponse
+//	@Failure		400			{object}	llm.ErrorResponse	"Invalid query parameters"
+//	@Failure		500			{object}	llm.ErrorResponse	"Failed to list sessions"
+//	@Router			/v1/sessions [get]
 func (s *Server) handleListSessions(c *fiber.Ctx) error {
 	opts, err := parseListOpts(c)
 	if err != nil {
@@ -118,6 +135,18 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 }
 
 // handleGetSession handles GET /v1/sessions/:hash.
+//
+//	@Summary		Get a session chain
+//	@Description	Returns a session ancestry chain in chronological order (root first). When depth is provided, only the last N turns are returned while the full chain depth is still reported.
+//	@Tags			sessions
+//	@Produce		json
+//	@Param			hash	path		string	true	"Session head hash"
+//	@Param			depth	query		int		false	"Maximum number of most-recent turns to include"	minimum(1)
+//	@Success		200		{object}	SessionResponse
+//	@Failure		400		{object}	llm.ErrorResponse	"Missing or invalid hash/depth"
+//	@Failure		404		{object}	llm.ErrorResponse	"Session not found"
+//	@Failure		500		{object}	llm.ErrorResponse	"Failed to load session"
+//	@Router			/v1/sessions/{hash} [get]
 func (s *Server) handleGetSession(c *fiber.Ctx) error {
 	hash := c.Params("hash")
 	if hash == "" {
@@ -168,6 +197,21 @@ func (s *Server) handleGetSession(c *fiber.Ctx) error {
 }
 
 // handleStats handles GET /v1/stats.
+//
+//	@Summary		Get aggregate session stats
+//	@Description	Returns aggregate counts for sessions, turns, and roots matching the supplied filters.
+//	@Tags			sessions
+//	@Produce		json
+//	@Param			project		query		string	false	"Filter by project name"
+//	@Param			agent_name	query		string	false	"Filter by agent name"
+//	@Param			model		query		string	false	"Filter by model name"
+//	@Param			provider	query		string	false	"Filter by provider name"
+//	@Param			since		query		string	false	"Only include records at or after this RFC3339 timestamp"	format(date-time)
+//	@Param			until		query		string	false	"Only include records before or at this RFC3339 timestamp"	format(date-time)
+//	@Success		200			{object}	StatsResponse
+//	@Failure		400			{object}	llm.ErrorResponse	"Invalid query parameters"
+//	@Failure		500			{object}	llm.ErrorResponse	"Failed to compute stats"
+//	@Router			/v1/stats [get]
 func (s *Server) handleStats(c *fiber.Ctx) error {
 	opts, err := parseListOpts(c)
 	if err != nil {

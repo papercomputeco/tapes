@@ -78,6 +78,11 @@ linters:
           - gocritic
           - revive
           - unparam
+      # Swagger/swag annotations intentionally repeat tokens like
+      # `query query` / `path path` as part of the directive syntax.
+      - source: '^//\s*@Param\s+\w+\s+(query|path|header|cookie|formData|body)\s+'
+        linters:
+          - dupword
       # @jpmcb - TODO: rename these packages to avoid "meaningless" names
       - path: api/
         text: "var-naming: avoid meaningless package names"

@@ -1,0 +1,896 @@
+{
+    "schemes": [
+        "http",
+        "https"
+    ],
+    "swagger": "2.0",
+    "info": {
+        "description": "HTTP API for inspecting, querying, and searching stored Tapes sessions.\n\nThe REST surface exposes health checks, session listing and retrieval, derived session summaries, aggregate stats, semantic search, and a streamable MCP endpoint.",
+        "title": "Tapes API",
+        "contact": {}
+    },
+    "basePath": "/",
+    "paths": {
+        "/ping": {
+            "get": {
+                "description": "Returns a simple JSON string confirming that the API server is reachable.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "health"
+                ],
+                "summary": "Health check",
+                "responses": {
+                    "200": {
+                        "description": "pong",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/mcp": {
+            "get": {
+                "description": "Opens the streamable MCP endpoint for server-sent events. Stateless clients can use this to receive streamed MCP messages.",
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Open an MCP event stream",
+                "responses": {
+                    "200": {
+                        "description": "Server-sent event stream",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Sends a JSON-RPC 2.0 request to the stateless Model Context Protocol endpoint mounted at /v1/mcp.\n\nTypical calls include initialize, tools/list, and tools/call. When search is configured, the server exposes a search tool over this transport.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Invoke the streamable MCP endpoint",
+                "parameters": [
+                    {
+                        "description": "JSON-RPC 2.0 request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.swaggerMCPRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.swaggerMCPResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid JSON-RPC request",
+                        "schema": {
+                            "$ref": "#/definitions/api.swaggerMCPResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Server-side MCP error",
+                        "schema": {
+                            "$ref": "#/definitions/api.swaggerMCPResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Requests termination of a streamable MCP session when a client is using session-oriented transport semantics.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Close an MCP session",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.swaggerMCPResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.swaggerMCPResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/search": {
+            "get": {
+                "description": "Embeds the query text, searches the configured vector store, and returns matching sessions with their full conversation branch.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "search"
+                ],
+                "summary": "Semantic search over stored sessions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Search query",
+                        "name": "query",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Maximum number of results to return",
+                        "name": "top_k",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_api_search.Output"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing or invalid query parameters",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Search execution failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Search is not configured",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sessions": {
+            "get": {
+                "description": "Returns paginated session head records ordered from newest to oldest. Filters apply to the head node of each session.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "List session heads",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by project name",
+                        "name": "project",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by agent name",
+                        "name": "agent_name",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by model name",
+                        "name": "model",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by provider name",
+                        "name": "provider",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Only include sessions updated at or after this RFC3339 timestamp",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Only include sessions updated before or at this RFC3339 timestamp",
+                        "name": "until",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Opaque pagination cursor returned by a previous response",
+                        "name": "cursor",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Maximum number of sessions to return",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.SessionListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid query parameters",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to list sessions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sessions/summary": {
+            "get": {
+                "description": "Returns paginated per-session summaries including derived labels, status, token counts, cost, duration, and truncation metadata.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "List derived session summaries",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by project name",
+                        "name": "project",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by agent name",
+                        "name": "agent_name",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by model name",
+                        "name": "model",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by provider name",
+                        "name": "provider",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Only include sessions updated at or after this RFC3339 timestamp",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Only include sessions updated before or at this RFC3339 timestamp",
+                        "name": "until",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Opaque pagination cursor returned by a previous response",
+                        "name": "cursor",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Maximum number of summaries to return",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.SessionSummaryListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid query parameters",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to list or summarize sessions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sessions/{hash}": {
+            "get": {
+                "description": "Returns a session ancestry chain in chronological order (root first). When depth is provided, only the last N turns are returned while the full chain depth is still reported.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Get a session chain",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session head hash",
+                        "name": "hash",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Maximum number of most-recent turns to include",
+                        "name": "depth",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.SessionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing or invalid hash/depth",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Session not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to load session",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/stats": {
+            "get": {
+                "description": "Returns aggregate counts for sessions, turns, and roots matching the supplied filters.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Get aggregate session stats",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by project name",
+                        "name": "project",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by agent name",
+                        "name": "agent_name",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by model name",
+                        "name": "model",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by provider name",
+                        "name": "provider",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Only include records at or after this RFC3339 timestamp",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Only include records before or at this RFC3339 timestamp",
+                        "name": "until",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.StatsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid query parameters",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to compute stats",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "api.SessionListItem": {
+            "type": "object",
+            "properties": {
+                "agent_name": {
+                    "type": "string"
+                },
+                "hash": {
+                    "type": "string"
+                },
+                "head_role": {
+                    "type": "string"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "preview": {
+                    "type": "string"
+                },
+                "project": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.SessionListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.SessionListItem"
+                    }
+                },
+                "next_cursor": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.SessionResponse": {
+            "type": "object",
+            "properties": {
+                "depth": {
+                    "description": "Depth is the total number of turns in the full ancestry of Hash.\nWhen the client passes ?depth=N, the Turns array may contain fewer\nthan Depth items.",
+                    "type": "integer"
+                },
+                "hash": {
+                    "description": "Hash is the head of the returned chain (== the requested hash).",
+                    "type": "string"
+                },
+                "missing_parent": {
+                    "type": "string"
+                },
+                "truncated": {
+                    "description": "Truncated is true when the ancestry walk stopped at a parent_hash\nthat could not be resolved in the current store. MissingParent\nnames that hash. This is an expected edge case on stores that\ntrim older data, merge foreign content, or offload history to\nanother source — not an error.",
+                    "type": "boolean"
+                },
+                "turns": {
+                    "description": "Turns contains the chain in chronological order (root-first).\nWhen ?depth=N is supplied, only the last N turns (head + N-1 ancestors)\nare returned, still in chronological order.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.Turn"
+                    }
+                }
+            }
+        },
+        "api.SessionSummaryListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_sessions.SessionSummary"
+                    }
+                },
+                "next_cursor": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.StatsResponse": {
+            "type": "object",
+            "properties": {
+                "root_count": {
+                    "type": "integer"
+                },
+                "session_count": {
+                    "type": "integer"
+                },
+                "turn_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.Turn": {
+            "type": "object",
+            "properties": {
+                "agent_name": {
+                    "type": "string"
+                },
+                "content": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ContentBlock"
+                    }
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "hash": {
+                    "type": "string"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "parent_hash": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "stop_reason": {
+                    "type": "string"
+                },
+                "usage": {
+                    "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.Usage"
+                }
+            }
+        },
+        "api.swaggerMCPError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "integer",
+                    "example": -32600
+                },
+                "message": {
+                    "type": "string",
+                    "example": "invalid request"
+                }
+            }
+        },
+        "api.swaggerMCPRequest": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "example": "1"
+                },
+                "jsonrpc": {
+                    "type": "string",
+                    "example": "2.0"
+                },
+                "method": {
+                    "type": "string",
+                    "example": "tools/call"
+                },
+                "params": {
+                    "type": "object",
+                    "additionalProperties": {}
+                }
+            }
+        },
+        "api.swaggerMCPResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "$ref": "#/definitions/api.swaggerMCPError"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "1"
+                },
+                "jsonrpc": {
+                    "type": "string",
+                    "example": "2.0"
+                },
+                "result": {
+                    "type": "object",
+                    "additionalProperties": {}
+                }
+            }
+        },
+        "github_com_papercomputeco_tapes_api_search.Output": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "query": {
+                    "type": "string"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_papercomputeco_tapes_api_search.Result"
+                    }
+                }
+            }
+        },
+        "github_com_papercomputeco_tapes_api_search.Result": {
+            "type": "object",
+            "properties": {
+                "branch": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_papercomputeco_tapes_api_search.Turn"
+                    }
+                },
+                "hash": {
+                    "type": "string"
+                },
+                "preview": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "score": {
+                    "type": "number"
+                },
+                "turns": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_papercomputeco_tapes_api_search.Turn": {
+            "type": "object",
+            "properties": {
+                "hash": {
+                    "type": "string"
+                },
+                "matched": {
+                    "type": "boolean"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "text": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_papercomputeco_tapes_pkg_llm.ContentBlock": {
+            "type": "object",
+            "properties": {
+                "image_base64": {
+                    "description": "Base64-encoded image data",
+                    "type": "string"
+                },
+                "image_url": {
+                    "description": "Image content (type=\"image\")",
+                    "type": "string"
+                },
+                "is_error": {
+                    "type": "boolean"
+                },
+                "media_type": {
+                    "description": "MIME type (e.g., \"image/png\")",
+                    "type": "string"
+                },
+                "text": {
+                    "description": "Text content (type=\"text\")",
+                    "type": "string"
+                },
+                "tool_input": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "tool_name": {
+                    "type": "string"
+                },
+                "tool_output": {
+                    "type": "string"
+                },
+                "tool_result_id": {
+                    "description": "Tool result (type=\"tool_result\") - result from tool execution",
+                    "type": "string"
+                },
+                "tool_use_id": {
+                    "description": "Tool use (type=\"tool_use\") - assistant requesting tool execution",
+                    "type": "string"
+                },
+                "type": {
+                    "description": "\"text\", \"image\", \"tool_use\", \"tool_result\"",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_papercomputeco_tapes_pkg_llm.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_papercomputeco_tapes_pkg_llm.Usage": {
+            "type": "object",
+            "properties": {
+                "cache_creation_input_tokens": {
+                    "description": "Cache token counts (Anthropic prompt caching)",
+                    "type": "integer"
+                },
+                "cache_read_input_tokens": {
+                    "type": "integer"
+                },
+                "completion_tokens": {
+                    "type": "integer"
+                },
+                "prompt_duration_ns": {
+                    "type": "integer"
+                },
+                "prompt_tokens": {
+                    "description": "Token counts",
+                    "type": "integer"
+                },
+                "total_duration_ns": {
+                    "description": "Timing (provider-specific, but normalized to nanoseconds where possible)",
+                    "type": "integer"
+                },
+                "total_tokens": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_papercomputeco_tapes_pkg_sessions.SessionSummary": {
+            "type": "object",
+            "properties": {
+                "agent_name": {
+                    "type": "string"
+                },
+                "duration_ns": {
+                    "$ref": "#/definitions/time.Duration"
+                },
+                "end_time": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "input_cost": {
+                    "type": "number"
+                },
+                "input_tokens": {
+                    "type": "integer"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "message_count": {
+                    "type": "integer"
+                },
+                "missing_parent": {
+                    "type": "string"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "output_cost": {
+                    "type": "number"
+                },
+                "output_tokens": {
+                    "type": "integer"
+                },
+                "project": {
+                    "type": "string"
+                },
+                "session_count": {
+                    "type": "integer"
+                },
+                "start_time": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "tool_calls": {
+                    "type": "integer"
+                },
+                "total_cost": {
+                    "type": "number"
+                },
+                "truncated": {
+                    "description": "Truncated is true when this summary was built from a partial chain\nbecause an ancestor's parent_hash could not be resolved in the\ncurrent store. MissingParent names the hash that would have\ncontinued the walk if the referenced node existed. Both fields are\ninformational — they signal that higher ancestors may live outside\nthis store (trimmed history, foreign chain, offloaded data) rather\nthan an error.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "time.Duration": {
+            "type": "integer",
+            "format": "int64",
+            "enum": [
+                -9223372036854775808,
+                9223372036854775807,
+                1,
+                1000,
+                1000000,
+                1000000000,
+                60000000000,
+                3600000000000
+            ],
+            "x-enum-varnames": [
+                "minDuration",
+                "maxDuration",
+                "Nanosecond",
+                "Microsecond",
+                "Millisecond",
+                "Second",
+                "Minute",
+                "Hour"
+            ]
+        }
+    }
+}

@@ -41,7 +41,7 @@ type chatCommander struct {
 	logger *slog.Logger
 }
 
-// @jpmcb: TODO - we should adopt other providers with a -p --provider
+// TODO(@jpmcb): - we should adopt other providers with a -p --provider
 // flag and utilize the native pkg/llm/provider/ packages
 // vs. these hard coded Ollama request / responses.
 
