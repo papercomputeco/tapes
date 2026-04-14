@@ -48,6 +48,10 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	app.Get("/v1/sessions/:hash", s.handleGetSession)
 	app.Get("/v1/search", s.handleSearchEndpoint)
 
+	// API reference UI. Always mounted — the viewer JS comes from a CDN
+	// at view time, so the binary cost is negligible.
+	s.mountSwagger(app)
+
 	// Register MCP server if vector driver and embedder are configured
 	var mcpServer *mcp.Server
 	if config.VectorDriver != nil && config.Embedder != nil {
