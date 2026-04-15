@@ -335,6 +335,35 @@ var _ = Describe("Backfiller", func() {
 		Expect(count).To(Equal(1))
 	})
 
+	It("skips subagent inserts when the sibling .meta.json is missing", func() {
+		dbPath := filepath.Join(GinkgoT().TempDir(), "nometa.db")
+		sharedDriver, err := sqlite.NewDriver(ctx, dbPath)
+		Expect(err).NotTo(HaveOccurred())
+		defer sharedDriver.Close()
+		Expect(sharedDriver.Migrate(ctx)).To(Succeed())
+
+		subDir := filepath.Join(tmpDir, "sess-1", "subagents")
+		Expect(os.MkdirAll(subDir, 0o755)).To(Succeed())
+
+		ts := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+		jsonl := fmt.Sprintf(`{"type":"assistant","uuid":"a1","cwd":"/Users/me/proj","isSidechain":true,"timestamp":"%s","sessionId":"sess-1","message":{"id":"msg_nometa","role":"assistant","model":"claude-opus-4-6","content":[{"type":"text","text":"orphan child"}],"stop_reason":"end_turn","usage":{"input_tokens":7,"output_tokens":3,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`, ts)
+		writeJSONL(subDir, "agent-xyz.jsonl", jsonl)
+		// No agent-xyz.meta.json — insert should skip.
+
+		b, cleanup, err := backfill.NewBackfiller(ctx, dbPath, backfill.Options{})
+		Expect(err).NotTo(HaveOccurred())
+		defer cleanup()
+
+		result, err := b.Run(ctx, tmpDir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Inserted).To(Equal(0))
+		Expect(result.InsertSkipped).To(Equal(1))
+
+		count, err := sharedDriver.Client.Node.Query().Count(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(count).To(Equal(0))
+	})
+
 	It("inserted nodes carry project (cwd) and agent_name from .meta.json", func() {
 		dbPath := filepath.Join(GinkgoT().TempDir(), "meta.db")
 		sharedDriver, err := sqlite.NewDriver(ctx, dbPath)

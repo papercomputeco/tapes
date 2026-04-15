@@ -125,8 +125,10 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []sourcedEntry)
 
 	for _, se := range entries {
 		entry := se.Entry
+		// Entries without usage data carry no information for either pass —
+		// they're not insertion candidates and they're not match candidates.
+		// Skip them silently rather than inflating Unmatched.
 		if entry.Message == nil || entry.Message.Usage == nil {
-			result.Unmatched++
 			continue
 		}
 
@@ -256,6 +258,11 @@ func (b *Backfiller) insertOrphans(ctx context.Context, entries []sourcedEntry, 
 			continue
 		}
 
+		// Subagent transcripts must have a sibling .meta.json before we can
+		// insert them. Bucket.AgentName is part of the content-addressable
+		// hash, so inserting once with the fallback name and again with the
+		// real agentType would create two distinct rows for the same logical
+		// turn. Skip until the meta lands; a later run will pick it up.
 		agentName := "claude"
 		if isSubagentPath(se.SourceFile) {
 			meta, ok := metaCache[se.SourceFile]
@@ -266,9 +273,11 @@ func (b *Backfiller) insertOrphans(ctx context.Context, entries []sourcedEntry, 
 				}
 				metaCache[se.SourceFile] = meta
 			}
-			if meta != nil && meta.AgentType != "" {
-				agentName = meta.AgentType
+			if meta == nil || meta.AgentType == "" {
+				result.InsertSkipped++
+				continue
 			}
+			agentName = meta.AgentType
 		}
 
 		bucket := merkle.Bucket{
@@ -332,18 +341,20 @@ func extractTextFromContent(content []map[string]any) string {
 	return sb.String()
 }
 
-// contentPrefixMatch checks if the first n characters of two strings match.
+// contentPrefixMatch checks if the first n runes of two strings match.
+// Uses runes (not bytes) so a multi-byte UTF-8 character straddling the cut
+// point doesn't produce a false negative on otherwise-identical content.
 func contentPrefixMatch(a, b string, n int) bool {
 	if a == "" || b == "" {
 		return false
 	}
-	pa := a
-	if len(pa) > n {
-		pa = pa[:n]
+	return runePrefix(a, n) == runePrefix(b, n)
+}
+
+func runePrefix(s string, n int) string {
+	r := []rune(s)
+	if len(r) > n {
+		r = r[:n]
 	}
-	pb := b
-	if len(pb) > n {
-		pb = pb[:n]
-	}
-	return pa == pb
+	return string(r)
 }
