@@ -7,6 +7,8 @@ type Result struct {
 	Matched               int
 	Skipped               int
 	Unmatched             int
+	Inserted              int
+	InsertSkipped         int
 	TotalTokensBackfilled int
 	TranscriptFiles       int
 	TranscriptEntries     int
@@ -15,10 +17,10 @@ type Result struct {
 // Summary returns a human-readable summary of the sync result.
 func (r *Result) Summary() string {
 	return fmt.Sprintf(
-		"Sync complete: %d matched, %d skipped (already have tokens), %d unmatched\n"+
+		"Sync complete: %d matched, %d skipped (already have tokens), %d unmatched, %d inserted, %d insert-skipped\n"+
 			"Scanned %d transcript files (%d assistant entries)\n"+
 			"Total tokens synced: %d",
-		r.Matched, r.Skipped, r.Unmatched,
+		r.Matched, r.Skipped, r.Unmatched, r.Inserted, r.InsertSkipped,
 		r.TranscriptFiles, r.TranscriptEntries,
 		r.TotalTokensBackfilled,
 	)

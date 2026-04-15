@@ -101,6 +101,21 @@ var _ = Describe("ParseTranscript", func() {
 		Expect(entries).To(BeEmpty())
 	})
 
+	It("captures cwd, parentUuid, isSidechain, and agentId from each entry", func() {
+		tmpDir := GinkgoT().TempDir()
+		jsonl := `{"type":"assistant","uuid":"a1","parentUuid":"u0","isSidechain":true,"agentId":"agent-abc","cwd":"/Users/me/proj","timestamp":"2026-02-01T10:00:00.000Z","sessionId":"s1","message":{"id":"msg_001","role":"assistant","model":"claude-opus-4-6","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`
+
+		path := writeJSONL(tmpDir, "test.jsonl", jsonl)
+		entries, err := backfill.ParseTranscript(path)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(entries).To(HaveLen(1))
+		Expect(entries[0].Cwd).To(Equal("/Users/me/proj"))
+		Expect(entries[0].ParentUUID).NotTo(BeNil())
+		Expect(*entries[0].ParentUUID).To(Equal("u0"))
+		Expect(entries[0].IsSidechain).To(BeTrue())
+		Expect(entries[0].AgentID).To(Equal("agent-abc"))
+	})
+
 	It("skips malformed lines gracefully", func() {
 		tmpDir := GinkgoT().TempDir()
 		jsonl := `not json at all
@@ -110,6 +125,29 @@ var _ = Describe("ParseTranscript", func() {
 		entries, err := backfill.ParseTranscript(path)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(entries).To(HaveLen(1))
+	})
+})
+
+var _ = Describe("LoadAgentMeta", func() {
+	It("reads the agentType and description from a sibling .meta.json", func() {
+		dir := GinkgoT().TempDir()
+		jsonlPath := writeJSONL(dir, "agent-abc.jsonl", "{}")
+		writeJSONL(dir, "agent-abc.meta.json", `{"agentType":"Explore","description":"poke around"}`)
+
+		meta, err := backfill.LoadAgentMeta(jsonlPath)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(meta).NotTo(BeNil())
+		Expect(meta.AgentType).To(Equal("Explore"))
+		Expect(meta.Description).To(Equal("poke around"))
+	})
+
+	It("returns nil when there is no sibling meta file", func() {
+		dir := GinkgoT().TempDir()
+		jsonlPath := writeJSONL(dir, "agent-abc.jsonl", "{}")
+
+		meta, err := backfill.LoadAgentMeta(jsonlPath)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(meta).To(BeNil())
 	})
 })
 
@@ -242,6 +280,91 @@ var _ = Describe("Backfiller", func() {
 		Expect(*updated.PromptTokens).To(Equal(200))
 		Expect(*updated.CompletionTokens).To(Equal(75))
 		Expect(*updated.TotalTokens).To(Equal(275))
+	})
+
+	It("inserts orphan nodes for transcript entries with no matching DB node", func() {
+		dbPath := filepath.Join(GinkgoT().TempDir(), "insert.db")
+		sharedDriver, err := sqlite.NewDriver(ctx, dbPath)
+		Expect(err).NotTo(HaveOccurred())
+		defer sharedDriver.Close()
+		Expect(sharedDriver.Migrate(ctx)).To(Succeed())
+
+		ts := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+		jsonl := fmt.Sprintf(`{"type":"assistant","uuid":"a1","cwd":"/Users/me/proj","timestamp":"%s","sessionId":"sess-1","message":{"id":"msg_orphan","role":"assistant","model":"claude-opus-4-6","content":[{"type":"text","text":"Subagent text answer"}],"stop_reason":"end_turn","usage":{"input_tokens":50,"output_tokens":25,"cache_creation_input_tokens":10,"cache_read_input_tokens":5}}}`, ts)
+		writeJSONL(tmpDir, "session.jsonl", jsonl)
+
+		b, cleanup, err := backfill.NewBackfiller(ctx, dbPath, backfill.Options{})
+		Expect(err).NotTo(HaveOccurred())
+		defer cleanup()
+
+		result, err := b.Run(ctx, tmpDir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Inserted).To(Equal(1))
+		Expect(result.Matched).To(Equal(0))
+
+		count, err := sharedDriver.Client.Node.Query().Count(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(count).To(Equal(1))
+	})
+
+	It("re-running insert is idempotent (hash dedup)", func() {
+		dbPath := filepath.Join(GinkgoT().TempDir(), "idem.db")
+		sharedDriver, err := sqlite.NewDriver(ctx, dbPath)
+		Expect(err).NotTo(HaveOccurred())
+		defer sharedDriver.Close()
+		Expect(sharedDriver.Migrate(ctx)).To(Succeed())
+
+		ts := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+		jsonl := fmt.Sprintf(`{"type":"assistant","uuid":"a1","cwd":"/Users/me/proj","timestamp":"%s","sessionId":"sess-1","message":{"id":"msg_idem","role":"assistant","model":"claude-opus-4-6","content":[{"type":"text","text":"Idempotent answer"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`, ts)
+		writeJSONL(tmpDir, "session.jsonl", jsonl)
+
+		b, cleanup, err := backfill.NewBackfiller(ctx, dbPath, backfill.Options{})
+		Expect(err).NotTo(HaveOccurred())
+		defer cleanup()
+
+		_, err = b.Run(ctx, tmpDir)
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := b.Run(ctx, tmpDir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Inserted).To(Equal(0))
+		Expect(result.InsertSkipped).To(Equal(1))
+
+		count, err := sharedDriver.Client.Node.Query().Count(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(count).To(Equal(1))
+	})
+
+	It("inserted nodes carry project (cwd) and agent_name from .meta.json", func() {
+		dbPath := filepath.Join(GinkgoT().TempDir(), "meta.db")
+		sharedDriver, err := sqlite.NewDriver(ctx, dbPath)
+		Expect(err).NotTo(HaveOccurred())
+		defer sharedDriver.Close()
+		Expect(sharedDriver.Migrate(ctx)).To(Succeed())
+
+		// Subagent layout: <session>/subagents/agent-X.jsonl + agent-X.meta.json
+		subDir := filepath.Join(tmpDir, "sess-1", "subagents")
+		Expect(os.MkdirAll(subDir, 0o755)).To(Succeed())
+
+		ts := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+		jsonl := fmt.Sprintf(`{"type":"assistant","uuid":"a1","cwd":"/Users/me/proj","isSidechain":true,"agentId":"agent-xyz","timestamp":"%s","sessionId":"sess-1","message":{"id":"msg_sub","role":"assistant","model":"claude-opus-4-6","content":[{"type":"text","text":"Sidechain output"}],"stop_reason":"end_turn","usage":{"input_tokens":7,"output_tokens":3,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`, ts)
+		writeJSONL(subDir, "agent-xyz.jsonl", jsonl)
+		writeJSONL(subDir, "agent-xyz.meta.json", `{"agentType":"Explore","description":"poke around"}`)
+
+		b, cleanup, err := backfill.NewBackfiller(ctx, dbPath, backfill.Options{})
+		Expect(err).NotTo(HaveOccurred())
+		defer cleanup()
+
+		result, err := b.Run(ctx, tmpDir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Inserted).To(Equal(1))
+
+		nodes, err := sharedDriver.Client.Node.Query().All(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(nodes).To(HaveLen(1))
+		Expect(nodes[0].Project).NotTo(BeNil())
+		Expect(*nodes[0].Project).To(Equal("/Users/me/proj"))
+		Expect(nodes[0].AgentName).To(Equal("Explore"))
 	})
 })
 

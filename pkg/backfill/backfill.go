@@ -3,10 +3,12 @@ package backfill
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
+	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage/ent"
 	"github.com/papercomputeco/tapes/pkg/storage/ent/node"
 	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
@@ -45,6 +47,13 @@ func NewBackfiller(ctx context.Context, dbPath string, opts Options) (*Backfille
 	return b, driver.Close, nil
 }
 
+// sourcedEntry pairs a transcript entry with the file it was parsed from so
+// the insert pass can resolve the matching subagent .meta.json (if any).
+type sourcedEntry struct {
+	Entry      TranscriptEntry
+	SourceFile string
+}
+
 // Run scans transcripts and backfills usage data into the database.
 func (b *Backfiller) Run(ctx context.Context, transcriptDir string) (*Result, error) {
 	files, err := ScanTranscriptDir(transcriptDir)
@@ -53,7 +62,7 @@ func (b *Backfiller) Run(ctx context.Context, transcriptDir string) (*Result, er
 	}
 
 	// Collect all transcript entries from all files.
-	var allEntries []TranscriptEntry
+	var allEntries []sourcedEntry
 	for _, f := range files {
 		entries, err := ParseTranscript(f)
 		if err != nil {
@@ -62,11 +71,17 @@ func (b *Backfiller) Run(ctx context.Context, transcriptDir string) (*Result, er
 			}
 			continue
 		}
-		allEntries = append(allEntries, entries...)
+		for _, e := range entries {
+			allEntries = append(allEntries, sourcedEntry{Entry: e, SourceFile: f})
+		}
 	}
 
-	result, err := b.matchAndUpdate(ctx, allEntries)
+	result, unmatched, err := b.matchAndUpdate(ctx, allEntries)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := b.insertOrphans(ctx, unmatched, result); err != nil {
 		return nil, err
 	}
 
@@ -76,7 +91,7 @@ func (b *Backfiller) Run(ctx context.Context, transcriptDir string) (*Result, er
 	return result, nil
 }
 
-func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEntry) (*Result, error) {
+func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []sourcedEntry) (*Result, []sourcedEntry, error) {
 	result := &Result{}
 
 	// Query all assistant nodes where token fields are NULL.
@@ -87,7 +102,7 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 		).
 		All(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query nodes: %w", err)
+		return nil, nil, fmt.Errorf("failed to query nodes: %w", err)
 	}
 
 	if b.options.Verbose {
@@ -106,8 +121,10 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 
 	// Track which nodes have been matched to avoid double-matching.
 	matched := make(map[string]bool)
+	var unmatched []sourcedEntry
 
-	for _, entry := range entries {
+	for _, se := range entries {
+		entry := se.Entry
 		if entry.Message == nil || entry.Message.Usage == nil {
 			result.Unmatched++
 			continue
@@ -117,6 +134,7 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 		modelCandidates, ok := byModel[model]
 		if !ok {
 			result.Unmatched++
+			unmatched = append(unmatched, se)
 			continue
 		}
 
@@ -162,6 +180,7 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 
 		if bestMatch == nil {
 			result.Unmatched++
+			unmatched = append(unmatched, se)
 			continue
 		}
 
@@ -187,7 +206,7 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 
 		if !b.options.DryRun {
 			if err := b.driver.UpdateUsage(ctx, bestMatch.ID, usage); err != nil {
-				return nil, fmt.Errorf("failed to update node %s: %w", bestMatch.ID, err)
+				return nil, nil, fmt.Errorf("failed to update node %s: %w", bestMatch.ID, err)
 			}
 		}
 
@@ -203,7 +222,101 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 		result.Skipped = totalAssistant - len(candidates)
 	}
 
-	return result, nil
+	return result, unmatched, nil
+}
+
+// insertOrphans creates assistant nodes from transcript entries that have no
+// matching node in the DB. Each entry becomes a parent_hash=NULL node with a
+// content-addressable hash, so re-running the backfill is naturally idempotent
+// (Put returns isNew=false for an already-present hash). Subagent .meta.json
+// siblings, when present, supply the agent_name.
+func (b *Backfiller) insertOrphans(ctx context.Context, entries []sourcedEntry, result *Result) error {
+	if b.options.DryRun {
+		return nil
+	}
+
+	metaCache := make(map[string]*AgentMeta)
+
+	for _, se := range entries {
+		entry := se.Entry
+		if entry.Message == nil || entry.Message.Usage == nil {
+			continue
+		}
+
+		entryTime, err := time.Parse(time.RFC3339Nano, entry.Timestamp)
+		if err != nil {
+			entryTime, err = time.Parse("2006-01-02T15:04:05.000Z", entry.Timestamp)
+			if err != nil {
+				continue
+			}
+		}
+
+		text := entry.TextContent()
+		if text == "" {
+			continue
+		}
+
+		agentName := "claude"
+		if isSubagentPath(se.SourceFile) {
+			meta, ok := metaCache[se.SourceFile]
+			if !ok {
+				m, err := LoadAgentMeta(se.SourceFile)
+				if err == nil {
+					meta = m
+				}
+				metaCache[se.SourceFile] = meta
+			}
+			if meta != nil && meta.AgentType != "" {
+				agentName = meta.AgentType
+			}
+		}
+
+		bucket := merkle.Bucket{
+			Type:      "message",
+			Role:      "assistant",
+			Content:   []llm.ContentBlock{{Type: "text", Text: text}},
+			Model:     entry.Message.Model,
+			Provider:  "anthropic",
+			AgentName: agentName,
+		}
+
+		totalInput := entry.Message.Usage.InputTokens +
+			entry.Message.Usage.CacheCreationInputTokens +
+			entry.Message.Usage.CacheReadInputTokens
+		usage := &llm.Usage{
+			PromptTokens:             totalInput,
+			CompletionTokens:         entry.Message.Usage.OutputTokens,
+			TotalTokens:              totalInput + entry.Message.Usage.OutputTokens,
+			CacheCreationInputTokens: entry.Message.Usage.CacheCreationInputTokens,
+			CacheReadInputTokens:     entry.Message.Usage.CacheReadInputTokens,
+		}
+
+		n := merkle.NewNode(bucket, nil, merkle.NodeOptions{
+			StopReason: "end_turn",
+			Usage:      usage,
+			Project:    entry.Cwd,
+		})
+		n.CreatedAt = entryTime
+
+		isNew, err := b.driver.Put(ctx, n)
+		if err != nil {
+			return fmt.Errorf("failed to insert transcript node: %w", err)
+		}
+		if isNew {
+			result.Inserted++
+			result.TotalTokensBackfilled += usage.TotalTokens
+		} else {
+			result.InsertSkipped++
+		}
+	}
+
+	return nil
+}
+
+// isSubagentPath reports whether p is a Claude Code subagent transcript:
+// .../<session>/subagents/agent-*.jsonl.
+func isSubagentPath(p string) bool {
+	return filepath.Base(filepath.Dir(p)) == "subagents"
 }
 
 // extractTextFromContent concatenates text from content blocks.

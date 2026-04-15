@@ -36,12 +36,47 @@ type TranscriptBlock struct {
 
 // TranscriptEntry represents a single line in a Claude Code JSONL transcript.
 type TranscriptEntry struct {
-	Type       string             `json:"type"`
-	UUID       string             `json:"uuid"`
-	ParentUUID *string            `json:"parentUuid"`
-	Timestamp  string             `json:"timestamp"`
-	SessionID  string             `json:"sessionId"`
-	Message    *TranscriptMessage `json:"message"`
+	Type        string             `json:"type"`
+	UUID        string             `json:"uuid"`
+	ParentUUID  *string            `json:"parentUuid"`
+	Timestamp   string             `json:"timestamp"`
+	SessionID   string             `json:"sessionId"`
+	Cwd         string             `json:"cwd"`
+	IsSidechain bool               `json:"isSidechain"`
+	AgentID     string             `json:"agentId"`
+	Message     *TranscriptMessage `json:"message"`
+}
+
+// AgentMeta is the small JSON record Claude Code writes alongside each
+// subagent transcript at <session>/subagents/agent-<id>.meta.json. It
+// names the subagent's role so backfill can attach an agent_name to the
+// inserted nodes.
+type AgentMeta struct {
+	AgentType   string `json:"agentType"`
+	Description string `json:"description"`
+}
+
+// LoadAgentMeta returns the sibling .meta.json for a subagent transcript,
+// or nil if the meta file does not exist. The transcript path looks like
+// .../subagents/agent-abc.jsonl; the meta path is the same with the .jsonl
+// suffix replaced by .meta.json.
+func LoadAgentMeta(transcriptPath string) (*AgentMeta, error) {
+	if !strings.HasSuffix(transcriptPath, ".jsonl") {
+		return nil, nil
+	}
+	metaPath := strings.TrimSuffix(transcriptPath, ".jsonl") + ".meta.json"
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var m AgentMeta
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
 }
 
 // TextContent extracts the concatenated text from all text content blocks.
