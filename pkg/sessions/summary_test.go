@@ -211,6 +211,7 @@ var _ = Describe("NormalizeModel", func() {
 	})
 	It("rewrites hyphenated version markers", func() {
 		Expect(sessions.NormalizeModel("claude-opus-4-6")).To(Equal("claude-opus-4.6"))
+		Expect(sessions.NormalizeModel("claude-opus-4-7")).To(Equal("claude-opus-4.7"))
 	})
 	It("returns empty for empty input", func() {
 		Expect(sessions.NormalizeModel("")).To(Equal(""))
