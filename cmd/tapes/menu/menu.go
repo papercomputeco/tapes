@@ -1,3 +1,5 @@
+//go:build darwin
+
 // Package menucmder provides the "menu" spf13/cobra command which runs a
 // macOS menu bar app displaying the tapes logo. For now the icon is inert —
 // it shows up in the menu bar and offers a Quit item plus a live count of
