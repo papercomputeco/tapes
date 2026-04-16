@@ -1,33 +1,26 @@
 //go:build darwin
 
 // Package menucmder provides the "menu" spf13/cobra command which runs a
-// macOS menu bar app displaying the tapes logo. For now the icon is inert —
-// it shows up in the menu bar and offers a Quit item plus a live count of
-// running tapes agents.
+// macOS menu bar app displaying the tapes logo. The icon is pre-rendered at
+// build time by ./internal/icongen so the menu binary does not pull SVG
+// rasterization dependencies into the runtime.
 package menucmder
 
+//go:generate go run ./internal/icongen -in tapes-logo.svg -out tapes-logo.png
+
 import (
-	"bytes"
 	_ "embed"
 	"fmt"
-	"image"
-	"image/color"
-	"image/png"
 	"time"
 
 	"github.com/getlantern/systray"
 	"github.com/spf13/cobra"
-	"github.com/srwiley/oksvg"
-	"github.com/srwiley/rasterx"
 
 	"github.com/papercomputeco/tapes/pkg/start"
 )
 
-//go:embed tapes-logo.svg
-var tapesLogoSVG []byte
-
-// iconSize is 22pt at @2x for a Retina menu bar.
-const iconSize = 44
+//go:embed tapes-logo.png
+var tapesLogoPNG []byte
 
 func NewMenuCmd() *cobra.Command {
 	return &cobra.Command{
@@ -44,12 +37,7 @@ func NewMenuCmd() *cobra.Command {
 
 func onReadyFor(configDir string) func() {
 	return func() {
-		icon, err := renderTemplateIcon(tapesLogoSVG, iconSize)
-		if err != nil {
-			systray.SetTitle("tapes")
-		} else {
-			systray.SetTemplateIcon(icon, icon)
-		}
+		systray.SetTemplateIcon(tapesLogoPNG, tapesLogoPNG)
 		systray.SetTooltip("Tapes")
 
 		status := systray.AddMenuItem("Running: …", "Number of running tapes agents")
@@ -96,44 +84,4 @@ func readRunningAgents(mgr *start.Manager) int {
 		return 0
 	}
 	return len(state.Agents)
-}
-
-// renderTemplateIcon rasterizes the embedded SVG at the requested size and
-// flattens every opaque pixel to black while preserving alpha, producing a
-// macOS template image that AppKit will auto-tint for light/dark menu bars.
-func renderTemplateIcon(svgBytes []byte, size int) ([]byte, error) {
-	icon, err := oksvg.ReadIconStream(bytes.NewReader(svgBytes))
-	if err != nil {
-		return nil, fmt.Errorf("parse svg: %w", err)
-	}
-	icon.SetTarget(0, 0, float64(size), float64(size))
-
-	rgba := image.NewRGBA(image.Rect(0, 0, size, size))
-	scanner := rasterx.NewScannerGV(size, size, rgba, rgba.Bounds())
-	raster := rasterx.NewDasher(size, size, scanner)
-	icon.Draw(raster, 1.0)
-
-	// Template conversion: keep coloured body pixels as black and promote
-	// near-white pixels (the cassette's white details) to transparent holes
-	// so the menu bar shows through them.
-	for y := 0; y < size; y++ {
-		for x := 0; x < size; x++ {
-			r, g, b, a := rgba.At(x, y).RGBA()
-			if a == 0 {
-				continue
-			}
-			r8, g8, b8 := uint8(r>>8), uint8(g>>8), uint8(b>>8)
-			if r8 > 200 && g8 > 200 && b8 > 200 {
-				rgba.Set(x, y, color.RGBA{})
-				continue
-			}
-			rgba.Set(x, y, color.RGBA{R: 0, G: 0, B: 0, A: uint8(a >> 8)})
-		}
-	}
-
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, rgba); err != nil {
-		return nil, fmt.Errorf("encode png: %w", err)
-	}
-	return buf.Bytes(), nil
 }
