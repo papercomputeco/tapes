@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -487,15 +486,13 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 		ShutdownWhenIdle: shutdownWhenIdle,
 		LogPath:          manager.LogPath,
 	}
+	// Preserve a pre-existing MenuPID so that a menu spawned by `tapes serve`
+	// is not orphaned when the daemon writes its own state on top.
+	if existing, _ := manager.LoadState(); existing != nil {
+		state.MenuPID = existing.MenuPID
+	}
 	if err := manager.SaveState(state); err != nil {
 		return err
-	}
-
-	menuCmd := c.spawnMenu(manager, log)
-	stopMenu := func() {
-		if menuCmd != nil && menuCmd.Process != nil {
-			_ = menuCmd.Process.Signal(syscall.SIGTERM)
-		}
 	}
 
 	if shutdownWhenIdle {
@@ -507,11 +504,9 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 
 	select {
 	case err := <-errChan:
-		stopMenu()
 		_ = manager.ClearState()
 		return err
 	case <-sigChan:
-		stopMenu()
 		_ = manager.ClearState()
 		return nil
 	}
@@ -620,89 +615,6 @@ func (c *startCommander) spawnDaemon(ctx context.Context, manager *start.Manager
 	c.daemonDone = done
 
 	return logFile.Close()
-}
-
-// spawnMenu launches the menu bar app as a separate process on macOS.
-// Returns the exec.Cmd so the caller can kill it on shutdown. On non-darwin
-// platforms this is a no-op and returns nil. If a menu process from a
-// previous run is still alive (tracked via MenuPID in state), it is killed
-// first to avoid duplicate icons.
-func (c *startCommander) spawnMenu(manager *start.Manager, log *slog.Logger) *exec.Cmd {
-	if runtime.GOOS != "darwin" {
-		return nil
-	}
-
-	// Kill any leftover menu process from a previous daemon run.
-	c.killStaleMenu(manager, log)
-
-	execPath, err := os.Executable()
-	if err != nil {
-		log.Warn("could not resolve executable for menu", "error", err)
-		return nil
-	}
-
-	args := []string{"menu"}
-	if c.debug {
-		args = append(args, "--debug")
-	}
-	if c.configDir != "" {
-		args = append(args, "--config-dir", c.configDir)
-	}
-
-	// #nosec G204 -- args are constructed from known constants.
-	cmd := exec.Command(execPath, args...)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-
-	if err := cmd.Start(); err != nil {
-		log.Warn("could not start menu bar app", "error", err)
-		return nil
-	}
-
-	log.Info("started menu bar app", "pid", cmd.Process.Pid)
-
-	// Record the menu PID in state so future daemon starts can detect it.
-	c.saveMenuPID(manager, cmd.Process.Pid, log)
-
-	go func() {
-		_ = cmd.Wait()
-	}()
-
-	return cmd
-}
-
-// killStaleMenu terminates a leftover menu process recorded in the state file.
-func (c *startCommander) killStaleMenu(manager *start.Manager, log *slog.Logger) {
-	state, err := manager.LoadState()
-	if err != nil || state == nil || state.MenuPID == 0 {
-		return
-	}
-	if processAlive(state.MenuPID) {
-		log.Info("killing stale menu bar app", "pid", state.MenuPID)
-		if proc, err := os.FindProcess(state.MenuPID); err == nil {
-			_ = proc.Signal(syscall.SIGTERM)
-		}
-	}
-}
-
-// saveMenuPID persists the menu process PID into the daemon state file.
-func (c *startCommander) saveMenuPID(manager *start.Manager, pid int, log *slog.Logger) {
-	lock, err := manager.Lock()
-	if err != nil {
-		log.Warn("could not lock state to save menu PID", "error", err)
-		return
-	}
-	defer func() { _ = lock.Release() }()
-
-	state, err := manager.LoadState()
-	if err != nil || state == nil {
-		log.Warn("could not load state to save menu PID", "error", err)
-		return
-	}
-	state.MenuPID = pid
-	if err := manager.SaveState(state); err != nil {
-		log.Warn("could not save menu PID to state", "error", err)
-	}
 }
 
 func (c *startCommander) waitForDaemon(ctx context.Context, manager *start.Manager) (*start.State, error) {

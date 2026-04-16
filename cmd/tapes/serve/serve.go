@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/papercomputeco/tapes/api"
+	menucmder "github.com/papercomputeco/tapes/cmd/tapes/menu"
 	apicmder "github.com/papercomputeco/tapes/cmd/tapes/serve/api"
 	ingestcmder "github.com/papercomputeco/tapes/cmd/tapes/serve/ingest"
 	proxycmder "github.com/papercomputeco/tapes/cmd/tapes/serve/proxy"
@@ -22,6 +23,7 @@ import (
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
+	"github.com/papercomputeco/tapes/pkg/start"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
@@ -39,6 +41,7 @@ type ServeCommander struct {
 	ingestListen string
 	upstream     string
 	debug        bool
+	configDir    string
 	sqlitePath   string
 	postgresDSN  string
 	project      string
@@ -98,6 +101,7 @@ func NewServeCmd() *cobra.Command {
 		Long:  serveLongDesc,
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
 			configDir, _ := cmd.Flags().GetString("config-dir")
+			cmder.configDir = configDir
 			v, err := config.InitViper(configDir)
 			if err != nil {
 				return fmt.Errorf("loading config: %w", err)
@@ -317,6 +321,8 @@ func (c *ServeCommander) run() error {
 		}
 	}()
 
+	c.spawnMenu()
+
 	// Wait for interrupt signal or error
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -328,6 +334,18 @@ func (c *ServeCommander) run() error {
 		c.logger.Info("received signal, shutting down", "signal", sig.String())
 		return nil
 	}
+}
+
+// spawnMenu launches the macOS menu bar app the first time the server boots.
+// It is idempotent — subsequent serves with a live menu process re-attach
+// silently. On non-darwin platforms this is a no-op.
+func (c *ServeCommander) spawnMenu() {
+	manager, err := start.NewManager(c.configDir)
+	if err != nil {
+		c.logger.Warn("could not init start manager for menu", "error", err)
+		return
+	}
+	menucmder.Spawn(manager, c.configDir, c.debug, c.logger)
 }
 
 func (c *ServeCommander) newStorageDriver() (storage.Driver, error) {
