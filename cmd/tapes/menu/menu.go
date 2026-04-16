@@ -11,6 +11,7 @@ package menucmder
 import (
 	_ "embed"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/getlantern/systray"
@@ -29,6 +30,26 @@ func NewMenuCmd() *cobra.Command {
 		Long:  "Launches a macOS menu bar app displaying the tapes logo.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			configDir, _ := cmd.Flags().GetString("config-dir")
+
+			// Acquire the menu lock. If held by another live instance we
+			// exit silently — the existing menu owns the menu bar slot.
+			// The kernel auto-releases the flock when this process exits,
+			// so a SIGKILL cannot strand the lock.
+			lock, err := acquireMenuLock(configDir)
+			if err != nil {
+				return fmt.Errorf("acquiring menu lock: %w", err)
+			}
+			if lock == nil {
+				return nil
+			}
+			defer func() { _ = lock.Close() }()
+
+			if err := writePID(lock, os.Getpid()); err != nil {
+				// Informational only — proceed even if we cannot persist
+				// the pid for human inspection.
+				_ = err
+			}
+
 			systray.Run(onReadyFor(configDir), onExit)
 			return nil
 		},
