@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -490,6 +491,13 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 		return err
 	}
 
+	menuCmd := c.spawnMenu(log)
+	stopMenu := func() {
+		if menuCmd != nil && menuCmd.Process != nil {
+			_ = menuCmd.Process.Signal(syscall.SIGTERM)
+		}
+	}
+
 	if shutdownWhenIdle {
 		go c.monitorIdle(manager, log, errChan)
 	}
@@ -499,9 +507,11 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 
 	select {
 	case err := <-errChan:
+		stopMenu()
 		_ = manager.ClearState()
 		return err
 	case <-sigChan:
+		stopMenu()
 		_ = manager.ClearState()
 		return nil
 	}
@@ -610,6 +620,44 @@ func (c *startCommander) spawnDaemon(ctx context.Context, manager *start.Manager
 	c.daemonDone = done
 
 	return logFile.Close()
+}
+
+// spawnMenu launches the menu bar app as a separate process on macOS.
+// Returns the exec.Cmd so the caller can kill it on shutdown. On non-darwin
+// platforms this is a no-op and returns nil.
+func (c *startCommander) spawnMenu(log *slog.Logger) *exec.Cmd {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
+
+	execPath, err := os.Executable()
+	if err != nil {
+		log.Warn("could not resolve executable for menu", "error", err)
+		return nil
+	}
+
+	args := []string{"menu"}
+	if c.configDir != "" {
+		args = append(args, "--config-dir", c.configDir)
+	}
+
+	// #nosec G204 -- args are constructed from known constants.
+	cmd := exec.Command(execPath, args...)
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+
+	if err := cmd.Start(); err != nil {
+		log.Warn("could not start menu bar app", "error", err)
+		return nil
+	}
+
+	log.Info("started menu bar app", "pid", cmd.Process.Pid)
+
+	go func() {
+		_ = cmd.Wait()
+	}()
+
+	return cmd
 }
 
 func (c *startCommander) waitForDaemon(ctx context.Context, manager *start.Manager) (*start.State, error) {
