@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 135 90" width="135" height="90" fill="none">
-  <g transform="translate(135, 0) rotate(90) translate(-218, -215)">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 135" width="90" height="135" fill="none">
+  <g transform="translate(-218, -215)">
     <path d="M308 340.907C308 345.929 303.561 350 298.085 350L227.915 350C222.439 350 218 345.929 218 340.907L218 224.093C218 219.071 222.439 215 227.915 215L298.085 215C303.561 215 308 219.071 308 224.093L308 340.907Z" fill="#EA4335"/>
     <circle cx="226.391" cy="224.15" r="3.05085" fill="white"/>
     <circle cx="298.842" cy="224.15" r="3.05085" fill="white"/>
