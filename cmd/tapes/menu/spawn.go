@@ -3,7 +3,6 @@
 package menucmder
 
 import (
-	"context"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -31,10 +30,11 @@ func Spawn(configDir string, debug bool, log *slog.Logger) {
 		args = append(args, "--config-dir", configDir)
 	}
 
-	// The menu outlives the caller's lifecycle by design — use a Background
-	// context so it survives `tapes serve` shutdown.
+	// The menu outlives the caller's lifecycle by design, so we deliberately
+	// do not bind it to a cancellable context — `tapes serve` exiting must
+	// not kill the menu.
 	// #nosec G204 -- args are constructed from known constants.
-	cmd := exec.CommandContext(context.Background(), execPath, args...)
+	cmd := exec.Command(execPath, args...) //nolint:noctx
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 
