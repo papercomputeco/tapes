@@ -40,7 +40,6 @@ type ServeCommander struct {
 	ingestListen string
 	upstream     string
 	debug        bool
-	configDir    string
 	sqlitePath   string
 	postgresDSN  string
 	project      string
@@ -100,7 +99,6 @@ func NewServeCmd() *cobra.Command {
 		Long:  serveLongDesc,
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
 			configDir, _ := cmd.Flags().GetString("config-dir")
-			cmder.configDir = configDir
 			v, err := config.InitViper(configDir)
 			if err != nil {
 				return fmt.Errorf("loading config: %w", err)
@@ -175,8 +173,9 @@ func NewServeCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("could not get debug flag: %w", err)
 			}
+			configDir, _ := cmd.Flags().GetString("config-dir")
 			telemetry.FromContext(cmd.Context()).CaptureServerStarted("both")
-			return cmder.run()
+			return cmder.run(configDir)
 		},
 	}
 
@@ -202,7 +201,7 @@ func NewServeCmd() *cobra.Command {
 	return cmd
 }
 
-func (c *ServeCommander) run() error {
+func (c *ServeCommander) run(configDir string) error {
 	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
 
 	// Create shared driver (satisfies storage.Driver, which embeds merkle.DagLoader)
@@ -320,7 +319,7 @@ func (c *ServeCommander) run() error {
 		}
 	}()
 
-	menucmder.Spawn(c.configDir, c.debug, c.logger)
+	menucmder.Spawn(configDir, c.logger)
 
 	// Wait for interrupt signal or error
 	sigChan := make(chan os.Signal, 1)

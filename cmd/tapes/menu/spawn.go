@@ -10,12 +10,11 @@ import (
 
 // Spawn launches the menu bar app as a separate process. It is safe to call
 // on every server start — the spawned binary acquires an exclusive flock on
-// ~/.tapes/menu.pid and exits silently if a menu is already running, so at
-// most one instance is ever visible. Using flock instead of a pid-alive
-// check eliminates PID-reuse and TOCTOU races a plain pid file would suffer.
+// ~/.tapes/menu.lock and exits silently if a menu is already running, so at
+// most one instance is ever visible.
 //
 // On non-darwin platforms this is a no-op via the build tag.
-func Spawn(configDir string, debug bool, log *slog.Logger) {
+func Spawn(configDir string, log *slog.Logger) {
 	execPath, err := os.Executable()
 	if err != nil {
 		log.Warn("could not resolve executable for menu", "error", err)
@@ -23,9 +22,6 @@ func Spawn(configDir string, debug bool, log *slog.Logger) {
 	}
 
 	args := []string{"menu"}
-	if debug {
-		args = append(args, "--debug")
-	}
 	if configDir != "" {
 		args = append(args, "--config-dir", configDir)
 	}
@@ -46,7 +42,6 @@ func Spawn(configDir string, debug bool, log *slog.Logger) {
 	log.Info("spawned menu bar app candidate", "pid", cmd.Process.Pid)
 
 	// Reap the child if it exits quickly (e.g. another menu already holds the
-	// lock and this candidate exits silently). Without this the process would
-	// linger as a zombie until the parent exits.
+	// lock and this candidate exits silently).
 	go func() { _ = cmd.Wait() }()
 }

@@ -53,8 +53,8 @@ var _ = Describe("acquireMenuLock", func() {
 		Expect(second.Close()).To(Succeed())
 	})
 
-	It("creates the pid file if it does not exist", func() {
-		path, err := pidFilePath(tmpDir)
+	It("creates the lock file if it does not exist", func() {
+		path, err := lockFilePath(tmpDir)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(filepath.Dir(path)).To(Equal(tmpDir))
 
@@ -70,56 +70,14 @@ var _ = Describe("acquireMenuLock", func() {
 		Expect(statErr).NotTo(HaveOccurred())
 	})
 
-	It("acquires successfully when a stale pid file exists with no live holder", func() {
-		// Pre-seed the pid file with a fake pid; no process holds the flock.
-		path, err := pidFilePath(tmpDir)
+	It("acquires successfully when a stale lock file exists with no live holder", func() {
+		path, err := lockFilePath(tmpDir)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(os.WriteFile(path, []byte("999999999\n"), 0o600)).To(Succeed())
+		Expect(os.WriteFile(path, []byte{}, 0o600)).To(Succeed())
 
 		holder, err := acquireMenuLock(tmpDir)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(holder).NotTo(BeNil(), "stale pid file must not block lock acquisition")
+		Expect(holder).NotTo(BeNil(), "stale lock file must not block acquisition")
 		DeferCleanup(func() { _ = holder.Close() })
-	})
-})
-
-var _ = Describe("writePID", func() {
-	var tmpDir string
-
-	BeforeEach(func() {
-		var err error
-		tmpDir, err = os.MkdirTemp("", "tapes-menu-writepid-*")
-		Expect(err).NotTo(HaveOccurred())
-	})
-
-	AfterEach(func() {
-		Expect(os.RemoveAll(tmpDir)).To(Succeed())
-	})
-
-	It("persists the pid as decimal text", func() {
-		holder, err := acquireMenuLock(tmpDir)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(holder).NotTo(BeNil())
-		DeferCleanup(func() { _ = holder.Close() })
-
-		Expect(writePID(holder, 12345)).To(Succeed())
-
-		path, err := pidFilePath(tmpDir)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(readPID(path)).To(Equal(12345))
-	})
-
-	It("overwrites a previously recorded pid", func() {
-		holder, err := acquireMenuLock(tmpDir)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(holder).NotTo(BeNil())
-		DeferCleanup(func() { _ = holder.Close() })
-
-		Expect(writePID(holder, 11111)).To(Succeed())
-		Expect(writePID(holder, 22222)).To(Succeed())
-
-		path, err := pidFilePath(tmpDir)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(readPID(path)).To(Equal(22222))
 	})
 })
