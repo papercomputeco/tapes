@@ -8,17 +8,21 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
-
-	"github.com/papercomputeco/tapes/pkg/start"
 )
 
 // Spawn launches the menu bar app as a separate process if one is not already
 // running. It is idempotent: callers can invoke it on every server start and
-// only the first call will fork a new process. The menu's lifecycle is
-// independent of the calling server — it survives across restarts and is only
-// killed when the user quits it from the menu itself.
-func Spawn(manager *start.Manager, configDir string, debug bool, log *slog.Logger) {
-	if existingMenuAlive(manager) {
+// only the first call will fork a new process. The menu owns its lifecycle via
+// a PID file (typically ~/.tapes/menu.pid) and survives across restarts of the
+// invoking server — it is only killed when the user quits it from the menu.
+func Spawn(configDir string, debug bool, log *slog.Logger) {
+	pidPath, err := pidFilePath(configDir)
+	if err != nil {
+		log.Warn("could not resolve menu pid file", "error", err)
+		return
+	}
+
+	if pid := readPID(pidPath); pid > 0 && processAlive(pid) {
 		return
 	}
 
@@ -49,39 +53,19 @@ func Spawn(manager *start.Manager, configDir string, debug bool, log *slog.Logge
 	}
 
 	log.Info("started menu bar app", "pid", cmd.Process.Pid)
-	saveMenuPID(manager, cmd.Process.Pid, log)
 
-	go func() { _ = cmd.Wait() }()
-}
+	if err := writePID(pidPath, cmd.Process.Pid); err != nil {
+		log.Warn("could not persist menu pid", "error", err)
+	}
 
-func existingMenuAlive(manager *start.Manager) bool {
-	state, err := manager.LoadState()
-	if err != nil || state == nil || state.MenuPID == 0 {
-		return false
-	}
-	return processAlive(state.MenuPID)
-}
-
-func saveMenuPID(manager *start.Manager, pid int, log *slog.Logger) {
-	lock, err := manager.Lock()
-	if err != nil {
-		log.Warn("could not lock state to save menu PID", "error", err)
-		return
-	}
-	defer func() { _ = lock.Release() }()
-
-	state, err := manager.LoadState()
-	if err != nil {
-		log.Warn("could not load state to save menu PID", "error", err)
-		return
-	}
-	if state == nil {
-		state = &start.State{}
-	}
-	state.MenuPID = pid
-	if err := manager.SaveState(state); err != nil {
-		log.Warn("could not save menu PID to state", "error", err)
-	}
+	go func() {
+		_ = cmd.Wait()
+		// Clean up the pid file once the menu exits so a future Spawn does not
+		// see a stale PID and skip relaunching.
+		if err := removePID(pidPath); err != nil {
+			log.Warn("could not remove menu pid file", "error", err)
+		}
+	}()
 }
 
 func processAlive(pid int) bool {

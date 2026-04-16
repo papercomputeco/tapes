@@ -28,7 +28,6 @@ type AgentSession struct {
 type State struct {
 	Version          int            `json:"version"`
 	DaemonPID        int            `json:"daemon_pid"`
-	MenuPID          int            `json:"menu_pid,omitempty"`
 	ProxyURL         string         `json:"proxy_url"`
 	APIURL           string         `json:"api_url"`
 	ShutdownWhenIdle bool           `json:"shutdown_when_idle"`

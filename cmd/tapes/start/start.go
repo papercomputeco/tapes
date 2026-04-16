@@ -486,11 +486,6 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 		ShutdownWhenIdle: shutdownWhenIdle,
 		LogPath:          manager.LogPath,
 	}
-	// Preserve a pre-existing MenuPID so that a menu spawned by `tapes serve`
-	// is not orphaned when the daemon writes its own state on top.
-	if existing, _ := manager.LoadState(); existing != nil {
-		state.MenuPID = existing.MenuPID
-	}
 	if err := manager.SaveState(state); err != nil {
 		return err
 	}

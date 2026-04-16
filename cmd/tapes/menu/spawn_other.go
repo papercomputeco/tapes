@@ -2,11 +2,7 @@
 
 package menucmder
 
-import (
-	"log/slog"
-
-	"github.com/papercomputeco/tapes/pkg/start"
-)
+import "log/slog"
 
 // Spawn is a no-op on non-darwin platforms.
-func Spawn(_ *start.Manager, _ string, _ bool, _ *slog.Logger) {}
+func Spawn(_ string, _ bool, _ *slog.Logger) {}
