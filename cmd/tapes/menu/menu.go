@@ -1,12 +1,8 @@
 //go:build darwin
 
 // Package menucmder provides the "menu" spf13/cobra command which runs a
-// macOS menu bar app displaying the tapes logo. The icon is pre-rendered at
-// build time by ./internal/icongen so the menu binary does not pull SVG
-// rasterization dependencies into the runtime.
+// macOS menu bar app displaying the tapes logo.
 package menucmder
-
-//go:generate go run ./internal/icongen -in tapes-logo.svg -out tapes-logo.png
 
 import (
 	_ "embed"
