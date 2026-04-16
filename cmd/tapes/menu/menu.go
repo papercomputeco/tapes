@@ -68,10 +68,16 @@ func onExit() {}
 
 // pollAgentCount rereads the tapes start state every few seconds and pushes
 // the agent count into the given menu item. A missing or unreadable state is
-// reported as "Running: 0".
+// reported as "Running: 0". The manager is created once and reused across
+// ticks to avoid repeated filesystem resolution of the config directory.
 func pollAgentCount(configDir string, item *systray.MenuItem) {
+	mgr, err := start.NewManager(configDir)
+	if err != nil {
+		item.SetTitle("Running: 0")
+		return
+	}
 	render := func() {
-		n := readRunningAgents(configDir)
+		n := readRunningAgents(mgr)
 		item.SetTitle(fmt.Sprintf("Running: %d", n))
 	}
 	render()
@@ -82,11 +88,7 @@ func pollAgentCount(configDir string, item *systray.MenuItem) {
 	}
 }
 
-func readRunningAgents(configDir string) int {
-	mgr, err := start.NewManager(configDir)
-	if err != nil {
-		return 0
-	}
+func readRunningAgents(mgr *start.Manager) int {
 	state, err := mgr.LoadState()
 	if err != nil || state == nil {
 		return 0
