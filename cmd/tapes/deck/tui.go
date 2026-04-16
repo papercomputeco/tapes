@@ -166,17 +166,21 @@ func newDeckModel(query deck.Querier, filters deck.Filters, overview *deck.Overv
 		}
 	}
 
-	// Determine initial time period from filters
-	period := period30d
-	if filters.Since > 0 {
-		switch {
-		case filters.Since >= 30*24*time.Hour:
-			period = period30d
-		case filters.Since >= 7*24*time.Hour:
-			period = period7d
-		default:
-			period = period24h
-		}
+	// tapes deck shows at most a rolling 30-day window. Missing --since (0)
+	// or a value larger than 30d both clamp to 30d so the label, the cutoff,
+	// and the data all agree.
+	if filters.Since <= 0 || filters.Since > maxSinceDuration {
+		filters.Since = maxSinceDuration
+	}
+
+	var period timePeriod
+	switch {
+	case filters.Since >= 30*24*time.Hour:
+		period = period30d
+	case filters.Since >= 7*24*time.Hour:
+		period = period7d
+	default:
+		period = period24h
 	}
 
 	s := spinner.New()

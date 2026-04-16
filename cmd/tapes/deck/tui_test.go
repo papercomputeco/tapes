@@ -209,4 +209,45 @@ var _ = Describe("Deck TUI helpers", func() {
 			Expect(countWrappedLines("a\n\nb", 10)).To(Equal(3))
 		})
 	})
+
+	Describe("newDeckModel initial time period", func() {
+		It("clamps a zero --since to the 30d window", func() {
+			m := newDeckModel(nil, deck.Filters{}, nil, 0)
+			Expect(m.filters.Since).To(Equal(maxSinceDuration))
+			Expect(m.timePeriod).To(Equal(period30d))
+		})
+
+		It("clamps a negative --since to the 30d window", func() {
+			m := newDeckModel(nil, deck.Filters{Since: -1 * time.Hour}, nil, 0)
+			Expect(m.filters.Since).To(Equal(maxSinceDuration))
+			Expect(m.timePeriod).To(Equal(period30d))
+		})
+
+		It("clamps an over-sized --since down to 30d", func() {
+			m := newDeckModel(nil, deck.Filters{Since: 90 * 24 * time.Hour}, nil, 0)
+			Expect(m.filters.Since).To(Equal(maxSinceDuration))
+			Expect(m.timePeriod).To(Equal(period30d))
+		})
+
+		It("keeps a 7d --since and picks the 7d period", func() {
+			since := 7 * 24 * time.Hour
+			m := newDeckModel(nil, deck.Filters{Since: since}, nil, 0)
+			Expect(m.filters.Since).To(Equal(since))
+			Expect(m.timePeriod).To(Equal(period7d))
+		})
+
+		It("keeps a 24h --since and picks the 24h period", func() {
+			since := 24 * time.Hour
+			m := newDeckModel(nil, deck.Filters{Since: since}, nil, 0)
+			Expect(m.filters.Since).To(Equal(since))
+			Expect(m.timePeriod).To(Equal(period24h))
+		})
+
+		It("treats sub-7d values as the 24h period", func() {
+			since := 3 * 24 * time.Hour
+			m := newDeckModel(nil, deck.Filters{Since: since}, nil, 0)
+			Expect(m.filters.Since).To(Equal(since))
+			Expect(m.timePeriod).To(Equal(period24h))
+		})
+	})
 })
