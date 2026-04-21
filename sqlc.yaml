@@ -1,0 +1,24 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    schema: "migrations"
+    queries:
+      - "pkg/storage/postgres/queries/ancestry_chains.sql"
+      - "pkg/storage/postgres/queries/duckdb_force_execution.sql"
+      - "pkg/storage/postgres/queries/count_leaf_sessions.sql"
+      - "pkg/storage/postgres/queries/count_roots.sql"
+      - "pkg/storage/postgres/queries/cout_turns.sql"
+      - "pkg/storage/postgres/queries/get_node.sql"
+      - "pkg/storage/postgres/queries/get_nodes_by_parent.sql"
+      - "pkg/storage/postgres/queries/get_root_nodes.sql"
+      - "pkg/storage/postgres/queries/has_node.sql"
+      - "pkg/storage/postgres/queries/insert.node.sql"
+      - "pkg/storage/postgres/queries/list_leaves.sql"
+      - "pkg/storage/postgres/queries/list_nodes.sql"
+      - "pkg/storage/postgres/queries/list_parent_refs.sql"
+      - "pkg/storage/postgres/queries/list_sessions.sql"
+    gen:
+      go:
+        package: "gensqlc"
+        out: "pkg/storage/postgres/gensqlc"
+        sql_package: "pgx/v5"

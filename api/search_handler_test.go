@@ -13,6 +13,7 @@ import (
 	apisearch "github.com/papercomputeco/tapes/api/search"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	testutils "github.com/papercomputeco/tapes/pkg/utils/test"
 	"github.com/papercomputeco/tapes/pkg/vector"
@@ -21,7 +22,7 @@ import (
 var _ = Describe("handleSearchEndpoint", func() {
 	var (
 		server       *Server
-		inMem        *inmemory.Driver
+		driver       storage.Driver
 		vectorDriver *testutils.MockVectorDriver
 		embedder     *testutils.MockEmbedder
 		ctx          context.Context
@@ -29,7 +30,7 @@ var _ = Describe("handleSearchEndpoint", func() {
 
 	BeforeEach(func() {
 		logger := tapeslogger.NewNoop()
-		inMem = inmemory.NewDriver()
+		driver = inmemory.NewDriver()
 		vectorDriver = testutils.NewMockVectorDriver()
 		embedder = testutils.NewMockEmbedder()
 		ctx = context.Background()
@@ -41,7 +42,7 @@ var _ = Describe("handleSearchEndpoint", func() {
 				VectorDriver: vectorDriver,
 				Embedder:     embedder,
 			},
-			inMem,
+			driver,
 			logger,
 		)
 		Expect(err).NotTo(HaveOccurred())
@@ -52,7 +53,7 @@ var _ = Describe("handleSearchEndpoint", func() {
 			logger := tapeslogger.NewNoop()
 			noSearchServer, err := NewServer(
 				Config{ListenAddr: ":0"},
-				inMem,
+				driver,
 				logger,
 			)
 			Expect(err).NotTo(HaveOccurred())
@@ -150,9 +151,9 @@ var _ = Describe("handleSearchEndpoint", func() {
 			node1 := merkle.NewNode(testutils.NewTestBucket("user", "Hello"), nil)
 			node2 := merkle.NewNode(testutils.NewTestBucket("assistant", "Hi there"), node1)
 
-			_, err := inMem.Put(ctx, node1)
+			_, err := driver.Put(ctx, node1)
 			Expect(err).NotTo(HaveOccurred())
-			_, err = inMem.Put(ctx, node2)
+			_, err = driver.Put(ctx, node2)
 			Expect(err).NotTo(HaveOccurred())
 
 			vectorDriver.Results = []vector.QueryResult{

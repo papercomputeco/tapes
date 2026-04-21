@@ -10,7 +10,6 @@ import (
 
 	"github.com/papercomputeco/tapes/cmd/tapes/inprocessapi"
 	searchcmder "github.com/papercomputeco/tapes/cmd/tapes/search"
-	"github.com/papercomputeco/tapes/cmd/tapes/sqlitepath"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/credentials"
 	"github.com/papercomputeco/tapes/pkg/deck"
@@ -21,18 +20,18 @@ import (
 type generateCommander struct {
 	flags config.FlagSet
 
-	sqlitePath string
-	name       string
-	skillType  string
-	preview    bool
-	provider   string
-	model      string
-	apiKey     string
-	since      string
-	until      string
-	search     string
-	searchTop  int
-	apiTarget  string
+	postgresDSN string
+	name        string
+	skillType   string
+	preview     bool
+	provider    string
+	model       string
+	apiKey      string
+	since       string
+	until       string
+	search      string
+	searchTop   int
+	apiTarget   string
 }
 
 var generateFlags = config.FlagSet{
@@ -89,7 +88,7 @@ Examples:
 	cmd.Flags().StringVar(&cmder.provider, "provider", "openai", "LLM provider (openai|anthropic|ollama)")
 	cmd.Flags().StringVar(&cmder.model, "model", "", "LLM model for extraction")
 	cmd.Flags().StringVar(&cmder.apiKey, "api-key", "", "API key for LLM provider")
-	cmd.Flags().StringVarP(&cmder.sqlitePath, "sqlite", "s", "", "Path to SQLite database")
+	cmd.Flags().StringVar(&cmder.postgresDSN, "postgres", "", "PostgreSQL connection string for a local in-process API")
 	cmd.Flags().StringVar(&cmder.since, "since", "", "Only include messages on or after this date (YYYY-MM-DD or RFC3339)")
 	cmd.Flags().StringVar(&cmder.until, "until", "", "Only include messages on or before this date (YYYY-MM-DD or RFC3339)")
 	cmd.Flags().StringVar(&cmder.search, "search", "", "Search query to find sessions (requires running API server)")
@@ -122,7 +121,7 @@ func (c *generateCommander) run(cmd *cobra.Command, args []string) error {
 
 	// Step 1: Connect to the tapes API. With --api-target we use the
 	// remote server; otherwise we spin up an in-process API server backed
-	// by --sqlite, mirroring the pattern used by `tapes deck`.
+	// by --postgres, mirroring the pattern used by `tapes deck`.
 	var query deck.Querier
 	var closeFn func()
 	if err := step(w, "Connecting to API", func() error {
@@ -132,11 +131,10 @@ func (c *generateCommander) run(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 
-		dbPath, dbErr := sqlitepath.ResolveSQLitePath(c.sqlitePath)
-		if dbErr != nil {
-			return dbErr
+		if strings.TrimSpace(c.postgresDSN) == "" {
+			return errors.New("no API target configured: pass --api-target or --postgres")
 		}
-		target, stop, startErr := inprocessapi.Start(cmd.Context(), dbPath, nil)
+		target, stop, startErr := inprocessapi.Start(cmd.Context(), c.postgresDSN, nil)
 		if startErr != nil {
 			return startErr
 		}

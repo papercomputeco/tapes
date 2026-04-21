@@ -1,15 +1,18 @@
 package backfill
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
-	"github.com/papercomputeco/tapes/pkg/storage/ent"
-	"github.com/papercomputeco/tapes/pkg/storage/ent/node"
-	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
+	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
 // Options configures backfill behavior.
@@ -18,31 +21,64 @@ type Options struct {
 	Verbose bool
 }
 
+// APIRunRequest is the request payload for the API-backed usage sync flow.
+type APIRunRequest struct {
+	TranscriptDir string `json:"transcript_dir"`
+	DryRun        bool   `json:"dry_run,omitempty"`
+	Verbose       bool   `json:"verbose,omitempty"`
+}
+
 // Backfiller matches Claude Code transcript usage data to tapes DB nodes.
 type Backfiller struct {
-	driver  *sqlite.Driver
+	driver  storage.Driver
 	options Options
 }
 
-// NewBackfiller creates a Backfiller connected to the given SQLite database.
-// The returned cleanup function closes the database.
-func NewBackfiller(ctx context.Context, dbPath string, opts Options) (*Backfiller, func() error, error) {
-	driver, err := sqlite.NewDriver(ctx, dbPath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to open database: %w", err)
-	}
-
-	if err := driver.Migrate(ctx); err != nil {
-		driver.Close()
-		return nil, nil, fmt.Errorf("running migrations: %w", err)
-	}
-
-	b := &Backfiller{
+// NewBackfillerWithDriver creates a Backfiller using an existing storage driver.
+func NewBackfillerWithDriver(driver storage.Driver, opts Options) *Backfiller {
+	return &Backfiller{
 		driver:  driver,
 		options: opts,
 	}
+}
 
-	return b, driver.Close, nil
+// RunViaAPI asks a tapes API server to perform the usage sync.
+func RunViaAPI(ctx context.Context, apiTarget string, transcriptDir string, opts Options) (*Result, error) {
+	payload, err := json.Marshal(APIRunRequest{
+		TranscriptDir: transcriptDir,
+		DryRun:        opts.DryRun,
+		Verbose:       opts.Verbose,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal sync request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(apiTarget, "/")+"/v1/admin/backfill/usage", bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("create sync request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("sync via api: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read sync response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("sync api returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var result Result
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("decode sync response: %w", err)
+	}
+
+	return &result, nil
 }
 
 // Run scans transcripts and backfills usage data into the database.
@@ -79,15 +115,24 @@ func (b *Backfiller) Run(ctx context.Context, transcriptDir string) (*Result, er
 func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEntry) (*Result, error) {
 	result := &Result{}
 
-	// Query all assistant nodes where token fields are NULL.
-	candidates, err := b.driver.Client.Node.Query().
-		Where(
-			node.RoleEQ("assistant"),
-			node.PromptTokensIsNil(),
-		).
-		All(ctx)
+	var (
+		candidates     []*merkle.Node
+		totalAssistant int
+	)
+
+	nodes, err := b.driver.List(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query nodes: %w", err)
+		return nil, fmt.Errorf("failed to list nodes: %w", err)
+	}
+	for _, candidate := range nodes {
+		if candidate.Bucket.Role != "assistant" {
+			continue
+		}
+		totalAssistant++
+		if candidate.Usage != nil && candidate.Usage.PromptTokens > 0 {
+			continue
+		}
+		candidates = append(candidates, candidate)
 	}
 
 	if b.options.Verbose {
@@ -95,16 +140,14 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 		fmt.Printf("Found %d transcript entries to match\n", len(entries))
 	}
 
-	// Index candidates by model for fast lookup.
 	type candidateInfo struct {
-		node *ent.Node
+		node *merkle.Node
 	}
 	byModel := make(map[string][]candidateInfo)
 	for _, c := range candidates {
-		byModel[c.Model] = append(byModel[c.Model], candidateInfo{node: c})
+		byModel[c.Bucket.Model] = append(byModel[c.Bucket.Model], candidateInfo{node: c})
 	}
 
-	// Track which nodes have been matched to avoid double-matching.
 	matched := make(map[string]bool)
 
 	for _, entry := range entries {
@@ -130,11 +173,11 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 		}
 
 		entryText := entry.TextContent()
-		var bestMatch *ent.Node
+		var bestMatch *merkle.Node
 		bestDelta := 5 * time.Second
 
 		for _, ci := range modelCandidates {
-			if matched[ci.node.ID] {
+			if matched[ci.node.Hash] {
 				continue
 			}
 
@@ -146,10 +189,9 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 				continue
 			}
 
-			// Verify by content prefix if we have text content.
-			if entryText != "" && len(ci.node.Content) > 0 {
-				nodeText := extractTextFromContent(ci.node.Content)
-				if !contentPrefixMatch(entryText, nodeText, 200) {
+			if entryText != "" {
+				nodeText := ci.node.Bucket.ExtractText()
+				if nodeText == "" || !contentPrefixMatch(entryText, nodeText, 200) {
 					continue
 				}
 			}
@@ -165,10 +207,7 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 			continue
 		}
 
-		matched[bestMatch.ID] = true
-		// PromptTokens follows the proxy convention: total input tokens including
-		// base input, cache creation, and cache read. The Anthropic API reports
-		// input_tokens as only the non-cached portion, so we must sum all three.
+		matched[bestMatch.Hash] = true
 		totalInput := entry.Message.Usage.InputTokens +
 			entry.Message.Usage.CacheCreationInputTokens +
 			entry.Message.Usage.CacheReadInputTokens
@@ -182,12 +221,12 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 
 		if b.options.Verbose {
 			fmt.Printf("  match: node=%s model=%s tokens=%d+%d\n",
-				bestMatch.ID[:12], model, usage.PromptTokens, usage.CompletionTokens)
+				bestMatch.Hash[:12], model, usage.PromptTokens, usage.CompletionTokens)
 		}
 
 		if !b.options.DryRun {
-			if err := b.driver.UpdateUsage(ctx, bestMatch.ID, usage); err != nil {
-				return nil, fmt.Errorf("failed to update node %s: %w", bestMatch.ID, err)
+			if err := b.driver.UpdateUsage(ctx, bestMatch.Hash, usage); err != nil {
+				return nil, fmt.Errorf("failed to update node %s: %w", bestMatch.Hash, err)
 			}
 		}
 
@@ -195,28 +234,8 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 		result.TotalTokensBackfilled += usage.TotalTokens
 	}
 
-	// Count skipped nodes (already have tokens) for reporting.
-	totalAssistant, err := b.driver.Client.Node.Query().
-		Where(node.RoleEQ("assistant")).
-		Count(ctx)
-	if err == nil {
-		result.Skipped = totalAssistant - len(candidates)
-	}
-
+	result.Skipped = totalAssistant - len(candidates)
 	return result, nil
-}
-
-// extractTextFromContent concatenates text from content blocks.
-func extractTextFromContent(content []map[string]any) string {
-	var sb strings.Builder
-	for _, block := range content {
-		if t, ok := block["type"].(string); ok && t == "text" {
-			if text, ok := block["text"].(string); ok {
-				sb.WriteString(text)
-			}
-		}
-	}
-	return sb.String()
 }
 
 // contentPrefixMatch checks if the first n characters of two strings match.

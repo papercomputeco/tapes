@@ -2,9 +2,12 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -25,33 +28,45 @@ func postgresTestBucket(text string) merkle.Bucket {
 	}
 }
 
-// connStr returns the PostgreSQL connection string from environment or skips the test.
-func connStr() string {
-	dsn := os.Getenv("TAPES_TEST_POSTGRES_DSN")
+func testPostgresDSN() (string, error) {
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
 	if dsn == "" {
-		Skip("TAPES_TEST_POSTGRES_DSN not set, skipping PostgreSQL tests")
+		return "", errors.New("TEST_POSTGRES_DSN is not set; run postgres integration tests via `dagger call test` so the Dagger Postgres service is available")
 	}
-	return dsn
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return "", fmt.Errorf("connect to test postgres: %w", err)
+	}
+	defer conn.Close(context.Background())
+
+	if err := conn.Ping(ctx); err != nil {
+		return "", fmt.Errorf("ping test postgres at TEST_POSTGRES_DSN: %w", err)
+	}
+
+	return dsn, nil
 }
 
 var _ = Describe("Driver", func() {
 	var (
-		driver *postgres.Driver
+		driver storage.Driver
 		ctx    context.Context
 	)
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		dsn := connStr()
+		dsn, err := testPostgresDSN()
+		Expect(err).ToNot(HaveOccurred())
 
-		var err error
 		driver, err = postgres.NewDriver(ctx, dsn)
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(driver.Migrate(ctx)).To(Succeed())
-
-		// Clean all nodes before each test for isolation.
-		_, err = driver.Client.Node.Delete().Exec(ctx)
+		pgDriver, ok := driver.(*postgres.Driver)
+		Expect(ok).To(BeTrue())
+		_, err = pgDriver.DB().Exec(ctx, "TRUNCATE TABLE nodes")
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -62,15 +77,6 @@ var _ = Describe("Driver", func() {
 	})
 
 	Describe("NewDriver", func() {
-		It("creates a driver with valid connection string", func() {
-			dsn := connStr()
-			d, err := postgres.NewDriver(context.Background(), dsn)
-			Expect(err).NotTo(HaveOccurred())
-			defer d.Close()
-
-			Expect(d.Migrate(context.Background())).To(Succeed())
-		})
-
 		It("returns an error for invalid connection string", func() {
 			_, err := postgres.NewDriver(context.Background(), "host=invalid port=9999 user=bad dbname=bad sslmode=disable connect_timeout=1")
 			Expect(err).To(HaveOccurred())
@@ -277,7 +283,7 @@ var _ = Describe("Driver", func() {
 			driver.Put(ctx, child)
 			driver.Put(ctx, grandchild)
 
-			dag, err := merkle.LoadDag(ctx, driver, grandchild.Hash)
+			dag, err := driver.LoadDag(ctx, grandchild.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dag.Size()).To(Equal(3))
 
@@ -299,7 +305,7 @@ var _ = Describe("Driver", func() {
 			driver.Put(ctx, child)
 			driver.Put(ctx, grandchild)
 
-			dag, err := merkle.LoadDag(ctx, driver, root.Hash)
+			dag, err := driver.LoadDag(ctx, root.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dag.Size()).To(Equal(3))
 
@@ -324,7 +330,7 @@ var _ = Describe("Driver", func() {
 			driver.Put(ctx, child2)
 			driver.Put(ctx, grandchild)
 
-			dag, err := merkle.LoadDag(ctx, driver, root.Hash)
+			dag, err := driver.LoadDag(ctx, root.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dag.Size()).To(Equal(4))
 
@@ -348,7 +354,7 @@ var _ = Describe("Driver", func() {
 			driver.Put(ctx, child1)
 			driver.Put(ctx, child2)
 
-			dag, err := merkle.LoadDag(ctx, driver, child1.Hash)
+			dag, err := driver.LoadDag(ctx, child1.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dag.Size()).To(Equal(2))
 

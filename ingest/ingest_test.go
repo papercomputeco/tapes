@@ -14,6 +14,7 @@ import (
 
 	"github.com/papercomputeco/tapes/ingest"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
+	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
@@ -78,7 +79,7 @@ func mustJSON(v any) json.RawMessage {
 	return b
 }
 
-func newTestServer() (*ingest.Server, *inmemory.Driver, string) {
+func newTestServer() (*ingest.Server, storage.Driver, string) {
 	logger := tapeslogger.NewNoop()
 	driver := inmemory.NewDriver()
 
@@ -106,7 +107,7 @@ func newTestServer() (*ingest.Server, *inmemory.Driver, string) {
 var _ = Describe("Ingest Server", func() {
 	var (
 		server  *ingest.Server
-		driver  *inmemory.Driver
+		driver  storage.Driver
 		baseURL string
 		client  *http.Client
 	)

@@ -41,7 +41,7 @@ type Config struct {
 }
 
 // NewDriver creates a new pgvector driver connected to PostgreSQL.
-func NewDriver(c Config, log *slog.Logger) (*Driver, error) {
+func NewDriver(ctx context.Context, c *Config, log *slog.Logger) (*Driver, error) {
 	if c.ConnString == "" {
 		return nil, errors.New("pgvector connection string must be provided")
 	}
@@ -55,13 +55,13 @@ func NewDriver(c Config, log *slog.Logger) (*Driver, error) {
 		tableName = DefaultTableName
 	}
 
-	pool, err := pgxpool.New(context.Background(), c.ConnString)
+	pool, err := pgxpool.New(ctx, c.ConnString)
 	if err != nil {
 		return nil, fmt.Errorf("creating pgx connection pool: %w", err)
 	}
 
 	// Verify connectivity
-	if err := pool.Ping(context.Background()); err != nil {
+	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("%w: %w", vector.ErrConnection, err)
 	}
@@ -73,7 +73,7 @@ func NewDriver(c Config, log *slog.Logger) (*Driver, error) {
 		logger:     log,
 	}
 
-	if err := d.ensureSchema(context.Background()); err != nil {
+	if err := d.ensureSchema(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("ensuring schema: %w", err)
 	}

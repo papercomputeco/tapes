@@ -1,6 +1,6 @@
 // Package inprocessapi provides a shared helper for CLI subcommands that
 // want to talk to the tapes API server over HTTP without requiring an
-// external server. It opens the local SQLite database, runs migrations,
+// external server. It opens a local PostgreSQL-backed storage driver, runs migrations,
 // and starts an api.Server bound to a random localhost port. Callers
 // receive the loopback URL and a stop function to invoke at shutdown.
 package inprocessapi
@@ -13,27 +13,23 @@ import (
 	"github.com/papercomputeco/tapes/api"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/sessions"
-	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
+	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 )
 
-// Start spins up an in-process tapes API server backed by the SQLite
-// database at sqlitePath. Returns the loopback URL the caller should use
+// Start spins up an in-process tapes API server backed by PostgreSQL
+// using postgresDSN. Returns the loopback URL the caller should use
 // to construct an HTTP client, plus a stop function that must be invoked
 // at shutdown to release the listener and close the storage driver.
 //
 // pricing is passed through to the API server's /v1/sessions/summary
 // handler. nil is acceptable; the handler falls back to
 // sessions.DefaultPricing in that case.
-func Start(ctx context.Context, sqlitePath string, pricing sessions.PricingTable) (string, func(), error) {
+func Start(ctx context.Context, postgresDSN string, pricing sessions.PricingTable) (string, func(), error) {
 	logger := tapeslogger.NewNoop()
 
-	driver, err := sqlite.NewDriver(ctx, sqlitePath)
+	driver, err := postgres.NewDriver(ctx, postgresDSN)
 	if err != nil {
-		return "", nil, fmt.Errorf("opening sqlite driver: %w", err)
-	}
-	if err := driver.Migrate(ctx); err != nil {
-		_ = driver.Close()
-		return "", nil, fmt.Errorf("running migrations: %w", err)
+		return "", nil, fmt.Errorf("opening postgres driver: %w", err)
 	}
 
 	server, err := api.NewServer(api.Config{

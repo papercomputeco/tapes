@@ -1,6 +1,8 @@
 package pgvector_test
 
 import (
+	"context"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -10,14 +12,14 @@ import (
 
 var _ = Describe("Driver", func() {
 	Describe("Interface compliance", func() {
-		It("should implement vector.Driver interface", func() {
+		It("should implement vector.Backend", func() {
 			var _ vector.Driver = (*pgvector.Driver)(nil)
 		})
 	})
 
 	Describe("NewDriver", func() {
 		It("should return an error when connection string is empty", func() {
-			_, err := pgvector.NewDriver(pgvector.Config{
+			_, err := pgvector.NewDriver(context.TODO(), &pgvector.Config{
 				Dimensions: 128,
 			}, nil)
 			Expect(err).To(HaveOccurred())
@@ -25,7 +27,7 @@ var _ = Describe("Driver", func() {
 		})
 
 		It("should return an error when dimensions is zero", func() {
-			_, err := pgvector.NewDriver(pgvector.Config{
+			_, err := pgvector.NewDriver(context.TODO(), &pgvector.Config{
 				ConnString: "postgres://localhost:5432/test",
 			}, nil)
 			Expect(err).To(HaveOccurred())

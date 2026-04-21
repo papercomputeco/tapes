@@ -12,7 +12,7 @@ import (
 	configcmder "github.com/papercomputeco/tapes/cmd/tapes/config"
 	deckcmder "github.com/papercomputeco/tapes/cmd/tapes/deck"
 	initcmder "github.com/papercomputeco/tapes/cmd/tapes/init"
-	migratecmder "github.com/papercomputeco/tapes/cmd/tapes/migrate"
+	localcmder "github.com/papercomputeco/tapes/cmd/tapes/local"
 	searchcmder "github.com/papercomputeco/tapes/cmd/tapes/search"
 	seedcmder "github.com/papercomputeco/tapes/cmd/tapes/seed"
 	servecmder "github.com/papercomputeco/tapes/cmd/tapes/serve"
@@ -21,7 +21,7 @@ import (
 	statuscmder "github.com/papercomputeco/tapes/cmd/tapes/status"
 	synccmder "github.com/papercomputeco/tapes/cmd/tapes/sync"
 	validatecmder "github.com/papercomputeco/tapes/cmd/tapes/validate"
-	versioncmder "github.com/papercomputeco/tapes/cmd/version"
+	versioncmder "github.com/papercomputeco/tapes/cmd/tapes/version"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/telemetry"
@@ -49,13 +49,12 @@ Experimental: Chat through the proxy:
 Search sessions:
   tapes search         Search sessions using semantic similarity
 
-	Deck sessions:
-	  tapes deck           ROI dashboard for sessions
-	  tapes deck --web     Local web dashboard
-	  tapes seed           Seed demo sessions
+Deck sessions:
+  tapes deck           ROI dashboard for sessions
+  tapes seed           Seed demo sessions
 
-	Configuration:
-	  tapes config set <key> <value>    Set a configuration value
+Configuration:
+  tapes config set <key> <value>    Set a configuration value
   tapes config get <key>            Get a configuration value
   tapes config list                 List all configuration values`
 
@@ -99,9 +98,9 @@ func NewTapesCmd() *cobra.Command {
 	cmd.AddCommand(deckcmder.NewDeckCmd())
 	cmd.AddCommand(authcmder.NewAuthCmd())
 	cmd.AddCommand(initcmder.NewInitCmd())
+	cmd.AddCommand(localcmder.NewLocalCmd())
 	cmd.AddCommand(searchcmder.NewSearchCmd())
 	cmd.AddCommand(seedcmder.NewSeedCmd())
-	cmd.AddCommand(migratecmder.NewMigrateCmd())
 	cmd.AddCommand(servecmder.NewServeCmd())
 	cmd.AddCommand(skillcmder.NewSkillCmd())
 	cmd.AddCommand(startcmder.NewStartCmd())

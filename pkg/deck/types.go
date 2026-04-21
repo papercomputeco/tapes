@@ -7,7 +7,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/sessions"
 )
 
-// Querier is the interface the deck TUI and web dashboard use to fetch
+// Querier is the interface the deck TUI use to fetch
 // session data. The HTTPQuery implementation in this package talks to a
 // tapes API server (in-process or remote) over HTTP.
 type Querier interface {

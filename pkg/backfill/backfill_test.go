@@ -13,7 +13,8 @@ import (
 	"github.com/papercomputeco/tapes/pkg/backfill"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
-	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
+	"github.com/papercomputeco/tapes/pkg/storage"
+	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
 func makeAssistantBucket(text, model string) merkle.Bucket {
@@ -37,7 +38,6 @@ var _ = Describe("ScanTranscriptDir", func() {
 	It("finds JSONL files in nested directories", func() {
 		tmpDir := GinkgoT().TempDir()
 
-		// Create nested structure
 		subDir := filepath.Join(tmpDir, "project", "subagents")
 		Expect(os.MkdirAll(subDir, 0o755)).To(Succeed())
 
@@ -79,7 +79,6 @@ var _ = Describe("ParseTranscript", func() {
 
 	It("deduplicates by message ID keeping last entry", func() {
 		tmpDir := GinkgoT().TempDir()
-		// Simulate streaming: same message ID, content grows, last entry wins
 		jsonl := `{"type":"assistant","uuid":"a1","timestamp":"2026-02-01T10:00:00.000Z","sessionId":"s1","message":{"id":"msg_001","role":"assistant","model":"claude-sonnet-4-5-20250929","content":[{"type":"text","text":"Hi"}],"stop_reason":null,"usage":{"input_tokens":100,"output_tokens":2,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
 {"type":"assistant","uuid":"a2","timestamp":"2026-02-01T10:00:01.000Z","sessionId":"s1","message":{"id":"msg_001","role":"assistant","model":"claude-sonnet-4-5-20250929","content":[{"type":"text","text":"Hi there! How can I help?"}],"stop_reason":null,"usage":{"input_tokens":100,"output_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`
 
@@ -116,22 +115,19 @@ var _ = Describe("ParseTranscript", func() {
 var _ = Describe("Backfiller", func() {
 	var (
 		ctx    context.Context
-		driver *sqlite.Driver
+		driver storage.Driver
 		tmpDir string
 	)
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		var err error
-		driver, err = sqlite.NewDriver(ctx, ":memory:")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(driver.Migrate(ctx)).To(Succeed())
+		driver = inmemory.NewDriver()
 		tmpDir = GinkgoT().TempDir()
 	})
 
 	AfterEach(func() {
 		if driver != nil {
-			driver.Close()
+			Expect(driver.Close()).To(Succeed())
 		}
 	})
 
@@ -141,27 +137,23 @@ var _ = Describe("Backfiller", func() {
 
 		bucket := makeAssistantBucket("Hello from Claude!", "claude-sonnet-4-5-20250929")
 		node := merkle.NewNode(bucket, nil)
+		node.CreatedAt = now
 		_, err := driver.Put(ctx, node)
 		Expect(err).NotTo(HaveOccurred())
 
 		jsonl := fmt.Sprintf(`{"type":"assistant","uuid":"a1","timestamp":"%s","sessionId":"s1","message":{"id":"msg_001","role":"assistant","model":"claude-sonnet-4-5-20250929","content":[{"type":"text","text":"Hello from Claude!"}],"stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":1000,"cache_read_input_tokens":500}}}`, ts)
 		writeJSONL(tmpDir, "test.jsonl", jsonl)
 
-		b, cleanup, err := backfill.NewBackfiller(ctx, ":memory:", backfill.Options{})
-		Expect(err).NotTo(HaveOccurred())
-		defer cleanup()
-
+		b := backfill.NewBackfillerWithDriver(driver, backfill.Options{})
 		result, err := b.Run(ctx, tmpDir)
 		Expect(err).NotTo(HaveOccurred())
-		// The in-memory DB is different from driver's, so we just verify parsing works
 		Expect(result.TranscriptFiles).To(Equal(1))
 		Expect(result.TranscriptEntries).To(Equal(1))
+		Expect(result.Matched).To(Equal(1))
 	})
 
 	It("reports dry-run results without writing", func() {
-		b, cleanup, err := backfill.NewBackfiller(ctx, ":memory:", backfill.Options{DryRun: true})
-		Expect(err).NotTo(HaveOccurred())
-		defer cleanup()
+		b := backfill.NewBackfillerWithDriver(driver, backfill.Options{DryRun: true})
 
 		jsonl := `{"type":"assistant","uuid":"a1","timestamp":"2026-02-01T10:00:00.000Z","sessionId":"s1","message":{"id":"msg_001","role":"assistant","model":"test-model","content":[{"type":"text","text":"test"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`
 		writeJSONL(tmpDir, "test.jsonl", jsonl)
@@ -172,76 +164,57 @@ var _ = Describe("Backfiller", func() {
 	})
 
 	It("sets PromptTokens to total input including cache tokens", func() {
-		// Use a temp file DB so backfiller and test share the same database
-		dbPath := filepath.Join(GinkgoT().TempDir(), "test.db")
-		sharedDriver, err := sqlite.NewDriver(ctx, dbPath)
-		Expect(err).NotTo(HaveOccurred())
-		defer sharedDriver.Close()
-		Expect(sharedDriver.Migrate(ctx)).To(Succeed())
-
 		now := time.Now().UTC()
 		ts := now.Format("2006-01-02T15:04:05.000Z")
 
 		bucket := makeAssistantBucket("Hello from Claude!", "claude-sonnet-4-5-20250929")
 		node := merkle.NewNode(bucket, nil)
-		_, err = sharedDriver.Put(ctx, node)
+		node.CreatedAt = now
+		_, err := driver.Put(ctx, node)
 		Expect(err).NotTo(HaveOccurred())
 
-		// Transcript with: input_tokens=100, cache_creation=1000, cache_read=500
-		// Expected PromptTokens = 100 + 1000 + 500 = 1600
 		jsonl := fmt.Sprintf(`{"type":"assistant","uuid":"a1","timestamp":"%s","sessionId":"s1","message":{"id":"msg_001","role":"assistant","model":"claude-sonnet-4-5-20250929","content":[{"type":"text","text":"Hello from Claude!"}],"stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":1000,"cache_read_input_tokens":500}}}`, ts)
 		writeJSONL(tmpDir, "test.jsonl", jsonl)
 
-		b, cleanup, err := backfill.NewBackfiller(ctx, dbPath, backfill.Options{})
-		Expect(err).NotTo(HaveOccurred())
-		defer cleanup()
-
+		b := backfill.NewBackfillerWithDriver(driver, backfill.Options{})
 		result, err := b.Run(ctx, tmpDir)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result.Matched).To(Equal(1))
 
-		// Verify the stored usage values
-		updated, err := sharedDriver.Client.Node.Get(ctx, node.Hash)
+		updated, err := driver.Get(ctx, node.Hash)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(*updated.PromptTokens).To(Equal(1600))   // 100 + 1000 + 500
-		Expect(*updated.CompletionTokens).To(Equal(50)) // output_tokens
-		Expect(*updated.TotalTokens).To(Equal(1650))    // 1600 + 50
-		Expect(*updated.CacheCreationInputTokens).To(Equal(1000))
-		Expect(*updated.CacheReadInputTokens).To(Equal(500))
+		Expect(updated.Usage).NotTo(BeNil())
+		Expect(updated.Usage.PromptTokens).To(Equal(1600))
+		Expect(updated.Usage.CompletionTokens).To(Equal(50))
+		Expect(updated.Usage.TotalTokens).To(Equal(1650))
+		Expect(updated.Usage.CacheCreationInputTokens).To(Equal(1000))
+		Expect(updated.Usage.CacheReadInputTokens).To(Equal(500))
 	})
 
 	It("sets PromptTokens equal to input_tokens when no cache tokens present", func() {
-		dbPath := filepath.Join(GinkgoT().TempDir(), "test.db")
-		sharedDriver, err := sqlite.NewDriver(ctx, dbPath)
-		Expect(err).NotTo(HaveOccurred())
-		defer sharedDriver.Close()
-		Expect(sharedDriver.Migrate(ctx)).To(Succeed())
-
 		now := time.Now().UTC()
 		ts := now.Format("2006-01-02T15:04:05.000Z")
 
 		bucket := makeAssistantBucket("No cache response", "claude-sonnet-4-5-20250929")
 		node := merkle.NewNode(bucket, nil)
-		_, err = sharedDriver.Put(ctx, node)
+		node.CreatedAt = now
+		_, err := driver.Put(ctx, node)
 		Expect(err).NotTo(HaveOccurred())
 
-		// No cache tokens: input_tokens=200, cache_creation=0, cache_read=0
 		jsonl := fmt.Sprintf(`{"type":"assistant","uuid":"a1","timestamp":"%s","sessionId":"s1","message":{"id":"msg_001","role":"assistant","model":"claude-sonnet-4-5-20250929","content":[{"type":"text","text":"No cache response"}],"stop_reason":"end_turn","usage":{"input_tokens":200,"output_tokens":75,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`, ts)
 		writeJSONL(tmpDir, "test.jsonl", jsonl)
 
-		b, cleanup, err := backfill.NewBackfiller(ctx, dbPath, backfill.Options{})
-		Expect(err).NotTo(HaveOccurred())
-		defer cleanup()
-
+		b := backfill.NewBackfillerWithDriver(driver, backfill.Options{})
 		result, err := b.Run(ctx, tmpDir)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result.Matched).To(Equal(1))
 
-		updated, err := sharedDriver.Client.Node.Get(ctx, node.Hash)
+		updated, err := driver.Get(ctx, node.Hash)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(*updated.PromptTokens).To(Equal(200))
-		Expect(*updated.CompletionTokens).To(Equal(75))
-		Expect(*updated.TotalTokens).To(Equal(275))
+		Expect(updated.Usage).NotTo(BeNil())
+		Expect(updated.Usage.PromptTokens).To(Equal(200))
+		Expect(updated.Usage.CompletionTokens).To(Equal(75))
+		Expect(updated.Usage.TotalTokens).To(Equal(275))
 	})
 })
 

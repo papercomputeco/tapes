@@ -17,21 +17,21 @@ Use this skill when you need to:
 
 ## Prerequisites
 
-The tapes search requires:
-1. A running vector store (e.g., Chroma, SQLite or Qdrant) with indexed session data
-2. An embedding provider (e.g., Ollama) to convert queries to vectors
-3. A SQLite database with the session storage
+The tapes search command requires:
+1. A Postgres-backed tapes API or local tapes runtime
+2. A pgvector-backed vector index in the same Postgres database
+3. An embedding provider (for example Ollama) to convert queries to vectors
 
 ## Quick Start
 
 ```bash
 tapes search "<your query>" \
-  --vector-store-provider chroma \
-  --vector-store-target http://localhost:8000 \
+  --postgres postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable \
+  --vector-store-provider pgvector \
+  --vector-store-target postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable \
   --embedding-provider ollama \
   --embedding-target http://localhost:11434 \
-  --embedding-model nomic-embed-text \
-  --sqlite ./tapes.sqlite
+  --embedding-model nomic-embed-text
 ```
 
 ## Command Reference
@@ -46,12 +46,12 @@ tapes search <query> [flags]
 
 | Flag | Description | Example |
 |------|-------------|---------|
-| `--vector-store-provider` | Vector store type | `chroma` or `sqlite` or `qdrant` |
-| `--vector-store-target` | Vector store URL | `http://localhost:8000` |
+| `--postgres` | Postgres connection string | `postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable` |
+| `--vector-store-provider` | Vector store type | `pgvector` |
+| `--vector-store-target` | Vector store target | `postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable` |
 | `--embedding-provider` | Embedding provider type | `ollama` |
 | `--embedding-target` | Embedding provider URL | `http://localhost:11434` |
 | `--embedding-model` | Embedding model name | `nomic-embed-text` |
-| `--sqlite`, `-s` | Path to SQLite database | `./tapes.sqlite` |
 
 ### Optional Flags
 
@@ -66,12 +66,12 @@ tapes search <query> [flags]
 
 ```bash
 tapes search "how to configure logging" \
-  --vector-store-provider chroma \
-  --vector-store-target http://localhost:8000 \
+  --postgres postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable \
+  --vector-store-provider pgvector \
+  --vector-store-target postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable \
   --embedding-provider ollama \
   --embedding-target http://localhost:11434 \
-  --embedding-model nomic-embed-text \
-  --sqlite ./tapes.sqlite
+  --embedding-model nomic-embed-text
 ```
 
 ### Get More Results
@@ -79,12 +79,12 @@ tapes search "how to configure logging" \
 ```bash
 tapes search "error handling patterns" \
   --top 10 \
-  --vector-store-provider chroma \
-  --vector-store-target http://localhost:8000 \
+  --postgres postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable \
+  --vector-store-provider pgvector \
+  --vector-store-target postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable \
   --embedding-provider ollama \
   --embedding-target http://localhost:11434 \
-  --embedding-model nomic-embed-text \
-  --sqlite ./tapes.sqlite
+  --embedding-model nomic-embed-text
 ```
 
 ### Debug Mode
@@ -92,12 +92,12 @@ tapes search "error handling patterns" \
 ```bash
 tapes search "authentication flow" \
   --debug \
-  --vector-store-provider chroma \
-  --vector-store-target http://localhost:8000 \
+  --postgres postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable \
+  --vector-store-provider pgvector \
+  --vector-store-target postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable \
   --embedding-provider ollama \
   --embedding-target http://localhost:11434 \
-  --embedding-model nomic-embed-text \
-  --sqlite ./tapes.sqlite
+  --embedding-model nomic-embed-text
 ```
 
 ## Output Format

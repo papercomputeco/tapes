@@ -4,6 +4,7 @@
 VERSION ?= $(shell git describe --tags --always --dirty)
 COMMIT  := $(shell git rev-parse HEAD)
 BUILDTIME ?= $(shell date -u '+%Y-%m-%d %H:%M:%S')
+REGISTRY ?= public.ecr.aws/g4e5l3z3/papercomputeco
 
 POSTHOG_API_KEY ?=
 POSTHOG_ENDPOINT ?= https://us.i.posthog.com
@@ -38,23 +39,19 @@ swagfmt: ## Runs swaggo/swag for formatting swag godoc comments
 	swag fmt
 
 .PHONY: generate
-generate: ## Regenerates ent code from schema
-	go generate ./pkg/storage/ent/...
+generate: ## Regenerates sqlc queries
+	sqlc generate
 
 .PHONY: build-local
 build-local: ## Builds local artifacts with local toolchain
 	$(call print-target)
 	@mkdir -p ./build
-	CGO_ENABLED=1 GOEXPERIMENT=jsonv2 go build -ldflags "$(LDFLAGS)" -o ./build/ ./cli/tapes
-	CGO_ENABLED=1 GOEXPERIMENT=jsonv2 go build -ldflags "$(LDFLAGS)" -o ./build/ ./cli/tapesprox
-	CGO_ENABLED=1 GOEXPERIMENT=jsonv2 go build -ldflags "$(LDFLAGS)" -o ./build/ ./cli/tapesapi
+	CGO_ENABLED=0 GOEXPERIMENT=jsonv2 go build -ldflags "$(LDFLAGS)" -o ./build/ ./cli/tapes
 
 .PHONY: install
 install: build-local ## Builds local artifacts and installs to configured $GOPATH
 	$(call print-target)
 	cp ./build/tapes $(shell go env GOBIN)
-	cp ./build/tapesprox $(shell go env GOBIN)
-	cp ./build/tapesapi $(shell go env GOBIN)
 
 .PHONY: build
 build: ## Builds all cross-platform artifacts - Warning! MacOS may fail cross compiling toolchain dependency
@@ -98,54 +95,66 @@ release: ## Builds and releases tapes artifacts
 			--access-key-id=env://BUCKET_ACCESS_KEY_ID \
 			--secret-access-key=env://BUCKET_SECRET_ACCESS_KEY
 
-.PHONY: build-push-image
-build-push-image: ## Builds and publishes multi-arch container images to ECR
+.PHONY: build-images
+build-images: build-tapes-image build-postgres-image ## Builds all container artifacts
+
+.PHONY: build-tapes-image
+build-tapes-image: ## Builds, tags, and loads the tapes container artifact locally
+	$(call print-target)
 	dagger call \
-		build-push-image \
+		build-tapes-image \
+			--version=${VERSION} \
+			--commit=${COMMIT} \
+		export-image \
+			--name=${REGISTRY}/tapes:${VERSION}
+	dagger call \
+		build-tapes-image \
+			--version=${VERSION} \
+			--commit=${COMMIT} \
+		export-image \
+			--name=${REGISTRY}/tapes:latest
+
+.PHONY: build-postgres-image
+build-postgres-image: ## Builds, tags, and loads the tapes postgres container artifact locally
+	$(call print-target)
+	dagger call \
+		build-postgres-image \
+		export-image \
+			--name=${REGISTRY}/postgres:${VERSION}
+	dagger call \
+		build-postgres-image \
+		export-image \
+			--name=${REGISTRY}/postgres:latest
+
+.PHONY: build-push-tapes-images
+build-push-tapes-images: ## Builds and publishes the multi-arch tapes container images
+	dagger call \
+		build-push-tapes-images \
 			--registry=${REGISTRY} \
 			--tags=${VERSION} \
 			--tags=latest \
 			--version=${VERSION} \
 			--commit=${COMMIT}
 
+.PHONY: build-push-postgres-images
+build-push-postgres-images: ## Builds and publishes the multi-arch postgres container images
+	dagger call \
+		build-push-postgres-images \
+			--registry=${REGISTRY} \
+			--tags=${VERSION} \
+			--tags=latest
+
 .PHONY: up
 up:
 	docker compose up --build
-
-.PHONY: build-containers
-build-containers: build-tapes-container build-api-container build-proxy-container ## Builds all container artifacts
-
-.PHONY: build-tapes-container
-build-tapes-container: ## Build the tapes container artifact
-	$(call print-target)
-	docker build -f dockerfiles/tapes.Dockerfile \
-		-t papercomputeco/tapes:$(VERSION) \
-		-t papercomputeco/tapes:latest \
-		.
-
-.PHONY: build-api-container
-build-api-container: ## Build the tapesapi container artifact
-	$(call print-target)
-	docker build -f dockerfiles/tapesapi.Dockerfile \
-		-t papercomputeco/api:$(VERSION) \
-		-t papercomputeco/api:latest \
-		.
-
-.PHONY: build-proxy-container
-build-proxy-container: ## Build the tapesprox container artifact
-	$(call print-target)
-	docker build -f dockerfiles/tapesprox.Dockerfile \
-		-t papercomputeco/proxy:$(VERSION) \
-		-t papercomputeco/proxy:latest \
-		.
 
 .PHONY: clean
 clean: ## Removes the "build" directory with built artifacts
 	$(call print-target)
 	@rm -rf ./build
 
-.PHONY: unit-test
-unit-test: ## Runs unit tests via "go test"
+.PHONY: test
+test: ## Runs tests via "go test" in the Dagger services environment
 	$(call print-target)
 	dagger call test
 

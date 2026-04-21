@@ -1,28 +1,9 @@
 package merkle
 
 import (
-	"context"
 	"errors"
 	"fmt"
 )
-
-// DagLoader defines the interface for loading nodes from storage.
-// This allows the Dag to be loaded from any storage implementation
-// without creating a circular dependency.
-//
-// storage.Driver embeds this interface, so any storage.Driver
-// satisfies DagLoader automatically — no runtime cast needed.
-type DagLoader interface {
-	// Get retrieves a node by its hash.
-	Get(ctx context.Context, hash string) (*Node, error)
-
-	// GetByParent retrieves all nodes that have the given parent hash.
-	// Pass nil to get root nodes.
-	GetByParent(ctx context.Context, parentHash *string) ([]*Node, error)
-
-	// Ancestry returns the path from a node back to its root (node first, root last).
-	Ancestry(ctx context.Context, hash string) ([]*Node, error)
-}
 
 // Dag is an in-memory view of a single-rooted Merkle DAG (i.e., a single branch
 // within the graph's plane).
@@ -51,44 +32,6 @@ func NewDag() *Dag {
 	return &Dag{
 		index: make(map[string]*DagNode),
 	}
-}
-
-// LoadDag loads the full branch containing the given hash from storage.
-// This includes all ancestors (up to root) and all descendants (down to leaves).
-//
-// The returned Dag has a single root and contains the complete conversation
-// branch that includes the specified node.
-func LoadDag(ctx context.Context, loader DagLoader, hash string) (*Dag, error) {
-	// First, get the ancestry (path from node to root)
-	ancestry, err := loader.Ancestry(ctx, hash)
-	if err != nil {
-		return nil, fmt.Errorf("getting ancestry for %s: %w", hash, err)
-	}
-
-	if len(ancestry) == 0 {
-		return nil, fmt.Errorf("node %s not found", hash)
-	}
-
-	dag := NewDag()
-
-	// Add nodes from root to the matched node (ancestry is node-first, root-last)
-	for i := len(ancestry) - 1; i >= 0; i-- {
-		if _, err := dag.addNode(ancestry[i]); err != nil {
-			return nil, fmt.Errorf("adding ancestor node: %w", err)
-		}
-	}
-
-	// Now load all descendants of the matched node
-	matchedNode := dag.Get(hash)
-	if matchedNode == nil {
-		return nil, fmt.Errorf("matched node %s not in DAG after adding ancestry", hash)
-	}
-
-	if err := dag.loadDescendants(ctx, loader, matchedNode); err != nil {
-		return nil, fmt.Errorf("loading descendants: %w", err)
-	}
-
-	return dag, nil
 }
 
 // Get returns the DagNode with the given hash, or nil if not found.
@@ -202,7 +145,7 @@ func (d *Dag) BranchPoints() []*DagNode {
 	return branchPoints
 }
 
-// addNode is an internal method for adding a node to the DAG.
+// AddNode adds a node to the given DAG.
 // The node's ParentHash must reference an existing node in the DAG,
 // or be nil (making it the root).
 //
@@ -214,7 +157,7 @@ func (d *Dag) BranchPoints() []*DagNode {
 //
 // This method is a noop if:
 //   - The node already exists in the DAG
-func (d *Dag) addNode(node *Node) (*DagNode, error) {
+func (d *Dag) AddNode(node *Node) (*DagNode, error) {
 	if node == nil {
 		return nil, errors.New("cannot add nil node to dag")
 	}
@@ -249,32 +192,4 @@ func (d *Dag) addNode(node *Node) (*DagNode, error) {
 
 	d.index[node.Hash] = dagNode
 	return dagNode, nil
-}
-
-// loadDescendants recursively loads all descendants of a node into the DAG.
-func (d *Dag) loadDescendants(ctx context.Context, loader DagLoader, node *DagNode) error {
-	children, err := loader.GetByParent(ctx, &node.Hash)
-	if err != nil {
-		return fmt.Errorf("getting children of %s: %w", node.Hash, err)
-	}
-
-	for _, child := range children {
-		// Skip if already in DAG. This shouldn't happen but if the branch loader
-		// brings in an invalid state, defensively continue.
-		if d.Get(child.Hash) != nil {
-			continue
-		}
-
-		childNode, err := d.addNode(child)
-		if err != nil {
-			return fmt.Errorf("adding child node %s: %w", child.Hash, err)
-		}
-
-		// Recursively load this child's descendants
-		if err := d.loadDescendants(ctx, loader, childNode); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }

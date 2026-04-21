@@ -9,14 +9,14 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/papercomputeco/tapes/pkg/embeddings"
-	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/utils"
 	"github.com/papercomputeco/tapes/pkg/vector"
 )
 
 type Config struct {
-	// DagLoader loads full node ancestry from search results
-	DagLoader merkle.DagLoader
+	// Driver loads full node ancestry from search results
+	Driver storage.Driver
 
 	// VectorDriver for semantic search
 	VectorDriver vector.Driver
@@ -60,7 +60,7 @@ func NewServer(c Config) (*Server, error) {
 		return s, nil
 	}
 
-	if c.DagLoader == nil {
+	if c.Driver == nil {
 		return nil, errors.New("storage driver is required")
 	}
 	if c.VectorDriver == nil {

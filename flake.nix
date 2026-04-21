@@ -23,16 +23,11 @@
             pkgs.go_1_25
             pkgs.gotools
             pkgs.go-swag
+            pkgs.sqlc
 
             # Build tools
             pkgs.gnumake
             dagger.packages.${system}.dagger
-
-            # GCC toolchain (avoids inheriting Xcode's system clang)
-            pkgs.gcc
-
-            # SQLite development headers (needed by sqlite-vec CGO bindings)
-            pkgs.sqlite.dev
 
             # Version control
             pkgs.git
@@ -42,9 +37,6 @@
 
           # Enable Go's experimental JSON v2 implementation
           GOEXPERIMENT = "jsonv2";
-
-          # CGO for embedded sqlite
-          CGO_ENABLED = 1;
 
           shellHook = 
             (skills.mkSkillsHook {

@@ -272,8 +272,7 @@ func RunAncestryChainBasicSpecs(label string, makeDriver DriverFactory) bool {
 
 // RunAncestryChainDanglingSpecs exercises the dangling-parent path of
 // AncestryChain. Only drivers without enforced referential integrity (i.e.
-// the in-memory driver) can accept an orphan via Put — the sqlite driver
-// has a foreign-key constraint that rejects them. Drivers with FK enforcement
+// the in-memory driver) can accept an orphan via Put. Drivers with FK enforcement
 // must inject orphans by bypassing Put and should register these specs
 // manually from their own test file with a dedicated setup.
 func RunAncestryChainDanglingSpecs(label string, makeDriver DriverFactory) bool {

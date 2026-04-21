@@ -38,9 +38,7 @@ func New(
 func (t *Tapes) goContainer() *dagger.Container {
 	return dag.Container().
 		From("golang:1.25-bookworm").
-		WithExec([]string{"apt-get", "update"}).
-		WithExec([]string{"apt-get", "install", "-y", "gcc", "libsqlite3-dev"}).
-		WithEnvVariable("CGO_ENABLED", "1").
+		WithEnvVariable("CGO_ENABLED", "0").
 		WithEnvVariable("GOEXPERIMENT", "jsonv2").
 		WithEnvVariable("PATH", "/go/bin:$PATH", dagger.ContainerWithEnvVariableOpts{Expand: true}).
 		WithMountedCache("/go/pkg/mod", dag.CacheVolume("go-mod")).
@@ -49,23 +47,31 @@ func (t *Tapes) goContainer() *dagger.Container {
 		WithDirectory("/src", t.Source)
 }
 
-// CheckGenerate verifies that generated code (e.g. ent) is up to date
-// by running go generate and diffing the result against the committed files.
+// CheckGenerate verifies that sqlc-generated code is up to date
+// by regenerating it from sqlc.yaml and diffing the result against
+// the committed files.
 //
 // +check
 func (t *Tapes) CheckGenerate(ctx context.Context) (string, error) {
 	return t.goContainer().
-		WithExec([]string{"cp", "-r", "pkg/storage/ent", "/tmp/ent-before"}).
-		WithExec([]string{"go", "generate", "./pkg/storage/ent/..."}).
-		WithExec([]string{"diff", "-r", "/tmp/ent-before", "pkg/storage/ent"}).
+		WithExec([]string{"cp", "-r", "pkg/storage/postgres/gensqlc", "/tmp/gensqlc-before"}).
+		WithExec([]string{"go", "run", "github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0", "generate", "-f", "sqlc.yaml"}).
+		WithExec([]string{"diff", "-r", "/tmp/gensqlc-before", "pkg/storage/postgres/gensqlc"}).
 		Stdout(ctx)
 }
 
-// Test runs the tapes unit tests via "go test"
+// Test runs the tapes unit tests via "go test" and provides a just-in-time
+// Postgres service that can be used by the tests via the "TEST_POSTGRES_DSN" env var.
 //
 // +check
 func (t *Tapes) Test(ctx context.Context) (string, error) {
-	return t.goContainer().
-		WithExec([]string{"go", "test", "-v", "./..."}).
-		Stdout(ctx)
+	postgresSvc := t.PostgresService()
+	dsn := newPostgresDSN()
+
+	ctr := t.goContainer().
+		WithServiceBinding("postgres", postgresSvc).
+		WithEnvVariable("TEST_POSTGRES_DSN", dsn).
+		WithExec([]string{"go", "test", "-v", "./..."})
+
+	return ctr.Stdout(ctx)
 }

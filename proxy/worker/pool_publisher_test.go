@@ -80,7 +80,7 @@ func (m *mockPublisher) closeCallCount() int {
 }
 
 type ancestryFailDriver struct {
-	*inmemory.Driver
+	storage.Driver
 	ancestryErr error
 }
 
@@ -88,7 +88,7 @@ func (d *ancestryFailDriver) Ancestry(_ context.Context, _ string) ([]*merkle.No
 	return nil, d.ancestryErr
 }
 
-func newPublisherTestPool(pub publisher.Publisher) (*Pool, *inmemory.Driver) {
+func newPublisherTestPool(pub publisher.Publisher) (*Pool, storage.Driver) {
 	logger := tapeslogger.NewNoop()
 	driver := inmemory.NewDriver()
 

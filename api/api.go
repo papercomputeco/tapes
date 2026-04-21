@@ -47,6 +47,8 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	app.Get("/v1/sessions/summary", s.handleListSessionsSummary)
 	app.Get("/v1/sessions/:hash", s.handleGetSession)
 	app.Get("/v1/search", s.handleSearchEndpoint)
+	app.Post("/v1/admin/seed/demo", s.handleSeedDemo)
+	app.Post("/v1/admin/backfill/usage", s.handleBackfillUsage)
 
 	// API reference UI. Always mounted — the viewer JS comes from a CDN
 	// at view time, so the binary cost is negligible.
@@ -57,7 +59,7 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	if config.VectorDriver != nil && config.Embedder != nil {
 		s.logger.Debug("creating mcp server")
 		mcpServer, err = mcp.NewServer(mcp.Config{
-			DagLoader:    driver,
+			Driver:       driver,
 			VectorDriver: config.VectorDriver,
 			Embedder:     config.Embedder,
 			Logger:       log,

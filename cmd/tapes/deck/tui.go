@@ -2,6 +2,7 @@ package deckcmder
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,34 +54,38 @@ const (
 )
 
 type deckModel struct {
-	query            deck.Querier
-	filters          deck.Filters
-	overview         *deck.Overview
-	detail           *deck.SessionDetail
-	view             deckView
-	cursor           int
-	scrollOffset     int
-	messageCursor    int
-	width            int
-	height           int
-	sortIndex        int
-	statusIndex      int
-	messageSort      int
-	timePeriod       timePeriod
-	modalCursor      int
-	modalTab         modalTab
-	replayActive     bool
-	replayOnLoad     bool
-	metricsReady     bool
-	overviewStats    *deckOverviewStats
-	refreshEvery     time.Duration
-	spinner          spinner.Model
-	keys             deckKeyMap
-	help             help.Model
-	searchInput      textinput.Model
-	searchActive     bool
-	sortedCache      *sortedMessagesCache
-	sortedGroupCache *sortedGroupCache
+	query              deck.Querier
+	filters            deck.Filters
+	overview           *deck.Overview
+	detail             *deck.SessionDetail
+	view               deckView
+	cursor             int
+	scrollOffset       int
+	messageCursor      int
+	width              int
+	height             int
+	sortIndex          int
+	statusIndex        int
+	messageSort        int
+	timePeriod         timePeriod
+	modalCursor        int
+	modalTab           modalTab
+	replayActive       bool
+	replayOnLoad       bool
+	metricsReady       bool
+	overviewStats      *deckOverviewStats
+	overviewLoading    bool
+	overviewStatus     string
+	overviewStatusTime time.Time
+	overviewError      string
+	refreshEvery       time.Duration
+	spinner            spinner.Model
+	keys               deckKeyMap
+	help               help.Model
+	searchInput        textinput.Model
+	searchActive       bool
+	sortedCache        *sortedMessagesCache
+	sortedGroupCache   *sortedGroupCache
 }
 
 type sortedMessagesCache struct {
@@ -113,6 +118,7 @@ type sessionLoadedMsg struct {
 type overviewLoadedMsg struct {
 	overview *deck.Overview
 	err      error
+	status   string
 }
 
 type replayTickMsg time.Time
@@ -201,22 +207,25 @@ func newDeckModel(query deck.Querier, filters deck.Filters, overview *deck.Overv
 	h.Styles = help.DefaultStyles(isDarkTheme())
 
 	return deckModel{
-		query:            query,
-		filters:          filters,
-		overview:         overview,
-		view:             viewOverview,
-		sortIndex:        sortIndex,
-		statusIndex:      statusIndex,
-		messageSort:      0,
-		timePeriod:       period,
-		modalTab:         modalSort,
-		refreshEvery:     refreshEvery,
-		spinner:          s,
-		keys:             defaultKeyMap(),
-		help:             h,
-		searchInput:      ti,
-		sortedCache:      &sortedMessagesCache{},
-		sortedGroupCache: &sortedGroupCache{},
+		query:              query,
+		filters:            filters,
+		overview:           overview,
+		view:               viewOverview,
+		sortIndex:          sortIndex,
+		statusIndex:        statusIndex,
+		messageSort:        0,
+		timePeriod:         period,
+		modalTab:           modalSort,
+		overviewLoading:    overview == nil,
+		overviewStatus:     describeOverviewLoad(filters),
+		overviewStatusTime: time.Now(),
+		refreshEvery:       refreshEvery,
+		spinner:            s,
+		keys:               defaultKeyMap(),
+		help:               h,
+		searchInput:        ti,
+		sortedCache:        &sortedMessagesCache{},
+		sortedGroupCache:   &sortedGroupCache{},
 	}
 }
 
@@ -238,9 +247,14 @@ func (m deckModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height - (2 * verticalPadding)
 		return m, nil
 	case overviewLoadedMsg:
+		m.overviewLoading = false
+		m.overviewStatus = msg.status
+		m.overviewStatusTime = time.Now()
 		if msg.err != nil {
+			m.overviewError = msg.err.Error()
 			return m, nil
 		}
+		m.overviewError = ""
 		// Preserve cursor position by remembering the selected session ID
 		var selectedSessionID string
 		if m.overview != nil && m.cursor < len(m.overview.Sessions) {
@@ -317,7 +331,7 @@ func (m deckModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.messageCursor++
 		return m, replayTick()
 	case spinner.TickMsg:
-		overviewLoading := m.overview == nil || !m.metricsReady
+		overviewLoading := m.overviewLoading || (m.overview != nil && !m.metricsReady)
 		if m.view == viewOverview && overviewLoading {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
@@ -524,7 +538,7 @@ func (m deckModel) handleModalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.statusIndex = m.modalCursor
 			m.filters.Status = statusFilters[m.statusIndex]
 			m.view = viewOverview
-			return m, loadOverviewCmd(m.query, m.filters)
+			return m.startOverviewLoad()
 		}
 	}
 	return m, nil
@@ -588,7 +602,7 @@ func (m deckModel) enterSession() (tea.Model, tea.Cmd) {
 func (m deckModel) cyclePeriod() (tea.Model, tea.Cmd) {
 	m.timePeriod = (m.timePeriod + 1) % 3
 	m.filters.Since = periodToDuration(m.timePeriod)
-	return m, loadOverviewCmd(m.query, m.filters)
+	return m.startOverviewLoad()
 }
 
 func (m deckModel) cycleMessageSort() (tea.Model, tea.Cmd) {
@@ -771,8 +785,19 @@ func (m deckModel) overlayModal(base, modal string) string {
 
 func loadOverviewCmd(query deck.Querier, filters deck.Filters) tea.Cmd {
 	return func() tea.Msg {
+		started := time.Now()
+		baseStatus := describeOverviewLoad(filters)
 		overview, err := query.Overview(context.Background(), filters)
-		return overviewLoadedMsg{overview: overview, err: err}
+		if err != nil {
+			status := "load failed after " + time.Since(started).Round(time.Millisecond).String()
+			return overviewLoadedMsg{overview: overview, err: err, status: status}
+		}
+		count := 0
+		if overview != nil {
+			count = len(overview.Sessions)
+		}
+		status := baseStatus + " • loaded " + strconv.Itoa(count) + " sessions in " + time.Since(started).Round(time.Millisecond).String()
+		return overviewLoadedMsg{overview: overview, err: err, status: status}
 	}
 }
 
@@ -788,6 +813,55 @@ func loadSessionCmd(query deck.Querier, sessionID string, keepUI bool) tea.Cmd {
 		detail, err := query.SessionDetail(context.Background(), sessionID)
 		return sessionLoadedMsg{detail: detail, err: err, keepUI: keepUI}
 	}
+}
+
+func formatOptionalTime(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+func describeOverviewLoad(filters deck.Filters) string {
+	parts := []string{"loading latest sessions"}
+	if filters.Since > 0 {
+		parts = append(parts, "since="+filters.Since.String())
+	}
+	if filters.From != nil {
+		parts = append(parts, "from="+formatOptionalTime(filters.From))
+	}
+	if filters.To != nil {
+		parts = append(parts, "to="+formatOptionalTime(filters.To))
+	}
+	if filters.Project != "" {
+		parts = append(parts, "project="+filters.Project)
+	}
+	if filters.Model != "" {
+		parts = append(parts, "model="+filters.Model)
+	}
+	if filters.Status != "" {
+		parts = append(parts, "status="+filters.Status)
+	}
+	return strings.Join(parts, " • ")
+}
+
+func (m deckModel) startOverviewLoad() (deckModel, tea.Cmd) {
+	m.overviewLoading = true
+	m.overviewError = ""
+	m.overviewStatus = describeOverviewLoad(m.filters)
+	m.overviewStatusTime = time.Now()
+	return m, loadOverviewCmd(m.query, m.filters)
+}
+
+func formatRelativeTime(d time.Duration) string {
+	d = d.Round(time.Second)
+	if d < 0 {
+		d = -d
+	}
+	if d < time.Second {
+		return "0s"
+	}
+	return d.String()
 }
 
 func replayTick() tea.Cmd {

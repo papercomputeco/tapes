@@ -99,8 +99,17 @@ func (m deckModel) sessionListHeight() int {
 
 func (m deckModel) viewOverview() string {
 	if m.overview == nil {
-		loading := m.spinner.View() + " loading sessions..."
-		return deckMutedStyle.Render(loading)
+		lines := []string{deckMutedStyle.Render(m.spinner.View() + " loading sessions...")}
+		if m.overviewStatus != "" {
+			lines = append(lines, "", deckDimStyle.Render(m.overviewStatus))
+		}
+		if !m.overviewStatusTime.IsZero() {
+			lines = append(lines, deckDimStyle.Render("started "+formatRelativeTime(time.Since(m.overviewStatusTime))+" ago"))
+		}
+		if m.overviewError != "" {
+			lines = append(lines, "", deckStatusFailStyle.Render("error: "+m.overviewError), deckDimStyle.Render("press p or f to trigger another overview load, or q to quit"))
+		}
+		return strings.Join(lines, "\n")
 	}
 
 	above, footer := m.overviewChrome()

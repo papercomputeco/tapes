@@ -24,18 +24,12 @@ import (
 	"github.com/papercomputeco/tapes/api"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/credentials"
-	"github.com/papercomputeco/tapes/pkg/dotdir"
-	"github.com/papercomputeco/tapes/pkg/embeddings"
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/start"
-	"github.com/papercomputeco/tapes/pkg/storage"
-	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
-	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
-	"github.com/papercomputeco/tapes/pkg/vector"
-	vectorutils "github.com/papercomputeco/tapes/pkg/vector/utils"
+	"github.com/papercomputeco/tapes/pkg/vector/pgvector"
 	"github.com/papercomputeco/tapes/proxy"
 )
 
@@ -77,8 +71,6 @@ type startCommander struct {
 
 type startConfig struct {
 	PostgresDSN         string
-	SQLitePath          string
-	VectorStoreProvider string
 	VectorStoreTarget   string
 	EmbeddingProvider   string
 	EmbeddingTarget     string
@@ -401,22 +393,30 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 		return err
 	}
 
-	driver, err := c.newStorageDriver(ctx, startCfg, log)
+	driver, err := postgres.NewDriver(ctx, startCfg.PostgresDSN)
 	if err != nil {
 		return err
 	}
 	defer driver.Close()
 
-	if err := driver.Migrate(ctx); err != nil {
-		return fmt.Errorf("running migrations: %w", err)
+	pgVecDriver, err := pgvector.NewDriver(ctx, &pgvector.Config{
+		ConnString: startCfg.VectorStoreTarget,
+		Dimensions: startCfg.EmbeddingDimensions,
+	}, log)
+	if err != nil {
+		return fmt.Errorf("could not create new vector driver: %w", err)
+	}
+	if pgVecDriver != nil {
+		defer pgVecDriver.Close()
 	}
 
-	vectorDriver, embedder, err := c.newVectorAndEmbedder(startCfg, log)
+	embedder, err := embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
+		ProviderType: startCfg.EmbeddingProvider,
+		TargetURL:    startCfg.EmbeddingTarget,
+		Model:        startCfg.EmbeddingModel,
+	})
 	if err != nil {
-		return err
-	}
-	if vectorDriver != nil {
-		defer vectorDriver.Close()
+		return fmt.Errorf("could not create new embedder: %w", err)
 	}
 	if embedder != nil {
 		defer embedder.Close()
@@ -439,7 +439,7 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 			"openai":    "https://api.openai.com/v1",
 			"ollama":    startCfg.OllamaUpstream,
 		},
-		VectorDriver: vectorDriver,
+		VectorDriver: pgVecDriver,
 		Embedder:     embedder,
 	}
 
@@ -451,7 +451,7 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 
 	apiConfig := api.Config{
 		ListenAddr:   apiListener.Addr().String(),
-		VectorDriver: vectorDriver,
+		VectorDriver: pgVecDriver,
 		Embedder:     embedder,
 	}
 	apiServer, err := api.NewServer(apiConfig, driver, log)
@@ -718,42 +718,9 @@ func (c *startCommander) loadConfig() (*startConfig, error) {
 		v.Set("storage.postgres_dsn", c.postgresDSN)
 	}
 
-	// Resolve default sqlite path from dotdir target when not set
-	// via env or config file.
-	if v.GetString("storage.sqlite_path") == "" {
-		dotdirManager := dotdir.NewManager()
-		defaultTargetDir, err := dotdirManager.Target(c.configDir)
-		if err != nil {
-			return nil, fmt.Errorf("resolving target dir: %w", err)
-		}
-		if defaultTargetDir == "" {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return nil, fmt.Errorf("resolving home dir: %w", err)
-			}
-			defaultTargetDir = filepath.Join(home, ".tapes")
-			if err := os.MkdirAll(defaultTargetDir, 0o755); err != nil {
-				return nil, fmt.Errorf("creating tapes dir: %w", err)
-			}
-		}
-		v.Set("storage.sqlite_path", filepath.Join(defaultTargetDir, "tapes.sqlite"))
-	}
-
-	// Same fallback for vector store target.
-	if v.GetString("vector_store.target") == "" {
-		dotdirManager := dotdir.NewManager()
-		defaultTargetDir, err := dotdirManager.Target(c.configDir)
-		if err != nil {
-			return nil, fmt.Errorf("resolving target dir: %w", err)
-		}
-		if defaultTargetDir == "" {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return nil, fmt.Errorf("resolving home dir: %w", err)
-			}
-			defaultTargetDir = filepath.Join(home, ".tapes")
-		}
-		v.Set("vector_store.target", filepath.Join(defaultTargetDir, "tapes.sqlite"))
+	// Default pgvector to the primary Postgres DSN.
+	if v.GetString("vector_store.target") == "" && v.GetString("storage.postgres_dsn") != "" {
+		v.Set("vector_store.target", v.GetString("storage.postgres_dsn"))
 	}
 
 	provider := v.GetString("proxy.provider")
@@ -761,8 +728,6 @@ func (c *startCommander) loadConfig() (*startConfig, error) {
 
 	return &startConfig{
 		PostgresDSN:         v.GetString("storage.postgres_dsn"),
-		SQLitePath:          v.GetString("storage.sqlite_path"),
-		VectorStoreProvider: v.GetString("vector_store.provider"),
 		VectorStoreTarget:   v.GetString("vector_store.target"),
 		EmbeddingProvider:   v.GetString("embedding.provider"),
 		EmbeddingTarget:     v.GetString("embedding.target"),
@@ -774,53 +739,6 @@ func (c *startCommander) loadConfig() (*startConfig, error) {
 		OpenCodeProvider:    v.GetString("opencode.provider"),
 		Project:             v.GetString("proxy.project"),
 	}, nil
-}
-
-func (c *startCommander) newStorageDriver(ctx context.Context, cfg *startConfig, log *slog.Logger) (storage.Driver, error) {
-	if cfg.PostgresDSN != "" {
-		driver, err := postgres.NewDriver(ctx, cfg.PostgresDSN)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create PostgreSQL storer: %w", err)
-		}
-		log.Info("using PostgreSQL storage")
-		return driver, nil
-	}
-
-	if cfg.SQLitePath != "" {
-		driver, err := sqlite.NewDriver(ctx, cfg.SQLitePath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
-		}
-		log.Info("using SQLite storage", "path", cfg.SQLitePath)
-		return driver, nil
-	}
-
-	log.Info("using in-memory storage")
-	return inmemory.NewDriver(), nil
-}
-
-func (c *startCommander) newVectorAndEmbedder(cfg *startConfig, log *slog.Logger) (vector.Driver, embeddings.Embedder, error) {
-	vectorDriver, err := vectorutils.NewVectorDriver(&vectorutils.NewVectorDriverOpts{
-		ProviderType: cfg.VectorStoreProvider,
-		Target:       cfg.VectorStoreTarget,
-		Dimensions:   cfg.EmbeddingDimensions,
-		Logger:       log,
-	})
-	if err != nil {
-		return nil, nil, fmt.Errorf("creating vector driver: %w", err)
-	}
-
-	embedder, err := embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
-		ProviderType: cfg.EmbeddingProvider,
-		TargetURL:    cfg.EmbeddingTarget,
-		Model:        cfg.EmbeddingModel,
-	})
-	if err != nil {
-		vectorDriver.Close()
-		return nil, nil, fmt.Errorf("creating embedder: %w", err)
-	}
-
-	return vectorDriver, embedder, nil
 }
 
 // configureCodexAuth temporarily writes the stored OpenAI API key into codex's

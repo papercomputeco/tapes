@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+const transcriptAssistantType = "assistant"
+
 // TranscriptUsage contains token counts from a Claude Code transcript entry.
 type TranscriptUsage struct {
 	InputTokens              int `json:"input_tokens"`
@@ -96,13 +98,13 @@ func ParseTranscript(path string) ([]TranscriptEntry, error) {
 			continue // skip malformed lines
 		}
 
-		if entry.Type != "assistant" {
+		if entry.Type != transcriptAssistantType {
 			continue
 		}
 		if entry.Message == nil || entry.Message.Usage == nil {
 			continue
 		}
-		if entry.Message.Role != "assistant" {
+		if entry.Message.Role != transcriptAssistantType {
 			continue
 		}
 

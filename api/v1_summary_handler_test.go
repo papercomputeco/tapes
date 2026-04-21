@@ -15,13 +15,14 @@ import (
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/sessions"
+	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
 var _ = Describe("GET /v1/sessions/summary", func() {
 	var (
 		server   *Server
-		inMem    *inmemory.Driver
+		inMem    storage.Driver
 		ctx      context.Context
 		baseTime time.Time
 	)
