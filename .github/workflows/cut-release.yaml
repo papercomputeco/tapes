@@ -7,7 +7,7 @@ permissions:
   contents: write
 
 env:
-  DAGGER_VERSION: "0.20.1"
+  DAGGER_VERSION: "0.20.6"
 
 jobs:
   create-release:
