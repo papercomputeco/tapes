@@ -27,9 +27,10 @@ var _ = Describe("HTTPQuery", func() {
 	Describe("Overview", func() {
 		It("fetches a single bounded summary page and pushes time filters down", func() {
 			type capturedRequest struct {
-				Limit string
-				Since string
-				Until string
+				Limit  string
+				Since  string
+				Until  string
+				Cursor string
 			}
 
 			var requests []capturedRequest
@@ -37,9 +38,10 @@ var _ = Describe("HTTPQuery", func() {
 				Expect(r.URL.Path).To(Equal("/v1/sessions/summary"))
 				qp := r.URL.Query()
 				requests = append(requests, capturedRequest{
-					Limit: qp.Get("limit"),
-					Since: qp.Get("since"),
-					Until: qp.Get("until"),
+					Limit:  qp.Get("limit"),
+					Since:  qp.Get("since"),
+					Until:  qp.Get("until"),
+					Cursor: qp.Get("cursor"),
 				})
 				Expect(json.NewEncoder(w).Encode(httpSummaryResponse{})).To(Succeed())
 			}))
@@ -56,6 +58,33 @@ var _ = Describe("HTTPQuery", func() {
 			Expect(requests[0].Limit).To(Equal("25"))
 			Expect(requests[0].Since).To(Equal(from.UTC().Format(time.RFC3339)))
 			Expect(requests[0].Until).To(Equal(until.UTC().Format(time.RFC3339)))
+			Expect(requests[0].Cursor).To(BeEmpty())
+		})
+	})
+
+	Describe("OverviewPage", func() {
+		It("sends cursor and limit and returns next cursor metadata", func() {
+			var seenLimit string
+			var seenCursor string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Expect(r.URL.Path).To(Equal("/v1/sessions/summary"))
+				seenLimit = r.URL.Query().Get("limit")
+				seenCursor = r.URL.Query().Get("cursor")
+				Expect(json.NewEncoder(w).Encode(httpSummaryResponse{
+					Items:      []SessionSummary{{ID: "s1", Label: "one"}},
+					NextCursor: "cursor-2",
+				})).To(Succeed())
+			}))
+			defer srv.Close()
+
+			q := NewHTTPQuery(srv.URL, nil)
+			page, err := q.OverviewPage(context.Background(), Filters{}, "cursor-1", 7)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(seenLimit).To(Equal("7"))
+			Expect(seenCursor).To(Equal("cursor-1"))
+			Expect(page.NextCursor).To(Equal("cursor-2"))
+			Expect(page.HasMore).To(BeTrue())
+			Expect(page.Overview.Sessions).To(HaveLen(1))
 		})
 	})
 })

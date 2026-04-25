@@ -75,6 +75,34 @@ func (c *sessionCache) storeSessionCandidates(candidates []sessionCandidate) {
 	c.loadedAt = time.Now()
 }
 
+// appendSessionCandidates merges candidates into the current cache snapshot,
+// replacing duplicate session IDs while preserving first-seen order.
+func (c *sessionCache) appendSessionCandidates(candidates []sessionCandidate) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	merged := copySessionCandidates(c.candidates)
+	if merged == nil {
+		merged = []sessionCandidate{}
+	}
+	byID := make(map[string]int, len(merged)+len(candidates))
+	for i := range merged {
+		byID[merged[i].summary.ID] = i
+	}
+	for _, candidate := range candidates {
+		if i, ok := byID[candidate.summary.ID]; ok {
+			merged[i] = candidate
+			continue
+		}
+		byID[candidate.summary.ID] = len(merged)
+		merged = append(merged, candidate)
+	}
+
+	c.candidates = merged
+	c.byID = buildCandidateIndex(c.candidates)
+	c.loadedAt = time.Now()
+}
+
 // buildCandidateIndex returns a map keyed by session ID pointing into the
 // given slice. The pointers are valid for the lifetime of the slice.
 func buildCandidateIndex(candidates []sessionCandidate) map[string]*sessionCandidate {

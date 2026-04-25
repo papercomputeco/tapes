@@ -10,6 +10,31 @@ import (
 )
 
 var _ = Describe("Deck TUI helpers", func() {
+	Describe("period helpers", func() {
+		It("includes extended period windows", func() {
+			Expect(periodLabels).To(Equal([]string{"24h", "7d", "30d", "90d", "120d"}))
+			Expect(periodToDuration(period90d)).To(Equal(90 * 24 * time.Hour))
+			Expect(periodToDuration(period120d)).To(Equal(120 * 24 * time.Hour))
+			Expect(periodToLabel(period90d)).To(Equal("90d"))
+			Expect(periodToLabel(period120d)).To(Equal("120d"))
+		})
+	})
+
+	Describe("appendUniqueSessions", func() {
+		It("appends new sessions and replaces duplicates in place", func() {
+			existing := []deck.SessionSummary{{ID: "s1", Label: "old"}, {ID: "s2", Label: "two"}}
+			incoming := []deck.SessionSummary{{ID: "s1", Label: "new"}, {ID: "s3", Label: "three"}}
+
+			merged := appendUniqueSessions(existing, incoming)
+
+			Expect(merged).To(Equal([]deck.SessionSummary{
+				{ID: "s1", Label: "new"},
+				{ID: "s2", Label: "two"},
+				{ID: "s3", Label: "three"},
+			}))
+		})
+	})
+
 	Describe("summarizeSessions", func() {
 		It("rolls up totals and model costs", func() {
 			sessions := []deck.SessionSummary{

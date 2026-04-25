@@ -122,9 +122,8 @@ func (m deckModel) viewOverview() string {
 func (m deckModel) viewMetrics(stats deckOverviewStats) string {
 	// Period selector header with box background for active
 	periodLabel := periodToLabel(m.timePeriod)
-	periods := []string{"24h", "7d", "30d"}
 	periodParts := []string{}
-	for _, p := range periods {
+	for _, p := range periodLabels {
 		if p == periodLabel {
 			// Active period with filled background
 			periodParts = append(periodParts, deckHighlightStyle.Render(" "+p+" "))
@@ -749,12 +748,18 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 		lines = append(lines, line)
 	}
 
-	// Show position indicator if not all sessions are visible
+	// Show position/pagination indicator if not all sessions are visible or
+	// the HTTP-backed query has more pages available.
 	totalSessions := len(sessions)
-	if totalSessions > maxVisible {
-		position := fmt.Sprintf("showing %d-%d of %d", start+1, end, totalSessions)
+	if totalSessions > maxVisible || m.overviewHasMore || m.overviewLoadingMore {
+		position := fmt.Sprintf("showing %d-%d of %d loaded", start+1, end, totalSessions)
 		if m.searchInput.Value() != "" {
-			position += fmt.Sprintf(" (filtered from %d)", len(m.overview.Sessions))
+			position += fmt.Sprintf(" (filtered from %d loaded)", len(m.overview.Sessions))
+		}
+		if m.overviewLoadingMore {
+			position += " · loading more..."
+		} else if m.overviewHasMore {
+			position += " · more available · press n"
 		}
 		lines = append(lines, "", deckMutedStyle.Render(position))
 	}
