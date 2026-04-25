@@ -23,12 +23,14 @@ type anthropicMessage struct {
 
 // anthropicContentBlock represents a content block in Anthropic's format.
 type anthropicContentBlock struct {
-	Type   string           `json:"type"`
-	Text   string           `json:"text,omitempty"`
-	Source *anthropicSource `json:"source,omitempty"`
-	ID     string           `json:"id,omitempty"`
-	Name   string           `json:"name,omitempty"`
-	Input  map[string]any   `json:"input,omitempty"`
+	Type      string           `json:"type"`
+	Text      string           `json:"text,omitempty"`
+	Source    *anthropicSource `json:"source,omitempty"`
+	ID        string           `json:"id,omitempty"`
+	Name      string           `json:"name,omitempty"`
+	Input     map[string]any   `json:"input,omitempty"`
+	Thinking  string           `json:"thinking,omitempty"`
+	Signature string           `json:"signature,omitempty"`
 }
 
 type anthropicSource struct {
