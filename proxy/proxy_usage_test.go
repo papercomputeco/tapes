@@ -18,87 +18,9 @@ var _ = Describe("extractUsageFromSSE", func() {
 		p.Close()
 	})
 
-	Describe("Anthropic provider", func() {
-		It("extracts input tokens from message_start event", func() {
-			usage := &llm.Usage{}
-			meta := &streamMeta{}
-			data := []byte(`{"type":"message_start","message":{"usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`)
-			p.extractUsageFromSSE(data, providerAnthropic, usage, meta)
-
-			Expect(usage.PromptTokens).To(Equal(100))
-			Expect(usage.CacheCreationInputTokens).To(Equal(0))
-			Expect(usage.CacheReadInputTokens).To(Equal(0))
-		})
-
-		It("extracts model from message_start event", func() {
-			usage := &llm.Usage{}
-			meta := &streamMeta{}
-			data := []byte(`{"type":"message_start","message":{"model":"claude-opus-4-6","usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`)
-			p.extractUsageFromSSE(data, providerAnthropic, usage, meta)
-
-			Expect(meta.Model).To(Equal("claude-opus-4-6"))
-			Expect(usage.PromptTokens).To(Equal(100))
-		})
-
-		It("extracts cache tokens from message_start event", func() {
-			usage := &llm.Usage{}
-			meta := &streamMeta{}
-			data := []byte(`{"type":"message_start","message":{"usage":{"input_tokens":500,"cache_creation_input_tokens":2000,"cache_read_input_tokens":8000}}}`)
-			p.extractUsageFromSSE(data, providerAnthropic, usage, meta)
-
-			Expect(usage.PromptTokens).To(Equal(500 + 2000 + 8000))
-			Expect(usage.CacheCreationInputTokens).To(Equal(2000))
-			Expect(usage.CacheReadInputTokens).To(Equal(8000))
-		})
-
-		It("extracts output tokens from message_delta event", func() {
-			usage := &llm.Usage{}
-			meta := &streamMeta{}
-			data := []byte(`{"type":"message_delta","usage":{"output_tokens":350}}`)
-			p.extractUsageFromSSE(data, providerAnthropic, usage, meta)
-
-			Expect(usage.CompletionTokens).To(Equal(350))
-		})
-
-		It("extracts stop_reason from message_delta event", func() {
-			usage := &llm.Usage{}
-			meta := &streamMeta{}
-			data := []byte(`{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":350}}`)
-			p.extractUsageFromSSE(data, providerAnthropic, usage, meta)
-
-			Expect(usage.CompletionTokens).To(Equal(350))
-			Expect(meta.StopReason).To(Equal("end_turn"))
-		})
-
-		It("accumulates usage and model across message_start and message_delta events", func() {
-			usage := &llm.Usage{}
-			meta := &streamMeta{}
-
-			start := []byte(`{"type":"message_start","message":{"model":"claude-opus-4-6","usage":{"input_tokens":100,"cache_creation_input_tokens":500,"cache_read_input_tokens":3000}}}`)
-			p.extractUsageFromSSE(start, providerAnthropic, usage, meta)
-
-			delta := []byte(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":200}}`)
-			p.extractUsageFromSSE(delta, providerAnthropic, usage, meta)
-
-			Expect(usage.PromptTokens).To(Equal(100 + 500 + 3000))
-			Expect(usage.CompletionTokens).To(Equal(200))
-			Expect(usage.CacheCreationInputTokens).To(Equal(500))
-			Expect(usage.CacheReadInputTokens).To(Equal(3000))
-			Expect(meta.StopReason).To(Equal("end_turn"))
-			Expect(meta.Model).To(Equal("claude-opus-4-6"))
-		})
-
-		It("ignores content_block_delta events", func() {
-			usage := &llm.Usage{}
-			meta := &streamMeta{}
-			data := []byte(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}`)
-			p.extractUsageFromSSE(data, providerAnthropic, usage, meta)
-
-			Expect(usage.PromptTokens).To(Equal(0))
-			Expect(usage.CompletionTokens).To(Equal(0))
-			Expect(meta.StopReason).To(BeEmpty())
-		})
-	})
+	// Anthropic extraction tests moved to pkg/capture — the proxy's legacy
+	// extraction helpers no longer handle anthropic; the provider routes
+	// through capture.Reduce.
 
 	Describe("OpenAI provider", func() {
 		It("extracts usage from the final chunk", func() {

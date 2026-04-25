@@ -216,6 +216,51 @@ var _ = Describe("SSE Streaming Proxy", func() {
 		})
 	})
 
+	Context("when upstream splits a single SSE event across multiple TCP writes", func() {
+		// Real upstream servers can flush mid-event; our SSE reader has to
+		// accumulate data: lines across reads rather than treating each read
+		// as a complete event. This test deliberately fragments one event
+		// into two flushes.
+		BeforeEach(func() {
+			upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				flusher, _ := w.(http.Flusher)
+
+				// First flush: the event header and the first half of data:.
+				fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hel")
+				flusher.Flush()
+				fmt.Fprint(w, "lo world\"}}]}\n\n")
+				flusher.Flush()
+				fmt.Fprint(w, "data: [DONE]\n\n")
+				flusher.Flush()
+			}))
+			p, driver = newOpenAITestProxy(upstream.URL)
+		})
+
+		It("reconstructs the split event and lands a node with the full content", func() {
+			reqBody := makeOpenAIRequestBody("gpt-4", []openaiTestMsgEntry{
+				{Role: "user", Content: "hi"},
+			}, boolPtr(true))
+
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), -1)
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(body)).To(ContainSubstring(`"content":"Hello world"`))
+
+			p.Close()
+			p = nil
+
+			ctx := GinkgoT().Context()
+			leaves, err := driver.Leaves(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(leaves).To(HaveLen(1))
+			Expect(leaves[0].Bucket.ExtractText()).To(Equal("Hello world"))
+		})
+	})
+
 	Context("when upstream SSE includes comment lines", func() {
 		BeforeEach(func() {
 			upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
