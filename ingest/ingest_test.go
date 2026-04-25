@@ -133,6 +133,77 @@ var _ = Describe("Ingest Server", func() {
 		})
 	})
 
+	Describe("GET /metrics", func() {
+		It("returns a scrapeable Prometheus body", func() {
+			resp, err := client.Get(baseURL + "/metrics")
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			Expect(resp.Header.Get("Content-Type")).To(ContainSubstring("text/plain"))
+			body, _ := io.ReadAll(resp.Body)
+			// Gauges always render; counters only render once a label tuple
+			// has been observed. Queue depth is the gauge, and it proves the
+			// endpoint is wired to our registry.
+			Expect(string(body)).To(ContainSubstring("tapes_ingest_worker_queue_depth"))
+		})
+
+		It("increments writes_total{status=accepted} on a valid turn", func() {
+			payload := ingest.TurnPayload{
+				Provider: "ollama",
+				RawRequest: mustJSON(ollamaRequest{
+					Model:    "llama3",
+					Messages: []ollamaMessage{{Role: "user", Content: "Hello"}},
+				}),
+				RawResponse: mustJSON(ollamaResponse{
+					Model:   "llama3",
+					Message: ollamaMessage{Role: "assistant", Content: "Hi"},
+					Done:    true,
+				}),
+			}
+			body, _ := json.Marshal(payload)
+			resp, err := client.Post(baseURL+"/v1/ingest", "application/json", bytes.NewReader(body))
+			Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+
+			scrape, err := client.Get(baseURL + "/metrics")
+			Expect(err).NotTo(HaveOccurred())
+			defer scrape.Body.Close()
+			txt, _ := io.ReadAll(scrape.Body)
+			Expect(string(txt)).To(ContainSubstring(`tapes_ingest_writes_total{provider="ollama",status="accepted"}`))
+		})
+
+		It("increments writes_total{status=reject_envelope} on malformed JSON", func() {
+			resp, err := client.Post(baseURL+"/v1/ingest", "application/json", bytes.NewReader([]byte(`{bad`)))
+			Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+			Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+
+			scrape, err := client.Get(baseURL + "/metrics")
+			Expect(err).NotTo(HaveOccurred())
+			defer scrape.Body.Close()
+			txt, _ := io.ReadAll(scrape.Body)
+			Expect(string(txt)).To(ContainSubstring(`status="reject_envelope"`))
+		})
+
+		It("increments writes_total{status=unknown_provider} on unsupported provider", func() {
+			payload := ingest.TurnPayload{
+				Provider:    "bogus-provider",
+				RawRequest:  json.RawMessage(`{}`),
+				RawResponse: json.RawMessage(`{}`),
+			}
+			body, _ := json.Marshal(payload)
+			resp, err := client.Post(baseURL+"/v1/ingest", "application/json", bytes.NewReader(body))
+			Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+
+			scrape, err := client.Get(baseURL + "/metrics")
+			Expect(err).NotTo(HaveOccurred())
+			defer scrape.Body.Close()
+			txt, _ := io.ReadAll(scrape.Body)
+			Expect(string(txt)).To(ContainSubstring(`status="unknown_provider"`))
+		})
+	})
+
 	Describe("POST /v1/ingest", func() {
 		It("accepts a valid ollama turn and stores it in the DAG", func() {
 			payload := ingest.TurnPayload{
@@ -231,6 +302,8 @@ var _ = Describe("Ingest Server", func() {
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 
+			// A well-formed envelope wrapping an unparseable inner request
+			// is 422 (unprocessable) rather than 400 (bad envelope).
 			Expect(resp.StatusCode).To(Equal(http.StatusUnprocessableEntity))
 			respBody, _ := io.ReadAll(resp.Body)
 			Expect(string(respBody)).To(ContainSubstring("cannot parse request"))
@@ -242,6 +315,61 @@ var _ = Describe("Ingest Server", func() {
 			defer resp.Body.Close()
 
 			Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+		})
+	})
+
+	Describe("GET /v1/ingest/nodes", func() {
+		It("returns only nodes matching the agent query", func() {
+			// Land two turns under different agents.
+			for _, agent := range []string{"canary-1", "other-2"} {
+				payload := ingest.TurnPayload{
+					Provider:  "ollama",
+					AgentName: agent,
+					RawRequest: mustJSON(ollamaRequest{
+						Model: "llama3", Messages: []ollamaMessage{{Role: "user", Content: "hi"}},
+					}),
+					RawResponse: mustJSON(ollamaResponse{
+						Model:   "llama3",
+						Message: ollamaMessage{Role: "assistant", Content: "yo"},
+						Done:    true,
+					}),
+				}
+				body, _ := json.Marshal(payload)
+				r, err := client.Post(baseURL+"/v1/ingest", "application/json", bytes.NewReader(body))
+				Expect(err).NotTo(HaveOccurred())
+				r.Body.Close()
+			}
+
+			// Poll until both nodes have landed.
+			Eventually(func() int {
+				nodes, _ := driver.List(context.Background())
+				return len(nodes)
+			}).WithTimeout(2 * time.Second).WithPolling(25 * time.Millisecond).
+				Should(BeNumerically(">=", 2))
+
+			resp, err := client.Get(baseURL + "/v1/ingest/nodes?agent=canary-1")
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+
+			var out ingest.NodeListResponse
+			Expect(json.NewDecoder(resp.Body).Decode(&out)).To(Succeed())
+			Expect(out.Count).To(BeNumerically(">=", 1))
+			for _, n := range out.Nodes {
+				Expect(n.AgentName).To(Equal("canary-1"))
+			}
+		})
+
+		It("returns an empty list for an agent with no nodes", func() {
+			resp, err := client.Get(baseURL + "/v1/ingest/nodes?agent=nonexistent-agent")
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+
+			var out ingest.NodeListResponse
+			Expect(json.NewDecoder(resp.Body).Decode(&out)).To(Succeed())
+			Expect(out.Count).To(Equal(0))
+			Expect(out.Nodes).To(BeEmpty())
 		})
 	})
 
@@ -339,6 +467,42 @@ var _ = Describe("Ingest Server", func() {
 			defer resp.Body.Close()
 
 			Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+		})
+
+		It("emits Prometheus metrics for both accepted and rejected turns", func() {
+			payload := ingest.BatchPayload{
+				Turns: []ingest.TurnPayload{
+					{
+						Provider: "ollama",
+						RawRequest: mustJSON(ollamaRequest{
+							Model:    "llama3",
+							Messages: []ollamaMessage{{Role: "user", Content: "hi"}},
+						}),
+						RawResponse: mustJSON(ollamaResponse{
+							Model:   "llama3",
+							Message: ollamaMessage{Role: "assistant", Content: "ok"},
+							Done:    true,
+						}),
+					},
+					{
+						Provider:    "bad-provider",
+						RawRequest:  json.RawMessage(`{}`),
+						RawResponse: json.RawMessage(`{}`),
+					},
+				},
+			}
+
+			body, _ := json.Marshal(payload)
+			resp, err := client.Post(baseURL+"/v1/ingest/batch", "application/json", bytes.NewReader(body))
+			Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+
+			scrape, err := client.Get(baseURL + "/metrics")
+			Expect(err).NotTo(HaveOccurred())
+			defer scrape.Body.Close()
+			txt, _ := io.ReadAll(scrape.Body)
+			Expect(string(txt)).To(ContainSubstring(`tapes_ingest_writes_total{provider="ollama",status="accepted"}`))
+			Expect(string(txt)).To(ContainSubstring(`status="unknown_provider"`))
 		})
 	})
 })
