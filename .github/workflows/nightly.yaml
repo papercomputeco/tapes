@@ -75,15 +75,24 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Push nightly image
+      - name: Push nightly tapes image
         run: |
           dagger call \
-            build-push-image \
+            build-push-tapes-images \
               --registry=${{ vars.REGISTRY }} \
               --tags="nightly" \
               --version="nightly" \
               --commit="${{ github.sha }}" \
               --post-hog-public-key="${{ secrets.POSTHOG_API_KEY }}" \
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+
+      - name: Push nightly postgres image
+        run: |
+          dagger call \
+            build-push-postgres-images \
+              --registry=${{ vars.REGISTRY }} \
+              --tags="nightly"
         env:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 

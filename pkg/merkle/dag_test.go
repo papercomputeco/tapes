@@ -39,7 +39,7 @@ func buildTestDag(ctx context.Context, nodes []*merkle.Node, loadFromHash string
 		hash = nodes[len(nodes)-1].Hash
 	}
 
-	return merkle.LoadDag(ctx, driver, hash)
+	return driver.LoadDag(ctx, hash)
 }
 
 var _ = Describe("Dag", func() {
@@ -380,7 +380,7 @@ var _ = Describe("Dag", func() {
 			_, err := driver.Put(ctx, root)
 			Expect(err).NotTo(HaveOccurred())
 
-			dag, err := merkle.LoadDag(ctx, driver, root.Hash)
+			dag, err := driver.LoadDag(ctx, root.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dag.Size()).To(Equal(1))
 			Expect(dag.Root.Hash).To(Equal(root.Hash))
@@ -399,7 +399,7 @@ var _ = Describe("Dag", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Load from the middle node
-			dag, err := merkle.LoadDag(ctx, driver, child.Hash)
+			dag, err := driver.LoadDag(ctx, child.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dag.Size()).To(Equal(3))
 			Expect(dag.Root.Hash).To(Equal(root.Hash))
@@ -431,7 +431,7 @@ var _ = Describe("Dag", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Load from root - should get all 4 nodes
-			dag, err := merkle.LoadDag(ctx, driver, root.Hash)
+			dag, err := driver.LoadDag(ctx, root.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dag.Size()).To(Equal(4))
 			Expect(dag.Root.Children).To(HaveLen(2))
@@ -454,14 +454,14 @@ var _ = Describe("Dag", func() {
 
 			// Load from child1 - should get root + child1, but NOT child2
 			// (child2 is not an ancestor or descendant of child1)
-			dag, err := merkle.LoadDag(ctx, driver, child1.Hash)
+			dag, err := driver.LoadDag(ctx, child1.Hash)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dag.Size()).To(Equal(2))
 			Expect(dag.Get(child2.Hash)).To(BeNil())
 		})
 
 		It("returns error for non-existent hash", func() {
-			_, err := merkle.LoadDag(ctx, driver, "nonexistent")
+			_, err := driver.LoadDag(ctx, "nonexistent")
 			Expect(err).To(HaveOccurred())
 		})
 	})

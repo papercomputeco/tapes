@@ -61,7 +61,6 @@ func NewConfiger(override string) (*Configer, error) {
 func ValidConfigKeys() []string {
 	// Return in a stable, logical order matching the TOML section layout.
 	ordered := []string{
-		"storage.sqlite_path",
 		"proxy.provider",
 		"proxy.upstream",
 		"proxy.listen",

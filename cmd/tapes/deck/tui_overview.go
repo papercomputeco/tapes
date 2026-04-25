@@ -99,8 +99,17 @@ func (m deckModel) sessionListHeight() int {
 
 func (m deckModel) viewOverview() string {
 	if m.overview == nil {
-		loading := m.spinner.View() + " loading sessions..."
-		return deckMutedStyle.Render(loading)
+		lines := []string{deckMutedStyle.Render(m.spinner.View() + " loading sessions...")}
+		if m.overviewStatus != "" {
+			lines = append(lines, "", deckDimStyle.Render(m.overviewStatus))
+		}
+		if !m.overviewStatusTime.IsZero() {
+			lines = append(lines, deckDimStyle.Render("started "+formatRelativeTime(time.Since(m.overviewStatusTime))+" ago"))
+		}
+		if m.overviewError != "" {
+			lines = append(lines, "", deckStatusFailStyle.Render("error: "+m.overviewError), deckDimStyle.Render("press p or f to trigger another overview load, or q to quit"))
+		}
+		return strings.Join(lines, "\n")
 	}
 
 	above, footer := m.overviewChrome()
@@ -113,9 +122,8 @@ func (m deckModel) viewOverview() string {
 func (m deckModel) viewMetrics(stats deckOverviewStats) string {
 	// Period selector header with box background for active
 	periodLabel := periodToLabel(m.timePeriod)
-	periods := []string{"24h", "7d", "30d"}
 	periodParts := []string{}
-	for _, p := range periods {
+	for _, p := range periodLabels {
 		if p == periodLabel {
 			// Active period with filled background
 			periodParts = append(periodParts, deckHighlightStyle.Render(" "+p+" "))
@@ -740,12 +748,18 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 		lines = append(lines, line)
 	}
 
-	// Show position indicator if not all sessions are visible
+	// Show position/pagination indicator if not all sessions are visible or
+	// the HTTP-backed query has more pages available.
 	totalSessions := len(sessions)
-	if totalSessions > maxVisible {
-		position := fmt.Sprintf("showing %d-%d of %d", start+1, end, totalSessions)
+	if totalSessions > maxVisible || m.overviewHasMore || m.overviewLoadingMore {
+		position := fmt.Sprintf("showing %d-%d of %d loaded", start+1, end, totalSessions)
 		if m.searchInput.Value() != "" {
-			position += fmt.Sprintf(" (filtered from %d)", len(m.overview.Sessions))
+			position += fmt.Sprintf(" (filtered from %d loaded)", len(m.overview.Sessions))
+		}
+		if m.overviewLoadingMore {
+			position += " · loading more..."
+		} else if m.overviewHasMore {
+			position += " · more available · press n"
 		}
 		lines = append(lines, "", deckMutedStyle.Render(position))
 	}

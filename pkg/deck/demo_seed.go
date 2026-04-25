@@ -1,22 +1,20 @@
 package deck
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
-	"github.com/papercomputeco/tapes/pkg/storage/ent"
-	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
+	"github.com/papercomputeco/tapes/pkg/storage"
 )
-
-const DemoSQLitePath = "tapes.demo.sqlite"
 
 const (
 	providerAnthropic = "anthropic"
@@ -46,35 +44,24 @@ type seedMessage struct {
 	PromptDuration   time.Duration
 }
 
-func SeedDemo(ctx context.Context, path string, overwrite bool) (int, int, error) {
-	if err := prepareSQLitePath(path, overwrite); err != nil {
-		return 0, 0, err
-	}
+type SeedDemoResponse struct {
+	Sessions int `json:"sessions"`
+	Messages int `json:"messages"`
+}
 
-	driver, err := sqlite.NewDriver(ctx, path)
+func SeedDemoToDriver(ctx context.Context, driver storage.Driver) (int, int, error) {
+	hasData, err := driverHasData(ctx, driver)
 	if err != nil {
 		return 0, 0, err
 	}
-	defer func() { _ = driver.Close() }()
-
-	if err := driver.Migrate(ctx); err != nil {
-		return 0, 0, fmt.Errorf("running migrations: %w", err)
-	}
-
-	if !overwrite {
-		hasData, err := hasExistingData(ctx, driver.Client)
-		if err != nil {
-			return 0, 0, err
-		}
-		if hasData {
-			return 0, 0, fmt.Errorf("sqlite database already has data: %s (use --overwrite)", path)
-		}
+	if hasData {
+		return 0, 0, errors.New("database already has data (use --overwrite with a fresh local database)")
 	}
 
 	sessions := demoDeckSessions(time.Now())
 	messageCount := 0
 	for _, session := range sessions {
-		if err := insertSession(ctx, driver.Client, session); err != nil {
+		if err := insertSessionToDriver(ctx, driver, session); err != nil {
 			return 0, 0, err
 		}
 		messageCount += len(session.Messages)
@@ -83,55 +70,50 @@ func SeedDemo(ctx context.Context, path string, overwrite bool) (int, int, error
 	return len(sessions), messageCount, nil
 }
 
-func prepareSQLitePath(path string, overwrite bool) error {
-	if isInMemorySQLite(path) {
-		return nil
-	}
-
-	if info, err := os.Stat(path); err == nil {
-		if info.IsDir() {
-			return fmt.Errorf("sqlite path is a directory: %s", path)
-		}
-		if overwrite {
-			if err := os.Remove(path); err != nil {
-				return fmt.Errorf("remove sqlite database: %w", err)
-			}
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("stat sqlite database: %w", err)
-	}
-
-	parent := filepath.Dir(path)
-	if parent == "." || parent == "" {
-		return nil
-	}
-
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return fmt.Errorf("create sqlite directory: %w", err)
-	}
-
-	return nil
-}
-
-func hasExistingData(ctx context.Context, client *ent.Client) (bool, error) {
-	exists, err := client.Node.Query().Exist(ctx)
+func SeedDemoViaAPI(ctx context.Context, apiTarget string, overwrite bool) (int, int, error) {
+	payload, err := json.Marshal(map[string]bool{"overwrite": overwrite})
 	if err != nil {
-		return false, fmt.Errorf("check sqlite database: %w", err)
+		return 0, 0, fmt.Errorf("marshal seed request: %w", err)
 	}
 
-	return exists, nil
-}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(apiTarget, "/")+"/v1/admin/seed/demo", bytes.NewReader(payload))
+	if err != nil {
+		return 0, 0, fmt.Errorf("create seed request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
 
-func isInMemorySQLite(path string) bool {
-	trimmed := strings.TrimSpace(path)
-	if trimmed == ":memory:" {
-		return true
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, 0, fmt.Errorf("seed demo via api: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, 0, fmt.Errorf("read seed response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return 0, 0, fmt.Errorf("seed api returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	return strings.HasPrefix(trimmed, "file::memory:")
+	var result SeedDemoResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return 0, 0, fmt.Errorf("decode seed response: %w", err)
+	}
+
+	return result.Sessions, result.Messages, nil
 }
 
-func insertSession(ctx context.Context, client *ent.Client, session seedSession) error {
+func driverHasData(ctx context.Context, driver storage.Driver) (bool, error) {
+	nodes, err := driver.List(ctx)
+	if err != nil {
+		return false, fmt.Errorf("check database: %w", err)
+	}
+
+	return len(nodes) > 0, nil
+}
+
+func insertSessionToDriver(ctx context.Context, driver storage.Driver, session seedSession) error {
 	var parent *merkle.Node
 	for _, message := range session.Messages {
 		bucket := merkle.Bucket{
@@ -148,9 +130,10 @@ func insertSession(ctx context.Context, client *ent.Client, session seedSession)
 			Usage:      usage,
 			Project:    session.Project,
 		})
+		node.CreatedAt = message.At
 
-		if err := createEntNode(ctx, client, node, message.At); err != nil {
-			return err
+		if _, err := driver.Put(ctx, node); err != nil {
+			return fmt.Errorf("create node: %w", err)
 		}
 
 		parent = node
@@ -180,68 +163,6 @@ func buildUsage(message seedMessage) *llm.Usage {
 	}
 
 	return usage
-}
-
-func createEntNode(ctx context.Context, client *ent.Client, node *merkle.Node, createdAt time.Time) error {
-	create := client.Node.Create().
-		SetID(node.Hash).
-		SetNillableParentHash(node.ParentHash).
-		SetType(node.Bucket.Type).
-		SetRole(node.Bucket.Role).
-		SetModel(node.Bucket.Model).
-		SetProvider(node.Bucket.Provider).
-		SetStopReason(node.StopReason).
-		SetCreatedAt(createdAt)
-
-	if node.Project != "" {
-		create.SetProject(node.Project)
-	}
-
-	bucketJSON, err := json.Marshal(node.Bucket)
-	if err != nil {
-		return fmt.Errorf("marshal bucket: %w", err)
-	}
-
-	var bucketMap map[string]any
-	if err := json.Unmarshal(bucketJSON, &bucketMap); err != nil {
-		return fmt.Errorf("unmarshal bucket: %w", err)
-	}
-	create.SetBucket(bucketMap)
-
-	contentJSON, err := json.Marshal(node.Bucket.Content)
-	if err != nil {
-		return fmt.Errorf("marshal content: %w", err)
-	}
-
-	var contentSlice []map[string]any
-	if err := json.Unmarshal(contentJSON, &contentSlice); err != nil {
-		return fmt.Errorf("unmarshal content: %w", err)
-	}
-	create.SetContent(contentSlice)
-
-	if node.Usage != nil {
-		if node.Usage.PromptTokens > 0 {
-			create.SetPromptTokens(node.Usage.PromptTokens)
-		}
-		if node.Usage.CompletionTokens > 0 {
-			create.SetCompletionTokens(node.Usage.CompletionTokens)
-		}
-		if node.Usage.TotalTokens > 0 {
-			create.SetTotalTokens(node.Usage.TotalTokens)
-		}
-		if node.Usage.TotalDurationNs > 0 {
-			create.SetTotalDurationNs(node.Usage.TotalDurationNs)
-		}
-		if node.Usage.PromptDurationNs > 0 {
-			create.SetPromptDurationNs(node.Usage.PromptDurationNs)
-		}
-	}
-
-	if err := create.Exec(ctx); err != nil {
-		return fmt.Errorf("create node: %w", err)
-	}
-
-	return nil
 }
 
 func demoDeckSessions(now time.Time) []seedSession {

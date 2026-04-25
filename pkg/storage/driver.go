@@ -4,20 +4,20 @@ package storage
 import (
 	"context"
 
+	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 )
 
 // Driver defines the interface for persisting and retrieving nodes in a storage backend.
 // The Driver is the primary interface for working with pkg/merkle - it handles
 // storage, retrieval, and traversal of nodes per the storage implementor.
-//
-// A Driver embeds merkle.DagLoader, so any storage.Driver is also a merkle.DagLoader.
-// This avoids the need for callers to cast a Driver to a DagLoader — they can pass
-// a Driver wherever a DagLoader is expected directly.
 type Driver interface {
-	// DagLoader provides read and traversal operations on the DAG.
-	// Get, GetByParent, and Ancestry come from this embedded interface.
-	merkle.DagLoader
+	// Get retrieves a node by its hash.
+	Get(ctx context.Context, hash string) (*merkle.Node, error)
+
+	// GetByParent retrieves all nodes that have the given parent hash.
+	// Pass nil to get root nodes.
+	GetByParent(ctx context.Context, parentHash *string) ([]*merkle.Node, error)
 
 	// Put stores a node. Returns true if the node was newly inserted,
 	// false if it already exists. If the node already exists, this should be
@@ -49,6 +49,9 @@ type Driver interface {
 	// the filter in opts. Pagination fields on opts (Limit, Cursor) are ignored.
 	CountSessions(ctx context.Context, opts ListOpts) (SessionStats, error)
 
+	// Ancestry returns the path from a node back to its root (node first, root last).
+	Ancestry(ctx context.Context, hash string) ([]*merkle.Node, error)
+
 	// AncestryChain is Ancestry with a marker describing how the walk
 	// terminated. When the walk stops at a parent_hash whose target is not
 	// present in this store, the returned Chain has Incomplete=true and
@@ -73,13 +76,17 @@ type Driver interface {
 	// of thousands of leaves will not complete in any reasonable time.
 	AncestryChains(ctx context.Context, hashes []string) (map[string]*Chain, error)
 
+	// LoadDag takes a node hash and returns the full graph.
+	LoadDag(ctx context.Context, hash string) (*merkle.Dag, error)
+
+	// Open initializes the backing store and makes it ready for use.
+	Open(ctx context.Context) error
+
+	// UpdateUsage updates token / duration usage metadata on an existing node.
+	UpdateUsage(ctx context.Context, hash string, usage *llm.Usage) error
+
 	// Depth returns the depth of a node (0 for roots).
 	Depth(ctx context.Context, hash string) (int, error)
-
-	// Migrate applies any pending schema migrations for the storage backend.
-	// Implementations must be safe to call concurrently from multiple processes.
-	// For backends that don't require migrations (e.g. in-memory), this is a no-op.
-	Migrate(ctx context.Context) error
 
 	// Close closes the store and releases any resources.
 	Close() error

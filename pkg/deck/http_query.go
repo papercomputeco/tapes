@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
@@ -20,19 +19,15 @@ import (
 
 const (
 	httpQueryTimeout = 30 * time.Second
-	// httpQueryPageLimit is sized to ride the AncestryChains fixed-cost
-	// floor: each /v1/sessions/summary call costs ~260ms regardless of
-	// page size on a real store, so smaller pages just multiply the
-	// total round-trip count for no per-row savings. 2000 is a safe
-	// page size for the bumped storage.MaxListLimit (5000).
-	httpQueryPageLimit  = 2000
-	httpQueryMaxSummary = 10000 // safety cap on total sessions paged through
+	// httpQueryOverviewLimit keeps the API-backed deck lightweight: fetch one
+	// recent page of rich session summaries, then render and drill into detail
+	// on demand. This avoids the old "page through the whole corpus" behavior.
+	httpQueryOverviewLimit = 25
 )
 
 // HTTPQuery is a Querier implementation that talks to a remote (or
 // in-process) tapes API server over HTTP. It mirrors the Querier surface of
-// the legacy SQLite-backed Query type so callers can swap implementations
-// without changes.
+// the local query path so callers can swap implementations without changes.
 type HTTPQuery struct {
 	apiTarget string
 	pricing   PricingTable
@@ -40,8 +35,11 @@ type HTTPQuery struct {
 	cache     sessionCache
 }
 
-// Compile-time check that HTTPQuery satisfies the Querier interface.
-var _ Querier = (*HTTPQuery)(nil)
+// Compile-time checks that HTTPQuery satisfies the deck query interfaces.
+var (
+	_ Querier       = (*HTTPQuery)(nil)
+	_ OverviewPager = (*HTTPQuery)(nil)
+)
 
 // NewHTTPQuery constructs an HTTPQuery pointed at apiTarget (e.g.
 // "http://127.0.0.1:8081"). The pricing table is retained for client-side
@@ -49,10 +47,21 @@ var _ Querier = (*HTTPQuery)(nil)
 // fully-populated SessionSummary objects.
 func NewHTTPQuery(apiTarget string, pricing PricingTable) *HTTPQuery {
 	return &HTTPQuery{
-		apiTarget: strings.TrimRight(apiTarget, "/"),
+		apiTarget: normalizeAPITarget(apiTarget),
 		pricing:   pricing,
 		client:    &http.Client{Timeout: httpQueryTimeout},
 	}
+}
+
+func normalizeAPITarget(apiTarget string) string {
+	target := strings.TrimSpace(apiTarget)
+	if target == "" {
+		return ""
+	}
+	if !strings.Contains(target, "://") {
+		target = "http://" + target
+	}
+	return strings.TrimRight(target, "/")
 }
 
 // httpSummaryResponse mirrors api.SessionSummaryListResponse for JSON
@@ -84,74 +93,50 @@ type httpTurn struct {
 	CreatedAt  time.Time          `json:"created_at,omitzero"`
 }
 
-// Overview fetches all session summaries from the API (paging through with
-// /v1/sessions/summary), then runs the existing deck-side grouping, filtering
-// and rollup logic on top of the returned data.
+// Overview fetches a single recent page from /v1/sessions/summary, then runs
+// the existing deck-side grouping, filtering, and rollup logic on that bounded
+// result set.
 //
-// Filters that the API understands natively (since/from, project, model) are
-// pushed down to the request as query params so the server can apply them at
-// the SQL level. Without this pushdown the deck would page through every
-// session in the database before filtering, which OOMs on large stores.
-// Filters that depend on derived state (status, the To bound, sort order)
-// stay client-side and are applied to the smaller filtered slice below.
+// Filters that the API understands natively (since/from, to/until, project,
+// model) are pushed down to the request as query params so the server can
+// narrow the SQL work before building rich summaries. Filters that depend on
+// derived state (status, sort order) stay client-side and are applied to the
+// smaller page returned below.
 func (q *HTTPQuery) Overview(ctx context.Context, filters Filters) (*Overview, error) {
-	all, err := q.fetchAllSummaries(ctx, filters)
+	page, err := q.OverviewPage(ctx, filters, "", httpQueryOverviewLimit)
+	if err != nil {
+		return nil, err
+	}
+	return page.Overview, nil
+}
+
+// OverviewPage fetches one bounded page from /v1/sessions/summary and returns
+// the API cursor needed to request the next page. The first page replaces the
+// detail cache; subsequent pages merge into it so group/detail lookups keep
+// working for every loaded row.
+func (q *HTTPQuery) OverviewPage(ctx context.Context, filters Filters, cursor string, limit int) (*OverviewPage, error) {
+	if limit <= 0 {
+		limit = httpQueryOverviewLimit
+	}
+
+	page, err := q.fetchSummaryPage(ctx, cursor, filters, limit)
 	if err != nil {
 		return nil, err
 	}
 
-	candidates := candidatesFromSummaries(all)
-	q.cache.storeSessionCandidates(candidates)
-
-	candidates = preFilterCandidatesByTime(candidates, filters)
-	groups := groupSessionCandidates(candidates)
-
-	overview := &Overview{
-		Sessions:    make([]SessionSummary, 0, len(groups)),
-		CostByModel: map[string]ModelCost{},
-	}
-	for _, group := range groups {
-		summary := group.summary
-		if !matchesFilters(summary, filters) {
-			continue
-		}
-
-		overview.Sessions = append(overview.Sessions, summary)
-		overview.TotalCost += summary.TotalCost
-		overview.InputTokens += summary.InputTokens
-		overview.OutputTokens += summary.OutputTokens
-		overview.TotalTokens += summary.InputTokens + summary.OutputTokens
-		overview.TotalDuration += summary.Duration
-		overview.TotalToolCalls += summary.ToolCalls
-
-		switch summary.Status {
-		case StatusCompleted:
-			overview.Completed++
-		case StatusFailed:
-			overview.Failed++
-		case StatusAbandoned:
-			overview.Abandoned++
-		}
-
-		for model, cost := range group.modelCosts {
-			aggregate := overview.CostByModel[model]
-			aggregate.Model = model
-			aggregate.InputTokens += cost.InputTokens
-			aggregate.OutputTokens += cost.OutputTokens
-			aggregate.InputCost += cost.InputCost
-			aggregate.OutputCost += cost.OutputCost
-			aggregate.TotalCost += cost.TotalCost
-			aggregate.SessionCount += cost.SessionCount
-			overview.CostByModel[model] = aggregate
-		}
+	candidates := candidatesFromSummaries(page.Items)
+	if cursor == "" {
+		q.cache.storeSessionCandidates(candidates)
+	} else {
+		q.cache.appendSessionCandidates(candidates)
 	}
 
-	if total := len(overview.Sessions); total > 0 {
-		overview.SuccessRate = float64(overview.Completed) / float64(total)
-	}
-
-	SortSessions(overview.Sessions, filters.Sort, filters.SortDir)
-	return overview, nil
+	overview := buildOverviewFromCandidates(candidates, filters)
+	return &OverviewPage{
+		Overview:   overview,
+		NextCursor: page.NextCursor,
+		HasMore:    page.NextCursor != "",
+	}, nil
 }
 
 // SessionDetail fetches the chain for a single session via /v1/sessions/:hash
@@ -229,47 +214,73 @@ func (q *HTTPQuery) groupSessionDetail(ctx context.Context, sessionID string) (*
 	}, nil
 }
 
-// fetchAllSummaries pages through /v1/sessions/summary until the API
-// returns no NextCursor, returning every session it finds. Capped at
-// httpQueryMaxSummary to avoid pathological memory growth. The filter
-// fields the API supports natively are passed through to every page so
-// the server can narrow the result set before pagination is applied.
-func (q *HTTPQuery) fetchAllSummaries(ctx context.Context, filters Filters) ([]SessionSummary, error) {
-	var all []SessionSummary
-	cursor := ""
-	for {
-		page, err := q.fetchSummaryPage(ctx, cursor, filters)
-		if err != nil {
-			return nil, err
-		}
-		all = append(all, page.Items...)
-		if page.NextCursor == "" {
-			break
-		}
-		if len(all) >= httpQueryMaxSummary {
-			slog.Warn("session summary cap reached; overview may be incomplete",
-				"cap", httpQueryMaxSummary,
-				"fetched", len(all),
-			)
-			break
-		}
-		cursor = page.NextCursor
+func buildOverviewFromCandidates(candidates []sessionCandidate, filters Filters) *Overview {
+	candidates = preFilterCandidatesByTime(candidates, filters)
+	groups := groupSessionCandidates(candidates)
+
+	overview := &Overview{
+		Sessions:    make([]SessionSummary, 0, len(groups)),
+		CostByModel: map[string]ModelCost{},
 	}
-	return all, nil
+	for _, group := range groups {
+		summary := group.summary
+		if !matchesFilters(summary, filters) {
+			continue
+		}
+
+		overview.Sessions = append(overview.Sessions, summary)
+		overview.TotalCost += summary.TotalCost
+		overview.InputTokens += summary.InputTokens
+		overview.OutputTokens += summary.OutputTokens
+		overview.TotalTokens += summary.InputTokens + summary.OutputTokens
+		overview.TotalDuration += summary.Duration
+		overview.TotalToolCalls += summary.ToolCalls
+
+		switch summary.Status {
+		case StatusCompleted:
+			overview.Completed++
+		case StatusFailed:
+			overview.Failed++
+		case StatusAbandoned:
+			overview.Abandoned++
+		}
+
+		for model, cost := range group.modelCosts {
+			aggregate := overview.CostByModel[model]
+			aggregate.Model = model
+			aggregate.InputTokens += cost.InputTokens
+			aggregate.OutputTokens += cost.OutputTokens
+			aggregate.InputCost += cost.InputCost
+			aggregate.OutputCost += cost.OutputCost
+			aggregate.TotalCost += cost.TotalCost
+			aggregate.SessionCount += cost.SessionCount
+			overview.CostByModel[model] = aggregate
+		}
+	}
+
+	if total := len(overview.Sessions); total > 0 {
+		overview.SuccessRate = float64(overview.Completed) / float64(total)
+	}
+
+	SortSessions(overview.Sessions, filters.Sort, filters.SortDir)
+	return overview
 }
 
-func (q *HTTPQuery) fetchSummaryPage(ctx context.Context, cursor string, filters Filters) (*httpSummaryResponse, error) {
+func (q *HTTPQuery) fetchSummaryPage(ctx context.Context, cursor string, filters Filters, limit int) (*httpSummaryResponse, error) {
 	u, err := url.Parse(q.apiTarget + "/v1/sessions/summary")
 	if err != nil {
 		return nil, fmt.Errorf("invalid api target: %w", err)
 	}
 	qparams := u.Query()
-	qparams.Set("limit", strconv.Itoa(httpQueryPageLimit))
+	qparams.Set("limit", strconv.Itoa(limit))
 	if cursor != "" {
 		qparams.Set("cursor", cursor)
 	}
 	if cutoff := effectiveSinceCutoff(filters); !cutoff.IsZero() {
 		qparams.Set("since", cutoff.UTC().Format(time.RFC3339))
+	}
+	if filters.To != nil {
+		qparams.Set("until", filters.To.UTC().Format(time.RFC3339))
 	}
 	if filters.Project != "" {
 		qparams.Set("project", filters.Project)

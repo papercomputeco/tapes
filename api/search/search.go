@@ -10,6 +10,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/embeddings"
 	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/vector"
 )
 
@@ -49,7 +50,7 @@ type Searcher struct {
 
 	embedder     embeddings.Embedder
 	vectorDriver vector.Driver
-	dagLoader    merkle.DagLoader
+	driver       storage.Driver
 	logger       *slog.Logger
 }
 
@@ -57,14 +58,14 @@ func NewSearcher(
 	ctx context.Context,
 	embedder embeddings.Embedder,
 	vectorDriver vector.Driver,
-	dagLoader merkle.DagLoader,
+	driver storage.Driver,
 	log *slog.Logger,
 ) *Searcher {
 	return &Searcher{
 		ctx,
 		embedder,
 		vectorDriver,
-		dagLoader,
+		driver,
 		log,
 	}
 }
@@ -100,7 +101,7 @@ func (s *Searcher) Search(
 	// Build search results with full branch using merkle.LoadDag
 	searchResults := make([]Result, 0, len(results))
 	for _, result := range results {
-		dag, err := merkle.LoadDag(s.ctx, s.dagLoader, result.Hash)
+		dag, err := s.driver.LoadDag(s.ctx, result.Hash)
 		if err != nil {
 			s.logger.Warn("failed to load branch for result",
 				"hash", result.Hash,

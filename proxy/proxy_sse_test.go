@@ -12,6 +12,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
+	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
@@ -29,7 +30,7 @@ type openaiTestMsgEntry struct {
 
 // newOpenAITestProxy creates a Proxy pointed at the given upstream URL,
 // using an in-memory storage driver and the openai provider.
-func newOpenAITestProxy(upstreamURL string) (*Proxy, *inmemory.Driver) {
+func newOpenAITestProxy(upstreamURL string) (*Proxy, storage.Driver) {
 	logger := tapeslogger.NewNoop()
 	driver := inmemory.NewDriver()
 
@@ -60,7 +61,7 @@ func makeOpenAIRequestBody(model string, messages []openaiTestMsgEntry, stream *
 var _ = Describe("SSE Streaming Proxy", func() {
 	var (
 		p        *Proxy
-		driver   *inmemory.Driver
+		driver   storage.Driver
 		upstream *httptest.Server
 	)
 

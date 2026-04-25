@@ -17,12 +17,9 @@ import (
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/publisher"
 	kafkapublisher "github.com/papercomputeco/tapes/pkg/publisher/kafka"
-	"github.com/papercomputeco/tapes/pkg/storage"
-	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
-	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
 	"github.com/papercomputeco/tapes/pkg/telemetry"
-	vectorutils "github.com/papercomputeco/tapes/pkg/vector/utils"
+	"github.com/papercomputeco/tapes/pkg/vector/pgvector"
 )
 
 type ingestCommander struct {
@@ -30,12 +27,10 @@ type ingestCommander struct {
 
 	listen      string
 	debug       bool
-	sqlitePath  string
 	postgresDSN string
 	project     string
 
-	vectorStoreProvider string
-	vectorStoreTarget   string
+	vectorStoreTarget string
 
 	embeddingProvider   string
 	embeddingTarget     string
@@ -54,11 +49,9 @@ type ingestCommander struct {
 // --ingest-listen/-i, and omits proxy/api-specific flags.
 var ingestFlags = config.FlagSet{
 	config.FlagIngestListenStandalone: {Name: "listen", Shorthand: "l", ViperKey: "ingest.listen", Description: "Address for ingest server to listen on"},
-	config.FlagSQLite:                 {Name: "sqlite", Shorthand: "s", ViperKey: "storage.sqlite_path", Description: "Path to SQLite database"},
 	config.FlagPostgres:               {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
 	config.FlagProject:                {Name: "project", ViperKey: "proxy.project", Description: "Project name to tag sessions (default: auto-detect from git)"},
-	config.FlagVectorStoreProv:        {Name: "vector-store-provider", ViperKey: "vector_store.provider", Description: "Vector store provider type (e.g., chroma, sqlite, qdrant)"},
-	config.FlagVectorStoreTgt:         {Name: "vector-store-target", ViperKey: "vector_store.target", Description: "Vector store target: filepath for sqlite or URL for remote service"},
+	config.FlagVectorStoreTgt:         {Name: "vector-store-target", ViperKey: "vector_store.target", Description: "pgvector connection string (defaults to storage.postgres_dsn when unset)"},
 	config.FlagEmbeddingProv:          {Name: "embedding-provider", ViperKey: "embedding.provider", Description: "Embedding provider type (e.g., ollama)"},
 	config.FlagEmbeddingTgt:           {Name: "embedding-target", ViperKey: "embedding.target", Description: "Embedding provider URL"},
 	config.FlagEmbeddingModel:         {Name: "embedding-model", ViperKey: "embedding.model", Description: "Embedding model name (e.g., nomic-embed-text)"},
@@ -101,10 +94,8 @@ func NewIngestCmd() *cobra.Command {
 
 			config.BindRegisteredFlags(v, cmd, cmder.flags, []string{
 				config.FlagIngestListenStandalone,
-				config.FlagSQLite,
 				config.FlagPostgres,
 				config.FlagProject,
-				config.FlagVectorStoreProv,
 				config.FlagVectorStoreTgt,
 				config.FlagEmbeddingProv,
 				config.FlagEmbeddingTgt,
@@ -116,15 +107,16 @@ func NewIngestCmd() *cobra.Command {
 			})
 
 			cmder.listen = v.GetString("ingest.listen")
-			cmder.sqlitePath = v.GetString("storage.sqlite_path")
 			cmder.postgresDSN = v.GetString("storage.postgres_dsn")
 			cmder.project = v.GetString("proxy.project")
-			cmder.vectorStoreProvider = v.GetString("vector_store.provider")
 			cmder.vectorStoreTarget = v.GetString("vector_store.target")
 			cmder.embeddingProvider = v.GetString("embedding.provider")
 			cmder.embeddingTarget = v.GetString("embedding.target")
 			cmder.embeddingModel = v.GetString("embedding.model")
 			cmder.embeddingDimensions = v.GetUint("embedding.dimensions")
+			if cmder.vectorStoreTarget == "" && cmder.postgresDSN != "" {
+				cmder.vectorStoreTarget = cmder.postgresDSN
+			}
 			cmder.kafkaBrokers = v.GetString("publisher.kafka.brokers")
 			cmder.kafkaClientID = v.GetString("publisher.kafka.client_id")
 			cmder.kafkaTopic = v.GetString("publisher.kafka.topic")
@@ -148,10 +140,8 @@ func NewIngestCmd() *cobra.Command {
 	}
 
 	config.AddStringFlag(cmd, cmder.flags, config.FlagIngestListenStandalone, &cmder.listen)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagSQLite, &cmder.sqlitePath)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagPostgres, &cmder.postgresDSN)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagProject, &cmder.project)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagVectorStoreProv, &cmder.vectorStoreProvider)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagVectorStoreTgt, &cmder.vectorStoreTarget)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingProv, &cmder.embeddingProvider)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingTgt, &cmder.embeddingTarget)
@@ -181,15 +171,11 @@ func (c *ingestCommander) run() error {
 		}
 	}()
 
-	driver, err := c.newStorageDriver()
+	driver, err := postgres.NewDriver(context.TODO(), c.postgresDSN)
 	if err != nil {
 		return err
 	}
 	defer driver.Close()
-
-	if err := driver.Migrate(context.Background()); err != nil {
-		return fmt.Errorf("running migrations: %w", err)
-	}
 
 	cfg := ingest.Config{
 		ListenAddr: c.listen,
@@ -204,23 +190,20 @@ func (c *ingestCommander) run() error {
 			Model:        c.embeddingModel,
 		})
 		if err != nil {
-			return fmt.Errorf("creating embedder: %w", err)
+			return fmt.Errorf("could not create new embedder: %w", err)
 		}
 		defer cfg.Embedder.Close()
 
-		cfg.VectorDriver, err = vectorutils.NewVectorDriver(&vectorutils.NewVectorDriverOpts{
-			ProviderType: c.vectorStoreProvider,
-			Target:       c.vectorStoreTarget,
-			Logger:       c.logger,
-			Dimensions:   c.embeddingDimensions,
-		})
+		cfg.VectorDriver, err = pgvector.NewDriver(context.TODO(), &pgvector.Config{
+			ConnString: c.vectorStoreTarget,
+			Dimensions: c.embeddingDimensions,
+		}, c.logger)
 		if err != nil {
-			return fmt.Errorf("creating vector driver: %w", err)
+			return fmt.Errorf("could not create new vector driver: %w", err)
 		}
 		defer cfg.VectorDriver.Close()
 
 		c.logger.Info("vector storage enabled",
-			"vector_store_provider", c.vectorStoreProvider,
 			"vector_store_target", c.vectorStoreTarget,
 			"embedding_provider", c.embeddingProvider,
 			"embedding_target", c.embeddingTarget,
@@ -285,27 +268,4 @@ func (c *ingestCommander) newPublisher() (publisher.Publisher, error) {
 		Topic:    kafkaTopic,
 		ClientID: strings.TrimSpace(c.kafkaClientID),
 	})
-}
-
-func (c *ingestCommander) newStorageDriver() (storage.Driver, error) {
-	if c.postgresDSN != "" {
-		driver, err := postgres.NewDriver(context.Background(), c.postgresDSN)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create PostgreSQL storer: %w", err)
-		}
-		c.logger.Info("using PostgreSQL storage")
-		return driver, nil
-	}
-
-	if c.sqlitePath != "" {
-		driver, err := sqlite.NewDriver(context.Background(), c.sqlitePath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create SQLite storer: %w", err)
-		}
-		c.logger.Info("using SQLite storage", "path", c.sqlitePath)
-		return driver, nil
-	}
-
-	c.logger.Info("using in-memory storage")
-	return inmemory.NewDriver(), nil
 }

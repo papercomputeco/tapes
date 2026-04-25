@@ -47,7 +47,7 @@ func InitViper(configDir string) (*viper.Viper, error) {
 		}
 	}
 
-	// 3. Environment variables: TAPES_PROXY_LISTEN, TAPES_STORAGE_SQLITE_PATH, etc.
+	// 3. Environment variables: TAPES_PROXY_LISTEN, etc.
 	v.SetEnvPrefix("TAPES")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
@@ -63,7 +63,6 @@ func setViperDefaults(v *viper.Viper) {
 	v.SetDefault("version", d.Version)
 
 	// Storage
-	v.SetDefault("storage.sqlite_path", d.Storage.SQLitePath)
 	v.SetDefault("storage.postgres_dsn", d.Storage.PostgresDSN)
 
 	// Proxy
@@ -83,7 +82,6 @@ func setViperDefaults(v *viper.Viper) {
 	v.SetDefault("client.api_target", d.Client.APITarget)
 
 	// Vector store
-	v.SetDefault("vector_store.provider", d.VectorStore.Provider)
 	v.SetDefault("vector_store.target", d.VectorStore.Target)
 
 	// Embedding

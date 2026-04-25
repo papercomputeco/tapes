@@ -17,7 +17,6 @@ type Config struct {
 
 // StorageConfig holds shared storage settings used by both proxy and API.
 type StorageConfig struct {
-	SQLitePath  string `toml:"sqlite_path,omitempty"  mapstructure:"sqlite_path"`
 	PostgresDSN string `toml:"postgres_dsn,omitempty" mapstructure:"postgres_dsn"`
 }
 
@@ -49,8 +48,7 @@ type ClientConfig struct {
 
 // VectorStoreConfig holds vector store settings.
 type VectorStoreConfig struct {
-	Provider string `toml:"provider,omitempty" mapstructure:"provider"`
-	Target   string `toml:"target,omitempty"   mapstructure:"target"`
+	Target string `toml:"target,omitempty"   mapstructure:"target"`
 }
 
 // EmbeddingConfig holds embedding provider settings.
@@ -75,7 +73,6 @@ type TelemetryConfig struct {
 // configKeySet is the authoritative set of all supported user-facing config keys.
 // Keys use dotted notation matching the TOML section structure.
 var configKeySet = map[string]bool{
-	"storage.sqlite_path":   true,
 	"proxy.provider":        true,
 	"proxy.upstream":        true,
 	"proxy.listen":          true,

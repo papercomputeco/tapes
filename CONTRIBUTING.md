@@ -3,27 +3,24 @@
 ## Quick start (recommended)
 
 The Nix flake dev shell is the recommended way to develop tapes. It pins
-Go 1.25, GCC, Dagger, SQLite dev headers, and configures all required
-environment variables (`CGO_ENABLED`, `GOEXPERIMENT`). This avoids toolchain
-drift and CGO build warnings on macOS by using Nix-provided GCC instead of
-Xcode's system clang.
+Go 1.25, GCC, Dagger, and configures all required environment variables
+(`CGO_ENABLED`, `GOEXPERIMENT`). This avoids toolchain drift and CGO build
+warnings on macOS by using Nix-provided GCC instead of Xcode's system clang.
 
 ```bash
 nix develop          # enter the dev shell
 direnv allow         # or use direnv for automatic activation
 make build-local
-./build/tapes deck --demo
+./build/tapes local
 ```
 
 ## Quick start (manual)
 
-If you prefer not to use Nix, ensure you have the prerequisites below and
-note that you may see harmless deprecation warnings from Apple's SDK headers
-during CGO compilation.
+If you prefer not to use Nix, ensure you have the prerequisites below.
 
 ```bash
 make build-local
-./build/tapes deck --demo
+./build/tapes local
 ```
 
 ## Contributing a PR
@@ -39,39 +36,29 @@ make build-local
 
 ## Local demo data
 
-Seed demo sessions for the deck UI without touching real data:
+Seed demo sessions for the deck UI through the local API server:
 
 ```bash
-tapes deck -m
-tapes deck --demo --sqlite ./tapes.demo.sqlite
+tapes deck --demo --api-target http://localhost:8081
 ```
 
-To reset the demo database:
-
-```bash
-tapes deck -m -f
-```
+To reset demo data, use a fresh database behind the API server.
 
 ## Prerequisites checklist
 
 - Go 1.25+
-- CGO enabled and SQLite dev libraries (e.g., `libsqlite3`)
 - Docker (required for `make format`, `make check`, `make unit-test` via Dagger)
+- PostgreSQL with pgvector + pg_duckdb for local runtime work
 - Optional: Ollama for embeddings when running `tapes serve`
 
 ## Common issues
 
-- SQLite deprecation warnings on macOS (e.g., `sqlite3_auto_extension is deprecated`)
-  - These are harmless warnings from Apple's SDK headers. Use the Nix dev shell to avoid them.
-- SQLite errors when building or running
-  - Ensure SQLite dev libraries are installed and `CGO_ENABLED=1`
 - Merkle hashing requires `GOEXPERIMENT=jsonv2`
   - `make build-local` sets this automatically
 - `make format`/`make check`/`make unit-test` require Docker for Dagger
 - Demo seeding docs
-  - Use `tapes deck --demo` to seed demo sessions
-  - Demo DB path defaults to `./tapes.demo.sqlite`
-  - Reseed with `tapes deck --demo --overwrite`
+  - Use `tapes deck --demo --api-target http://localhost:8081` to seed demo sessions
+  - Use a fresh Postgres database behind the API when reseeding
 
 ## Example commands
 
@@ -79,18 +66,15 @@ tapes deck -m -f
 # Build local binaries
 make build-local
 
-# Run the deck UI with demo data
-./build/tapes deck --demo
+# Start local dependencies
+./build/tapes local
 
-# Reseed demo data
-./build/tapes deck --demo --overwrite
+# Run the deck UI with demo data
+./build/tapes deck --demo --api-target http://localhost:8081
 
 # Run tests
 make unit-test
 
 # Format code
 make format
-
-# Run deck against a specific database
-TAPES_SQLITE=./tapes.sqlite ./build/tapes deck
 ```

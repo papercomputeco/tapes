@@ -21,7 +21,6 @@ import (
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
-	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
 	"github.com/papercomputeco/tapes/pkg/validate"
 )
 
@@ -32,7 +31,6 @@ const previewMaxChars = 200
 type validateCommander struct {
 	flags config.FlagSet
 
-	sqlitePath  string
 	postgresDSN string
 	format      string
 	outputPath  string
@@ -42,7 +40,6 @@ type validateCommander struct {
 }
 
 var validateFlags = config.FlagSet{
-	config.FlagSQLite:   {Name: "sqlite", Shorthand: "s", ViperKey: "storage.sqlite_path", Description: "Path to SQLite database"},
 	config.FlagPostgres: {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string"},
 }
 
@@ -65,16 +62,11 @@ func NewValidateCmd() *cobra.Command {
 				return fmt.Errorf("loading config: %w", err)
 			}
 			config.BindRegisteredFlags(v, cmd, cmder.flags, []string{
-				config.FlagSQLite,
 				config.FlagPostgres,
 			})
-			cmder.sqlitePath = v.GetString("storage.sqlite_path")
 			cmder.postgresDSN = v.GetString("storage.postgres_dsn")
-			// Positional argument wins: `tapes validate ~/paper/brain.sqlite`
-			// is the shortest path to pointing the check at a specific file.
 			if len(args) == 1 {
-				cmder.sqlitePath = args[0]
-				cmder.postgresDSN = ""
+				cmder.postgresDSN = args[0]
 			}
 
 			switch cmder.format {
@@ -94,7 +86,6 @@ func NewValidateCmd() *cobra.Command {
 		},
 	}
 
-	config.AddStringFlag(cmd, cmder.flags, config.FlagSQLite, &cmder.sqlitePath)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagPostgres, &cmder.postgresDSN)
 	cmd.Flags().StringVar(&cmder.format, "format", "text", "Output format: text or json")
 	cmd.Flags().StringVarP(&cmder.outputPath, "output", "o", "", "Write report to this path instead of stdout")
@@ -105,39 +96,23 @@ func NewValidateCmd() *cobra.Command {
 func (c *validateCommander) run(ctx context.Context) error {
 	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
 
-	// Refuse to validate a SQLite path that doesn't already exist — the
-	// driver would otherwise happily create an empty database and report
-	// a clean scan over zero rows, which is worse than useless.
 	if c.postgresDSN == "" {
-		if c.sqlitePath == "" {
-			return errors.New("no storage configured: pass a db path, --sqlite, or --postgres")
-		}
-		if _, err := os.Stat(c.sqlitePath); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("sqlite database does not exist: %s", c.sqlitePath)
-			}
-			return fmt.Errorf("stat sqlite database: %w", err)
-		}
+		return errors.New("no storage configured: pass --postgres")
 	}
 
-	driver, err := c.newStorageDriver(ctx)
+	driver, err := postgres.NewDriver(ctx, c.postgresDSN)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create PostgreSQL storage: %w", err)
 	}
 	defer driver.Close()
 
-	lister, ok := driver.(storage.ParentRefLister)
-	if !ok {
-		return errors.New("storage driver does not support integrity checks (missing ParentRefLister)")
-	}
-
-	report, err := validate.Check(ctx, lister)
+	report, err := validate.Check(ctx, driver)
 	if err != nil {
 		return fmt.Errorf("validate: %w", err)
 	}
 
 	// Enrich the dangling entries with node metadata so triage doesn't
-	// require a second pass through sqlite3. Cheap — there are typically
+	// require a second pass through the store. Cheap — there are typically
 	// far fewer dangling refs than total nodes.
 	danglingDetails := enrichDangling(ctx, driver, report.Dangling)
 
@@ -176,27 +151,9 @@ func (c *validateCommander) openOutput() (io.Writer, func(), error) {
 	return f, func() { _ = f.Close() }, nil
 }
 
-func (c *validateCommander) newStorageDriver(ctx context.Context) (storage.Driver, error) {
-	if c.postgresDSN != "" {
-		driver, err := postgres.NewDriver(ctx, c.postgresDSN)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create PostgreSQL driver: %w", err)
-		}
-		c.logger.Info("using PostgreSQL storage")
-		return driver, nil
-	}
-
-	driver, err := sqlite.NewDriver(ctx, c.sqlitePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create SQLite driver: %w", err)
-	}
-	c.logger.Info("using SQLite storage", "path", c.sqlitePath)
-	return driver, nil
-}
-
 // danglingDetail is the enriched shape used in JSON output. It carries
 // enough context (role, project, content preview, timestamp) to triage a
-// dangling reference without a separate sqlite3 query.
+// dangling reference without a separate store query.
 type danglingDetail struct {
 	Hash           string    `json:"hash"`
 	ParentHash     string    `json:"parent_hash"`

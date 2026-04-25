@@ -29,7 +29,7 @@ func (s *Server) handleSearch(ctx context.Context, _ *mcp.CallToolRequest, input
 		ctx,
 		s.config.Embedder,
 		s.config.VectorDriver,
-		s.config.DagLoader,
+		s.config.Driver,
 		s.config.Logger,
 	)
 	output, err := searcher.Search(input.Query, input.TopK)

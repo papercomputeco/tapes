@@ -10,8 +10,6 @@ const (
 	defaultClientProxyTarget = "http://localhost:8080"
 	defaultClientAPITarget   = "http://localhost:8081"
 
-	defaultVectorProvider = "sqlite"
-
 	defaultEmbeddingModel      = "embeddinggemma"
 	defaultEmbeddingDimensions = 768
 	defaultEmbeddingTarget     = "http://localhost:11434"
@@ -37,9 +35,7 @@ func NewDefaultConfig() *Config {
 			ProxyTarget: defaultClientProxyTarget,
 			APITarget:   defaultClientAPITarget,
 		},
-		VectorStore: VectorStoreConfig{
-			Provider: defaultVectorProvider,
-		},
+		VectorStore: VectorStoreConfig{},
 		Embedding: EmbeddingConfig{
 			Provider:   defaultProvider,
 			Target:     defaultUpstream,

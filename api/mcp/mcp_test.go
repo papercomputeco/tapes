@@ -6,6 +6,7 @@ import (
 
 	"github.com/papercomputeco/tapes/api/mcp"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
+	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	testutils "github.com/papercomputeco/tapes/pkg/utils/test"
 )
@@ -13,7 +14,7 @@ import (
 var _ = Describe("MCP Server", func() {
 	var (
 		server       *mcp.Server
-		driver       *inmemory.Driver
+		driver       storage.Driver
 		vectorDriver *testutils.MockVectorDriver
 		embedder     *testutils.MockEmbedder
 	)
@@ -26,7 +27,7 @@ var _ = Describe("MCP Server", func() {
 
 		var err error
 		server, err = mcp.NewServer(mcp.Config{
-			DagLoader:    driver,
+			Driver:       driver,
 			VectorDriver: vectorDriver,
 			Embedder:     embedder,
 			Logger:       logger,
@@ -49,9 +50,9 @@ var _ = Describe("MCP Server", func() {
 		It("returns an error when vector driver is nil", func() {
 			logger := tapeslogger.NewNoop()
 			_, err := mcp.NewServer(mcp.Config{
-				DagLoader: driver,
-				Embedder:  embedder,
-				Logger:    logger,
+				Driver:   driver,
+				Embedder: embedder,
+				Logger:   logger,
 			})
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("vector driver is required"))
@@ -60,7 +61,7 @@ var _ = Describe("MCP Server", func() {
 		It("returns an error when embedder is nil", func() {
 			logger := tapeslogger.NewNoop()
 			_, err := mcp.NewServer(mcp.Config{
-				DagLoader:    driver,
+				Driver:       driver,
 				VectorDriver: vectorDriver,
 				Logger:       logger,
 			})
@@ -70,7 +71,7 @@ var _ = Describe("MCP Server", func() {
 
 		It("returns an error when logger is nil", func() {
 			_, err := mcp.NewServer(mcp.Config{
-				DagLoader:    driver,
+				Driver:       driver,
 				VectorDriver: vectorDriver,
 				Embedder:     embedder,
 			})

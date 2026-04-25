@@ -14,6 +14,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/llm"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
@@ -32,7 +33,7 @@ func v1TestBucket(role, text, model, provider, agent string) merkle.Bucket {
 var _ = Describe("v1 session handlers", func() {
 	var (
 		server *Server
-		inMem  *inmemory.Driver
+		inMem  storage.Driver
 		ctx    context.Context
 	)
 
@@ -296,7 +297,7 @@ var _ = Describe("v1 session handlers", func() {
 	})
 })
 
-func putNode(ctx context.Context, d *inmemory.Driver, n *merkle.Node) error {
+func putNode(ctx context.Context, d storage.Driver, n *merkle.Node) error {
 	_, err := d.Put(ctx, n)
 	return err
 }

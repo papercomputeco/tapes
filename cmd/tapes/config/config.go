@@ -14,7 +14,7 @@ config file values.
 
 Keys use dotted notation matching the TOML section structure:
   proxy.provider, proxy.upstream, proxy.listen,
-  api.listen, storage.sqlite_path,
+  api.listen, storage.postgres_dsn,
   client.proxy_target, client.api_target,
   vector_store.provider, vector_store.target,
   embedding.provider, embedding.target, embedding.model, embedding.dimensions

@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"runtime"
 	"strings"
 	"time"
 
@@ -11,37 +10,12 @@ import (
 	"dagger/tapes/internal/dagger"
 )
 
-const (
-	zigVersion string = "0.15.2"
-
-	// osxcross image provides the macOS SDK and cross-compilation toolchain
-	// for building CGO-enabled Go binaries targeting darwin from Linux containers.
-	osxcrossImage string = "crazymax/osxcross:latest-ubuntu"
-)
-
 type buildTarget struct {
-	goos       string
-	goarch     string
-	cc         string
-	cxx        string
-	cgoFlags   string
-	cgoLdFlags string
-}
-
-func zigArch() string {
-	switch runtime.GOARCH {
-	case "arm64":
-		return "aarch64"
-	case "amd64":
-		return "x86_64"
-	default:
-		return runtime.GOARCH
-	}
+	goos   string
+	goarch string
 }
 
 // Build and return directory of go binaries for all platforms.
-// Linux targets are cross-compiled using Zig as the C toolchain.
-// Darwin targets are cross-compiled using osxcross (macOS SDK + clang).
 func (t *Tapes) Build(
 	ctx context.Context,
 
@@ -50,51 +24,23 @@ func (t *Tapes) Build(
 	// +default="-s -w"
 	ldflags string,
 ) *dagger.Directory {
+	targets := []buildTarget{
+		{"linux", "amd64"},
+		{"linux", "arm64"},
+		{"darwin", "amd64"},
+		{"darwin", "arm64"},
+	}
+
+	golang := t.goContainer()
 	outputs := dag.Directory()
-	outputs = t.buildLinux(outputs, ldflags)
-	outputs = t.buildDarwin(outputs, ldflags)
-	return outputs
-}
-
-// buildLinux compiles Go binaries for linux/amd64 and linux/arm64
-// using Zig as the cross-compilation C toolchain.
-func (t *Tapes) buildLinux(outputs *dagger.Directory, ldflags string) *dagger.Directory {
-	cgoFlags := "-I/opt/sqlite -fno-sanitize=all"
-	cgoLdFlags := "-fno-sanitize=all"
-
-	targets := []buildTarget{
-		{"linux", "amd64", "zig cc -target x86_64-linux-gnu", "zig c++ -target x86_64-linux-gnu", cgoFlags, cgoLdFlags},
-		{"linux", "arm64", "zig cc -target aarch64-linux-gnu", "zig c++ -target aarch64-linux-gnu", cgoFlags, cgoLdFlags},
-	}
-
-	// Build zig download URL based on host architecture
-	zigArch := zigArch()
-	zigDownloadURL := fmt.Sprintf("https://ziglang.org/download/%s/zig-%s-linux-%s.tar.xz", zigVersion, zigArch, zigVersion)
-	zigDir := fmt.Sprintf("zig-%s-linux-%s", zigArch, zigVersion)
-
-	golang := t.goContainer().
-		WithExec([]string{"apt-get", "install", "-y", "xz-utils"}).
-		WithExec([]string{"mkdir", "-p", "/opt/sqlite"}).
-		WithExec([]string{"cp", "/usr/include/sqlite3.h", "/opt/sqlite/"}).
-		WithExec([]string{"cp", "/usr/include/sqlite3ext.h", "/opt/sqlite/"}).
-		WithExec([]string{"sh", "-c", fmt.Sprintf("curl -L %s | tar -xJ -C /usr/local", zigDownloadURL)}).
-		WithEnvVariable("PATH", fmt.Sprintf("/usr/local/%s:$PATH", zigDir), dagger.ContainerWithEnvVariableOpts{Expand: true})
 
 	for _, target := range targets {
 		path := fmt.Sprintf("%s/%s/", target.goos, target.goarch)
 
 		build := golang.
-			WithEnvVariable("CGO_ENABLED", "1").
-			WithEnvVariable("GOEXPERIMENT", "jsonv2").
 			WithEnvVariable("GOOS", target.goos).
 			WithEnvVariable("GOARCH", target.goarch).
-			WithEnvVariable("CC", target.cc).
-			WithEnvVariable("CXX", target.cxx).
-			WithEnvVariable("CGO_CFLAGS", target.cgoFlags).
-			WithEnvVariable("CGO_LDFLAGS", target.cgoLdFlags).
-			WithExec([]string{"go", "build", "-ldflags", ldflags, "-o", path, "./cli/tapes"}).
-			WithExec([]string{"go", "build", "-ldflags", ldflags, "-o", path, "./cli/tapesprox"}).
-			WithExec([]string{"go", "build", "-ldflags", ldflags, "-o", path, "./cli/tapesapi"})
+			WithExec([]string{"go", "build", "-ldflags", ldflags, "-o", path, "./cli/tapes"})
 
 		outputs = outputs.WithDirectory(path, build.Directory(path))
 	}
@@ -102,65 +48,26 @@ func (t *Tapes) buildLinux(outputs *dagger.Directory, ldflags string) *dagger.Di
 	return outputs
 }
 
-// buildDarwin compiles Go binaries for darwin/amd64 and darwin/arm64
-// using the osxcross toolchain which provides the macOS SDK and clang
-// cross-compilers inside a Linux container.
-func (t *Tapes) buildDarwin(outputs *dagger.Directory, ldflags string) *dagger.Directory {
-	cgoFlags := "-I/opt/sqlite"
-	// Use lld instead of osxcross's ld64 to properly set SG_READ_ONLY flag on __DATA_CONST
-	// segment, which is required by macOS 15 (Sequoia) and later.
-	cgoLdFlags := "-fuse-ld=lld"
+func (t *Tapes) releaseLDFlags(version string, commit string, postHogPublicKey string, postHogEndpoint string) string {
+	buildtime := time.Now()
 
-	targets := []buildTarget{
-		{"darwin", "amd64", "o64-clang", "o64-clang++", cgoFlags, cgoLdFlags},
-		{"darwin", "arm64", "oa64-clang", "oa64-clang++", cgoFlags, cgoLdFlags},
+	ldflags := []string{
+		"-s",
+		"-w",
+		fmt.Sprintf("-X 'github.com/papercomputeco/tapes/pkg/utils.Version=%s'", version),
+		fmt.Sprintf("-X 'github.com/papercomputeco/tapes/pkg/utils.Sha=%s'", commit),
+		fmt.Sprintf("-X 'github.com/papercomputeco/tapes/pkg/utils.Buildtime=%s'", buildtime),
 	}
 
-	// Pull the osxcross toolchain (macOS SDK + clang cross-compilers)
-	osxcross := dag.Container().
-		From(osxcrossImage).
-		Directory("/osxcross")
-
-	// Use Debian Trixie as the base for darwin builds because the osxcross
-	// toolchain binaries require GLIBC 2.38+ (Bookworm only has 2.36).
-	// NOTE: this cannot reuse goContainer() since it needs Trixie, not Bookworm.
-	golang := dag.Container().
-		From("golang:1.25-trixie").
-		WithExec([]string{"apt-get", "update"}).
-		WithExec([]string{"apt-get", "install", "-y", "clang", "lld", "libsqlite3-dev"}).
-		WithExec([]string{"mkdir", "-p", "/opt/sqlite"}).
-		WithExec([]string{"cp", "/usr/include/sqlite3.h", "/opt/sqlite/"}).
-		WithExec([]string{"cp", "/usr/include/sqlite3ext.h", "/opt/sqlite/"}).
-		WithDirectory("/osxcross", osxcross).
-		WithEnvVariable("PATH", "/osxcross/bin:$PATH", dagger.ContainerWithEnvVariableOpts{Expand: true}).
-		WithEnvVariable("LD_LIBRARY_PATH", "/osxcross/lib:$LD_LIBRARY_PATH", dagger.ContainerWithEnvVariableOpts{Expand: true}).
-		WithEnvVariable("CGO_ENABLED", "1").
-		WithEnvVariable("GOEXPERIMENT", "jsonv2").
-		WithMountedCache("/go/pkg/mod", dag.CacheVolume("go-mod")).
-		WithMountedCache("/root/.cache/go-build", dag.CacheVolume("go-build")).
-		WithDirectory("/src", t.Source).
-		WithWorkdir("/src")
-
-	for _, target := range targets {
-		path := fmt.Sprintf("%s/%s/", target.goos, target.goarch)
-
-		build := golang.
-			WithEnvVariable("CGO_ENABLED", "1").
-			WithEnvVariable("GOEXPERIMENT", "jsonv2").
-			WithEnvVariable("GOOS", target.goos).
-			WithEnvVariable("GOARCH", target.goarch).
-			WithEnvVariable("CC", target.cc).
-			WithEnvVariable("CXX", target.cxx).
-			WithEnvVariable("CGO_CFLAGS", target.cgoFlags).
-			WithEnvVariable("CGO_LDFLAGS", target.cgoLdFlags).
-			WithExec([]string{"go", "build", "-ldflags", ldflags, "-o", path, "./cli/tapes"}).
-			WithExec([]string{"go", "build", "-ldflags", ldflags, "-o", path, "./cli/tapesprox"}).
-			WithExec([]string{"go", "build", "-ldflags", ldflags, "-o", path, "./cli/tapesapi"})
-
-		outputs = outputs.WithDirectory(path, build.Directory(path))
+	if postHogPublicKey != "" {
+		ldflags = append(ldflags, fmt.Sprintf("-X 'github.com/papercomputeco/tapes/pkg/telemetry.PostHogAPIKey=%s'", postHogPublicKey))
 	}
 
-	return outputs
+	if postHogEndpoint != "" {
+		ldflags = append(ldflags, fmt.Sprintf("-X 'github.com/papercomputeco/tapes/pkg/telemetry.PostHogEndpoint=%s'", postHogEndpoint))
+	}
+
+	return strings.Join(ldflags, " ")
 }
 
 // BuildRelease compiles versioned release binaries with embedded version info
@@ -181,25 +88,7 @@ func (t *Tapes) BuildRelease(
 	// +optional
 	postHogEndpoint string,
 ) *dagger.Directory {
-	buildtime := time.Now()
-
-	ldflags := []string{
-		"-s",
-		"-w",
-		fmt.Sprintf("-X 'github.com/papercomputeco/tapes/pkg/utils.Version=%s'", version),
-		fmt.Sprintf("-X 'github.com/papercomputeco/tapes/pkg/utils.Sha=%s'", commit),
-		fmt.Sprintf("-X 'github.com/papercomputeco/tapes/pkg/utils.Buildtime=%s'", buildtime),
-	}
-
-	if postHogPublicKey != "" {
-		ldflags = append(ldflags, fmt.Sprintf("-X 'github.com/papercomputeco/tapes/pkg/telemetry.PostHogAPIKey=%s'", postHogPublicKey))
-	}
-
-	if postHogEndpoint != "" {
-		ldflags = append(ldflags, fmt.Sprintf("-X 'github.com/papercomputeco/tapes/pkg/telemetry.PostHogEndpoint=%s'", postHogEndpoint))
-	}
-
-	dir := t.Build(ctx, strings.Join(ldflags, " "))
+	dir := t.Build(ctx, t.releaseLDFlags(version, commit, postHogPublicKey, postHogEndpoint))
 	return t.checksum(ctx, dir)
 }
 

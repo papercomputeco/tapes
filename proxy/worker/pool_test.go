@@ -8,12 +8,13 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
+	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
 // newTestPool creates a worker pool backed by an in-memory driver.
 // Callers should "wp.Close()" to drain enqueued jobs before asserting storage state.
-func newTestPool() (*Pool, *inmemory.Driver) {
+func newTestPool() (*Pool, storage.Driver) {
 	logger := tapeslogger.NewNoop()
 	driver := inmemory.NewDriver()
 
@@ -29,7 +30,7 @@ func newTestPool() (*Pool, *inmemory.Driver) {
 var _ = Describe("Worker Pool", func() {
 	var (
 		wp     *Pool
-		driver *inmemory.Driver
+		driver storage.Driver
 		ctx    context.Context
 	)
 

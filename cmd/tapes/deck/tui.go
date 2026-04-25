@@ -2,6 +2,7 @@ package deckcmder
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,7 +30,11 @@ const (
 	period24h timePeriod = iota
 	period7d
 	period30d
+	period90d
+	period120d
 )
+
+var periodLabels = []string{"24h", "7d", "30d", "90d", "120d"}
 
 const (
 	horizontalPadding = 2
@@ -45,6 +50,7 @@ const (
 	keyEnter                 = "enter"
 	maxCostByModelEntries    = 5
 	waveformWindowMultiplier = 10
+	httpOverviewPageLimit    = 25
 )
 
 const (
@@ -53,34 +59,41 @@ const (
 )
 
 type deckModel struct {
-	query            deck.Querier
-	filters          deck.Filters
-	overview         *deck.Overview
-	detail           *deck.SessionDetail
-	view             deckView
-	cursor           int
-	scrollOffset     int
-	messageCursor    int
-	width            int
-	height           int
-	sortIndex        int
-	statusIndex      int
-	messageSort      int
-	timePeriod       timePeriod
-	modalCursor      int
-	modalTab         modalTab
-	replayActive     bool
-	replayOnLoad     bool
-	metricsReady     bool
-	overviewStats    *deckOverviewStats
-	refreshEvery     time.Duration
-	spinner          spinner.Model
-	keys             deckKeyMap
-	help             help.Model
-	searchInput      textinput.Model
-	searchActive     bool
-	sortedCache      *sortedMessagesCache
-	sortedGroupCache *sortedGroupCache
+	query               deck.Querier
+	filters             deck.Filters
+	overview            *deck.Overview
+	detail              *deck.SessionDetail
+	view                deckView
+	cursor              int
+	scrollOffset        int
+	messageCursor       int
+	width               int
+	height              int
+	sortIndex           int
+	statusIndex         int
+	messageSort         int
+	timePeriod          timePeriod
+	modalCursor         int
+	modalTab            modalTab
+	replayActive        bool
+	replayOnLoad        bool
+	metricsReady        bool
+	overviewStats       *deckOverviewStats
+	overviewLoading     bool
+	overviewLoadingMore bool
+	overviewNextCursor  string
+	overviewHasMore     bool
+	overviewStatus      string
+	overviewStatusTime  time.Time
+	overviewError       string
+	refreshEvery        time.Duration
+	spinner             spinner.Model
+	keys                deckKeyMap
+	help                help.Model
+	searchInput         textinput.Model
+	searchActive        bool
+	sortedCache         *sortedMessagesCache
+	sortedGroupCache    *sortedGroupCache
 }
 
 type sortedMessagesCache struct {
@@ -111,8 +124,12 @@ type sessionLoadedMsg struct {
 }
 
 type overviewLoadedMsg struct {
-	overview *deck.Overview
-	err      error
+	overview   *deck.Overview
+	err        error
+	status     string
+	nextCursor string
+	hasMore    bool
+	appendPage bool
 }
 
 type replayTickMsg time.Time
@@ -166,10 +183,14 @@ func newDeckModel(query deck.Querier, filters deck.Filters, overview *deck.Overv
 		}
 	}
 
-	// Determine initial time period from filters
+	// Determine initial time period from filters.
 	period := period30d
 	if filters.Since > 0 {
 		switch {
+		case filters.Since >= 120*24*time.Hour:
+			period = period120d
+		case filters.Since >= 90*24*time.Hour:
+			period = period90d
 		case filters.Since >= 30*24*time.Hour:
 			period = period30d
 		case filters.Since >= 7*24*time.Hour:
@@ -201,22 +222,25 @@ func newDeckModel(query deck.Querier, filters deck.Filters, overview *deck.Overv
 	h.Styles = help.DefaultStyles(isDarkTheme())
 
 	return deckModel{
-		query:            query,
-		filters:          filters,
-		overview:         overview,
-		view:             viewOverview,
-		sortIndex:        sortIndex,
-		statusIndex:      statusIndex,
-		messageSort:      0,
-		timePeriod:       period,
-		modalTab:         modalSort,
-		refreshEvery:     refreshEvery,
-		spinner:          s,
-		keys:             defaultKeyMap(),
-		help:             h,
-		searchInput:      ti,
-		sortedCache:      &sortedMessagesCache{},
-		sortedGroupCache: &sortedGroupCache{},
+		query:              query,
+		filters:            filters,
+		overview:           overview,
+		view:               viewOverview,
+		sortIndex:          sortIndex,
+		statusIndex:        statusIndex,
+		messageSort:        0,
+		timePeriod:         period,
+		modalTab:           modalSort,
+		overviewLoading:    overview == nil,
+		overviewStatus:     describeOverviewLoad(filters),
+		overviewStatusTime: time.Now(),
+		refreshEvery:       refreshEvery,
+		spinner:            s,
+		keys:               defaultKeyMap(),
+		help:               h,
+		searchInput:        ti,
+		sortedCache:        &sortedMessagesCache{},
+		sortedGroupCache:   &sortedGroupCache{},
 	}
 }
 
@@ -238,19 +262,39 @@ func (m deckModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height - (2 * verticalPadding)
 		return m, nil
 	case overviewLoadedMsg:
+		m.overviewLoading = false
+		m.overviewLoadingMore = false
+		m.overviewStatus = msg.status
+		m.overviewStatusTime = time.Now()
 		if msg.err != nil {
+			m.overviewError = msg.err.Error()
 			return m, nil
 		}
-		// Preserve cursor position by remembering the selected session ID
+		m.overviewError = ""
+		m.overviewNextCursor = msg.nextCursor
+		m.overviewHasMore = msg.hasMore
+
+		// Preserve cursor position by remembering the selected session ID.
 		var selectedSessionID string
-		if m.overview != nil && m.cursor < len(m.overview.Sessions) {
-			selectedSessionID = m.overview.Sessions[m.cursor].ID
+		if m.overview != nil {
+			filtered := m.filteredSessions()
+			if m.cursor < len(filtered) {
+				selectedSessionID = filtered[m.cursor].ID
+			}
 		}
 
-		m.overview = msg.overview
+		if msg.appendPage && m.overview != nil && msg.overview != nil {
+			m.overview.Sessions = appendUniqueSessions(m.overview.Sessions, msg.overview.Sessions)
+			deck.SortSessions(m.overview.Sessions, m.filters.Sort, m.filters.SortDir)
+		} else {
+			m.overview = msg.overview
+		}
 		m.metricsReady = false
 		m.overviewStats = nil
 
+		if m.overview == nil {
+			return m, nil
+		}
 		metricsCmd := computeMetricsCmd(m.overview.Sessions)
 
 		// Try to find the previously selected session in the filtered list
@@ -276,7 +320,9 @@ func (m deckModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if m.cursor >= len(filtered) {
 			m.cursor = clamp(m.cursor, len(filtered)-1)
 		}
-		m.scrollOffset = 0
+		if !msg.appendPage {
+			m.scrollOffset = 0
+		}
 		return m, metricsCmd
 	case metricsReadyMsg:
 		m.metricsReady = true
@@ -317,7 +363,7 @@ func (m deckModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.messageCursor++
 		return m, replayTick()
 	case spinner.TickMsg:
-		overviewLoading := m.overview == nil || !m.metricsReady
+		overviewLoading := m.overviewLoading || m.overviewLoadingMore || (m.overview != nil && !m.metricsReady)
 		if m.view == viewOverview && overviewLoading {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
@@ -398,6 +444,10 @@ func (m deckModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "j", "down":
 		return m.moveCursor(1)
+	case "n", " ":
+		if m.view == viewOverview {
+			return m.loadMoreOverview()
+		}
 	case "k", "up":
 		return m.moveCursor(-1)
 	case "l", keyEnter:
@@ -524,7 +574,7 @@ func (m deckModel) handleModalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.statusIndex = m.modalCursor
 			m.filters.Status = statusFilters[m.statusIndex]
 			m.view = viewOverview
-			return m, loadOverviewCmd(m.query, m.filters)
+			return m.startOverviewLoad()
 		}
 	}
 	return m, nil
@@ -586,9 +636,9 @@ func (m deckModel) enterSession() (tea.Model, tea.Cmd) {
 }
 
 func (m deckModel) cyclePeriod() (tea.Model, tea.Cmd) {
-	m.timePeriod = (m.timePeriod + 1) % 3
+	m.timePeriod = (m.timePeriod + 1) % timePeriod(len(periodLabels))
 	m.filters.Since = periodToDuration(m.timePeriod)
-	return m, loadOverviewCmd(m.query, m.filters)
+	return m.startOverviewLoad()
 }
 
 func (m deckModel) cycleMessageSort() (tea.Model, tea.Cmd) {
@@ -770,9 +820,47 @@ func (m deckModel) overlayModal(base, modal string) string {
 }
 
 func loadOverviewCmd(query deck.Querier, filters deck.Filters) tea.Cmd {
+	return loadOverviewPageCmd(query, filters, "", httpOverviewPageLimit, false)
+}
+
+func loadOverviewPageCmd(query deck.Querier, filters deck.Filters, cursor string, limit int, appendPage bool) tea.Cmd {
 	return func() tea.Msg {
-		overview, err := query.Overview(context.Background(), filters)
-		return overviewLoadedMsg{overview: overview, err: err}
+		started := time.Now()
+		baseStatus := describeOverviewLoad(filters)
+		if appendPage {
+			baseStatus = "loading more sessions"
+		}
+
+		var overview *deck.Overview
+		var nextCursor string
+		var hasMore bool
+		var err error
+		if pager, ok := query.(deck.OverviewPager); ok {
+			page, pageErr := pager.OverviewPage(context.Background(), filters, cursor, limit)
+			err = pageErr
+			if page != nil {
+				overview = page.Overview
+				nextCursor = page.NextCursor
+				hasMore = page.HasMore
+			}
+		} else {
+			overview, err = query.Overview(context.Background(), filters)
+		}
+
+		if err != nil {
+			status := "load failed after " + time.Since(started).Round(time.Millisecond).String()
+			return overviewLoadedMsg{overview: overview, err: err, status: status, appendPage: appendPage}
+		}
+		count := 0
+		if overview != nil {
+			count = len(overview.Sessions)
+		}
+		verb := "loaded "
+		if appendPage {
+			verb = "loaded another "
+		}
+		status := baseStatus + " • " + verb + strconv.Itoa(count) + " sessions in " + time.Since(started).Round(time.Millisecond).String()
+		return overviewLoadedMsg{overview: overview, err: err, status: status, nextCursor: nextCursor, hasMore: hasMore, appendPage: appendPage}
 	}
 }
 
@@ -788,6 +876,69 @@ func loadSessionCmd(query deck.Querier, sessionID string, keepUI bool) tea.Cmd {
 		detail, err := query.SessionDetail(context.Background(), sessionID)
 		return sessionLoadedMsg{detail: detail, err: err, keepUI: keepUI}
 	}
+}
+
+func formatOptionalTime(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+func describeOverviewLoad(filters deck.Filters) string {
+	parts := []string{"loading latest sessions"}
+	if filters.Since > 0 {
+		parts = append(parts, "since="+filters.Since.String())
+	}
+	if filters.From != nil {
+		parts = append(parts, "from="+formatOptionalTime(filters.From))
+	}
+	if filters.To != nil {
+		parts = append(parts, "to="+formatOptionalTime(filters.To))
+	}
+	if filters.Project != "" {
+		parts = append(parts, "project="+filters.Project)
+	}
+	if filters.Model != "" {
+		parts = append(parts, "model="+filters.Model)
+	}
+	if filters.Status != "" {
+		parts = append(parts, "status="+filters.Status)
+	}
+	return strings.Join(parts, " • ")
+}
+
+func (m deckModel) startOverviewLoad() (deckModel, tea.Cmd) {
+	m.overviewLoading = true
+	m.overviewLoadingMore = false
+	m.overviewNextCursor = ""
+	m.overviewHasMore = false
+	m.overviewError = ""
+	m.overviewStatus = describeOverviewLoad(m.filters)
+	m.overviewStatusTime = time.Now()
+	return m, loadOverviewCmd(m.query, m.filters)
+}
+
+func (m deckModel) loadMoreOverview() (deckModel, tea.Cmd) {
+	if !m.overviewHasMore || m.overviewNextCursor == "" || m.overviewLoading || m.overviewLoadingMore {
+		return m, nil
+	}
+	m.overviewLoadingMore = true
+	m.overviewError = ""
+	m.overviewStatus = "loading more sessions"
+	m.overviewStatusTime = time.Now()
+	return m, loadOverviewPageCmd(m.query, m.filters, m.overviewNextCursor, httpOverviewPageLimit, true)
+}
+
+func formatRelativeTime(d time.Duration) string {
+	d = d.Round(time.Second)
+	if d < 0 {
+		d = -d
+	}
+	if d < time.Second {
+		return "0s"
+	}
+	return d.String()
 }
 
 func replayTick() tea.Cmd {

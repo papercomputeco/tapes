@@ -11,6 +11,7 @@ import (
 	"github.com/papercomputeco/tapes/api/search"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	testutils "github.com/papercomputeco/tapes/pkg/utils/test"
 	"github.com/papercomputeco/tapes/pkg/vector"
@@ -23,7 +24,7 @@ func TestSearch(t *testing.T) {
 
 var _ = Describe("Search", func() {
 	var (
-		driver       *inmemory.Driver
+		driver       storage.Driver
 		vectorDriver *testutils.MockVectorDriver
 		embedder     *testutils.MockEmbedder
 		log          *slog.Logger
@@ -34,6 +35,7 @@ var _ = Describe("Search", func() {
 	BeforeEach(func() {
 		log = logger.NewNoop()
 		driver = inmemory.NewDriver()
+
 		vectorDriver = testutils.NewMockVectorDriver()
 		embedder = testutils.NewMockEmbedder()
 		ctx = context.Background()
@@ -130,7 +132,7 @@ var _ = Describe("Search", func() {
 				Score: 0.95,
 			}
 
-			dag, err := merkle.LoadDag(ctx, driver, node.Hash)
+			dag, err := driver.LoadDag(ctx, node.Hash)
 			Expect(err).NotTo(HaveOccurred())
 
 			searchResult := searcher.BuildResult(result, dag)
@@ -163,7 +165,7 @@ var _ = Describe("Search", func() {
 				Score: 0.85,
 			}
 
-			dag, err := merkle.LoadDag(ctx, driver, node3.Hash)
+			dag, err := driver.LoadDag(ctx, node3.Hash)
 			Expect(err).NotTo(HaveOccurred())
 
 			searchResult := searcher.BuildResult(result, dag)

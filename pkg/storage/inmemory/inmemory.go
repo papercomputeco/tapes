@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
@@ -211,6 +212,101 @@ func (s *Driver) AncestryChains(ctx context.Context, hashes []string) (map[strin
 		out[h] = chain
 	}
 	return out, nil
+}
+
+// LoadDag takes a node hash and returns the branch containing that node:
+// its ancestry up to the root and all descendants reachable from that node.
+func (s *Driver) LoadDag(ctx context.Context, hash string) (*merkle.Dag, error) {
+	dag := merkle.NewDag()
+
+	ancestry, err := s.Ancestry(ctx, hash)
+	if err != nil {
+		return nil, fmt.Errorf("getting ancestry for %s: %w", hash, err)
+	}
+	if len(ancestry) == 0 {
+		return nil, storage.NotFoundError{Hash: hash}
+	}
+
+	for i := len(ancestry) - 1; i >= 0; i-- {
+		if _, err := dag.AddNode(ancestry[i]); err != nil {
+			return nil, fmt.Errorf("adding ancestor node %s: %w", ancestry[i].Hash, err)
+		}
+	}
+
+	seen := map[string]struct{}{hash: {}}
+	var addDescendants func(string) error
+	addDescendants = func(parentHash string) error {
+		children, err := s.GetByParent(ctx, &parentHash)
+		if err != nil {
+			return fmt.Errorf("getting children of %s: %w", parentHash, err)
+		}
+		for _, child := range children {
+			if _, err := dag.AddNode(child); err != nil {
+				return fmt.Errorf("adding child node %s: %w", child.Hash, err)
+			}
+			if _, ok := seen[child.Hash]; ok {
+				continue
+			}
+			seen[child.Hash] = struct{}{}
+			if err := addDescendants(child.Hash); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	if err := addDescendants(hash); err != nil {
+		return nil, err
+	}
+
+	return dag, nil
+}
+
+// Open is a no-op for the in-memory storer.
+func (s *Driver) Open(_ context.Context) error {
+	return nil
+}
+
+// UpdateUsage updates only usage metadata on an existing node by hash.
+func (s *Driver) UpdateUsage(_ context.Context, hash string, usage *llm.Usage) error {
+	if usage == nil {
+		return errors.New("cannot update with nil usage")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	node, ok := s.nodes[hash]
+	if !ok {
+		return storage.NotFoundError{Hash: hash}
+	}
+	if node.Usage == nil {
+		node.Usage = &llm.Usage{}
+	}
+
+	if usage.PromptTokens > 0 {
+		node.Usage.PromptTokens = usage.PromptTokens
+	}
+	if usage.CompletionTokens > 0 {
+		node.Usage.CompletionTokens = usage.CompletionTokens
+	}
+	if usage.TotalTokens > 0 {
+		node.Usage.TotalTokens = usage.TotalTokens
+	}
+	if usage.CacheCreationInputTokens > 0 {
+		node.Usage.CacheCreationInputTokens = usage.CacheCreationInputTokens
+	}
+	if usage.CacheReadInputTokens > 0 {
+		node.Usage.CacheReadInputTokens = usage.CacheReadInputTokens
+	}
+	if usage.TotalDurationNs > 0 {
+		node.Usage.TotalDurationNs = usage.TotalDurationNs
+	}
+	if usage.PromptDurationNs > 0 {
+		node.Usage.PromptDurationNs = usage.PromptDurationNs
+	}
+
+	return nil
 }
 
 // Depth returns the depth of a node (0 for roots).

@@ -47,7 +47,6 @@ var _ = Describe("Configer config", func() {
 			Expect(cfg.API.Listen).To(Equal(defaults.API.Listen))
 			Expect(cfg.Client.ProxyTarget).To(Equal(defaults.Client.ProxyTarget))
 			Expect(cfg.Client.APITarget).To(Equal(defaults.Client.APITarget))
-			Expect(cfg.VectorStore.Provider).To(Equal(defaults.VectorStore.Provider))
 			Expect(cfg.Embedding.Provider).To(Equal(defaults.Embedding.Provider))
 			Expect(cfg.Embedding.Target).To(Equal(defaults.Embedding.Target))
 			Expect(cfg.Embedding.Model).To(Equal(defaults.Embedding.Model))
@@ -83,7 +82,7 @@ dimensions = 768
 			data := `version = 0
 
 [storage]
-sqlite_path = "/tmp/tapes.sqlite"
+postgres_dsn = "postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable"
 
 [proxy]
 provider = "openai"
@@ -98,7 +97,6 @@ proxy_target = "http://myhost:9090"
 api_target = "http://myhost:9091"
 
 [vector_store]
-provider = "chroma"
 target = "http://localhost:8000"
 
 [embedding]
@@ -116,14 +114,13 @@ dimensions = 1024
 			cfg, err := c.LoadConfig()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cfg.Version).To(Equal(0))
-			Expect(cfg.Storage.SQLitePath).To(Equal("/tmp/tapes.sqlite"))
+			Expect(cfg.Storage.PostgresDSN).To(Equal("postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable"))
 			Expect(cfg.Proxy.Provider).To(Equal("openai"))
 			Expect(cfg.Proxy.Upstream).To(Equal("https://api.openai.com"))
 			Expect(cfg.Proxy.Listen).To(Equal(":9090"))
 			Expect(cfg.API.Listen).To(Equal(":9091"))
 			Expect(cfg.Client.ProxyTarget).To(Equal("http://myhost:9090"))
 			Expect(cfg.Client.APITarget).To(Equal("http://myhost:9091"))
-			Expect(cfg.VectorStore.Provider).To(Equal("chroma"))
 			Expect(cfg.VectorStore.Target).To(Equal("http://localhost:8000"))
 			Expect(cfg.Embedding.Provider).To(Equal("ollama"))
 			Expect(cfg.Embedding.Target).To(Equal("http://localhost:11434"))
@@ -372,7 +369,7 @@ provider = "openai"
 			c, err := config.NewConfiger(tmpDir)
 			Expect(err).NotTo(HaveOccurred())
 
-			val, err := c.GetConfigValue("storage.sqlite_path")
+			val, err := c.GetConfigValue("storage.postgres_dsn")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(val).To(BeEmpty())
 		})
@@ -446,7 +443,7 @@ listen = ":7070"
 		It("returns all expected keys", func() {
 			keys := config.ValidConfigKeys()
 			Expect(keys).To(ContainElements(
-				"storage.sqlite_path",
+				"storage.postgres_dsn",
 				"proxy.provider",
 				"proxy.upstream",
 				"proxy.listen",
@@ -498,7 +495,7 @@ listen = ":7070"
 			cfg := &config.Config{
 				Version: config.CurrentV,
 				Storage: config.StorageConfig{
-					SQLitePath: "/tmp/test.sqlite",
+					PostgresDSN: "postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable",
 				},
 				Proxy: config.ProxyConfig{
 					Provider: "openai",
@@ -516,8 +513,7 @@ listen = ":7070"
 					APITarget:   "http://myhost:9091",
 				},
 				VectorStore: config.VectorStoreConfig{
-					Provider: "chroma",
-					Target:   "http://localhost:8000",
+					Target: "http://localhost:8000",
 				},
 				Embedding: config.EmbeddingConfig{
 					Provider:   "ollama",
@@ -660,7 +656,6 @@ var _ = Describe("NewDefaultConfig", func() {
 		Expect(cfg.API.Listen).To(Equal(":8081"))
 		Expect(cfg.Client.ProxyTarget).To(Equal("http://localhost:8080"))
 		Expect(cfg.Client.APITarget).To(Equal("http://localhost:8081"))
-		Expect(cfg.VectorStore.Provider).To(Equal("sqlite"))
 		Expect(cfg.Embedding.Provider).To(Equal("ollama"))
 		Expect(cfg.Embedding.Target).To(Equal("http://localhost:11434"))
 		Expect(cfg.Embedding.Model).To(Equal("embeddinggemma"))
@@ -885,7 +880,6 @@ provider = "anthropic"
 		Expect(cfg.API.Listen).To(Equal(defaults.API.Listen))
 		Expect(cfg.Client.ProxyTarget).To(Equal(defaults.Client.ProxyTarget))
 		Expect(cfg.Client.APITarget).To(Equal(defaults.Client.APITarget))
-		Expect(cfg.VectorStore.Provider).To(Equal(defaults.VectorStore.Provider))
 		Expect(cfg.Embedding.Provider).To(Equal(defaults.Embedding.Provider))
 		Expect(cfg.Embedding.Target).To(Equal(defaults.Embedding.Target))
 		Expect(cfg.Embedding.Model).To(Equal(defaults.Embedding.Model))

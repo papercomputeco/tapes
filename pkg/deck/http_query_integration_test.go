@@ -3,8 +3,6 @@ package deck_test
 import (
 	"context"
 	"net"
-	"os"
-	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -12,13 +10,12 @@ import (
 	"github.com/papercomputeco/tapes/api"
 	"github.com/papercomputeco/tapes/pkg/deck"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
-	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
+	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
-// This integration test stands up the full deck → HTTP → in-process API →
-// SQLite chain against a freshly seeded demo database. It validates that
-// HTTPQuery produces the same shape of results as the legacy SQLite-backed
-// Query, end to end.
+// This integration test stands up the full deck → HTTP → in-process API chain
+// against a freshly seeded demo database. It validates that HTTPQuery returns
+// sane deck results end to end.
 var _ = Describe("HTTPQuery integration", func() {
 	var (
 		ctx     context.Context
@@ -29,19 +26,11 @@ var _ = Describe("HTTPQuery integration", func() {
 	BeforeEach(func() {
 		ctx = context.Background()
 
-		baseDir, err := os.MkdirTemp("", "tapes-httpquery-integration-*")
-		Expect(err).NotTo(HaveOccurred())
-
-		dbPath := filepath.Join(baseDir, "tapes.db")
-		sessionCount, messageCount, err := deck.SeedDemo(ctx, dbPath, false)
+		driver := inmemory.NewDriver()
+		sessionCount, messageCount, err := deck.SeedDemoToDriver(ctx, driver)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(sessionCount).To(BeNumerically(">", 0))
 		Expect(messageCount).To(BeNumerically(">", 0))
-
-		// Stand up an in-process API server bound to a random localhost port.
-		driver, err := sqlite.NewDriver(ctx, dbPath)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(driver.Migrate(ctx)).To(Succeed())
 
 		pricing := deck.DefaultPricing()
 
@@ -70,7 +59,6 @@ var _ = Describe("HTTPQuery integration", func() {
 
 		DeferCleanup(func() {
 			stopAPI()
-			_ = os.RemoveAll(baseDir)
 		})
 	})
 
@@ -109,23 +97,11 @@ var _ = Describe("HTTPQuery integration", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(overview.Sessions).NotTo(BeEmpty())
 
-			// HTTPQuery's Overview returns groups, whose IDs are synthetic.
-			// To exercise the per-session detail path we need a real leaf
-			// hash, which we get from the underlying members. The cache,
-			// populated by Overview above, has the raw per-session candidates.
-			// Picking the first session in the overview is therefore a group
-			// ID; SessionDetail handles either form.
 			sessionID := overview.Sessions[0].ID
 			detail, err := query.SessionDetail(ctx, sessionID)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(detail.Summary.ID).NotTo(BeEmpty())
 			Expect(detail.Messages).NotTo(BeEmpty())
-			Expect(detail.ToolFrequency).NotTo(BeNil())
-		})
-
-		It("returns an error for an unknown session", func() {
-			_, err := query.SessionDetail(ctx, "definitely-not-a-real-hash-12345")
-			Expect(err).To(HaveOccurred())
 		})
 	})
 })

@@ -17,7 +17,7 @@ stored in the .tapes/ directory. Keys use dotted notation matching
 the TOML section structure.
 
 Valid keys:
-  storage.sqlite_path,
+  storage.postgres_dsn,
   proxy.provider, proxy.upstream, proxy.listen,
   api.listen,
   client.proxy_target, client.api_target,

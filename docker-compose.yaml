@@ -1,4 +1,18 @@
 services:
+  postgres:
+    build:
+      context: .
+      dockerfile: postgres/Dockerfile
+    image: tapes-postgres-cnpg-pgduckdb:17
+    environment:
+      POSTGRES_DB: tapes
+      POSTGRES_USER: tapes
+      POSTGRES_PASSWORD: tapes
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
   ollama:
     image: ollama/ollama
     ports:
@@ -6,31 +20,20 @@ services:
     volumes:
       - ~/.ollama:/root/.ollama
 
-  chromadb:
-    image: chromadb/chroma:1.4.1
-    ports:
-      - "8000:8000"
-    environment:
-      - IS_PERSISTENT=TRUE
-      - ANONYMIZED_TELEMETRY=TRUE
-    volumes:
-      - chroma-data:/chroma/chroma
-
   tapes:
     build:
-      dockerfile: dockerfiles/tapes.Dockerfile
+      dockerfile: Dockerfile
     depends_on:
+      - postgres
       - ollama
-      - chromadb
     ports:
       - "8080:8080"
       - "8081:8081"
     command: >-
       serve
       --upstream http://ollama:11434
-      --sqlite /data/tapes.sqlite
-      --vector-store-provider chroma
-      --vector-store-target http://chromadb:8000
+      --postgres postgres://tapes:tapes@postgres:5432/tapes?sslmode=disable
+      --vector-store-target postgres://tapes:tapes@postgres:5432/tapes?sslmode=disable
       --embedding-provider ollama
       --embedding-target http://ollama:11434
       --embedding-model nomic-embed-text
@@ -39,5 +42,5 @@ services:
       - tapes-data:/data
 
 volumes:
-  chroma-data:
+  postgres-data:
   tapes-data:

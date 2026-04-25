@@ -14,6 +14,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
+	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	"github.com/papercomputeco/tapes/proxy/header"
 )
@@ -94,7 +95,7 @@ func makeOllamaResponseBody(model, role, content string) []byte {
 var _ = Describe("Non-Streaming Proxy", func() {
 	var (
 		p        *Proxy
-		driver   *inmemory.Driver
+		driver   storage.Driver
 		upstream *httptest.Server
 	)
 
@@ -352,7 +353,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 var _ = Describe("Streaming Proxy", func() {
 	var (
 		p        *Proxy
-		driver   *inmemory.Driver
+		driver   storage.Driver
 		upstream *httptest.Server
 	)
 
@@ -730,7 +731,7 @@ var _ = Describe("New", func() {
 var _ = Describe("End-to-End Multi-Turn Proxy", func() {
 	var (
 		p        *Proxy
-		driver   *inmemory.Driver
+		driver   storage.Driver
 		upstream *httptest.Server
 		turnNum  int
 	)
@@ -818,7 +819,7 @@ var _ = Describe("End-to-End Multi-Turn Proxy", func() {
 var _ = Describe("Storage Provider Metadata", func() {
 	var (
 		p        *Proxy
-		driver   *inmemory.Driver
+		driver   storage.Driver
 		upstream *httptest.Server
 	)
 

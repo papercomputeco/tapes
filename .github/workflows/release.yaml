@@ -33,15 +33,25 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Push image
+      - name: Push tapes image
         run: |
           dagger call \
-            build-push-image \
+            build-push-tapes-images \
               --registry=${{ vars.REGISTRY }} \
               --tags="${{ github.event.release.tag_name }}" \
               --tags="latest" \
               --version="${{ github.event.release.tag_name }}" \
               --commit="${{ github.sha }}" \
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+
+      - name: Push postgres image
+        run: |
+          dagger call \
+            build-push-postgres-images \
+              --registry=${{ vars.REGISTRY }} \
+              --tags="${{ github.event.release.tag_name }}" \
+              --tags="latest"
         env:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 

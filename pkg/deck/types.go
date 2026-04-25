@@ -7,12 +7,27 @@ import (
 	"github.com/papercomputeco/tapes/pkg/sessions"
 )
 
-// Querier is the interface the deck TUI and web dashboard use to fetch
+// Querier is the interface the deck TUI use to fetch
 // session data. The HTTPQuery implementation in this package talks to a
 // tapes API server (in-process or remote) over HTTP.
 type Querier interface {
 	Overview(ctx context.Context, filters Filters) (*Overview, error)
 	SessionDetail(ctx context.Context, sessionID string) (*SessionDetail, error)
+}
+
+// OverviewPager is an optional extension implemented by query backends that
+// can return bounded overview pages. TUI callers use it to lazily load more
+// sessions without forcing every Querier implementation to support pagination.
+type OverviewPager interface {
+	OverviewPage(ctx context.Context, filters Filters, cursor string, limit int) (*OverviewPage, error)
+}
+
+// OverviewPage is one page of the deck overview plus the API cursor needed to
+// fetch the next page. HasMore is true when NextCursor is non-empty.
+type OverviewPage struct {
+	Overview   *Overview
+	NextCursor string
+	HasMore    bool
 }
 
 // Pricing aliases sessions.Pricing so the deck and the API both speak the

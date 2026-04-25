@@ -32,25 +32,13 @@ func (t *Tapes) TestE2E(ctx context.Context) (string, error) {
 		WithServiceBinding("postgres", postgresSvc).
 		WithServiceBinding("ollama", ollamaSvc)
 
-	// --- Run migrations once before starting services ---
-	_, err = tapesBase.
-		WithExec([]string{
-			"tapes",
-			"migrate",
-			"--postgres", postgresDSN,
-		}).
-		Stdout(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to run migrations: %w", err)
-	}
-
 	// --- tapes proxy service ---
 	proxySvc := tapesBase.
 		WithExposedPort(8080).
 		AsService(dagger.ContainerAsServiceOpts{
 			Args: []string{
 				"tapes", "serve", "proxy",
-				"--postgres", postgresDSN,
+				"--postgres", newPostgresDSN(),
 				"--upstream", fmt.Sprintf("http://ollama:%d", ollamaPort),
 				"--provider", "ollama",
 				"--listen", ":8080",
@@ -65,7 +53,7 @@ func (t *Tapes) TestE2E(ctx context.Context) (string, error) {
 		AsService(dagger.ContainerAsServiceOpts{
 			Args: []string{
 				"tapes", "serve", "api",
-				"--postgres", postgresDSN,
+				"--postgres", newPostgresDSN(),
 				"--listen", ":8081",
 			},
 		})

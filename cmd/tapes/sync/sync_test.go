@@ -19,9 +19,8 @@ var _ = Describe("NewSyncCmd", func() {
 	It("has the expected flags", func() {
 		cmd := NewSyncCmd()
 
-		sqliteFlag := cmd.Flags().Lookup("sqlite")
-		Expect(sqliteFlag).NotTo(BeNil())
-		Expect(sqliteFlag.Shorthand).To(Equal("s"))
+		postgresFlag := cmd.Flags().Lookup("postgres")
+		Expect(postgresFlag).NotTo(BeNil())
 
 		claudeDirFlag := cmd.Flags().Lookup("claude-dir")
 		Expect(claudeDirFlag).NotTo(BeNil())

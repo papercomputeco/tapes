@@ -13,6 +13,27 @@ import (
 	"github.com/papercomputeco/tapes/pkg/sessions"
 )
 
+func appendUniqueSessions(existing, incoming []deck.SessionSummary) []deck.SessionSummary {
+	if len(incoming) == 0 {
+		return existing
+	}
+	seen := make(map[string]int, len(existing)+len(incoming))
+	out := make([]deck.SessionSummary, len(existing), len(existing)+len(incoming))
+	copy(out, existing)
+	for i, session := range out {
+		seen[session.ID] = i
+	}
+	for _, session := range incoming {
+		if idx, ok := seen[session.ID]; ok {
+			out[idx] = session
+			continue
+		}
+		seen[session.ID] = len(out)
+		out = append(out, session)
+	}
+	return out
+}
+
 func sortedModelCosts(costs map[string]deck.ModelCost) []deck.ModelCost {
 	items := make([]deck.ModelCost, 0, len(costs))
 	for _, cost := range costs {
@@ -47,6 +68,10 @@ func periodToDuration(p timePeriod) time.Duration {
 		return 7 * 24 * time.Hour
 	case period30d:
 		return 30 * 24 * time.Hour
+	case period90d:
+		return 90 * 24 * time.Hour
+	case period120d:
+		return 120 * 24 * time.Hour
 	default:
 		return 30 * 24 * time.Hour
 	}
@@ -60,6 +85,10 @@ func periodToLabel(p timePeriod) string {
 		return "7d"
 	case period30d:
 		return "30d"
+	case period90d:
+		return "90d"
+	case period120d:
+		return "120d"
 	default:
 		return "30d"
 	}

@@ -2,51 +2,32 @@ package deck
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/papercomputeco/tapes/pkg/storage/sqlite"
+	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
-var _ = Describe("SeedDemo", func() {
-	It("allows seeding when sqlite file exists but is empty", func() {
+var _ = Describe("SeedDemoToDriver", func() {
+	It("allows seeding an empty database", func() {
 		ctx := context.Background()
-		baseDir, err := os.MkdirTemp("", "tapes-seed-empty-*")
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() {
-			_ = os.RemoveAll(baseDir)
-		})
+		driver := inmemory.NewDriver()
 
-		dbPath := filepath.Join(baseDir, "tapes.db")
-		Expect(os.WriteFile(dbPath, []byte{}, 0o644)).To(Succeed())
-
-		sessions, messages, err := SeedDemo(ctx, dbPath, false)
+		sessions, messages, err := SeedDemoToDriver(ctx, driver)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(sessions).To(BeNumerically(">", 0))
 		Expect(messages).To(BeNumerically(">", 0))
 	})
 
-	It("returns an error when sqlite has existing data", func() {
+	It("returns an error when the database already has data", func() {
 		ctx := context.Background()
-		baseDir, err := os.MkdirTemp("", "tapes-seed-data-*")
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() {
-			_ = os.RemoveAll(baseDir)
-		})
+		driver := inmemory.NewDriver()
 
-		dbPath := filepath.Join(baseDir, "tapes.db")
-		driver, err := sqlite.NewDriver(ctx, dbPath)
+		_, _, err := SeedDemoToDriver(ctx, driver)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(driver.Migrate(ctx)).To(Succeed())
-		Expect(driver.Client.Node.Create().
-			SetID("seeded-node").
-			Exec(ctx)).To(Succeed())
-		Expect(driver.Close()).To(Succeed())
 
-		_, _, err = SeedDemo(ctx, dbPath, false)
+		_, _, err = SeedDemoToDriver(ctx, driver)
 		Expect(err).To(MatchError(ContainSubstring("already has data")))
 	})
 })

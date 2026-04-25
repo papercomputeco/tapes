@@ -4,12 +4,12 @@ import "fmt"
 
 // Result contains statistics from a backfill run.
 type Result struct {
-	Matched               int
-	Skipped               int
-	Unmatched             int
-	TotalTokensBackfilled int
-	TranscriptFiles       int
-	TranscriptEntries     int
+	Matched               int `json:"matched"`
+	Skipped               int `json:"skipped"`
+	Unmatched             int `json:"unmatched"`
+	TotalTokensBackfilled int `json:"total_tokens_backfilled"`
+	TranscriptFiles       int `json:"transcript_files"`
+	TranscriptEntries     int `json:"transcript_entries"`
 }
 
 // Summary returns a human-readable summary of the sync result.
