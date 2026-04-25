@@ -9,6 +9,7 @@ ARG PG_MAJOR
 
 FROM ${CNPG_IMAGE}
 ARG PG_MAJOR
+ARG TARGETARCH
 
 USER root
 
@@ -30,9 +31,20 @@ COPY --from=pgduckdb /usr/local/bin/docker-entrypoint.sh /usr/local/bin/
 COPY --from=pgduckdb /usr/local/bin/docker-ensure-initdb.sh /usr/local/bin/
 COPY --from=pgduckdb /usr/local/bin/docker-enforce-initdb.sh /usr/local/bin/
 COPY --from=pgduckdb /usr/local/bin/gosu /usr/local/bin/
-COPY --from=pgduckdb /usr/lib/x86_64-linux-gnu/libnss_wrapper.so /usr/lib/x86_64-linux-gnu/
 
-RUN apt-get update && \
+# Stage libnss_wrapper from whichever multiarch dir the pgduckdb base image
+# ships, then place it under the destination image's triplet (TARGETARCH is
+# amd64/arm64, not the Debian multiarch triplet, so it gets mapped below).
+COPY --from=pgduckdb /usr/lib/*-linux-gnu/libnss_wrapper.so /tmp/libnss_wrapper.so
+
+RUN case "${TARGETARCH}" in \
+      amd64) triplet=x86_64-linux-gnu ;; \
+      arm64) triplet=aarch64-linux-gnu ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac && \
+    install -m 0644 /tmp/libnss_wrapper.so /usr/lib/${triplet}/libnss_wrapper.so && \
+    rm /tmp/libnss_wrapper.so && \
+    apt-get update && \
     apt-get install -y --no-install-recommends libcurl4 && \
     apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false && \
     rm -rf /var/lib/apt/lists/* /var/cache/* /var/log/* && \
