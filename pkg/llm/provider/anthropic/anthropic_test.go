@@ -300,6 +300,35 @@ var _ = Describe("Anthropic Provider", func() {
 			})
 		})
 
+		Context("with a thinking block", func() {
+			It("populates ContentBlock.Thinking and ThinkingSignature", func() {
+				payload := []byte(`{
+					"id": "msg_thinking_01",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "thinking",
+							"thinking": "Let me consider this carefully.",
+							"signature": "EqoBCkgIARgCIkBYp3d2"
+						},
+						{"type": "text", "text": "Done."}
+					],
+					"model": "claude-opus-4-20250514",
+					"stop_reason": "end_turn"
+				}`)
+
+				resp, err := p.ParseResponse(payload)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.Message.Content).To(HaveLen(2))
+				Expect(resp.Message.Content[0].Type).To(Equal("thinking"))
+				Expect(resp.Message.Content[0].Thinking).To(Equal("Let me consider this carefully."))
+				Expect(resp.Message.Content[0].ThinkingSignature).To(Equal("EqoBCkgIARgCIkBYp3d2"))
+				Expect(resp.Message.Content[1].Type).To(Equal("text"))
+				Expect(resp.Message.Content[1].Text).To(Equal("Done."))
+			})
+		})
+
 		Context("with Extra fields", func() {
 			It("stores id and type in Extra", func() {
 				payload := []byte(`{

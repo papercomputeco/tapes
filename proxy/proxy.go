@@ -18,6 +18,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"
 
+	"github.com/papercomputeco/tapes/pkg/capture"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/llm/provider"
 	"github.com/papercomputeco/tapes/pkg/sse"
@@ -46,6 +47,7 @@ type Proxy struct {
 	providers     map[string]provider.Provider
 	defaultProv   provider.Provider
 	headerHandler *header.Handler
+	reducers      map[string]capture.Reducer
 }
 
 // New creates a new Proxy.
@@ -111,6 +113,9 @@ func New(config Config, driver storage.Driver, log *slog.Logger) (*Proxy, error)
 		httpClient: &http.Client{
 			// LLM requests can be slow, especially with thinking blocks
 			Timeout: 5 * time.Minute,
+		},
+		reducers: map[string]capture.Reducer{
+			capture.ProviderAnthropic: capture.NewAnthropicReducer(),
 		},
 	}
 
@@ -352,8 +357,72 @@ func (p *Proxy) handleHTTPRespToPipeWriter(httpResp *http.Response, pw *io.PipeW
 
 // handleSSEStream reads an SSE-formatted upstream response (used by OpenAI
 // and Anthropic), forwarding raw bytes verbatim to the pipe writer while
-// parsing events for telemetry accumulation.
+// accumulating a parallel copy for the capture library.
+//
+// Providers with a reducer in p.reducers go through capture for a canonical
+// reduction; everything else falls back to the in-proxy extraction helpers
+// until it migrates into the shared library.
 func (p *Proxy) handleSSEStream(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
+	if r, ok := p.reducers[prov.Name()]; ok {
+		p.handleSSEStreamViaCapture(r, httpResp, pw, parsedReq, prov, agentName, startTime)
+		return
+	}
+	p.handleSSEStreamLegacy(httpResp, pw, parsedReq, prov, agentName, startTime)
+}
+
+// handleSSEStreamViaCapture forwards chunks to the client while teeing the
+// raw body into the reducer on end-of-stream.
+//
+// Bytes flow through a single tee: upstream → pw (client) and through to
+// the reducer for event parsing. We stream directly into Reduce rather
+// than materializing the full body into an intermediate []byte — on a
+// large response that would double the resident memory for no gain.
+func (p *Proxy) handleSSEStreamViaCapture(r capture.Reducer, httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
+	reader := io.TeeReader(httpResp.Body, pw)
+
+	resp, err := r.Reduce(
+		context.Background(),
+		nil,
+		reader,
+		httpResp.Header.Get("Content-Type"),
+	)
+	if err != nil {
+		p.logger.Error("capture reduce failed",
+			"error", err,
+			"provider", prov.Name(),
+			"agent", agentName,
+		)
+		return
+	}
+	if resp == nil || parsedReq == nil {
+		return
+	}
+
+	if resp.Model == "" && parsedReq.Model != "" {
+		resp.Model = parsedReq.Model
+	}
+	if resp.CreatedAt.IsZero() {
+		resp.CreatedAt = time.Now()
+	}
+
+	p.logger.Debug("streaming complete",
+		"provider", prov.Name(),
+		"agent", agentName,
+		"model", resp.Model,
+		"duration", time.Since(startTime),
+	)
+
+	p.workerPool.Enqueue(worker.Job{
+		Provider:  prov.Name(),
+		AgentName: agentName,
+		Req:       parsedReq,
+		Resp:      resp,
+	})
+}
+
+// handleSSEStreamLegacy preserves the pre-capture path for providers that
+// have not yet migrated into pkg/capture.
+func (p *Proxy) handleSSEStreamLegacy(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
 	var allChunks [][]byte
 	var fullContent strings.Builder
 	var streamUsage llm.Usage
@@ -442,6 +511,9 @@ func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, p
 
 // extractContentFromJSON performs best-effort content extraction from a JSON
 // streaming chunk, dispatching on the configured provider.
+//
+// Anthropic is no longer handled here — it routes through pkg/capture.
+// Only OpenAI and Ollama remain until they migrate too.
 func (p *Proxy) extractContentFromJSON(data []byte, providerName string, content *strings.Builder) {
 	var chunkData map[string]any
 	if err := json.Unmarshal(data, &chunkData); err != nil {
@@ -467,63 +539,29 @@ func (p *Proxy) extractContentFromJSON(data []byte, providerName string, content
 				}
 			}
 		}
-	case providerAnthropic:
-		// Anthropic SSE: content_block_delta events carry delta.text
-		if delta, ok := chunkData["delta"].(map[string]any); ok {
-			if text, ok := delta["text"].(string); ok {
-				content.WriteString(text)
-			}
-		}
 	}
 }
 
-// streamMeta accumulates metadata from SSE events that lives outside llm.Usage,
-// such as the stop reason which Anthropic sends in message_delta and the model
-// name from message_start.
+// streamMeta carries legacy-path metadata that doesn't fit llm.Usage. The
+// Model field is reserved for provider migrations that still need it;
+// nothing currently writes to it in the legacy branch, but
+// reconstructStreamedResponse still reads it so retaining the type keeps
+// the call signatures stable.
 type streamMeta struct {
 	StopReason string
 	Model      string
 }
 
-// extractUsageFromSSE extracts token usage from SSE event data.
-// Anthropic splits usage across message_start (input tokens) and message_delta (output tokens).
-// OpenAI includes usage in the final chunk. Ollama includes it in the final NDJSON line.
-func (p *Proxy) extractUsageFromSSE(data []byte, providerName string, usage *llm.Usage, meta *streamMeta) {
+// extractUsageFromSSE extracts token usage from SSE event data. OpenAI
+// includes usage in the final chunk; Ollama includes it in the final NDJSON
+// line. Anthropic migrated into pkg/capture and no longer reaches this path.
+func (p *Proxy) extractUsageFromSSE(data []byte, providerName string, usage *llm.Usage, _ *streamMeta) {
 	var chunkData map[string]any
 	if err := json.Unmarshal(data, &chunkData); err != nil {
 		return
 	}
 
 	switch providerName {
-	case providerAnthropic:
-		chunkType, _ := chunkData["type"].(string)
-		switch chunkType {
-		case "message_start":
-			// message_start contains: message.{model, usage.{input_tokens, cache_creation_input_tokens, cache_read_input_tokens}}
-			if msg, ok := chunkData["message"].(map[string]any); ok {
-				if model, ok := msg["model"].(string); ok && model != "" {
-					meta.Model = model
-				}
-				if u, ok := msg["usage"].(map[string]any); ok {
-					inputTokens := jsonInt(u, "input_tokens")
-					cacheCreation := jsonInt(u, "cache_creation_input_tokens")
-					cacheRead := jsonInt(u, "cache_read_input_tokens")
-					usage.PromptTokens = inputTokens + cacheCreation + cacheRead
-					usage.CacheCreationInputTokens = cacheCreation
-					usage.CacheReadInputTokens = cacheRead
-				}
-			}
-		case "message_delta":
-			// message_delta contains: delta.stop_reason and usage.output_tokens
-			if u, ok := chunkData["usage"].(map[string]any); ok {
-				usage.CompletionTokens = jsonInt(u, "output_tokens")
-			}
-			if delta, ok := chunkData["delta"].(map[string]any); ok {
-				if sr, ok := delta["stop_reason"].(string); ok && sr != "" {
-					meta.StopReason = sr
-				}
-			}
-		}
 	case providerOpenAI:
 		// OpenAI includes usage in the final chunk
 		if u, ok := chunkData["usage"].(map[string]any); ok {

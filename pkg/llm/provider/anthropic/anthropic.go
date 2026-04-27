@@ -140,6 +140,9 @@ func (p *Provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 			cb.ToolUseID = block.ID
 			cb.ToolName = block.Name
 			cb.ToolInput = block.Input
+		case "thinking":
+			cb.Thinking = block.Thinking
+			cb.ThinkingSignature = block.Signature
 		}
 		content = append(content, cb)
 	}

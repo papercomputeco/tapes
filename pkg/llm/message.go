@@ -13,7 +13,7 @@ type Message struct {
 // ContentBlock represents a single piece of content within a message.
 // The Type field determines which other fields are populated.
 type ContentBlock struct {
-	Type string `json:"type"` // "text", "image", "tool_use", "tool_result"
+	Type string `json:"type"` // "text", "image", "tool_use", "tool_result", "thinking"
 
 	// Text content (type="text")
 	Text string `json:"text,omitempty"`
@@ -32,6 +32,14 @@ type ContentBlock struct {
 	ToolResultID string `json:"tool_result_id,omitempty"` // References the tool_use_id
 	ToolOutput   string `json:"tool_output,omitempty"`
 	IsError      bool   `json:"is_error,omitempty"`
+
+	// Thinking (type="thinking") - Anthropic extended-thinking blocks.
+	// Anthropic emits thinking as content_block_delta frames with type
+	// "thinking_delta" followed by a "signature_delta" that authenticates the
+	// block. Consumers treat Thinking as opaque text; the signature is persisted
+	// so downstream tooling can verify integrity.
+	Thinking          string `json:"thinking,omitempty"`
+	ThinkingSignature string `json:"thinking_signature,omitempty"`
 }
 
 // NewTextMessage creates a simple text message with the given role and content.
