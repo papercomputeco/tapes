@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/papercomputeco/tapes/pkg/cliui"
 	"github.com/papercomputeco/tapes/pkg/dotdir"
 )
 
@@ -120,8 +121,15 @@ func (c *localCommander) runUp() error {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return errors.New("docker is required for 'tapes local'")
 	}
+	fmt.Printf("  %s %s\n", cliui.SuccessMark, cliui.StepStyle.Render("Docker available"))
 
 	if err := ensureDockerNetwork(localNetworkName); err != nil {
+		return err
+	}
+	if err := ensureDockerImage(c.postgresImage, "Postgres"); err != nil {
+		return err
+	}
+	if err := ensureDockerImage(c.ollamaImage, "Ollama"); err != nil {
 		return err
 	}
 	postgresDir, err := ensureLocalPostgresDir(c.configDir)
@@ -137,17 +145,17 @@ func (c *localCommander) runUp() error {
 	if err := ensureOllamaContainer(c); err != nil {
 		return err
 	}
-	if err := waitForPostgresReady(); err != nil {
+	if err := cliui.Step(os.Stdout, "Waiting for Postgres", waitForPostgresReady); err != nil {
 		return err
 	}
 
 	dsn := fmt.Sprintf("postgres://%s:%s@localhost:%d/%s?sslmode=disable", postgresUser, postgresPass, c.postgresPort, postgresDB)
 
-	fmt.Printf("\nStarted local services:\n")
-	fmt.Printf("  Postgres: %s\n", dsn)
-	fmt.Printf("  Data dir: %s\n", postgresDir)
-	fmt.Printf("  Ollama:   http://localhost:%d\n\n", c.ollamaPort)
-	fmt.Printf("Suggested config:\n")
+	fmt.Printf("\n%s\n", cliui.HeaderStyle.Render("Started local services"))
+	fmt.Printf("  %s %s\n", cliui.KeyStyle.Render("Postgres:"), cliui.ValueStyle.Render(dsn))
+	fmt.Printf("  %s %s\n", cliui.KeyStyle.Render("Data dir:"), cliui.ValueStyle.Render(postgresDir))
+	fmt.Printf("  %s %s\n\n", cliui.KeyStyle.Render("Ollama:  "), cliui.ValueStyle.Render(fmt.Sprintf("http://localhost:%d", c.ollamaPort)))
+	fmt.Printf("%s\n", cliui.HeaderStyle.Render("Suggested config"))
 	fmt.Printf("  tapes config set storage.postgres_dsn %q\n", dsn)
 	fmt.Printf("  tapes config set vector_store.provider %q\n", "pgvector")
 	fmt.Printf("  tapes config set vector_store.target %q\n", dsn)
@@ -163,11 +171,19 @@ func (c *localCommander) runUp() error {
 
 func (c *localCommander) runDown() error {
 	for _, name := range []string{postgresContainer, ollamaContainer} {
-		if err := runDocker("rm", "-f", name); err != nil && !isDockerNotFoundError(err) {
+		_, exists, err := containerState(name)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			fmt.Printf("  %s %s %s\n", cliui.DimStyle.Render("●"), cliui.NameStyle.Render(name), cliui.DimStyle.Render("not created"))
+			continue
+		}
+		if err := runDocker("rm", "-f", name); err != nil {
 			return err
 		}
 	}
-	fmt.Println("Removed local tapes containers.")
+	fmt.Printf("  %s %s\n", cliui.SuccessMark, cliui.StepStyle.Render("Removed local tapes containers"))
 	return nil
 }
 
@@ -179,7 +195,13 @@ func (c *localCommander) runStatus() error {
 		}
 		status := strings.TrimSpace(out)
 		if status == "" {
-			status = name + "\tnot created"
+			fmt.Printf("  %s %s %s\n", cliui.DimStyle.Render("●"), cliui.NameStyle.Render(name), cliui.DimStyle.Render("not created"))
+			continue
+		}
+		parts := strings.SplitN(status, "\t", 2)
+		if len(parts) == 2 {
+			fmt.Printf("  %s %s %s\n", cliui.SuccessMark, cliui.NameStyle.Render(parts[0]), cliui.ValueStyle.Render(parts[1]))
+			continue
 		}
 		fmt.Println(status)
 	}
@@ -187,10 +209,23 @@ func (c *localCommander) runStatus() error {
 }
 
 func ensureDockerNetwork(name string) error {
-	if err := runDocker("network", "inspect", name); err == nil {
+	if _, err := dockerOutput("network", "inspect", name); err == nil {
+		fmt.Printf("  %s %s %s\n", cliui.SuccessMark, cliui.NameStyle.Render(name), cliui.StepStyle.Render("network exists"))
 		return nil
 	}
 	return runDocker("network", "create", name)
+}
+
+func ensureDockerImage(image, label string) error {
+	if _, err := dockerOutput("image", "inspect", image); err == nil {
+		fmt.Printf("  %s %s %s\n", cliui.SuccessMark, cliui.NameStyle.Render(image), cliui.StepStyle.Render("image exists"))
+		return nil
+	} else if !isDockerImageNotFoundError(err) {
+		return err
+	}
+
+	fmt.Printf("  %s %s\n", cliui.WarnStyle.Render("↓"), cliui.StepStyle.Render(label+" image not found locally; pulling"))
+	return runDocker("pull", image)
 }
 
 func ensurePostgresContainer(c *localCommander) error {
@@ -278,7 +313,7 @@ func prepareLocalPostgresDir(postgresDir, image string) error {
 func waitForPostgresReady() error {
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
-		if err := runDocker("exec", postgresContainer, "pg_isready", "-U", postgresUser, "-d", postgresDB); err == nil {
+		if _, err := dockerOutput("exec", postgresContainer, "pg_isready", "-U", postgresUser, "-d", postgresDB); err == nil {
 			return nil
 		}
 		time.Sleep(1 * time.Second)
@@ -339,11 +374,18 @@ func isDockerNotFoundError(err error) bool {
 	return strings.Contains(msg, "no such object") || strings.Contains(msg, "no such container")
 }
 
+func isDockerImageNotFoundError(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no such image") || strings.Contains(msg, "no such object")
+}
+
 func runDocker(args ...string) error {
+	fmt.Printf("  %s docker %s\n", cliui.DimStyle.Render("$"), cliui.ValueStyle.Render(strings.Join(args, " ")))
 	cmd := exec.CommandContext(context.Background(), "docker", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("docker %s: %w\n%s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker %s: %w", strings.Join(args, " "), err)
 	}
 	return nil
 }
