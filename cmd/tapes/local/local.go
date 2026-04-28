@@ -19,16 +19,18 @@ import (
 )
 
 const (
-	defaultPostgresImage = "public.ecr.aws/g4e5l3z3/papercomputeco/postgres"
-	defaultOllamaImage   = "ollama/ollama:latest"
-	localNetworkName     = "tapes-local"
-	postgresContainer    = "tapes-local-postgres"
-	ollamaContainer      = "tapes-local-ollama"
-	postgresDirName      = "postgres"
-	postgresDataPath     = "/tapes-postgres/data"
-	postgresUser         = "tapes"
-	postgresPass         = "tapes"
-	postgresDB           = "tapes"
+	defaultPostgresImage  = "public.ecr.aws/g4e5l3z3/papercomputeco/postgres"
+	defaultOllamaImage    = "ollama/ollama:latest"
+	defaultEmbeddingModel = "embeddinggemma"
+	ollamaEmbeddingModel  = defaultEmbeddingModel + ":latest"
+	localNetworkName      = "tapes-local"
+	postgresContainer     = "tapes-local-postgres"
+	ollamaContainer       = "tapes-local-ollama"
+	postgresDirName       = "postgres"
+	postgresDataPath      = "/tapes-postgres/data"
+	postgresUser          = "tapes"
+	postgresPass          = "tapes"
+	postgresDB            = "tapes"
 )
 
 type localCommander struct {
@@ -148,6 +150,12 @@ func (c *localCommander) runUp() error {
 	if err := cliui.Step(os.Stdout, "Waiting for Postgres", waitForPostgresReady); err != nil {
 		return err
 	}
+	if err := cliui.Step(os.Stdout, "Waiting for Ollama", waitForOllamaReady); err != nil {
+		return err
+	}
+	if err := ensureOllamaModel(ollamaEmbeddingModel); err != nil {
+		return err
+	}
 
 	dsn := fmt.Sprintf("postgres://%s:%s@localhost:%d/%s?sslmode=disable", postgresUser, postgresPass, c.postgresPort, postgresDB)
 
@@ -162,10 +170,10 @@ func (c *localCommander) runUp() error {
 	fmt.Printf("  tapes config set proxy.upstream %q\n", fmt.Sprintf("http://localhost:%d", c.ollamaPort))
 	fmt.Printf("  tapes config set embedding.provider %q\n", "ollama")
 	fmt.Printf("  tapes config set embedding.target %q\n", fmt.Sprintf("http://localhost:%d", c.ollamaPort))
-	fmt.Printf("  tapes config set embedding.model %q\n\n", "nomic-embed-text")
+	fmt.Printf("  tapes config set embedding.model %q\n\n", defaultEmbeddingModel)
 	fmt.Printf("Next steps:\n")
 	fmt.Printf("  1. Run: tapes serve --postgres %q\n", dsn)
-	fmt.Printf("  2. Optionally pull models with: docker exec -it %s ollama pull qwen3-coder:30b\n\n", ollamaContainer)
+	fmt.Printf("  2. Optionally pull chat/completion models with: docker exec -it %s ollama pull qwen3-coder:30b\n\n", ollamaContainer)
 	return nil
 }
 
@@ -319,6 +327,22 @@ func waitForPostgresReady() error {
 		time.Sleep(1 * time.Second)
 	}
 	return fmt.Errorf("postgres container %q did not become ready within 30s", postgresContainer)
+}
+
+func waitForOllamaReady() error {
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := dockerOutput("exec", ollamaContainer, "ollama", "list"); err == nil {
+			return nil
+		}
+		time.Sleep(1 * time.Second)
+	}
+	return fmt.Errorf("ollama container %q did not become ready within 60s", ollamaContainer)
+}
+
+func ensureOllamaModel(model string) error {
+	fmt.Printf("  %s %s\n", cliui.WarnStyle.Render("↓"), cliui.StepStyle.Render("Pulling Ollama model "+model))
+	return runDocker("exec", ollamaContainer, "ollama", "pull", model)
 }
 
 func resolveLocalTapesDir(configDir string) (string, error) {

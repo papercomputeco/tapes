@@ -16,7 +16,7 @@ import (
 
 const (
 	// DefaultEmbeddingModel is the default model used for embeddings.
-	DefaultEmbeddingModel = "nomic-embed-text"
+	DefaultEmbeddingModel = "embeddinggemma"
 
 	// DefaultBaseURL is the default Ollama API URL.
 	DefaultBaseURL = "http://localhost:11434"
@@ -35,7 +35,7 @@ type EmbedderConfig struct {
 	// Defaults to DefaultBaseURL if empty.
 	BaseURL string
 
-	// Model is the embedding model to use (e.g., "nomic-embed-text", "all-minilm").
+	// Model is the embedding model to use (e.g., "embeddinggemma", "all-minilm").
 	// Defaults to DefaultEmbeddingModel if empty.
 	Model string
 }
