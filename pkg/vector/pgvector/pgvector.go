@@ -89,9 +89,15 @@ func NewDriver(ctx context.Context, c *Config, log *slog.Logger) (*Driver, error
 func (d *Driver) ensureSchema(ctx context.Context) error {
 	table := d.table.Sanitize()
 
-	// Enable the pgvector extension
-	if _, err := d.pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector`); err != nil {
-		return fmt.Errorf("enabling vector extension: %w", err)
+	// The pgvector extension must be installed by database provisioning. Runtime
+	// application connections commonly do not have permission to create
+	// extensions, especially in managed Postgres and operator-managed clusters.
+	var hasVector bool
+	if err := d.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')`).Scan(&hasVector); err != nil {
+		return fmt.Errorf("checking vector extension: %w", err)
+	}
+	if !hasVector {
+		return errors.New("vector extension is not installed in this database")
 	}
 
 	// Create the embeddings table with a vector column sized to the configured dimensions.
