@@ -7,10 +7,7 @@ import (
 	"dagger/tapes/internal/dagger"
 )
 
-const (
-	tapesImageName    = "tapes"
-	postgresImageName = "postgres"
-)
+const tapesImageName = "tapes"
 
 var imagePlatforms = []dagger.Platform{
 	"linux/amd64",

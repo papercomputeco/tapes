@@ -87,15 +87,6 @@ jobs:
         env:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
-      - name: Push nightly postgres image
-        run: |
-          dagger call \
-            build-push-postgres-images \
-              --registry=${{ vars.REGISTRY }} \
-              --tags="nightly"
-        env:
-          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-
       - name: Build upload nightly release artifacts
         run: |
           dagger call \
