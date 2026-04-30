@@ -96,7 +96,7 @@ release: ## Builds and releases tapes artifacts
 			--secret-access-key=env://BUCKET_SECRET_ACCESS_KEY
 
 .PHONY: build-images
-build-images: build-tapes-image build-postgres-image ## Builds all container artifacts
+build-images: build-tapes-image ## Builds all container artifacts
 
 .PHONY: build-tapes-image
 build-tapes-image: ## Builds, tags, and loads the tapes container artifact locally
@@ -114,18 +114,6 @@ build-tapes-image: ## Builds, tags, and loads the tapes container artifact local
 		export-image \
 			--name=${REGISTRY}/tapes:latest
 
-.PHONY: build-postgres-image
-build-postgres-image: ## Builds, tags, and loads the tapes postgres container artifact locally
-	$(call print-target)
-	dagger call \
-		build-postgres-image \
-		export-image \
-			--name=${REGISTRY}/postgres:${VERSION}
-	dagger call \
-		build-postgres-image \
-		export-image \
-			--name=${REGISTRY}/postgres:latest
-
 .PHONY: build-push-tapes-images
 build-push-tapes-images: ## Builds and publishes the multi-arch tapes container images
 	dagger call \
@@ -135,14 +123,6 @@ build-push-tapes-images: ## Builds and publishes the multi-arch tapes container 
 			--tags=latest \
 			--version=${VERSION} \
 			--commit=${COMMIT}
-
-.PHONY: build-push-postgres-images
-build-push-postgres-images: ## Builds and publishes the multi-arch postgres container images
-	dagger call \
-		build-push-postgres-images \
-			--registry=${REGISTRY} \
-			--tags=${VERSION} \
-			--tags=latest
 
 .PHONY: up
 up:

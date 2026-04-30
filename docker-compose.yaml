@@ -1,9 +1,6 @@
 services:
   postgres:
-    build:
-      context: .
-      dockerfile: postgres/Dockerfile
-    image: tapes-postgres-cnpg-pgduckdb:17
+    image: public.ecr.aws/g4e5l3z3/papercomputeco/postgres:17.7-pgduckdb-1.1.1
     environment:
       POSTGRES_DB: tapes
       POSTGRES_USER: tapes

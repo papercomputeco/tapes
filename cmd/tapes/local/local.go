@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	defaultPostgresImage  = "public.ecr.aws/g4e5l3z3/papercomputeco/postgres"
+	defaultPostgresImage  = "public.ecr.aws/g4e5l3z3/papercomputeco/postgres:17.7-pgduckdb-1.1.1"
 	defaultOllamaImage    = "ollama/ollama:latest"
 	defaultEmbeddingModel = "embeddinggemma"
 	ollamaEmbeddingModel  = defaultEmbeddingModel + ":latest"

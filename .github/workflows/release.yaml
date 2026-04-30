@@ -47,16 +47,6 @@ jobs:
         env:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
-      - name: Push postgres image
-        run: |
-          dagger call \
-            build-push-postgres-images \
-              --registry=${{ vars.REGISTRY }} \
-              --tags="${{ github.event.release.tag_name }}" \
-              --tags="latest"
-        env:
-          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-
       - name: Build upload release artifacts
         run: |
           dagger call \
