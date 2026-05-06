@@ -44,7 +44,7 @@ func NewMetrics() *Metrics {
 		),
 		queueDepth: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "tapes_ingest_worker_queue_depth",
-			Help: "Best-effort snapshot of pending items in the ingest worker queue.",
+			Help: "Best-effort snapshot of pending items in the worker queue, as observed on the ingest enqueue path. The underlying Pool is shared with the proxy enqueue paths, which do not currently update this gauge — so the value reflects ingest-side observations only.",
 		}),
 		bytesHistory: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{

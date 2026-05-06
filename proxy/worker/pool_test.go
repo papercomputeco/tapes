@@ -68,6 +68,34 @@ var _ = Describe("Worker Pool", func() {
 		})
 	})
 
+	Describe("Len", func() {
+		It("reports zero on an empty, drained pool", func() {
+			wp.Close()
+			Expect(wp.Len()).To(Equal(0))
+		})
+
+		It("reflects pending items still on the queue", func() {
+			// The drained-pool spec above would still pass against a
+			// stub `Len() int { return 0 }` regression — that's the
+			// hazard the production gauge actually reads. Exercise the
+			// accessor with non-zero pending items.
+			//
+			// Bypassing NewPool here is deliberate: NewPool starts
+			// workers that would drain whatever we enqueue before the
+			// assertion runs, so a pool wired to a stub queue with no
+			// consumers is the only way to read Len() deterministically
+			// across non-empty states.
+			p := &Pool{queue: make(chan Job, 4)}
+			Expect(p.Len()).To(Equal(0))
+
+			p.queue <- Job{Provider: "first"}
+			Expect(p.Len()).To(Equal(1))
+
+			p.queue <- Job{Provider: "second"}
+			Expect(p.Len()).To(Equal(2))
+		})
+	})
+
 	Describe("Multi-Turn Conversation Storage", func() {
 		// These tests exercise the worker pool's storeConversationTurn logic
 		// by enqueuing jobs and draining via wp.Close() before asserting storage state.

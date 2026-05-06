@@ -7,6 +7,7 @@ import (
 
 	"github.com/gofiber/adaptor/v2"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/recover"
 
 	"github.com/papercomputeco/tapes/api/mcp"
 	"github.com/papercomputeco/tapes/pkg/storage"
@@ -18,6 +19,7 @@ type Server struct {
 	driver    storage.Driver
 	logger    *slog.Logger
 	app       *fiber.App
+	metrics   *Metrics
 	mcpServer *mcp.Server
 }
 
@@ -31,11 +33,26 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	})
 
 	s := &Server{
-		config: config,
-		driver: driver,
-		logger: log,
-		app:    app,
+		config:  config,
+		driver:  driver,
+		logger:  log,
+		app:     app,
+		metrics: NewMetrics(),
 	}
+
+	// RED metrics is registered first so it sits as the outermost wrapper.
+	// Order matters: the request-count and duration increments run AFTER
+	// c.Next() returns, not in a defer, so a panic unwinding through them
+	// would skip those updates. Putting recover.New() inside the metrics
+	// middleware means recover catches the panic and translates it into
+	// an error returned to the metrics middleware — which then derives
+	// the right status via the err (see Middleware in metrics.go).
+	app.Use(s.metrics.Middleware())
+	app.Use(recover.New())
+
+	// /metrics is intentionally outside any auth group — Alloy scrapes
+	// in-cluster and there is no caller identity to verify.
+	app.Get("/metrics", s.metrics.Handler())
 
 	app.Get("/ping", s.handlePing)
 

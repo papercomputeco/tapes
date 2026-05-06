@@ -119,6 +119,14 @@ func (p *Pool) Enqueue(job Job) bool {
 	}
 }
 
+// Len returns the current number of jobs buffered in the queue. It is a
+// best-effort snapshot — workers may pick up items between the read and any
+// downstream observation — and is intended for metric instrumentation rather
+// than for routing decisions.
+func (p *Pool) Len() int {
+	return len(p.queue)
+}
+
 // Close signals workers to stop and waits for in-flight jobs to drain.
 // Call this during graceful shutdown after the proxy HTTP server has stopped.
 func (p *Pool) Close() {

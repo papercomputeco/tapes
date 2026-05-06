@@ -364,8 +364,14 @@ func (s *Server) processTurn(turn *TurnPayload) error {
 			"agent", turn.AgentName,
 			"model", parsedReq.Model,
 		)
+		// Snapshot depth even on a drop so the gauge reflects saturation.
+		s.metrics.SetQueueDepth(s.workerPool.Len())
 		return fmt.Errorf("%w: worker queue full", ErrDownstream)
 	}
 
+	// Best-effort snapshot of post-enqueue depth. Workers may have already
+	// drained the slot we just wrote, so the value can lag actual depth — but
+	// over many turns this tracks back-pressure well enough to alert on.
+	s.metrics.SetQueueDepth(s.workerPool.Len())
 	return nil
 }
