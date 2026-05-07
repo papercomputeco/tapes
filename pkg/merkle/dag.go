@@ -87,6 +87,19 @@ func (d *Dag) walkNode(node *DagNode, f func(*DagNode) (bool, error)) (bool, err
 	return true, nil
 }
 
+// walkDescendants recursively traverses descendants of the given node in
+// depth-first order. It does not visit the node itself.
+func (d *Dag) walkDescendants(node *DagNode, f func(*DagNode) (bool, error)) error {
+	for _, child := range node.Children {
+		ok, err := d.walkNode(child, f)
+		if !ok || err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // Ancestors returns the path from the given node up to the root.
 // The returned slice is ordered from the node to root (node first, root last).
 // Returns nil if the hash is not found.
@@ -116,8 +129,8 @@ func (d *Dag) Descendants(hash string) []*DagNode {
 	}
 
 	descendants := []*DagNode{}
-	_ = d.Walk(func(n *DagNode) (bool, error) {
-		descendants = append(descendants, n.Children...)
+	_ = d.walkDescendants(node, func(descendant *DagNode) (bool, error) {
+		descendants = append(descendants, descendant)
 		return true, nil
 	})
 

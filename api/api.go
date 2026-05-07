@@ -56,12 +56,17 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 
 	app.Get("/ping", s.handlePing)
 
+	// Minimal same-origin web UI. Like Prometheus's built-in UI, this is
+	// served directly by the API binary and has no frontend build step.
+	app.Get("/", s.handleWebUI)
+
 	// v1 session-oriented surface. Static paths are registered before
 	// parameterised ones so `/v1/sessions/summary` is not shadowed by
 	// `/v1/sessions/:hash`.
 	app.Get("/v1/stats", s.handleStats)
 	app.Get("/v1/sessions", s.handleListSessions)
 	app.Get("/v1/sessions/summary", s.handleListSessionsSummary)
+	app.Get("/v1/sessions/:hash/graph", s.handleGetSessionGraph)
 	app.Get("/v1/sessions/:hash", s.handleGetSession)
 	app.Get("/v1/search", s.handleSearchEndpoint)
 	app.Post("/v1/admin/seed/demo", s.handleSeedDemo)

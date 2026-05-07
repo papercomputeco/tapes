@@ -297,6 +297,20 @@ var _ = Describe("Dag", func() {
 			Expect(hashes).To(HaveKey(child.Hash))
 			Expect(hashes).To(HaveKey(grandchild.Hash))
 		})
+
+		It("returns only descendants below the requested node", func() {
+			root := merkle.NewNode(dagTestBucket("user", "root"), nil)
+			child1 := merkle.NewNode(dagTestBucket("assistant", "child1"), root)
+			child2 := merkle.NewNode(dagTestBucket("assistant", "child2"), root)
+			grandchild := merkle.NewNode(dagTestBucket("user", "grandchild"), child1)
+
+			dag, err := buildTestDag(ctx, []*merkle.Node{root, child1, child2, grandchild}, root.Hash)
+			Expect(err).NotTo(HaveOccurred())
+
+			descendants := dag.Descendants(child1.Hash)
+			Expect(descendants).To(HaveLen(1))
+			Expect(descendants[0].Hash).To(Equal(grandchild.Hash))
+		})
 	})
 
 	Describe("IsBranching", func() {
