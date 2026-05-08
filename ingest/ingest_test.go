@@ -13,6 +13,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/papercomputeco/tapes/ingest"
+	"github.com/papercomputeco/tapes/pkg/llm"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
@@ -30,17 +31,6 @@ type ollamaMessage struct {
 	Content string `json:"content"`
 }
 
-// ollamaResponse is a minimal Ollama-format response for test fixtures.
-type ollamaResponse struct {
-	Model           string        `json:"model"`
-	CreatedAt       time.Time     `json:"created_at"`
-	Message         ollamaMessage `json:"message"`
-	Done            bool          `json:"done"`
-	DoneReason      string        `json:"done_reason,omitempty"`
-	PromptEvalCount int           `json:"prompt_eval_count,omitempty"`
-	EvalCount       int           `json:"eval_count,omitempty"`
-}
-
 // openaiRequest is a minimal OpenAI-format request for test fixtures.
 type openaiRequest struct {
 	Model    string          `json:"model"`
@@ -52,31 +42,20 @@ type openaiMessage struct {
 	Content string `json:"content"`
 }
 
-// openaiResponse is a minimal OpenAI-format response for test fixtures.
-type openaiResponse struct {
-	ID      string         `json:"id"`
-	Object  string         `json:"object"`
-	Model   string         `json:"model"`
-	Choices []openaiChoice `json:"choices"`
-	Usage   openaiUsage    `json:"usage"`
-}
-
-type openaiChoice struct {
-	Index        int           `json:"index"`
-	Message      openaiMessage `json:"message"`
-	FinishReason string        `json:"finish_reason"`
-}
-
-type openaiUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-}
-
 func mustJSON(v any) json.RawMessage {
 	b, err := json.Marshal(v)
 	Expect(err).NotTo(HaveOccurred())
 	return b
+}
+
+func reducedResponse(model, text string, usage *llm.Usage) llm.ChatResponse {
+	return llm.ChatResponse{
+		Model:      model,
+		Message:    llm.NewTextMessage("assistant", text),
+		Done:       true,
+		StopReason: "stop",
+		Usage:      usage,
+	}
 }
 
 func newTestServer() (*ingest.Server, storage.Driver, string) {
@@ -154,11 +133,7 @@ var _ = Describe("Ingest Server", func() {
 					Model:    "llama3",
 					Messages: []ollamaMessage{{Role: "user", Content: "Hello"}},
 				}),
-				RawResponse: mustJSON(ollamaResponse{
-					Model:   "llama3",
-					Message: ollamaMessage{Role: "assistant", Content: "Hi"},
-					Done:    true,
-				}),
+				Response: reducedResponse("llama3", "Hi", nil),
 			}
 			body, _ := json.Marshal(payload)
 			resp, err := client.Post(baseURL+"/v1/ingest", "application/json", bytes.NewReader(body))
@@ -187,9 +162,9 @@ var _ = Describe("Ingest Server", func() {
 
 		It("increments writes_total{status=unknown_provider} on unsupported provider", func() {
 			payload := ingest.TurnPayload{
-				Provider:    "bogus-provider",
-				RawRequest:  json.RawMessage(`{}`),
-				RawResponse: json.RawMessage(`{}`),
+				Provider:   "bogus-provider",
+				RawRequest: json.RawMessage(`{}`),
+				Response:   reducedResponse("", "ok", nil),
 			}
 			body, _ := json.Marshal(payload)
 			resp, err := client.Post(baseURL+"/v1/ingest", "application/json", bytes.NewReader(body))
@@ -215,11 +190,7 @@ var _ = Describe("Ingest Server", func() {
 						{Role: "user", Content: "Hello"},
 					},
 				}),
-				RawResponse: mustJSON(ollamaResponse{
-					Model:   "llama3",
-					Message: ollamaMessage{Role: "assistant", Content: "Hi there!"},
-					Done:    true,
-				}),
+				Response: reducedResponse("llama3", "Hi there!", nil),
 			}
 
 			body, _ := json.Marshal(payload)
@@ -249,22 +220,10 @@ var _ = Describe("Ingest Server", func() {
 						{Role: "user", Content: "Explain Go interfaces"},
 					},
 				}),
-				RawResponse: mustJSON(openaiResponse{
-					ID:     "chatcmpl-123",
-					Object: "chat.completion",
-					Model:  "gpt-4",
-					Choices: []openaiChoice{
-						{
-							Index:        0,
-							Message:      openaiMessage{Role: "assistant", Content: "In Go, an interface..."},
-							FinishReason: "stop",
-						},
-					},
-					Usage: openaiUsage{
-						PromptTokens:     10,
-						CompletionTokens: 20,
-						TotalTokens:      30,
-					},
+				Response: reducedResponse("gpt-4", "In Go, an interface...", &llm.Usage{
+					PromptTokens:     10,
+					CompletionTokens: 20,
+					TotalTokens:      30,
 				}),
 			}
 
@@ -278,9 +237,9 @@ var _ = Describe("Ingest Server", func() {
 
 		It("rejects an unsupported provider", func() {
 			payload := ingest.TurnPayload{
-				Provider:    "unknown-provider",
-				RawRequest:  json.RawMessage(`{}`),
-				RawResponse: json.RawMessage(`{}`),
+				Provider:   "unknown-provider",
+				RawRequest: json.RawMessage(`{}`),
+				Response:   reducedResponse("", "ok", nil),
 			}
 
 			body, _ := json.Marshal(payload)
@@ -328,11 +287,7 @@ var _ = Describe("Ingest Server", func() {
 					RawRequest: mustJSON(ollamaRequest{
 						Model: "llama3", Messages: []ollamaMessage{{Role: "user", Content: "hi"}},
 					}),
-					RawResponse: mustJSON(ollamaResponse{
-						Model:   "llama3",
-						Message: ollamaMessage{Role: "assistant", Content: "yo"},
-						Done:    true,
-					}),
+					Response: reducedResponse("llama3", "yo", nil),
 				}
 				body, _ := json.Marshal(payload)
 				r, err := client.Post(baseURL+"/v1/ingest", "application/json", bytes.NewReader(body))
@@ -384,11 +339,7 @@ var _ = Describe("Ingest Server", func() {
 							Model:    "llama3",
 							Messages: []ollamaMessage{{Role: "user", Content: "First"}},
 						}),
-						RawResponse: mustJSON(ollamaResponse{
-							Model:   "llama3",
-							Message: ollamaMessage{Role: "assistant", Content: "Response 1"},
-							Done:    true,
-						}),
+						Response: reducedResponse("llama3", "Response 1", nil),
 					},
 					{
 						Provider:  "ollama",
@@ -397,11 +348,7 @@ var _ = Describe("Ingest Server", func() {
 							Model:    "llama3",
 							Messages: []ollamaMessage{{Role: "user", Content: "Second"}},
 						}),
-						RawResponse: mustJSON(ollamaResponse{
-							Model:   "llama3",
-							Message: ollamaMessage{Role: "assistant", Content: "Response 2"},
-							Done:    true,
-						}),
+						Response: reducedResponse("llama3", "Response 2", nil),
 					},
 				},
 			}
@@ -429,16 +376,12 @@ var _ = Describe("Ingest Server", func() {
 							Model:    "llama3",
 							Messages: []ollamaMessage{{Role: "user", Content: "Valid"}},
 						}),
-						RawResponse: mustJSON(ollamaResponse{
-							Model:   "llama3",
-							Message: ollamaMessage{Role: "assistant", Content: "OK"},
-							Done:    true,
-						}),
+						Response: reducedResponse("llama3", "OK", nil),
 					},
 					{
-						Provider:    "bad-provider",
-						RawRequest:  json.RawMessage(`{}`),
-						RawResponse: json.RawMessage(`{}`),
+						Provider:   "bad-provider",
+						RawRequest: json.RawMessage(`{}`),
+						Response:   reducedResponse("", "ok", nil),
 					},
 				},
 			}
@@ -478,16 +421,12 @@ var _ = Describe("Ingest Server", func() {
 							Model:    "llama3",
 							Messages: []ollamaMessage{{Role: "user", Content: "hi"}},
 						}),
-						RawResponse: mustJSON(ollamaResponse{
-							Model:   "llama3",
-							Message: ollamaMessage{Role: "assistant", Content: "ok"},
-							Done:    true,
-						}),
+						Response: reducedResponse("llama3", "ok", nil),
 					},
 					{
-						Provider:    "bad-provider",
-						RawRequest:  json.RawMessage(`{}`),
-						RawResponse: json.RawMessage(`{}`),
+						Provider:   "bad-provider",
+						RawRequest: json.RawMessage(`{}`),
+						Response:   reducedResponse("", "ok", nil),
 					},
 				},
 			}

@@ -37,8 +37,9 @@ var (
 )
 
 // TurnPayload is the ingest request body for a single completed conversation turn.
-// It carries the raw provider request and response so tapes can parse, store,
-// and embed them exactly as the transparent proxy would.
+// It carries the raw provider request plus an already-reduced response.
+// Capture adapters such as tapes-extproc own protocol-specific stream reduction;
+// ingest owns request parsing, validation, and durable storage.
 type TurnPayload struct {
 	// Provider type: "openai", "anthropic", "ollama"
 	Provider string `json:"provider"`
@@ -46,11 +47,11 @@ type TurnPayload struct {
 	// AgentName optionally tags the turn (same as X-Tapes-Agent-Name header)
 	AgentName string `json:"agent_name,omitempty"`
 
-	// RawRequest is the original request body sent to the LLM provider
+	// RawRequest is the original request body sent to the LLM provider.
 	RawRequest json.RawMessage `json:"request"`
 
-	// RawResponse is the complete response body from the LLM provider
-	RawResponse json.RawMessage `json:"response"`
+	// Response is the already reduced, provider-agnostic response for the turn.
+	Response llm.ChatResponse `json:"response"`
 }
 
 // BatchPayload is the ingest request body for multiple conversation turns.
@@ -287,7 +288,7 @@ func (s *Server) handleBatchIngest(c *fiber.Ctx) error {
 		// envelope. Sum of raw request + response is a close lower bound; the
 		// JSON envelope overhead (provider, agent_name) is small and omitted to
 		// avoid re-marshaling.
-		turnBytes := len(t.RawRequest) + len(t.RawResponse)
+		turnBytes := len(t.RawRequest) + reducedResponseSize(t.Response)
 
 		start := time.Now()
 		if err := s.processTurn(t); err != nil {
@@ -327,6 +328,32 @@ func (s *Server) writeProcessTurnError(c *fiber.Ctx, err error) error {
 	return c.Status(status).JSON(llm.ErrorResponse{Error: err.Error()})
 }
 
+// reducedResponseSize provides the json marshaled size of the chat response
+func reducedResponseSize(resp llm.ChatResponse) int {
+	b, err := json.Marshal(resp)
+	if err != nil {
+		return 0
+	}
+	return len(b)
+}
+
+// validateReducedResponse is a sanity check ontop of a provided llm.ChatResponse
+// that ensures the payload to the ingest server is valid.
+func validateReducedResponse(resp *llm.ChatResponse) error {
+	if resp.Message.Role == "" {
+		return errors.New("missing response.message.role")
+	}
+	if len(resp.Message.Content) == 0 {
+		return errors.New("missing response.message.content")
+	}
+	for i, block := range resp.Message.Content {
+		if block.Type == "" {
+			return fmt.Errorf("missing response.message.content[%d].type", i)
+		}
+	}
+	return nil
+}
+
 // processTurn parses a raw turn payload and enqueues it for async DAG storage.
 // Returned errors wrap one of ErrEnvelope / ErrUnprocessable / ErrDownstream so
 // the caller can map to an HTTP status without re-parsing the message.
@@ -342,9 +369,9 @@ func (s *Server) processTurn(turn *TurnPayload) error {
 		return fmt.Errorf("%w: cannot parse request: %w", ErrUnprocessable, err)
 	}
 
-	parsedResp, err := prov.ParseResponse(turn.RawResponse)
-	if err != nil {
-		return fmt.Errorf("%w: cannot parse response: %w", ErrUnprocessable, err)
+	parsedResp := turn.Response
+	if err := validateReducedResponse(&parsedResp); err != nil {
+		return fmt.Errorf("%w: invalid reduced response: %w", ErrUnprocessable, err)
 	}
 
 	s.logger.Debug("ingesting turn",
@@ -357,7 +384,7 @@ func (s *Server) processTurn(turn *TurnPayload) error {
 		Provider:  prov.Name(),
 		AgentName: turn.AgentName,
 		Req:       parsedReq,
-		Resp:      parsedResp,
+		Resp:      &parsedResp,
 	}); !ok {
 		s.logger.Error("ingest enqueue failed: worker queue full",
 			"provider", prov.Name(),

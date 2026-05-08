@@ -35,16 +35,15 @@ func mustMarshalPayload(p ingest.TurnPayload) []byte {
 
 func buildValidAnthropicOneshot() []byte {
 	req := json.RawMessage(`{"model":"claude-3-5-sonnet-20241022","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
-	resp := json.RawMessage(`{"id":"msg_x","type":"message","role":"assistant","model":"claude-3-5-sonnet-20241022","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":5,"output_tokens":2,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}`)
-	return mustMarshalPayload(ingest.TurnPayload{Provider: "anthropic", AgentName: "contract", RawRequest: req, RawResponse: resp})
+	return mustMarshalPayload(ingest.TurnPayload{Provider: "anthropic", AgentName: "contract", RawRequest: req, Response: reducedResponse("claude-3-5-sonnet-20241022", "hi", nil)})
 }
 
 func buildUnknownProvider() []byte {
-	return mustMarshalPayload(ingest.TurnPayload{Provider: "nope", RawRequest: json.RawMessage(`{}`), RawResponse: json.RawMessage(`{}`)})
+	return mustMarshalPayload(ingest.TurnPayload{Provider: "nope", RawRequest: json.RawMessage(`{}`), Response: reducedResponse("", "ok", nil)})
 }
 
 func buildMissingProvider() []byte {
-	return mustMarshalPayload(ingest.TurnPayload{RawRequest: json.RawMessage(`{}`), RawResponse: json.RawMessage(`{}`)})
+	return mustMarshalPayload(ingest.TurnPayload{RawRequest: json.RawMessage(`{}`), Response: reducedResponse("", "ok", nil)})
 }
 
 func buildMalformedEnvelope() []byte { return []byte(`{not json`) }
@@ -103,10 +102,9 @@ var _ = Describe("Ingest contract", func() {
 			contractCase{name: "empty_body", body: buildEmptyBody(), wantStatus: http.StatusBadRequest, wantRow: false}),
 	)
 
-	It("returns 422 when provider-specific response parse fails", func() {
+	It("returns 422 when reduced response validation fails", func() {
 		req := json.RawMessage(`{"model":"claude-3-5-sonnet","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
-		resp := json.RawMessage(`"this is a string, not a messages response"`)
-		payload := ingest.TurnPayload{Provider: "anthropic", RawRequest: req, RawResponse: resp}
+		payload := ingest.TurnPayload{Provider: "anthropic", RawRequest: req}
 		body, _ := json.Marshal(payload)
 
 		httpResp, err := client.Post(baseURL+"/v1/ingest", "application/json", bytes.NewReader(body))
@@ -114,6 +112,6 @@ var _ = Describe("Ingest contract", func() {
 		defer httpResp.Body.Close()
 		Expect(httpResp.StatusCode).To(Equal(http.StatusUnprocessableEntity))
 		b, _ := io.ReadAll(httpResp.Body)
-		Expect(string(b)).To(ContainSubstring("cannot parse response"))
+		Expect(string(b)).To(ContainSubstring("invalid reduced response"))
 	})
 })

@@ -12,7 +12,7 @@ HTTP 200
 jsonpath "$.status" == "ok"
 
 # ──────────────────────────────────────────────
-# 2. Single turn — OpenAI format
+# 2. Single turn — OpenAI request + reduced response
 # ──────────────────────────────────────────────
 
 POST {{host}}/v1/ingest
@@ -27,16 +27,15 @@ Content-Type: application/json
     ]
   },
   "response": {
-    "id": "chatcmpl-e2e-001",
-    "object": "chat.completion",
     "model": "gpt-4",
-    "choices": [
-      {
-        "index": 0,
-        "message": { "role": "assistant", "content": "Content addressing is a method of storing and retrieving data based on the content itself, rather than its location." },
-        "finish_reason": "stop"
-      }
-    ],
+    "message": {
+      "role": "assistant",
+      "content": [
+        { "type": "text", "text": "Content addressing is a method of storing and retrieving data based on the content itself, rather than its location." }
+      ]
+    },
+    "done": true,
+    "stop_reason": "stop",
     "usage": {
       "prompt_tokens": 12,
       "completion_tokens": 25,
@@ -49,7 +48,7 @@ HTTP 202
 jsonpath "$.status" == "accepted"
 
 # ──────────────────────────────────────────────
-# 3. Single turn — Anthropic format
+# 3. Single turn — Anthropic request + reduced response
 # ──────────────────────────────────────────────
 
 POST {{host}}/v1/ingest
@@ -66,17 +65,23 @@ Content-Type: application/json
     ]
   },
   "response": {
-    "id": "msg_e2e_002",
-    "type": "message",
-    "role": "assistant",
     "model": "claude-sonnet-4-20250514",
-    "content": [
-      { "type": "text", "text": "A Merkle DAG is a directed acyclic graph where each node is identified by a cryptographic hash of its content and links." }
-    ],
+    "message": {
+      "role": "assistant",
+      "content": [
+        { "type": "text", "text": "A Merkle DAG is a directed acyclic graph where each node is identified by a cryptographic hash of its content and links." }
+      ]
+    },
+    "done": true,
     "stop_reason": "end_turn",
     "usage": {
-      "input_tokens": 20,
-      "output_tokens": 30
+      "prompt_tokens": 20,
+      "completion_tokens": 30,
+      "total_tokens": 50
+    },
+    "extra": {
+      "id": "msg_e2e_002",
+      "type": "message"
     }
   }
 }
@@ -85,7 +90,7 @@ HTTP 202
 jsonpath "$.status" == "accepted"
 
 # ──────────────────────────────────────────────
-# 4. Single turn — Ollama format
+# 4. Single turn — Ollama request + reduced response
 # ──────────────────────────────────────────────
 
 POST {{host}}/v1/ingest
@@ -102,13 +107,20 @@ Content-Type: application/json
   },
   "response": {
     "model": "llama3",
-    "created_at": "2025-01-01T00:00:00Z",
-    "message": { "role": "assistant", "content": "Hi there! How can I help you?" },
+    "message": {
+      "role": "assistant",
+      "content": [
+        { "type": "text", "text": "Hi there! How can I help you?" }
+      ]
+    },
     "done": true,
-    "done_reason": "stop",
-    "prompt_eval_count": 5,
-    "eval_count": 10,
-    "total_duration": 500000000
+    "stop_reason": "stop",
+    "usage": {
+      "prompt_tokens": 5,
+      "completion_tokens": 10,
+      "total_tokens": 15,
+      "total_duration_ns": 500000000
+    }
   }
 }
 HTTP 202
@@ -131,10 +143,10 @@ Content-Type: application/json
         "messages": [{ "role": "user", "content": "Batch turn 1" }]
       },
       "response": {
-        "id": "chatcmpl-e2e-batch-1",
-        "object": "chat.completion",
         "model": "gpt-4",
-        "choices": [{ "index": 0, "message": { "role": "assistant", "content": "Batch response 1" }, "finish_reason": "stop" }],
+        "message": { "role": "assistant", "content": [{ "type": "text", "text": "Batch response 1" }] },
+        "done": true,
+        "stop_reason": "stop",
         "usage": { "prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10 }
       }
     },
@@ -148,9 +160,9 @@ Content-Type: application/json
       },
       "response": {
         "model": "llama3",
-        "created_at": "2025-01-01T00:00:00Z",
-        "message": { "role": "assistant", "content": "Batch response 2" },
-        "done": true
+        "message": { "role": "assistant", "content": [{ "type": "text", "text": "Batch response 2" }] },
+        "done": true,
+        "stop_reason": "stop"
       }
     }
   ]
@@ -169,7 +181,7 @@ Content-Type: application/json
 {
   "provider": "unknown-provider",
   "request": { "model": "x", "messages": [] },
-  "response": {}
+  "response": { "message": { "role": "assistant", "content": [{ "type": "text", "text": "ok" }] } }
 }
 HTTP 422
 [Asserts]
@@ -199,17 +211,17 @@ Content-Type: application/json
         "messages": [{ "role": "user", "content": "Valid turn" }]
       },
       "response": {
-        "id": "chatcmpl-e2e-partial",
-        "object": "chat.completion",
         "model": "gpt-4",
-        "choices": [{ "index": 0, "message": { "role": "assistant", "content": "OK" }, "finish_reason": "stop" }],
+        "message": { "role": "assistant", "content": [{ "type": "text", "text": "OK" }] },
+        "done": true,
+        "stop_reason": "stop",
         "usage": { "prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4 }
       }
     },
     {
       "provider": "bad-provider",
       "request": {},
-      "response": {}
+      "response": { "message": { "role": "assistant", "content": [{ "type": "text", "text": "ok" }] } }
     }
   ]
 }
