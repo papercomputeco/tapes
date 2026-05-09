@@ -482,6 +482,7 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 		DaemonPID:        os.Getpid(),
 		ProxyURL:         proxyURL,
 		APIURL:           apiURL,
+		PostgresDSN:      startCfg.PostgresDSN,
 		ShutdownWhenIdle: shutdownWhenIdle,
 		LogPath:          manager.LogPath,
 	}
@@ -539,8 +540,12 @@ func (c *startCommander) monitorIdle(manager *start.Manager, log *slog.Logger, e
 }
 
 func (c *startCommander) ensureDaemon(ctx context.Context, manager *start.Manager) (*start.State, error) {
-	state, err := start.LoadHealthyOrClear(ctx, manager, os.Stderr)
+	state, err := start.LoadHealthyMatching(ctx, manager, c.postgresDSN, os.Stderr)
 	if err != nil {
+		var mismatch *start.DSNMismatchError
+		if errors.As(err, &mismatch) {
+			return nil, fmt.Errorf("running daemon is bound to %q but you passed --postgres %q; stop the running daemon (pkill -f 'tapes start') or omit --postgres to reuse it", mismatch.Running, mismatch.Requested)
+		}
 		return nil, err
 	}
 	if state != nil {

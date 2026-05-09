@@ -116,6 +116,36 @@ var _ = Describe("bootstrapAPI", func() {
 		})
 	})
 
+	Describe("DSN mismatch with running daemon", func() {
+		It("refuses to attach and returns a styled actionable error", func() {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+			DeferCleanup(server.Close)
+
+			manager, err := start.NewManager(tmpDir)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(manager.SaveState(&start.State{
+				DaemonPID:   os.Getpid(),
+				APIURL:      server.URL,
+				ProxyURL:    server.URL,
+				PostgresDSN: "postgres://running/db_a",
+			})).To(Succeed())
+
+			_, _, err = bootstrapAPI(context.Background(), bootstrapConfig{
+				configDir:   tmpDir,
+				postgresDSN: "postgres://requested/db_b",
+				out:         &bytes.Buffer{},
+			})
+			Expect(err).To(HaveOccurred())
+			msg := err.Error()
+			Expect(msg).To(ContainSubstring("Running tapes daemon is bound to a different Postgres"))
+			Expect(msg).To(ContainSubstring("postgres://running/db_a"))
+			Expect(msg).To(ContainSubstring("postgres://requested/db_b"))
+			Expect(msg).To(ContainSubstring("pkill -f 'tapes start'"))
+		})
+	})
+
 	Describe("step 3: ensurePostgres without Docker", func() {
 		It("returns the styled actionable error when Docker is missing and Postgres is unreachable", func() {
 			_, _, err := bootstrapAPI(context.Background(), bootstrapConfig{

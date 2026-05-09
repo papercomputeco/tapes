@@ -238,6 +238,38 @@ func UnregisterAgent(manager *Manager, pid int) error {
 	return manager.SaveState(state)
 }
 
+// DSNMismatchError signals that a healthy daemon is running but bound to a
+// different Postgres DSN than the caller asked for. Callers should refuse to
+// attach and instruct the user to stop the running daemon.
+type DSNMismatchError struct {
+	Running   string
+	Requested string
+}
+
+func (e *DSNMismatchError) Error() string {
+	return fmt.Sprintf("running daemon is bound to %q; you asked for %q", e.Running, e.Requested)
+}
+
+// LoadHealthyMatching wraps LoadHealthyOrClear and additionally rejects a
+// healthy daemon whose recorded PostgresDSN does not match wantDSN. An empty
+// wantDSN or an empty recorded DSN (legacy state files) skips the check.
+func LoadHealthyMatching(ctx context.Context, manager *Manager, wantDSN string, warnOut io.Writer) (*State, error) {
+	state, err := LoadHealthyOrClear(ctx, manager, warnOut)
+	if err != nil {
+		return nil, err
+	}
+	if state == nil {
+		return nil, nil
+	}
+	if wantDSN == "" || state.PostgresDSN == "" {
+		return state, nil
+	}
+	if state.PostgresDSN != wantDSN {
+		return nil, &DSNMismatchError{Running: state.PostgresDSN, Requested: wantDSN}
+	}
+	return state, nil
+}
+
 // LoadHealthyOrClear acquires the manager lock, loads the daemon state, and
 // returns it only if it points at a live, /ping-responsive daemon. If state is
 // stale or the JSON is corrupted, it is cleared and the function returns

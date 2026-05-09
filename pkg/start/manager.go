@@ -30,6 +30,7 @@ type State struct {
 	DaemonPID        int            `json:"daemon_pid"`
 	ProxyURL         string         `json:"proxy_url"`
 	APIURL           string         `json:"api_url"`
+	PostgresDSN      string         `json:"postgres_dsn,omitempty"`
 	ShutdownWhenIdle bool           `json:"shutdown_when_idle"`
 	Agents           []AgentSession `json:"agents"`
 	LogPath          string         `json:"log_path"`

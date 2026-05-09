@@ -3,6 +3,7 @@ package start_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -183,6 +184,82 @@ var _ = Describe("LoadHealthyOrClear", func() {
 		reloaded, err := manager.LoadState()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(reloaded).To(BeNil())
+	})
+
+	It("returns DSNMismatchError when running daemon's DSN differs from wantDSN", func() {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		DeferCleanup(server.Close)
+
+		Expect(manager.SaveState(&start.State{
+			DaemonPID:   os.Getpid(),
+			APIURL:      server.URL,
+			ProxyURL:    server.URL,
+			PostgresDSN: "postgres://running/db_a",
+		})).To(Succeed())
+
+		state, err := start.LoadHealthyMatching(context.Background(), manager, "postgres://requested/db_b", nil)
+		Expect(err).To(HaveOccurred())
+		Expect(state).To(BeNil())
+
+		var mismatch *start.DSNMismatchError
+		Expect(errors.As(err, &mismatch)).To(BeTrue())
+		Expect(mismatch.Running).To(Equal("postgres://running/db_a"))
+		Expect(mismatch.Requested).To(Equal("postgres://requested/db_b"))
+	})
+
+	It("attaches when wantDSN matches the running DSN", func() {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		DeferCleanup(server.Close)
+
+		Expect(manager.SaveState(&start.State{
+			DaemonPID:   os.Getpid(),
+			APIURL:      server.URL,
+			ProxyURL:    server.URL,
+			PostgresDSN: "postgres://shared/db",
+		})).To(Succeed())
+
+		state, err := start.LoadHealthyMatching(context.Background(), manager, "postgres://shared/db", nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(state).NotTo(BeNil())
+	})
+
+	It("attaches without checking when wantDSN is empty (caller has no preference)", func() {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		DeferCleanup(server.Close)
+
+		Expect(manager.SaveState(&start.State{
+			DaemonPID:   os.Getpid(),
+			APIURL:      server.URL,
+			ProxyURL:    server.URL,
+			PostgresDSN: "postgres://anything/db",
+		})).To(Succeed())
+
+		state, err := start.LoadHealthyMatching(context.Background(), manager, "", nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(state).NotTo(BeNil())
+	})
+
+	It("attaches without checking when running daemon has no recorded DSN (legacy state)", func() {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		DeferCleanup(server.Close)
+
+		Expect(manager.SaveState(&start.State{
+			DaemonPID: os.Getpid(),
+			APIURL:    server.URL,
+			ProxyURL:  server.URL,
+		})).To(Succeed())
+
+		state, err := start.LoadHealthyMatching(context.Background(), manager, "postgres://anything/db", nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(state).NotTo(BeNil())
 	})
 
 	It("clears corrupt state and warns instead of returning an error", func() {

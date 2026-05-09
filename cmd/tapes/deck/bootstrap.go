@@ -51,8 +51,22 @@ func bootstrapAPI(ctx context.Context, cfg bootstrapConfig) (string, func(), err
 		return "", nil, fmt.Errorf("locating tapes start manager: %w", err)
 	}
 
-	state, err := start.LoadHealthyOrClear(ctx, manager, os.Stderr)
+	state, err := start.LoadHealthyMatching(ctx, manager, cfg.postgresDSN, os.Stderr)
 	if err != nil {
+		var mismatch *start.DSNMismatchError
+		if errors.As(err, &mismatch) {
+			return "", nil, errors.New(strings.Join([]string{
+				cliui.FailMark + " Running tapes daemon is bound to a different Postgres",
+				"",
+				"  running:   " + mismatch.Running,
+				"  requested: " + mismatch.Requested,
+				"",
+				"To switch, stop the running daemon first:",
+				"  pkill -f 'tapes start'",
+				"",
+				"Or omit --postgres / unset storage.postgres_dsn to attach to the running daemon.",
+			}, "\n"))
+		}
 		return "", nil, err
 	}
 	if state != nil {
