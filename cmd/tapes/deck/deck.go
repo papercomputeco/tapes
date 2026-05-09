@@ -5,11 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/deck"
 	"github.com/papercomputeco/tapes/pkg/sessions"
 )
@@ -29,41 +31,86 @@ Examples:
   tapes deck --pricing ./pricing.json
   tapes deck --demo
 `
-	deckShortDesc = "Deck - ROI dashboard for agent sessions"
-	sortDirDesc   = "desc"
+	deckShortDesc    = "Deck - ROI dashboard for agent sessions"
+	sortDirDesc      = "desc"
+	defaultAPITarget = "http://localhost:8081"
 )
 
+var deckFlags = config.FlagSet{
+	config.FlagAPITarget: {Name: "api-target", Shorthand: "a", ViperKey: "client.api_target", Description: "URL of the tapes API server"},
+	config.FlagPostgres:  {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL DSN used when bootstrapping a local daemon"},
+}
+
 type deckCommander struct {
-	apiTarget   string
-	pricingPath string
-	since       string
-	from        string
-	to          string
-	sort        string
-	sortDir     string
-	model       string
-	status      string
-	project     string
-	session     string
-	refresh     uint
-	demo        bool
-	theme       string
+	apiTarget         string
+	apiTargetIsCustom bool
+	postgresDSN       string
+	configDir         string
+	debug             bool
+	pricingPath       string
+	since             string
+	from              string
+	to                string
+	sort              string
+	sortDir           string
+	model             string
+	status            string
+	project           string
+	session           string
+	refresh           uint
+	demo              bool
+	theme             string
 }
 
 func NewDeckCmd() *cobra.Command {
-	cmder := &deckCommander{}
+	cmder := &deckCommander{
+		apiTarget: defaultAPITarget,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "deck",
 		Short: deckShortDesc,
 		Long:  deckLongDesc,
 		Args:  cobra.NoArgs,
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			configDir, _ := cmd.Flags().GetString("config-dir")
+			cmder.configDir = configDir
+
+			v, err := config.InitViper(configDir)
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+
+			config.BindRegisteredFlags(v, cmd, deckFlags, []string{
+				config.FlagAPITarget,
+				config.FlagPostgres,
+			})
+
+			// A target is "custom" only when its resolved value points
+			// somewhere other than the default localhost API. This keeps
+			// bootstrap engaged for users who have client.api_target set
+			// in config to the same default we'd use anyway.
+			resolved := strings.TrimRight(strings.TrimSpace(v.GetString("client.api_target")), "/")
+			cmder.apiTargetIsCustom = (cmd.Flags().Changed("api-target") && cmder.apiTarget != defaultAPITarget) ||
+				(resolved != "" && resolved != defaultAPITarget)
+			if resolved != "" {
+				cmder.apiTarget = resolved
+			}
+			cmder.postgresDSN = v.GetString("storage.postgres_dsn")
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			debug, err := cmd.Flags().GetBool("debug")
+			if err != nil {
+				return fmt.Errorf("could not get debug flag: %w", err)
+			}
+			cmder.debug = debug
 			return cmder.run(cmd.Context(), cmd)
 		},
 	}
 
-	cmd.Flags().StringVarP(&cmder.apiTarget, "api-target", "a", "http://localhost:8081", "URL of the tapes API server")
+	config.AddStringFlag(cmd, deckFlags, config.FlagAPITarget, &cmder.apiTarget)
+	config.AddStringFlag(cmd, deckFlags, config.FlagPostgres, &cmder.postgresDSN)
 	cmd.Flags().StringVar(&cmder.pricingPath, "pricing", "", "Path to pricing JSON overrides")
 	cmd.Flags().StringVar(&cmder.since, "since", "", "Look back duration (e.g. 24h)")
 	cmd.Flags().StringVar(&cmder.from, "from", "", "Start time (YYYY-MM-DD or RFC3339)")
@@ -101,7 +148,19 @@ func (c *deckCommander) run(ctx context.Context, cmd *cobra.Command) error {
 		return err
 	}
 
-	apiTarget := normalizeAPITarget(c.apiTarget)
+	apiTarget, cleanup, err := bootstrapAPI(ctx, bootstrapConfig{
+		apiTarget:         c.apiTarget,
+		apiTargetIsCustom: c.apiTargetIsCustom,
+		postgresDSN:       c.postgresDSN,
+		configDir:         c.configDir,
+		debug:             c.debug,
+		out:               os.Stderr,
+	})
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
 	if c.demo {
 		sessionCount, messageCount, err := deck.SeedDemoViaAPI(ctx, apiTarget, false)
 		if err != nil {

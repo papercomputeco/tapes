@@ -9,7 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -189,7 +188,7 @@ func (c *startCommander) runLogs(ctx context.Context, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if !stateHealthy(ctx, state) {
+	if !start.StateHealthy(ctx, state) {
 		return errors.New("daemon is not running")
 	}
 
@@ -300,14 +299,14 @@ func (c *startCommander) runAgent(ctx context.Context, agent string, passthrough
 	}
 
 	agentPID := cmd.Process.Pid
-	if err := c.registerAgent(manager, agent, agentPID); err != nil {
+	if err := start.RegisterAgent(manager, agent, agentPID); err != nil {
 		_ = cleanup()
 		return err
 	}
 
 	err = cmd.Wait()
 	cleanupErr := cleanup()
-	if err := c.unregisterAgent(manager, agentPID); err != nil {
+	if err := start.UnregisterAgent(manager, agentPID); err != nil {
 		return err
 	}
 	if cleanupErr != nil {
@@ -525,7 +524,7 @@ func (c *startCommander) monitorIdle(manager *start.Manager, log *slog.Logger, e
 			continue
 		}
 
-		active := filterActiveAgents(state)
+		active := start.FilterActiveAgents(state)
 		if state != nil {
 			state.Agents = active
 			_ = manager.SaveState(state)
@@ -540,166 +539,24 @@ func (c *startCommander) monitorIdle(manager *start.Manager, log *slog.Logger, e
 }
 
 func (c *startCommander) ensureDaemon(ctx context.Context, manager *start.Manager) (*start.State, error) {
-	lock, err := manager.Lock()
+	state, err := start.LoadHealthyOrClear(ctx, manager, os.Stderr)
 	if err != nil {
 		return nil, err
 	}
-
-	state, err := manager.LoadState()
-	if err != nil {
-		_ = lock.Release()
-		return nil, err
-	}
-
-	if !stateHealthy(ctx, state) {
-		_ = manager.ClearState()
-		state = nil
-	}
-
-	if err := lock.Release(); err != nil {
-		return nil, err
-	}
-
 	if state != nil {
 		return state, nil
 	}
 
-	if err := c.spawnDaemon(ctx, manager); err != nil {
-		return nil, err
-	}
-
-	return c.waitForDaemon(ctx, manager)
-}
-
-func (c *startCommander) spawnDaemon(ctx context.Context, manager *start.Manager) error {
-	execPath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("resolving executable: %w", err)
-	}
-
-	logFile, err := os.OpenFile(manager.LogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return fmt.Errorf("opening log file: %w", err)
-	}
-
-	args := []string{"start", "--daemon"}
-	if c.debug {
-		args = append(args, "--debug")
-	}
-	if c.configDir != "" {
-		args = append(args, "--config-dir", c.configDir)
-	}
-	if c.postgresDSN != "" {
-		args = append(args, "--postgres", c.postgresDSN)
-	}
-
-	cmd := exec.CommandContext(ctx, execPath, args...)
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-
-	if err := cmd.Start(); err != nil {
-		_ = logFile.Close()
-		return fmt.Errorf("starting daemon: %w", err)
-	}
-
-	done := make(chan struct{})
-	go func() {
-		_ = cmd.Wait()
-		close(done)
-	}()
+	state, done, err := start.SpawnAndWait(ctx, manager,
+		start.SpawnOptions{
+			ConfigDir:   c.configDir,
+			Debug:       c.debug,
+			PostgresDSN: c.postgresDSN,
+		},
+		start.WaitOptions{Timeout: c.daemonTimeout},
+	)
 	c.daemonDone = done
-
-	return logFile.Close()
-}
-
-func (c *startCommander) waitForDaemon(ctx context.Context, manager *start.Manager) (*start.State, error) {
-	timeout := c.daemonTimeout
-	if timeout == 0 {
-		timeout = 30 * time.Second
-	}
-	deadline := time.After(timeout)
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-deadline:
-			return nil, errors.New("timed out waiting for daemon: the daemon process did not become healthy within 30 seconds; check logs with 'tapes start --logs'")
-		default:
-		}
-
-		// Channel-based crash detection: if the daemon child exited, fail fast
-		// instead of polling until timeout.
-		if c.daemonDone != nil {
-			select {
-			case <-c.daemonDone:
-				return nil, errors.New("daemon process exited during startup; check logs with 'tapes start --logs'")
-			default:
-			}
-		}
-
-		lock, err := manager.Lock()
-		if err != nil {
-			return nil, err
-		}
-		state, err := manager.LoadState()
-		_ = lock.Release()
-		if err != nil {
-			return nil, err
-		}
-		if state != nil && stateHealthy(ctx, state) {
-			return state, nil
-		}
-		time.Sleep(300 * time.Millisecond)
-	}
-}
-
-func (c *startCommander) registerAgent(manager *start.Manager, name string, pid int) error {
-	lock, err := manager.Lock()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = lock.Release() }()
-
-	state, err := manager.LoadState()
-	if err != nil {
-		return err
-	}
-	if state == nil {
-		return errors.New("daemon state missing")
-	}
-
-	state.Agents = append(state.Agents, start.AgentSession{
-		Name:      name,
-		PID:       pid,
-		StartedAt: time.Now(),
-	})
-
-	return manager.SaveState(state)
-}
-
-func (c *startCommander) unregisterAgent(manager *start.Manager, pid int) error {
-	lock, err := manager.Lock()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = lock.Release() }()
-
-	state, err := manager.LoadState()
-	if err != nil {
-		return err
-	}
-	if state == nil {
-		return nil
-	}
-
-	remaining := make([]start.AgentSession, 0, len(state.Agents))
-	for _, session := range state.Agents {
-		if session.PID != pid {
-			remaining = append(remaining, session)
-		}
-	}
-	state.Agents = remaining
-	return manager.SaveState(state)
+	return state, err
 }
 
 func (c *startCommander) loadConfig() (*startConfig, error) {
@@ -871,55 +728,6 @@ func agentCommand(agent string) string {
 	default:
 		return agent
 	}
-}
-
-func stateHealthy(ctx context.Context, state *start.State) bool {
-	if state == nil || state.DaemonPID == 0 || state.APIURL == "" {
-		return false
-	}
-	if !processAlive(state.DaemonPID) {
-		return false
-	}
-	return apiReachable(ctx, state.APIURL)
-}
-
-func filterActiveAgents(state *start.State) []start.AgentSession {
-	if state == nil {
-		return nil
-	}
-	active := make([]start.AgentSession, 0, len(state.Agents))
-	for _, session := range state.Agents {
-		if processAlive(session.PID) {
-			active = append(active, session)
-		}
-	}
-	return active
-}
-
-func processAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	return proc.Signal(syscall.Signal(0)) == nil
-}
-
-func apiReachable(ctx context.Context, apiURL string) bool {
-	client := &http.Client{Timeout: 2 * time.Second}
-	url := strings.TrimRight(apiURL, "/") + "/ping"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return false
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
 }
 
 func followLog(ctx context.Context, path string, out io.Writer) error {

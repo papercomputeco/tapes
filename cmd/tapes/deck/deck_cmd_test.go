@@ -14,7 +14,7 @@ var _ = Describe("NewDeckCmd", func() {
 		Expect(cmd.Flags().Lookup("api-target").DefValue).To(Equal("http://localhost:8081"))
 		Expect(cmd.Flags().Lookup("sort").DefValue).To(Equal("date"))
 		Expect(cmd.Flags().Lookup("refresh").DefValue).To(Equal("0"))
-		Expect(cmd.Flags().Lookup("postgres")).To(BeNil())
+		Expect(cmd.Flags().Lookup("postgres")).NotTo(BeNil())
 	})
 })
 
