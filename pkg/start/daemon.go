@@ -153,7 +153,7 @@ func WaitForDaemon(ctx context.Context, manager *Manager, opts WaitOptions) (*St
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-deadline:
-			return nil, errors.New("timed out waiting for daemon: the daemon process did not become healthy within 30 seconds; check logs with 'tapes start --logs'")
+			return nil, fmt.Errorf("timed out waiting for daemon: the daemon process did not become healthy within %s; check logs with 'tapes start --logs'", timeout)
 		default:
 		}
 

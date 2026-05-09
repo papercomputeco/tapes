@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -60,6 +61,29 @@ func PostgresDSN(port int) string {
 		port = DefaultPostgresPort
 	}
 	return fmt.Sprintf("postgres://%s:%s@localhost:%d/%s?sslmode=disable", PostgresUser, PostgresPass, port, PostgresDB)
+}
+
+// IsLocalDefaultHost returns true if dsn parses as a postgres URL whose host
+// resolves to localhost and whose port matches DefaultPostgresPort. Credentials
+// and database name are not compared. Empty DSN returns true so bootstrap
+// proceeds normally when the user has not configured anything.
+func IsLocalDefaultHost(dsn string) bool {
+	if strings.TrimSpace(dsn) == "" {
+		return true
+	}
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+		return false
+	}
+	port := u.Port()
+	if port == "" {
+		port = strconv.Itoa(DefaultPostgresPort)
+	}
+	return port == strconv.Itoa(DefaultPostgresPort)
 }
 
 // HasDocker reports whether the docker CLI is available on PATH.

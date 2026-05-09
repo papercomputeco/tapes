@@ -65,4 +65,34 @@ var _ = Describe("local", func() {
 			Expect(local.PostgresDSN(0)).To(ContainSubstring(":5432/"))
 		})
 	})
+
+	Describe("IsLocalDefaultHost", func() {
+		It("returns true for empty DSN", func() {
+			Expect(local.IsLocalDefaultHost("")).To(BeTrue())
+		})
+
+		It("returns true for localhost on the default port", func() {
+			Expect(local.IsLocalDefaultHost("postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable")).To(BeTrue())
+		})
+
+		It("returns true for 127.0.0.1 on the default port", func() {
+			Expect(local.IsLocalDefaultHost("postgres://u:p@127.0.0.1:5432/db")).To(BeTrue())
+		})
+
+		It("returns true when the port is omitted (defaults to 5432)", func() {
+			Expect(local.IsLocalDefaultHost("postgres://u:p@localhost/db")).To(BeTrue())
+		})
+
+		It("returns false for a non-local host", func() {
+			Expect(local.IsLocalDefaultHost("postgres://u:p@staging.example.com:5432/db")).To(BeFalse())
+		})
+
+		It("returns false for a non-default port on localhost", func() {
+			Expect(local.IsLocalDefaultHost("postgres://u:p@localhost:6543/db")).To(BeFalse())
+		})
+
+		It("returns false for an unparseable DSN", func() {
+			Expect(local.IsLocalDefaultHost("not a url")).To(BeFalse())
+		})
+	})
 })

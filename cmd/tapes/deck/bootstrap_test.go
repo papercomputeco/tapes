@@ -146,13 +146,42 @@ var _ = Describe("bootstrapAPI", func() {
 		})
 	})
 
+	Describe("step 3: ensurePostgres with non-local configured DSN", func() {
+		It("refuses to bootstrap when the configured DSN points elsewhere", func() {
+			_, _, err := bootstrapAPI(context.Background(), bootstrapConfig{
+				configDir:     tmpDir,
+				postgresDSN:   "postgres://user:pw@staging.example.com:5432/db?sslmode=disable",
+				out:           &bytes.Buffer{},
+				hasDocker:     func() bool { return true },
+				probePostgres: func(context.Context, string) bool { return false },
+			})
+			Expect(err).To(HaveOccurred())
+			msg := err.Error()
+			Expect(msg).To(ContainSubstring("Configured Postgres is unreachable"))
+			Expect(msg).To(ContainSubstring("staging.example.com"))
+			Expect(msg).To(ContainSubstring(`tapes config set storage.postgres_dsn ""`))
+		})
+
+		It("refuses to bootstrap when the configured DSN uses a non-default port", func() {
+			_, _, err := bootstrapAPI(context.Background(), bootstrapConfig{
+				configDir:     tmpDir,
+				postgresDSN:   "postgres://user:pw@localhost:6543/db?sslmode=disable",
+				out:           &bytes.Buffer{},
+				hasDocker:     func() bool { return true },
+				probePostgres: func(context.Context, string) bool { return false },
+			})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("Configured Postgres is unreachable"))
+		})
+	})
+
 	Describe("step 3: ensurePostgres without Docker", func() {
 		It("returns the styled actionable error when Docker is missing and Postgres is unreachable", func() {
 			_, _, err := bootstrapAPI(context.Background(), bootstrapConfig{
-				configDir:   tmpDir,
-				postgresDSN: "postgres://x:y@127.0.0.1:1/db?sslmode=disable",
-				out:         &bytes.Buffer{},
-				hasDocker:   func() bool { return false },
+				configDir:     tmpDir,
+				out:           &bytes.Buffer{},
+				hasDocker:     func() bool { return false },
+				probePostgres: func(context.Context, string) bool { return false },
 			})
 			Expect(err).To(HaveOccurred())
 			msg := err.Error()
@@ -167,10 +196,10 @@ var _ = Describe("bootstrapAPI", func() {
 			Expect(os.WriteFile(tmpDir+"/start.json", []byte("{not json"), 0o600)).To(Succeed())
 
 			_, _, _ = bootstrapAPI(context.Background(), bootstrapConfig{
-				configDir:   tmpDir,
-				postgresDSN: "postgres://x:y@127.0.0.1:1/db?sslmode=disable",
-				out:         &bytes.Buffer{},
-				hasDocker:   func() bool { return false },
+				configDir:     tmpDir,
+				out:           &bytes.Buffer{},
+				hasDocker:     func() bool { return false },
+				probePostgres: func(context.Context, string) bool { return false },
 			})
 
 			_, statErr := os.Stat(tmpDir + "/start.json")

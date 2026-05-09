@@ -25,7 +25,8 @@ type bootstrapConfig struct {
 	configDir         string // forwarded to start.SpawnOptions
 	debug             bool
 	out               io.Writer
-	hasDocker         func() bool // defaults to local.HasDocker; overridden in tests
+	hasDocker         func() bool                                // defaults to local.HasDocker; overridden in tests
+	probePostgres     func(ctx context.Context, dsn string) bool // defaults to postgresReachable; overridden in tests
 }
 
 // bootstrapAPI resolves the URL of a tapes API server, bringing up local
@@ -40,6 +41,9 @@ func bootstrapAPI(ctx context.Context, cfg bootstrapConfig) (string, func(), err
 	}
 	if cfg.hasDocker == nil {
 		cfg.hasDocker = local.HasDocker
+	}
+	if cfg.probePostgres == nil {
+		cfg.probePostgres = postgresReachable
 	}
 
 	if cfg.apiTargetIsCustom {
@@ -88,17 +92,30 @@ func bootstrapAPI(ctx context.Context, cfg bootstrapConfig) (string, func(), err
 }
 
 // ensurePostgres checks the configured DSN and runs `pkg/local.Up` (Postgres
-// only) if nothing answers. Returns the DSN that was confirmed working so the
-// caller can forward it to the daemon spawn. Returns a styled actionable
-// error when Docker is unavailable.
+// only) if nothing answers and the DSN points at the same place local.Up
+// would start. A configured DSN that points elsewhere (staging, a remote
+// host, a non-default port) is refused with a styled error rather than
+// silently swapped for a fresh local container — the user's intent is
+// preserved.
 func ensurePostgres(ctx context.Context, cfg bootstrapConfig) (string, error) {
 	dsn := cfg.postgresDSN
 	if dsn == "" {
 		dsn = local.PostgresDSN(local.DefaultPostgresPort)
 	}
 
-	if postgresReachable(ctx, dsn) {
+	if cfg.probePostgres(ctx, dsn) {
 		return dsn, nil
+	}
+
+	if !local.IsLocalDefaultHost(dsn) {
+		return "", errors.New(strings.Join([]string{
+			cliui.FailMark + " Configured Postgres is unreachable",
+			"",
+			"  storage.postgres_dsn: " + dsn,
+			"",
+			"Bring it up, or clear the configured DSN to use a local container:",
+			"  tapes config set storage.postgres_dsn \"\"",
+		}, "\n"))
 	}
 
 	if !cfg.hasDocker() {
