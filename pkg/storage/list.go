@@ -76,17 +76,64 @@ type Page[T any] struct {
 }
 
 // SessionStats is the aggregate result of CountSessions for a given filter.
+//
+// All numeric aggregates are computed over the set of nodes matching the
+// supplied ListOpts filter; they are not restricted to nodes that are part
+// of a matching leaf session. This mirrors the long-standing TurnCount
+// semantic: the filter is per-node, not per-chain.
 type SessionStats struct {
 	// SessionCount is the number of leaf nodes matching the filter.
 	SessionCount int
 
 	// TurnCount is the number of nodes (turns) matching the filter.
-	// Filters apply to the same per-node fields used for SessionCount;
-	// it is not restricted to nodes that are part of a matching session.
 	TurnCount int
 
 	// RootCount is the number of root nodes (no parent) matching the filter.
 	RootCount int
+
+	// CompletedCount is the number of leaf nodes whose terminal classification
+	// is "completed" using leaf-only inputs (assistant role + a terminal
+	// stop_reason). This intentionally diverges from
+	// pkg/sessions.DetermineStatus, which also walks the chain to detect
+	// tool errors and git activity. The leaf-only form is fast and
+	// satisfiable in a single SQL aggregate.
+	CompletedCount int
+
+	// InputTokens / OutputTokens are SUMs over the matching node set,
+	// taken from prompt_tokens / completion_tokens columns.
+	InputTokens  int64
+	OutputTokens int64
+
+	// CacheCreationTokens / CacheReadTokens are SUMs of the cache-aware
+	// token columns. Surfaced so a caller (typically the API handler) can
+	// fold cost via pkg/sessions.CostForTokensWithCache.
+	CacheCreationTokens int64
+	CacheReadTokens     int64
+
+	// TotalDurationNs is SUM(total_duration_ns) over the matching node
+	// set — the wall-clock time each LLM call took. This is total compute
+	// spent on agents, not session wall-clock.
+	TotalDurationNs int64
+
+	// ToolCalls is the number of tool_use content blocks across the
+	// matching node set.
+	ToolCalls int
+
+	// PerModel breaks tokens down by (normalized) model so the API layer
+	// can apply per-model pricing without the storage driver having to
+	// know about pricing tables. Keys are normalized model names; nodes
+	// with no model are excluded.
+	PerModel map[string]ModelTokenStats
+}
+
+// ModelTokenStats is the per-model token rollup returned inside SessionStats.
+// Cost is intentionally not computed here — pricing lives in pkg/sessions
+// and is applied by the API handler.
+type ModelTokenStats struct {
+	InputTokens         int64
+	OutputTokens        int64
+	CacheCreationTokens int64
+	CacheReadTokens     int64
 }
 
 // Cursor is the decoded form of an opaque ListOpts.Cursor token.

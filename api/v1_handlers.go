@@ -87,10 +87,33 @@ type Turn struct {
 }
 
 // StatsResponse is the response for GET /v1/stats.
+//
+// All fields are computed by a single storage-driver aggregate over the
+// matching node set — no per-session chain walk. This means:
+//
+//   - InputTokens / OutputTokens / TotalDurationNs / ToolCalls are SUMs over
+//     every node matching the filter (same semantic as TurnCount). For typical
+//     queries where filters do not split chains, the totals match what summing
+//     the corresponding fields on /v1/sessions/summary would produce.
+//   - TotalCost is folded in the handler from the per-model token rollup
+//     returned by the driver, using the configured pricing table.
+//   - CompletedCount uses leaf-status-only classification: an assistant leaf
+//     with a terminal stop_reason ("stop", "end_turn", "end-turn", "eos").
+//     This is an approximation of pkg/sessions.DetermineStatus, which also
+//     considers tool errors and git activity from the full chain. Sessions
+//     with terminal stop_reason but a tool error elsewhere in the chain will
+//     count here as completed (DetermineStatus would call them failed); a
+//     follow-up will reconcile this if it matters in practice.
 type StatsResponse struct {
-	SessionCount int `json:"session_count"`
-	TurnCount    int `json:"turn_count"`
-	RootCount    int `json:"root_count"`
+	SessionCount    int     `json:"session_count"`
+	TurnCount       int     `json:"turn_count"`
+	RootCount       int     `json:"root_count"`
+	CompletedCount  int     `json:"completed_count"`
+	TotalCost       float64 `json:"total_cost"`
+	InputTokens     int64   `json:"input_tokens"`
+	OutputTokens    int64   `json:"output_tokens"`
+	TotalDurationNs int64   `json:"total_duration_ns"`
+	ToolCalls       int     `json:"tool_calls"`
 }
 
 // handleListSessions handles GET /v1/sessions.
@@ -199,7 +222,7 @@ func (s *Server) handleGetSession(c *fiber.Ctx) error {
 // handleStats handles GET /v1/stats.
 //
 //	@Summary		Get aggregate session stats
-//	@Description	Returns aggregate counts for sessions, turns, and roots matching the supplied filters.
+//	@Description	Returns counts plus folded cost / token / duration / tool-call / completed-count totals across every node matching the supplied filters. Numeric aggregates come from a single storage-driver SQL aggregate; cost is folded in the handler from the per-model token rollup using the configured pricing table. completed_count uses leaf-status-only classification (assistant leaf with a terminal stop_reason) — see StatsResponse for the divergence from pkg/sessions.DetermineStatus.
 //	@Tags			sessions
 //	@Produce		json
 //	@Param			project		query		string	false	"Filter by project name"
@@ -227,11 +250,39 @@ func (s *Server) handleStats(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to compute stats"})
 	}
 
+	pricing := s.config.Pricing
+	if pricing == nil {
+		pricing = sessions.DefaultPricing()
+	}
+
 	return c.JSON(StatsResponse{
-		SessionCount: stats.SessionCount,
-		TurnCount:    stats.TurnCount,
-		RootCount:    stats.RootCount,
+		SessionCount:    stats.SessionCount,
+		TurnCount:       stats.TurnCount,
+		RootCount:       stats.RootCount,
+		CompletedCount:  stats.CompletedCount,
+		TotalCost:       totalCostFromPerModel(stats.PerModel, pricing),
+		InputTokens:     stats.InputTokens,
+		OutputTokens:    stats.OutputTokens,
+		TotalDurationNs: stats.TotalDurationNs,
+		ToolCalls:       stats.ToolCalls,
 	})
+}
+
+// totalCostFromPerModel folds the driver's per-model token rollup into a
+// single USD total via the pricing table. Models the table doesn't price
+// (e.g. unrecognized provider strings) contribute zero — same fall-through
+// as pkg/sessions.BuildSummary.
+func totalCostFromPerModel(perModel map[string]storage.ModelTokenStats, pricing sessions.PricingTable) float64 {
+	var total float64
+	for model, t := range perModel {
+		price, ok := sessions.PricingForModel(pricing, model)
+		if !ok {
+			continue
+		}
+		_, _, cost := sessions.CostForTokensWithCache(price, t.InputTokens, t.OutputTokens, t.CacheCreationTokens, t.CacheReadTokens)
+		total += cost
+	}
+	return total
 }
 
 // parseListOpts reads ListOpts fields from query params. Filter fields are
