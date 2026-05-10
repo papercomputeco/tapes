@@ -359,8 +359,9 @@ var _ = Describe("v1 session handlers", func() {
 				_, err := richMem.Put(richCtx, user)
 				Expect(err).NotTo(HaveOccurred())
 
-				blocks := []llm.ContentBlock{{Type: "text", Text: "a " + o.tag}}
-				for i := 0; i < o.toolUses; i++ {
+				blocks := make([]llm.ContentBlock, 0, 1+o.toolUses)
+				blocks = append(blocks, llm.ContentBlock{Type: "text", Text: "a " + o.tag})
+				for range o.toolUses {
 					blocks = append(blocks, llm.ContentBlock{Type: "tool_use", ToolName: "fake_tool"})
 				}
 				assistantBucket := merkle.Bucket{
