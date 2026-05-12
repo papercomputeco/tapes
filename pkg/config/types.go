@@ -31,6 +31,7 @@ type ProxyConfig struct {
 // APIConfig holds API server settings.
 type APIConfig struct {
 	Listen string `toml:"listen,omitempty" mapstructure:"listen"`
+	WebUI  bool   `toml:"web_ui,omitempty" mapstructure:"web_ui"`
 }
 
 // IngestConfig holds ingest server settings for sidecar mode.
@@ -78,6 +79,7 @@ var configKeySet = map[string]bool{
 	"proxy.listen":          true,
 	"proxy.project":         true,
 	"api.listen":            true,
+	"api.web_ui":            true,
 	"ingest.listen":         true,
 	"client.proxy_target":   true,
 	"client.api_target":     true,

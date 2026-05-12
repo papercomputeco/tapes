@@ -81,6 +81,7 @@ type startConfig struct {
 	OllamaUpstream      string
 	OpenCodeProvider    string
 	Project             string
+	APIWebUI            bool
 }
 
 func NewStartCmd() *cobra.Command {
@@ -453,6 +454,7 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 		ListenAddr:   apiListener.Addr().String(),
 		VectorDriver: pgVecDriver,
 		Embedder:     embedder,
+		EnableWebUI:  startCfg.APIWebUI,
 	}
 	apiServer, err := api.NewServer(apiConfig, driver, log)
 	if err != nil {
@@ -738,6 +740,7 @@ func (c *startCommander) loadConfig() (*startConfig, error) {
 		OllamaUpstream:      resolveOllamaUpstream(provider, upstream),
 		OpenCodeProvider:    v.GetString("opencode.provider"),
 		Project:             v.GetString("proxy.project"),
+		APIWebUI:            v.GetBool("api.web_ui"),
 	}, nil
 }
 

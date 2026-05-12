@@ -148,9 +148,9 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 //	@Failure		500		{object}	llm.ErrorResponse	"Failed to load session"
 //	@Router			/v1/sessions/{hash} [get]
 func (s *Server) handleGetSession(c *fiber.Ctx) error {
-	hash := c.Params("hash")
-	if hash == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "hash parameter required"})
+	hash, chain, err := s.loadSessionChain(c)
+	if err != nil {
+		return s.handleLoadSessionChainError(c, hash, err)
 	}
 
 	depth := 0
@@ -160,16 +160,6 @@ func (s *Server) handleGetSession(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "depth must be a positive integer"})
 		}
 		depth = parsed
-	}
-
-	chain, err := s.driver.AncestryChain(c.Context(), hash)
-	if err != nil {
-		var notFound storage.NotFoundError
-		if errors.As(err, &notFound) {
-			return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
-		}
-		s.logger.Error("load ancestry", "hash", hash, "error", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session"})
 	}
 
 	// AncestryChain returns node-first (leaf) then back toward root. Slice
@@ -194,6 +184,39 @@ func (s *Server) handleGetSession(c *fiber.Ctx) error {
 		Truncated:     chain.Incomplete,
 		MissingParent: chain.MissingParent,
 	})
+}
+
+var errHashParameterRequired = errors.New("hash parameter required")
+
+func (s *Server) loadSessionChain(c *fiber.Ctx) (string, *storage.Chain, error) {
+	hash := c.Params("hash")
+	if hash == "" {
+		return "", nil, errHashParameterRequired
+	}
+
+	chain, err := s.driver.AncestryChain(c.Context(), hash)
+	if err != nil {
+		return hash, nil, err
+	}
+	if len(chain.Nodes) == 0 {
+		return hash, nil, storage.NotFoundError{Hash: hash}
+	}
+
+	return hash, chain, nil
+}
+
+func (s *Server) handleLoadSessionChainError(c *fiber.Ctx, hash string, err error) error {
+	if errors.Is(err, errHashParameterRequired) {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: errHashParameterRequired.Error()})
+	}
+
+	var notFound storage.NotFoundError
+	if errors.As(err, &notFound) {
+		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
+	}
+
+	s.logger.Error("load session ancestry", "hash", hash, "error", err)
+	return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session"})
 }
 
 // handleStats handles GET /v1/stats.

@@ -21,4 +21,9 @@ type Config struct {
 	// Pricing is the model pricing table used by /v1/sessions/summary to
 	// compute per-session cost. When nil, sessions.DefaultPricing() is used.
 	Pricing sessions.PricingTable
+
+	// EnableWebUI serves the minimal browser UI at /. It is disabled by default
+	// so API-only servers do not expose a human-facing development UI unless
+	// explicitly requested.
+	EnableWebUI bool
 }

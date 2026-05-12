@@ -73,6 +73,7 @@ func setViperDefaults(v *viper.Viper) {
 
 	// API
 	v.SetDefault("api.listen", d.API.Listen)
+	v.SetDefault("api.web_ui", d.API.WebUI)
 
 	// Ingest
 	v.SetDefault("ingest.listen", d.Ingest.Listen)

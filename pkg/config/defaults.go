@@ -27,6 +27,7 @@ func NewDefaultConfig() *Config {
 		},
 		API: APIConfig{
 			Listen: defaultAPIListen,
+			WebUI:  false,
 		},
 		Ingest: IngestConfig{
 			Listen: defaultIngestListen,

@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tapes</title>
+  <style>
+    :root { color-scheme: light dark; --bg:#0f172a; --panel:#111827; --muted:#94a3b8; --line:#334155; --text:#e5e7eb; --accent:#38bdf8; --ok:#34d399; --warn:#f59e0b; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+    header { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.8rem 1rem; border-bottom:1px solid var(--line); background:#020617; }
+    header h1 { margin:0; font-size:1.1rem; letter-spacing:.04em; }
+    header nav { display:flex; gap:.8rem; align-items:center; }
+    a { color: var(--accent); text-decoration:none; }
+    a:hover { text-decoration:underline; }
+    main { display:grid; grid-template-columns: 360px minmax(0,1fr); min-height: calc(100vh - 54px); }
+    aside { border-right:1px solid var(--line); background:var(--panel); overflow:auto; }
+    .pane { padding:1rem; }
+    .controls { display:grid; gap:.6rem; }
+    .row { display:flex; gap:.5rem; align-items:center; }
+    input, select, button { border:1px solid var(--line); border-radius:6px; padding:.45rem .55rem; background:#020617; color:var(--text); font:inherit; }
+    input { width:100%; min-width:0; }
+    button { cursor:pointer; }
+    button.primary { background:#075985; border-color:#0284c7; }
+    button:hover { border-color:var(--accent); }
+    .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:.5rem; margin:.8rem 0; }
+    .stat { border:1px solid var(--line); border-radius:8px; padding:.55rem; background:#020617; }
+    .stat b { display:block; font-size:1.2rem; }
+    .stat span, .muted { color:var(--muted); font-size:.85rem; }
+    #sessions { display:grid; gap:.45rem; margin-top:.8rem; }
+    .session { width:100%; text-align:left; display:grid; gap:.25rem; }
+    .session.active { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+    .session strong { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+    code { color:#bae6fd; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:.82rem; }
+    .graph-shell { min-width:0; display:grid; grid-template-rows:auto minmax(360px,1fr) auto; }
+    #graph-meta { padding:.7rem 1rem; border-bottom:1px solid var(--line); color:var(--muted); }
+    #graph-wrap { min-height:360px; overflow:hidden; }
+    svg { width:100%; height:100%; min-height:520px; display:block; background:radial-gradient(circle at top left, rgba(56,189,248,.10), transparent 34rem); }
+    .link { fill:none; stroke:#64748b; stroke-width:1.6px; }
+    .node text { fill:var(--text); paint-order:stroke; stroke:#020617; stroke-width:3px; stroke-linejoin:round; }
+    .node circle { stroke:#0f172a; stroke-width:2px; }
+    .node.selected circle { stroke:var(--accent); stroke-width:4px; }
+    .node.branch circle { stroke:var(--warn); stroke-width:4px; }
+    #details { margin:0; padding:1rem; border-top:1px solid var(--line); max-height:260px; overflow:auto; background:#020617; }
+    .empty, .error { border:1px dashed var(--line); border-radius:8px; padding:.8rem; color:var(--muted); }
+    .error { color:#fecaca; border-color:#7f1d1d; }
+    @media (max-width: 900px) { main { grid-template-columns:1fr; } aside { border-right:0; border-bottom:1px solid var(--line); } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Tapes</h1>
+    <nav>
+      <a href="/swagger">API</a>
+      <a href="/metrics">Metrics</a>
+    </nav>
+  </header>
+  <main>
+    <aside>
+      <div class="pane controls">
+        <div class="row">
+          <input id="hash" placeholder="node/session hash" autocomplete="off" />
+          <button id="load" class="primary">Load</button>
+        </div>
+        <div class="row">
+          <select id="scope" title="Graph scope">
+            <option value="root">root + all branches</option>
+            <option value="branch">selected branch</option>
+            <option value="ancestry">ancestry only</option>
+          </select>
+          <button id="refresh">Refresh</button>
+          <button id="seed">Seed demo</button>
+        </div>
+        <div id="status" class="muted">Loading sessions...</div>
+        <div class="stats">
+          <div class="stat"><b id="stat-sessions">-</b><span>sessions</span></div>
+          <div class="stat"><b id="stat-turns">-</b><span>turns</span></div>
+          <div class="stat"><b id="stat-roots">-</b><span>roots</span></div>
+        </div>
+        <div class="muted">Recent session heads</div>
+        <div id="sessions"></div>
+      </div>
+    </aside>
+    <section class="graph-shell">
+      <div id="graph-meta">Select a session to visualize its content-addressed graph.</div>
+      <div id="graph-wrap"><svg id="dag" role="img" aria-label="session graph visualization"></svg></div>
+      <pre id="details">Click a node to inspect its hash, parent, and metadata.</pre>
+    </section>
+  </main>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js" integrity="sha256-8glLv2FBs1lyLE/kVOtsSw8OQswQzHr5IfwVj864ZTk=" crossorigin="anonymous"></script>
+  <script>
+  (function () {
+    var params = new URLSearchParams(window.location.search);
+    var state = { sessions: [], currentHash: params.get('hash') || '', scope: params.get('scope') || 'root' };
+    var colors = { system:'#a78bfa', user:'#38bdf8', assistant:'#34d399', tool:'#f59e0b' };
+
+    function byID(id) { return document.getElementById(id); }
+    function esc(value) {
+      return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
+        return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[ch];
+      });
+    }
+    function shortHash(hash) { return hash ? hash.slice(0, 12) : ''; }
+    function setStatus(message, isError) {
+      var el = byID('status');
+      el.className = isError ? 'error' : 'muted';
+      el.textContent = message;
+    }
+    async function fetchJSON(path, options) {
+      var res = await fetch(path, options || {});
+      var text = await res.text();
+      var data = text ? JSON.parse(text) : {};
+      if (!res.ok) throw new Error(data.error || (res.status + ' ' + res.statusText));
+      return data;
+    }
+    function sessionHash(item) { return item.id || item.hash || ''; }
+    function sessionLabel(item) { return item.label || item.preview || shortHash(sessionHash(item)); }
+
+    async function loadStats() {
+      var stats = await fetchJSON('/v1/stats');
+      byID('stat-sessions').textContent = stats.session_count || 0;
+      byID('stat-turns').textContent = stats.turn_count || 0;
+      byID('stat-roots').textContent = stats.root_count || 0;
+    }
+
+    async function loadSessions() {
+      var data = await fetchJSON('/v1/sessions/summary?limit=50');
+      state.sessions = data.items || [];
+      renderSessions();
+      if (!state.currentHash && state.sessions.length > 0) {
+        state.currentHash = sessionHash(state.sessions[0]);
+        byID('hash').value = state.currentHash;
+      }
+    }
+
+    function renderSessions() {
+      var list = byID('sessions');
+      if (!state.sessions.length) {
+        list.innerHTML = '<div class="empty">No sessions yet. Start the proxy or click "Seed demo" for local sample data.</div>';
+        return;
+      }
+      list.innerHTML = '';
+      state.sessions.forEach(function (item) {
+        var hash = sessionHash(item);
+        var button = document.createElement('button');
+        button.className = 'session' + (hash === state.currentHash ? ' active' : '');
+        button.innerHTML = '<strong>' + esc(sessionLabel(item)) + '</strong>' +
+          '<code>' + esc(shortHash(hash)) + '</code>' +
+          '<span class="muted">' + esc([item.project, item.model, item.status].filter(Boolean).join(' · ')) + '</span>';
+        button.addEventListener('click', function () { loadDag(hash); });
+        list.appendChild(button);
+      });
+    }
+
+    async function loadDag(hash) {
+      hash = (hash || byID('hash').value || '').trim();
+      if (!hash) return;
+      state.currentHash = hash;
+      state.scope = byID('scope').value;
+      byID('hash').value = hash;
+      var query = '?scope=' + encodeURIComponent(state.scope) + '&max_nodes=500';
+      history.replaceState(null, '', '/?hash=' + encodeURIComponent(hash) + '&scope=' + encodeURIComponent(state.scope));
+      setStatus('Loading graph ' + shortHash(hash) + '...', false);
+      try {
+        var graph = await fetchJSON('/v1/sessions/' + encodeURIComponent(hash) + '/graph' + query);
+        renderSessions();
+        renderDag(graph);
+        setStatus('Loaded ' + graph.nodes.length + ' nodes.', false);
+      } catch (err) {
+        setStatus(err.message, true);
+      }
+    }
+
+    function renderDag(data) {
+      var svg = d3.select('#dag');
+      svg.on('.zoom', null);
+      svg.selectAll('*').remove();
+      var nodes = data.nodes || [];
+      if (!nodes.length) {
+        byID('graph-meta').textContent = 'No graph nodes returned.';
+        byID('details').textContent = 'No node details.';
+        return;
+      }
+
+      byID('graph-meta').textContent = data.scope + ' graph • root ' + shortHash(data.root_hash) +
+        ' • ' + nodes.length + ' nodes • ' + (data.branch_points || []).length + ' branch points' +
+        (data.truncated ? ' • truncated' : '');
+
+      var root;
+      try {
+        root = d3.stratify().id(function (d) { return d.id; }).parentId(function (d) { return d.parent_id || null; })(nodes);
+      } catch (err) {
+        byID('details').textContent = 'D3 could not stratify the graph: ' + err.message;
+        return;
+      }
+      root.sort(function (a, b) {
+        return d3.ascending(a.data.created_at || '', b.data.created_at || '') || d3.ascending(a.id, b.id);
+      });
+
+      var tree = d3.tree().nodeSize([64, 230]);
+      tree(root);
+      var laidOut = root.descendants();
+      var minX = d3.min(laidOut, function (d) { return d.x; });
+      var maxX = d3.max(laidOut, function (d) { return d.x; });
+      var maxY = d3.max(laidOut, function (d) { return d.y; });
+      var left = -90, top = minX - 90, right = maxY + 430, bottom = maxX + 90;
+      svg.attr('viewBox', [left, top, right - left, bottom - top].join(' '));
+
+      var g = svg.append('g');
+      svg.call(d3.zoom().scaleExtent([0.25, 3]).on('zoom', function (event) { g.attr('transform', event.transform); }));
+
+      g.append('g').selectAll('path')
+        .data(root.links())
+        .join('path')
+        .attr('class', 'link')
+        .attr('d', d3.linkHorizontal().x(function (d) { return d.y; }).y(function (d) { return d.x; }));
+
+      var node = g.append('g').selectAll('g')
+        .data(laidOut)
+        .join('g')
+        .attr('class', function (d) { return 'node' + (d.data.selected ? ' selected' : '') + (d.data.is_branch_point ? ' branch' : ''); })
+        .attr('transform', function (d) { return 'translate(' + d.y + ',' + d.x + ')'; })
+        .on('click', function (event, d) { event.stopPropagation(); showNode(d.data); });
+
+      node.append('circle')
+        .attr('r', function (d) { return d.data.is_branch_point ? 10 : 7; })
+        .attr('fill', function (d) { return colors[d.data.role] || '#94a3b8'; });
+
+      node.append('text')
+        .attr('x', 16)
+        .attr('dy', '-0.15em')
+        .attr('font-size', 12)
+        .text(function (d) { return (d.data.role || 'node') + ' ' + shortHash(d.data.id); });
+
+      node.append('text')
+        .attr('x', 16)
+        .attr('dy', '1.15em')
+        .attr('font-size', 11)
+        .attr('fill', '#94a3b8')
+        .text(function (d) { return (d.data.preview || '').slice(0, 54); });
+
+      node.append('title').text(function (d) { return d.data.id + '\n' + (d.data.preview || ''); });
+      var selected = nodes.find(function (n) { return n.selected; }) || nodes[0];
+      showNode(selected);
+    }
+
+    function showNode(node) {
+      byID('details').textContent = JSON.stringify({
+        hash: node.id,
+        parent_hash: node.parent_hash || null,
+        role: node.role,
+        type: node.type,
+        depth: node.depth,
+        children_count: node.children_count,
+        branch_point: node.is_branch_point,
+        model: node.model,
+        provider: node.provider,
+        agent_name: node.agent_name,
+        project: node.project,
+        created_at: node.created_at,
+        preview: node.preview
+      }, null, 2);
+    }
+
+    async function refreshAll() {
+      try {
+        setStatus('Loading sessions...', false);
+        await Promise.all([loadStats(), loadSessions()]);
+        if (state.currentHash) await loadDag(state.currentHash);
+        else setStatus('No sessions found.', false);
+      } catch (err) {
+        setStatus(err.message, true);
+      }
+    }
+
+    byID('scope').value = ['root', 'branch', 'ancestry'].indexOf(state.scope) >= 0 ? state.scope : 'root';
+    byID('hash').value = state.currentHash;
+    byID('load').addEventListener('click', function () { loadDag(); });
+    byID('hash').addEventListener('keydown', function (event) { if (event.key === 'Enter') loadDag(); });
+    byID('scope').addEventListener('change', function () { if (state.currentHash) loadDag(state.currentHash); });
+    byID('refresh').addEventListener('click', refreshAll);
+    byID('seed').addEventListener('click', async function () {
+      try {
+        setStatus('Seeding demo data...', false);
+        await fetchJSON('/v1/admin/seed/demo', { method:'POST' });
+        await refreshAll();
+      } catch (err) {
+        setStatus(err.message, true);
+      }
+    });
+
+    refreshAll();
+  })();
+  </script>
+</body>
+</html>
