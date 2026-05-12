@@ -5,13 +5,26 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
+
+// terminalStopReasons mirrors the leaf-status branch of
+// pkg/sessions.DetermineStatus: an assistant leaf with one of these
+// stop_reason values classifies as completed without any chain walk.
+// Kept in sync with status.go in the sessions package.
+var terminalStopReasons = map[string]struct{}{
+	"stop":     {},
+	"end_turn": {},
+	"end-turn": {},
+	"eos":      {},
+}
 
 // Driver implements Storer using an in-memory map.
 type Driver struct {
@@ -390,26 +403,95 @@ func (s *Driver) ListSessions(_ context.Context, opts storage.ListOpts) (*storag
 
 // CountSessions returns aggregate counts for the slice of data matching opts.
 // Pagination fields on opts are ignored.
+//
+// All numeric aggregates apply per-node, matching the SQL aggregate the
+// Postgres driver runs for /v1/stats. completed_count uses leaf-only
+// classification (assistant leaf with a terminal stop_reason) — the
+// chain-context overrides in pkg/sessions.DetermineStatus are deliberately
+// NOT applied here, so both drivers return identical numbers for the same
+// store contents.
+//
+// TotalDurationNs is wall-clock span (MAX − MIN of CreatedAt) over the
+// matching set, NOT a sum of per-call Usage.TotalDurationNs. See PCC-514
+// for the proxy gap that motivated the workaround.
 func (s *Driver) CountSessions(_ context.Context, opts storage.ListOpts) (storage.SessionStats, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	hasChildren := s.computeHasChildren()
 
-	var stats storage.SessionStats
+	var (
+		stats              storage.SessionStats
+		minCreated         time.Time
+		maxCreated         time.Time
+		haveCreatedAtRange bool
+	)
 	for _, node := range s.nodes {
 		if !matchesFilter(node, opts) {
 			continue
 		}
 		stats.TurnCount++
-		if !hasChildren[node.Hash] {
+
+		if !haveCreatedAtRange {
+			minCreated = node.CreatedAt
+			maxCreated = node.CreatedAt
+			haveCreatedAtRange = true
+		} else {
+			if node.CreatedAt.Before(minCreated) {
+				minCreated = node.CreatedAt
+			}
+			if node.CreatedAt.After(maxCreated) {
+				maxCreated = node.CreatedAt
+			}
+		}
+
+		isLeaf := !hasChildren[node.Hash]
+		if isLeaf {
 			stats.SessionCount++
+			if leafIsCompleted(node) {
+				stats.CompletedCount++
+			}
 		}
 		if node.ParentHash == nil || *node.ParentHash == "" {
 			stats.RootCount++
 		}
+
+		t := sessions.TokensForNode(node)
+		stats.InputTokens += t.Input
+		stats.OutputTokens += t.Output
+		stats.CacheCreationTokens += t.CacheCreation
+		stats.CacheReadTokens += t.CacheRead
+		stats.ToolCalls += sessions.CountToolCalls(node.Bucket.Content)
+
+		if model := node.Bucket.Model; model != "" {
+			if stats.PerModel == nil {
+				stats.PerModel = map[string]storage.ModelTokenStats{}
+			}
+			perModel := stats.PerModel[model]
+			perModel.InputTokens += t.Input
+			perModel.OutputTokens += t.Output
+			perModel.CacheCreationTokens += t.CacheCreation
+			perModel.CacheReadTokens += t.CacheRead
+			stats.PerModel[model] = perModel
+		}
+	}
+	if haveCreatedAtRange {
+		stats.TotalDurationNs = maxCreated.Sub(minCreated).Nanoseconds()
 	}
 	return stats, nil
+}
+
+// leafIsCompleted reports whether a leaf node satisfies the leaf-only
+// "completed" rule used by /v1/stats: assistant role plus a terminal
+// stop_reason. Not equivalent to pkg/sessions.DetermineStatus, which
+// also walks the chain for tool errors and git activity — see the
+// SessionStats.CompletedCount godoc.
+func leafIsCompleted(n *merkle.Node) bool {
+	if strings.ToLower(n.Bucket.Role) != "assistant" {
+		return false
+	}
+	_, ok := terminalStopReasons[strings.ToLower(strings.TrimSpace(n.StopReason))]
+	return ok
 }
 
 // computeHasChildren builds a set of node hashes that are referenced as a

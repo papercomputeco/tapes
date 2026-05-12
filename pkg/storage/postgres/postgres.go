@@ -235,7 +235,7 @@ func (d *Driver) ListSessions(ctx context.Context, opts storage.ListOpts) (*stor
 }
 
 func (d *Driver) CountSessions(ctx context.Context, opts storage.ListOpts) (storage.SessionStats, error) {
-	params := gensqlc.CountLeafSessionsParams{
+	params := gensqlc.AggregateSessionsParams{
 		ProjectFilter:  nullStringValue(opts.Project),
 		AgentFilter:    nullStringValue(opts.Agent),
 		ModelFilter:    nullStringValue(opts.Model),
@@ -243,23 +243,65 @@ func (d *Driver) CountSessions(ctx context.Context, opts storage.ListOpts) (stor
 		SinceFilter:    nullTimePtr(opts.Since),
 		UntilFilter:    nullTimePtr(opts.Until),
 	}
-	leafCount, err := d.q.CountLeafSessions(ctx, params)
+
+	// Run both aggregates inside a single read-only REPEATABLE READ
+	// snapshot so a concurrent Put between the two queries cannot make
+	// the per-model cost rollup reflect more nodes than the scalar
+	// token totals — both reads see the same MVCC view. /v1/stats
+	// returning self-inconsistent fields was raised on the PR review.
+	tx, err := d.conn.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
 	if err != nil {
-		return storage.SessionStats{}, fmt.Errorf("count sessions: %w", err)
+		return storage.SessionStats{}, fmt.Errorf("begin stats snapshot tx: %w", err)
 	}
-	turnCount, err := d.q.CountTurns(ctx, gensqlc.CountTurnsParams(params))
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	qtx := d.q.WithTx(tx)
+
+	row, err := qtx.AggregateSessions(ctx, params)
 	if err != nil {
-		return storage.SessionStats{}, fmt.Errorf("count turns: %w", err)
+		return storage.SessionStats{}, fmt.Errorf("aggregate sessions: %w", err)
 	}
-	rootCount, err := d.q.CountRoots(ctx, gensqlc.CountRootsParams(params))
+
+	byModel, err := qtx.AggregateSessionsByModel(ctx, gensqlc.AggregateSessionsByModelParams(params))
 	if err != nil {
-		return storage.SessionStats{}, fmt.Errorf("count roots: %w", err)
+		return storage.SessionStats{}, fmt.Errorf("aggregate sessions by model: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return storage.SessionStats{}, fmt.Errorf("commit stats snapshot tx: %w", err)
+	}
+
+	var perModel map[string]storage.ModelTokenStats
+	for _, m := range byModel {
+		if !m.Model.Valid || m.Model.String == "" {
+			continue
+		}
+		if perModel == nil {
+			perModel = make(map[string]storage.ModelTokenStats, len(byModel))
+		}
+		perModel[m.Model.String] = storage.ModelTokenStats{
+			InputTokens:         m.InputTokens,
+			OutputTokens:        m.OutputTokens,
+			CacheCreationTokens: m.CacheCreationTokens,
+			CacheReadTokens:     m.CacheReadTokens,
+		}
 	}
 
 	return storage.SessionStats{
-		SessionCount: int(leafCount),
-		TurnCount:    int(turnCount),
-		RootCount:    int(rootCount),
+		SessionCount:        int(row.SessionCount),
+		TurnCount:           int(row.TurnCount),
+		RootCount:           int(row.RootCount),
+		CompletedCount:      int(row.CompletedCount),
+		InputTokens:         row.InputTokens,
+		OutputTokens:        row.OutputTokens,
+		CacheCreationTokens: row.CacheCreationTokens,
+		CacheReadTokens:     row.CacheReadTokens,
+		TotalDurationNs:     row.TotalDurationNs,
+		ToolCalls:           int(row.ToolCalls),
+		PerModel:            perModel,
 	}, nil
 }
 

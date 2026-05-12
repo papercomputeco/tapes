@@ -470,7 +470,7 @@ const docTemplate = `{
         },
         "/v1/stats": {
             "get": {
-                "description": "Returns aggregate counts for sessions, turns, and roots matching the supplied filters.",
+                "description": "Returns counts plus folded cost / token / duration / tool-call / completed-count totals across every node matching the supplied filters. Numeric aggregates come from a single storage-driver SQL aggregate; cost is folded in the handler from the per-model token rollup using the configured pricing table. total_duration_ns is wall-clock MAX-MIN over the matched window (see PCC-514). completed_count uses leaf-status-only classification (assistant leaf with a terminal stop_reason) — see StatsResponse and PCC-515 for the durable chain-aware fix.",
                 "produces": [
                     "application/json"
                 ],
@@ -763,10 +763,28 @@ const docTemplate = `{
         "api.StatsResponse": {
             "type": "object",
             "properties": {
+                "completed_count": {
+                    "type": "integer"
+                },
+                "input_tokens": {
+                    "type": "integer"
+                },
+                "output_tokens": {
+                    "type": "integer"
+                },
                 "root_count": {
                     "type": "integer"
                 },
                 "session_count": {
+                    "type": "integer"
+                },
+                "tool_calls": {
+                    "type": "integer"
+                },
+                "total_cost": {
+                    "type": "number"
+                },
+                "total_duration_ns": {
                     "type": "integer"
                 },
                 "turn_count": {

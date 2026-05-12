@@ -14,6 +14,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/llm"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
@@ -271,28 +272,201 @@ var _ = Describe("v1 session handlers", func() {
 	})
 
 	Describe("GET /v1/stats", func() {
-		BeforeEach(func() {
-			root := merkle.NewNode(v1TestBucket("user", "root", "m", "p", "claude"), nil, merkle.NodeOptions{Project: "tapes"})
-			Expect(putNode(ctx, inMem, root)).To(Succeed())
+		Context("with bare seed data (no usage, no stop_reason)", func() {
+			BeforeEach(func() {
+				root := merkle.NewNode(v1TestBucket("user", "root", "m", "p", "claude"), nil, merkle.NodeOptions{Project: "tapes"})
+				Expect(putNode(ctx, inMem, root)).To(Succeed())
 
-			leafA := merkle.NewNode(v1TestBucket("assistant", "a", "m", "p", "claude"), root, merkle.NodeOptions{Project: "tapes"})
-			leafB := merkle.NewNode(v1TestBucket("assistant", "b", "m", "p", "claude"), root, merkle.NodeOptions{Project: "other"})
-			Expect(putNode(ctx, inMem, leafA)).To(Succeed())
-			Expect(putNode(ctx, inMem, leafB)).To(Succeed())
+				leafA := merkle.NewNode(v1TestBucket("assistant", "a", "m", "p", "claude"), root, merkle.NodeOptions{Project: "tapes"})
+				leafB := merkle.NewNode(v1TestBucket("assistant", "b", "m", "p", "claude"), root, merkle.NodeOptions{Project: "other"})
+				Expect(putNode(ctx, inMem, leafA)).To(Succeed())
+				Expect(putNode(ctx, inMem, leafB)).To(Succeed())
+			})
+
+			It("returns unfiltered totals with zero aggregates", func() {
+				body := decodeStats(server, "/v1/stats")
+				Expect(body.SessionCount).To(Equal(2))
+				Expect(body.TurnCount).To(Equal(3))
+				Expect(body.RootCount).To(Equal(1))
+				// No Usage on any node, no pricing match for model "m", no
+				// stop_reason → completed_count and the aggregates stay zero.
+				Expect(body.CompletedCount).To(Equal(0))
+				Expect(body.TotalCost).To(Equal(0.0))
+				Expect(body.InputTokens).To(Equal(int64(0)))
+				Expect(body.OutputTokens).To(Equal(int64(0)))
+				Expect(body.ToolCalls).To(Equal(0))
+			})
+
+			It("applies the project filter", func() {
+				body := decodeStats(server, "/v1/stats?project=tapes")
+				Expect(body.SessionCount).To(Equal(1))
+				Expect(body.TurnCount).To(Equal(2))
+				Expect(body.RootCount).To(Equal(1))
+				Expect(body.CompletedCount).To(Equal(0))
+			})
 		})
 
-		It("returns unfiltered totals", func() {
-			body := decodeStats(server, "/v1/stats")
-			Expect(body.SessionCount).To(Equal(2))
-			Expect(body.TurnCount).To(Equal(3))
-			Expect(body.RootCount).To(Equal(1))
-		})
+		Context("with rich session data (usage, stop_reason, pricing)", func() {
+			var (
+				richServer *Server
+				richMem    storage.Driver
+				richCtx    context.Context
+				baseTime   time.Time
+				offset     time.Duration
+			)
 
-		It("applies the project filter", func() {
-			body := decodeStats(server, "/v1/stats?project=tapes")
-			Expect(body.SessionCount).To(Equal(1))
-			Expect(body.TurnCount).To(Equal(2))
-			Expect(body.RootCount).To(Equal(1))
+			BeforeEach(func() {
+				logger := tapeslogger.NewNoop()
+				richMem = inmemory.NewDriver()
+				richCtx = context.Background()
+				baseTime = time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
+				offset = 0
+
+				cfg := Config{
+					ListenAddr: ":0",
+					Pricing: sessions.PricingTable{
+						"test-model": {Input: 10.0, Output: 30.0},
+					},
+				}
+				var err error
+				richServer, err = NewServer(cfg, richMem, logger)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			type seedOpts struct {
+				tag         string
+				project     string
+				inputTokens int
+				outputTok   int
+				// usageDurationNs sets assistant Usage.TotalDurationNs. The
+				// SQL aggregate IGNORES this column (see StatsResponse and
+				// PCC-514); tests use it to assert that contract.
+				usageDurationNs int64
+				stop            string
+				toolUses        int
+			}
+
+			// Seeds a two-turn session (user → assistant). Each call
+			// advances offset by 2s — user at +1s, assistant at +2s
+			// relative to the prior assistant — so the wall-clock window
+			// of N seeded sessions spans 2N seconds.
+			seedSession := func(o seedOpts) {
+				offset += time.Second
+				userBucket := merkle.Bucket{
+					Type:    "message",
+					Role:    "user",
+					Content: []llm.ContentBlock{{Type: "text", Text: "q " + o.tag}},
+					Model:   "test-model",
+				}
+				user := merkle.NewNode(userBucket, nil, merkle.NodeOptions{Project: o.project})
+				user.CreatedAt = baseTime.Add(offset)
+				_, err := richMem.Put(richCtx, user)
+				Expect(err).NotTo(HaveOccurred())
+
+				blocks := make([]llm.ContentBlock, 0, 1+o.toolUses)
+				blocks = append(blocks, llm.ContentBlock{Type: "text", Text: "a " + o.tag})
+				for range o.toolUses {
+					blocks = append(blocks, llm.ContentBlock{Type: "tool_use", ToolName: "fake_tool"})
+				}
+				assistantBucket := merkle.Bucket{
+					Type:    "message",
+					Role:    "assistant",
+					Content: blocks,
+					Model:   "test-model",
+				}
+				assistant := merkle.NewNode(assistantBucket, user, merkle.NodeOptions{
+					Project:    o.project,
+					StopReason: o.stop,
+					Usage: &llm.Usage{
+						PromptTokens:     o.inputTokens,
+						CompletionTokens: o.outputTok,
+						TotalDurationNs:  o.usageDurationNs,
+					},
+				})
+				offset += time.Second
+				assistant.CreatedAt = baseTime.Add(offset)
+				_, err = richMem.Put(richCtx, assistant)
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			It("aggregates tokens, tool_calls, wall-clock duration, and folds cost from the per-model rollup", func() {
+				// Session 1: completed (stop), 1M in / 0.5M out → $25; 2 tool_use blocks.
+				// Nodes land at baseTime+1s (user) and baseTime+2s (assistant).
+				seedSession(seedOpts{tag: "a", project: "tapes", inputTokens: 1_000_000, outputTok: 500_000, stop: "stop", toolUses: 2})
+				// Session 2: pending (no stop_reason), 0.5M in / 0.25M out → $12.50.
+				// Nodes land at baseTime+3s (user) and baseTime+4s (assistant).
+				seedSession(seedOpts{tag: "b", project: "tapes", inputTokens: 500_000, outputTok: 250_000, stop: ""})
+
+				body := decodeStats(richServer, "/v1/stats")
+				Expect(body.SessionCount).To(Equal(2))
+				Expect(body.TurnCount).To(Equal(4))
+				Expect(body.RootCount).To(Equal(2))
+				Expect(body.InputTokens).To(Equal(int64(1_500_000)))
+				Expect(body.OutputTokens).To(Equal(int64(750_000)))
+				Expect(body.TotalCost).To(BeNumerically("~", 37.5, 0.0001))
+				// Wall-clock span MAX(created_at) − MIN(created_at) =
+				// (baseTime+4s) − (baseTime+1s) = 3s.
+				Expect(body.TotalDurationNs).To(Equal(3 * int64(time.Second)))
+				Expect(body.ToolCalls).To(Equal(2))
+				// Leaf-status: session 1's assistant leaf has stop_reason "stop"; session 2's is empty.
+				Expect(body.CompletedCount).To(Equal(1))
+			})
+
+			It("narrows folded aggregates by the project filter", func() {
+				// Project=tapes nodes at baseTime+1s, +2s. Project=other at +3s, +4s.
+				seedSession(seedOpts{tag: "a", project: "tapes", inputTokens: 1_000_000, outputTok: 500_000, stop: "stop"})
+				seedSession(seedOpts{tag: "b", project: "other", inputTokens: 999_999, outputTok: 999_999, stop: "stop"})
+
+				body := decodeStats(richServer, "/v1/stats?project=tapes")
+				Expect(body.SessionCount).To(Equal(1))
+				Expect(body.InputTokens).To(Equal(int64(1_000_000)))
+				Expect(body.OutputTokens).To(Equal(int64(500_000)))
+				Expect(body.TotalCost).To(BeNumerically("~", 25.0, 0.0001))
+				// Wall-clock window narrows to the tapes-project pair (+1s..+2s) = 1s.
+				Expect(body.TotalDurationNs).To(Equal(int64(time.Second)))
+				Expect(body.CompletedCount).To(Equal(1))
+			})
+
+			It("classifies completed_count using leaf stop_reason only", func() {
+				// Sessions across the spectrum of leaf states.
+				seedSession(seedOpts{tag: "completed-stop", project: "tapes", stop: "stop"})
+				seedSession(seedOpts{tag: "completed-end_turn", project: "tapes", stop: "end_turn"})
+				seedSession(seedOpts{tag: "completed-eos", project: "tapes", stop: "EOS"}) // case-insensitive
+				seedSession(seedOpts{tag: "failed-length", project: "tapes", stop: "length"})
+				seedSession(seedOpts{tag: "unknown", project: "tapes", stop: ""})
+
+				body := decodeStats(richServer, "/v1/stats")
+				Expect(body.SessionCount).To(Equal(5))
+				Expect(body.CompletedCount).To(Equal(3))
+			})
+
+			// Regression guard: nodes.total_duration_ns is currently never
+			// populated by the proxy (PCC-514), and the SQL aggregate
+			// deliberately reports wall-clock window instead. A future
+			// change that "fixes" the SQL back to SUM(total_duration_ns)
+			// would silently break this contract; pin it.
+			It("reports wall-clock span and ignores Usage.TotalDurationNs", func() {
+				seedSession(seedOpts{tag: "a", project: "tapes", usageDurationNs: 99 * int64(time.Second), stop: "stop"})
+				seedSession(seedOpts{tag: "b", project: "tapes", usageDurationNs: 99 * int64(time.Second), stop: "stop"})
+
+				body := decodeStats(richServer, "/v1/stats")
+				// SUM(Usage.TotalDurationNs) would be 198s. Wall-clock span
+				// is 3s (baseTime+1s..baseTime+4s). The latter is correct.
+				Expect(body.TotalDurationNs).To(Equal(3 * int64(time.Second)))
+			})
+
+			It("returns zeros across every field for an empty store", func() {
+				body := decodeStats(richServer, "/v1/stats")
+				Expect(body.SessionCount).To(Equal(0))
+				Expect(body.TurnCount).To(Equal(0))
+				Expect(body.RootCount).To(Equal(0))
+				Expect(body.CompletedCount).To(Equal(0))
+				Expect(body.TotalCost).To(Equal(0.0))
+				Expect(body.InputTokens).To(Equal(int64(0)))
+				Expect(body.OutputTokens).To(Equal(int64(0)))
+				Expect(body.TotalDurationNs).To(Equal(int64(0)))
+				Expect(body.ToolCalls).To(Equal(0))
+			})
 		})
 	})
 })
