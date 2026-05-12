@@ -168,11 +168,13 @@ func newGraphResponseBuilder(driver storage.Driver, requestedHash, scope string,
 		scope:         scope,
 		maxNodes:      maxNodes,
 		resp: &GraphResponse{
-			Hash:      requestedHash,
-			Scope:     scope,
-			NodeLimit: maxNodes,
-			Nodes:     []GraphNode{},
-			Links:     []GraphLink{},
+			Hash:         requestedHash,
+			Scope:        scope,
+			NodeLimit:    maxNodes,
+			Nodes:        []GraphNode{},
+			Links:        []GraphLink{},
+			Leaves:       []string{},
+			BranchPoints: []string{},
 		},
 		seenNode: make(map[string]struct{}),
 		seenLink: make(map[string]struct{}),
@@ -192,14 +194,22 @@ func (b *graphResponseBuilder) build(ctx context.Context, chain *storage.Chain) 
 		if ok, err := b.addAncestryPath(ctx, rootFirst); err != nil || !ok {
 			return b.resp, err
 		}
-		if err := b.addDescendants(ctx, rootFirst[0], 0, map[string]struct{}{rootFirst[0].Hash: {}}); err != nil {
-			return nil, err
+		pathSeen := map[string]struct{}{}
+		for i, node := range rootFirst {
+			pathSeen[node.Hash] = struct{}{}
+			var skip map[string]struct{}
+			if i+1 < len(rootFirst) {
+				skip = map[string]struct{}{rootFirst[i+1].Hash: {}}
+			}
+			if err := b.addDescendants(ctx, node, i, pathSeen, skip); err != nil {
+				return nil, err
+			}
 		}
 	case "branch":
 		if ok, err := b.addAncestryPath(ctx, rootFirst); err != nil || !ok {
 			return b.resp, err
 		}
-		if err := b.addDescendants(ctx, rootFirst[len(rootFirst)-1], len(rootFirst)-1, hashesFromNodes(rootFirst)); err != nil {
+		if err := b.addDescendants(ctx, rootFirst[len(rootFirst)-1], len(rootFirst)-1, hashesFromNodes(rootFirst), nil); err != nil {
 			return nil, err
 		}
 	case "ancestry":
@@ -224,13 +234,17 @@ func (b *graphResponseBuilder) addAncestryPath(ctx context.Context, rootFirst []
 	return true, nil
 }
 
-func (b *graphResponseBuilder) addDescendants(ctx context.Context, parent *merkle.Node, parentDepth int, pathSeen map[string]struct{}) error {
+func (b *graphResponseBuilder) addDescendants(ctx context.Context, parent *merkle.Node, parentDepth int, pathSeen, skip map[string]struct{}) error {
 	children, err := b.childrenOf(ctx, parent.Hash)
 	if err != nil {
 		return err
 	}
 
 	for _, child := range children {
+		if _, ok := skip[child.Hash]; ok {
+			b.addLink(stringPtr(parent.Hash), child.Hash)
+			continue
+		}
 		if _, ok := pathSeen[child.Hash]; ok {
 			b.resp.Truncated = true
 			b.resp.CycleDetected = true
@@ -243,7 +257,7 @@ func (b *graphResponseBuilder) addDescendants(ctx context.Context, parent *merkl
 		}
 
 		pathSeen[child.Hash] = struct{}{}
-		if err := b.addDescendants(ctx, child, parentDepth+1, pathSeen); err != nil {
+		if err := b.addDescendants(ctx, child, parentDepth+1, pathSeen, nil); err != nil {
 			return err
 		}
 		delete(pathSeen, child.Hash)

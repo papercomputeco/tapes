@@ -112,6 +112,16 @@ var _ = Describe("GET /v1/sessions/:hash/graph", func() {
 		Expect(body.Truncated).To(BeTrue())
 		Expect(body.NodeLimit).To(Equal(2))
 		Expect(body.Nodes).To(HaveLen(2))
+		Expect(body.Leaves).NotTo(BeNil())
+	})
+
+	It("serializes empty graph arrays as JSON arrays", func() {
+		isolated := merkle.NewNode(v1TestBucket("user", "solo", "m", "p", "claude"), nil, merkle.NodeOptions{Project: "tapes"})
+		Expect(putNode(ctx, inMem, isolated)).To(Succeed())
+
+		body := decodeGraph(server, sessionGraphPath(isolated.Hash))
+		Expect(body.Leaves).To(Equal([]string{isolated.Hash}))
+		Expect(body.BranchPoints).To(Equal([]string{}))
 	})
 
 	It("prioritizes the requested ancestry path before sibling branches when node-limited", func() {
@@ -198,7 +208,8 @@ var _ = Describe("minimal web UI", func() {
 
 		raw, err := io.ReadAll(resp.Body)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(string(raw)).To(ContainSubstring("d3@7"))
+		Expect(string(raw)).To(ContainSubstring("d3@7.9.0"))
+		Expect(string(raw)).To(ContainSubstring("integrity=\"sha256-1AqCL/P1MtPZ9HQLjuNAO+QOIV1Q7AhiAl2fT14nSI=\""))
 		Expect(string(raw)).To(ContainSubstring("/v1/sessions/"))
 		Expect(string(raw)).To(ContainSubstring("/v1/sessions/summary"))
 		Expect(string(raw)).NotTo(ContainSubstring("/v1/dags/"))
