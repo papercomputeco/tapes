@@ -31,11 +31,12 @@ type Flag struct {
 type FlagSet map[string]Flag
 
 // Flag registry keys.
-// Use these constants when calling AddStringFlag, AddUintFlag,
+// Use these constants when calling AddStringFlag, AddUintFlag, AddBoolFlag,
 // and BindRegisteredFlags to avoid typos or drift from one command to another.
 const (
 	FlagProxyListen         = "proxy-listen"
 	FlagAPIListen           = "api-listen"
+	FlagAPIWebUI            = "api-web-ui"
 	FlagUpstream            = "upstream"
 	FlagProvider            = "provider"
 	FlagPostgres            = "postgres"
@@ -76,6 +77,21 @@ func AddStringFlag(cmd *cobra.Command, fs FlagSet, key string, target *string) {
 		cmd.Flags().StringVarP(target, def.Name, def.Shorthand, defaultVal, def.Description)
 	} else {
 		cmd.Flags().StringVar(target, def.Name, defaultVal, def.Description)
+	}
+}
+
+// AddBoolFlag registers a bool flag on cmd from the given FlagSet.
+func AddBoolFlag(cmd *cobra.Command, fs FlagSet, registryKey string, target *bool) {
+	def, ok := fs[registryKey]
+	if !ok {
+		return
+	}
+
+	defaultVal := defaultBool(def.ViperKey)
+	if def.Shorthand != "" {
+		cmd.Flags().BoolVarP(target, def.Name, def.Shorthand, defaultVal, def.Description)
+	} else {
+		cmd.Flags().BoolVar(target, def.Name, defaultVal, def.Description)
 	}
 }
 
@@ -137,4 +153,9 @@ func defaultString(viperKey string) string {
 // defaultUint returns the default uint value for a viper key from NewDefaultConfig.
 func defaultUint(viperKey string) uint {
 	return getDefaultViper().GetUint(viperKey)
+}
+
+// defaultBool returns the default bool value for a viper key from NewDefaultConfig.
+func defaultBool(viperKey string) bool {
+	return getDefaultViper().GetBool(viperKey)
 }

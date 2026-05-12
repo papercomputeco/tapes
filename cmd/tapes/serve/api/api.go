@@ -21,6 +21,7 @@ type apiCommander struct {
 	listen      string
 	debug       bool
 	postgresDSN string
+	webUI       bool
 
 	logger *slog.Logger
 }
@@ -28,6 +29,7 @@ type apiCommander struct {
 // apiFlags defines the flags for the standalone API subcommand.
 var apiFlags = config.FlagSet{
 	config.FlagAPIListenStandalone: {Name: "listen", Shorthand: "l", ViperKey: "api.listen", Description: "Address for API server to listen on"},
+	config.FlagAPIWebUI:            {Name: "web-ui", ViperKey: "api.web_ui", Description: "Enable the minimal browser UI at /"},
 	config.FlagPostgres:            {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
 }
 
@@ -53,10 +55,12 @@ func NewAPICmd() *cobra.Command {
 
 			config.BindRegisteredFlags(v, cmd, cmder.flags, []string{
 				config.FlagAPIListenStandalone,
+				config.FlagAPIWebUI,
 				config.FlagPostgres,
 			})
 
 			cmder.listen = v.GetString("api.listen")
+			cmder.webUI = v.GetBool("api.web_ui")
 			cmder.postgresDSN = v.GetString("storage.postgres_dsn")
 			return nil
 		},
@@ -73,6 +77,7 @@ func NewAPICmd() *cobra.Command {
 	}
 
 	config.AddStringFlag(cmd, cmder.flags, config.FlagAPIListenStandalone, &cmder.listen)
+	config.AddBoolFlag(cmd, cmder.flags, config.FlagAPIWebUI, &cmder.webUI)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagPostgres, &cmder.postgresDSN)
 
 	return cmd
@@ -88,7 +93,8 @@ func (c *apiCommander) run() error {
 	defer driver.Close()
 
 	config := api.Config{
-		ListenAddr: c.listen,
+		ListenAddr:  c.listen,
+		EnableWebUI: c.webUI,
 	}
 
 	server, err := api.NewServer(config, driver, c.logger)

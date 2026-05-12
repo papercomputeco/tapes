@@ -31,6 +31,7 @@ type ServeCommander struct {
 
 	proxyListen  string
 	apiListen    string
+	apiWebUI     bool
 	ingestListen string
 	upstream     string
 	debug        bool
@@ -53,6 +54,7 @@ type ServeCommander struct {
 var ServeFlags = config.FlagSet{
 	config.FlagProxyListen:    {Name: "proxy-listen", Shorthand: "p", ViperKey: "proxy.listen", Description: "Address for proxy to listen on"},
 	config.FlagAPIListen:      {Name: "api-listen", Shorthand: "a", ViperKey: "api.listen", Description: "Address for API server to listen on"},
+	config.FlagAPIWebUI:       {Name: "api-web-ui", ViperKey: "api.web_ui", Description: "Enable the minimal browser UI at /"},
 	config.FlagIngestListen:   {Name: "ingest-listen", Shorthand: "i", ViperKey: "ingest.listen", Description: "Address for ingest server to listen on (sidecar mode)"},
 	config.FlagUpstream:       {Name: "upstream", Shorthand: "u", ViperKey: "proxy.upstream", Description: "Upstream LLM provider URL"},
 	config.FlagProvider:       {Name: "provider", ViperKey: "proxy.provider", Description: "LLM provider type (anthropic, openai, ollama)"},
@@ -97,6 +99,7 @@ func NewServeCmd() *cobra.Command {
 			config.BindRegisteredFlags(v, cmd, cmder.flags, []string{
 				config.FlagProxyListen,
 				config.FlagAPIListen,
+				config.FlagAPIWebUI,
 				config.FlagIngestListen,
 				config.FlagUpstream,
 				config.FlagProvider,
@@ -117,6 +120,7 @@ func NewServeCmd() *cobra.Command {
 			cmder.postgresDSN = v.GetString("storage.postgres_dsn")
 			cmder.proxyListen = v.GetString("proxy.listen")
 			cmder.apiListen = v.GetString("api.listen")
+			cmder.apiWebUI = v.GetBool("api.web_ui")
 			cmder.ingestListen = v.GetString("ingest.listen")
 			cmder.upstream = v.GetString("proxy.upstream")
 			cmder.providerType = v.GetString("proxy.provider")
@@ -146,6 +150,7 @@ func NewServeCmd() *cobra.Command {
 
 	config.AddStringFlag(cmd, cmder.flags, config.FlagProxyListen, &cmder.proxyListen)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagAPIListen, &cmder.apiListen)
+	config.AddBoolFlag(cmd, cmder.flags, config.FlagAPIWebUI, &cmder.apiWebUI)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagIngestListen, &cmder.ingestListen)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagUpstream, &cmder.upstream)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagProvider, &cmder.providerType)
@@ -224,6 +229,7 @@ func (c *ServeCommander) run() error {
 		ListenAddr:   c.apiListen,
 		VectorDriver: proxyConfig.VectorDriver,
 		Embedder:     proxyConfig.Embedder,
+		EnableWebUI:  c.apiWebUI,
 	}
 	apiServer, err := api.NewServer(apiConfig, driver, c.logger)
 	if err != nil {

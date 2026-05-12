@@ -173,8 +173,19 @@ var _ = Describe("minimal web UI", func() {
 
 	BeforeEach(func() {
 		var err error
-		server, err = NewServer(Config{ListenAddr: ":0"}, inmemory.NewDriver(), tapeslogger.NewNoop())
+		server, err = NewServer(Config{ListenAddr: ":0", EnableWebUI: true}, inmemory.NewDriver(), tapeslogger.NewNoop())
 		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("does not serve the UI unless explicitly enabled", func() {
+		defaultServer, err := NewServer(Config{ListenAddr: ":0"}, inmemory.NewDriver(), tapeslogger.NewNoop())
+		Expect(err).NotTo(HaveOccurred())
+
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
+		Expect(err).NotTo(HaveOccurred())
+		resp, err := defaultServer.app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(fiber.StatusNotFound))
 	})
 
 	It("serves the D3 UI from / without a frontend build", func() {

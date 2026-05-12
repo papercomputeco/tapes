@@ -66,6 +66,7 @@ func ValidConfigKeys() []string {
 		"proxy.listen",
 		"proxy.project",
 		"api.listen",
+		"api.web_ui",
 		"ingest.listen",
 		"client.proxy_target",
 		"client.api_target",
