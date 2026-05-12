@@ -209,7 +209,7 @@ var _ = Describe("minimal web UI", func() {
 		raw, err := io.ReadAll(resp.Body)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(raw)).To(ContainSubstring("d3@7.9.0"))
-		Expect(string(raw)).To(ContainSubstring("integrity=\"sha256-1AqCL/P1MtPZ9HQLjuNAO+QOIV1Q7AhiAl2fT14nSI=\""))
+		Expect(string(raw)).To(ContainSubstring("integrity=\"sha256-8glLv2FBs1lyLE/kVOtsSw8OQswQzHr5IfwVj864ZTk=\""))
 		Expect(string(raw)).To(ContainSubstring("/v1/sessions/"))
 		Expect(string(raw)).To(ContainSubstring("/v1/sessions/summary"))
 		Expect(string(raw)).NotTo(ContainSubstring("/v1/dags/"))
