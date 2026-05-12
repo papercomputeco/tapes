@@ -410,18 +410,40 @@ func (s *Driver) ListSessions(_ context.Context, opts storage.ListOpts) (*storag
 // chain-context overrides in pkg/sessions.DetermineStatus are deliberately
 // NOT applied here, so both drivers return identical numbers for the same
 // store contents.
+//
+// TotalDurationNs is wall-clock span (MAX − MIN of CreatedAt) over the
+// matching set, NOT a sum of per-call Usage.TotalDurationNs. See PCC-514
+// for the proxy gap that motivated the workaround.
 func (s *Driver) CountSessions(_ context.Context, opts storage.ListOpts) (storage.SessionStats, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	hasChildren := s.computeHasChildren()
 
-	var stats storage.SessionStats
+	var (
+		stats              storage.SessionStats
+		minCreated         time.Time
+		maxCreated         time.Time
+		haveCreatedAtRange bool
+	)
 	for _, node := range s.nodes {
 		if !matchesFilter(node, opts) {
 			continue
 		}
 		stats.TurnCount++
+
+		if !haveCreatedAtRange {
+			minCreated = node.CreatedAt
+			maxCreated = node.CreatedAt
+			haveCreatedAtRange = true
+		} else {
+			if node.CreatedAt.Before(minCreated) {
+				minCreated = node.CreatedAt
+			}
+			if node.CreatedAt.After(maxCreated) {
+				maxCreated = node.CreatedAt
+			}
+		}
 
 		isLeaf := !hasChildren[node.Hash]
 		if isLeaf {
@@ -439,9 +461,6 @@ func (s *Driver) CountSessions(_ context.Context, opts storage.ListOpts) (storag
 		stats.OutputTokens += t.Output
 		stats.CacheCreationTokens += t.CacheCreation
 		stats.CacheReadTokens += t.CacheRead
-		if node.Usage != nil {
-			stats.TotalDurationNs += node.Usage.TotalDurationNs
-		}
 		stats.ToolCalls += sessions.CountToolCalls(node.Bucket.Content)
 
 		if model := node.Bucket.Model; model != "" {
@@ -455,6 +474,9 @@ func (s *Driver) CountSessions(_ context.Context, opts storage.ListOpts) (storag
 			perModel.CacheReadTokens += t.CacheRead
 			stats.PerModel[model] = perModel
 		}
+	}
+	if haveCreatedAtRange {
+		stats.TotalDurationNs = maxCreated.Sub(minCreated).Nanoseconds()
 	}
 	return stats, nil
 }

@@ -91,19 +91,27 @@ type Turn struct {
 // All fields are computed by a single storage-driver aggregate over the
 // matching node set — no per-session chain walk. This means:
 //
-//   - InputTokens / OutputTokens / TotalDurationNs / ToolCalls are SUMs over
-//     every node matching the filter (same semantic as TurnCount). For typical
-//     queries where filters do not split chains, the totals match what summing
-//     the corresponding fields on /v1/sessions/summary would produce.
+//   - InputTokens / OutputTokens / ToolCalls are SUMs over every node
+//     matching the filter, NOT per-chain folds. Each piece of work (each
+//     token billed, each tool_use invoked) is counted exactly once
+//     regardless of how many leaves share its ancestor. This deliberately
+//     diverges from /v1/sessions/summary's per-chain numbers, which
+//     multi-count shared ancestors when leaves descend from a common
+//     branch.
 //   - TotalCost is folded in the handler from the per-model token rollup
 //     returned by the driver, using the configured pricing table.
+//   - TotalDurationNs is the wall-clock span MAX(created_at) − MIN(created_at)
+//     across matching nodes, in nanoseconds. It is NOT a sum of per-call
+//     durations: the underlying nodes.total_duration_ns column is currently
+//     never populated by the proxy (see PCC-514). Once that lands the SQL
+//     can switch to SUM without the JSON field name changing.
 //   - CompletedCount uses leaf-status-only classification: an assistant leaf
 //     with a terminal stop_reason ("stop", "end_turn", "end-turn", "eos").
 //     This is an approximation of pkg/sessions.DetermineStatus, which also
 //     considers tool errors and git activity from the full chain. Sessions
-//     with terminal stop_reason but a tool error elsewhere in the chain will
-//     count here as completed (DetermineStatus would call them failed); a
-//     follow-up will reconcile this if it matters in practice.
+//     where the agent shipped work (e.g. `git commit`) but the leaf is not
+//     itself terminal will undercount here. PCC-515 tracks the durable
+//     fix (denormalize derived_status on Put + backfill).
 type StatsResponse struct {
 	SessionCount    int     `json:"session_count"`
 	TurnCount       int     `json:"turn_count"`
@@ -222,7 +230,7 @@ func (s *Server) handleGetSession(c *fiber.Ctx) error {
 // handleStats handles GET /v1/stats.
 //
 //	@Summary		Get aggregate session stats
-//	@Description	Returns counts plus folded cost / token / duration / tool-call / completed-count totals across every node matching the supplied filters. Numeric aggregates come from a single storage-driver SQL aggregate; cost is folded in the handler from the per-model token rollup using the configured pricing table. completed_count uses leaf-status-only classification (assistant leaf with a terminal stop_reason) — see StatsResponse for the divergence from pkg/sessions.DetermineStatus.
+//	@Description	Returns counts plus folded cost / token / duration / tool-call / completed-count totals across every node matching the supplied filters. Numeric aggregates come from a single storage-driver SQL aggregate; cost is folded in the handler from the per-model token rollup using the configured pricing table. total_duration_ns is wall-clock MAX-MIN over the matched window (see PCC-514). completed_count uses leaf-status-only classification (assistant leaf with a terminal stop_reason) — see StatsResponse and PCC-515 for the durable chain-aware fix.
 //	@Tags			sessions
 //	@Produce		json
 //	@Param			project		query		string	false	"Filter by project name"

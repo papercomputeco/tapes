@@ -110,9 +110,12 @@ type SessionStats struct {
 	CacheCreationTokens int64
 	CacheReadTokens     int64
 
-	// TotalDurationNs is SUM(total_duration_ns) over the matching node
-	// set — the wall-clock time each LLM call took. This is total compute
-	// spent on agents, not session wall-clock.
+	// TotalDurationNs is the wall-clock span MAX(created_at) − MIN(created_at)
+	// over the matching node set, in nanoseconds. It is NOT a sum of per-call
+	// durations: nodes.total_duration_ns is currently never populated by the
+	// proxy (see PCC-514), so SUMming the column would always return 0.
+	// Wall-clock span is meaningful for a dashboard "Agent Time" card and is
+	// the same shape that pkg/sessions.BuildSummary uses per session.
 	TotalDurationNs int64
 
 	// ToolCalls is the number of tool_use content blocks across the

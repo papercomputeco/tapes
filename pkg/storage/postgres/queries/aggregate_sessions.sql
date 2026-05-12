@@ -8,7 +8,16 @@
 -- stop_reason. It deliberately omits the chain-context overrides
 -- (hasToolError / hasGitActivity) that pkg/sessions.DetermineStatus
 -- applies, so a single SQL aggregate is sufficient. See StatsResponse
--- in api/v1_handlers.go for the rationale.
+-- in api/v1_handlers.go for the rationale, and PCC-515 for the durable
+-- chain-aware fix.
+--
+-- total_duration_ns is wall-clock span MAX(created_at) - MIN(created_at)
+-- across the matching set, NOT SUM(nodes.total_duration_ns). The
+-- nodes.total_duration_ns column is currently never populated by the
+-- proxy (verified against jason@'s local store: 0 of 1460 rows have a
+-- non-zero value) — see PCC-514. Until that lands, SUMming the column
+-- would always return 0, which is misleading; wall-clock span is a
+-- meaningful "Agent Time" proxy that doesn't depend on the dead column.
 --
 -- The tool_calls subquery scans content JSONB per node to count tool_use
 -- blocks. This is acceptable at current corpus sizes; if it becomes a
@@ -20,11 +29,11 @@ WITH filtered AS (
         n.role,
         n.stop_reason,
         n.content,
+        n.created_at,
         n.prompt_tokens,
         n.completion_tokens,
         n.cache_creation_input_tokens,
         n.cache_read_input_tokens,
-        n.total_duration_ns,
         EXISTS (SELECT 1 FROM nodes c WHERE c.parent_hash = n.hash) AS has_child
     FROM nodes n
     WHERE (sqlc.narg(project_filter)::text IS NULL OR n.project = sqlc.narg(project_filter)::text)
@@ -47,7 +56,10 @@ SELECT
     COALESCE(SUM(completion_tokens), 0)::bigint                              AS output_tokens,
     COALESCE(SUM(cache_creation_input_tokens), 0)::bigint                    AS cache_creation_tokens,
     COALESCE(SUM(cache_read_input_tokens), 0)::bigint                        AS cache_read_tokens,
-    COALESCE(SUM(total_duration_ns), 0)::bigint                              AS total_duration_ns,
+    COALESCE(
+        EXTRACT(EPOCH FROM (MAX(created_at) - MIN(created_at))) * 1e9,
+        0
+    )::bigint                                                                AS total_duration_ns,
     COALESCE(SUM((
         SELECT COUNT(*)
         FROM jsonb_array_elements(content) AS block

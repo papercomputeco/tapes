@@ -338,14 +338,18 @@ var _ = Describe("v1 session handlers", func() {
 				project     string
 				inputTokens int
 				outputTok   int
-				durationNs  int64
-				stop        string
-				toolUses    int
+				// usageDurationNs sets assistant Usage.TotalDurationNs. The
+				// SQL aggregate IGNORES this column (see StatsResponse and
+				// PCC-514); tests use it to assert that contract.
+				usageDurationNs int64
+				stop            string
+				toolUses        int
 			}
 
-			// Seeds a two-turn session (user → assistant). Per-node Usage
-			// drives the SQL-aggregate semantic the handler now uses, so
-			// duration goes on the assistant Usage, not on CreatedAt.
+			// Seeds a two-turn session (user → assistant). Each call
+			// advances offset by 2s — user at +1s, assistant at +2s
+			// relative to the prior assistant — so the wall-clock window
+			// of N seeded sessions spans 2N seconds.
 			seedSession := func(o seedOpts) {
 				offset += time.Second
 				userBucket := merkle.Bucket{
@@ -376,7 +380,7 @@ var _ = Describe("v1 session handlers", func() {
 					Usage: &llm.Usage{
 						PromptTokens:     o.inputTokens,
 						CompletionTokens: o.outputTok,
-						TotalDurationNs:  o.durationNs,
+						TotalDurationNs:  o.usageDurationNs,
 					},
 				})
 				offset += time.Second
@@ -385,11 +389,13 @@ var _ = Describe("v1 session handlers", func() {
 				Expect(err).NotTo(HaveOccurred())
 			}
 
-			It("aggregates tokens, duration, tool_calls, and folds cost from the per-model rollup", func() {
-				// Session 1: completed (stop), 1M in / 0.5M out → $25; 1s LLM time; 2 tool_use blocks.
-				seedSession(seedOpts{tag: "a", project: "tapes", inputTokens: 1_000_000, outputTok: 500_000, durationNs: int64(time.Second), stop: "stop", toolUses: 2})
-				// Session 2: pending (no stop_reason), 0.5M in / 0.25M out → $12.50; 2s LLM time; no tool calls.
-				seedSession(seedOpts{tag: "b", project: "tapes", inputTokens: 500_000, outputTok: 250_000, durationNs: 2 * int64(time.Second), stop: ""})
+			It("aggregates tokens, tool_calls, wall-clock duration, and folds cost from the per-model rollup", func() {
+				// Session 1: completed (stop), 1M in / 0.5M out → $25; 2 tool_use blocks.
+				// Nodes land at baseTime+1s (user) and baseTime+2s (assistant).
+				seedSession(seedOpts{tag: "a", project: "tapes", inputTokens: 1_000_000, outputTok: 500_000, stop: "stop", toolUses: 2})
+				// Session 2: pending (no stop_reason), 0.5M in / 0.25M out → $12.50.
+				// Nodes land at baseTime+3s (user) and baseTime+4s (assistant).
+				seedSession(seedOpts{tag: "b", project: "tapes", inputTokens: 500_000, outputTok: 250_000, stop: ""})
 
 				body := decodeStats(richServer, "/v1/stats")
 				Expect(body.SessionCount).To(Equal(2))
@@ -398,6 +404,8 @@ var _ = Describe("v1 session handlers", func() {
 				Expect(body.InputTokens).To(Equal(int64(1_500_000)))
 				Expect(body.OutputTokens).To(Equal(int64(750_000)))
 				Expect(body.TotalCost).To(BeNumerically("~", 37.5, 0.0001))
+				// Wall-clock span MAX(created_at) − MIN(created_at) =
+				// (baseTime+4s) − (baseTime+1s) = 3s.
 				Expect(body.TotalDurationNs).To(Equal(3 * int64(time.Second)))
 				Expect(body.ToolCalls).To(Equal(2))
 				// Leaf-status: session 1's assistant leaf has stop_reason "stop"; session 2's is empty.
@@ -405,14 +413,16 @@ var _ = Describe("v1 session handlers", func() {
 			})
 
 			It("narrows folded aggregates by the project filter", func() {
-				seedSession(seedOpts{tag: "a", project: "tapes", inputTokens: 1_000_000, outputTok: 500_000, durationNs: int64(time.Second), stop: "stop"})
-				seedSession(seedOpts{tag: "b", project: "other", inputTokens: 999_999, outputTok: 999_999, durationNs: 99 * int64(time.Second), stop: "stop"})
+				// Project=tapes nodes at baseTime+1s, +2s. Project=other at +3s, +4s.
+				seedSession(seedOpts{tag: "a", project: "tapes", inputTokens: 1_000_000, outputTok: 500_000, stop: "stop"})
+				seedSession(seedOpts{tag: "b", project: "other", inputTokens: 999_999, outputTok: 999_999, stop: "stop"})
 
 				body := decodeStats(richServer, "/v1/stats?project=tapes")
 				Expect(body.SessionCount).To(Equal(1))
 				Expect(body.InputTokens).To(Equal(int64(1_000_000)))
 				Expect(body.OutputTokens).To(Equal(int64(500_000)))
 				Expect(body.TotalCost).To(BeNumerically("~", 25.0, 0.0001))
+				// Wall-clock window narrows to the tapes-project pair (+1s..+2s) = 1s.
 				Expect(body.TotalDurationNs).To(Equal(int64(time.Second)))
 				Expect(body.CompletedCount).To(Equal(1))
 			})
@@ -428,6 +438,21 @@ var _ = Describe("v1 session handlers", func() {
 				body := decodeStats(richServer, "/v1/stats")
 				Expect(body.SessionCount).To(Equal(5))
 				Expect(body.CompletedCount).To(Equal(3))
+			})
+
+			// Regression guard: nodes.total_duration_ns is currently never
+			// populated by the proxy (PCC-514), and the SQL aggregate
+			// deliberately reports wall-clock window instead. A future
+			// change that "fixes" the SQL back to SUM(total_duration_ns)
+			// would silently break this contract; pin it.
+			It("reports wall-clock span and ignores Usage.TotalDurationNs", func() {
+				seedSession(seedOpts{tag: "a", project: "tapes", usageDurationNs: 99 * int64(time.Second), stop: "stop"})
+				seedSession(seedOpts{tag: "b", project: "tapes", usageDurationNs: 99 * int64(time.Second), stop: "stop"})
+
+				body := decodeStats(richServer, "/v1/stats")
+				// SUM(Usage.TotalDurationNs) would be 198s. Wall-clock span
+				// is 3s (baseTime+1s..baseTime+4s). The latter is correct.
+				Expect(body.TotalDurationNs).To(Equal(3 * int64(time.Second)))
 			})
 
 			It("returns zeros across every field for an empty store", func() {

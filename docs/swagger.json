@@ -400,7 +400,7 @@
         },
         "/v1/stats": {
             "get": {
-                "description": "Returns counts plus folded cost / token / duration / tool-call / completed-count totals across every node matching the supplied filters. Numeric aggregates come from a single storage-driver SQL aggregate; cost is folded in the handler from the per-model token rollup using the configured pricing table. completed_count uses leaf-status-only classification (assistant leaf with a terminal stop_reason) — see StatsResponse for the divergence from pkg/sessions.DetermineStatus.",
+                "description": "Returns counts plus folded cost / token / duration / tool-call / completed-count totals across every node matching the supplied filters. Numeric aggregates come from a single storage-driver SQL aggregate; cost is folded in the handler from the per-model token rollup using the configured pricing table. total_duration_ns is wall-clock MAX-MIN over the matched window (see PCC-514). completed_count uses leaf-status-only classification (assistant leaf with a terminal stop_reason) — see StatsResponse and PCC-515 for the durable chain-aware fix.",
                 "produces": [
                     "application/json"
                 ],
