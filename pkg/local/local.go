@@ -390,6 +390,7 @@ func (r *runner) ensureTapesContainer(ctx context.Context) error {
 		"run", "-d",
 		"--name", TapesContainer,
 		"--network", NetworkName,
+		"--restart", "unless-stopped",
 		"-p", strconv.Itoa(r.opts.TapesAPIPort) + ":8081",
 		"-p", strconv.Itoa(r.opts.TapesProxyPort) + ":8080",
 		r.opts.TapesImage,
@@ -399,7 +400,11 @@ func (r *runner) ensureTapesContainer(ctx context.Context) error {
 		"--proxy-listen", ":8080",
 	}
 	if !r.opts.SkipOllama {
+		// Wire the proxy and embedder at the in-network Ollama. Without
+		// --upstream, tapes serve would default to localhost:11434 relative
+		// to the container, which points at itself, not Ollama.
 		args = append(args,
+			"--upstream", ollamaURL,
 			"--embedding-provider", "ollama",
 			"--embedding-target", ollamaURL,
 			"--embedding-model", DefaultEmbeddingModel,
