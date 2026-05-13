@@ -394,6 +394,13 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 
 	driver, err := postgres.NewDriver(ctx, startCfg.PostgresDSN)
 	if err != nil {
+		if shutdownWhenIdle {
+			_ = manager.RecordSpawnError(start.SpawnError{
+				Reason: classifyPostgresError(err),
+				DSN:    startCfg.PostgresDSN,
+				Detail: err.Error(),
+			})
+		}
 		return err
 	}
 	defer driver.Close()
@@ -489,6 +496,9 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 	if err := manager.SaveState(state); err != nil {
 		return err
 	}
+	// Past Postgres + listeners — clear any sentinel left by a previous
+	// failed spawn so deck's recovery path doesn't re-fire on the next run.
+	_ = manager.ClearSpawnError()
 
 	if shutdownWhenIdle {
 		go c.monitorIdle(manager, log, errChan)
@@ -973,6 +983,34 @@ func resolveOpenCodeAgentRoute(cfg *startConfig) proxy.AgentRoute {
 	}
 
 	return proxy.AgentRoute{ProviderType: provider, UpstreamURL: upstream}
+}
+
+// classifyPostgresError maps a postgres.NewDriver failure to a SpawnError
+// reason. Network-level signals (connection refused, dial errors, name
+// resolution, deadline exceeded) indicate Postgres is not answering and
+// `tapes local up` may be able to recover. Everything else (auth, missing
+// db, bad DSN) is surfaced to the user as-is.
+func classifyPostgresError(err error) start.SpawnErrorReason {
+	if err == nil {
+		return start.ReasonOther
+	}
+	msg := strings.ToLower(err.Error())
+	signals := []string{
+		"connection refused",
+		"dial tcp",
+		"dial unix",
+		"no such host",
+		"i/o timeout",
+		"context deadline exceeded",
+		"network is unreachable",
+		"no route to host",
+	}
+	for _, s := range signals {
+		if strings.Contains(msg, s) {
+			return start.ReasonPostgresUnreachable
+		}
+	}
+	return start.ReasonOther
 }
 
 func resolveOllamaUpstream(provider, upstream string) string {

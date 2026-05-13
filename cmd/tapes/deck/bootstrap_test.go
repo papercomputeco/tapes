@@ -3,6 +3,8 @@ package deckcmder
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +14,20 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/start"
 )
+
+// fakeSpawn returns a spawn function suitable for bootstrapConfig.spawn that
+// records the supplied SpawnError sentinel to the manager (mimicking what
+// the real daemon does on failure) and then returns the given error.
+func fakeSpawn(reason start.SpawnErrorReason, detail string) func(context.Context, *start.Manager, start.SpawnOptions) (*start.State, error) {
+	return func(_ context.Context, m *start.Manager, opts start.SpawnOptions) (*start.State, error) {
+		_ = m.RecordSpawnError(start.SpawnError{
+			Reason: reason,
+			DSN:    opts.PostgresDSN,
+			Detail: detail,
+		})
+		return nil, errors.New("daemon process exited during startup")
+	}
+}
 
 var _ = Describe("bootstrapAPI", func() {
 	var tmpDir string
@@ -39,7 +55,6 @@ var _ = Describe("bootstrapAPI", func() {
 			Expect(cleanup).NotTo(BeNil())
 			cleanup()
 
-			// State file should not exist — we never spawned anything.
 			_, statErr := os.Stat(tmpDir + "/start.json")
 			Expect(os.IsNotExist(statErr)).To(BeTrue())
 		})
@@ -103,11 +118,11 @@ var _ = Describe("bootstrapAPI", func() {
 				ProxyURL:  "http://127.0.0.1:1",
 			})).To(Succeed())
 
-			// We don't expect bootstrap to succeed (no Postgres, no Docker test
-			// fixture), but we do expect step 2 to clear the stale state.
 			_, _, _ = bootstrapAPI(context.Background(), bootstrapConfig{
 				configDir: tmpDir,
 				out:       &bytes.Buffer{},
+				hasDocker: func() bool { return false },
+				spawn:     fakeSpawn(start.ReasonPostgresUnreachable, "connection refused"),
 			})
 
 			state, err := manager.LoadState()
@@ -146,14 +161,14 @@ var _ = Describe("bootstrapAPI", func() {
 		})
 	})
 
-	Describe("step 3: ensurePostgres with non-local configured DSN", func() {
+	Describe("spawn fails with postgres_unreachable + non-local DSN", func() {
 		It("refuses to bootstrap when the configured DSN points elsewhere", func() {
 			_, _, err := bootstrapAPI(context.Background(), bootstrapConfig{
-				configDir:     tmpDir,
-				postgresDSN:   "postgres://user:pw@staging.example.com:5432/db?sslmode=disable",
-				out:           &bytes.Buffer{},
-				hasDocker:     func() bool { return true },
-				probePostgres: func(context.Context, string) bool { return false },
+				configDir:   tmpDir,
+				postgresDSN: "postgres://user:pw@staging.example.com:5432/db?sslmode=disable",
+				out:         &bytes.Buffer{},
+				hasDocker:   func() bool { return true },
+				spawn:       fakeSpawn(start.ReasonPostgresUnreachable, "dial tcp staging.example.com:5432: connect: connection refused"),
 			})
 			Expect(err).To(HaveOccurred())
 			msg := err.Error()
@@ -164,24 +179,24 @@ var _ = Describe("bootstrapAPI", func() {
 
 		It("refuses to bootstrap when the configured DSN uses a non-default port", func() {
 			_, _, err := bootstrapAPI(context.Background(), bootstrapConfig{
-				configDir:     tmpDir,
-				postgresDSN:   "postgres://user:pw@localhost:6543/db?sslmode=disable",
-				out:           &bytes.Buffer{},
-				hasDocker:     func() bool { return true },
-				probePostgres: func(context.Context, string) bool { return false },
+				configDir:   tmpDir,
+				postgresDSN: "postgres://user:pw@localhost:6543/db?sslmode=disable",
+				out:         &bytes.Buffer{},
+				hasDocker:   func() bool { return true },
+				spawn:       fakeSpawn(start.ReasonPostgresUnreachable, "dial tcp 127.0.0.1:6543: connect: connection refused"),
 			})
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("Configured Postgres is unreachable"))
 		})
 	})
 
-	Describe("step 3: ensurePostgres without Docker", func() {
-		It("returns the styled actionable error when Docker is missing and Postgres is unreachable", func() {
+	Describe("spawn fails with postgres_unreachable + no Docker", func() {
+		It("returns the styled actionable error when Docker is missing", func() {
 			_, _, err := bootstrapAPI(context.Background(), bootstrapConfig{
-				configDir:     tmpDir,
-				out:           &bytes.Buffer{},
-				hasDocker:     func() bool { return false },
-				probePostgres: func(context.Context, string) bool { return false },
+				configDir: tmpDir,
+				out:       &bytes.Buffer{},
+				hasDocker: func() bool { return false },
+				spawn:     fakeSpawn(start.ReasonPostgresUnreachable, "dial tcp 127.0.0.1:5432: connect: connection refused"),
 			})
 			Expect(err).To(HaveOccurred())
 			msg := err.Error()
@@ -191,30 +206,70 @@ var _ = Describe("bootstrapAPI", func() {
 		})
 	})
 
+	Describe("spawn fails with postgres_unreachable + local default + docker", func() {
+		It("calls local.Up and retries the spawn once", func() {
+			localUpCalls := 0
+			spawnCalls := 0
+			_, _, err := bootstrapAPI(context.Background(), bootstrapConfig{
+				configDir: tmpDir,
+				out:       &bytes.Buffer{},
+				hasDocker: func() bool { return true },
+				localUp: func(_ context.Context, _ string, _ io.Writer) error {
+					localUpCalls++
+					return nil
+				},
+				spawn: func(_ context.Context, m *start.Manager, opts start.SpawnOptions) (*start.State, error) {
+					spawnCalls++
+					if spawnCalls == 1 {
+						_ = m.RecordSpawnError(start.SpawnError{
+							Reason: start.ReasonPostgresUnreachable,
+							DSN:    opts.PostgresDSN,
+							Detail: "dial tcp 127.0.0.1:5432: connect: connection refused",
+						})
+						return nil, errors.New("daemon process exited during startup")
+					}
+					_ = m.ClearSpawnError()
+					return nil, errors.New("retry-also-failed-but-we-only-care-about-the-control-flow")
+				},
+			})
+			Expect(err).To(HaveOccurred())
+			Expect(localUpCalls).To(Equal(1))
+			Expect(spawnCalls).To(Equal(2))
+		})
+	})
+
+	Describe("spawn fails with non-postgres reason", func() {
+		It("surfaces the underlying error without invoking local.Up", func() {
+			localUpCalls := 0
+			_, _, err := bootstrapAPI(context.Background(), bootstrapConfig{
+				configDir: tmpDir,
+				out:       &bytes.Buffer{},
+				hasDocker: func() bool { return true },
+				localUp: func(_ context.Context, _ string, _ io.Writer) error {
+					localUpCalls++
+					return nil
+				},
+				spawn: fakeSpawn(start.ReasonOther, "listen tcp 127.0.0.1:0: bind: address already in use"),
+			})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("spawning tapes daemon"))
+			Expect(localUpCalls).To(Equal(0))
+		})
+	})
+
 	Describe("corrupt start.json", func() {
 		It("clears the file and falls through instead of erroring", func() {
 			Expect(os.WriteFile(tmpDir+"/start.json", []byte("{not json"), 0o600)).To(Succeed())
 
 			_, _, _ = bootstrapAPI(context.Background(), bootstrapConfig{
-				configDir:     tmpDir,
-				out:           &bytes.Buffer{},
-				hasDocker:     func() bool { return false },
-				probePostgres: func(context.Context, string) bool { return false },
+				configDir: tmpDir,
+				out:       &bytes.Buffer{},
+				hasDocker: func() bool { return false },
+				spawn:     fakeSpawn(start.ReasonPostgresUnreachable, "connection refused"),
 			})
 
 			_, statErr := os.Stat(tmpDir + "/start.json")
 			Expect(os.IsNotExist(statErr)).To(BeTrue())
-		})
-	})
-
-	Describe("postgresReachable", func() {
-		It("returns false on empty DSN", func() {
-			Expect(postgresReachable(context.Background(), "")).To(BeFalse())
-		})
-
-		It("returns false on an unreachable port", func() {
-			// Port 1 is privileged + closed; a 1s timeout keeps the test fast.
-			Expect(postgresReachable(context.Background(), "postgres://x:y@127.0.0.1:1/db?sslmode=disable")).To(BeFalse())
 		})
 	})
 })

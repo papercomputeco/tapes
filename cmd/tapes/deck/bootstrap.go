@@ -7,9 +7,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/papercomputeco/tapes/pkg/cliui"
 	"github.com/papercomputeco/tapes/pkg/local"
@@ -17,7 +14,7 @@ import (
 )
 
 // bootstrapConfig captures everything bootstrapAPI needs to resolve an API
-// target without reading flags directly. Tests override these.
+// target without reading flags directly. Tests override the function fields.
 type bootstrapConfig struct {
 	apiTarget         string // resolved value of --api-target / client.api_target
 	apiTargetIsCustom bool   // true if user explicitly set api-target
@@ -25,16 +22,25 @@ type bootstrapConfig struct {
 	configDir         string // forwarded to start.SpawnOptions
 	debug             bool
 	out               io.Writer
-	hasDocker         func() bool                                // defaults to local.HasDocker; overridden in tests
-	probePostgres     func(ctx context.Context, dsn string) bool // defaults to postgresReachable; overridden in tests
+	hasDocker         func() bool                              // defaults to local.HasDocker
+	localUp           func(ctx context.Context, configDir string, out io.Writer) error
+	spawn             func(ctx context.Context, manager *start.Manager, opts start.SpawnOptions) (*start.State, error)
 }
 
-// bootstrapAPI resolves the URL of a tapes API server, bringing up local
-// Postgres + a `tapes start` daemon when nothing is already serving.
+// bootstrapAPI resolves the URL of a tapes API server.
 //
-// The returned cleanup function unregisters the deck session from the daemon's
-// agent list and is safe to call multiple times. It is non-nil even on the
-// happy paths that don't require cleanup; callers should always defer it.
+// The deck client never opens a Postgres connection itself. Instead it:
+//
+//  1. honours an explicit --api-target / TAPES_CLIENT_API_TARGET,
+//  2. attaches to a healthy `tapes start` daemon if one is already running,
+//  3. asks the daemon to start; if the daemon fails because Postgres is
+//     unreachable, falls back to `tapes local up` (Docker container) and
+//     retries the spawn once.
+//
+// The returned cleanup function unregisters the deck session from the
+// daemon's agent list and is safe to call multiple times. It is non-nil even
+// on the happy paths that don't require cleanup; callers should always defer
+// it.
 func bootstrapAPI(ctx context.Context, cfg bootstrapConfig) (string, func(), error) {
 	if cfg.out == nil {
 		cfg.out = os.Stdout
@@ -42,8 +48,11 @@ func bootstrapAPI(ctx context.Context, cfg bootstrapConfig) (string, func(), err
 	if cfg.hasDocker == nil {
 		cfg.hasDocker = local.HasDocker
 	}
-	if cfg.probePostgres == nil {
-		cfg.probePostgres = postgresReachable
+	if cfg.localUp == nil {
+		cfg.localUp = defaultLocalUp
+	}
+	if cfg.spawn == nil {
+		cfg.spawn = defaultSpawn
 	}
 
 	if cfg.apiTargetIsCustom {
@@ -77,38 +86,31 @@ func bootstrapAPI(ctx context.Context, cfg bootstrapConfig) (string, func(), err
 		return finalizeWithDaemon(ctx, manager, state.APIURL)
 	}
 
-	dsn, err := ensurePostgres(ctx, cfg)
-	if err != nil {
-		return "", nil, err
-	}
-	cfg.postgresDSN = dsn
+	// No existing daemon. Clear any sentinel from a prior failed spawn so we
+	// don't react to stale information from a previous run.
+	_ = manager.ClearSpawnError()
 
-	state, err = spawnAndWait(ctx, manager, cfg)
-	if err != nil {
-		return "", nil, err
+	state, err = trySpawn(ctx, manager, cfg)
+	if err == nil {
+		return finalizeWithDaemon(ctx, manager, state.APIURL)
 	}
 
-	return finalizeWithDaemon(ctx, manager, state.APIURL)
-}
+	spawnErr, _ := manager.LoadSpawnError()
+	if spawnErr == nil || spawnErr.Reason != start.ReasonPostgresUnreachable {
+		// Generic spawn failure — surface the underlying error.
+		return "", nil, err
+	}
 
-// ensurePostgres checks the configured DSN and runs `pkg/local.Up` (Postgres
-// only) if nothing answers and the DSN points at the same place local.Up
-// would start. A configured DSN that points elsewhere (staging, a remote
-// host, a non-default port) is refused with a styled error rather than
-// silently swapped for a fresh local container — the user's intent is
-// preserved.
-func ensurePostgres(ctx context.Context, cfg bootstrapConfig) (string, error) {
-	dsn := cfg.postgresDSN
+	dsn := spawnErr.DSN
+	if dsn == "" {
+		dsn = cfg.postgresDSN
+	}
 	if dsn == "" {
 		dsn = local.PostgresDSN(local.DefaultPostgresPort)
 	}
 
-	if cfg.probePostgres(ctx, dsn) {
-		return dsn, nil
-	}
-
 	if !local.IsLocalDefaultHost(dsn) {
-		return "", errors.New(strings.Join([]string{
+		return "", nil, errors.New(strings.Join([]string{
 			cliui.FailMark + " Configured Postgres is unreachable",
 			"",
 			"  storage.postgres_dsn: " + dsn,
@@ -119,7 +121,7 @@ func ensurePostgres(ctx context.Context, cfg bootstrapConfig) (string, error) {
 	}
 
 	if !cfg.hasDocker() {
-		return "", errors.New(strings.Join([]string{
+		return "", nil, errors.New(strings.Join([]string{
 			cliui.FailMark + " Postgres is not reachable and Docker is not installed",
 			"",
 			"Install Docker (https://docs.docker.com/get-docker/) and re-run:",
@@ -131,50 +133,46 @@ func ensurePostgres(ctx context.Context, cfg bootstrapConfig) (string, error) {
 	}
 
 	fmt.Fprintf(cfg.out, "%s\n", cliui.HeaderStyle.Render("Bootstrapping local Postgres"))
-	if err := local.Up(ctx, local.Options{
-		ConfigDir:  cfg.configDir,
-		SkipOllama: true,
-		Out:        cfg.out,
-	}); err != nil {
-		return "", err
+	if err := cfg.localUp(ctx, cfg.configDir, cfg.out); err != nil {
+		return "", nil, err
 	}
-	return dsn, nil
-}
 
-// postgresReachable opens a small pgxpool against dsn and pings it. Returns
-// false on any error (unreachable, auth failure, missing db, ...). A 1s
-// timeout keeps cold starts snappy when the host port is closed.
-func postgresReachable(ctx context.Context, dsn string) bool {
-	if strings.TrimSpace(dsn) == "" {
-		return false
-	}
-	probeCtx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
-
-	pool, err := pgxpool.New(probeCtx, dsn)
+	_ = manager.ClearSpawnError()
+	cfg.postgresDSN = dsn
+	state, err = trySpawn(ctx, manager, cfg)
 	if err != nil {
-		return false
+		return "", nil, err
 	}
-	defer pool.Close()
-	return pool.Ping(probeCtx) == nil
+	return finalizeWithDaemon(ctx, manager, state.APIURL)
 }
 
-// spawnAndWait launches `tapes start --daemon` and polls until /ping responds
-// or the spawn fails.
-func spawnAndWait(ctx context.Context, manager *start.Manager, cfg bootstrapConfig) (*start.State, error) {
+// trySpawn launches `tapes start --daemon` and waits for it. The daemon
+// records any Postgres failure to a SpawnError sentinel which the caller
+// inspects.
+func trySpawn(ctx context.Context, manager *start.Manager, cfg bootstrapConfig) (*start.State, error) {
 	fmt.Fprintf(cfg.out, "%s\n", cliui.HeaderStyle.Render("Starting tapes API daemon"))
-	state, _, err := start.SpawnAndWait(ctx, manager,
-		start.SpawnOptions{
-			ConfigDir:   cfg.configDir,
-			Debug:       cfg.debug,
-			PostgresDSN: cfg.postgresDSN,
-		},
-		start.WaitOptions{},
-	)
+	state, err := cfg.spawn(ctx, manager, start.SpawnOptions{
+		ConfigDir:   cfg.configDir,
+		Debug:       cfg.debug,
+		PostgresDSN: cfg.postgresDSN,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("spawning tapes daemon: %w", err)
 	}
 	return state, nil
+}
+
+func defaultSpawn(ctx context.Context, manager *start.Manager, opts start.SpawnOptions) (*start.State, error) {
+	state, _, err := start.SpawnAndWait(ctx, manager, opts, start.WaitOptions{})
+	return state, err
+}
+
+func defaultLocalUp(ctx context.Context, configDir string, out io.Writer) error {
+	return local.Up(ctx, local.Options{
+		ConfigDir:  configDir,
+		SkipOllama: true,
+		Out:        out,
+	})
 }
 
 // finalizeWithDaemon registers the current process as a deck session and
