@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -382,9 +383,9 @@ func (r *runner) ensureTapesContainer(ctx context.Context) error {
 		return r.docker(ctx, "start", TapesContainer)
 	}
 
-	dsn := fmt.Sprintf("postgres://%s:%s@%s:5432/%s?sslmode=disable",
-		PostgresUser, PostgresPass, PostgresContainer, PostgresDB)
-	ollamaURL := fmt.Sprintf("http://%s:11434", OllamaContainer)
+	dsn := fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable",
+		PostgresUser, PostgresPass, net.JoinHostPort(PostgresContainer, "5432"), PostgresDB)
+	ollamaURL := "http://" + net.JoinHostPort(OllamaContainer, "11434")
 
 	args := []string{
 		"run", "-d",
