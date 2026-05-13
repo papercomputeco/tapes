@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/papercomputeco/tapes/pkg/cliui"
-	"github.com/papercomputeco/tapes/pkg/local"
 	"github.com/papercomputeco/tapes/pkg/start"
 )
 
@@ -18,41 +17,34 @@ import (
 type bootstrapConfig struct {
 	apiTarget         string // resolved value of --api-target / client.api_target
 	apiTargetIsCustom bool   // true if user explicitly set api-target
-	postgresDSN       string // resolved value of --postgres / storage.postgres_dsn
-	configDir         string // forwarded to start.SpawnOptions
-	debug             bool
+	postgresDSN       string // forwarded to LoadHealthyMatching to detect DSN mismatches
+	configDir         string
 	out               io.Writer
-	hasDocker         func() bool                              // defaults to local.HasDocker
-	localUp           func(ctx context.Context, configDir string, out io.Writer) error
-	spawn             func(ctx context.Context, manager *start.Manager, opts start.SpawnOptions) (*start.State, error)
+	apiReachable      func(ctx context.Context, apiURL string) bool // overridable for tests
 }
 
 // bootstrapAPI resolves the URL of a tapes API server.
 //
-// The deck client never opens a Postgres connection itself. Instead it:
+// Deck is a pure API client. It never opens a Postgres connection and never
+// orchestrates Docker. Resolution order:
 //
-//  1. honours an explicit --api-target / TAPES_CLIENT_API_TARGET,
-//  2. attaches to a healthy `tapes start` daemon if one is already running,
-//  3. asks the daemon to start; if the daemon fails because Postgres is
-//     unreachable, falls back to `tapes local up` (Docker container) and
-//     retries the spawn once.
+//  1. Explicit --api-target / TAPES_CLIENT_API_TARGET.
+//  2. A host-side `tapes start` daemon (e.g. left running by `tapes start
+//     claude`). When present, deck attaches and registers a session so the
+//     daemon's idle-monitor doesn't tear it down underneath us.
+//  3. The configured `client.api_target`, if a tapes API answers /ping
+//     there. This is the URL `tapes local up` writes when it brings up the
+//     bundled tapes serve container.
+//  4. Nothing reachable → styled error pointing the user at `tapes local
+//     up` or --api-target.
 //
-// The returned cleanup function unregisters the deck session from the
-// daemon's agent list and is safe to call multiple times. It is non-nil even
-// on the happy paths that don't require cleanup; callers should always defer
-// it.
+// The returned cleanup function is always non-nil; callers should defer it.
 func bootstrapAPI(ctx context.Context, cfg bootstrapConfig) (string, func(), error) {
 	if cfg.out == nil {
 		cfg.out = os.Stdout
 	}
-	if cfg.hasDocker == nil {
-		cfg.hasDocker = local.HasDocker
-	}
-	if cfg.localUp == nil {
-		cfg.localUp = defaultLocalUp
-	}
-	if cfg.spawn == nil {
-		cfg.spawn = defaultSpawn
+	if cfg.apiReachable == nil {
+		cfg.apiReachable = start.APIReachable
 	}
 
 	if cfg.apiTargetIsCustom {
@@ -86,93 +78,22 @@ func bootstrapAPI(ctx context.Context, cfg bootstrapConfig) (string, func(), err
 		return finalizeWithDaemon(ctx, manager, state.APIURL)
 	}
 
-	// No existing daemon. Clear any sentinel from a prior failed spawn so we
-	// don't react to stale information from a previous run.
-	_ = manager.ClearSpawnError()
-
-	state, err = trySpawn(ctx, manager, cfg)
-	if err == nil {
-		return finalizeWithDaemon(ctx, manager, state.APIURL)
+	target := normalizeAPITarget(cfg.apiTarget)
+	if target != "" && cfg.apiReachable(ctx, target) {
+		return target, func() {}, nil
 	}
 
-	spawnErr, _ := manager.LoadSpawnError()
-	if spawnErr == nil || spawnErr.Reason != start.ReasonPostgresUnreachable {
-		// Generic spawn failure — surface the underlying error.
-		return "", nil, err
-	}
-
-	dsn := spawnErr.DSN
-	if dsn == "" {
-		dsn = cfg.postgresDSN
-	}
-	if dsn == "" {
-		dsn = local.PostgresDSN(local.DefaultPostgresPort)
-	}
-
-	if !local.IsLocalDefaultHost(dsn) {
-		return "", nil, errors.New(strings.Join([]string{
-			cliui.FailMark + " Configured Postgres is unreachable",
-			"",
-			"  storage.postgres_dsn: " + dsn,
-			"",
-			"Bring it up, or clear the configured DSN to use a local container:",
-			"  tapes config set storage.postgres_dsn \"\"",
-		}, "\n"))
-	}
-
-	if !cfg.hasDocker() {
-		return "", nil, errors.New(strings.Join([]string{
-			cliui.FailMark + " Postgres is not reachable and Docker is not installed",
-			"",
-			"Install Docker (https://docs.docker.com/get-docker/) and re-run:",
-			"  tapes deck",
-			"",
-			"Or point at an existing Postgres:",
-			"  tapes config set storage.postgres_dsn <dsn>",
-		}, "\n"))
-	}
-
-	fmt.Fprintf(cfg.out, "%s\n", cliui.HeaderStyle.Render("Bootstrapping local Postgres"))
-	if err := cfg.localUp(ctx, cfg.configDir, cfg.out); err != nil {
-		return "", nil, err
-	}
-
-	_ = manager.ClearSpawnError()
-	cfg.postgresDSN = dsn
-	state, err = trySpawn(ctx, manager, cfg)
-	if err != nil {
-		return "", nil, err
-	}
-	return finalizeWithDaemon(ctx, manager, state.APIURL)
-}
-
-// trySpawn launches `tapes start --daemon` and waits for it. The daemon
-// records any Postgres failure to a SpawnError sentinel which the caller
-// inspects.
-func trySpawn(ctx context.Context, manager *start.Manager, cfg bootstrapConfig) (*start.State, error) {
-	fmt.Fprintf(cfg.out, "%s\n", cliui.HeaderStyle.Render("Starting tapes API daemon"))
-	state, err := cfg.spawn(ctx, manager, start.SpawnOptions{
-		ConfigDir:   cfg.configDir,
-		Debug:       cfg.debug,
-		PostgresDSN: cfg.postgresDSN,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("spawning tapes daemon: %w", err)
-	}
-	return state, nil
-}
-
-func defaultSpawn(ctx context.Context, manager *start.Manager, opts start.SpawnOptions) (*start.State, error) {
-	state, _, err := start.SpawnAndWait(ctx, manager, opts, start.WaitOptions{})
-	return state, err
-}
-
-func defaultLocalUp(ctx context.Context, configDir string, out io.Writer) error {
-	return local.Up(ctx, local.Options{
-		ConfigDir:  configDir,
-		SkipOllama: true,
-		Out:        out,
-	})
+	return "", nil, errors.New(strings.Join([]string{
+		cliui.FailMark + " No tapes API is reachable",
+		"",
+		"  api-target: " + target,
+		"",
+		"Bring up a local stack and try again:",
+		"  tapes local up",
+		"",
+		"Or point at an existing API:",
+		"  tapes deck --api-target <url>",
+	}, "\n"))
 }
 
 // finalizeWithDaemon registers the current process as a deck session and

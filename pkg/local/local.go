@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -27,13 +28,17 @@ import (
 const (
 	DefaultPostgresImage  = "public.ecr.aws/g4e5l3z3/papercomputeco/postgres:17.7-pgduckdb-1.1.1"
 	DefaultOllamaImage    = "ollama/ollama:latest"
+	DefaultTapesImage     = "public.ecr.aws/g4e5l3z3/papercomputeco/tapes:latest"
 	DefaultEmbeddingModel = "embeddinggemma"
 	DefaultPostgresPort   = 5432
 	DefaultOllamaPort     = 11434
+	DefaultTapesAPIPort   = 8081
+	DefaultTapesProxyPort = 8080
 
 	NetworkName       = "tapes-local"
 	PostgresContainer = "tapes-local-postgres"
 	OllamaContainer   = "tapes-local-ollama"
+	TapesContainer    = "tapes-local-serve"
 	PostgresUser      = "tapes"
 	PostgresPass      = "tapes"
 	PostgresDB        = "tapes"
@@ -46,13 +51,26 @@ const (
 // Options configures a local stack operation. Zero values fall back to the
 // package defaults; callers only need to set the fields they care about.
 type Options struct {
-	ConfigDir     string
-	PostgresPort  int
-	OllamaPort    int
-	PostgresImage string
-	OllamaImage   string
-	SkipOllama    bool
-	Out           io.Writer
+	ConfigDir      string
+	PostgresPort   int
+	OllamaPort     int
+	TapesAPIPort   int
+	TapesProxyPort int
+	PostgresImage  string
+	OllamaImage    string
+	TapesImage     string
+	SkipOllama     bool
+	SkipTapes      bool
+	Out            io.Writer
+}
+
+// TapesAPIURL returns the host-accessible URL for the bundled tapes serve
+// container on the given host port.
+func TapesAPIURL(port int) string {
+	if port == 0 {
+		port = DefaultTapesAPIPort
+	}
+	return fmt.Sprintf("http://localhost:%d", port)
 }
 
 // PostgresDSN returns the DSN string for a local Postgres listening on port.
@@ -114,6 +132,11 @@ func Up(ctx context.Context, opts Options) error {
 			return err
 		}
 	}
+	if !r.opts.SkipTapes {
+		if err := r.ensureImage(ctx, r.opts.TapesImage, "Tapes"); err != nil {
+			return err
+		}
+	}
 
 	postgresDir, err := EnsureLocalPostgresDir(r.opts.ConfigDir)
 	if err != nil {
@@ -143,6 +166,15 @@ func Up(ctx context.Context, opts Options) error {
 		}
 	}
 
+	if !r.opts.SkipTapes {
+		if err := r.ensureTapesContainer(ctx); err != nil {
+			return err
+		}
+		if err := cliui.Step(r.out, "Waiting for tapes API", func() error { return r.waitForTapesReady(ctx) }); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -155,6 +187,9 @@ func PrintStartedSummary(out io.Writer, opts Options) {
 	}
 	if opts.OllamaPort == 0 {
 		opts.OllamaPort = DefaultOllamaPort
+	}
+	if opts.TapesAPIPort == 0 {
+		opts.TapesAPIPort = DefaultTapesAPIPort
 	}
 	if out == nil {
 		out = os.Stdout
@@ -171,6 +206,9 @@ func PrintStartedSummary(out io.Writer, opts Options) {
 	if !opts.SkipOllama {
 		fmt.Fprintf(out, "  %s %s\n", cliui.KeyStyle.Render("Ollama:  "), cliui.ValueStyle.Render(fmt.Sprintf("http://localhost:%d", opts.OllamaPort)))
 	}
+	if !opts.SkipTapes {
+		fmt.Fprintf(out, "  %s %s\n", cliui.KeyStyle.Render("Tapes:   "), cliui.ValueStyle.Render(TapesAPIURL(opts.TapesAPIPort)))
+	}
 	fmt.Fprintln(out)
 }
 
@@ -178,7 +216,9 @@ func PrintStartedSummary(out io.Writer, opts Options) {
 // are reported as "not created" and skipped.
 func Down(ctx context.Context, opts Options) error {
 	r := newRunner(opts)
-	for _, name := range []string{PostgresContainer, OllamaContainer} {
+	// Order matters: stop the tapes serve container first so it doesn't
+	// log noisy connection errors while Postgres is being torn down.
+	for _, name := range []string{TapesContainer, PostgresContainer, OllamaContainer} {
 		_, exists, err := r.containerState(ctx, name)
 		if err != nil {
 			return err
@@ -198,7 +238,7 @@ func Down(ctx context.Context, opts Options) error {
 // Status writes the current container statuses to opts.Out.
 func Status(ctx context.Context, opts Options) error {
 	r := newRunner(opts)
-	for _, name := range []string{PostgresContainer, OllamaContainer} {
+	for _, name := range []string{PostgresContainer, OllamaContainer, TapesContainer} {
 		out, err := r.dockerOutput(ctx, "ps", "-a", "--filter", "name="+name, "--format", "{{.Names}}\t{{.Status}}")
 		if err != nil {
 			return err
@@ -245,11 +285,20 @@ func newRunner(opts Options) *runner {
 	if opts.OllamaPort == 0 {
 		opts.OllamaPort = DefaultOllamaPort
 	}
+	if opts.TapesAPIPort == 0 {
+		opts.TapesAPIPort = DefaultTapesAPIPort
+	}
+	if opts.TapesProxyPort == 0 {
+		opts.TapesProxyPort = DefaultTapesProxyPort
+	}
 	if opts.PostgresImage == "" {
 		opts.PostgresImage = DefaultPostgresImage
 	}
 	if opts.OllamaImage == "" {
 		opts.OllamaImage = DefaultOllamaImage
+	}
+	if opts.TapesImage == "" {
+		opts.TapesImage = DefaultTapesImage
 	}
 	out := opts.Out
 	if out == nil {
@@ -317,6 +366,70 @@ func (r *runner) ensurePostgresContainer(ctx context.Context, postgresDir string
 		"-v", postgresDir+":"+path.Dir(postgresDataPath),
 		r.opts.PostgresImage,
 	)
+}
+
+// ensureTapesContainer starts the bundled tapes serve container on the
+// docker network so deck (and any other API client) can reach it on
+// localhost:TapesAPIPort. The container talks to Postgres + Ollama by
+// network name, not by host port. Calling this on an already-running
+// container is a no-op.
+func (r *runner) ensureTapesContainer(ctx context.Context) error {
+	if running, exists, err := r.containerState(ctx, TapesContainer); err != nil {
+		return err
+	} else if running {
+		return nil
+	} else if exists {
+		return r.docker(ctx, "start", TapesContainer)
+	}
+
+	dsn := fmt.Sprintf("postgres://%s:%s@%s:5432/%s?sslmode=disable",
+		PostgresUser, PostgresPass, PostgresContainer, PostgresDB)
+	ollamaURL := fmt.Sprintf("http://%s:11434", OllamaContainer)
+
+	args := []string{
+		"run", "-d",
+		"--name", TapesContainer,
+		"--network", NetworkName,
+		"-p", strconv.Itoa(r.opts.TapesAPIPort) + ":8081",
+		"-p", strconv.Itoa(r.opts.TapesProxyPort) + ":8080",
+		r.opts.TapesImage,
+		"serve",
+		"--postgres", dsn,
+		"--api-listen", ":8081",
+		"--proxy-listen", ":8080",
+	}
+	if !r.opts.SkipOllama {
+		args = append(args,
+			"--embedding-provider", "ollama",
+			"--embedding-target", ollamaURL,
+			"--embedding-model", DefaultEmbeddingModel,
+		)
+	}
+	return r.docker(ctx, args...)
+}
+
+func (r *runner) waitForTapesReady(ctx context.Context) error {
+	url := TapesAPIURL(r.opts.TapesAPIPort) + "/ping"
+	client := &http.Client{Timeout: 2 * time.Second}
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err == nil {
+			resp, err := client.Do(req)
+			if err == nil {
+				_ = resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					return nil
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+	return fmt.Errorf("tapes container %q did not become ready within 30s", TapesContainer)
 }
 
 func (r *runner) ensureOllamaContainer(ctx context.Context) error {

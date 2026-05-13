@@ -261,39 +261,6 @@ var _ = Describe("parseStartArgs", func() {
 	)
 })
 
-var _ = Describe("classifyPostgresError", func() {
-	DescribeTable("classifies network-level failures as postgres_unreachable",
-		func(msg string) {
-			Expect(classifyPostgresError(errFromString(msg))).To(Equal(start.ReasonPostgresUnreachable))
-		},
-		Entry("connection refused", "dial tcp 127.0.0.1:5432: connect: connection refused"),
-		Entry("no such host", "lookup db.example.com: no such host"),
-		Entry("i/o timeout", "read tcp 10.0.0.1:5432: i/o timeout"),
-		Entry("context deadline", "context deadline exceeded while connecting"),
-		Entry("network unreachable", "dial tcp 10.0.0.1:5432: connect: network is unreachable"),
-	)
-
-	DescribeTable("classifies non-network failures as other",
-		func(msg string) {
-			Expect(classifyPostgresError(errFromString(msg))).To(Equal(start.ReasonOther))
-		},
-		Entry("auth failure", "FATAL: password authentication failed for user \"tapes\""),
-		Entry("missing db", "FATAL: database \"tapes\" does not exist"),
-		Entry("bad dsn", "cannot parse dsn: missing \"=\" after \"foo\""),
-	)
-
-	It("returns other on nil error", func() {
-		Expect(classifyPostgresError(nil)).To(Equal(start.ReasonOther))
-	})
-})
-
-// errFromString is a tiny helper so DescribeTable rows can stay readable.
-func errFromString(s string) error { return &stringError{s: s} }
-
-type stringError struct{ s string }
-
-func (e *stringError) Error() string { return e.s }
-
 func appendToFile(path string, data []byte) error {
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {

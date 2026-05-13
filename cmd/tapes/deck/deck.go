@@ -153,7 +153,6 @@ func (c *deckCommander) run(ctx context.Context, cmd *cobra.Command) error {
 		apiTargetIsCustom: c.apiTargetIsCustom,
 		postgresDSN:       c.postgresDSN,
 		configDir:         c.configDir,
-		debug:             c.debug,
 		out:               os.Stderr,
 	})
 	if err != nil {

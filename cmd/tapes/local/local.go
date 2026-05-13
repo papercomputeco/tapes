@@ -14,19 +14,25 @@ import (
 )
 
 type localCommander struct {
-	configDir     string
-	postgresPort  int
-	ollamaPort    int
-	postgresImage string
-	ollamaImage   string
+	configDir      string
+	postgresPort   int
+	ollamaPort     int
+	tapesAPIPort   int
+	tapesProxyPort int
+	postgresImage  string
+	ollamaImage    string
+	tapesImage     string
 }
 
 func NewLocalCmd() *cobra.Command {
 	cmder := &localCommander{
-		postgresPort:  local.DefaultPostgresPort,
-		ollamaPort:    local.DefaultOllamaPort,
-		postgresImage: local.DefaultPostgresImage,
-		ollamaImage:   local.DefaultOllamaImage,
+		postgresPort:   local.DefaultPostgresPort,
+		ollamaPort:     local.DefaultOllamaPort,
+		tapesAPIPort:   local.DefaultTapesAPIPort,
+		tapesProxyPort: local.DefaultTapesProxyPort,
+		postgresImage:  local.DefaultPostgresImage,
+		ollamaImage:    local.DefaultOllamaImage,
+		tapesImage:     local.DefaultTapesImage,
 	}
 
 	cmd := &cobra.Command{
@@ -53,8 +59,11 @@ Examples:
 
 	cmd.Flags().IntVar(&cmder.postgresPort, "postgres-port", cmder.postgresPort, "Host port to bind Postgres to")
 	cmd.Flags().IntVar(&cmder.ollamaPort, "ollama-port", cmder.ollamaPort, "Host port to bind Ollama to")
+	cmd.Flags().IntVar(&cmder.tapesAPIPort, "tapes-api-port", cmder.tapesAPIPort, "Host port to bind the bundled tapes API to")
+	cmd.Flags().IntVar(&cmder.tapesProxyPort, "tapes-proxy-port", cmder.tapesProxyPort, "Host port to bind the bundled tapes proxy to")
 	cmd.Flags().StringVar(&cmder.postgresImage, "postgres-image", cmder.postgresImage, "Docker image to use for Postgres")
 	cmd.Flags().StringVar(&cmder.ollamaImage, "ollama-image", cmder.ollamaImage, "Docker image to use for Ollama")
+	cmd.Flags().StringVar(&cmder.tapesImage, "tapes-image", cmder.tapesImage, "Docker image to use for the bundled tapes serve container")
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "up",
@@ -101,12 +110,15 @@ func (c *localCommander) loadConfigDir(cmd *cobra.Command) error {
 
 func (c *localCommander) toOptions() local.Options {
 	return local.Options{
-		ConfigDir:     c.configDir,
-		PostgresPort:  c.postgresPort,
-		OllamaPort:    c.ollamaPort,
-		PostgresImage: c.postgresImage,
-		OllamaImage:   c.ollamaImage,
-		Out:           os.Stdout,
+		ConfigDir:      c.configDir,
+		PostgresPort:   c.postgresPort,
+		OllamaPort:     c.ollamaPort,
+		TapesAPIPort:   c.tapesAPIPort,
+		TapesProxyPort: c.tapesProxyPort,
+		PostgresImage:  c.postgresImage,
+		OllamaImage:    c.ollamaImage,
+		TapesImage:     c.tapesImage,
+		Out:            os.Stdout,
 	}
 }
 
@@ -121,6 +133,7 @@ func (c *localCommander) runUp(cmd *cobra.Command) error {
 
 	dsn := local.PostgresDSN(c.postgresPort)
 	ollamaURL := fmt.Sprintf("http://localhost:%d", c.ollamaPort)
+	apiTarget := local.TapesAPIURL(c.tapesAPIPort)
 
 	cfger, err := config.NewConfiger(c.configDir)
 	if err != nil {
@@ -128,6 +141,7 @@ func (c *localCommander) runUp(cmd *cobra.Command) error {
 	}
 
 	settings := []struct{ key, value string }{
+		{"client.api_target", apiTarget},
 		{"storage.postgres_dsn", dsn},
 		{"vector_store.provider", "pgvector"},
 		{"vector_store.target", dsn},
