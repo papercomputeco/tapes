@@ -65,9 +65,12 @@ func (t *Tapes) CheckGenerate(ctx context.Context) (string, error) {
 //
 // +check
 func (t *Tapes) Test(ctx context.Context) (string, error) {
-	postgresSvc := t.PostgresService()
-	dsn := newPostgresDSN()
+	postgresSvc, err := t.PostgresStack(ctx)
+	if err != nil {
+		return "", err
+	}
 
+	dsn := newPostgresDSN()
 	ctr := t.goContainer().
 		WithServiceBinding("postgres", postgresSvc).
 		WithEnvVariable("TEST_POSTGRES_DSN", dsn).
