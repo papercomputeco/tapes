@@ -67,14 +67,11 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
-    entrypoint: ["kafka-topics"]
+    entrypoint: ["/bin/sh", "-ec"]
     command:
-      - --bootstrap-server=kafka:9092
-      - --topic=tapes.e2e.proxy
-      - --partitions=1
-      - --replication-factor=1
-      - --create
-      - --if-not-exists
+      - |
+        kafka-topics --bootstrap-server=kafka:9092 --topic=tapes.e2e.proxy --partitions=1 --replication-factor=1 --create --if-not-exists
+        kafka-topics --bootstrap-server=kafka:9092 --topic=tapes.anomalies.api_keys --partitions=1 --replication-factor=1 --create --if-not-exists
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
@@ -88,6 +85,66 @@ services:
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
     ports:
       - "9091:9091"
+
+  flink-jobmanager:
+    build:
+      context: ./examples/flink-anomaly-detection
+    image: tapes-flink-anomaly:local
+    profiles:
+      - flink
+    command: jobmanager
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - "8083:8081"
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        rest.bind-address: 0.0.0.0
+        parallelism.default: 1
+
+  flink-taskmanager:
+    build:
+      context: ./examples/flink-anomaly-detection
+    image: tapes-flink-anomaly:local
+    profiles:
+      - flink
+    command: taskmanager
+    depends_on:
+      flink-jobmanager:
+        condition: service_started
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 2
+        parallelism.default: 1
+
+  flink-anomaly-job:
+    build:
+      context: ./examples/flink-anomaly-detection
+    image: tapes-flink-anomaly:local
+    profiles:
+      - flink
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      flink-jobmanager:
+        condition: service_started
+      flink-taskmanager:
+        condition: service_started
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        until /opt/flink/bin/flink list -m flink-jobmanager:8081 >/dev/null 2>&1; do
+          echo "waiting for Flink JobManager..."
+          sleep 2
+        done
+        /opt/flink/bin/sql-client.sh \
+          -D execution.target=remote \
+          -D rest.address=flink-jobmanager \
+          -D rest.port=8081 \
+          -f /opt/flink/usrlib/api-key-anomalies.sql
 
   tapes:
     build:
