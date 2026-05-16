@@ -93,6 +93,7 @@ services:
     profiles:
       - flink
     command: jobmanager
+    restart: unless-stopped
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -103,6 +104,11 @@ services:
         jobmanager.rpc.address: flink-jobmanager
         rest.bind-address: 0.0.0.0
         parallelism.default: 1
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8081/overview >/dev/null || wget -qO- http://localhost:8081/overview >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
 
   flink-taskmanager:
     build:
@@ -111,9 +117,10 @@ services:
     profiles:
       - flink
     command: taskmanager
+    restart: unless-stopped
     depends_on:
       flink-jobmanager:
-        condition: service_started
+        condition: service_healthy
     environment:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
@@ -130,7 +137,7 @@ services:
       kafka-init:
         condition: service_completed_successfully
       flink-jobmanager:
-        condition: service_started
+        condition: service_healthy
       flink-taskmanager:
         condition: service_started
     entrypoint: ["/bin/sh", "-ec"]

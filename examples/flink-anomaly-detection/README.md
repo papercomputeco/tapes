@@ -9,8 +9,12 @@ look like `api_...` keys, and emits anomalies to both Flink logs and Kafka.
 From the repository root:
 
 ```bash
-docker compose --profile flink up --build
+make up-flink
 ```
+
+`make down` tears down both the base stack and the profiled Flink services.
+The `flink-anomaly-job` container is expected to exit after submitting the SQL job;
+`flink-jobmanager` and `flink-taskmanager` must stay running for real-time processing.
 
 Services of interest:
 
@@ -38,9 +42,11 @@ curl -sS http://localhost:8080/api/chat \
 
 ## View anomalies
 
-Flink print sink output:
+Flink job status and print sink output:
 
 ```bash
+docker compose --profile flink ps
+docker compose exec flink-jobmanager /opt/flink/bin/flink list -m localhost:8081
 docker compose logs -f flink-taskmanager
 ```
 

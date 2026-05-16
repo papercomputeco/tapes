@@ -141,11 +141,11 @@ up:
 
 .PHONY: up-flink
 up-flink:
-	docker compose --profile flink up --build
+	docker compose --profile flink up --build --remove-orphans
 
 .PHONY: down
 down:
-	docker compose down
+	docker compose --profile flink down --remove-orphans
 
 .PHONY: clean
 clean: ## Removes the "build" directory with built artifacts
