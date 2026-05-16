@@ -62,7 +62,7 @@ var _ = Describe("serve proxy kafka e2e", func() {
 		DeferCleanup(func() { _ = reader.Close() })
 		Expect(reader.SetOffset(kafkago.LastOffset)).To(Succeed())
 
-		requestBody := []byte(`{"model":"llama3.2","stream":false,"messages":[{"role":"system","content":"You are helpful."},{"role":"user","content":"Say hello."}]}`)
+		requestBody := []byte(`{"model":"qwen3:0.6b","stream":false,"messages":[{"role":"system","content":"You are helpful."},{"role":"user","content":"Say hello."}]}`)
 		reqCtx, reqCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		DeferCleanup(reqCancel)
 		req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, proxyBaseURL.JoinPath("api/chat").String(), bytes.NewReader(requestBody))
