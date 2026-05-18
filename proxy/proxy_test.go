@@ -436,6 +436,16 @@ var _ = Describe("Streaming Proxy", func() {
 			Expect(leaves[0].Bucket.Role).To(Equal("assistant"))
 			// The accumulated content from all streaming chunks
 			Expect(leaves[0].Bucket.ExtractText()).To(Equal("2+2 equals 4."))
+
+			// The wire-reported total_duration was 1_000_000 ns (1ms) in the
+			// fixture above; the proxy must overwrite it with its own
+			// wall-clock measurement so non-Ollama providers and Ollama land
+			// on the same semantic. Anything > 0 and != the wire value proves
+			// the legacy NDJSON path's stampDuration call is taking effect.
+			Expect(leaves[0].Usage).NotTo(BeNil())
+			Expect(leaves[0].Usage.TotalDurationNs).NotTo(BeZero())
+			Expect(leaves[0].Usage.TotalDurationNs).NotTo(Equal(int64(1_000_000)),
+				"proxy should overwrite Ollama's wire-reported total_duration")
 		})
 	})
 
