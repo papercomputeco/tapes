@@ -412,8 +412,9 @@ func (s *Driver) ListSessions(_ context.Context, opts storage.ListOpts) (*storag
 // store contents.
 //
 // TotalDurationNs is wall-clock span (MAX − MIN of CreatedAt) over the
-// matching set, NOT a sum of per-call Usage.TotalDurationNs. See PCC-514
-// for the proxy gap that motivated the workaround.
+// matching set, NOT a sum of per-call Usage.TotalDurationNs. Per-call
+// duration is now persisted on nodes (PCC-514); switching this aggregate
+// to SUM is a separate decision since it changes the visible semantic.
 func (s *Driver) CountSessions(_ context.Context, opts storage.ListOpts) (storage.SessionStats, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

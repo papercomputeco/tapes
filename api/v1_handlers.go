@@ -102,9 +102,10 @@ type Turn struct {
 //     returned by the driver, using the configured pricing table.
 //   - TotalDurationNs is the wall-clock span MAX(created_at) − MIN(created_at)
 //     across matching nodes, in nanoseconds. It is NOT a sum of per-call
-//     durations: the underlying nodes.total_duration_ns column is currently
-//     never populated by the proxy (see PCC-514). Once that lands the SQL
-//     can switch to SUM without the JSON field name changing.
+//     durations. The underlying nodes.total_duration_ns column is now
+//     populated by the proxy with per-call wall-clock duration (PCC-514);
+//     switching this endpoint to SUM(total_duration_ns) is a separate
+//     decision since it changes the visible semantic.
 //   - CompletedCount uses leaf-status-only classification: an assistant leaf
 //     with a terminal stop_reason ("stop", "end_turn", "end-turn", "eos").
 //     This is an approximation of pkg/sessions.DetermineStatus, which also

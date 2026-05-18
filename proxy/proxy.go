@@ -269,6 +269,8 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL 
 				"duration", time.Since(startTime),
 			)
 
+			stampDuration(parsedResp, startTime)
+
 			// Non-blocking enqueue for async storage
 			p.workerPool.Enqueue(worker.Job{
 				Provider:  prov.Name(),
@@ -411,6 +413,8 @@ func (p *Proxy) handleSSEStreamViaCapture(r capture.Reducer, httpResp *http.Resp
 		"model", resp.Model,
 		"duration", time.Since(startTime),
 	)
+
+	stampDuration(resp, startTime)
 
 	p.workerPool.Enqueue(worker.Job{
 		Provider:  prov.Name(),
@@ -601,6 +605,7 @@ func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, 
 			if finalResp.Model == "" && parsedReq.Model != "" {
 				finalResp.Model = parsedReq.Model
 			}
+			stampDuration(finalResp, startTime)
 			p.workerPool.Enqueue(worker.Job{
 				Provider:  prov.Name(),
 				AgentName: agentName,
@@ -769,6 +774,22 @@ func resolveProviderOverride(path string) (string, string) {
 	}
 
 	return providerName, "/" + parts[1]
+}
+
+// stampDuration sets Usage.TotalDurationNs to the wall-clock time since
+// startTime, allocating Usage if needed. Called at every enqueue site so
+// tapes records a uniform per-call duration regardless of provider:
+// Anthropic and OpenAI don't surface call duration on the wire, and Ollama's
+// server-internal value is intentionally overwritten so aggregate stats compare
+// apples to apples. See PCC-514.
+func stampDuration(resp *llm.ChatResponse, startTime time.Time) {
+	if resp == nil {
+		return
+	}
+	if resp.Usage == nil {
+		resp.Usage = &llm.Usage{}
+	}
+	resp.Usage.TotalDurationNs = time.Since(startTime).Nanoseconds()
 }
 
 func isOpenAIAuthPath(path string) bool {
