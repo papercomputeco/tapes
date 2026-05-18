@@ -200,6 +200,90 @@ var _ = Describe("Anthropic Provider", func() {
 			})
 		})
 
+		Context("with tool result in messages", func() {
+			It("parses tool_result blocks with string content", func() {
+				payload := []byte(`{
+					"model": "claude-3-sonnet-20240229",
+					"max_tokens": 1024,
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "tool_result",
+									"tool_use_id": "toolu_123",
+									"content": "42"
+								}
+							]
+						}
+					]
+				}`)
+
+				req, err := p.ParseRequest(payload)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(req.Messages[0].Content).To(HaveLen(1))
+				Expect(req.Messages[0].Content[0].Type).To(Equal("tool_result"))
+				Expect(req.Messages[0].Content[0].ToolResultID).To(Equal("toolu_123"))
+				Expect(req.Messages[0].Content[0].ToolOutput).To(Equal("42"))
+				Expect(req.Messages[0].Content[0].IsError).To(BeFalse())
+			})
+
+			It("parses tool_result blocks with array content (text parts)", func() {
+				payload := []byte(`{
+					"model": "claude-3-sonnet-20240229",
+					"max_tokens": 1024,
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "tool_result",
+									"tool_use_id": "toolu_456",
+									"content": [
+										{"type": "text", "text": "line one"},
+										{"type": "text", "text": "line two"}
+									]
+								}
+							]
+						}
+					]
+				}`)
+
+				req, err := p.ParseRequest(payload)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(req.Messages[0].Content[0].Type).To(Equal("tool_result"))
+				Expect(req.Messages[0].Content[0].ToolResultID).To(Equal("toolu_456"))
+				Expect(req.Messages[0].Content[0].ToolOutput).To(Equal("line one\nline two"))
+			})
+
+			It("parses tool_result blocks with is_error true", func() {
+				payload := []byte(`{
+					"model": "claude-3-sonnet-20240229",
+					"max_tokens": 1024,
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "tool_result",
+									"tool_use_id": "toolu_789",
+									"content": "tool failed",
+									"is_error": true
+								}
+							]
+						}
+					]
+				}`)
+
+				req, err := p.ParseRequest(payload)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(req.Messages[0].Content[0].Type).To(Equal("tool_result"))
+				Expect(req.Messages[0].Content[0].ToolResultID).To(Equal("toolu_789"))
+				Expect(req.Messages[0].Content[0].ToolOutput).To(Equal("tool failed"))
+				Expect(req.Messages[0].Content[0].IsError).To(BeTrue())
+			})
+		})
+
 		Context("with invalid payload", func() {
 			It("returns an error for invalid JSON", func() {
 				payload := []byte(`not valid json`)
