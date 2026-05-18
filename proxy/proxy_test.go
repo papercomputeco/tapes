@@ -14,6 +14,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
+	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	"github.com/papercomputeco/tapes/proxy/header"
@@ -927,5 +928,113 @@ var _ = Describe("Storage Provider Metadata", func() {
 		Expect(leaves[0].Usage.PromptTokens).To(Equal(10))
 		Expect(leaves[0].Usage.CompletionTokens).To(Equal(5))
 		Expect(leaves[0].StopReason).To(Equal("stop"))
+	})
+})
+
+var _ = Describe("Anthropic tool_result capture", func() {
+	var (
+		p        *Proxy
+		driver   storage.Driver
+		upstream *httptest.Server
+	)
+
+	BeforeEach(func() {
+		upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{
+				"id": "msg_x",
+				"type": "message",
+				"role": "assistant",
+				"model": "claude-3-5-sonnet-20241022",
+				"stop_reason": "end_turn",
+				"content": [{"type": "text", "text": "ok"}],
+				"usage": {"input_tokens": 1, "output_tokens": 1, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+			}`))
+		}))
+
+		logger := tapeslogger.NewNoop()
+		driver = inmemory.NewDriver()
+		var err error
+		p, err = New(
+			Config{
+				ListenAddr:   ":0",
+				UpstreamURL:  upstream.URL,
+				ProviderType: "anthropic",
+			},
+			driver,
+			logger,
+		)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	AfterEach(func() {
+		if p != nil {
+			p.Close()
+		}
+		upstream.Close()
+	})
+
+	It("persists tool_use_id, content, and is_error on the user tool_result node", func() {
+		reqBody := []byte(`{
+			"model": "claude-3-5-sonnet-20241022",
+			"max_tokens": 64,
+			"stream": false,
+			"messages": [
+				{"role": "user", "content": "list files"},
+				{
+					"role": "assistant",
+					"content": [
+						{
+							"type": "tool_use",
+							"id": "toolu_abc",
+							"name": "ls",
+							"input": {"path": "."}
+						}
+					]
+				},
+				{
+					"role": "user",
+					"content": [
+						{
+							"type": "tool_result",
+							"tool_use_id": "toolu_abc",
+							"content": "a.txt\nb.txt",
+							"is_error": false
+						}
+					]
+				}
+			]
+		}`)
+
+		resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(string(reqBody))))
+		Expect(err).NotTo(HaveOccurred())
+		resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+
+		p.Close()
+		p = nil
+
+		ctx := GinkgoT().Context()
+		nodes, err := driver.List(ctx)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Locate the user tool_result node by its content block type.
+		var toolResultNode *merkle.Node
+		for _, n := range nodes {
+			if n.Bucket.Role != "user" || len(n.Bucket.Content) == 0 {
+				continue
+			}
+			if n.Bucket.Content[0].Type == "tool_result" {
+				toolResultNode = n
+				break
+			}
+		}
+		Expect(toolResultNode).NotTo(BeNil(), "expected a user node holding a tool_result block")
+
+		block := toolResultNode.Bucket.Content[0]
+		Expect(block.ToolResultID).To(Equal("toolu_abc"))
+		Expect(block.ToolOutput).To(Equal("a.txt\nb.txt"))
+		Expect(block.IsError).To(BeFalse())
 	})
 })

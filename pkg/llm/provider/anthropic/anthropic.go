@@ -69,6 +69,36 @@ func (p *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 					if input, ok := block["input"].(map[string]any); ok {
 						cb.ToolInput = input
 					}
+
+					// Tool result. Anthropic permits the `content` field to be
+					// either a string or an array of text/image content blocks;
+					// flatten any text into ToolOutput. Guard on cb.Type so a
+					// future block type that exposes a top-level `content` key
+					// can't silently populate ToolOutput.
+					if cb.Type == "tool_result" {
+						if toolUseID, ok := block["tool_use_id"].(string); ok {
+							cb.ToolResultID = toolUseID
+						}
+						if isError, ok := block["is_error"].(bool); ok {
+							cb.IsError = isError
+						}
+						switch tc := block["content"].(type) {
+						case string:
+							cb.ToolOutput = tc
+						case []any:
+							var parts []string
+							for _, item := range tc {
+								part, ok := item.(map[string]any)
+								if !ok {
+									continue
+								}
+								if text, ok := part["text"].(string); ok {
+									parts = append(parts, text)
+								}
+							}
+							cb.ToolOutput = strings.Join(parts, "\n")
+						}
+					}
 					converted.Content = append(converted.Content, cb)
 				}
 			}
