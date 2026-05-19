@@ -46,7 +46,16 @@ type Usage struct {
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
 
-	// Timing (provider-specific, but normalized to nanoseconds where possible)
-	TotalDurationNs  int64 `json:"total_duration_ns,omitempty"`
+	// TotalDurationNs is the proxy-measured wall-clock time, in nanoseconds,
+	// from when the proxy received the client request to when the upstream
+	// response was fully assembled. Set uniformly by the proxy across providers
+	// — Anthropic and OpenAI don't surface a duration field on the wire, and
+	// Ollama's server-internal `total_duration` is intentionally overwritten so
+	// aggregate stats compare apples to apples.
+	TotalDurationNs int64 `json:"total_duration_ns,omitempty"`
+
+	// PromptDurationNs is provider-reported prompt-evaluation time, in
+	// nanoseconds. Populated by providers that surface it (currently Ollama
+	// only); left at zero otherwise.
 	PromptDurationNs int64 `json:"prompt_duration_ns,omitempty"`
 }

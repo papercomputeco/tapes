@@ -436,6 +436,16 @@ var _ = Describe("Streaming Proxy", func() {
 			Expect(leaves[0].Bucket.Role).To(Equal("assistant"))
 			// The accumulated content from all streaming chunks
 			Expect(leaves[0].Bucket.ExtractText()).To(Equal("2+2 equals 4."))
+
+			// The wire-reported total_duration was 1_000_000 ns (1ms) in the
+			// fixture above; the proxy must overwrite it with its own
+			// wall-clock measurement so non-Ollama providers and Ollama land
+			// on the same semantic. Anything > 0 and != the wire value proves
+			// the legacy NDJSON path's stampDuration call is taking effect.
+			Expect(leaves[0].Usage).NotTo(BeNil())
+			Expect(leaves[0].Usage.TotalDurationNs).NotTo(BeZero())
+			Expect(leaves[0].Usage.TotalDurationNs).NotTo(Equal(int64(1_000_000)),
+				"proxy should overwrite Ollama's wire-reported total_duration")
 		})
 	})
 
@@ -1036,5 +1046,135 @@ var _ = Describe("Anthropic tool_result capture", func() {
 		Expect(block.ToolResultID).To(Equal("toolu_abc"))
 		Expect(block.ToolOutput).To(Equal("a.txt\nb.txt"))
 		Expect(block.IsError).To(BeFalse())
+	})
+})
+
+var _ = Describe("Proxy-measured total duration", func() {
+	const upstreamDelay = 50 * time.Millisecond
+
+	var (
+		p        *Proxy
+		driver   storage.Driver
+		upstream *httptest.Server
+	)
+
+	AfterEach(func() {
+		if p != nil {
+			p.Close()
+		}
+		if upstream != nil {
+			upstream.Close()
+		}
+	})
+
+	Context("non-streaming response", func() {
+		BeforeEach(func() {
+			upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				time.Sleep(upstreamDelay)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				w.Write(makeOllamaResponseBody("test-model", "assistant", "hi"))
+			}))
+			p, driver = newTestProxy(upstream.URL)
+		})
+
+		It("stamps Usage.TotalDurationNs with proxy wall-clock time", func() {
+			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+				{Role: "user", Content: "hi"},
+			}, boolPtr(false))
+
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
+			Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+
+			p.Close()
+			p = nil
+
+			ctx := GinkgoT().Context()
+			leaves, err := driver.Leaves(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(leaves).To(HaveLen(1))
+			Expect(leaves[0].Usage).NotTo(BeNil())
+
+			// Must overwrite the value Ollama wired in (1_000_000 from the
+			// test fixture). Proxy wall-clock should be >= the upstream
+			// sleep delay, which is well above the fixture value.
+			Expect(leaves[0].Usage.TotalDurationNs).To(BeNumerically(">=", upstreamDelay.Nanoseconds()),
+				"TotalDurationNs should reflect proxy round-trip, not the provider-reported value")
+		})
+	})
+
+	Context("streaming response through capture", func() {
+		BeforeEach(func() {
+			upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				time.Sleep(upstreamDelay)
+				w.Header().Set("Content-Type", "text/event-stream")
+				flusher, ok := w.(http.Flusher)
+				Expect(ok).To(BeTrue())
+				events := []string{
+					`event: message_start
+data: {"type":"message_start","message":{"id":"msg_x","type":"message","role":"assistant","content":[],"model":"claude-3-5-sonnet-20241022","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
+
+`,
+					`event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+`,
+					`event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}
+
+`,
+					`event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+`,
+					`event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}
+
+`,
+					`event: message_stop
+data: {"type":"message_stop"}
+
+`,
+				}
+				for _, ev := range events {
+					fmt.Fprint(w, ev)
+					flusher.Flush()
+				}
+			}))
+
+			logger := tapeslogger.NewNoop()
+			driver = inmemory.NewDriver()
+			var err error
+			p, err = New(
+				Config{
+					ListenAddr:   ":0",
+					UpstreamURL:  upstream.URL,
+					ProviderType: "anthropic",
+				},
+				driver,
+				logger,
+			)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("stamps Usage.TotalDurationNs on the streamed assistant node", func() {
+			reqBody := `{"model":"claude-3-5-sonnet-20241022","max_tokens":8,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
+
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(reqBody)), -1)
+			Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+
+			p.Close()
+			p = nil
+
+			ctx := GinkgoT().Context()
+			leaves, err := driver.Leaves(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(leaves).To(HaveLen(1))
+			Expect(leaves[0].Bucket.Role).To(Equal("assistant"))
+			Expect(leaves[0].Usage).NotTo(BeNil())
+			Expect(leaves[0].Usage.TotalDurationNs).To(BeNumerically(">=", upstreamDelay.Nanoseconds()))
+		})
 	})
 })
