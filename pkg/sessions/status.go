@@ -13,8 +13,13 @@ import (
 //  1. Any tool_result error in the chain → StatusFailed
 //  2. Any git commit/push in the chain → StatusCompleted (strong done signal)
 //  3. Non-assistant leaf → StatusAbandoned
-//  4. Assistant leaf with a known-terminal stop_reason → StatusCompleted
-//  5. Assistant leaf with a known-failing stop_reason → StatusFailed
+//  4. Assistant leaf with a known-terminal stop_reason → StatusCompleted.
+//     `tool_use` / `tool_use_response` count as terminal: a subagent
+//     dispatch or parallel-tool side-conversation ends when the model
+//     emits a tool request, which is the designed terminus, not a
+//     failure to respond.
+//  5. Assistant leaf with a known-failing stop_reason (the model could
+//     not produce a complete response — truncation, refusal) → StatusFailed
 //  6. Empty or otherwise unrecognised stop_reason → StatusUnknown
 func DetermineStatus(leaf *merkle.Node, hasToolError, hasGitActivity bool) string {
 	if leaf == nil {
@@ -34,9 +39,9 @@ func DetermineStatus(leaf *merkle.Node, hasToolError, hasGitActivity bool) strin
 
 	reason := strings.ToLower(strings.TrimSpace(leaf.StopReason))
 	switch reason {
-	case "stop", "end_turn", "end-turn", "eos":
+	case "stop", "end_turn", "end-turn", "eos", "tool_use", "tool_use_response":
 		return StatusCompleted
-	case "length", "max_tokens", "content_filter", "tool_use", "tool_use_response":
+	case "length", "max_tokens", "content_filter":
 		return StatusFailed
 	case "":
 		return StatusUnknown

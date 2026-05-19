@@ -181,15 +181,22 @@ var _ = Describe("DetermineStatus", func() {
 	})
 
 	It("maps stop reasons to expected statuses", func() {
+		// tool_use / tool_use_response are the designed terminus of a
+		// subagent or parallel-tool side-conversation — the model
+		// emitted a tool request, which is the contract. length /
+		// content_filter are real model-side failures (truncation,
+		// refusal).
 		cases := map[string]string{
-			"stop":            sessions.StatusCompleted,
-			"end_turn":        sessions.StatusCompleted,
-			"length":          sessions.StatusFailed,
-			"content_filter":  sessions.StatusFailed,
-			"tool_use":        sessions.StatusFailed,
-			"some_error_code": sessions.StatusFailed,
-			"weird_thing":     sessions.StatusUnknown,
-			"":                sessions.StatusUnknown,
+			"stop":              sessions.StatusCompleted,
+			"end_turn":          sessions.StatusCompleted,
+			"tool_use":          sessions.StatusCompleted,
+			"tool_use_response": sessions.StatusCompleted,
+			"length":            sessions.StatusFailed,
+			"max_tokens":        sessions.StatusFailed,
+			"content_filter":    sessions.StatusFailed,
+			"some_error_code":   sessions.StatusFailed,
+			"weird_thing":       sessions.StatusUnknown,
+			"":                  sessions.StatusUnknown,
 		}
 		for reason, want := range cases {
 			leaf := &merkle.Node{Bucket: merkle.Bucket{Role: "assistant"}, StopReason: reason}
