@@ -13,8 +13,14 @@ make up-flink
 ```
 
 `make down` tears down both the base stack and the profiled Flink services.
-The `flink-anomaly-job` container is expected to exit after submitting the SQL job;
-`flink-jobmanager` and `flink-taskmanager` must stay running for real-time processing.
+The `flink-anomaly-job`, `flink-token-usage-job`, and `flink-sentiment-job` containers
+are expected to exit after submitting their SQL jobs; `flink-jobmanager` and
+`flink-taskmanager` must stay running for real-time processing.
+
+Additional Flink examples live in sibling directories:
+
+- `examples/flink/token-usage-analysis` emits `tapes.analytics.token_usage`
+- `examples/flink/sentiment-analysis` emits `tapes.ml.sentiment`
 
 Services of interest:
 
