@@ -108,11 +108,13 @@ type Turn struct {
 //     decision since it changes the visible semantic.
 //   - CompletedCount uses leaf-status-only classification: an assistant leaf
 //     with a terminal stop_reason ("stop", "end_turn", "end-turn", "eos").
-//     This is an approximation of pkg/sessions.DetermineStatus, which also
-//     considers tool errors and git activity from the full chain. Sessions
-//     where the agent shipped work (e.g. `git commit`) but the leaf is not
-//     itself terminal will undercount here. PCC-515 tracks the durable
-//     fix (denormalize derived_status on Put + backfill).
+//     This is a narrower set than pkg/sessions.DetermineStatus accepts:
+//     that classifier also treats "tool_use" / "tool_use_response" as
+//     terminal and considers tool errors and git activity from the full
+//     chain. Sessions terminating on a tool request, or where the agent
+//     shipped work (e.g. `git commit`) without a terminal leaf stop_reason,
+//     will undercount here. PCC-515 tracks the durable fix (denormalize
+//     derived_status on Put + backfill).
 type StatsResponse struct {
 	SessionCount    int     `json:"session_count"`
 	TurnCount       int     `json:"turn_count"`
