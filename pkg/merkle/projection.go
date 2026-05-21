@@ -39,6 +39,15 @@ var HarnessTags = []string{
 //     the surviving prose cannot fork the chain (see PCC-562's
 //     "57a58 >" case).
 //  3. Drops any block that became empty after stripping.
+//  4. For tool_use blocks, drops zero-valued keys from ToolInput. The
+//     streamed assistant capture sees every key the model emitted
+//     including optional defaults like Edit's "replace_all": false;
+//     when that same turn is re-sent as history the harness strips
+//     those defaults. Without this step the two captures hash to
+//     different nodes and the chain branches.
+//  5. For thinking blocks, drops ThinkingSignature. Anthropic emits
+//     the signature on the live stream but the harness omits it on
+//     re-send; same shape as (4).
 //
 // The input slice and its blocks are not mutated; the returned slice is
 // independent. Bucket.Content itself stays unprojected so display,
@@ -53,9 +62,64 @@ func ProjectContent(blocks []llm.ContentBlock) []llm.ContentBlock {
 			}
 			b.Text = projected
 		}
+		if len(b.ToolInput) > 0 {
+			b.ToolInput = pruneZeroValues(b.ToolInput)
+		}
+		b.ThinkingSignature = ""
 		out = append(out, b)
 	}
 	return out
+}
+
+// pruneZeroValues returns a copy of m with zero-valued entries removed
+// and nested maps recursively pruned. A nested map that becomes empty
+// after pruning is itself dropped. Slices and other complex values are
+// passed through unchanged — extend the recursion if drift surfaces
+// inside them later.
+func pruneZeroValues(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		if nested, ok := v.(map[string]any); ok {
+			pruned := pruneZeroValues(nested)
+			if len(pruned) == 0 {
+				continue
+			}
+			out[k] = pruned
+			continue
+		}
+		if isZeroValue(v) {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// isZeroValue reports whether v is the zero value for its JSON kind.
+// JSON numbers decode to float64 through encoding/json, but tool input
+// can also reach us via direct map literals, so int / int64 are covered
+// for completeness.
+func isZeroValue(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return true
+	case bool:
+		return !x
+	case string:
+		return x == ""
+	case float64:
+		return x == 0
+	case float32:
+		return x == 0
+	case int:
+		return x == 0
+	case int64:
+		return x == 0
+	case []any:
+		return len(x) == 0
+	default:
+		return false
+	}
 }
 
 func stripHarnessTags(text string) string {

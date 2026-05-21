@@ -92,6 +92,11 @@ func (n *Node) computeHash() string {
 	//   * Blank-line whitespace drift in the surviving prose is
 	//     normalized (the harness re-serializes user text and
 	//     occasionally inserts a stray newline).
+	//   * Zero-valued keys are pruned from tool_use ToolInput so the
+	//     streamed capture (which has Edit's "replace_all": false)
+	//     dedups with the re-sent history (which omits the default).
+	//   * ThinkingSignature is dropped — present on the live stream,
+	//     absent when the harness re-sends the same thinking block.
 	//   * Routing metadata — Model, Provider, AgentName — is dropped
 	//     entirely. A single conversation may legitimately fan a
 	//     pre-flight call to Haiku and the main work to Opus; that is

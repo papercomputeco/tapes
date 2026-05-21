@@ -83,7 +83,7 @@ var _ = Describe("ProjectContent", func() {
 			To(Equal(merkle.ProjectContent([]llm.ContentBlock{{Type: "text", Text: drift}})))
 	})
 
-	It("preserves non-text blocks verbatim", func() {
+	It("preserves a tool_use block when nothing in its input is a zero value", func() {
 		blocks := []llm.ContentBlock{
 			{Type: "tool_use", ToolName: "Bash", ToolUseID: "abc", ToolInput: map[string]any{"cmd": "ls"}},
 			{Type: "image", ImageURL: "https://example.com/x.png", MediaType: "image/png"},
@@ -94,13 +94,101 @@ var _ = Describe("ProjectContent", func() {
 		Expect(projected).To(Equal(blocks))
 	})
 
+	It("drops zero-valued keys from tool_use.ToolInput (Edit replace_all=false)", func() {
+		// Mirrors the live capture pair (7067d494 vs b8d68493): same
+		// tool_use_id, same file_path / new_string / old_string, the
+		// streamed assistant turn includes "replace_all": false while
+		// the re-sent history omits it.
+		streamed := []llm.ContentBlock{{
+			Type:      "tool_use",
+			ToolUseID: "toolu_01abc",
+			ToolName:  "Edit",
+			ToolInput: map[string]any{
+				"file_path":   "/tmp/x.md",
+				"new_string":  "next",
+				"old_string":  "prev",
+				"replace_all": false,
+			},
+		}}
+		resent := []llm.ContentBlock{{
+			Type:      "tool_use",
+			ToolUseID: "toolu_01abc",
+			ToolName:  "Edit",
+			ToolInput: map[string]any{
+				"file_path":  "/tmp/x.md",
+				"new_string": "next",
+				"old_string": "prev",
+			},
+		}}
+
+		Expect(merkle.ProjectContent(streamed)).To(Equal(merkle.ProjectContent(resent)))
+	})
+
+	It("keeps tool_input values that are not the zero value", func() {
+		blocks := []llm.ContentBlock{{
+			Type:      "tool_use",
+			ToolUseID: "toolu_keep",
+			ToolName:  "Edit",
+			ToolInput: map[string]any{
+				"file_path":   "/tmp/y.md",
+				"replace_all": true,
+				"count":       int64(3),
+				"tags":        []any{"a", "b"},
+				"nested":      map[string]any{"on": true, "off": false},
+			},
+		}}
+
+		projected := merkle.ProjectContent(blocks)
+
+		Expect(projected).To(HaveLen(1))
+		Expect(projected[0].ToolInput).To(Equal(map[string]any{
+			"file_path":   "/tmp/y.md",
+			"replace_all": true,
+			"count":       int64(3),
+			"tags":        []any{"a", "b"},
+			"nested":      map[string]any{"on": true},
+		}))
+	})
+
+	It("drops the thinking signature so streamed and re-sent thinking blocks dedup", func() {
+		streamed := []llm.ContentBlock{{
+			Type:              "thinking",
+			Thinking:          "let me check…",
+			ThinkingSignature: "EosCCmMIDRgC…",
+		}}
+		resent := []llm.ContentBlock{{
+			Type:     "thinking",
+			Thinking: "let me check…",
+		}}
+
+		Expect(merkle.ProjectContent(streamed)).To(Equal(merkle.ProjectContent(resent)))
+	})
+
+	It("preserves an image block verbatim", func() {
+		blocks := []llm.ContentBlock{{Type: "image", ImageURL: "https://example.com/x.png", MediaType: "image/png"}}
+
+		Expect(merkle.ProjectContent(blocks)).To(Equal(blocks))
+	})
+
 	It("does not mutate the input slice or its blocks", func() {
 		input := []llm.ContentBlock{
 			{Type: "text", Text: "<system-reminder>drop</system-reminder>keep"},
+			{
+				Type:              "thinking",
+				Thinking:          "x",
+				ThinkingSignature: "sig",
+			},
+			{
+				Type:      "tool_use",
+				ToolName:  "Edit",
+				ToolInput: map[string]any{"replace_all": false, "p": "/x"},
+			},
 		}
 		_ = merkle.ProjectContent(input)
 
 		Expect(input[0].Text).To(Equal("<system-reminder>drop</system-reminder>keep"))
+		Expect(input[1].ThinkingSignature).To(Equal("sig"))
+		Expect(input[2].ToolInput).To(HaveKey("replace_all"))
 	})
 
 	It("swallows an unterminated harness tag to end-of-text", func() {
