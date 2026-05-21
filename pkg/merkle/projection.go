@@ -65,7 +65,9 @@ func ProjectContent(blocks []llm.ContentBlock) []llm.ContentBlock {
 		if len(b.ToolInput) > 0 {
 			b.ToolInput = pruneZeroValues(b.ToolInput)
 		}
-		b.ThinkingSignature = ""
+		if b.ThinkingSignature != "" {
+			b.ThinkingSignature = ""
+		}
 		out = append(out, b)
 	}
 	return out

@@ -83,6 +83,25 @@ var _ = Describe("ProjectContent", func() {
 			To(Equal(merkle.ProjectContent([]llm.ContentBlock{{Type: "text", Text: drift}})))
 	})
 
+	It("intentionally hashes two prose turns identically when they differ only by a blank-line run", func() {
+		// PCC-562 accepted-tradeoff guard. The harness occasionally
+		// re-serializes a turn and inserts or removes a blank line
+		// (see the "57a58 >" case in the ticket evidence). To survive
+		// that drift we collapse runs of newlines, which means a
+		// future reader of two captures whose ONLY difference is a
+		// blank-line count will see them dedup. This is intended.
+		// A real user authoring two genuinely-different turns that
+		// differ only by whitespace is implausible enough that we
+		// accept the tradeoff. If this assertion ever needs to flip,
+		// PCC-562's guarantees go with it — tighten the regex
+		// somewhere else, not here.
+		paragraphed := "Explain A\n\nExplain B"
+		flattened := "Explain A\nExplain B"
+
+		Expect(merkle.ProjectContent([]llm.ContentBlock{{Type: "text", Text: paragraphed}})).
+			To(Equal(merkle.ProjectContent([]llm.ContentBlock{{Type: "text", Text: flattened}})))
+	})
+
 	It("preserves a tool_use block when nothing in its input is a zero value", func() {
 		blocks := []llm.ContentBlock{
 			{Type: "tool_use", ToolName: "Bash", ToolUseID: "abc", ToolInput: map[string]any{"cmd": "ls"}},
