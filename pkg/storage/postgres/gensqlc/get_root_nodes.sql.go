@@ -13,7 +13,8 @@ const getRootNodes = `-- name: GetRootNodes :many
 SELECT hash, bucket, type, role, content, model, provider, agent_name, stop_reason,
        prompt_tokens, completion_tokens, total_tokens,
        cache_creation_input_tokens, cache_read_input_tokens,
-       total_duration_ns, prompt_duration_ns, project, created_at, parent_hash
+       total_duration_ns, prompt_duration_ns, project, created_at, parent_hash,
+       session_id, org_id
 FROM nodes
 WHERE parent_hash IS NULL
 ORDER BY created_at ASC, hash ASC
@@ -48,6 +49,8 @@ func (q *Queries) GetRootNodes(ctx context.Context) ([]Node, error) {
 			&i.Project,
 			&i.CreatedAt,
 			&i.ParentHash,
+			&i.SessionID,
+			&i.OrgID,
 		); err != nil {
 			return nil, err
 		}

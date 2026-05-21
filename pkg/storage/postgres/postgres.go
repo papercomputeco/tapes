@@ -108,6 +108,11 @@ func (d *Driver) Put(ctx context.Context, n *merkle.Node) (bool, error) {
 	}
 
 	rows, err := d.q.InsertNode(ctx, gensqlc.InsertNodeParams{
+		// Legacy Put has no org context: the Driver interface predates
+		// the session-tracking envelope. Use the nil-UUID sentinel so
+		// the (org_id, hash) PK is satisfied; session-aware writers
+		// (IngestTurn) supply the real org_id from the validated JWT.
+		OrgID:                    nilOrgID,
 		Hash:                     n.Hash,
 		Bucket:                   bucketJSON,
 		Type:                     nullStringValue(n.Bucket.Type),
@@ -689,6 +694,13 @@ func merkleNodeFromAncestryRow(row gensqlc.AncestryChainsRow) (*merkle.Node, err
 	)
 }
 
+// merkleNodeFromRow projects the persisted columns onto the in-memory
+// merkle.Node shape. session_id and org_id are intentionally NOT
+// projected here: merkle.Node has no fields for them (it pre-dates the
+// session-tracking envelope), and the read-side surface in storage.Driver
+// doesn't yet know about per-org scoping. Read-side features that need
+// session_id or org_id should add a dedicated method that returns a
+// richer row type rather than retrofit merkle.Node.
 func merkleNodeFromRow(row gensqlc.Node) (*merkle.Node, error) {
 	return merkleNodeFromParts(
 		row.Hash,
