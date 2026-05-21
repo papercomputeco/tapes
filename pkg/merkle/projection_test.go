@@ -1,6 +1,8 @@
 package merkle_test
 
 import (
+	"strings"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -55,13 +57,13 @@ var _ = Describe("ProjectContent", func() {
 			"command-name", "command-message", "command-args",
 			"local-command-stdout", "local-command-stderr", "local-command-caveat",
 		}
-		var body string
+		var body strings.Builder
 		for _, t := range tags {
-			body += "<" + t + ">drop-" + t + "</" + t + ">\n"
+			body.WriteString("<" + t + ">drop-" + t + "</" + t + ">\n")
 		}
-		body += "keep"
+		body.WriteString("keep")
 
-		projected := merkle.ProjectContent([]llm.ContentBlock{{Type: "text", Text: body}})
+		projected := merkle.ProjectContent([]llm.ContentBlock{{Type: "text", Text: body.String()}})
 
 		Expect(projected).To(HaveLen(1))
 		Expect(projected[0].Text).To(Equal("keep"))

@@ -143,16 +143,16 @@ func stripTaggedSpan(text, tag string) string {
 			return text
 		}
 		rest := text[start:]
-		end := strings.Index(rest, closeTag)
-		if end == -1 {
+		_, after, ok := strings.Cut(rest, closeTag)
+		if !ok {
 			return text[:start]
 		}
-		text = text[:start] + rest[end+len(closeTag):]
+		text = text[:start] + after
 	}
 }
 
 var (
-	trailingLineSpace = regexp.MustCompile(`[ \t]+\n`)
+	trailingLineSpace   = regexp.MustCompile(`[ \t]+\n`)
 	consecutiveNewlines = regexp.MustCompile(`\n{2,}`)
 )
 
