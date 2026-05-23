@@ -10,9 +10,11 @@ import (
 
 	"github.com/papercomputeco/tapes/api"
 	"github.com/papercomputeco/tapes/pkg/config"
+	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 	"github.com/papercomputeco/tapes/pkg/telemetry"
+	"github.com/papercomputeco/tapes/pkg/vector/pgvector"
 )
 
 type apiCommander struct {
@@ -23,6 +25,13 @@ type apiCommander struct {
 	postgresDSN string
 	webUI       bool
 
+	vectorStoreTarget string
+
+	embeddingProvider   string
+	embeddingTarget     string
+	embeddingModel      string
+	embeddingDimensions uint
+
 	logger *slog.Logger
 }
 
@@ -31,6 +40,11 @@ var apiFlags = config.FlagSet{
 	config.FlagAPIListenStandalone: {Name: "listen", Shorthand: "l", ViperKey: "api.listen", Description: "Address for API server to listen on"},
 	config.FlagAPIWebUI:            {Name: "web-ui", ViperKey: "api.web_ui", Description: "Enable the minimal browser UI at /"},
 	config.FlagPostgres:            {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
+	config.FlagVectorStoreTgt:      {Name: "vector-store-target", ViperKey: "vector_store.target", Description: "pgvector connection string (defaults to storage.postgres_dsn when unset)"},
+	config.FlagEmbeddingProv:       {Name: "embedding-provider", ViperKey: "embedding.provider", Description: "Embedding provider type (e.g., ollama, openai)"},
+	config.FlagEmbeddingTgt:        {Name: "embedding-target", ViperKey: "embedding.target", Description: "Embedding provider URL"},
+	config.FlagEmbeddingModel:      {Name: "embedding-model", ViperKey: "embedding.model", Description: "Embedding model name (e.g., text-embedding-3-small)"},
+	config.FlagEmbeddingDims:       {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Embedding dimensionality"},
 }
 
 const apiLongDesc string = `Run the Tapes API server for inspecting, managing, and query agent sessions.`
@@ -57,11 +71,21 @@ func NewAPICmd() *cobra.Command {
 				config.FlagAPIListenStandalone,
 				config.FlagAPIWebUI,
 				config.FlagPostgres,
+				config.FlagVectorStoreTgt,
+				config.FlagEmbeddingProv,
+				config.FlagEmbeddingTgt,
+				config.FlagEmbeddingModel,
+				config.FlagEmbeddingDims,
 			})
 
 			cmder.listen = v.GetString("api.listen")
 			cmder.webUI = v.GetBool("api.web_ui")
 			cmder.postgresDSN = v.GetString("storage.postgres_dsn")
+			cmder.vectorStoreTarget = v.GetString("vector_store.target")
+			cmder.embeddingProvider = v.GetString("embedding.provider")
+			cmder.embeddingTarget = v.GetString("embedding.target")
+			cmder.embeddingModel = v.GetString("embedding.model")
+			cmder.embeddingDimensions = v.GetUint("embedding.dimensions")
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -79,6 +103,11 @@ func NewAPICmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagAPIListenStandalone, &cmder.listen)
 	config.AddBoolFlag(cmd, cmder.flags, config.FlagAPIWebUI, &cmder.webUI)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagPostgres, &cmder.postgresDSN)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagVectorStoreTgt, &cmder.vectorStoreTarget)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingProv, &cmder.embeddingProvider)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingTgt, &cmder.embeddingTarget)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingModel, &cmder.embeddingModel)
+	config.AddUintFlag(cmd, cmder.flags, config.FlagEmbeddingDims, &cmder.embeddingDimensions)
 
 	return cmd
 }
@@ -92,12 +121,41 @@ func (c *apiCommander) run() error {
 	}
 	defer driver.Close()
 
-	config := api.Config{
+	apiConfig := api.Config{
 		ListenAddr:  c.listen,
 		EnableWebUI: c.webUI,
 	}
 
-	server, err := api.NewServer(config, driver, c.logger)
+	if c.vectorStoreTarget != "" {
+		apiConfig.Embedder, err = embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
+			ProviderType: c.embeddingProvider,
+			TargetURL:    c.embeddingTarget,
+			Model:        c.embeddingModel,
+			Dimensions:   c.embeddingDimensions,
+		})
+		if err != nil {
+			return fmt.Errorf("could not create new embedder: %w", err)
+		}
+		defer apiConfig.Embedder.Close()
+
+		apiConfig.VectorDriver, err = pgvector.NewDriver(context.Background(), &pgvector.Config{
+			ConnString: c.vectorStoreTarget,
+			Dimensions: c.embeddingDimensions,
+		}, c.logger)
+		if err != nil {
+			return fmt.Errorf("could not create new vector driver: %w", err)
+		}
+		defer apiConfig.VectorDriver.Close()
+
+		c.logger.Info("vector search enabled",
+			"vector_store_target", c.vectorStoreTarget,
+			"embedding_provider", c.embeddingProvider,
+			"embedding_target", c.embeddingTarget,
+			"embedding_model", c.embeddingModel,
+		)
+	}
+
+	server, err := api.NewServer(apiConfig, driver, c.logger)
 	if err != nil {
 		return fmt.Errorf("could not build new api server: %w", err)
 	}
