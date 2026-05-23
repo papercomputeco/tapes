@@ -415,6 +415,7 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 		ProviderType: startCfg.EmbeddingProvider,
 		TargetURL:    startCfg.EmbeddingTarget,
 		Model:        startCfg.EmbeddingModel,
+		Dimensions:   startCfg.EmbeddingDimensions,
 	})
 	if err != nil {
 		return fmt.Errorf("could not create new embedder: %w", err)

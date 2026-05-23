@@ -188,6 +188,7 @@ func (c *ingestCommander) run() error {
 			ProviderType: c.embeddingProvider,
 			TargetURL:    c.embeddingTarget,
 			Model:        c.embeddingModel,
+			Dimensions:   c.embeddingDimensions,
 		})
 		if err != nil {
 			return fmt.Errorf("could not create new embedder: %w", err)

@@ -198,6 +198,7 @@ func (c *ServeCommander) run() error {
 		ProviderType: c.embeddingProvider,
 		TargetURL:    c.embeddingTarget,
 		Model:        c.embeddingModel,
+		Dimensions:   c.embeddingDimensions,
 	})
 	if err != nil {
 		return fmt.Errorf("creating embedder: %w", err)
