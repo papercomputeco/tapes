@@ -12,6 +12,7 @@ import (
 
 	"github.com/papercomputeco/tapes/ingest"
 	"github.com/papercomputeco/tapes/pkg/config"
+	"github.com/papercomputeco/tapes/pkg/credentials"
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
@@ -36,6 +37,7 @@ type ingestCommander struct {
 	embeddingTarget     string
 	embeddingModel      string
 	embeddingDimensions uint
+	embeddingAPIKey     string
 
 	kafkaBrokers  string
 	kafkaTopic    string
@@ -52,9 +54,9 @@ var ingestFlags = config.FlagSet{
 	config.FlagPostgres:               {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
 	config.FlagProject:                {Name: "project", ViperKey: "proxy.project", Description: "Project name to tag sessions (default: auto-detect from git)"},
 	config.FlagVectorStoreTgt:         {Name: "vector-store-target", ViperKey: "vector_store.target", Description: "pgvector connection string (defaults to storage.postgres_dsn when unset)"},
-	config.FlagEmbeddingProv:          {Name: "embedding-provider", ViperKey: "embedding.provider", Description: "Embedding provider type (e.g., ollama)"},
+	config.FlagEmbeddingProv:          {Name: "embedding-provider", ViperKey: "embedding.provider", Description: "Embedding provider type (e.g., ollama, openai)"},
 	config.FlagEmbeddingTgt:           {Name: "embedding-target", ViperKey: "embedding.target", Description: "Embedding provider URL"},
-	config.FlagEmbeddingModel:         {Name: "embedding-model", ViperKey: "embedding.model", Description: "Embedding model name (e.g., nomic-embed-text)"},
+	config.FlagEmbeddingModel:         {Name: "embedding-model", ViperKey: "embedding.model", Description: "Embedding model name (e.g., embeddinggemma, text-embedding-3-small)"},
 	config.FlagEmbeddingDims:          {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Embedding dimensionality"},
 	config.FlagKafkaBrokers:           {Name: "kafka-brokers", ViperKey: "publisher.kafka.brokers", Description: "Comma separated list of broker ip:port pairs"},
 	config.FlagKafkaClientID:          {Name: "kafka-client-id", ViperKey: "publisher.kafka.client_id", Description: "Optional Kafka client.id"},
@@ -110,10 +112,23 @@ func NewIngestCmd() *cobra.Command {
 			cmder.postgresDSN = v.GetString("storage.postgres_dsn")
 			cmder.project = v.GetString("proxy.project")
 			cmder.vectorStoreTarget = v.GetString("vector_store.target")
-			cmder.embeddingProvider = v.GetString("embedding.provider")
-			cmder.embeddingTarget = v.GetString("embedding.target")
-			cmder.embeddingModel = v.GetString("embedding.model")
-			cmder.embeddingDimensions = v.GetUint("embedding.dimensions")
+			embedding := config.ResolveEmbeddingConfigWithOptions(
+				v.GetString("embedding.provider"),
+				v.GetString("embedding.target"),
+				v.GetString("embedding.model"),
+				v.GetUint("embedding.dimensions"),
+				config.ResolveEmbeddingConfigOptions{
+					DimensionsSet: config.IsRegisteredFlagExplicitlySet(v, cmd, cmder.flags, config.FlagEmbeddingDims),
+				},
+			)
+			cmder.embeddingProvider = embedding.Provider
+			cmder.embeddingTarget = embedding.Target
+			cmder.embeddingModel = embedding.Model
+			cmder.embeddingDimensions = embedding.Dimensions
+			cmder.embeddingAPIKey, err = credentials.APIKeyForProvider(embedding.Provider, configDir)
+			if err != nil {
+				return fmt.Errorf("could not load embedding credentials: %w", err)
+			}
 			if cmder.vectorStoreTarget == "" && cmder.postgresDSN != "" {
 				cmder.vectorStoreTarget = cmder.postgresDSN
 			}
@@ -189,6 +204,7 @@ func (c *ingestCommander) run() error {
 			TargetURL:    c.embeddingTarget,
 			Model:        c.embeddingModel,
 			Dimensions:   c.embeddingDimensions,
+			APIKey:       c.embeddingAPIKey,
 		})
 		if err != nil {
 			return fmt.Errorf("could not create new embedder: %w", err)

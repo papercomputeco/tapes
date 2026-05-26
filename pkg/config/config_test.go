@@ -547,6 +547,10 @@ var _ = Describe("PresetConfig", func() {
 		Expect(cfg.API.Listen).To(Equal(":8081"))
 		Expect(cfg.Client.ProxyTarget).To(Equal("http://localhost:8080"))
 		Expect(cfg.Client.APITarget).To(Equal("http://localhost:8081"))
+		Expect(cfg.Embedding.Provider).To(Equal("openai"))
+		Expect(cfg.Embedding.Target).To(Equal("https://api.openai.com"))
+		Expect(cfg.Embedding.Model).To(Equal("text-embedding-3-small"))
+		Expect(cfg.Embedding.Dimensions).To(Equal(uint(1536)))
 	})
 
 	It("returns anthropic preset with correct defaults", func() {
@@ -573,7 +577,7 @@ var _ = Describe("PresetConfig", func() {
 		Expect(cfg.Client.APITarget).To(Equal("http://localhost:8081"))
 		Expect(cfg.Embedding.Provider).To(Equal("ollama"))
 		Expect(cfg.Embedding.Target).To(Equal("http://localhost:11434"))
-		Expect(cfg.Embedding.Model).To(Equal("nomic-embed-text"))
+		Expect(cfg.Embedding.Model).To(Equal("embeddinggemma"))
 		Expect(cfg.Embedding.Dimensions).To(Equal(uint(768)))
 	})
 
@@ -592,6 +596,38 @@ var _ = Describe("PresetConfig", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("unknown preset"))
 		Expect(cfg).To(BeNil())
+	})
+})
+
+var _ = Describe("ResolveEmbeddingConfig", func() {
+	It("uses OpenAI defaults when provider inherits local embedding defaults", func() {
+		cfg := config.ResolveEmbeddingConfig("openai", "http://localhost:11434", "embeddinggemma", 768)
+		Expect(cfg.Provider).To(Equal("openai"))
+		Expect(cfg.Target).To(Equal("https://api.openai.com"))
+		Expect(cfg.Model).To(Equal("text-embedding-3-small"))
+		Expect(cfg.Dimensions).To(Equal(uint(1536)))
+	})
+
+	It("preserves explicit OpenAI dimensions", func() {
+		cfg := config.ResolveEmbeddingConfigWithOptions(
+			"openai",
+			"http://localhost:11434",
+			"embeddinggemma",
+			768,
+			config.ResolveEmbeddingConfigOptions{DimensionsSet: true},
+		)
+		Expect(cfg.Provider).To(Equal("openai"))
+		Expect(cfg.Target).To(Equal("https://api.openai.com"))
+		Expect(cfg.Model).To(Equal("text-embedding-3-small"))
+		Expect(cfg.Dimensions).To(Equal(uint(768)))
+	})
+
+	It("defaults Ollama to embeddinggemma at 768 dimensions", func() {
+		cfg := config.ResolveEmbeddingConfig("ollama", "", "", 0)
+		Expect(cfg.Provider).To(Equal("ollama"))
+		Expect(cfg.Target).To(Equal("http://localhost:11434"))
+		Expect(cfg.Model).To(Equal("embeddinggemma"))
+		Expect(cfg.Dimensions).To(Equal(uint(768)))
 	})
 })
 

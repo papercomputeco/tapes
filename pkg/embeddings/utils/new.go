@@ -14,6 +14,7 @@ type NewEmbedderOpts struct {
 	TargetURL    string
 	Model        string
 	Dimensions   uint
+	APIKey       string
 }
 
 func NewEmbedder(o *NewEmbedderOpts) (embeddings.Embedder, error) {
@@ -27,6 +28,7 @@ func NewEmbedder(o *NewEmbedderOpts) (embeddings.Embedder, error) {
 		return openai.NewEmbedder(openai.EmbedderConfig{
 			BaseURL:    o.TargetURL,
 			Model:      o.Model,
+			APIKey:     o.APIKey,
 			Dimensions: o.Dimensions,
 		})
 	default:

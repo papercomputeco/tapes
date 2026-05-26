@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"strings"
 	"sync"
 
 	"github.com/spf13/cobra"
@@ -127,6 +129,36 @@ func BindRegisteredFlags(v *viper.Viper, cmd *cobra.Command, fs FlagSet, registr
 
 		_ = v.BindPFlag(def.ViperKey, f)
 	}
+}
+
+// IsRegisteredFlagExplicitlySet reports whether a registered flag's value came
+// from a CLI flag, environment variable, or config file rather than defaults.
+func IsRegisteredFlagExplicitlySet(v *viper.Viper, cmd *cobra.Command, fs FlagSet, registryKey string) bool {
+	def, ok := fs[registryKey]
+	if !ok {
+		return false
+	}
+
+	if f := cmd.Flags().Lookup(def.Name); f != nil && f.Changed {
+		return true
+	}
+
+	if ExplicitConfigKeySet(v, def.ViperKey) {
+		return true
+	}
+
+	return false
+}
+
+// ExplicitConfigKeySet reports whether a config key was supplied through the
+// environment or the loaded config file.
+func ExplicitConfigKeySet(v *viper.Viper, key string) bool {
+	envKey := "TAPES_" + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
+	if _, ok := os.LookupEnv(envKey); ok {
+		return true
+	}
+
+	return v.InConfig(key)
 }
 
 // cachedDefaultViper is a lazily-initialized viper instance with all defaults

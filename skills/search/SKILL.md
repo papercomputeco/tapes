@@ -20,18 +20,30 @@ Use this skill when you need to:
 The tapes search command requires:
 1. A Postgres-backed tapes API or local tapes runtime
 2. A pgvector-backed vector index in the same Postgres database
-3. An embedding provider (for example Ollama) to convert queries to vectors
+3. An embedding provider, either Ollama or OpenAI, to convert queries to vectors
 
 ## Quick Start
 
+Start the API with Ollama embeddings:
+
 ```bash
-tapes search "<your query>" \
-  --postgres postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable \
-  --vector-store-provider pgvector \
-  --vector-store-target postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable \
-  --embedding-provider ollama \
-  --embedding-target http://localhost:11434 \
-  --embedding-model nomic-embed-text
+ollama pull embeddinggemma
+ollama serve
+tapes serve
+```
+
+Or start the API with OpenAI embeddings:
+
+```bash
+tapes auth openai
+tapes config set embedding.provider openai
+tapes serve
+```
+
+Then search through the API:
+
+```bash
+tapes search "<your query>"
 ```
 
 ## Command Reference
@@ -42,16 +54,11 @@ tapes search "<your query>" \
 tapes search <query> [flags]
 ```
 
-### Required Flags
+### API Flag
 
 | Flag | Description | Example |
 |------|-------------|---------|
-| `--postgres` | Postgres connection string | `postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable` |
-| `--vector-store-provider` | Vector store type | `pgvector` |
-| `--vector-store-target` | Vector store target | `postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable` |
-| `--embedding-provider` | Embedding provider type | `ollama` |
-| `--embedding-target` | Embedding provider URL | `http://localhost:11434` |
-| `--embedding-model` | Embedding model name | `nomic-embed-text` |
+| `--api-target` | Tapes API server URL | `http://localhost:8081` |
 
 ### Optional Flags
 
@@ -66,12 +73,7 @@ tapes search <query> [flags]
 
 ```bash
 tapes search "how to configure logging" \
-  --postgres postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable \
-  --vector-store-provider pgvector \
-  --vector-store-target postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable \
-  --embedding-provider ollama \
-  --embedding-target http://localhost:11434 \
-  --embedding-model nomic-embed-text
+  --api-target http://localhost:8081
 ```
 
 ### Get More Results
@@ -79,12 +81,7 @@ tapes search "how to configure logging" \
 ```bash
 tapes search "error handling patterns" \
   --top 10 \
-  --postgres postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable \
-  --vector-store-provider pgvector \
-  --vector-store-target postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable \
-  --embedding-provider ollama \
-  --embedding-target http://localhost:11434 \
-  --embedding-model nomic-embed-text
+  --api-target http://localhost:8081
 ```
 
 ### Debug Mode
@@ -92,12 +89,7 @@ tapes search "error handling patterns" \
 ```bash
 tapes search "authentication flow" \
   --debug \
-  --postgres postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable \
-  --vector-store-provider pgvector \
-  --vector-store-target postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable \
-  --embedding-provider ollama \
-  --embedding-target http://localhost:11434 \
-  --embedding-model nomic-embed-text
+  --api-target http://localhost:8081
 ```
 
 ## Output Format
