@@ -78,13 +78,49 @@ func (n *Node) computeHash() string {
 		parent = *n.ParentHash
 	}
 
-	// Marshal to JSON using an inline struct for hash computation
+	// Marshal to JSON using an inline struct for hash computation.
+	//
+	// The hash is computed over a projection of the bucket, not the
+	// bucket itself, so that "the same logical conversation turn"
+	// hashes the same across the kinds of drift agent harnesses
+	// introduce between requests in a single conversation. Concretely:
+	//
+	//   * Content text inside <system-reminder>, <command-*>, and
+	//     <local-command-*> spans is stripped (the harness rotates
+	//     this preamble — clock ticks, skills load, MCP inventory
+	//     shifts).
+	//   * Blank-line whitespace drift in the surviving prose is
+	//     normalized (the harness re-serializes user text and
+	//     occasionally inserts a stray newline).
+	//   * Zero-valued keys are pruned from tool_use ToolInput so the
+	//     streamed capture (which has Edit's "replace_all": false)
+	//     dedups with the re-sent history (which omits the default).
+	//   * ThinkingSignature is dropped — present on the live stream,
+	//     absent when the harness re-sends the same thinking block.
+	//   * Routing metadata — Model, Provider, AgentName — is dropped
+	//     entirely. A single conversation may legitimately fan a
+	//     pre-flight call to Haiku and the main work to Opus; that is
+	//     a routing decision, not a new turn.
+	//
+	// The raw n.Bucket is left untouched so storage / display / labels
+	// / search still see exactly what the model received, including
+	// model identity. See PCC-562.
+	type hashableBucket struct {
+		Type    string             `json:"type"`
+		Role    string             `json:"role"`
+		Content []llm.ContentBlock `json:"content"`
+	}
+
 	data, err := json.Marshal(struct {
-		Parent  string `json:"parent"`
-		Content Bucket `json:"content"`
+		Parent  string         `json:"parent"`
+		Content hashableBucket `json:"content"`
 	}{
-		Parent:  parent,
-		Content: n.Bucket,
+		Parent: parent,
+		Content: hashableBucket{
+			Type:    n.Bucket.Type,
+			Role:    n.Bucket.Role,
+			Content: ProjectContent(n.Bucket.Content),
+		},
 	})
 	if err != nil {
 		panic("failed to marshal hash input: " + err.Error())
