@@ -49,15 +49,33 @@ Install `tapes`:
 curl -fsSL https://download.tapes.dev/install | bash
 ```
 
-Run Ollama and the `tapes` services. By default, `tapes` targets embeddings on Ollama 
-with the `embeddinggema:latest` model - pull this model with `ollama pull embeddinggema`:
+Run the `tapes` services with an embedding provider. Embeddings power `tapes search`;
+choose either local Ollama or OpenAI.
+
+For local embeddings, run Ollama and pull the default `embeddinggemma` model:
 
 ```bash
+ollama pull embeddinggemma
 ollama serve
 ```
+
+Then start Tapes:
+
 ```bash
 tapes serve
 ```
+
+For OpenAI embeddings, store an API key and switch the embedding provider:
+
+```bash
+tapes auth openai
+tapes config set embedding.provider openai
+tapes serve
+```
+
+You can also provide the key with `OPENAI_API_KEY` instead of `tapes auth openai`.
+When OpenAI is selected without a key, Tapes fails at startup with an authentication
+configuration error from the OpenAI embedder.
 
 Start a chat session:
 

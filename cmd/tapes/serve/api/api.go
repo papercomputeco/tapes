@@ -10,6 +10,7 @@ import (
 
 	"github.com/papercomputeco/tapes/api"
 	"github.com/papercomputeco/tapes/pkg/config"
+	"github.com/papercomputeco/tapes/pkg/credentials"
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
@@ -31,6 +32,7 @@ type apiCommander struct {
 	embeddingTarget     string
 	embeddingModel      string
 	embeddingDimensions uint
+	embeddingAPIKey     string
 
 	logger *slog.Logger
 }
@@ -82,10 +84,26 @@ func NewAPICmd() *cobra.Command {
 			cmder.webUI = v.GetBool("api.web_ui")
 			cmder.postgresDSN = v.GetString("storage.postgres_dsn")
 			cmder.vectorStoreTarget = v.GetString("vector_store.target")
-			cmder.embeddingProvider = v.GetString("embedding.provider")
-			cmder.embeddingTarget = v.GetString("embedding.target")
-			cmder.embeddingModel = v.GetString("embedding.model")
-			cmder.embeddingDimensions = v.GetUint("embedding.dimensions")
+			if cmder.vectorStoreTarget == "" && cmder.postgresDSN != "" {
+				cmder.vectorStoreTarget = cmder.postgresDSN
+			}
+			embedding := config.ResolveEmbeddingConfigWithOptions(
+				v.GetString("embedding.provider"),
+				v.GetString("embedding.target"),
+				v.GetString("embedding.model"),
+				v.GetUint("embedding.dimensions"),
+				config.ResolveEmbeddingConfigOptions{
+					DimensionsSet: config.IsRegisteredFlagExplicitlySet(v, cmd, cmder.flags, config.FlagEmbeddingDims),
+				},
+			)
+			cmder.embeddingProvider = embedding.Provider
+			cmder.embeddingTarget = embedding.Target
+			cmder.embeddingModel = embedding.Model
+			cmder.embeddingDimensions = embedding.Dimensions
+			cmder.embeddingAPIKey, err = credentials.APIKeyForProvider(embedding.Provider, configDir)
+			if err != nil {
+				return fmt.Errorf("could not load embedding credentials: %w", err)
+			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -132,6 +150,7 @@ func (c *apiCommander) run() error {
 			TargetURL:    c.embeddingTarget,
 			Model:        c.embeddingModel,
 			Dimensions:   c.embeddingDimensions,
+			APIKey:       c.embeddingAPIKey,
 		})
 		if err != nil {
 			return fmt.Errorf("could not create new embedder: %w", err)

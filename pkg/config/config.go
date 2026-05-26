@@ -264,6 +264,7 @@ func PresetConfig(name string) (*Config, error) {
 				ProxyTarget: "http://localhost:8080",
 				APITarget:   "http://localhost:8081",
 			},
+			Embedding: ResolveEmbeddingConfig("openai", "", "", 0),
 		}, nil
 
 	case "anthropic":
@@ -298,12 +299,7 @@ func PresetConfig(name string) (*Config, error) {
 				ProxyTarget: "http://localhost:8080",
 				APITarget:   "http://localhost:8081",
 			},
-			Embedding: EmbeddingConfig{
-				Provider:   "ollama",
-				Target:     "http://localhost:11434",
-				Model:      "nomic-embed-text",
-				Dimensions: 768,
-			},
+			Embedding: ResolveEmbeddingConfig("ollama", "", "", 0),
 		}, nil
 
 	default:

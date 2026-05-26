@@ -133,6 +133,39 @@ func (m *Manager) GetKey(provider string) (string, error) {
 	return pc.APIKey, nil
 }
 
+// GetKeyUnlessEnvSet returns the stored API key for provider unless the
+// provider's environment variable is already set.
+func (m *Manager) GetKeyUnlessEnvSet(provider string) (string, error) {
+	envVar := EnvVarForProvider(provider)
+	if envVar == "" {
+		return "", nil
+	}
+	if os.Getenv(envVar) != "" {
+		return "", nil
+	}
+
+	return m.GetKey(provider)
+}
+
+// APIKeyForProvider returns a stored API key for provider when the matching
+// environment variable is not already set.
+func APIKeyForProvider(provider, configDir string) (string, error) {
+	envVar := EnvVarForProvider(provider)
+	if envVar == "" {
+		return "", nil
+	}
+	if os.Getenv(envVar) != "" {
+		return "", nil
+	}
+
+	mgr, err := NewManager(configDir)
+	if err != nil {
+		return "", err
+	}
+
+	return mgr.GetKeyUnlessEnvSet(provider)
+}
+
 // RemoveKey deletes the stored credential for a provider.
 func (m *Manager) RemoveKey(provider string) error {
 	creds, err := m.Load()

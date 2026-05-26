@@ -76,6 +76,7 @@ type startConfig struct {
 	EmbeddingTarget     string
 	EmbeddingModel      string
 	EmbeddingDimensions uint
+	EmbeddingAPIKey     string
 	DefaultProvider     string
 	DefaultUpstream     string
 	OllamaUpstream      string
@@ -416,6 +417,7 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 		TargetURL:    startCfg.EmbeddingTarget,
 		Model:        startCfg.EmbeddingModel,
 		Dimensions:   startCfg.EmbeddingDimensions,
+		APIKey:       startCfg.EmbeddingAPIKey,
 	})
 	if err != nil {
 		return fmt.Errorf("could not create new embedder: %w", err)
@@ -728,14 +730,28 @@ func (c *startCommander) loadConfig() (*startConfig, error) {
 
 	provider := v.GetString("proxy.provider")
 	upstream := v.GetString("proxy.upstream")
+	embedding := config.ResolveEmbeddingConfigWithOptions(
+		v.GetString("embedding.provider"),
+		v.GetString("embedding.target"),
+		v.GetString("embedding.model"),
+		v.GetUint("embedding.dimensions"),
+		config.ResolveEmbeddingConfigOptions{
+			DimensionsSet: config.ExplicitConfigKeySet(v, "embedding.dimensions"),
+		},
+	)
+	embeddingAPIKey, err := credentials.APIKeyForProvider(embedding.Provider, c.configDir)
+	if err != nil {
+		return nil, fmt.Errorf("loading embedding credentials: %w", err)
+	}
 
 	return &startConfig{
 		PostgresDSN:         v.GetString("storage.postgres_dsn"),
 		VectorStoreTarget:   v.GetString("vector_store.target"),
-		EmbeddingProvider:   v.GetString("embedding.provider"),
-		EmbeddingTarget:     v.GetString("embedding.target"),
-		EmbeddingModel:      v.GetString("embedding.model"),
-		EmbeddingDimensions: v.GetUint("embedding.dimensions"),
+		EmbeddingProvider:   embedding.Provider,
+		EmbeddingTarget:     embedding.Target,
+		EmbeddingModel:      embedding.Model,
+		EmbeddingDimensions: embedding.Dimensions,
+		EmbeddingAPIKey:     embeddingAPIKey,
 		DefaultProvider:     provider,
 		DefaultUpstream:     upstream,
 		OllamaUpstream:      resolveOllamaUpstream(provider, upstream),

@@ -160,6 +160,37 @@ api_key = "sk-test-key"
 		})
 	})
 
+	Describe("GetKeyUnlessEnvSet", func() {
+		It("returns stored API key when provider env var is unset", func() {
+			mgr, err := credentials.NewManager(tmpDir)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mgr.SetKey("openai", "sk-stored")).To(Succeed())
+
+			key, err := mgr.GetKeyUnlessEnvSet("openai")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(key).To(Equal("sk-stored"))
+		})
+
+		It("lets provider env var take precedence over stored credentials", func() {
+			mgr, err := credentials.NewManager(tmpDir)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mgr.SetKey("openai", "sk-stored")).To(Succeed())
+			value, ok := os.LookupEnv("OPENAI_API_KEY")
+			Expect(os.Setenv("OPENAI_API_KEY", "sk-env")).To(Succeed())
+			DeferCleanup(func() {
+				if ok {
+					Expect(os.Setenv("OPENAI_API_KEY", value)).To(Succeed())
+					return
+				}
+				Expect(os.Unsetenv("OPENAI_API_KEY")).To(Succeed())
+			})
+
+			key, err := mgr.GetKeyUnlessEnvSet("openai")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(key).To(BeEmpty())
+		})
+	})
+
 	Describe("RemoveKey", func() {
 		It("removes an existing key", func() {
 			mgr, err := credentials.NewManager(tmpDir)
