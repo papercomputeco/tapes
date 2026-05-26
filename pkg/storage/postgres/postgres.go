@@ -151,6 +151,38 @@ func (d *Driver) Get(ctx context.Context, hash string) (*merkle.Node, error) {
 	return merkleNodeFromRow(row)
 }
 
+// SessionIdentityByHash returns the harness identity for the sessions row
+// attached to a node hash, scoped to orgID. Older rows, legacy Put writes,
+// and non-Postgres stores may not have session tracking metadata; those
+// return nil without error so read APIs can expose the field
+// opportunistically.
+//
+// The org_id predicate is load-bearing, not cosmetic: nodes is keyed by the
+// composite (org_id, hash), so identical content yields one row per org. A
+// lookup on hash alone would return an arbitrary org's row for shared
+// content, leaking another tenant's harness_session_id. An empty orgID maps
+// to the nil-UUID sentinel bucket (legacy / non-session writes).
+func (d *Driver) SessionIdentityByHash(ctx context.Context, orgID, hash string) (*storage.SessionIdentity, error) {
+	oid, err := orgIDFromString(orgID)
+	if err != nil {
+		return nil, fmt.Errorf("session identity org_id: %w", err)
+	}
+	var identity storage.SessionIdentity
+	err = d.conn.QueryRow(ctx, `
+SELECT s.harness_id, s.harness_session_id
+  FROM nodes n
+  JOIN sessions s ON s.id = n.session_id
+ WHERE n.org_id = $1 AND n.hash = $2
+ LIMIT 1`, oid, hash).Scan(&identity.HarnessID, &identity.HarnessSessionID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get session identity: %w", err)
+	}
+	return &identity, nil
+}
+
 func (d *Driver) Has(ctx context.Context, hash string) (bool, error) {
 	exists, err := d.q.HasNode(ctx, hash)
 	if err != nil {

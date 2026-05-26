@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"time"
 
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/sessions"
@@ -86,4 +87,28 @@ type IngestTurnResult struct {
 	// False for pure-retry calls where every node hash already
 	// existed (idempotent retries must not double-count).
 	CountersUpdated bool
+}
+
+// SessionBackfiller is an optional Driver capability for linking legacy
+// node rows to a session table row after the fact. It is deliberately
+// separate from SessionIngester: backfill does not insert nodes, it only
+// UPSERTs session identity and stamps existing nodes that still have no
+// session_id.
+type SessionBackfiller interface {
+	BackfillSession(ctx context.Context, req SessionBackfillRequest) (SessionBackfillResult, error)
+}
+
+type SessionBackfillRequest struct {
+	Session      *sessions.IngestEnvelope
+	NodeHashes   []string
+	StartedAt    time.Time
+	LastSeenAt   time.Time
+	InputTokens  int64
+	OutputTokens int64
+	TurnCount    int64
+}
+
+type SessionBackfillResult struct {
+	SessionID   string
+	NodesLinked int
 }

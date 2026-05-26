@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"strconv"
 	"strings"
@@ -52,6 +53,12 @@ type SessionSummaryListResponse struct {
 type SessionResponse struct {
 	// Hash is the head of the returned chain (== the requested hash).
 	Hash string `json:"hash"`
+
+	// HarnessID and HarnessSessionID identify the upstream agent session when
+	// session tracking metadata is available. For Claude Code, HarnessID is
+	// "claude" and HarnessSessionID is Claude's session id.
+	HarnessID        string `json:"harness_id,omitempty"`
+	HarnessSessionID string `json:"harness_session_id,omitempty"`
 
 	// Depth is the total number of turns in the full ancestry of Hash.
 	// When the client passes ?depth=N, the Turns array may contain fewer
@@ -211,13 +218,36 @@ func (s *Server) handleGetSession(c *fiber.Ctx) error {
 		turns[len(slice)-1-i] = turnFromNode(n)
 	}
 
-	return c.JSON(SessionResponse{
+	identity, err := s.sessionIdentity(c.Context(), orgIDFromCtx(c), hash)
+	if err != nil {
+		s.logger.Warn("failed to load session identity", "hash", hash, "error", err)
+	}
+
+	resp := SessionResponse{
 		Hash:          hash,
 		Depth:         total,
 		Turns:         turns,
 		Truncated:     chain.Incomplete,
 		MissingParent: chain.MissingParent,
-	})
+	}
+	if identity != nil {
+		resp.HarnessID = identity.HarnessID
+		resp.HarnessSessionID = identity.HarnessSessionID
+	}
+
+	return c.JSON(resp)
+}
+
+type sessionIdentityLookup interface {
+	SessionIdentityByHash(ctx context.Context, orgID, hash string) (*storage.SessionIdentity, error)
+}
+
+func (s *Server) sessionIdentity(ctx context.Context, orgID, hash string) (*storage.SessionIdentity, error) {
+	lookup, ok := s.driver.(sessionIdentityLookup)
+	if !ok {
+		return nil, nil
+	}
+	return lookup.SessionIdentityByHash(ctx, orgID, hash)
 }
 
 var errHashParameterRequired = errors.New("hash parameter required")

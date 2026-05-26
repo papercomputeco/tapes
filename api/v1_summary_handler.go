@@ -85,6 +85,14 @@ func (s *Server) handleListSessionsSummary(c *fiber.Ctx) error {
 			summary.Truncated = true
 			summary.MissingParent = chain.MissingParent
 		}
+		identity, err := s.sessionIdentity(c.Context(), orgIDFromCtx(c), leaf.Hash)
+		if err != nil {
+			s.logger.Warn("failed to load session identity", "hash", leaf.Hash, "error", err)
+		}
+		if identity != nil {
+			summary.HarnessID = identity.HarnessID
+			summary.HarnessSessionID = identity.HarnessSessionID
+		}
 		items = append(items, summary)
 	}
 

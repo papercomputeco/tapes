@@ -45,7 +45,10 @@ var nilOrgID = pgtype.UUID{Bytes: [16]byte{}, Valid: true}
 // change to IngestTurn would otherwise silently downgrade the worker
 // dispatch path to the legacy per-node Put loop — the runtime type
 // assertion in proxy/worker would just fall through without flagging.
-var _ storage.SessionIngester = (*Driver)(nil)
+var (
+	_ storage.SessionIngester   = (*Driver)(nil)
+	_ storage.SessionBackfiller = (*Driver)(nil)
+)
 
 // IngestTurn implements storage.SessionIngester for the Postgres
 // driver. The session-tracking flow runs in a single transaction:
@@ -178,6 +181,110 @@ func (d *Driver) IngestTurn(ctx context.Context, req storage.IngestTurnRequest) 
 		SessionID:       uuidString(sessionRow.ID),
 		NewNodes:        newNodes,
 		CountersUpdated: countersUpdated,
+	}, nil
+}
+
+// BackfillSession links existing legacy nodes to a session table row. It is
+// used by transcript backfills where the node DAG already exists but the
+// original ingest path predated session envelopes.
+func (d *Driver) BackfillSession(ctx context.Context, req storage.SessionBackfillRequest) (storage.SessionBackfillResult, error) {
+	if d == nil || d.conn == nil {
+		return storage.SessionBackfillResult{}, errors.New("postgres driver not open")
+	}
+	if req.Session == nil {
+		return storage.SessionBackfillResult{}, errors.New("backfill session: missing session envelope")
+	}
+	if req.Session.HarnessSessionID == "" {
+		return storage.SessionBackfillResult{}, errors.New("backfill session: missing harness_session_id")
+	}
+	if len(req.NodeHashes) == 0 {
+		return storage.SessionBackfillResult{}, nil
+	}
+
+	orgID, err := orgIDFromEnvelope(req.Session)
+	if err != nil {
+		return storage.SessionBackfillResult{}, fmt.Errorf("decode org_id: %w", err)
+	}
+	sessionUUID, err := newAppUUID()
+	if err != nil {
+		return storage.SessionBackfillResult{}, fmt.Errorf("mint session uuid: %w", err)
+	}
+
+	startedAt := req.StartedAt.UTC()
+	if startedAt.IsZero() {
+		startedAt = time.Now().UTC()
+	}
+	lastSeenAt := req.LastSeenAt.UTC()
+	if lastSeenAt.IsZero() || lastSeenAt.Before(startedAt) {
+		lastSeenAt = startedAt
+	}
+	metadata := []byte(req.Session.HarnessMetadata)
+	if len(metadata) == 0 {
+		metadata = []byte("{}")
+	}
+
+	tx, err := d.conn.Begin(ctx)
+	if err != nil {
+		return storage.SessionBackfillResult{}, fmt.Errorf("begin backfill session tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	var sessionID pgtype.UUID
+	err = tx.QueryRow(ctx, `
+INSERT INTO sessions (
+    id, org_id, auth_subject, harness_id, harness_session_id,
+    name, cwd, harness_version, started_at, last_seen_at, harness_metadata,
+    total_input_tokens, total_output_tokens, turn_count
+) VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''), $9, $10, $11, $12, $13, $14)
+ON CONFLICT (org_id, harness_id, harness_session_id) DO UPDATE
+SET last_seen_at = GREATEST(sessions.last_seen_at, EXCLUDED.last_seen_at),
+    auth_subject = EXCLUDED.auth_subject,
+    harness_metadata = sessions.harness_metadata || EXCLUDED.harness_metadata,
+    name = COALESCE(EXCLUDED.name, sessions.name),
+    cwd = COALESCE(EXCLUDED.cwd, sessions.cwd),
+    harness_version = COALESCE(EXCLUDED.harness_version, sessions.harness_version),
+    total_input_tokens = GREATEST(sessions.total_input_tokens, EXCLUDED.total_input_tokens),
+    total_output_tokens = GREATEST(sessions.total_output_tokens, EXCLUDED.total_output_tokens),
+    turn_count = GREATEST(sessions.turn_count, EXCLUDED.turn_count)
+RETURNING id`,
+		sessionUUID,
+		orgID,
+		req.Session.AuthSubject,
+		req.Session.HarnessIDOrUnknown(),
+		req.Session.HarnessSessionID,
+		req.Session.Name,
+		req.Session.Cwd,
+		req.Session.HarnessVersion,
+		startedAt,
+		lastSeenAt,
+		metadata,
+		req.InputTokens,
+		req.OutputTokens,
+		req.TurnCount,
+	).Scan(&sessionID)
+	if err != nil {
+		return storage.SessionBackfillResult{}, fmt.Errorf("upsert session: %w", err)
+	}
+
+	tag, err := tx.Exec(ctx, `
+UPDATE nodes
+   SET session_id = $1
+ WHERE org_id = $2
+   AND hash = ANY($3::text[])
+   AND session_id IS NULL`,
+		sessionID,
+		orgID,
+		req.NodeHashes,
+	)
+	if err != nil {
+		return storage.SessionBackfillResult{}, fmt.Errorf("stamp legacy nodes: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return storage.SessionBackfillResult{}, fmt.Errorf("commit backfill session tx: %w", err)
+	}
+	return storage.SessionBackfillResult{
+		SessionID:   uuidString(sessionID),
+		NodesLinked: int(tag.RowsAffected()),
 	}, nil
 }
 
@@ -324,12 +431,24 @@ func resolveParentSessionID(
 // any real org's rows. Deployments that need to enforce per-org
 // isolation can match org_id != nilOrgID.
 func orgIDFromEnvelope(envelope *sessions.IngestEnvelope) (pgtype.UUID, error) {
-	if envelope == nil || envelope.OrgID == "" {
+	if envelope == nil {
 		return nilOrgID, nil
 	}
-	parsed, err := uuid.Parse(envelope.OrgID)
+	return orgIDFromString(envelope.OrgID)
+}
+
+// orgIDFromString decodes a text org_id into a pgtype.UUID with the same
+// sentinel/parse semantics as orgIDFromEnvelope: an empty string maps to
+// the nil-UUID bucket, a non-empty value must parse. Shared by the read
+// path (SessionIdentityByHash), which scopes its lookup to a single org so
+// a content hash several orgs share cannot resolve to the wrong tenant.
+func orgIDFromString(orgID string) (pgtype.UUID, error) {
+	if orgID == "" {
+		return nilOrgID, nil
+	}
+	parsed, err := uuid.Parse(orgID)
 	if err != nil {
-		return pgtype.UUID{}, fmt.Errorf("parse org_id %q: %w", envelope.OrgID, err)
+		return pgtype.UUID{}, fmt.Errorf("parse org_id %q: %w", orgID, err)
 	}
 	return pgtype.UUID{Bytes: parsed, Valid: true}, nil
 }

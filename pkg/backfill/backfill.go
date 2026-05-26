@@ -7,18 +7,23 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
 // Options configures backfill behavior.
 type Options struct {
-	DryRun  bool
-	Verbose bool
+	DryRun      bool
+	Verbose     bool
+	Sessions    bool
+	OrgID       string
+	AuthSubject string
 }
 
 // APIRunRequest is the request payload for the API-backed usage sync flow.
@@ -26,6 +31,9 @@ type APIRunRequest struct {
 	TranscriptDir string `json:"transcript_dir"`
 	DryRun        bool   `json:"dry_run,omitempty"`
 	Verbose       bool   `json:"verbose,omitempty"`
+	Sessions      bool   `json:"sessions,omitempty"`
+	OrgID         string `json:"org_id,omitempty"`
+	AuthSubject   string `json:"auth_subject,omitempty"`
 }
 
 // Backfiller matches Claude Code transcript usage data to tapes DB nodes.
@@ -48,6 +56,9 @@ func RunViaAPI(ctx context.Context, apiTarget string, transcriptDir string, opts
 		TranscriptDir: transcriptDir,
 		DryRun:        opts.DryRun,
 		Verbose:       opts.Verbose,
+		Sessions:      opts.Sessions,
+		OrgID:         opts.OrgID,
+		AuthSubject:   opts.AuthSubject,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal sync request: %w", err)
@@ -98,6 +109,9 @@ func (b *Backfiller) Run(ctx context.Context, transcriptDir string) (*Result, er
 			}
 			continue
 		}
+		for i := range entries {
+			entries[i].SourcePath = f
+		}
 		allEntries = append(allEntries, entries...)
 	}
 
@@ -129,7 +143,7 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 			continue
 		}
 		totalAssistant++
-		if candidate.Usage != nil && candidate.Usage.PromptTokens > 0 {
+		if !b.options.Sessions && candidate.Usage != nil && candidate.Usage.PromptTokens > 0 {
 			continue
 		}
 		candidates = append(candidates, candidate)
@@ -149,6 +163,7 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 	}
 
 	matched := make(map[string]bool)
+	sessionMatches := make(map[string]*sessionBackfillMatch)
 
 	for _, entry := range entries {
 		if entry.Message == nil || entry.Message.Usage == nil {
@@ -163,13 +178,10 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 			continue
 		}
 
-		entryTime, err := time.Parse(time.RFC3339Nano, entry.Timestamp)
+		entryTime, err := parseTranscriptTime(entry.Timestamp)
 		if err != nil {
-			entryTime, err = time.Parse("2006-01-02T15:04:05.000Z", entry.Timestamp)
-			if err != nil {
-				result.Unmatched++
-				continue
-			}
+			result.Unmatched++
+			continue
 		}
 
 		entryText := entry.TextContent()
@@ -224,9 +236,15 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 				bestMatch.Hash[:12], model, usage.PromptTokens, usage.CompletionTokens)
 		}
 
-		if !b.options.DryRun {
+		if !b.options.DryRun && (bestMatch.Usage == nil || bestMatch.Usage.PromptTokens == 0) {
 			if err := b.driver.UpdateUsage(ctx, bestMatch.Hash, usage); err != nil {
 				return nil, fmt.Errorf("failed to update node %s: %w", bestMatch.Hash, err)
+			}
+		}
+
+		if b.options.Sessions {
+			if err := b.recordSessionMatch(ctx, sessionMatches, entry, bestMatch, usage); err != nil {
+				return nil, err
 			}
 		}
 
@@ -235,7 +253,159 @@ func (b *Backfiller) matchAndUpdate(ctx context.Context, entries []TranscriptEnt
 	}
 
 	result.Skipped = totalAssistant - len(candidates)
+	if b.options.Sessions {
+		if err := b.backfillSessions(ctx, sessionMatches, result); err != nil {
+			return nil, err
+		}
+	}
 	return result, nil
+}
+
+type sessionBackfillMatch struct {
+	sessionID    string
+	sourcePath   string
+	cwd          string
+	version      string
+	startedAt    time.Time
+	lastSeenAt   time.Time
+	nodeHashes   map[string]struct{}
+	inputTokens  int64
+	outputTokens int64
+	turnCount    int64
+}
+
+func (b *Backfiller) recordSessionMatch(
+	ctx context.Context,
+	matches map[string]*sessionBackfillMatch,
+	entry TranscriptEntry,
+	node *merkle.Node,
+	usage *llm.Usage,
+) error {
+	sessionID := strings.TrimSpace(entry.SessionID)
+	if sessionID == "" && entry.SourcePath != "" {
+		sessionID = strings.TrimSuffix(filepath.Base(entry.SourcePath), filepath.Ext(entry.SourcePath))
+	}
+	if sessionID == "" {
+		return nil
+	}
+	entryTime, err := parseTranscriptTime(entry.Timestamp)
+	if err != nil {
+		// An unparseable timestamp can't seed the session's
+		// started_at/last_seen_at, so skip this entry rather than abort the
+		// whole backfill. The node's token usage was already recorded by the
+		// caller before this point, so only the session rollup is dropped.
+		return nil //nolint:nilerr // malformed timestamp is a per-entry skip, not a backfill failure
+	}
+
+	match := matches[sessionID]
+	if match == nil {
+		match = &sessionBackfillMatch{
+			sessionID:  sessionID,
+			sourcePath: entry.SourcePath,
+			cwd:        entry.Cwd,
+			version:    entry.Version,
+			startedAt:  entryTime,
+			lastSeenAt: entryTime,
+			nodeHashes: make(map[string]struct{}),
+		}
+		matches[sessionID] = match
+	}
+	if match.cwd == "" {
+		match.cwd = entry.Cwd
+	}
+	if match.version == "" {
+		match.version = entry.Version
+	}
+	if entryTime.Before(match.startedAt) {
+		match.startedAt = entryTime
+	}
+	if entryTime.After(match.lastSeenAt) {
+		match.lastSeenAt = entryTime
+	}
+	match.inputTokens += int64(usage.PromptTokens)
+	match.outputTokens += int64(usage.CompletionTokens)
+	match.turnCount++
+
+	chain, err := b.driver.AncestryChain(ctx, node.Hash)
+	if err != nil {
+		return fmt.Errorf("load ancestry for session backfill node %s: %w", node.Hash, err)
+	}
+	for _, chainNode := range chain.Nodes {
+		if chainNode != nil && chainNode.Hash != "" {
+			match.nodeHashes[chainNode.Hash] = struct{}{}
+		}
+	}
+	return nil
+}
+
+func (b *Backfiller) backfillSessions(ctx context.Context, matches map[string]*sessionBackfillMatch, result *Result) error {
+	backfiller, ok := b.driver.(storage.SessionBackfiller)
+	if !ok {
+		if len(matches) > 0 && b.options.Verbose {
+			fmt.Printf("  warning: storage driver does not support session backfill\n")
+		}
+		return nil
+	}
+	for _, match := range matches {
+		nodeHashes := make([]string, 0, len(match.nodeHashes))
+		for hash := range match.nodeHashes {
+			nodeHashes = append(nodeHashes, hash)
+		}
+		metadata, err := json.Marshal(map[string]any{
+			"source":          "claude-projects-backfill",
+			"transcript_path": match.sourcePath,
+		})
+		if err != nil {
+			return fmt.Errorf("marshal session metadata: %w", err)
+		}
+		req := storage.SessionBackfillRequest{
+			Session: &sessions.IngestEnvelope{
+				OrgID:            b.options.OrgID,
+				AuthSubject:      firstNonEmpty(b.options.AuthSubject, "claude-projects-backfill"),
+				HarnessID:        "claude",
+				HarnessSessionID: match.sessionID,
+				Name:             filepath.Base(match.sourcePath),
+				Cwd:              match.cwd,
+				HarnessVersion:   match.version,
+				HarnessMetadata:  metadata,
+			},
+			NodeHashes:   nodeHashes,
+			StartedAt:    match.startedAt,
+			LastSeenAt:   match.lastSeenAt,
+			InputTokens:  match.inputTokens,
+			OutputTokens: match.outputTokens,
+			TurnCount:    match.turnCount,
+		}
+		if b.options.DryRun {
+			result.SessionsBackfilled++
+			result.NodesLinked += len(nodeHashes)
+			continue
+		}
+		backfilled, err := backfiller.BackfillSession(ctx, req)
+		if err != nil {
+			return fmt.Errorf("backfill session %s: %w", match.sessionID, err)
+		}
+		result.SessionsBackfilled++
+		result.NodesLinked += backfilled.NodesLinked
+	}
+	return nil
+}
+
+func parseTranscriptTime(raw string) (time.Time, error) {
+	entryTime, err := time.Parse(time.RFC3339Nano, raw)
+	if err == nil {
+		return entryTime, nil
+	}
+	return time.Parse("2006-01-02T15:04:05.000Z", raw)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // contentPrefixMatch checks if the first n characters of two strings match.
