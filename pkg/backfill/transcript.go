@@ -43,7 +43,10 @@ type TranscriptEntry struct {
 	ParentUUID *string            `json:"parentUuid"`
 	Timestamp  string             `json:"timestamp"`
 	SessionID  string             `json:"sessionId"`
+	Cwd        string             `json:"cwd"`
+	Version    string             `json:"version"`
 	Message    *TranscriptMessage `json:"message"`
+	SourcePath string             `json:"-"`
 }
 
 // TextContent extracts the concatenated text from all text content blocks.

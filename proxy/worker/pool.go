@@ -18,6 +18,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/publisher"
+	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/vector"
 )
@@ -33,6 +34,18 @@ type Job struct {
 	AgentName string
 	Req       *llm.ChatRequest
 	Resp      *llm.ChatResponse
+
+	// Session is the optional session-tracking envelope attached to
+	// the turn at the ingest HTTP boundary. When non-nil and the
+	// driver supports session-aware ingest (Postgres), the worker
+	// pool runs the transactional path: a `sessions` row is UPSERTed,
+	// nodes are inserted with a non-NULL session_id FK, and counters
+	// are rolled up — all in one Tx. When nil OR when the driver does
+	// not implement that capability (e.g. inmemory), the legacy
+	// per-node Put loop runs and session metadata is dropped on the
+	// floor — this keeps the local CLI proxy and unit tests working
+	// without a Postgres backend.
+	Session *sessions.IngestEnvelope
 }
 
 // Config is the configuration options for the worker pool.
@@ -235,11 +248,46 @@ func (p *Pool) deriveRootHash(ctx context.Context, head string) (string, error) 
 
 // storeConversationTurn stores a request-response pair in the merkle dag.
 // Returns the head hash and the slice of nodes that were newly Put.
+//
+// When the configured driver implements storage.SessionIngester AND
+// the job carries a session-tracking envelope, the entire turn (every
+// message node plus the response node) is folded into a single
+// transactional IngestTurn call — so a sessions row is UPSERTed,
+// nodes are inserted with a non-NULL session_id FK, and counters are
+// rolled up atomically.
+//
+// Otherwise (legacy in-memory driver, or a turn without an envelope),
+// the original per-node Put loop runs unchanged.
 func (p *Pool) storeConversationTurn(ctx context.Context, job Job) (string, []*merkle.Node, error) {
-	var parent *merkle.Node
-	var newNodes []*merkle.Node
+	chain := buildTurnChain(job, p.config.Project)
+	if len(chain) == 0 {
+		return "", nil, errors.New("conversation turn produced no nodes")
+	}
+	head := chain[len(chain)-1]
 
-	// Store each message from the request as nodes.
+	if ingester, ok := p.config.Driver.(storage.SessionIngester); ok && job.Session != nil {
+		return p.ingestTurnViaSessionIngester(ctx, ingester, job, chain, head)
+	}
+
+	newNodes, err := p.putChainSequentially(ctx, chain)
+	if err != nil {
+		return "", nil, err
+	}
+	return head.Hash, newNodes, nil
+}
+
+// buildTurnChain materializes the ordered (root → leaf) chain of nodes
+// for a single conversation turn: one node per request message,
+// followed by the assistant response node. ParentHash linkage is set
+// via merkle.NewNode so every node's hash is stable before any I/O.
+func buildTurnChain(job Job, project string) []*merkle.Node {
+	if job.Req == nil || job.Resp == nil {
+		return nil
+	}
+
+	chain := make([]*merkle.Node, 0, len(job.Req.Messages)+1)
+	var parent *merkle.Node
+
 	for _, msg := range job.Req.Messages {
 		bucket := merkle.Bucket{
 			Type:      "message",
@@ -249,24 +297,8 @@ func (p *Pool) storeConversationTurn(ctx context.Context, job Job) (string, []*m
 			Provider:  job.Provider,
 			AgentName: job.AgentName,
 		}
-
-		node := merkle.NewNode(bucket, parent, merkle.NodeOptions{Project: p.config.Project})
-
-		isNew, err := p.config.Driver.Put(ctx, node)
-		if err != nil {
-			return "", nil, fmt.Errorf("storing message node: %w", err)
-		}
-
-		p.logger.Debug("stored message in DAG",
-			"hash", node.Hash,
-			"role", msg.Role,
-			"content", msg.GetText(),
-			"is_new", isNew,
-		)
-
-		if isNew {
-			newNodes = append(newNodes, node)
-		}
+		node := merkle.NewNode(bucket, parent, merkle.NodeOptions{Project: project})
+		chain = append(chain, node)
 		parent = node
 	}
 
@@ -278,33 +310,84 @@ func (p *Pool) storeConversationTurn(ctx context.Context, job Job) (string, []*m
 		Provider:  job.Provider,
 		AgentName: job.AgentName,
 	}
-
 	responseNode := merkle.NewNode(
 		responseBucket,
 		parent,
 		merkle.NodeOptions{
 			StopReason: job.Resp.StopReason,
 			Usage:      job.Resp.Usage,
-			Project:    p.config.Project,
+			Project:    project,
 		},
 	)
+	chain = append(chain, responseNode)
+	return chain
+}
 
-	isNew, err := p.config.Driver.Put(ctx, responseNode)
+// putChainSequentially is the legacy per-node Put loop used when the
+// driver cannot (or shouldn't) host sessions. Identical to the
+// pre-session-tracking behavior.
+func (p *Pool) putChainSequentially(ctx context.Context, chain []*merkle.Node) ([]*merkle.Node, error) {
+	var newNodes []*merkle.Node
+	for i, node := range chain {
+		isNew, err := p.config.Driver.Put(ctx, node)
+		if err != nil {
+			if i == len(chain)-1 {
+				return nil, fmt.Errorf("storing response node: %w", err)
+			}
+			return nil, fmt.Errorf("storing message node: %w", err)
+		}
+		p.logger.Debug("stored node in DAG",
+			"hash", node.Hash,
+			"role", node.Bucket.Role,
+			"is_new", isNew,
+		)
+		if isNew {
+			newNodes = append(newNodes, node)
+		}
+	}
+	return newNodes, nil
+}
+
+// ingestTurnViaSessionIngester routes the chain through the
+// transactional SessionIngester path so the sessions row, node
+// inserts, and counter rollup commit atomically. CostUSD is stubbed
+// at 0: this repo's worker has no pricing lookup wired in. The
+// sessions total_cost_usd column defaults to 0 so writing a 0 delta
+// is a true no-op.
+func (p *Pool) ingestTurnViaSessionIngester(
+	ctx context.Context,
+	ingester storage.SessionIngester,
+	job Job,
+	chain []*merkle.Node,
+	head *merkle.Node,
+) (string, []*merkle.Node, error) {
+	// Values mirror provider-reported usage; not re-derived. A stale or
+	// zero Usage from the upstream provider produces undercounted
+	// session totals — the data source is the provider response we
+	// already trust elsewhere in the worker.
+	var inputTokens, outputTokens int64
+	if usage := job.Resp.Usage; usage != nil {
+		inputTokens = int64(usage.PromptTokens)
+		outputTokens = int64(usage.CompletionTokens)
+	}
+
+	res, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
+		Session:      job.Session,
+		Nodes:        chain,
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		CostUSD:      0, // pricing lookup not wired in this repo.
+	})
 	if err != nil {
-		return "", nil, fmt.Errorf("storing response node: %w", err)
+		return "", nil, fmt.Errorf("session ingester: %w", err)
 	}
 
-	p.logger.Debug("stored response in DAG",
-		"hash", responseNode.Hash,
-		"content_preview", job.Resp.Message.GetText(),
-		"is_new", isNew,
+	p.logger.Debug("ingested conversation turn via session ingester",
+		"session_id", res.SessionID,
+		"new_nodes", len(res.NewNodes),
+		"counters_updated", res.CountersUpdated,
 	)
-
-	if isNew {
-		newNodes = append(newNodes, responseNode)
-	}
-
-	return responseNode.Hash, newNodes, nil
+	return head.Hash, res.NewNodes, nil
 }
 
 // storeEmbeddings generates and stores embeddings for the given nodes.

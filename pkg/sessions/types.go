@@ -24,23 +24,25 @@ type PricingTable map[string]Pricing
 // chain). It is produced by BuildSummary and consumed by both the API's
 // /v1/sessions/summary response and the deck TUI overview.
 type SessionSummary struct {
-	ID           string        `json:"id"`
-	Label        string        `json:"label"`
-	Model        string        `json:"model"`
-	Project      string        `json:"project"`
-	AgentName    string        `json:"agent_name,omitempty"`
-	Status       string        `json:"status"`
-	StartTime    time.Time     `json:"start_time"`
-	EndTime      time.Time     `json:"end_time"`
-	Duration     time.Duration `json:"duration_ns"`
-	InputTokens  int64         `json:"input_tokens"`
-	OutputTokens int64         `json:"output_tokens"`
-	InputCost    float64       `json:"input_cost"`
-	OutputCost   float64       `json:"output_cost"`
-	TotalCost    float64       `json:"total_cost"`
-	ToolCalls    int           `json:"tool_calls"`
-	MessageCount int           `json:"message_count"`
-	SessionCount int           `json:"session_count,omitempty"`
+	ID               string        `json:"id"`
+	HarnessID        string        `json:"harness_id,omitempty"`
+	HarnessSessionID string        `json:"harness_session_id,omitempty"`
+	Label            string        `json:"label"`
+	Model            string        `json:"model"`
+	Project          string        `json:"project"`
+	AgentName        string        `json:"agent_name,omitempty"`
+	Status           string        `json:"status"`
+	StartTime        time.Time     `json:"start_time"`
+	EndTime          time.Time     `json:"end_time"`
+	Duration         time.Duration `json:"duration_ns"`
+	InputTokens      int64         `json:"input_tokens"`
+	OutputTokens     int64         `json:"output_tokens"`
+	InputCost        float64       `json:"input_cost"`
+	OutputCost       float64       `json:"output_cost"`
+	TotalCost        float64       `json:"total_cost"`
+	ToolCalls        int           `json:"tool_calls"`
+	MessageCount     int           `json:"message_count"`
+	SessionCount     int           `json:"session_count,omitempty"`
 
 	// Truncated is true when this summary was built from a partial chain
 	// because an ancestor's parent_hash could not be resolved in the

@@ -108,6 +108,11 @@ func (d *Driver) Put(ctx context.Context, n *merkle.Node) (bool, error) {
 	}
 
 	rows, err := d.q.InsertNode(ctx, gensqlc.InsertNodeParams{
+		// Legacy Put has no org context: the Driver interface predates
+		// the session-tracking envelope. Use the nil-UUID sentinel so
+		// the (org_id, hash) PK is satisfied; session-aware writers
+		// (IngestTurn) supply the real org_id from the validated JWT.
+		OrgID:                    nilOrgID,
 		Hash:                     n.Hash,
 		Bucket:                   bucketJSON,
 		Type:                     nullStringValue(n.Bucket.Type),
@@ -144,6 +149,38 @@ func (d *Driver) Get(ctx context.Context, hash string) (*merkle.Node, error) {
 		return nil, fmt.Errorf("get node: %w", err)
 	}
 	return merkleNodeFromRow(row)
+}
+
+// SessionIdentityByHash returns the harness identity for the sessions row
+// attached to a node hash, scoped to orgID. Older rows, legacy Put writes,
+// and non-Postgres stores may not have session tracking metadata; those
+// return nil without error so read APIs can expose the field
+// opportunistically.
+//
+// The org_id predicate is load-bearing, not cosmetic: nodes is keyed by the
+// composite (org_id, hash), so identical content yields one row per org. A
+// lookup on hash alone would return an arbitrary org's row for shared
+// content, leaking another tenant's harness_session_id. An empty orgID maps
+// to the nil-UUID sentinel bucket (legacy / non-session writes).
+func (d *Driver) SessionIdentityByHash(ctx context.Context, orgID, hash string) (*storage.SessionIdentity, error) {
+	oid, err := orgIDFromString(orgID)
+	if err != nil {
+		return nil, fmt.Errorf("session identity org_id: %w", err)
+	}
+	var identity storage.SessionIdentity
+	err = d.conn.QueryRow(ctx, `
+SELECT s.harness_id, s.harness_session_id
+  FROM nodes n
+  JOIN sessions s ON s.id = n.session_id
+ WHERE n.org_id = $1 AND n.hash = $2
+ LIMIT 1`, oid, hash).Scan(&identity.HarnessID, &identity.HarnessSessionID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get session identity: %w", err)
+	}
+	return &identity, nil
 }
 
 func (d *Driver) Has(ctx context.Context, hash string) (bool, error) {
@@ -689,6 +726,13 @@ func merkleNodeFromAncestryRow(row gensqlc.AncestryChainsRow) (*merkle.Node, err
 	)
 }
 
+// merkleNodeFromRow projects the persisted columns onto the in-memory
+// merkle.Node shape. session_id and org_id are intentionally NOT
+// projected here: merkle.Node has no fields for them (it pre-dates the
+// session-tracking envelope), and the read-side surface in storage.Driver
+// doesn't yet know about per-org scoping. Read-side features that need
+// session_id or org_id should add a dedicated method that returns a
+// richer row type rather than retrofit merkle.Node.
 func merkleNodeFromRow(row gensqlc.Node) (*merkle.Node, error) {
 	return merkleNodeFromParts(
 		row.Hash,

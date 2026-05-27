@@ -20,6 +20,9 @@ type backfillUsageRequest struct {
 	TranscriptDir string `json:"transcript_dir"`
 	DryRun        bool   `json:"dry_run,omitempty"`
 	Verbose       bool   `json:"verbose,omitempty"`
+	Sessions      bool   `json:"sessions,omitempty"`
+	OrgID         string `json:"org_id,omitempty"`
+	AuthSubject   string `json:"auth_subject,omitempty"`
 }
 
 func (s *Server) handleSeedDemo(c *fiber.Ctx) error {
@@ -61,8 +64,11 @@ func (s *Server) handleBackfillUsage(c *fiber.Ctx) error {
 	}
 
 	b := backfill.NewBackfillerWithDriver(s.driver, backfill.Options{
-		DryRun:  req.DryRun,
-		Verbose: req.Verbose,
+		DryRun:      req.DryRun,
+		Verbose:     req.Verbose,
+		Sessions:    req.Sessions,
+		OrgID:       req.OrgID,
+		AuthSubject: req.AuthSubject,
 	})
 	result, err := b.Run(c.Context(), req.TranscriptDir)
 	if err != nil {

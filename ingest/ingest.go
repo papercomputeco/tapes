@@ -13,6 +13,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/llm/provider"
+	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/proxy/worker"
 )
@@ -52,6 +53,19 @@ type TurnPayload struct {
 
 	// Response is the already reduced, provider-agnostic response for the turn.
 	Response llm.ChatResponse `json:"response"`
+
+	// Session is the optional session-tracking envelope. When present,
+	// ingest UPSERTs a `sessions` row keyed by
+	// (org_id, harness_id, harness_session_id), resolves the
+	// parent_session_id FK (placeholder-inserting when needed), and
+	// rolls up turn counters — all in the same transaction as the
+	// nodes insert. When absent, ingest treats the turn as
+	// harness_id="unknown" and derives a synthetic harness_session_id
+	// from the captured turn's Merkle root prefix.
+	//
+	// The type lives in pkg/sessions to avoid an import cycle
+	// (proxy/worker depends on it too).
+	Session *sessions.IngestEnvelope `json:"session,omitempty"`
 }
 
 // BatchPayload is the ingest request body for multiple conversation turns.
@@ -227,6 +241,18 @@ func (s *Server) handleIngest(c *fiber.Ctx) error {
 		})
 	}
 
+	if err := payload.Session.Validate(); err != nil {
+		s.logger.Warn("ingest envelope rejected",
+			"reason", "session",
+			"error", err,
+			"bytes", bodySize,
+		)
+		s.metrics.ObserveWrite("", ResultRejectEnv, bodySize)
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{
+			Error: fmt.Sprintf("%s: %s", ErrEnvelope, err),
+		})
+	}
+
 	start := time.Now()
 	if err := s.processTurn(&payload); err != nil {
 		s.recordProcessTurnError(payload.Provider, err, bodySize)
@@ -289,6 +315,19 @@ func (s *Server) handleBatchIngest(c *fiber.Ctx) error {
 		// JSON envelope overhead (provider, agent_name) is small and omitted to
 		// avoid re-marshaling.
 		turnBytes := len(t.RawRequest) + reducedResponseSize(t.Response)
+
+		if err := t.Session.Validate(); err != nil {
+			s.logger.Warn("ingest batch turn rejected",
+				"reason", "session",
+				"error", err,
+				"turn", i,
+				"bytes", turnBytes,
+			)
+			s.metrics.ObserveWrite(t.Provider, ResultRejectEnv, turnBytes)
+			result.Rejected++
+			result.Errors = append(result.Errors, fmt.Sprintf("turn[%d]: %s: %s", i, ErrEnvelope, err))
+			continue
+		}
 
 		start := time.Now()
 		if err := s.processTurn(t); err != nil {
@@ -374,10 +413,25 @@ func (s *Server) processTurn(turn *TurnPayload) error {
 		return fmt.Errorf("%w: invalid reduced response: %w", ErrUnprocessable, err)
 	}
 
+	// Log session attribution at debug. The full envelope isn't logged
+	// (auth_subject, harness_metadata are sensitive); we surface just
+	// the natural-key tuple so operators can correlate a turn with
+	// the eventual sessions row when triaging ingestion issues.
+	var (
+		sessHarnessID, sessHarnessSessionID, sessOrgID string
+	)
+	if turn.Session != nil {
+		sessHarnessID = turn.Session.HarnessIDOrUnknown()
+		sessHarnessSessionID = turn.Session.HarnessSessionID
+		sessOrgID = turn.Session.OrgID
+	}
 	s.logger.Debug("ingesting turn",
 		"provider", prov.Name(),
 		"agent", turn.AgentName,
 		"model", parsedReq.Model,
+		"session_org_id", sessOrgID,
+		"session_harness_id", sessHarnessID,
+		"session_harness_session_id", sessHarnessSessionID,
 	)
 
 	if ok := s.workerPool.Enqueue(worker.Job{
@@ -385,6 +439,7 @@ func (s *Server) processTurn(turn *TurnPayload) error {
 		AgentName: turn.AgentName,
 		Req:       parsedReq,
 		Resp:      &parsedResp,
+		Session:   turn.Session,
 	}); !ok {
 		s.logger.Error("ingest enqueue failed: worker queue full",
 			"provider", prov.Name(),

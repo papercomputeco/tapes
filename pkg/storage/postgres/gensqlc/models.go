@@ -28,4 +28,26 @@ type Node struct {
 	Project                  pgtype.Text
 	CreatedAt                pgtype.Timestamptz
 	ParentHash               pgtype.Text
+	SessionID                pgtype.UUID
+	OrgID                    pgtype.UUID
+}
+
+type Session struct {
+	ID                pgtype.UUID
+	OrgID             pgtype.UUID
+	AuthSubject       string
+	HarnessID         string
+	HarnessSessionID  string
+	Name              pgtype.Text
+	Cwd               pgtype.Text
+	HarnessVersion    pgtype.Text
+	ParentSessionID   pgtype.UUID
+	StartedAt         pgtype.Timestamptz
+	LastSeenAt        pgtype.Timestamptz
+	EndedAt           pgtype.Timestamptz
+	HarnessMetadata   []byte
+	TotalInputTokens  int64
+	TotalOutputTokens int64
+	TotalCostUsd      pgtype.Numeric
+	TurnCount         int32
 }

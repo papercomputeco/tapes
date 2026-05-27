@@ -15,7 +15,8 @@ const listSessions = `-- name: ListSessions :many
 SELECT n.hash, n.bucket, n.type, n.role, n.content, n.model, n.provider, n.agent_name, n.stop_reason,
        n.prompt_tokens, n.completion_tokens, n.total_tokens,
        n.cache_creation_input_tokens, n.cache_read_input_tokens,
-       n.total_duration_ns, n.prompt_duration_ns, n.project, n.created_at, n.parent_hash
+       n.total_duration_ns, n.prompt_duration_ns, n.project, n.created_at, n.parent_hash,
+       n.session_id, n.org_id
 FROM nodes n
 WHERE NOT EXISTS (
     SELECT 1 FROM nodes c WHERE c.parent_hash = n.hash
@@ -86,6 +87,8 @@ func (q *Queries) ListSessions(ctx context.Context, arg ListSessionsParams) ([]N
 			&i.Project,
 			&i.CreatedAt,
 			&i.ParentHash,
+			&i.SessionID,
+			&i.OrgID,
 		); err != nil {
 			return nil, err
 		}

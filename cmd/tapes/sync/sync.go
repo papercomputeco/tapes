@@ -24,6 +24,9 @@ type syncCommander struct {
 	claudeDir   string
 	dryRun      bool
 	verbose     bool
+	sessions    bool
+	orgID       string
+	authSubject string
 }
 
 // NewSyncCmd creates the sync cobra command.
@@ -49,6 +52,9 @@ func NewSyncCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cmder.claudeDir, "claude-dir", "", "Override Claude Code projects directory")
 	cmd.Flags().BoolVar(&cmder.dryRun, "dry-run", false, "Preview matches without writing")
 	cmd.Flags().BoolVarP(&cmder.verbose, "verbose", "v", false, "Show per-node match details")
+	cmd.Flags().BoolVar(&cmder.sessions, "sessions", false, "Also backfill Claude session rows and link legacy nodes")
+	cmd.Flags().StringVar(&cmder.orgID, "org-id", "", "Organization UUID to use for backfilled sessions")
+	cmd.Flags().StringVar(&cmder.authSubject, "auth-subject", "", "Auth subject to use for backfilled sessions")
 
 	return cmd
 }
@@ -75,8 +81,11 @@ func (c *syncCommander) run(ctx context.Context) error {
 	if err := cliui.Step(os.Stdout, "Syncing token usage", func() error {
 		var runErr error
 		result, runErr = backfill.RunViaAPI(ctx, apiTarget, claudeDir, backfill.Options{
-			DryRun:  c.dryRun,
-			Verbose: c.verbose,
+			DryRun:      c.dryRun,
+			Verbose:     c.verbose,
+			Sessions:    c.sessions,
+			OrgID:       c.orgID,
+			AuthSubject: c.authSubject,
 		})
 		return runErr
 	}); err != nil {

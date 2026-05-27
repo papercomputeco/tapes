@@ -16,6 +16,7 @@ sql:
       - "pkg/storage/postgres/queries/list_nodes.sql"
       - "pkg/storage/postgres/queries/list_parent_refs.sql"
       - "pkg/storage/postgres/queries/list_sessions.sql"
+      - "pkg/storage/postgres/queries/sessions.sql"
     gen:
       go:
         package: "gensqlc"

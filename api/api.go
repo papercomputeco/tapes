@@ -50,6 +50,13 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	app.Use(s.metrics.Middleware())
 	app.Use(recover.New())
 
+	// Tenant context: canonicalise the client-asserted org_id header onto
+	// Locals so the read handlers can scope lookups to a single tenant.
+	// Registered after recover (a malformed header can't escape panic
+	// translation) and before the routes; it only sets a Local, so it is a
+	// no-op for /metrics and /ping.
+	app.Use(s.withOrgContext)
+
 	// /metrics is intentionally outside any auth group — Alloy scrapes
 	// in-cluster and there is no caller identity to verify.
 	app.Get("/metrics", s.metrics.Handler())
