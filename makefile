@@ -5,6 +5,7 @@ VERSION ?= $(shell git describe --tags --always --dirty)
 COMMIT  := $(shell git rev-parse HEAD)
 BUILDTIME ?= $(shell date -u '+%Y-%m-%d %H:%M:%S')
 REGISTRY ?= public.ecr.aws/g4e5l3z3/papercomputeco
+IMAGE ?= tapes:dev
 
 POSTHOG_API_KEY ?=
 POSTHOG_ENDPOINT ?= https://us.i.posthog.com
@@ -97,6 +98,16 @@ release: ## Builds and releases tapes artifacts
 
 .PHONY: build-images
 build-images: build-tapes-image ## Builds all container artifacts
+
+.PHONY: build-local-image
+build-local-image: ## Build a local Docker image for Kind/clearing (IMAGE=tapes:dev)
+	$(call print-target)
+	dagger call \
+		build-tapes-image \
+			--version=${VERSION} \
+			--commit=${COMMIT} \
+		export-image \
+			--name=${IMAGE}
 
 .PHONY: build-tapes-image
 build-tapes-image: ## Builds, tags, and loads the tapes container artifact locally
