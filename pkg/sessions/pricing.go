@@ -10,7 +10,7 @@ import (
 
 // DefaultPricing returns hardcoded pricing per million tokens for supported models.
 //
-// Last verified: 2026-04-16
+// Last verified: 2026-05-29
 // Sources:
 //   - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
 //   - OpenAI:    https://platform.openai.com/docs/pricing
@@ -23,6 +23,7 @@ import (
 func DefaultPricing() PricingTable {
 	return PricingTable{
 		// Anthropic
+		"claude-opus-4.8":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25},
 		"claude-opus-4.7":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25},
 		"claude-opus-4.6":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25},
 		"claude-opus-4.5":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25},
@@ -146,6 +147,7 @@ func NormalizeModel(model string) string {
 	normalized = strings.ReplaceAll(normalized, "-5-3", "-5.3")
 	normalized = strings.ReplaceAll(normalized, "-5-2", "-5.2")
 	normalized = strings.ReplaceAll(normalized, "-5-1", "-5.1")
+	normalized = strings.ReplaceAll(normalized, "-4-8", "-4.8")
 	normalized = strings.ReplaceAll(normalized, "-4-7", "-4.7")
 	normalized = strings.ReplaceAll(normalized, "-4-6", "-4.6")
 	normalized = strings.ReplaceAll(normalized, "-4-5", "-4.5")
