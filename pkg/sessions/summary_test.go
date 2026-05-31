@@ -1,6 +1,7 @@
 package sessions_test
 
 import (
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -216,9 +217,18 @@ var _ = Describe("NormalizeModel", func() {
 	It("strips OpenAI-style date suffix", func() {
 		Expect(sessions.NormalizeModel("gpt-4o-2024-08-06")).To(Equal("gpt-4o"))
 	})
-	It("rewrites hyphenated version markers", func() {
-		Expect(sessions.NormalizeModel("claude-opus-4-6")).To(Equal("claude-opus-4.6"))
-		Expect(sessions.NormalizeModel("claude-opus-4-7")).To(Equal("claude-opus-4.7"))
+	It("every Anthropic pricing key is reachable from its canonical API form", func() {
+		// Guards against forgetting the matching `-N-M` → `-N.M` rewrite when
+		// adding a new Anthropic row to DefaultPricing. The dated variant
+		// also exercises the date-suffix stripper that real API IDs carry.
+		for key := range sessions.DefaultPricing() {
+			if !strings.HasPrefix(key, "claude-") || !strings.ContainsRune(key, '.') {
+				continue
+			}
+			api := strings.ReplaceAll(key, ".", "-")
+			Expect(sessions.NormalizeModel(api)).To(Equal(key), "bare API form %q", api)
+			Expect(sessions.NormalizeModel(api+"-20260101")).To(Equal(key), "dated API form %q", api+"-20260101")
+		}
 	})
 	It("returns empty for empty input", func() {
 		Expect(sessions.NormalizeModel("")).To(Equal(""))
