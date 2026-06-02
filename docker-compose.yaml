@@ -1,3 +1,7 @@
+x-flink-demo-build: &flink-demo-build
+  context: ./examples/flink
+  dockerfile: Dockerfile
+
 services:
   postgres:
     image: public.ecr.aws/g4e5l3z3/papercomputeco/postgres:17.7-pgduckdb-1.1.1
@@ -9,34 +13,236 @@ services:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tapes -d tapes"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
 
   ollama:
-    image: ollama/ollama
+    image: ollama/ollama:0.24.0
     ports:
       - "11434:11434"
     volumes:
-      - ~/.ollama:/root/.ollama
+      - ~/.ollama/models:/root/.ollama/models
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+  ollama-pull:
+    image: ollama/ollama:0.24.0
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    volumes:
+      - ~/.ollama/models:/root/.ollama/models
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        ollama pull qwen3:0.6b
+        ollama pull embeddinggemma
+
+  kafka:
+    image: confluentinc/confluent-local:8.1.3
+    ports:
+      - "29092:29092"
+    environment:
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
+  kafka-init:
+    image: confluentinc/confluent-local:8.1.3
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        kafka-topics --bootstrap-server=kafka:9092 --topic=tapes.e2e.proxy --partitions=1 --replication-factor=1 --create --if-not-exists
+        kafka-topics --bootstrap-server=kafka:9092 --topic=tapes.anomalies.api_keys --partitions=1 --replication-factor=1 --create --if-not-exists
+        kafka-topics --bootstrap-server=kafka:9092 --topic=tapes.analytics.token_usage --partitions=1 --replication-factor=1 --create --if-not-exists
+        kafka-topics --bootstrap-server=kafka:9092 --topic=tapes.ml.sentiment --partitions=1 --replication-factor=1 --create --if-not-exists
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      SERVER_PORT: "9091"
+      DYNAMIC_CONFIG_ENABLED: "true"
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    ports:
+      - "9091:9091"
+
+  flink-jobmanager:
+    build: *flink-demo-build
+    image: tapes-flink-demo:local
+    profiles:
+      - flink
+    command: jobmanager
+    restart: unless-stopped
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - "8083:8081"
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        rest.bind-address: 0.0.0.0
+        parallelism.default: 1
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8081/overview >/dev/null || wget -qO- http://localhost:8081/overview >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  flink-taskmanager:
+    build: *flink-demo-build
+    image: tapes-flink-demo:local
+    profiles:
+      - flink
+    command: taskmanager
+    restart: unless-stopped
+    depends_on:
+      flink-jobmanager:
+        condition: service_healthy
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 4
+        parallelism.default: 1
+
+  flink-anomaly-job:
+    build: *flink-demo-build
+    image: tapes-flink-demo:local
+    profiles:
+      - flink
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      flink-jobmanager:
+        condition: service_healthy
+      flink-taskmanager:
+        condition: service_started
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        until /opt/flink/bin/flink list -m flink-jobmanager:8081 >/dev/null 2>&1; do
+          echo "waiting for Flink JobManager..."
+          sleep 2
+        done
+        /opt/flink/bin/sql-client.sh \
+          -D execution.target=remote \
+          -D rest.address=flink-jobmanager \
+          -D rest.port=8081 \
+          -f /opt/flink/usrlib/api-key-anomalies.sql
+
+  flink-token-usage-job:
+    build: *flink-demo-build
+    image: tapes-flink-demo:local
+    profiles:
+      - flink
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      flink-jobmanager:
+        condition: service_healthy
+      flink-taskmanager:
+        condition: service_started
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        until /opt/flink/bin/flink list -m flink-jobmanager:8081 >/dev/null 2>&1; do
+          echo "waiting for Flink JobManager..."
+          sleep 2
+        done
+        /opt/flink/bin/sql-client.sh \
+          -D execution.target=remote \
+          -D rest.address=flink-jobmanager \
+          -D rest.port=8081 \
+          -f /opt/flink/usrlib/token-usage.sql
+
+  flink-sentiment-job:
+    build: *flink-demo-build
+    image: tapes-flink-demo:local
+    profiles:
+      - flink
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      flink-jobmanager:
+        condition: service_healthy
+      flink-taskmanager:
+        condition: service_started
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        until /opt/flink/bin/flink list -m flink-jobmanager:8081 >/dev/null 2>&1; do
+          echo "waiting for Flink JobManager..."
+          sleep 2
+        done
+        /opt/flink/bin/flink run -d \
+          -m flink-jobmanager:8081 \
+          -py /opt/flink/usrlib/sentiment-analysis/job.py \
+          -pyfs /opt/flink/usrlib/sentiment-analysis \
+          -pyclientexec python3 \
+          -pyexec python3
 
   tapes:
     build:
       dockerfile: Dockerfile
     depends_on:
-      - postgres
-      - ollama
+      postgres:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      ollama-pull:
+        condition: service_completed_successfully
     ports:
       - "8080:8080"
       - "8081:8081"
-    command: >-
-      serve
-      --upstream http://ollama:11434
-      --postgres postgres://tapes:tapes@postgres:5432/tapes?sslmode=disable
-      --vector-store-target postgres://tapes:tapes@postgres:5432/tapes?sslmode=disable
-      --embedding-provider ollama
-      --embedding-target http://ollama:11434
-      --embedding-model nomic-embed-text
-      --debug
+      - "8082:8082"
+    command:
+      - serve
+      - --postgres=postgres://tapes:tapes@postgres:5432/tapes?sslmode=disable
+      - --kafka-brokers=kafka:9092
+      - --kafka-topic=tapes.e2e.proxy
+      - --upstream=http://ollama:11434
+      - --provider=ollama
+      - --vector-store-target=postgres://tapes:tapes@postgres:5432/tapes?sslmode=disable
+      - --embedding-provider=ollama
+      - --embedding-target=http://ollama:11434
+      - --embedding-model=embeddinggemma
+      - --embedding-dimensions=768
+      - --api-web-ui
+      - --debug
     volumes:
       - tapes-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "test \"$$(wget -qO- http://127.0.0.1:8081/ping)\" = '\"pong\"'"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
 volumes:
   postgres-data:
