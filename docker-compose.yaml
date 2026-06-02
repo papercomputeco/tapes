@@ -200,11 +200,12 @@ services:
           echo "waiting for Flink JobManager..."
           sleep 2
         done
-        /opt/flink/bin/sql-client.sh \
-          -D execution.target=remote \
-          -D rest.address=flink-jobmanager \
-          -D rest.port=8081 \
-          -f /opt/flink/usrlib/sentiment-analysis.sql
+        /opt/flink/bin/flink run -d \
+          -m flink-jobmanager:8081 \
+          -py /opt/flink/usrlib/sentiment-analysis/job.py \
+          -pyfs /opt/flink/usrlib/sentiment-analysis \
+          -pyclientexec python3 \
+          -pyexec python3
 
   tapes:
     build:

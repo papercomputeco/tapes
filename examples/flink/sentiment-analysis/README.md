@@ -1,8 +1,12 @@
-# Flink user message sentiment demo
+# Flink user message sentiment inference demo
 
-This example adds a very small sentiment-analysis job for user messages flowing through
-tapes. It uses a regex lexicon in Flink SQL, which keeps the demo lightweight while
-showing where a streaming ML inference job can plug in.
+This example adds a small PyFlink streaming job for user messages flowing through tapes.
+It trains a tiny pure-Python Naive Bayes sentiment model from an in-repo dataset and runs
+that model as Python UDF inference inside the Flink job.
+
+The implementation is intentionally lightweight: no external model server, no scikit-learn,
+and no heavyweight Python dependencies. It is still a real streaming inference path rather
+than a SQL regex check.
 
 ## Start
 
@@ -14,7 +18,7 @@ make up-flink
 
 This starts all Flink demo jobs in the compose profile, including the API-key anomaly
 and token usage examples. The `flink-sentiment-job` container exits after submitting
-this SQL job. The `flink-jobmanager` and `flink-taskmanager` services keep the job
+this PyFlink job. The `flink-jobmanager` and `flink-taskmanager` services keep the job
 running.
 
 ## Trigger sentiment rows
@@ -33,15 +37,21 @@ curl -sS http://localhost:8080/api/chat \
   }'
 ```
 
-Try negative words like `broken`, `terrible`, or `frustrated` to produce negative rows.
-Messages with both positive and negative matches are classified as `mixed`; messages with
-no lexicon match are classified as `neutral`.
+Try negative phrases like `this is terrible and broken` or neutral prompts like
+`please summarize this conversation` to see different predictions.
 
 ## Output topic
 
 ```text
 tapes.ml.sentiment
 ```
+
+Each output row includes:
+
+- input node metadata: `root_hash`, `node_hash`, `provider`, `model`
+- prediction: `sentiment`, `confidence`, `scores_json`
+- model metadata: `ml_model`, `ml_model_version`
+- raw `content_json` used for inference
 
 ## View results
 
