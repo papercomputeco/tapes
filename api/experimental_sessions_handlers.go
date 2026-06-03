@@ -256,9 +256,18 @@ func (s *Server) handleGetExperimentalSession(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session turns"})
 	}
 
-	chain := longestChainFromNodes(nodes)
-	turns := make([]Turn, len(chain))
-	for i, n := range chain {
+	// ?chain=longest (default) returns only the longest root-to-leaf path.
+	// ?chain=all returns every node ordered by created_at.
+	var selected []*merkle.Node
+	switch c.Query("chain", "longest") {
+	case "all":
+		selected = nodes
+	default:
+		selected = longestChainFromNodes(nodes)
+	}
+
+	turns := make([]Turn, len(selected))
+	for i, n := range selected {
 		turns[i] = turnFromNode(n)
 	}
 
