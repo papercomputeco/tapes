@@ -105,6 +105,29 @@ UPDATE sessions
        total_cost_usd      = total_cost_usd      + sqlc.arg(cost_usd_delta)
  WHERE id = sqlc.arg(id);
 
+-- name: ListExperimentalSessions :many
+-- Paginated list of sessions for an org ordered newest-first (last_seen_at DESC, id DESC).
+-- Pass NULL cursor values to start from the beginning.
+SELECT * FROM sessions
+WHERE org_id = sqlc.arg(org_id)
+  AND (
+    sqlc.narg(cursor_ts)::timestamptz IS NULL
+    OR last_seen_at < sqlc.narg(cursor_ts)::timestamptz
+    OR (last_seen_at = sqlc.narg(cursor_ts)::timestamptz AND id < sqlc.narg(cursor_id)::uuid)
+  )
+ORDER BY last_seen_at DESC, id DESC
+LIMIT sqlc.arg(lim);
+
+-- name: GetExperimentalSessionByID :one
+SELECT * FROM sessions
+WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id);
+
+-- name: ListNodesBySession :many
+-- All nodes attributed to a session, ordered by capture time (chronological).
+SELECT * FROM nodes
+WHERE session_id = sqlc.arg(session_id)
+ORDER BY created_at ASC;
+
 -- name: SetNodeSessionID :exec
 -- Stamp session_id onto an already-inserted nodes row. The existing
 -- InsertNode query is left intact (additive ALTER added the column

@@ -78,6 +78,11 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	app.Get("/v1/sessions/:hash/graph", s.handleGetSessionGraph)
 	app.Get("/v1/sessions/:hash", s.handleGetSession)
 	app.Get("/v1/search", s.handleSearchEndpoint)
+
+	// Experimental sessions surface — session-table-primary, no Merkle chain
+	// walks. Breaking changes are expected; don't depend on this in production.
+	app.Get("/v1/experimental/sessions", s.handleListExperimentalSessions)
+	app.Get("/v1/experimental/sessions/:id", s.handleGetExperimentalSession)
 	app.Post("/v1/admin/seed/demo", s.handleSeedDemo)
 	app.Post("/v1/admin/backfill/usage", s.handleBackfillUsage)
 
