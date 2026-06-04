@@ -129,8 +129,19 @@ func decodeSessionsCursor(token string) (sessionsCursor, error) {
 	return c, nil
 }
 
-// handleListSessions handles GET /v1/sessions — one row per harness session
-// from the sessions table, newest first, cursor-paginated.
+// handleListSessions handles GET /v1/sessions.
+//
+//	@Summary		List sessions
+//	@Description	Returns one row per harness session from the sessions table, newest first (last_seen_at desc), cursor-paginated. This is the product session view; the Merkle leaf-chain view lives at /v1/stems.
+//	@Tags			sessions
+//	@Produce		json
+//	@Param			limit	query		int		false	"Maximum number of sessions to return (default 50, max 200)"	minimum(1)
+//	@Param			cursor	query		string	false	"Opaque pagination cursor returned by a previous response"
+//	@Success		200		{object}	SessionListResponse
+//	@Failure		400		{object}	llm.ErrorResponse	"Invalid query parameters"
+//	@Failure		500		{object}	llm.ErrorResponse	"Failed to list sessions"
+//	@Failure		501		{object}	llm.ErrorResponse	"Sessions not supported by this backend"
+//	@Router			/v1/sessions [get]
 func (s *Server) handleListSessions(c *fiber.Ctx) error {
 	reader, ok := s.driver.(sessionsReader)
 	if !ok {
@@ -319,10 +330,21 @@ func longestStemFromNodes(nodes []*merkle.Node) []*merkle.Node {
 	return result
 }
 
-// handleGetSession handles GET /v1/sessions/:id — a single session plus the
-// selected stem of turns. ?stem=longest (default) returns the longest
-// root-to-leaf path; ?stem=all returns every node ordered by created_at.
-// ?root=<hash> restricts to the subtree rooted at that node.
+// handleGetSession handles GET /v1/sessions/:id.
+//
+//	@Summary		Get a session
+//	@Description	Returns a single session, the selected stem of turns, and a summary of every stem (root-to-leaf path) in the session. ?stem=longest (default) returns the longest stem; ?stem=all returns every node ordered by created_at. ?root=<hash> restricts turns to the subtree rooted at that node.
+//	@Tags			sessions
+//	@Produce		json
+//	@Param			id		path		string	true	"Session id (UUID)"
+//	@Param			stem	query		string	false	"Which turns to return: longest (default) or all"	Enums(longest, all)
+//	@Param			root	query		string	false	"Restrict turns to the subtree rooted at this node hash"
+//	@Success		200		{object}	SessionDetailResponse
+//	@Failure		400		{object}	llm.ErrorResponse	"Missing id or unknown root"
+//	@Failure		404		{object}	llm.ErrorResponse	"Session not found"
+//	@Failure		500		{object}	llm.ErrorResponse	"Failed to load session"
+//	@Failure		501		{object}	llm.ErrorResponse	"Sessions not supported by this backend"
+//	@Router			/v1/sessions/{id} [get]
 func (s *Server) handleGetSession(c *fiber.Ctx) error {
 	reader, ok := s.driver.(sessionsReader)
 	if !ok {

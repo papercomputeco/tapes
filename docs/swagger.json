@@ -174,6 +174,128 @@
                 }
             }
         },
+        "/v1/sessions": {
+            "get": {
+                "description": "Returns one row per harness session from the sessions table, newest first (last_seen_at desc), cursor-paginated. This is the product session view; the Merkle leaf-chain view lives at /v1/stems.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "List sessions",
+                "parameters": [
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Maximum number of sessions to return (default 50, max 200)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Opaque pagination cursor returned by a previous response",
+                        "name": "cursor",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.SessionListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid query parameters",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to list sessions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Sessions not supported by this backend",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sessions/{id}": {
+            "get": {
+                "description": "Returns a single session, the selected stem of turns, and a summary of every stem (root-to-leaf path) in the session. ?stem=longest (default) returns the longest stem; ?stem=all returns every node ordered by created_at. ?root=\u003chash\u003e restricts turns to the subtree rooted at that node.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Get a session",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session id (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "enum": [
+                            "longest",
+                            "all"
+                        ],
+                        "type": "string",
+                        "description": "Which turns to return: longest (default) or all",
+                        "name": "stem",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Restrict turns to the subtree rooted at this node hash",
+                        "name": "root",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.SessionDetailResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing id or unknown root",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Session not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to load session",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Sessions not supported by this backend",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/stats": {
             "get": {
                 "description": "Returns counts plus folded cost / token / duration / tool-call / completed-count totals across every node matching the supplied filters. Numeric aggregates come from a single storage-driver SQL aggregate; cost is folded in the handler from the per-model token rollup using the configured pricing table. total_duration_ns is wall-clock MAX-MIN over the matched window (see PCC-514). completed_count uses leaf-status-only classification (assistant leaf with a terminal stop_reason) — see StatsResponse and PCC-515 for the durable chain-aware fix.",
@@ -387,6 +509,94 @@
         }
     },
     "definitions": {
+        "api.SessionDetailResponse": {
+            "type": "object",
+            "properties": {
+                "session": {
+                    "$ref": "#/definitions/api.SessionItem"
+                },
+                "stems": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.StemSummary"
+                    }
+                },
+                "turns": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.Turn"
+                    }
+                }
+            }
+        },
+        "api.SessionItem": {
+            "type": "object",
+            "properties": {
+                "cwd": {
+                    "type": "string"
+                },
+                "ended_at": {
+                    "type": "string"
+                },
+                "harness_id": {
+                    "type": "string"
+                },
+                "harness_metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "harness_session_id": {
+                    "type": "string"
+                },
+                "harness_version": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "last_seen_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "parent_session_id": {
+                    "type": "string"
+                },
+                "preview": {
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "total_cost_usd": {
+                    "type": "number"
+                },
+                "total_input_tokens": {
+                    "type": "integer"
+                },
+                "total_output_tokens": {
+                    "type": "integer"
+                },
+                "turn_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.SessionListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.SessionItem"
+                    }
+                },
+                "next_cursor": {
+                    "type": "string"
+                }
+            }
+        },
         "api.StatsResponse": {
             "type": "object",
             "properties": {
@@ -464,6 +674,23 @@
                     "items": {
                         "$ref": "#/definitions/api.Turn"
                     }
+                }
+            }
+        },
+        "api.StemSummary": {
+            "type": "object",
+            "properties": {
+                "length": {
+                    "type": "integer"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "preview": {
+                    "type": "string"
+                },
+                "root_hash": {
+                    "type": "string"
                 }
             }
         },
