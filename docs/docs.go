@@ -510,9 +510,209 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/v1/stems/{hash}/graph": {
+            "get": {
+                "description": "Returns a graph-shaped projection of the Merkle DAG around a node hash (the same ancestry returned by GET /v1/stems/{hash}). scope=root loads the requested node's resolvable root and all descendants, scope=branch loads the ancestry plus descendants of the requested node, and scope=ancestry loads only the parent chain.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stems"
+                ],
+                "summary": "Get a stem graph",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Node (stem head) hash",
+                        "name": "hash",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "enum": [
+                            "root",
+                            "branch",
+                            "ancestry"
+                        ],
+                        "type": "string",
+                        "description": "Graph scope: root, branch, or ancestry",
+                        "name": "scope",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 5000,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Maximum number of graph nodes to include",
+                        "name": "max_nodes",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.GraphResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing hash or invalid query parameters",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Stem not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to load stem graph",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
+        "api.GraphLink": {
+            "type": "object",
+            "properties": {
+                "source": {
+                    "type": "string"
+                },
+                "target": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.GraphNode": {
+            "type": "object",
+            "properties": {
+                "agent_name": {
+                    "type": "string"
+                },
+                "children_count": {
+                    "type": "integer"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "depth": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_branch_point": {
+                    "type": "boolean"
+                },
+                "is_leaf": {
+                    "type": "boolean"
+                },
+                "is_root": {
+                    "type": "boolean"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "parent_hash": {
+                    "type": "string"
+                },
+                "parent_id": {
+                    "type": "string"
+                },
+                "preview": {
+                    "type": "string"
+                },
+                "project": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "selected": {
+                    "type": "boolean"
+                },
+                "stop_reason": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "usage": {
+                    "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.Usage"
+                }
+            }
+        },
+        "api.GraphResponse": {
+            "type": "object",
+            "properties": {
+                "branch_points": {
+                    "description": "BranchPoints names included nodes with more than one child in storage.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "cycle_detected": {
+                    "description": "CycleDetected is true when storage guarded the ancestry walk out of a cycle.",
+                    "type": "boolean"
+                },
+                "hash": {
+                    "description": "Hash is the session/node hash requested by the caller.",
+                    "type": "string"
+                },
+                "leaves": {
+                    "description": "Leaves names included nodes that have no children in storage.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "links": {
+                    "description": "Links contains parent -\u003e child edges between included nodes.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.GraphLink"
+                    }
+                },
+                "missing_parent": {
+                    "description": "MissingParent names the unresolved parent hash when the ancestry is incomplete.",
+                    "type": "string"
+                },
+                "node_limit": {
+                    "description": "NodeLimit is the maximum number of nodes the server will include.",
+                    "type": "integer"
+                },
+                "nodes": {
+                    "description": "Nodes is the flat node list consumed by graph visualizers.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.GraphNode"
+                    }
+                },
+                "root_hash": {
+                    "description": "RootHash is the top-most resolvable node included in the response.",
+                    "type": "string"
+                },
+                "scope": {
+                    "description": "Scope describes which portion of the graph was loaded: root, branch, or ancestry.",
+                    "type": "string"
+                },
+                "truncated": {
+                    "description": "Truncated is true when the graph hit NodeLimit or the ancestry chain is incomplete.",
+                    "type": "boolean"
+                }
+            }
+        },
         "api.SessionDetailResponse": {
             "type": "object",
             "properties": {
