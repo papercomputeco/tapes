@@ -34,14 +34,14 @@ func (d *identityDriver) SessionIdentityByHash(_ context.Context, orgID, _ strin
 	return d.identity, d.err
 }
 
-func decodeSessionResp(server *Server, path string) (SessionResponse, int) {
+func decodeSessionResp(server *Server, path string) (StemResponse, int) {
 	return decodeSessionRespWithOrg(server, path, "")
 }
 
 // decodeSessionRespWithOrg issues the request with an optional org header so
 // tests can assert the tenant is threaded from the request down to the
 // identity lookup. An empty org sends no header (exercising the default).
-func decodeSessionRespWithOrg(server *Server, path, org string) (SessionResponse, int) {
+func decodeSessionRespWithOrg(server *Server, path, org string) (StemResponse, int) {
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 	Expect(err).NotTo(HaveOccurred())
 	if org != "" {
@@ -52,14 +52,14 @@ func decodeSessionRespWithOrg(server *Server, path, org string) (SessionResponse
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(resp.Body)
 	Expect(err).NotTo(HaveOccurred())
-	var body SessionResponse
+	var body StemResponse
 	if resp.StatusCode == fiber.StatusOK {
 		Expect(json.Unmarshal(raw, &body)).To(Succeed())
 	}
 	return body, resp.StatusCode
 }
 
-var _ = Describe("session identity surfacing on GET /v1/sessions/:hash", func() {
+var _ = Describe("session identity surfacing on GET /v1/stems/:hash", func() {
 	var (
 		ctx  context.Context
 		base storage.Driver
@@ -89,7 +89,7 @@ var _ = Describe("session identity surfacing on GET /v1/sessions/:hash", func() 
 		}
 		server := newServer(drv)
 
-		body, status := decodeSessionResp(server, "/v1/sessions/"+leaf.Hash)
+		body, status := decodeSessionResp(server, "/v1/stems/"+leaf.Hash)
 		Expect(status).To(Equal(fiber.StatusOK))
 		Expect(body.HarnessID).To(Equal("claude"))
 		Expect(body.HarnessSessionID).To(Equal("sess-xyz"))
@@ -107,7 +107,7 @@ var _ = Describe("session identity surfacing on GET /v1/sessions/:hash", func() 
 		server := newServer(drv)
 
 		org := "11111111-1111-1111-1111-111111111111"
-		_, status := decodeSessionRespWithOrg(server, "/v1/sessions/"+leaf.Hash, org)
+		_, status := decodeSessionRespWithOrg(server, "/v1/stems/"+leaf.Hash, org)
 		Expect(status).To(Equal(fiber.StatusOK))
 		Expect(drv.lastOrgID).To(Equal(org), "the lookup must be scoped to the requested tenant")
 	})
@@ -116,7 +116,7 @@ var _ = Describe("session identity surfacing on GET /v1/sessions/:hash", func() 
 		drv := &identityDriver{Driver: base, identity: nil, err: nil}
 		server := newServer(drv)
 
-		body, status := decodeSessionResp(server, "/v1/sessions/"+leaf.Hash)
+		body, status := decodeSessionResp(server, "/v1/stems/"+leaf.Hash)
 		Expect(status).To(Equal(fiber.StatusOK))
 		Expect(body.HarnessID).To(BeEmpty())
 		Expect(body.HarnessSessionID).To(BeEmpty())
@@ -134,7 +134,7 @@ var _ = Describe("session identity surfacing on GET /v1/sessions/:hash", func() 
 
 		server := newServer(base)
 
-		body, status := decodeSessionResp(server, "/v1/sessions/"+leaf.Hash)
+		body, status := decodeSessionResp(server, "/v1/stems/"+leaf.Hash)
 		Expect(status).To(Equal(fiber.StatusOK))
 		Expect(body.HarnessID).To(BeEmpty())
 		Expect(body.HarnessSessionID).To(BeEmpty())

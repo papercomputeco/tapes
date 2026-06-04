@@ -124,7 +124,7 @@
     }
 
     async function loadSessions() {
-      var data = await fetchJSON('/v1/sessions/summary?limit=50');
+      var data = await fetchJSON('/v1/stems?limit=50');
       state.sessions = data.items || [];
       renderSessions();
       if (!state.currentHash && state.sessions.length > 0) {
@@ -162,7 +162,7 @@
       history.replaceState(null, '', '/?hash=' + encodeURIComponent(hash) + '&scope=' + encodeURIComponent(state.scope));
       setStatus('Loading graph ' + shortHash(hash) + '...', false);
       try {
-        var graph = await fetchJSON('/v1/sessions/' + encodeURIComponent(hash) + '/graph' + query);
+        var graph = await fetchJSON('/v1/stems/' + encodeURIComponent(hash) + '/graph' + query);
         renderSessions();
         renderDag(graph);
         setStatus('Loaded ' + graph.nodes.length + ' nodes.', false);

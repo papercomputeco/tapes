@@ -93,7 +93,7 @@ type httpTurn struct {
 	CreatedAt  time.Time          `json:"created_at,omitzero"`
 }
 
-// Overview fetches a single recent page from /v1/sessions/summary, then runs
+// Overview fetches a single recent page from /v1/stems, then runs
 // the existing deck-side grouping, filtering, and rollup logic on that bounded
 // result set.
 //
@@ -110,7 +110,7 @@ func (q *HTTPQuery) Overview(ctx context.Context, filters Filters) (*Overview, e
 	return page.Overview, nil
 }
 
-// OverviewPage fetches one bounded page from /v1/sessions/summary and returns
+// OverviewPage fetches one bounded page from /v1/stems and returns
 // the API cursor needed to request the next page. The first page replaces the
 // detail cache; subsequent pages merge into it so group/detail lookups keep
 // working for every loaded row.
@@ -139,7 +139,7 @@ func (q *HTTPQuery) OverviewPage(ctx context.Context, filters Filters, cursor st
 	}, nil
 }
 
-// SessionDetail fetches the chain for a single session via /v1/sessions/:hash
+// SessionDetail fetches the chain for a single stem via /v1/stems/:hash
 // and renders the per-turn message data using the cached SessionSummary for
 // the same ID. Group IDs (synthetic IDs from groupSessionCandidates) are
 // resolved against the cached candidates.
@@ -267,7 +267,7 @@ func buildOverviewFromCandidates(candidates []sessionCandidate, filters Filters)
 }
 
 func (q *HTTPQuery) fetchSummaryPage(ctx context.Context, cursor string, filters Filters, limit int) (*httpSummaryResponse, error) {
-	u, err := url.Parse(q.apiTarget + "/v1/sessions/summary")
+	u, err := url.Parse(q.apiTarget + "/v1/stems")
 	if err != nil {
 		return nil, fmt.Errorf("invalid api target: %w", err)
 	}
@@ -312,7 +312,7 @@ func (q *HTTPQuery) fetchSummaryPage(ctx context.Context, cursor string, filters
 }
 
 func (q *HTTPQuery) fetchSessionChain(ctx context.Context, hash string) ([]httpTurn, error) {
-	u := q.apiTarget + "/v1/sessions/" + url.PathEscape(hash)
+	u := q.apiTarget + "/v1/stems/" + url.PathEscape(hash)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)

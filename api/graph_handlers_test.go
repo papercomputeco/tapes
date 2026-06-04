@@ -18,7 +18,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
-var _ = Describe("GET /v1/sessions/:hash/graph", func() {
+var _ = Describe("GET /v1/stems/:hash/graph", func() {
 	var (
 		server *Server
 		inMem  storage.Driver
@@ -210,9 +210,9 @@ var _ = Describe("minimal web UI", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(raw)).To(ContainSubstring("d3@7.9.0"))
 		Expect(string(raw)).To(ContainSubstring("integrity=\"sha256-8glLv2FBs1lyLE/kVOtsSw8OQswQzHr5IfwVj864ZTk=\""))
-		Expect(string(raw)).To(ContainSubstring("/v1/sessions/"))
-		Expect(string(raw)).To(ContainSubstring("/v1/sessions/summary"))
-		Expect(string(raw)).NotTo(ContainSubstring("/v1/dags/"))
+		Expect(string(raw)).To(ContainSubstring("/v1/stems/"))
+		Expect(string(raw)).To(ContainSubstring("/v1/stems?limit="))
+		Expect(string(raw)).NotTo(ContainSubstring("/v1/sessions/summary"))
 	})
 
 	It("does not catch all unknown routes", func() {
@@ -227,7 +227,7 @@ var _ = Describe("minimal web UI", func() {
 })
 
 func sessionGraphPath(hash string) string {
-	return "/v1/sessions/" + hash + "/graph"
+	return "/v1/stems/" + hash + "/graph"
 }
 
 func decodeGraph(server *Server, path string) GraphResponse {

@@ -40,7 +40,7 @@ var _ = Describe("NewCheckoutCmd", func() {
 
 var _ = Describe("Session API response parsing", func() {
 	// This tests that the checkout command can correctly parse the
-	// API response format used by GET /v1/sessions/:hash
+	// API response format used by GET /v1/stems/:hash
 
 	type turn struct {
 		Hash       string             `json:"hash"`
@@ -111,7 +111,7 @@ var _ = Describe("Session API response parsing", func() {
 
 	It("correctly handles a mock API server returning a session", func() {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			Expect(r.URL.Path).To(Equal("/v1/sessions/abc123"))
+			Expect(r.URL.Path).To(Equal("/v1/stems/abc123"))
 			Expect(r.Method).To(Equal("GET"))
 
 			resp := sessionResponse{
@@ -141,7 +141,7 @@ var _ = Describe("Session API response parsing", func() {
 		defer server.Close()
 
 		// Fetch from mock server
-		url := server.URL + "/v1/sessions/abc123"
+		url := server.URL + "/v1/stems/abc123"
 		resp, err := http.Get(url)
 		Expect(err).NotTo(HaveOccurred())
 		defer resp.Body.Close()
@@ -164,7 +164,7 @@ var _ = Describe("Session API response parsing", func() {
 		}))
 		defer server.Close()
 
-		resp, err := http.Get(server.URL + "/v1/sessions/unknown")
+		resp, err := http.Get(server.URL + "/v1/stems/unknown")
 		Expect(err).NotTo(HaveOccurred())
 		defer resp.Body.Close()
 

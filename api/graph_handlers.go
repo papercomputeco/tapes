@@ -20,7 +20,7 @@ const (
 	upperGraphMaxNodes   = 5000
 )
 
-// GraphResponse is the graph-shaped projection for GET /v1/sessions/:hash/graph.
+// GraphResponse is the graph-shaped projection for GET /v1/stems/:hash/graph.
 type GraphResponse struct {
 	// Hash is the session/node hash requested by the caller.
 	Hash string `json:"hash"`
@@ -85,21 +85,21 @@ type GraphLink struct {
 	Target string `json:"target"`
 }
 
-// handleGetSessionGraph handles GET /v1/sessions/:hash/graph.
+// handleGetStemGraph handles GET /v1/stems/:hash/graph.
 //
-//	@Summary		Get a session graph
-//	@Description	Returns a graph-shaped projection of the same session ancestry returned by GET /v1/sessions/{hash}. scope=root loads the requested node's resolvable root and all descendants, scope=branch loads the ancestry plus descendants of the requested node, and scope=ancestry loads only the parent chain.
-//	@Tags			sessions
+//	@Summary		Get a stem graph
+//	@Description	Returns a graph-shaped projection of the Merkle DAG around a node hash (the same ancestry returned by GET /v1/stems/{hash}). scope=root loads the requested node's resolvable root and all descendants, scope=branch loads the ancestry plus descendants of the requested node, and scope=ancestry loads only the parent chain.
+//	@Tags			stems
 //	@Produce		json
-//	@Param			hash		path	string	true	"Session hash"
+//	@Param			hash		path	string	true	"Node (stem head) hash"
 //	@Param			scope		query	string	false	"Graph scope: root, branch, or ancestry" Enums(root, branch, ancestry)
 //	@Param			max_nodes	query	int		false	"Maximum number of graph nodes to include" minimum(1) maximum(5000)
 //	@Success		200			{object}	GraphResponse
 //	@Failure		400			{object}	llm.ErrorResponse	"Missing hash or invalid query parameters"
-//	@Failure		404			{object}	llm.ErrorResponse	"Session not found"
-//	@Failure		500			{object}	llm.ErrorResponse	"Failed to load session graph"
-//	@Router			/v1/sessions/{hash}/graph [get]
-func (s *Server) handleGetSessionGraph(c *fiber.Ctx) error {
+//	@Failure		404			{object}	llm.ErrorResponse	"Stem not found"
+//	@Failure		500			{object}	llm.ErrorResponse	"Failed to load stem graph"
+//	@Router			/v1/stems/{hash}/graph [get]
+func (s *Server) handleGetStemGraph(c *fiber.Ctx) error {
 	hash, chain, err := s.loadSessionChain(c)
 	if err != nil {
 		return s.handleLoadSessionChainError(c, hash, err)

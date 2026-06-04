@@ -53,6 +53,41 @@ func (q *Queries) GetSessionByNaturalKey(ctx context.Context, arg GetSessionByNa
 	return i, err
 }
 
+const getSessionRecord = `-- name: GetSessionRecord :one
+SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count FROM sessions
+WHERE org_id = $1 AND id = $2
+`
+
+type GetSessionRecordParams struct {
+	OrgID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) GetSessionRecord(ctx context.Context, arg GetSessionRecordParams) (Session, error) {
+	row := q.db.QueryRow(ctx, getSessionRecord, arg.OrgID, arg.ID)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.AuthSubject,
+		&i.HarnessID,
+		&i.HarnessSessionID,
+		&i.Name,
+		&i.Cwd,
+		&i.HarnessVersion,
+		&i.ParentSessionID,
+		&i.StartedAt,
+		&i.LastSeenAt,
+		&i.EndedAt,
+		&i.HarnessMetadata,
+		&i.TotalInputTokens,
+		&i.TotalOutputTokens,
+		&i.TotalCostUsd,
+		&i.TurnCount,
+	)
+	return i, err
+}
+
 const insertSessionPlaceholder = `-- name: InsertSessionPlaceholder :one
 INSERT INTO sessions (
     id,
@@ -107,6 +142,119 @@ func (q *Queries) InsertSessionPlaceholder(ctx context.Context, arg InsertSessio
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const listNodesBySession = `-- name: ListNodesBySession :many
+SELECT hash, bucket, type, role, content, model, provider, agent_name, stop_reason, prompt_tokens, completion_tokens, total_tokens, cache_creation_input_tokens, cache_read_input_tokens, total_duration_ns, prompt_duration_ns, project, created_at, parent_hash, session_id, org_id FROM nodes
+WHERE session_id = $1
+ORDER BY created_at ASC
+`
+
+// All nodes attributed to a session, ordered by capture time (chronological).
+func (q *Queries) ListNodesBySession(ctx context.Context, sessionID pgtype.UUID) ([]Node, error) {
+	rows, err := q.db.Query(ctx, listNodesBySession, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Node
+	for rows.Next() {
+		var i Node
+		if err := rows.Scan(
+			&i.Hash,
+			&i.Bucket,
+			&i.Type,
+			&i.Role,
+			&i.Content,
+			&i.Model,
+			&i.Provider,
+			&i.AgentName,
+			&i.StopReason,
+			&i.PromptTokens,
+			&i.CompletionTokens,
+			&i.TotalTokens,
+			&i.CacheCreationInputTokens,
+			&i.CacheReadInputTokens,
+			&i.TotalDurationNs,
+			&i.PromptDurationNs,
+			&i.Project,
+			&i.CreatedAt,
+			&i.ParentHash,
+			&i.SessionID,
+			&i.OrgID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSessionRecords = `-- name: ListSessionRecords :many
+SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count FROM sessions
+WHERE org_id = $1
+  AND (
+    $2::timestamptz IS NULL
+    OR last_seen_at < $2::timestamptz
+    OR (last_seen_at = $2::timestamptz AND id < $3::uuid)
+  )
+ORDER BY last_seen_at DESC, id DESC
+LIMIT $4
+`
+
+type ListSessionRecordsParams struct {
+	OrgID    pgtype.UUID
+	CursorTs pgtype.Timestamptz
+	CursorID pgtype.UUID
+	Lim      int32
+}
+
+// Paginated list of sessions for an org ordered newest-first (last_seen_at DESC, id DESC).
+// Pass NULL cursor values to start from the beginning.
+func (q *Queries) ListSessionRecords(ctx context.Context, arg ListSessionRecordsParams) ([]Session, error) {
+	rows, err := q.db.Query(ctx, listSessionRecords,
+		arg.OrgID,
+		arg.CursorTs,
+		arg.CursorID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Session
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.AuthSubject,
+			&i.HarnessID,
+			&i.HarnessSessionID,
+			&i.Name,
+			&i.Cwd,
+			&i.HarnessVersion,
+			&i.ParentSessionID,
+			&i.StartedAt,
+			&i.LastSeenAt,
+			&i.EndedAt,
+			&i.HarnessMetadata,
+			&i.TotalInputTokens,
+			&i.TotalOutputTokens,
+			&i.TotalCostUsd,
+			&i.TurnCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const setNodeSessionID = `-- name: SetNodeSessionID :exec

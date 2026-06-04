@@ -8,31 +8,30 @@ import (
 	"github.com/papercomputeco/tapes/pkg/sessions"
 )
 
-// handleListSessionsSummary handles GET /v1/sessions/summary.
+// handleListStems handles GET /v1/stems.
 //
-// Unlike the lean /v1/sessions endpoint, this walks each session's full
-// ancestry chain to compute rich per-item aggregates (cost, tokens, status,
-// label, duration, etc.) via pkg/sessions.BuildSummary.
+// A "stem" is a root-to-leaf chain of Merkle nodes. This walks each leaf's
+// full ancestry chain to compute rich per-item aggregates (cost, tokens,
+// status, label, duration, etc.) via pkg/sessions.BuildSummary. This is the
+// Merkle/forensic view; the product session view lives at /v1/sessions.
 //
-// Pagination and filter params match /v1/sessions exactly.
-//
-//	@Summary		List derived session summaries
-//	@Description	Returns paginated per-session summaries including derived labels, status, token counts, cost, duration, and truncation metadata.
-//	@Tags			sessions
+//	@Summary		List stems (Merkle leaf chains) with aggregates
+//	@Description	Returns paginated per-stem summaries including derived labels, status, token counts, cost, duration, and truncation metadata.
+//	@Tags			stems
 //	@Produce		json
 //	@Param			project		query		string	false	"Filter by project name"
 //	@Param			agent_name	query		string	false	"Filter by agent name"
 //	@Param			model		query		string	false	"Filter by model name"
 //	@Param			provider	query		string	false	"Filter by provider name"
-//	@Param			since		query		string	false	"Only include sessions updated at or after this RFC3339 timestamp"	format(date-time)
-//	@Param			until		query		string	false	"Only include sessions updated before or at this RFC3339 timestamp"	format(date-time)
+//	@Param			since		query		string	false	"Only include stems updated at or after this RFC3339 timestamp"	format(date-time)
+//	@Param			until		query		string	false	"Only include stems updated before or at this RFC3339 timestamp"	format(date-time)
 //	@Param			cursor		query		string	false	"Opaque pagination cursor returned by a previous response"
-//	@Param			limit		query		int		false	"Maximum number of summaries to return"	minimum(1)
-//	@Success		200			{object}	SessionSummaryListResponse
+//	@Param			limit		query		int		false	"Maximum number of stems to return"	minimum(1)
+//	@Success		200			{object}	StemListResponse
 //	@Failure		400			{object}	llm.ErrorResponse	"Invalid query parameters"
-//	@Failure		500			{object}	llm.ErrorResponse	"Failed to list or summarize sessions"
-//	@Router			/v1/sessions/summary [get]
-func (s *Server) handleListSessionsSummary(c *fiber.Ctx) error {
+//	@Failure		500			{object}	llm.ErrorResponse	"Failed to list or summarize stems"
+//	@Router			/v1/stems [get]
+func (s *Server) handleListStems(c *fiber.Ctx) error {
 	opts, err := parseListOpts(c)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
@@ -40,8 +39,8 @@ func (s *Server) handleListSessionsSummary(c *fiber.Ctx) error {
 
 	page, err := s.driver.ListSessions(c.Context(), opts)
 	if err != nil {
-		s.logger.Error("list sessions summary", "error", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
+		s.logger.Error("list stems", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list stems"})
 	}
 
 	pricing := s.config.Pricing
@@ -96,7 +95,7 @@ func (s *Server) handleListSessionsSummary(c *fiber.Ctx) error {
 		items = append(items, summary)
 	}
 
-	return c.JSON(SessionSummaryListResponse{
+	return c.JSON(StemListResponse{
 		Items:      items,
 		NextCursor: page.NextCursor,
 	})
