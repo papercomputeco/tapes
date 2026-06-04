@@ -12,7 +12,7 @@
   ·
   <a href="https://tapes.dev/">Download</a>
   ·
-  <a href="https://tapes.dev/docs">Documentation</a>
+  <a href="https://tapes.dev/guides/">Documentation</a>
   ·
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
@@ -49,14 +49,18 @@ Install `tapes`:
 curl -fsSL https://download.tapes.dev/install | bash
 ```
 
-Run the `tapes` services with an embedding provider. Embeddings power `tapes search`;
-choose either local Ollama or OpenAI.
+`tapes` stores sessions in PostgreSQL (with the `pgvector` extension) and uses an
+embedding provider to power `tapes search`. The quickest way to get a local
+Postgres — plus Ollama for embeddings — is the bundled Docker bootstrap (requires Docker):
 
-For local embeddings, run Ollama and pull the default `embeddinggemma` model:
+```bash
+tapes local up
+```
+
+For local embeddings, pull the default `embeddinggemma` model:
 
 ```bash
 ollama pull embeddinggemma
-ollama serve
 ```
 
 Then start Tapes:
@@ -65,7 +69,8 @@ Then start Tapes:
 tapes serve
 ```
 
-For OpenAI embeddings, store an API key and switch the embedding provider:
+Prefer OpenAI embeddings? Store an API key and switch the embedding provider
+(`tapes local up` still provides the required Postgres; Ollama just goes unused):
 
 ```bash
 tapes auth openai
