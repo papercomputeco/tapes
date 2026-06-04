@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
@@ -229,11 +230,6 @@ func sessionStems(nodes []*merkle.Node) []StemSummary {
 		return 1 + best
 	}
 
-	byHash := make(map[string]*merkle.Node, len(nodes))
-	for _, n := range nodes {
-		byHash[n.Hash] = n
-	}
-
 	var stems []StemSummary
 	for _, n := range nodes {
 		if n.ParentHash == nil || !inSet[*n.ParentHash] {
@@ -358,6 +354,11 @@ func (s *Server) handleGetSession(c *fiber.Ctx) error {
 	id := c.Params("id")
 	if id == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id parameter required"})
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		// A session id is a UUID; a malformed one is a client error, not a
+		// storage failure. (The swagger annotation documents 400 here.)
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id must be a valid UUID"})
 	}
 
 	orgID := orgIDFromCtx(c)
