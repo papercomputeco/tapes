@@ -105,7 +105,7 @@ UPDATE sessions
        total_cost_usd      = total_cost_usd      + sqlc.arg(cost_usd_delta)
  WHERE id = sqlc.arg(id);
 
--- name: ListExperimentalSessions :many
+-- name: ListSessionRecords :many
 -- Paginated list of sessions for an org ordered newest-first (last_seen_at DESC, id DESC).
 -- Pass NULL cursor values to start from the beginning.
 SELECT * FROM sessions
@@ -118,7 +118,7 @@ WHERE org_id = sqlc.arg(org_id)
 ORDER BY last_seen_at DESC, id DESC
 LIMIT sqlc.arg(lim);
 
--- name: GetExperimentalSessionByID :one
+-- name: GetSessionRecord :one
 SELECT * FROM sessions
 WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id);
 

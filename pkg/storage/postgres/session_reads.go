@@ -18,18 +18,18 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage/postgres/gensqlc"
 )
 
-// ListExperimentalSessions returns a page of sessions for an org ordered by
+// ListSessionRecords returns a page of sessions for an org ordered by
 // last_seen_at DESC. Pass nil cursorTs/cursorID to start from the beginning.
-func (d *Driver) ListExperimentalSessions(
+func (d *Driver) ListSessionRecords(
 	ctx context.Context,
 	orgID string,
 	limit int,
 	cursorTs *time.Time,
 	cursorID *string,
-) ([]storage.ExperimentalSession, error) {
+) ([]storage.SessionRecord, error) {
 	oid, err := orgIDFromString(orgID)
 	if err != nil {
-		return nil, fmt.Errorf("list experimental sessions: %w", err)
+		return nil, fmt.Errorf("list session records: %w", err)
 	}
 	if limit <= 0 {
 		limit = storage.DefaultListLimit
@@ -41,24 +41,24 @@ func (d *Driver) ListExperimentalSessions(
 		tsPg = pgtype.Timestamptz{Time: *cursorTs, Valid: true}
 		parsed, err := uuid.Parse(*cursorID)
 		if err != nil {
-			return nil, fmt.Errorf("list experimental sessions: invalid cursor id: %w", err)
+			return nil, fmt.Errorf("list session records: invalid cursor id: %w", err)
 		}
 		idPg = pgtype.UUID{Bytes: parsed, Valid: true}
 	}
 
-	rows, err := d.q.ListExperimentalSessions(ctx, gensqlc.ListExperimentalSessionsParams{
+	rows, err := d.q.ListSessionRecords(ctx, gensqlc.ListSessionRecordsParams{
 		OrgID:    oid,
 		CursorTs: tsPg,
 		CursorID: idPg,
 		Lim:      int32(limit),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("list experimental sessions: %w", err)
+		return nil, fmt.Errorf("list session records: %w", err)
 	}
 
-	out := make([]storage.ExperimentalSession, len(rows))
+	out := make([]storage.SessionRecord, len(rows))
 	for i, row := range rows {
-		out[i] = experimentalSessionFromRow(row)
+		out[i] = sessionRecordFromRow(row)
 	}
 
 	previews, err := d.getSessionPreviews(ctx, out)
@@ -77,7 +77,7 @@ const sessionPreviewMaxRunes = 120
 // the supplied list, in a single query. Returns a map of session UUID string →
 // truncated plain text preview (harness tags still present; stripping is the
 // caller's responsibility).
-func (d *Driver) getSessionPreviews(ctx context.Context, sessions []storage.ExperimentalSession) (map[string]string, error) {
+func (d *Driver) getSessionPreviews(ctx context.Context, sessions []storage.SessionRecord) (map[string]string, error) {
 	if len(sessions) == 0 {
 		return nil, nil
 	}
@@ -119,17 +119,17 @@ ORDER BY session_id, created_at ASC
 	return out, rows.Err()
 }
 
-// GetExperimentalSessionByID returns a single session by its UUID, or nil if not found.
-func (d *Driver) GetExperimentalSessionByID(ctx context.Context, orgID, id string) (*storage.ExperimentalSession, error) {
+// GetSessionRecord returns a single session by its UUID, or nil if not found.
+func (d *Driver) GetSessionRecord(ctx context.Context, orgID, id string) (*storage.SessionRecord, error) {
 	oid, err := orgIDFromString(orgID)
 	if err != nil {
-		return nil, fmt.Errorf("get experimental session: %w", err)
+		return nil, fmt.Errorf("get session record: %w", err)
 	}
 	parsed, err := uuid.Parse(id)
 	if err != nil {
-		return nil, fmt.Errorf("get experimental session: invalid id %q: %w", id, err)
+		return nil, fmt.Errorf("get session record: invalid id %q: %w", id, err)
 	}
-	row, err := d.q.GetExperimentalSessionByID(ctx, gensqlc.GetExperimentalSessionByIDParams{
+	row, err := d.q.GetSessionRecord(ctx, gensqlc.GetSessionRecordParams{
 		OrgID: oid,
 		ID:    pgtype.UUID{Bytes: parsed, Valid: true},
 	})
@@ -137,9 +137,9 @@ func (d *Driver) GetExperimentalSessionByID(ctx context.Context, orgID, id strin
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("get experimental session: %w", err)
+		return nil, fmt.Errorf("get session record: %w", err)
 	}
-	s := experimentalSessionFromRow(row)
+	s := sessionRecordFromRow(row)
 	return &s, nil
 }
 
@@ -157,10 +157,10 @@ func (d *Driver) ListNodesBySession(ctx context.Context, sessionID string) ([]*m
 	return merkleNodesFromRows(rows)
 }
 
-// experimentalSessionFromRow converts a sqlc-generated Session row to
-// the storage-level ExperimentalSession type.
-func experimentalSessionFromRow(row gensqlc.Session) storage.ExperimentalSession {
-	s := storage.ExperimentalSession{
+// sessionRecordFromRow converts a sqlc-generated Session row to
+// the storage-level SessionRecord type.
+func sessionRecordFromRow(row gensqlc.Session) storage.SessionRecord {
+	s := storage.SessionRecord{
 		ID:                uuidToString(row.ID),
 		HarnessID:         row.HarnessID,
 		HarnessSessionID:  row.HarnessSessionID,

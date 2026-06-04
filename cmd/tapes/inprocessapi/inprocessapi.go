@@ -21,7 +21,7 @@ import (
 // to construct an HTTP client, plus a stop function that must be invoked
 // at shutdown to release the listener and close the storage driver.
 //
-// pricing is passed through to the API server's /v1/sessions/summary
+// pricing is passed through to the API server's /v1/stems
 // handler. nil is acceptable; the handler falls back to
 // sessions.DefaultPricing in that case.
 func Start(ctx context.Context, postgresDSN string, pricing sessions.PricingTable) (string, func(), error) {

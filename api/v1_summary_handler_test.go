@@ -19,7 +19,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
-var _ = Describe("GET /v1/sessions/summary", func() {
+var _ = Describe("GET /v1/stems", func() {
 	var (
 		server   *Server
 		inMem    storage.Driver
@@ -80,7 +80,7 @@ var _ = Describe("GET /v1/sessions/summary", func() {
 		return assistant
 	}
 
-	decodeSummary := func(path string) SessionSummaryListResponse {
+	decodeSummary := func(path string) StemListResponse {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
 		Expect(err).NotTo(HaveOccurred())
 		resp, err := server.app.Test(req)
@@ -89,13 +89,13 @@ var _ = Describe("GET /v1/sessions/summary", func() {
 		defer resp.Body.Close()
 		raw, err := io.ReadAll(resp.Body)
 		Expect(err).NotTo(HaveOccurred())
-		var body SessionSummaryListResponse
+		var body StemListResponse
 		Expect(json.Unmarshal(raw, &body)).To(Succeed())
 		return body
 	}
 
 	It("returns an empty list for an empty store", func() {
-		body := decodeSummary("/v1/sessions/summary")
+		body := decodeSummary("/v1/stems")
 		Expect(body.Items).To(BeEmpty())
 		Expect(body.NextCursor).To(BeEmpty())
 	})
@@ -103,7 +103,7 @@ var _ = Describe("GET /v1/sessions/summary", func() {
 	It("builds per-session summaries with cost, status, and duration", func() {
 		leaf := seedSession("big", 0, 1_000_000, 500_000, "stop")
 
-		body := decodeSummary("/v1/sessions/summary")
+		body := decodeSummary("/v1/stems")
 		Expect(body.Items).To(HaveLen(1))
 
 		item := body.Items[0]
@@ -123,17 +123,17 @@ var _ = Describe("GET /v1/sessions/summary", func() {
 		leaf2 := seedSession("b", 5*time.Minute, 200_000, 100_000, "stop")  //
 		leaf3 := seedSession("c", 10*time.Minute, 300_000, 150_000, "stop") // newest
 
-		page := decodeSummary("/v1/sessions/summary")
+		page := decodeSummary("/v1/stems")
 		Expect(page.Items).To(HaveLen(3))
 		Expect(page.Items[0].ID).To(Equal(leaf3.Hash))
 		Expect(page.Items[1].ID).To(Equal(leaf2.Hash))
 		Expect(page.Items[2].ID).To(Equal(leaf1.Hash))
 
-		page1 := decodeSummary("/v1/sessions/summary?limit=2")
+		page1 := decodeSummary("/v1/stems?limit=2")
 		Expect(page1.Items).To(HaveLen(2))
 		Expect(page1.NextCursor).NotTo(BeEmpty())
 
-		page2 := decodeSummary("/v1/sessions/summary?limit=2&cursor=" + page1.NextCursor)
+		page2 := decodeSummary("/v1/stems?limit=2&cursor=" + page1.NextCursor)
 		Expect(page2.Items).To(HaveLen(1))
 		Expect(page2.Items[0].ID).To(Equal(leaf1.Hash))
 		Expect(page2.NextCursor).To(BeEmpty())
@@ -156,25 +156,25 @@ var _ = Describe("GET /v1/sessions/summary", func() {
 		_, err := inMem.Put(ctx, other)
 		Expect(err).NotTo(HaveOccurred())
 
-		body := decodeSummary("/v1/sessions/summary?project=tapes")
+		body := decodeSummary("/v1/stems?project=tapes")
 		Expect(body.Items).To(HaveLen(1))
 		Expect(body.Items[0].Project).To(Equal("tapes"))
 	})
 
 	It("returns 400 for an invalid cursor", func() {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "/v1/sessions/summary?cursor=not-a-real-cursor!!!", nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "/v1/stems?cursor=not-a-real-cursor!!!", nil)
 		Expect(err).NotTo(HaveOccurred())
 		resp, err := server.app.Test(req)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resp.StatusCode).To(Equal(fiber.StatusBadRequest))
 	})
 
-	It("does not shadow /v1/sessions/:hash with the static summary route", func() {
+	It("does not shadow /v1/stems/:hash with the static /v1/stems list route", func() {
 		leaf := seedSession("a", 0, 100_000, 50_000, "stop")
 
-		// Hitting /v1/sessions/<realhash> should still resolve to the detail
-		// endpoint, not the summary endpoint.
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "/v1/sessions/"+leaf.Hash, nil)
+		// Hitting /v1/stems/<realhash> should still resolve to the stem
+		// detail endpoint, not the list endpoint.
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "/v1/stems/"+leaf.Hash, nil)
 		Expect(err).NotTo(HaveOccurred())
 		resp, err := server.app.Test(req)
 		Expect(err).NotTo(HaveOccurred())
@@ -182,9 +182,9 @@ var _ = Describe("GET /v1/sessions/summary", func() {
 
 		raw, err := io.ReadAll(resp.Body)
 		Expect(err).NotTo(HaveOccurred())
-		var session SessionResponse
-		Expect(json.Unmarshal(raw, &session)).To(Succeed())
-		Expect(session.Hash).To(Equal(leaf.Hash))
-		Expect(session.Turns).NotTo(BeEmpty())
+		var stem StemResponse
+		Expect(json.Unmarshal(raw, &stem)).To(Succeed())
+		Expect(stem.Hash).To(Equal(leaf.Hash))
+		Expect(stem.Turns).NotTo(BeEmpty())
 	})
 })

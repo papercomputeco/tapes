@@ -11,18 +11,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const getExperimentalSessionByID = `-- name: GetExperimentalSessionByID :one
+const getSessionByNaturalKey = `-- name: GetSessionByNaturalKey :one
 SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count FROM sessions
-WHERE org_id = $1 AND id = $2
+WHERE org_id = $1
+  AND harness_id = $2
+  AND harness_session_id = $3
 `
 
-type GetExperimentalSessionByIDParams struct {
-	OrgID pgtype.UUID
-	ID    pgtype.UUID
+type GetSessionByNaturalKeyParams struct {
+	OrgID            pgtype.UUID
+	HarnessID        string
+	HarnessSessionID string
 }
 
-func (q *Queries) GetExperimentalSessionByID(ctx context.Context, arg GetExperimentalSessionByIDParams) (Session, error) {
-	row := q.db.QueryRow(ctx, getExperimentalSessionByID, arg.OrgID, arg.ID)
+// Lookup by the unique (org_id, harness_id, harness_session_id) index.
+// Used by the parent-FK resolution path in ingest: when an inbound
+// request carries a parent_harness_session_id hint, ingest reads the
+// parent's sessions.id this way and FKs it onto the new row.
+func (q *Queries) GetSessionByNaturalKey(ctx context.Context, arg GetSessionByNaturalKeyParams) (Session, error) {
+	row := q.db.QueryRow(ctx, getSessionByNaturalKey, arg.OrgID, arg.HarnessID, arg.HarnessSessionID)
 	var i Session
 	err := row.Scan(
 		&i.ID,
@@ -46,25 +53,18 @@ func (q *Queries) GetExperimentalSessionByID(ctx context.Context, arg GetExperim
 	return i, err
 }
 
-const getSessionByNaturalKey = `-- name: GetSessionByNaturalKey :one
+const getSessionRecord = `-- name: GetSessionRecord :one
 SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count FROM sessions
-WHERE org_id = $1
-  AND harness_id = $2
-  AND harness_session_id = $3
+WHERE org_id = $1 AND id = $2
 `
 
-type GetSessionByNaturalKeyParams struct {
-	OrgID            pgtype.UUID
-	HarnessID        string
-	HarnessSessionID string
+type GetSessionRecordParams struct {
+	OrgID pgtype.UUID
+	ID    pgtype.UUID
 }
 
-// Lookup by the unique (org_id, harness_id, harness_session_id) index.
-// Used by the parent-FK resolution path in ingest: when an inbound
-// request carries a parent_harness_session_id hint, ingest reads the
-// parent's sessions.id this way and FKs it onto the new row.
-func (q *Queries) GetSessionByNaturalKey(ctx context.Context, arg GetSessionByNaturalKeyParams) (Session, error) {
-	row := q.db.QueryRow(ctx, getSessionByNaturalKey, arg.OrgID, arg.HarnessID, arg.HarnessSessionID)
+func (q *Queries) GetSessionRecord(ctx context.Context, arg GetSessionRecordParams) (Session, error) {
+	row := q.db.QueryRow(ctx, getSessionRecord, arg.OrgID, arg.ID)
 	var i Session
 	err := row.Scan(
 		&i.ID,
@@ -144,70 +144,6 @@ func (q *Queries) InsertSessionPlaceholder(ctx context.Context, arg InsertSessio
 	return id, err
 }
 
-const listExperimentalSessions = `-- name: ListExperimentalSessions :many
-SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count FROM sessions
-WHERE org_id = $1
-  AND (
-    $2::timestamptz IS NULL
-    OR last_seen_at < $2::timestamptz
-    OR (last_seen_at = $2::timestamptz AND id < $3::uuid)
-  )
-ORDER BY last_seen_at DESC, id DESC
-LIMIT $4
-`
-
-type ListExperimentalSessionsParams struct {
-	OrgID    pgtype.UUID
-	CursorTs pgtype.Timestamptz
-	CursorID pgtype.UUID
-	Lim      int32
-}
-
-// Paginated list of sessions for an org ordered newest-first (last_seen_at DESC, id DESC).
-// Pass NULL cursor values to start from the beginning.
-func (q *Queries) ListExperimentalSessions(ctx context.Context, arg ListExperimentalSessionsParams) ([]Session, error) {
-	rows, err := q.db.Query(ctx, listExperimentalSessions,
-		arg.OrgID,
-		arg.CursorTs,
-		arg.CursorID,
-		arg.Lim,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Session
-	for rows.Next() {
-		var i Session
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.AuthSubject,
-			&i.HarnessID,
-			&i.HarnessSessionID,
-			&i.Name,
-			&i.Cwd,
-			&i.HarnessVersion,
-			&i.ParentSessionID,
-			&i.StartedAt,
-			&i.LastSeenAt,
-			&i.EndedAt,
-			&i.HarnessMetadata,
-			&i.TotalInputTokens,
-			&i.TotalOutputTokens,
-			&i.TotalCostUsd,
-			&i.TurnCount,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listNodesBySession = `-- name: ListNodesBySession :many
 SELECT hash, bucket, type, role, content, model, provider, agent_name, stop_reason, prompt_tokens, completion_tokens, total_tokens, cache_creation_input_tokens, cache_read_input_tokens, total_duration_ns, prompt_duration_ns, project, created_at, parent_hash, session_id, org_id FROM nodes
 WHERE session_id = $1
@@ -246,6 +182,70 @@ func (q *Queries) ListNodesBySession(ctx context.Context, sessionID pgtype.UUID)
 			&i.ParentHash,
 			&i.SessionID,
 			&i.OrgID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSessionRecords = `-- name: ListSessionRecords :many
+SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count FROM sessions
+WHERE org_id = $1
+  AND (
+    $2::timestamptz IS NULL
+    OR last_seen_at < $2::timestamptz
+    OR (last_seen_at = $2::timestamptz AND id < $3::uuid)
+  )
+ORDER BY last_seen_at DESC, id DESC
+LIMIT $4
+`
+
+type ListSessionRecordsParams struct {
+	OrgID    pgtype.UUID
+	CursorTs pgtype.Timestamptz
+	CursorID pgtype.UUID
+	Lim      int32
+}
+
+// Paginated list of sessions for an org ordered newest-first (last_seen_at DESC, id DESC).
+// Pass NULL cursor values to start from the beginning.
+func (q *Queries) ListSessionRecords(ctx context.Context, arg ListSessionRecordsParams) ([]Session, error) {
+	rows, err := q.db.Query(ctx, listSessionRecords,
+		arg.OrgID,
+		arg.CursorTs,
+		arg.CursorID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Session
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.AuthSubject,
+			&i.HarnessID,
+			&i.HarnessSessionID,
+			&i.Name,
+			&i.Cwd,
+			&i.HarnessVersion,
+			&i.ParentSessionID,
+			&i.StartedAt,
+			&i.LastSeenAt,
+			&i.EndedAt,
+			&i.HarnessMetadata,
+			&i.TotalInputTokens,
+			&i.TotalOutputTokens,
+			&i.TotalCostUsd,
+			&i.TurnCount,
 		); err != nil {
 			return nil, err
 		}

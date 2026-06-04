@@ -1,131 +1,36 @@
 basePath: /
 definitions:
-  api.GraphLink:
+  api.StatsResponse:
     properties:
-      source:
-        type: string
-      target:
-        type: string
-    type: object
-  api.GraphNode:
-    properties:
-      agent_name:
-        type: string
-      children_count:
+      completed_count:
         type: integer
-      created_at:
-        type: string
-      depth:
+      input_tokens:
         type: integer
-      id:
-        type: string
-      is_branch_point:
-        type: boolean
-      is_leaf:
-        type: boolean
-      is_root:
-        type: boolean
-      model:
-        type: string
-      parent_hash:
-        type: string
-      parent_id:
-        type: string
-      preview:
-        type: string
-      project:
-        type: string
-      provider:
-        type: string
-      role:
-        type: string
-      selected:
-        type: boolean
-      stop_reason:
-        type: string
-      type:
-        type: string
-      usage:
-        $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.Usage'
-    type: object
-  api.GraphResponse:
-    properties:
-      branch_points:
-        description: BranchPoints names included nodes with more than one child in
-          storage.
-        items:
-          type: string
-        type: array
-      cycle_detected:
-        description: CycleDetected is true when storage guarded the ancestry walk
-          out of a cycle.
-        type: boolean
-      hash:
-        description: Hash is the session/node hash requested by the caller.
-        type: string
-      leaves:
-        description: Leaves names included nodes that have no children in storage.
-        items:
-          type: string
-        type: array
-      links:
-        description: Links contains parent -> child edges between included nodes.
-        items:
-          $ref: '#/definitions/api.GraphLink'
-        type: array
-      missing_parent:
-        description: MissingParent names the unresolved parent hash when the ancestry
-          is incomplete.
-        type: string
-      node_limit:
-        description: NodeLimit is the maximum number of nodes the server will include.
+      output_tokens:
         type: integer
-      nodes:
-        description: Nodes is the flat node list consumed by graph visualizers.
-        items:
-          $ref: '#/definitions/api.GraphNode'
-        type: array
-      root_hash:
-        description: RootHash is the top-most resolvable node included in the response.
-        type: string
-      scope:
-        description: 'Scope describes which portion of the graph was loaded: root,
-          branch, or ancestry.'
-        type: string
-      truncated:
-        description: Truncated is true when the graph hit NodeLimit or the ancestry
-          chain is incomplete.
-        type: boolean
+      root_count:
+        type: integer
+      session_count:
+        type: integer
+      tool_calls:
+        type: integer
+      total_cost:
+        type: number
+      total_duration_ns:
+        type: integer
+      turn_count:
+        type: integer
     type: object
-  api.SessionListItem:
-    properties:
-      agent_name:
-        type: string
-      hash:
-        type: string
-      head_role:
-        type: string
-      model:
-        type: string
-      preview:
-        type: string
-      project:
-        type: string
-      provider:
-        type: string
-      updated_at:
-        type: string
-    type: object
-  api.SessionListResponse:
+  api.StemListResponse:
     properties:
       items:
         items:
-          $ref: '#/definitions/api.SessionListItem'
+          $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_sessions.SessionSummary'
         type: array
       next_cursor:
         type: string
     type: object
-  api.SessionResponse:
+  api.StemResponse:
     properties:
       depth:
         description: |-
@@ -133,6 +38,14 @@ definitions:
           When the client passes ?depth=N, the Turns array may contain fewer
           than Depth items.
         type: integer
+      harness_id:
+        description: |-
+          HarnessID and HarnessSessionID identify the upstream agent session when
+          session tracking metadata is available. For Claude Code, HarnessID is
+          "claude" and HarnessSessionID is Claude's session id.
+        type: string
+      harness_session_id:
+        type: string
       hash:
         description: Hash is the head of the returned chain (== the requested hash).
         type: string
@@ -154,36 +67,6 @@ definitions:
         items:
           $ref: '#/definitions/api.Turn'
         type: array
-    type: object
-  api.SessionSummaryListResponse:
-    properties:
-      items:
-        items:
-          $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_sessions.SessionSummary'
-        type: array
-      next_cursor:
-        type: string
-    type: object
-  api.StatsResponse:
-    properties:
-      completed_count:
-        type: integer
-      input_tokens:
-        type: integer
-      output_tokens:
-        type: integer
-      root_count:
-        type: integer
-      session_count:
-        type: integer
-      tool_calls:
-        type: integer
-      total_cost:
-        type: number
-      total_duration_ns:
-        type: integer
-      turn_count:
-        type: integer
     type: object
   api.Turn:
     properties:
@@ -345,13 +228,22 @@ definitions:
       completion_tokens:
         type: integer
       prompt_duration_ns:
+        description: |-
+          PromptDurationNs is provider-reported prompt-evaluation time, in
+          nanoseconds. Populated by providers that surface it (currently Ollama
+          only); left at zero otherwise.
         type: integer
       prompt_tokens:
         description: Token counts
         type: integer
       total_duration_ns:
-        description: Timing (provider-specific, but normalized to nanoseconds where
-          possible)
+        description: |-
+          TotalDurationNs is the proxy-measured wall-clock time, in nanoseconds,
+          from when the proxy received the client request to when the upstream
+          response was fully assembled. Set uniformly by the proxy across providers
+          — Anthropic and OpenAI don't surface a duration field on the wire, and
+          Ollama's server-internal `total_duration` is intentionally overwritten so
+          aggregate stats compare apples to apples.
         type: integer
       total_tokens:
         type: integer
@@ -363,6 +255,10 @@ definitions:
       duration_ns:
         $ref: '#/definitions/time.Duration'
       end_time:
+        type: string
+      harness_id:
+        type: string
+      harness_session_id:
         type: string
       id:
         type: string
@@ -549,209 +445,6 @@ paths:
       summary: Semantic search over stored sessions
       tags:
       - search
-  /v1/sessions:
-    get:
-      description: Returns paginated session head records ordered from newest to oldest.
-        Filters apply to the head node of each session.
-      parameters:
-      - description: Filter by project name
-        in: query
-        name: project
-        type: string
-      - description: Filter by agent name
-        in: query
-        name: agent_name
-        type: string
-      - description: Filter by model name
-        in: query
-        name: model
-        type: string
-      - description: Filter by provider name
-        in: query
-        name: provider
-        type: string
-      - description: Only include sessions updated at or after this RFC3339 timestamp
-        format: date-time
-        in: query
-        name: since
-        type: string
-      - description: Only include sessions updated before or at this RFC3339 timestamp
-        format: date-time
-        in: query
-        name: until
-        type: string
-      - description: Opaque pagination cursor returned by a previous response
-        in: query
-        name: cursor
-        type: string
-      - description: Maximum number of sessions to return
-        in: query
-        minimum: 1
-        name: limit
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.SessionListResponse'
-        "400":
-          description: Invalid query parameters
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-        "500":
-          description: Failed to list sessions
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-      summary: List session heads
-      tags:
-      - sessions
-  /v1/sessions/{hash}:
-    get:
-      description: Returns a session ancestry chain in chronological order (root first).
-        When depth is provided, only the last N turns are returned while the full
-        chain depth is still reported.
-      parameters:
-      - description: Session head hash
-        in: path
-        name: hash
-        required: true
-        type: string
-      - description: Maximum number of most-recent turns to include
-        in: query
-        minimum: 1
-        name: depth
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.SessionResponse'
-        "400":
-          description: Missing or invalid hash/depth
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-        "404":
-          description: Session not found
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-        "500":
-          description: Failed to load session
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-      summary: Get a session chain
-      tags:
-      - sessions
-  /v1/sessions/{hash}/graph:
-    get:
-      description: Returns a graph-shaped projection of the same session ancestry
-        returned by GET /v1/sessions/{hash}. scope=root loads the requested node's
-        resolvable root and all descendants, scope=branch loads the ancestry plus
-        descendants of the requested node, and scope=ancestry loads only the parent
-        chain.
-      parameters:
-      - description: Session hash
-        in: path
-        name: hash
-        required: true
-        type: string
-      - description: 'Graph scope: root, branch, or ancestry'
-        enum:
-        - root
-        - branch
-        - ancestry
-        in: query
-        name: scope
-        type: string
-      - description: Maximum number of graph nodes to include
-        in: query
-        maximum: 5000
-        minimum: 1
-        name: max_nodes
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.GraphResponse'
-        "400":
-          description: Missing hash or invalid query parameters
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-        "404":
-          description: Session not found
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-        "500":
-          description: Failed to load session graph
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-      summary: Get a session graph
-      tags:
-      - sessions
-  /v1/sessions/summary:
-    get:
-      description: Returns paginated per-session summaries including derived labels,
-        status, token counts, cost, duration, and truncation metadata.
-      parameters:
-      - description: Filter by project name
-        in: query
-        name: project
-        type: string
-      - description: Filter by agent name
-        in: query
-        name: agent_name
-        type: string
-      - description: Filter by model name
-        in: query
-        name: model
-        type: string
-      - description: Filter by provider name
-        in: query
-        name: provider
-        type: string
-      - description: Only include sessions updated at or after this RFC3339 timestamp
-        format: date-time
-        in: query
-        name: since
-        type: string
-      - description: Only include sessions updated before or at this RFC3339 timestamp
-        format: date-time
-        in: query
-        name: until
-        type: string
-      - description: Opaque pagination cursor returned by a previous response
-        in: query
-        name: cursor
-        type: string
-      - description: Maximum number of summaries to return
-        in: query
-        minimum: 1
-        name: limit
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.SessionSummaryListResponse'
-        "400":
-          description: Invalid query parameters
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-        "500":
-          description: Failed to list or summarize sessions
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-      summary: List derived session summaries
-      tags:
-      - sessions
   /v1/stats:
     get:
       description: Returns counts plus folded cost / token / duration / tool-call
@@ -807,6 +500,102 @@ paths:
       summary: Get aggregate session stats
       tags:
       - sessions
+  /v1/stems:
+    get:
+      description: Returns paginated per-stem summaries including derived labels,
+        status, token counts, cost, duration, and truncation metadata.
+      parameters:
+      - description: Filter by project name
+        in: query
+        name: project
+        type: string
+      - description: Filter by agent name
+        in: query
+        name: agent_name
+        type: string
+      - description: Filter by model name
+        in: query
+        name: model
+        type: string
+      - description: Filter by provider name
+        in: query
+        name: provider
+        type: string
+      - description: Only include stems updated at or after this RFC3339 timestamp
+        format: date-time
+        in: query
+        name: since
+        type: string
+      - description: Only include stems updated before or at this RFC3339 timestamp
+        format: date-time
+        in: query
+        name: until
+        type: string
+      - description: Opaque pagination cursor returned by a previous response
+        in: query
+        name: cursor
+        type: string
+      - description: Maximum number of stems to return
+        in: query
+        minimum: 1
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.StemListResponse'
+        "400":
+          description: Invalid query parameters
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Failed to list or summarize stems
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: List stems (Merkle leaf chains) with aggregates
+      tags:
+      - stems
+  /v1/stems/{hash}:
+    get:
+      description: Returns the ancestry chain of a single Merkle leaf in chronological
+        order (root first). When depth is provided, only the last N turns are returned
+        while the full chain depth is still reported.
+      parameters:
+      - description: Stem head (leaf) hash
+        in: path
+        name: hash
+        required: true
+        type: string
+      - description: Maximum number of most-recent turns to include
+        in: query
+        minimum: 1
+        name: depth
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.StemResponse'
+        "400":
+          description: Missing or invalid hash/depth
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "404":
+          description: Stem not found
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Failed to load stem
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Get a stem (Merkle leaf chain)
+      tags:
+      - stems
 schemes:
 - http
 - https

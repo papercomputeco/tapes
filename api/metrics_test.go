@@ -134,13 +134,13 @@ var _ = Describe("API server Prometheus metrics", func() {
 
 	Describe("RED counter labels", func() {
 		It("uses the templated route, not the materialized URL, for parameterised paths", func() {
-			// /v1/sessions/:hash matches even though the hash slot is empty
+			// /v1/stems/:hash matches even though the hash slot is empty
 			// or fake — we only care that the registered template is what
 			// lands in the `route` label. We hit it twice with different
 			// :hash values and assert they collapse to a single series.
 			for _, hash := range []string{"abc123", "def456"} {
 				req, err := http.NewRequestWithContext(
-					context.Background(), http.MethodGet, "/v1/sessions/"+hash, nil)
+					context.Background(), http.MethodGet, "/v1/stems/"+hash, nil)
 				Expect(err).NotTo(HaveOccurred())
 				_, err = server.app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
@@ -153,16 +153,16 @@ var _ = Describe("API server Prometheus metrics", func() {
 			total := 0.0
 			for _, status := range []string{"200", "404", "500"} {
 				total += counterValue(server.metrics.Registry(),
-					"/v1/sessions/:hash", http.MethodGet, status)
+					"/v1/stems/:hash", http.MethodGet, status)
 			}
 			Expect(total).To(BeNumerically(">=", 2.0),
-				"both /v1/sessions/<hash> hits should land on the templated row")
+				"both /v1/stems/<hash> hits should land on the templated row")
 
 			// And no row should carry the materialized URL as the route.
 			Expect(countSeriesWithRoute(server.metrics.Registry(),
-				"/v1/sessions/abc123")).To(Equal(0))
+				"/v1/stems/abc123")).To(Equal(0))
 			Expect(countSeriesWithRoute(server.metrics.Registry(),
-				"/v1/sessions/def456")).To(Equal(0))
+				"/v1/stems/def456")).To(Equal(0))
 		})
 
 		It("collapses unmatched 404s to a single 'unmatched' sentinel row", func() {

@@ -48,7 +48,7 @@ func TestEffectiveSinceCutoff(t *testing.T) {
 
 // TestHTTPQueryPushesFiltersDown is the regression test for issue #160. It
 // uses an httptest server to capture the query params HTTPQuery sends on
-// /v1/sessions/summary, then asserts that since/project/model are present
+// /v1/stems, then asserts that since/project/model are present
 // when the deck Filters carry them. Without this pushdown the deck would
 // page through every session in the store before applying client-side
 // filters, which OOMs on large databases.
@@ -62,7 +62,7 @@ func TestHTTPQueryPushesFiltersDown(t *testing.T) {
 	var seen []captured
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/v1/sessions/summary") {
+		if !strings.HasPrefix(r.URL.Path, "/v1/stems") {
 			http.NotFound(w, r)
 			return
 		}
@@ -91,7 +91,7 @@ func TestHTTPQueryPushesFiltersDown(t *testing.T) {
 	}
 
 	if len(seen) == 0 {
-		t.Fatal("expected at least one request to /v1/sessions/summary")
+		t.Fatal("expected at least one request to /v1/stems")
 	}
 	got := seen[0]
 	if got.proj != "tapes" {

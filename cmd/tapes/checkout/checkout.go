@@ -183,7 +183,7 @@ func (c *checkoutCommander) run() error {
 
 // fetchSession calls the API to get the session chain for a given hash.
 func (c *checkoutCommander) fetchSession(hash string) (*sessionResponse, error) {
-	endpoint := fmt.Sprintf("%s/v1/sessions/%s", c.apiTarget, url.PathEscape(hash))
+	endpoint := fmt.Sprintf("%s/v1/stems/%s", c.apiTarget, url.PathEscape(hash))
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, endpoint, nil)

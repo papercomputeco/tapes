@@ -17,71 +17,69 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
-// experimentalSessionsReader is the capability interface for the experimental
-// sessions API. The Postgres driver implements it; the handler falls back to
-// 501 Not Implemented for drivers that don't.
-type experimentalSessionsReader interface {
-	ListExperimentalSessions(ctx context.Context, orgID string, limit int, cursorTs *time.Time, cursorID *string) ([]storage.ExperimentalSession, error)
-	GetExperimentalSessionByID(ctx context.Context, orgID, id string) (*storage.ExperimentalSession, error)
+// sessionsReader is the capability interface for the product sessions API
+// (the sessions-table-backed surface at /v1/sessions). The Postgres driver
+// implements it; the handler returns 501 for drivers that don't.
+type sessionsReader interface {
+	ListSessionRecords(ctx context.Context, orgID string, limit int, cursorTs *time.Time, cursorID *string) ([]storage.SessionRecord, error)
+	GetSessionRecord(ctx context.Context, orgID, id string) (*storage.SessionRecord, error)
 	ListNodesBySession(ctx context.Context, sessionID string) ([]*merkle.Node, error)
 }
 
 const (
-	defaultExperimentalLimit = 50
-	maxExperimentalLimit     = 200
+	defaultSessionsLimit = 50
+	maxSessionsLimit     = 200
 )
 
-// ExperimentalSessionItem is the per-row shape returned by
-// GET /v1/experimental/sessions. It mirrors the sessions table directly —
-// no ancestry walk, no chain aggregation.
-type ExperimentalSessionItem struct {
-	ID               string         `json:"id"`
-	HarnessID        string         `json:"harness_id"`
-	HarnessSessionID string         `json:"harness_session_id"`
-	Name             string         `json:"name,omitempty"`
-	Cwd              string         `json:"cwd,omitempty"`
-	HarnessVersion   string         `json:"harness_version,omitempty"`
-	ParentSessionID  string         `json:"parent_session_id,omitempty"`
-	StartedAt        time.Time      `json:"started_at"`
-	LastSeenAt       time.Time      `json:"last_seen_at"`
-	EndedAt          *time.Time     `json:"ended_at,omitempty"`
-	TurnCount        int            `json:"turn_count"`
-	TotalInputTokens  int64         `json:"total_input_tokens"`
-	TotalOutputTokens int64         `json:"total_output_tokens"`
-	TotalCostUsd      float64       `json:"total_cost_usd"`
+// SessionItem is the per-row shape returned by GET /v1/sessions. It mirrors
+// the sessions table directly — no ancestry walk, no stem aggregation.
+type SessionItem struct {
+	ID                string         `json:"id"`
+	HarnessID         string         `json:"harness_id"`
+	HarnessSessionID  string         `json:"harness_session_id"`
+	Name              string         `json:"name,omitempty"`
+	Cwd               string         `json:"cwd,omitempty"`
+	HarnessVersion    string         `json:"harness_version,omitempty"`
+	ParentSessionID   string         `json:"parent_session_id,omitempty"`
+	StartedAt         time.Time      `json:"started_at"`
+	LastSeenAt        time.Time      `json:"last_seen_at"`
+	EndedAt           *time.Time     `json:"ended_at,omitempty"`
+	TurnCount         int            `json:"turn_count"`
+	TotalInputTokens  int64          `json:"total_input_tokens"`
+	TotalOutputTokens int64          `json:"total_output_tokens"`
+	TotalCostUsd      float64        `json:"total_cost_usd"`
 	HarnessMetadata   map[string]any `json:"harness_metadata,omitempty"`
 	Preview           string         `json:"preview,omitempty"`
 }
 
-// ExperimentalSessionListResponse is the response envelope for
-// GET /v1/experimental/sessions.
-type ExperimentalSessionListResponse struct {
-	Items      []ExperimentalSessionItem `json:"items"`
-	NextCursor string                    `json:"next_cursor,omitempty"`
+// SessionListResponse is the response envelope for GET /v1/sessions.
+type SessionListResponse struct {
+	Items      []SessionItem `json:"items"`
+	NextCursor string        `json:"next_cursor,omitempty"`
 }
 
-// ChainSummary describes one root-to-deepest-leaf path within a session.
-// The Chains array in ExperimentalSessionDetailResponse lists all roots so
-// the caller can switch between chains without a separate API call.
-type ChainSummary struct {
+// StemSummary describes one root-to-deepest-leaf path (a "stem") within a
+// session. The Stems array in SessionDetailResponse lists every root so the
+// caller can switch between stems without a separate API call.
+type StemSummary struct {
 	RootHash string `json:"root_hash"`
 	Length   int    `json:"length"`
 	Preview  string `json:"preview,omitempty"`
 	Model    string `json:"model,omitempty"`
 }
 
-// ExperimentalSessionDetailResponse is the response for
-// GET /v1/experimental/sessions/:id. Turns contains the selected chain
-// (controlled by ?chain= and ?root=). Chains lists every root in the
-// session sorted by length descending so callers can offer a picker.
-type ExperimentalSessionDetailResponse struct {
-	Session ExperimentalSessionItem `json:"session"`
-	Turns   []Turn                  `json:"turns"`
-	Chains  []ChainSummary          `json:"chains"`
+// SessionDetailResponse is the response for GET /v1/sessions/:id. Turns
+// contains the selected stem (controlled by ?stem= and ?root=). Stems lists
+// every root in the session sorted by length descending so callers can offer
+// a picker.
+type SessionDetailResponse struct {
+	Session SessionItem   `json:"session"`
+	Turns   []Turn        `json:"turns"`
+	Stems   []StemSummary `json:"stems"`
 }
 
-func experimentalSessionItemFromStorage(s storage.ExperimentalSession) ExperimentalSessionItem {
-	return ExperimentalSessionItem{
+func sessionItemFromStorage(s storage.SessionRecord) SessionItem {
+	return SessionItem{
 		ID:                s.ID,
 		HarnessID:         s.HarnessID,
 		HarnessSessionID:  s.HarnessSessionID,
@@ -101,51 +99,52 @@ func experimentalSessionItemFromStorage(s storage.ExperimentalSession) Experimen
 	}
 }
 
-// experimentalCursor is the decoded pagination cursor for the experimental
-// sessions list, keyed on (last_seen_at DESC, id DESC).
-type experimentalCursor struct {
+// sessionsCursor is the decoded pagination cursor for the sessions list,
+// keyed on (last_seen_at DESC, id DESC).
+type sessionsCursor struct {
 	LastSeenAt time.Time `json:"ts"`
 	ID         string    `json:"id"`
 }
 
-func encodeExperimentalCursor(c experimentalCursor) string {
+func encodeSessionsCursor(c sessionsCursor) string {
 	b, _ := json.Marshal(c)
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-func decodeExperimentalCursor(token string) (experimentalCursor, error) {
+func decodeSessionsCursor(token string) (sessionsCursor, error) {
 	if token == "" {
-		return experimentalCursor{}, nil
+		return sessionsCursor{}, nil
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
-		return experimentalCursor{}, fmt.Errorf("invalid cursor: %w", err)
+		return sessionsCursor{}, fmt.Errorf("invalid cursor: %w", err)
 	}
-	var c experimentalCursor
+	var c sessionsCursor
 	if err := json.Unmarshal(raw, &c); err != nil {
-		return experimentalCursor{}, fmt.Errorf("invalid cursor: %w", err)
+		return sessionsCursor{}, fmt.Errorf("invalid cursor: %w", err)
 	}
 	if c.ID == "" {
-		return experimentalCursor{}, errors.New("invalid cursor: missing id")
+		return sessionsCursor{}, errors.New("invalid cursor: missing id")
 	}
 	return c, nil
 }
 
-// handleListExperimentalSessions handles GET /v1/experimental/sessions.
-func (s *Server) handleListExperimentalSessions(c *fiber.Ctx) error {
-	reader, ok := s.driver.(experimentalSessionsReader)
+// handleListSessions handles GET /v1/sessions — one row per harness session
+// from the sessions table, newest first, cursor-paginated.
+func (s *Server) handleListSessions(c *fiber.Ctx) error {
+	reader, ok := s.driver.(sessionsReader)
 	if !ok {
-		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "experimental sessions not supported by this backend"})
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
 	}
 
-	limit := defaultExperimentalLimit
+	limit := defaultSessionsLimit
 	if raw := c.Query("limit"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed <= 0 {
 			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "limit must be a positive integer"})
 		}
-		if parsed > maxExperimentalLimit {
-			parsed = maxExperimentalLimit
+		if parsed > maxSessionsLimit {
+			parsed = maxSessionsLimit
 		}
 		limit = parsed
 	}
@@ -153,7 +152,7 @@ func (s *Server) handleListExperimentalSessions(c *fiber.Ctx) error {
 	var cursorTs *time.Time
 	var cursorID *string
 	if raw := c.Query("cursor"); raw != "" {
-		cur, err := decodeExperimentalCursor(raw)
+		cur, err := decodeSessionsCursor(raw)
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
 		}
@@ -163,9 +162,9 @@ func (s *Server) handleListExperimentalSessions(c *fiber.Ctx) error {
 
 	orgID := orgIDFromCtx(c)
 	// Fetch one extra item to detect whether a next page exists.
-	sessions, err := reader.ListExperimentalSessions(c.Context(), orgID, limit+1, cursorTs, cursorID)
+	sessions, err := reader.ListSessionRecords(c.Context(), orgID, limit+1, cursorTs, cursorID)
 	if err != nil {
-		s.logger.Error("list experimental sessions", "error", err)
+		s.logger.Error("list sessions", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
 	}
 
@@ -173,31 +172,29 @@ func (s *Server) handleListExperimentalSessions(c *fiber.Ctx) error {
 	if len(sessions) > limit {
 		sessions = sessions[:limit]
 		last := sessions[len(sessions)-1]
-		nextCursor = encodeExperimentalCursor(experimentalCursor{
+		nextCursor = encodeSessionsCursor(sessionsCursor{
 			LastSeenAt: last.LastSeenAt,
 			ID:         last.ID,
 		})
 	}
 
-	items := make([]ExperimentalSessionItem, len(sessions))
+	items := make([]SessionItem, len(sessions))
 	for i, sess := range sessions {
-		items[i] = experimentalSessionItemFromStorage(sess)
+		items[i] = sessionItemFromStorage(sess)
 	}
 
-	return c.JSON(ExperimentalSessionListResponse{
+	return c.JSON(SessionListResponse{
 		Items:      items,
 		NextCursor: nextCursor,
 	})
 }
 
-// sessionChains returns one ChainSummary per root in nodes, sorted by
-// length descending (longest first).
-func sessionChains(nodes []*merkle.Node) []ChainSummary {
+// sessionStems returns one StemSummary per root in nodes, sorted by length
+// descending (longest first).
+func sessionStems(nodes []*merkle.Node) []StemSummary {
 	inSet := make(map[string]bool, len(nodes))
-	byHash := make(map[string]*merkle.Node, len(nodes))
 	for _, n := range nodes {
 		inSet[n.Hash] = true
-		byHash[n.Hash] = n
 	}
 	children := make(map[string][]string, len(nodes))
 	for _, n := range nodes {
@@ -217,10 +214,15 @@ func sessionChains(nodes []*merkle.Node) []ChainSummary {
 		return 1 + best
 	}
 
-	var chains []ChainSummary
+	byHash := make(map[string]*merkle.Node, len(nodes))
+	for _, n := range nodes {
+		byHash[n.Hash] = n
+	}
+
+	var stems []StemSummary
 	for _, n := range nodes {
 		if n.ParentHash == nil || !inSet[*n.ParentHash] {
-			chains = append(chains, ChainSummary{
+			stems = append(stems, StemSummary{
 				RootHash: n.Hash,
 				Length:   depth(n.Hash),
 				Preview:  makePreview(n),
@@ -228,10 +230,10 @@ func sessionChains(nodes []*merkle.Node) []ChainSummary {
 			})
 		}
 	}
-	sort.Slice(chains, func(i, j int) bool {
-		return chains[i].Length > chains[j].Length
+	sort.Slice(stems, func(i, j int) bool {
+		return stems[i].Length > stems[j].Length
 	})
-	return chains
+	return stems
 }
 
 // subtreeFromRoot returns all nodes reachable from rootHash by following
@@ -264,10 +266,10 @@ func subtreeFromRoot(rootHash string, nodes []*merkle.Node) []*merkle.Node {
 	return result
 }
 
-// longestChainFromNodes returns the nodes on the longest root-to-leaf path in
-// the session's DAG, in chronological order (root first). Roots are nodes
-// whose parent_hash is absent or points outside the supplied set.
-func longestChainFromNodes(nodes []*merkle.Node) []*merkle.Node {
+// longestStemFromNodes returns the nodes on the longest root-to-leaf path
+// (stem) in the session's DAG, in chronological order (root first). Roots are
+// nodes whose parent_hash is absent or points outside the supplied set.
+func longestStemFromNodes(nodes []*merkle.Node) []*merkle.Node {
 	if len(nodes) == 0 {
 		return nil
 	}
@@ -317,11 +319,14 @@ func longestChainFromNodes(nodes []*merkle.Node) []*merkle.Node {
 	return result
 }
 
-// handleGetExperimentalSession handles GET /v1/experimental/sessions/:id.
-func (s *Server) handleGetExperimentalSession(c *fiber.Ctx) error {
-	reader, ok := s.driver.(experimentalSessionsReader)
+// handleGetSession handles GET /v1/sessions/:id — a single session plus the
+// selected stem of turns. ?stem=longest (default) returns the longest
+// root-to-leaf path; ?stem=all returns every node ordered by created_at.
+// ?root=<hash> restricts to the subtree rooted at that node.
+func (s *Server) handleGetSession(c *fiber.Ctx) error {
+	reader, ok := s.driver.(sessionsReader)
 	if !ok {
-		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "experimental sessions not supported by this backend"})
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
 	}
 
 	id := c.Params("id")
@@ -330,9 +335,9 @@ func (s *Server) handleGetExperimentalSession(c *fiber.Ctx) error {
 	}
 
 	orgID := orgIDFromCtx(c)
-	sess, err := reader.GetExperimentalSessionByID(c.Context(), orgID, id)
+	sess, err := reader.GetSessionRecord(c.Context(), orgID, id)
 	if err != nil {
-		s.logger.Error("get experimental session", "id", id, "error", err)
+		s.logger.Error("get session", "id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session"})
 	}
 	if sess == nil {
@@ -345,17 +350,17 @@ func (s *Server) handleGetExperimentalSession(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session turns"})
 	}
 
-	// Always compute the chains summary so the caller can render a picker.
-	chains := sessionChains(nodes)
+	// Always compute the stems summary so the caller can render a picker.
+	stems := sessionStems(nodes)
 
 	// ?root=<hash> restricts turns to the subtree rooted at that node.
-	// Validated against the computed chains so callers get a clear 400
-	// rather than a silent empty response for an unknown hash.
+	// Validated against the computed stems so callers get a clear 400 rather
+	// than a silent empty response for an unknown hash.
 	working := nodes
 	if rootHash := c.Query("root"); rootHash != "" {
 		found := false
-		for _, ch := range chains {
-			if ch.RootHash == rootHash {
+		for _, st := range stems {
+			if st.RootHash == rootHash {
 				found = true
 				break
 			}
@@ -366,14 +371,12 @@ func (s *Server) handleGetExperimentalSession(c *fiber.Ctx) error {
 		working = subtreeFromRoot(rootHash, nodes)
 	}
 
-	// ?chain=longest (default) returns only the longest root-to-leaf path.
-	// ?chain=all returns every node ordered by created_at.
 	var selected []*merkle.Node
-	switch c.Query("chain", "longest") {
+	switch c.Query("stem", "longest") {
 	case "all":
 		selected = working
 	default:
-		selected = longestChainFromNodes(working)
+		selected = longestStemFromNodes(working)
 	}
 
 	turns := make([]Turn, len(selected))
@@ -381,9 +384,9 @@ func (s *Server) handleGetExperimentalSession(c *fiber.Ctx) error {
 		turns[i] = turnFromNode(n)
 	}
 
-	return c.JSON(ExperimentalSessionDetailResponse{
-		Session: experimentalSessionItemFromStorage(*sess),
+	return c.JSON(SessionDetailResponse{
+		Session: sessionItemFromStorage(*sess),
 		Turns:   turns,
-		Chains:  chains,
+		Stems:   stems,
 	})
 }

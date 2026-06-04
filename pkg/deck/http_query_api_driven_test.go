@@ -35,7 +35,7 @@ var _ = Describe("HTTPQuery", func() {
 
 			var requests []capturedRequest
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				Expect(r.URL.Path).To(Equal("/v1/sessions/summary"))
+				Expect(r.URL.Path).To(Equal("/v1/stems"))
 				qp := r.URL.Query()
 				requests = append(requests, capturedRequest{
 					Limit:  qp.Get("limit"),
@@ -67,7 +67,7 @@ var _ = Describe("HTTPQuery", func() {
 			var seenLimit string
 			var seenCursor string
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				Expect(r.URL.Path).To(Equal("/v1/sessions/summary"))
+				Expect(r.URL.Path).To(Equal("/v1/stems"))
 				seenLimit = r.URL.Query().Get("limit")
 				seenCursor = r.URL.Query().Get("cursor")
 				Expect(json.NewEncoder(w).Encode(httpSummaryResponse{

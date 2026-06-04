@@ -16,41 +16,23 @@ import (
 )
 
 // previewMaxChars is the maximum number of characters included in the
-// `preview` field of a session list item.
+// `preview` field of a stem turn.
 const previewMaxChars = 200
 
-// SessionListItem is the per-item shape returned by GET /v1/sessions.
+// StemListResponse is the response envelope for GET /v1/stems. Items carry
+// the rich per-stem aggregates computed by pkg/sessions.BuildSummary.
 //
-// It deliberately omits fields that would require an ancestry walk per item
-// (e.g. started_at, depth, per-session aggregates). Callers that need those
-// should fetch /v1/sessions/:hash for the specific session.
-type SessionListItem struct {
-	Hash      string    `json:"hash"`
-	HeadRole  string    `json:"head_role,omitempty"`
-	UpdatedAt time.Time `json:"updated_at,omitzero"`
-	Project   string    `json:"project,omitempty"`
-	AgentName string    `json:"agent_name,omitempty"`
-	Model     string    `json:"model,omitempty"`
-	Provider  string    `json:"provider,omitempty"`
-	Preview   string    `json:"preview,omitempty"`
-}
-
-// SessionListResponse is the response envelope for GET /v1/sessions.
-type SessionListResponse struct {
-	Items      []SessionListItem `json:"items"`
-	NextCursor string            `json:"next_cursor,omitempty"`
-}
-
-// SessionSummaryListResponse is the response envelope for
-// GET /v1/sessions/summary. Items carry the rich per-session aggregates
-// computed by pkg/sessions.BuildSummary.
-type SessionSummaryListResponse struct {
+// A "stem" is a root-to-leaf chain of Merkle nodes — what the older API
+// called a leaf "session". The type name sessions.SessionSummary is retained
+// for wire compatibility with existing consumers (the deck TUI, checkout).
+type StemListResponse struct {
 	Items      []sessions.SessionSummary `json:"items"`
 	NextCursor string                    `json:"next_cursor,omitempty"`
 }
 
-// SessionResponse is the response for GET /v1/sessions/:hash.
-type SessionResponse struct {
+// StemResponse is the response for GET /v1/stems/:hash — the ancestry chain
+// of a single Merkle leaf, root-first.
+type StemResponse struct {
 	// Hash is the head of the returned chain (== the requested hash).
 	Hash string `json:"hash"`
 
@@ -134,61 +116,20 @@ type StatsResponse struct {
 	ToolCalls       int     `json:"tool_calls"`
 }
 
-// handleListSessions handles GET /v1/sessions.
+// handleGetStem handles GET /v1/stems/:hash.
 //
-//	@Summary		List session heads
-//	@Description	Returns paginated session head records ordered from newest to oldest. Filters apply to the head node of each session.
-//	@Tags			sessions
+//	@Summary		Get a stem (Merkle leaf chain)
+//	@Description	Returns the ancestry chain of a single Merkle leaf in chronological order (root first). When depth is provided, only the last N turns are returned while the full chain depth is still reported.
+//	@Tags			stems
 //	@Produce		json
-//	@Param			project		query		string	false	"Filter by project name"
-//	@Param			agent_name	query		string	false	"Filter by agent name"
-//	@Param			model		query		string	false	"Filter by model name"
-//	@Param			provider	query		string	false	"Filter by provider name"
-//	@Param			since		query		string	false	"Only include sessions updated at or after this RFC3339 timestamp"	format(date-time)
-//	@Param			until		query		string	false	"Only include sessions updated before or at this RFC3339 timestamp"	format(date-time)
-//	@Param			cursor		query		string	false	"Opaque pagination cursor returned by a previous response"
-//	@Param			limit		query		int		false	"Maximum number of sessions to return"	minimum(1)
-//	@Success		200			{object}	SessionListResponse
-//	@Failure		400			{object}	llm.ErrorResponse	"Invalid query parameters"
-//	@Failure		500			{object}	llm.ErrorResponse	"Failed to list sessions"
-//	@Router			/v1/sessions [get]
-func (s *Server) handleListSessions(c *fiber.Ctx) error {
-	opts, err := parseListOpts(c)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
-	}
-
-	page, err := s.driver.ListSessions(c.Context(), opts)
-	if err != nil {
-		s.logger.Error("list sessions", "error", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
-	}
-
-	items := make([]SessionListItem, len(page.Items))
-	for i, n := range page.Items {
-		items[i] = sessionListItemFromNode(n)
-	}
-
-	return c.JSON(SessionListResponse{
-		Items:      items,
-		NextCursor: page.NextCursor,
-	})
-}
-
-// handleGetSession handles GET /v1/sessions/:hash.
-//
-//	@Summary		Get a session chain
-//	@Description	Returns a session ancestry chain in chronological order (root first). When depth is provided, only the last N turns are returned while the full chain depth is still reported.
-//	@Tags			sessions
-//	@Produce		json
-//	@Param			hash	path		string	true	"Session head hash"
+//	@Param			hash	path		string	true	"Stem head (leaf) hash"
 //	@Param			depth	query		int		false	"Maximum number of most-recent turns to include"	minimum(1)
-//	@Success		200		{object}	SessionResponse
+//	@Success		200		{object}	StemResponse
 //	@Failure		400		{object}	llm.ErrorResponse	"Missing or invalid hash/depth"
-//	@Failure		404		{object}	llm.ErrorResponse	"Session not found"
-//	@Failure		500		{object}	llm.ErrorResponse	"Failed to load session"
-//	@Router			/v1/sessions/{hash} [get]
-func (s *Server) handleGetSession(c *fiber.Ctx) error {
+//	@Failure		404		{object}	llm.ErrorResponse	"Stem not found"
+//	@Failure		500		{object}	llm.ErrorResponse	"Failed to load stem"
+//	@Router			/v1/stems/{hash} [get]
+func (s *Server) handleGetStem(c *fiber.Ctx) error {
 	hash, chain, err := s.loadSessionChain(c)
 	if err != nil {
 		return s.handleLoadSessionChainError(c, hash, err)
@@ -220,10 +161,10 @@ func (s *Server) handleGetSession(c *fiber.Ctx) error {
 
 	identity, err := s.sessionIdentity(c.Context(), orgIDFromCtx(c), hash)
 	if err != nil {
-		s.logger.Warn("failed to load session identity", "hash", hash, "error", err)
+		s.logger.Warn("failed to load stem identity", "hash", hash, "error", err)
 	}
 
-	resp := SessionResponse{
+	resp := StemResponse{
 		Hash:          hash,
 		Depth:         total,
 		Turns:         turns,
@@ -399,21 +340,6 @@ func parseListOpts(c *fiber.Ctx) (storage.ListOpts, error) {
 	}
 
 	return opts, nil
-}
-
-// sessionListItemFromNode builds a list item from a leaf node. It does not
-// walk the ancestry; all fields come off the leaf itself.
-func sessionListItemFromNode(n *merkle.Node) SessionListItem {
-	return SessionListItem{
-		Hash:      n.Hash,
-		HeadRole:  n.Bucket.Role,
-		UpdatedAt: n.CreatedAt,
-		Project:   n.Project,
-		AgentName: n.Bucket.AgentName,
-		Model:     n.Bucket.Model,
-		Provider:  n.Bucket.Provider,
-		Preview:   makePreview(n),
-	}
 }
 
 func turnFromNode(n *merkle.Node) Turn {
