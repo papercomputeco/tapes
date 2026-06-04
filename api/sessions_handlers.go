@@ -107,7 +107,11 @@ type sessionsCursor struct {
 }
 
 func encodeSessionsCursor(c sessionsCursor) string {
-	b, _ := json.Marshal(c)
+	b, err := json.Marshal(c)
+	if err != nil {
+		// json.Marshal cannot fail for this struct shape.
+		panic(fmt.Sprintf("encoding sessions cursor: %v", err))
+	}
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 

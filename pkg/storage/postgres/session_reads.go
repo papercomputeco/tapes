@@ -50,7 +50,7 @@ func (d *Driver) ListSessionRecords(
 		OrgID:    oid,
 		CursorTs: tsPg,
 		CursorID: idPg,
-		Lim:      int32(limit),
+		Lim:      int32(limit), //nolint:gosec // bounded above by the API handler (maxSessionsLimit)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list session records: %w", err)
