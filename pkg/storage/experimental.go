@@ -22,4 +22,5 @@ type ExperimentalSession struct {
 	TotalOutputTokens int64
 	TotalCostUsd      float64
 	TurnCount         int
+	Preview           string // first user turn text, truncated; empty when unavailable
 }

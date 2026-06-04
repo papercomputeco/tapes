@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -58,7 +60,63 @@ func (d *Driver) ListExperimentalSessions(
 	for i, row := range rows {
 		out[i] = experimentalSessionFromRow(row)
 	}
+
+	previews, err := d.getSessionPreviews(ctx, out)
+	if err == nil {
+		for i := range out {
+			out[i].Preview = previews[out[i].ID]
+		}
+	}
+
 	return out, nil
+}
+
+const sessionPreviewMaxRunes = 120
+
+// getSessionPreviews fetches the first user-role node text for each session in
+// the supplied list, in a single query. Returns a map of session UUID string →
+// truncated plain text preview (harness tags still present; stripping is the
+// caller's responsibility).
+func (d *Driver) getSessionPreviews(ctx context.Context, sessions []storage.ExperimentalSession) (map[string]string, error) {
+	if len(sessions) == 0 {
+		return nil, nil
+	}
+	ids := make([]string, len(sessions))
+	for i, s := range sessions {
+		ids[i] = s.ID
+	}
+
+	rows, err := d.conn.Query(ctx, `
+SELECT DISTINCT ON (session_id) session_id::text, bucket
+FROM nodes
+WHERE session_id = ANY($1::uuid[])
+  AND role = 'user'
+ORDER BY session_id, created_at ASC
+`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("get session previews: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]string, len(sessions))
+	for rows.Next() {
+		var sessionID string
+		var bucketBytes []byte
+		if err := rows.Scan(&sessionID, &bucketBytes); err != nil {
+			continue
+		}
+		var bucket merkle.Bucket
+		if err := json.Unmarshal(bucketBytes, &bucket); err != nil {
+			continue
+		}
+		text := strings.TrimSpace(bucket.ExtractText())
+		if utf8.RuneCountInString(text) > sessionPreviewMaxRunes {
+			runes := []rune(text)
+			text = string(runes[:sessionPreviewMaxRunes])
+		}
+		out[sessionID] = text
+	}
+	return out, rows.Err()
 }
 
 // GetExperimentalSessionByID returns a single session by its UUID, or nil if not found.

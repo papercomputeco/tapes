@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 
@@ -49,6 +50,7 @@ type ExperimentalSessionItem struct {
 	TotalOutputTokens int64         `json:"total_output_tokens"`
 	TotalCostUsd      float64       `json:"total_cost_usd"`
 	HarnessMetadata   map[string]any `json:"harness_metadata,omitempty"`
+	Preview           string         `json:"preview,omitempty"`
 }
 
 // ExperimentalSessionListResponse is the response envelope for
@@ -58,12 +60,24 @@ type ExperimentalSessionListResponse struct {
 	NextCursor string                    `json:"next_cursor,omitempty"`
 }
 
+// ChainSummary describes one root-to-deepest-leaf path within a session.
+// The Chains array in ExperimentalSessionDetailResponse lists all roots so
+// the caller can switch between chains without a separate API call.
+type ChainSummary struct {
+	RootHash string `json:"root_hash"`
+	Length   int    `json:"length"`
+	Preview  string `json:"preview,omitempty"`
+	Model    string `json:"model,omitempty"`
+}
+
 // ExperimentalSessionDetailResponse is the response for
-// GET /v1/experimental/sessions/:id. It carries the session row plus all
-// nodes attributed to the session in chronological order.
+// GET /v1/experimental/sessions/:id. Turns contains the selected chain
+// (controlled by ?chain= and ?root=). Chains lists every root in the
+// session sorted by length descending so callers can offer a picker.
 type ExperimentalSessionDetailResponse struct {
 	Session ExperimentalSessionItem `json:"session"`
 	Turns   []Turn                  `json:"turns"`
+	Chains  []ChainSummary          `json:"chains"`
 }
 
 func experimentalSessionItemFromStorage(s storage.ExperimentalSession) ExperimentalSessionItem {
@@ -83,6 +97,7 @@ func experimentalSessionItemFromStorage(s storage.ExperimentalSession) Experimen
 		TotalOutputTokens: s.TotalOutputTokens,
 		TotalCostUsd:      s.TotalCostUsd,
 		HarnessMetadata:   s.HarnessMetadata,
+		Preview:           s.Preview,
 	}
 }
 
@@ -175,6 +190,80 @@ func (s *Server) handleListExperimentalSessions(c *fiber.Ctx) error {
 	})
 }
 
+// sessionChains returns one ChainSummary per root in nodes, sorted by
+// length descending (longest first).
+func sessionChains(nodes []*merkle.Node) []ChainSummary {
+	inSet := make(map[string]bool, len(nodes))
+	byHash := make(map[string]*merkle.Node, len(nodes))
+	for _, n := range nodes {
+		inSet[n.Hash] = true
+		byHash[n.Hash] = n
+	}
+	children := make(map[string][]string, len(nodes))
+	for _, n := range nodes {
+		if n.ParentHash != nil && inSet[*n.ParentHash] {
+			children[*n.ParentHash] = append(children[*n.ParentHash], n.Hash)
+		}
+	}
+
+	var depth func(hash string) int
+	depth = func(hash string) int {
+		best := 0
+		for _, kid := range children[hash] {
+			if d := depth(kid); d > best {
+				best = d
+			}
+		}
+		return 1 + best
+	}
+
+	var chains []ChainSummary
+	for _, n := range nodes {
+		if n.ParentHash == nil || !inSet[*n.ParentHash] {
+			chains = append(chains, ChainSummary{
+				RootHash: n.Hash,
+				Length:   depth(n.Hash),
+				Preview:  makePreview(n),
+				Model:    n.Bucket.Model,
+			})
+		}
+	}
+	sort.Slice(chains, func(i, j int) bool {
+		return chains[i].Length > chains[j].Length
+	})
+	return chains
+}
+
+// subtreeFromRoot returns all nodes reachable from rootHash by following
+// parent→child edges, in the order they appear in nodes.
+func subtreeFromRoot(rootHash string, nodes []*merkle.Node) []*merkle.Node {
+	byHash := make(map[string]*merkle.Node, len(nodes))
+	inSet := make(map[string]bool, len(nodes))
+	children := make(map[string][]string, len(nodes))
+	for _, n := range nodes {
+		byHash[n.Hash] = n
+		inSet[n.Hash] = true
+	}
+	for _, n := range nodes {
+		if n.ParentHash != nil && inSet[*n.ParentHash] {
+			children[*n.ParentHash] = append(children[*n.ParentHash], n.Hash)
+		}
+	}
+
+	var result []*merkle.Node
+	var visit func(hash string)
+	visit = func(hash string) {
+		if n, ok := byHash[hash]; ok {
+			result = append(result, n)
+			for _, kid := range children[hash] {
+				visit(kid)
+			}
+		}
+	}
+	visit(rootHash)
+	return result
+}
+
 // longestChainFromNodes returns the nodes on the longest root-to-leaf path in
 // the session's DAG, in chronological order (root first). Roots are nodes
 // whose parent_hash is absent or points outside the supplied set.
@@ -256,14 +345,35 @@ func (s *Server) handleGetExperimentalSession(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session turns"})
 	}
 
+	// Always compute the chains summary so the caller can render a picker.
+	chains := sessionChains(nodes)
+
+	// ?root=<hash> restricts turns to the subtree rooted at that node.
+	// Validated against the computed chains so callers get a clear 400
+	// rather than a silent empty response for an unknown hash.
+	working := nodes
+	if rootHash := c.Query("root"); rootHash != "" {
+		found := false
+		for _, ch := range chains {
+			if ch.RootHash == rootHash {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "root not found in this session"})
+		}
+		working = subtreeFromRoot(rootHash, nodes)
+	}
+
 	// ?chain=longest (default) returns only the longest root-to-leaf path.
 	// ?chain=all returns every node ordered by created_at.
 	var selected []*merkle.Node
 	switch c.Query("chain", "longest") {
 	case "all":
-		selected = nodes
+		selected = working
 	default:
-		selected = longestChainFromNodes(nodes)
+		selected = longestChainFromNodes(working)
 	}
 
 	turns := make([]Turn, len(selected))
@@ -274,5 +384,6 @@ func (s *Server) handleGetExperimentalSession(c *fiber.Ctx) error {
 	return c.JSON(ExperimentalSessionDetailResponse{
 		Session: experimentalSessionItemFromStorage(*sess),
 		Turns:   turns,
+		Chains:  chains,
 	})
 }
