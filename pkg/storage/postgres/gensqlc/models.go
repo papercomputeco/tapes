@@ -50,4 +50,7 @@ type Session struct {
 	TotalOutputTokens int64
 	TotalCostUsd      pgtype.Numeric
 	TurnCount         int32
+	DerivedStatus     string
+	HasToolError      bool
+	HasGitActivity    bool
 }
