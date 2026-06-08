@@ -85,6 +85,62 @@ var _ = Describe("Anthropic Reducer", func() {
 			Expect(resp.Message.Content[1].Text).To(Equal("2 + 2 = 4."))
 		})
 
+		It("captures server_tool_use input and web_search_tool_result content", func() {
+			// Mirrors a real web_search turn: server_tool_use streams its input
+			// via input_json_delta (like tool_use); web_search_tool_result
+			// arrives fully formed in content_block_start with no deltas.
+			stream := `event: message_start
+data: {"type":"message_start","message":{"id":"msg_ws","type":"message","role":"assistant","content":[],"model":"claude-opus-4-8","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"go version\"}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","content":[{"type":"web_search_result","title":"Go","url":"https://go.dev"}]}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: content_block_start
+data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"The latest Go is 1.x."}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":2}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":20}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+			resp, err := r.Reduce(ctx, nil, bytes.NewReader([]byte(stream)), "text/event-stream")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Message.Content).To(HaveLen(3))
+
+			Expect(resp.Message.Content[0].Type).To(Equal("server_tool_use"))
+			Expect(resp.Message.Content[0].ToolName).To(Equal("web_search"))
+			Expect(resp.Message.Content[0].ToolUseID).To(Equal("srvtoolu_1"))
+			Expect(resp.Message.Content[0].ToolInput).To(HaveKeyWithValue("query", "go version"))
+
+			Expect(resp.Message.Content[1].Type).To(Equal("web_search_tool_result"))
+			Expect(resp.Message.Content[1].ToolResultID).To(Equal("srvtoolu_1"))
+			Expect(string(resp.Message.Content[1].Content)).To(ContainSubstring("web_search_result"))
+			Expect(string(resp.Message.Content[1].Content)).To(ContainSubstring("go.dev"))
+
+			Expect(resp.Message.Content[2].Type).To(Equal("text"))
+			Expect(resp.Message.Content[2].Text).To(Equal("The latest Go is 1.x."))
+		})
+
 		It("preserves partial capture when error event arrives mid-stream", func() {
 			raw := readFixture("messages_error_mid_stream.sse")
 			resp, err := r.Reduce(ctx, nil, bytes.NewReader(raw), "text/event-stream")

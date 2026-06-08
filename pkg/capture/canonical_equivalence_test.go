@@ -77,5 +77,7 @@ var _ = Describe("Canonical equivalence", func() {
 			pair{"turn_02 tool_use", "turn_02_tool_use_oneshot.json", "turn_02_tool_use_stream.sse"}),
 		Entry("turn_03 thinking",
 			pair{"turn_03 thinking", "turn_03_thinking_oneshot.json", "turn_03_thinking_stream.sse"}),
+		Entry("turn_04 server_tool_use + web_search_tool_result",
+			pair{"turn_04 server_tool_use + web_search_tool_result", "turn_04_server_tool_oneshot.json", "turn_04_server_tool_stream.sse"}),
 	)
 })

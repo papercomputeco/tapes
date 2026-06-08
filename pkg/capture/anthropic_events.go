@@ -50,6 +50,11 @@ type anthropicContentBlock struct {
 	Input     map[string]any `json:"input,omitempty"`
 	Thinking  string         `json:"thinking,omitempty"`
 	Signature string         `json:"signature,omitempty"`
+	// ToolUseID links a web_search_tool_result back to its server_tool_use.
+	ToolUseID string `json:"tool_use_id,omitempty"`
+	// Content is the inline result payload on a web_search_tool_result block
+	// (a JSON array of result objects). server_tool_use reuses ID/Name/Input.
+	Content json.RawMessage `json:"content,omitempty"`
 }
 
 // content_block_delta carries incremental updates to an existing block.

@@ -20,9 +20,11 @@ const ProviderAnthropic = "anthropic"
 // Anthropic content-block type strings, used for both the one-shot JSON path
 // and the streaming state machine.
 const (
-	blockTypeText     = "text"
-	blockTypeToolUse  = "tool_use"
-	blockTypeThinking = "thinking"
+	blockTypeText                = "text"
+	blockTypeToolUse             = "tool_use"
+	blockTypeThinking            = "thinking"
+	blockTypeServerToolUse       = "server_tool_use"
+	blockTypeWebSearchToolResult = "web_search_tool_result"
 )
 
 // anthropicReducer turns a single Anthropic Messages turn — streamed SSE or
@@ -93,6 +95,13 @@ func (r *anthropicReducer) reduceOneShot(body io.Reader) (*llm.ChatResponse, err
 		case blockTypeThinking:
 			cb.Thinking = block.Thinking
 			cb.ThinkingSignature = block.Signature
+		case blockTypeServerToolUse:
+			cb.ToolUseID = block.ID
+			cb.ToolName = block.Name
+			cb.ToolInput = block.Input
+		case blockTypeWebSearchToolResult:
+			cb.ToolResultID = block.ToolUseID
+			cb.Content = block.Content
 		}
 		content = append(content, cb)
 	}
