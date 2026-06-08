@@ -10,6 +10,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/backfill"
 	"github.com/papercomputeco/tapes/pkg/deck"
 	"github.com/papercomputeco/tapes/pkg/llm"
+	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
 type seedDemoRequest struct {
@@ -77,4 +78,21 @@ func (s *Server) handleBackfillUsage(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(result)
+}
+
+// handleBackfillSessionStatus recomputes derived_status for existing
+// sessions whose rows predate the ingest-time computation. Live ingest
+// keeps status current, so this is a one-shot for legacy/pre-feature data;
+// it is idempotent and safe to re-run.
+func (s *Server) handleBackfillSessionStatus(c *fiber.Ctx) error {
+	bf, ok := s.driver.(storage.SessionStatusBackfiller)
+	if !ok {
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "driver does not support session-status backfill"})
+	}
+	res, err := bf.BackfillSessionStatus(c.Context())
+	if err != nil {
+		s.logger.Error("backfill session status", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: err.Error()})
+	}
+	return c.JSON(fiber.Map{"scanned": res.Scanned, "updated": res.Updated})
 }

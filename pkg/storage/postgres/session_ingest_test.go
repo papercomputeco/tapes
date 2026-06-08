@@ -194,6 +194,31 @@ var _ = Describe("Driver.IngestTurn", func() {
 		Expect(hasErr).To(BeTrue())
 	})
 
+	It("backfills derived_status for session rows that predate the computation", func() {
+		orgID := newTestOrgID()
+		env := &sessions.IngestEnvelope{OrgID: orgID, AuthSubject: "s", HarnessID: "claude", HarnessSessionID: "hs-backfill"}
+		_, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{Session: env, Nodes: sessionFixture("backfill me")})
+		Expect(err).NotTo(HaveOccurred())
+
+		pg := driver.(*postgres.Driver)
+		// Simulate a pre-feature row: blank out the computed status so the
+		// backfill has something to recover.
+		_, err = pg.DB().Exec(ctx, `UPDATE sessions SET derived_status='unknown', has_tool_error=false, has_git_activity=false WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
+			mustUUID(orgID), "claude", "hs-backfill")
+		Expect(err).NotTo(HaveOccurred())
+
+		bf, ok := driver.(storage.SessionStatusBackfiller)
+		Expect(ok).To(BeTrue(), "postgres driver must satisfy SessionStatusBackfiller")
+		res, err := bf.BackfillSessionStatus(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Updated).To(BeNumerically(">=", 1))
+
+		var status string
+		Expect(pg.DB().QueryRow(ctx, `SELECT derived_status FROM sessions WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
+			mustUUID(orgID), "claude", "hs-backfill").Scan(&status)).To(Succeed())
+		Expect(status).To(Equal(sessions.StatusCompleted))
+	})
+
 	It("is idempotent across a retried envelope: one row, one set of counter increments", func() {
 		orgID := newTestOrgID()
 		envelope := &sessions.IngestEnvelope{
