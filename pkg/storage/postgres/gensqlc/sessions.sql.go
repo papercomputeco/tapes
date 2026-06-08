@@ -322,6 +322,38 @@ func (q *Queries) UpdateSessionCounters(ctx context.Context, arg UpdateSessionCo
 	return err
 }
 
+const updateSessionStatus = `-- name: UpdateSessionStatus :exec
+UPDATE sessions
+   SET has_tool_error   = $1,
+       has_git_activity = $2,
+       derived_status   = $3
+ WHERE id = $4
+`
+
+type UpdateSessionStatusParams struct {
+	HasToolError   bool
+	HasGitActivity bool
+	DerivedStatus  string
+	ID             pgtype.UUID
+}
+
+// Persist the recomputed chain-aware status. has_tool_error and
+// has_git_activity are sticky signals OR-accumulated across all the
+// session's turns and stems — the caller computes the new values in Go
+// from the prior row state plus the current turn, so this query just
+// writes them. derived_status mirrors pkg/sessions.DetermineStatus over
+// those flags and the session's latest leaf. Called by ingest in the
+// same Tx as UpdateSessionCounters.
+func (q *Queries) UpdateSessionStatus(ctx context.Context, arg UpdateSessionStatusParams) error {
+	_, err := q.db.Exec(ctx, updateSessionStatus,
+		arg.HasToolError,
+		arg.HasGitActivity,
+		arg.DerivedStatus,
+		arg.ID,
+	)
+	return err
+}
+
 const upsertSession = `-- name: UpsertSession :one
 INSERT INTO sessions (
     id,

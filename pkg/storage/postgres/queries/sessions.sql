@@ -105,6 +105,20 @@ UPDATE sessions
        total_cost_usd      = total_cost_usd      + sqlc.arg(cost_usd_delta)
  WHERE id = sqlc.arg(id);
 
+-- name: UpdateSessionStatus :exec
+-- Persist the recomputed chain-aware status. has_tool_error and
+-- has_git_activity are sticky signals OR-accumulated across all the
+-- session's turns and stems — the caller computes the new values in Go
+-- from the prior row state plus the current turn, so this query just
+-- writes them. derived_status mirrors pkg/sessions.DetermineStatus over
+-- those flags and the session's latest leaf. Called by ingest in the
+-- same Tx as UpdateSessionCounters.
+UPDATE sessions
+   SET has_tool_error   = sqlc.arg(has_tool_error),
+       has_git_activity = sqlc.arg(has_git_activity),
+       derived_status   = sqlc.arg(derived_status)
+ WHERE id = sqlc.arg(id);
+
 -- name: ListSessionRecords :many
 -- Paginated list of sessions for an org ordered newest-first (last_seen_at DESC, id DESC).
 -- Pass NULL cursor values to start from the beginning.

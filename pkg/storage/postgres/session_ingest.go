@@ -171,6 +171,39 @@ func (d *Driver) IngestTurn(ctx context.Context, req storage.IngestTurnRequest) 
 			return storage.IngestTurnResult{}, fmt.Errorf("update session counters: %w", err)
 		}
 		countersUpdated = true
+
+		// Recompute the session's chain-aware status. has_tool_error and
+		// has_git_activity are sticky across every turn and stem of the
+		// session, so OR this turn's signals into the row's prior state
+		// (sessionRow reflects the pre-turn values via UpsertSession's
+		// RETURNING). derived_status mirrors pkg/sessions.DetermineStatus
+		// over the accumulated flags and this turn's leaf — req.Nodes is
+		// validated root->leaf, so the last node is the leaf.
+		hasToolError, hasGitActivity := sessionRow.HasToolError, sessionRow.HasGitActivity
+		for _, n := range req.Nodes {
+			if hasToolError && hasGitActivity {
+				break
+			}
+			if n == nil {
+				continue
+			}
+			if sessions.BlocksHaveToolError(n.Bucket.Content) {
+				hasToolError = true
+			}
+			if sessions.BlocksHaveGitActivity(n.Bucket.Content) {
+				hasGitActivity = true
+			}
+		}
+		leaf := req.Nodes[len(req.Nodes)-1]
+		status := sessions.DetermineStatus(leaf, hasToolError, hasGitActivity)
+		if err := qtx.UpdateSessionStatus(ctx, gensqlc.UpdateSessionStatusParams{
+			HasToolError:   hasToolError,
+			HasGitActivity: hasGitActivity,
+			DerivedStatus:  status,
+			ID:             sessionRow.ID,
+		}); err != nil {
+			return storage.IngestTurnResult{}, fmt.Errorf("update session status: %w", err)
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {

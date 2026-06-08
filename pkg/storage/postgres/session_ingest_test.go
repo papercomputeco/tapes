@@ -134,6 +134,66 @@ var _ = Describe("Driver.IngestTurn", func() {
 		}
 	})
 
+	It("derives status 'completed' for an assistant leaf with a terminal stop_reason", func() {
+		orgID := newTestOrgID()
+		env := &sessions.IngestEnvelope{OrgID: orgID, AuthSubject: "s", HarnessID: "claude", HarnessSessionID: "hs-complete"}
+
+		_, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{Session: env, Nodes: sessionFixture("done")})
+		Expect(err).NotTo(HaveOccurred())
+
+		var status string
+		var hasErr, hasGit bool
+		pg := driver.(*postgres.Driver)
+		Expect(pg.DB().QueryRow(ctx, `SELECT derived_status, has_tool_error, has_git_activity FROM sessions WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
+			mustUUID(orgID), "claude", "hs-complete").Scan(&status, &hasErr, &hasGit)).To(Succeed())
+		Expect(status).To(Equal(sessions.StatusCompleted))
+		Expect(hasErr).To(BeFalse())
+		Expect(hasGit).To(BeFalse())
+	})
+
+	It("derives 'completed' via git activity even when the leaf is a non-terminal tool_result (PCC-515)", func() {
+		orgID := newTestOrgID()
+		env := &sessions.IngestEnvelope{OrgID: orgID, AuthSubject: "s", HarnessID: "claude", HarnessSessionID: "hs-git"}
+
+		user := merkle.NewNode(merkle.Bucket{Type: "message", Role: "user", Content: []llm.ContentBlock{{Type: "text", Text: "ship it"}}}, nil)
+		asst := merkle.NewNode(merkle.Bucket{Type: "message", Role: "assistant", Content: []llm.ContentBlock{{Type: "tool_use", ToolName: "Bash", ToolInput: map[string]any{"command": "git commit -m wip"}}}}, user, merkle.NodeOptions{StopReason: "tool_use"})
+		// Leaf is the tool_result (user role, no terminal stop_reason): the
+		// leaf-only SQL classifier would call this abandoned, while the
+		// chain-aware classifier sees the git commit and returns completed.
+		toolRes := merkle.NewNode(merkle.Bucket{Type: "message", Role: "user", Content: []llm.ContentBlock{{Type: "tool_result", ToolOutput: "ok"}}}, asst)
+
+		_, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{Session: env, Nodes: []*merkle.Node{user, asst, toolRes}})
+		Expect(err).NotTo(HaveOccurred())
+
+		var status string
+		var hasGit bool
+		pg := driver.(*postgres.Driver)
+		Expect(pg.DB().QueryRow(ctx, `SELECT derived_status, has_git_activity FROM sessions WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
+			mustUUID(orgID), "claude", "hs-git").Scan(&status, &hasGit)).To(Succeed())
+		Expect(status).To(Equal(sessions.StatusCompleted))
+		Expect(hasGit).To(BeTrue())
+	})
+
+	It("derives 'failed' when any turn carries a tool_result error", func() {
+		orgID := newTestOrgID()
+		env := &sessions.IngestEnvelope{OrgID: orgID, AuthSubject: "s", HarnessID: "claude", HarnessSessionID: "hs-err"}
+
+		user := merkle.NewNode(merkle.Bucket{Type: "message", Role: "user", Content: []llm.ContentBlock{{Type: "text", Text: "do it"}}}, nil)
+		asst := merkle.NewNode(merkle.Bucket{Type: "message", Role: "assistant", Content: []llm.ContentBlock{{Type: "tool_use", ToolName: "Bash", ToolInput: map[string]any{"command": "ls"}}}}, user, merkle.NodeOptions{StopReason: "tool_use"})
+		toolRes := merkle.NewNode(merkle.Bucket{Type: "message", Role: "user", Content: []llm.ContentBlock{{Type: "tool_result", IsError: true, ToolOutput: "boom"}}}, asst)
+
+		_, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{Session: env, Nodes: []*merkle.Node{user, asst, toolRes}})
+		Expect(err).NotTo(HaveOccurred())
+
+		var status string
+		var hasErr bool
+		pg := driver.(*postgres.Driver)
+		Expect(pg.DB().QueryRow(ctx, `SELECT derived_status, has_tool_error FROM sessions WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
+			mustUUID(orgID), "claude", "hs-err").Scan(&status, &hasErr)).To(Succeed())
+		Expect(status).To(Equal(sessions.StatusFailed))
+		Expect(hasErr).To(BeTrue())
+	})
+
 	It("is idempotent across a retried envelope: one row, one set of counter increments", func() {
 		orgID := newTestOrgID()
 		envelope := &sessions.IngestEnvelope{
