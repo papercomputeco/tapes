@@ -22,8 +22,7 @@ func (t *Tapes) TestE2E(ctx context.Context) (string, error) {
 	}
 
 	tapesBase := t.BuildTapesDevImage(ctx)
-	tapesProxySvc := TapesProxySvc(ctx, tapesBase, WithPostgresSvc(postgresSvc), WithOllamaSvc(ollamaSvc))
-	tapesAPISvc := TapesAPISvc(ctx, tapesBase, WithPostgresSvc(postgresSvc))
+	tapesSvc := TapesSvc(ctx, tapesBase, WithPostgresSvc(postgresSvc), WithOllamaSvc(ollamaSvc))
 
 	// --- Test container ---
 	// Use a Nix container with hurl pre-installed to avoid Debian apt
@@ -35,8 +34,8 @@ func (t *Tapes) TestE2E(ctx context.Context) (string, error) {
 		WithExec([]string{"nix", "profile", "install", "nixpkgs#hurl", "nixpkgs#coreutils"}).
 		WithWorkdir("/src").
 		WithDirectory("/src", t.Source).
-		WithServiceBinding("tapes-proxy", tapesProxySvc).
-		WithServiceBinding("tapes-api", tapesAPISvc).
+		WithServiceBinding("tapes-proxy", tapesSvc).
+		WithServiceBinding("tapes-api", tapesSvc).
 
 		// Run hurl e2e tests.
 		WithExec([]string{"hurl", "--test", ".dagger/e2e/01-health.hurl"}).

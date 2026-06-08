@@ -25,14 +25,8 @@ func (t *Tapes) TestKafkaE2E(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("could not bring up postgres stack: %v", err)
 	}
 
-	kafkaUISvc, err := t.KafkaUIStack(ctx, kafkaSvc)
-	if err != nil {
-		return "", fmt.Errorf("could not bring up kafka stack: %v", err)
-	}
-	defer kafkaUISvc.Stop(ctx)
-
 	tapesBase := t.BuildTapesDevImage(ctx)
-	tapesProxySvc := TapesProxySvc(
+	tapesSvc := TapesSvc(
 		ctx,
 		tapesBase,
 		WithPostgresSvc(postgresSvc),
@@ -42,7 +36,7 @@ func (t *Tapes) TestKafkaE2E(ctx context.Context) (string, error) {
 
 	return t.goContainer().
 		WithServiceBinding("kafka", kafkaSvc).
-		WithServiceBinding("tapes-proxy", tapesProxySvc).
+		WithServiceBinding("tapes-proxy", tapesSvc).
 		WithEnvVariable("TAPES_E2E_KAFKA_BROKERS", fmt.Sprintf("kafka:%d", KAFKA_PORT)).
 		WithEnvVariable("TAPES_E2E_KAFKA_TOPIC", kafkaE2ETopic).
 		WithEnvVariable("TAPES_E2E_PROXY_URL", fmt.Sprintf("http://tapes-proxy:%d", TAPES_PROXY_DEFAULT_PORT)).

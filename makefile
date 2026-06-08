@@ -145,6 +145,10 @@ up-flink:
 
 .PHONY: down
 down:
+	docker compose down --remove-orphans
+
+.PHONY: down-flink
+down-flink:
 	docker compose --profile flink down --remove-orphans
 
 .PHONY: clean

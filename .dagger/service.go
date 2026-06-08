@@ -59,39 +59,3 @@ func TapesSvc(ctx context.Context, tapesBase *dagger.Container, opts ...SvcBindi
 
 	return tapesSvc
 }
-
-func TapesProxySvc(ctx context.Context, tapesBase *dagger.Container, opts ...SvcBindingArgOption) *dagger.Service {
-	args := []string{
-		"/app/tapes", "serve", "proxy",
-	}
-
-	for _, opt := range opts {
-		tapesBase, args = opt(tapesBase, args)
-	}
-
-	tapesProxySvc := tapesBase.
-		WithExposedPort(TAPES_PROXY_DEFAULT_PORT).
-		AsService(dagger.ContainerAsServiceOpts{
-			Args: args,
-		})
-
-	return tapesProxySvc
-}
-
-func TapesAPISvc(ctx context.Context, tapesBase *dagger.Container, opts ...SvcBindingArgOption) *dagger.Service {
-	args := []string{
-		"/app/tapes", "serve", "api",
-	}
-
-	for _, opt := range opts {
-		tapesBase, args = opt(tapesBase, args)
-	}
-
-	tapesAPISvc := tapesBase.
-		WithExposedPort(TAPES_API_DEFAULT_PORT).
-		AsService(dagger.ContainerAsServiceOpts{
-			Args: args,
-		})
-
-	return tapesAPISvc
-}
