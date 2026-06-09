@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -14,17 +13,6 @@ import (
 	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
-
-// terminalStopReasons mirrors the leaf-status branch of
-// pkg/sessions.DetermineStatus: an assistant leaf with one of these
-// stop_reason values classifies as completed without any chain walk.
-// Kept in sync with status.go in the sessions package.
-var terminalStopReasons = map[string]struct{}{
-	"stop":     {},
-	"end_turn": {},
-	"end-turn": {},
-	"eos":      {},
-}
 
 // Driver implements Storer using an in-memory map.
 type Driver struct {
@@ -446,12 +434,13 @@ func (s *Driver) CountSessions(_ context.Context, opts storage.ListOpts) (storag
 			}
 		}
 
+		// The in-memory driver does not track first-class sessions (no
+		// session_id / sessions table), so SessionCount and CompletedCount
+		// stay 0 — matching a Postgres store that has nodes but no session
+		// rows. StemCount is the leaf-based metric that is always available.
 		isLeaf := !hasChildren[node.Hash]
 		if isLeaf {
-			stats.SessionCount++
-			if leafIsCompleted(node) {
-				stats.CompletedCount++
-			}
+			stats.StemCount++
 		}
 		if node.ParentHash == nil || *node.ParentHash == "" {
 			stats.RootCount++
@@ -480,19 +469,6 @@ func (s *Driver) CountSessions(_ context.Context, opts storage.ListOpts) (storag
 		stats.TotalDurationNs = maxCreated.Sub(minCreated).Nanoseconds()
 	}
 	return stats, nil
-}
-
-// leafIsCompleted reports whether a leaf node satisfies the leaf-only
-// "completed" rule used by /v1/stats: assistant role plus a terminal
-// stop_reason. Not equivalent to pkg/sessions.DetermineStatus, which
-// also walks the chain for tool errors and git activity — see the
-// SessionStats.CompletedCount godoc.
-func leafIsCompleted(n *merkle.Node) bool {
-	if strings.ToLower(n.Bucket.Role) != "assistant" {
-		return false
-	}
-	_, ok := terminalStopReasons[strings.ToLower(strings.TrimSpace(n.StopReason))]
-	return ok
 }
 
 // computeHasChildren builds a set of node hashes that are referenced as a

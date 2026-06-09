@@ -1,15 +1,19 @@
 -- name: AggregateSessions :one
 --
--- Single-pass aggregate that powers /v1/stats. All counts and SUMs apply
--- to the set of nodes matching the supplied per-node filters; a "session"
--- is identified as a leaf node (no child references it as parent_hash).
+-- Single-pass aggregate that powers /v1/stats. SUMs and turn/stem/root
+-- counts apply to the set of nodes matching the supplied per-node filters.
 --
--- completed_count is leaf-status-only: assistant role plus a terminal
--- stop_reason. It deliberately omits the chain-context overrides
--- (hasToolError / hasGitActivity) that pkg/sessions.DetermineStatus
--- applies, so a single SQL aggregate is sufficient. See StatsResponse
--- in api/v1_handlers.go for the rationale, and PCC-515 for the durable
--- chain-aware fix.
+-- session_count and completed_count are session-grained, keyed on the
+-- first-class sessions table via nodes.session_id (PCC-565):
+--   session_count   = distinct sessions touched by the matching nodes
+--   completed_count = distinct sessions whose denormalized derived_status
+--                     is 'completed' (chain-aware, computed at ingest by
+--                     pkg/sessions.DetermineStatus — PCC-515)
+-- Nodes with no session_id (legacy / non-session-tracked writers) are not
+-- counted as sessions; COUNT(DISTINCT session_id) ignores their NULLs.
+--
+-- stem_count is the leaf count (one per Merkle chain, matching /v1/stems) —
+-- the value session_count used to report before the sessions table existed.
 --
 -- total_duration_ns is wall-clock span MAX(created_at) - MIN(created_at)
 -- across the matching set, NOT SUM(nodes.total_duration_ns). The
@@ -34,8 +38,11 @@ WITH filtered AS (
         n.completion_tokens,
         n.cache_creation_input_tokens,
         n.cache_read_input_tokens,
+        n.session_id,
+        s.derived_status,
         EXISTS (SELECT 1 FROM nodes c WHERE c.parent_hash = n.hash) AS has_child
     FROM nodes n
+    LEFT JOIN sessions s ON s.id = n.session_id
     WHERE (sqlc.narg(project_filter)::text IS NULL OR n.project = sqlc.narg(project_filter)::text)
       AND (sqlc.narg(agent_filter)::text IS NULL OR n.agent_name = sqlc.narg(agent_filter)::text)
       AND (sqlc.narg(model_filter)::text IS NULL OR n.model = sqlc.narg(model_filter)::text)
@@ -45,12 +52,11 @@ WITH filtered AS (
 )
 SELECT
     COUNT(*)::bigint                                                         AS turn_count,
-    COUNT(*) FILTER (WHERE NOT has_child)::bigint                            AS session_count,
+    COUNT(DISTINCT session_id)::bigint                                       AS session_count,
+    COUNT(*) FILTER (WHERE NOT has_child)::bigint                            AS stem_count,
     COUNT(*) FILTER (WHERE parent_hash IS NULL)::bigint                      AS root_count,
-    COUNT(*) FILTER (
-        WHERE NOT has_child
-          AND LOWER(role) = 'assistant'
-          AND LOWER(stop_reason) IN ('stop', 'end_turn', 'end-turn', 'eos')
+    COUNT(DISTINCT session_id) FILTER (
+        WHERE derived_status = 'completed'
     )::bigint                                                                AS completed_count,
     COALESCE(SUM(prompt_tokens), 0)::bigint                                  AS input_tokens,
     COALESCE(SUM(completion_tokens), 0)::bigint                              AS output_tokens,
