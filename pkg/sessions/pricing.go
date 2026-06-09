@@ -10,7 +10,7 @@ import (
 
 // DefaultPricing returns hardcoded pricing per million tokens for supported models.
 //
-// Last verified: 2026-05-29
+// Last verified: 2026-06-09
 // Sources:
 //   - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
 //   - OpenAI:    https://platform.openai.com/docs/pricing
@@ -23,6 +23,7 @@ import (
 func DefaultPricing() PricingTable {
 	return PricingTable{
 		// Anthropic
+		"claude-fable-5":    {Input: 10.00, Output: 50.00, CacheRead: 1.00, CacheWrite: 12.50},
 		"claude-opus-4.8":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25},
 		"claude-opus-4.7":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25},
 		"claude-opus-4.6":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25},
@@ -131,6 +132,10 @@ func NormalizeModel(model string) string {
 	if normalized == "" {
 		return normalized
 	}
+
+	// Strip the Anthropic 1M-context marker: claude-fable-5[1m] prices
+	// the same as claude-fable-5 (no long-context premium).
+	normalized = strings.TrimSuffix(normalized, "[1m]")
 
 	// Strip Anthropic-style date suffix: -YYYYMMDD (8 consecutive digits)
 	if idx := strings.LastIndex(normalized, "-"); idx != -1 {
