@@ -329,6 +329,7 @@ func (d *Driver) CountSessions(ctx context.Context, opts storage.ListOpts) (stor
 
 	return storage.SessionStats{
 		SessionCount:        int(row.SessionCount),
+		StemCount:           int(row.StemCount),
 		TurnCount:           int(row.TurnCount),
 		RootCount:           int(row.RootCount),
 		CompletedCount:      int(row.CompletedCount),

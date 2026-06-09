@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"strconv"
 	"time"
@@ -171,6 +172,40 @@ func (d *Driver) IngestTurn(ctx context.Context, req storage.IngestTurnRequest) 
 			return storage.IngestTurnResult{}, fmt.Errorf("update session counters: %w", err)
 		}
 		countersUpdated = true
+
+		// Recompute the session's chain-aware status. has_git_activity is
+		// sticky and the tool-result counts are cumulative across every turn
+		// and stem; sessionRow carries the pre-turn totals via UpsertSession's
+		// RETURNING. We accumulate over newNodes (the genuinely new rows this
+		// turn) rather than req.Nodes — the full chain is re-sent every turn,
+		// so counting it would multiply the totals; OR-only booleans tolerated
+		// that, counts do not. derived_status mirrors
+		// pkg/sessions.DetermineStatus over the totals and this turn's leaf
+		// (req.Nodes is validated root->leaf, so the last node is the leaf).
+		hasGitActivity := sessionRow.HasGitActivity
+		toolResultCount := int(sessionRow.ToolResultCount)
+		toolErrorCount := int(sessionRow.ToolErrorCount)
+		for _, n := range newNodes {
+			if n == nil {
+				continue
+			}
+			if !hasGitActivity && sessions.BlocksHaveGitActivity(n.Bucket.Content) {
+				hasGitActivity = true
+			}
+			toolResultCount += sessions.CountToolResults(n.Bucket.Content)
+			toolErrorCount += sessions.CountToolResultErrors(n.Bucket.Content)
+		}
+		leaf := req.Nodes[len(req.Nodes)-1]
+		status := sessions.DetermineStatus(leaf, hasGitActivity, toolResultCount, toolErrorCount)
+		if err := qtx.UpdateSessionStatus(ctx, gensqlc.UpdateSessionStatusParams{
+			HasGitActivity:  hasGitActivity,
+			ToolResultCount: int32Count(toolResultCount),
+			ToolErrorCount:  int32Count(toolErrorCount),
+			DerivedStatus:   status,
+			ID:              sessionRow.ID,
+		}); err != nil {
+			return storage.IngestTurnResult{}, fmt.Errorf("update session status: %w", err)
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -480,6 +515,19 @@ func uuidString(id pgtype.UUID) string {
 // worker currently stubs CostUSD at 0 (no pricing table is wired in
 // this repo); this function exists so the path is ready when a
 // pricing lookup is added.
+// int32Count clamps a non-negative running count into int32 for the session
+// counter columns. Tool-result counts are realistically tiny; the clamp only
+// guards against a pathological overflow and keeps gosec G115 satisfied.
+func int32Count(n int) int32 {
+	if n < 0 {
+		return 0
+	}
+	if n > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(n)
+}
+
 func numericFromFloat(v float64) (pgtype.Numeric, error) {
 	if v == 0 {
 		return pgtype.Numeric{Int: big.NewInt(0), Exp: 0, Valid: true}, nil

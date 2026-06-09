@@ -82,8 +82,17 @@ type Page[T any] struct {
 // of a matching leaf session. This mirrors the long-standing TurnCount
 // semantic: the filter is per-node, not per-chain.
 type SessionStats struct {
-	// SessionCount is the number of leaf nodes matching the filter.
+	// SessionCount is the number of distinct first-class sessions touched by
+	// the matching nodes (keyed on nodes.session_id). Nodes with no
+	// session_id — legacy or non-session-tracked writers, including the
+	// in-memory driver — do not contribute, so a store with no session rows
+	// reports 0. See StemCount for the leaf-based metric.
 	SessionCount int
+
+	// StemCount is the number of leaf nodes (Merkle chains) matching the
+	// filter — one per /v1/stems entry. This is the value SessionCount
+	// reported before the sessions table existed.
+	StemCount int
 
 	// TurnCount is the number of nodes (turns) matching the filter.
 	TurnCount int
@@ -91,12 +100,11 @@ type SessionStats struct {
 	// RootCount is the number of root nodes (no parent) matching the filter.
 	RootCount int
 
-	// CompletedCount is the number of leaf nodes whose terminal classification
-	// is "completed" using leaf-only inputs (assistant role + a terminal
-	// stop_reason). This intentionally diverges from
-	// pkg/sessions.DetermineStatus, which also walks the chain to detect
-	// tool errors and git activity. The leaf-only form is fast and
-	// satisfiable in a single SQL aggregate.
+	// CompletedCount is the number of distinct sessions whose chain-aware
+	// derived_status is "completed" (computed at ingest via
+	// pkg/sessions.DetermineStatus, read from the sessions table). Like
+	// SessionCount it is session-grained: a store with no session rows
+	// reports 0.
 	CompletedCount int
 
 	// InputTokens / OutputTokens are SUMs over the matching node set,

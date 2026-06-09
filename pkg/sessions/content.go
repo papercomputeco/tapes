@@ -48,11 +48,33 @@ func CountToolCalls(blocks []llm.ContentBlock) int {
 // BlocksHaveToolError reports whether any tool_result block is marked as an error.
 func BlocksHaveToolError(blocks []llm.ContentBlock) bool {
 	for _, block := range blocks {
-		if block.Type == "tool_result" && block.IsError {
+		if block.Type == blockTypeToolResult && block.IsError {
 			return true
 		}
 	}
 	return false
+}
+
+// CountToolResults returns how many tool_result blocks are in the slice.
+func CountToolResults(blocks []llm.ContentBlock) int {
+	count := 0
+	for _, block := range blocks {
+		if block.Type == blockTypeToolResult {
+			count++
+		}
+	}
+	return count
+}
+
+// CountToolResultErrors returns how many tool_result blocks are marked errors.
+func CountToolResultErrors(blocks []llm.ContentBlock) int {
+	count := 0
+	for _, block := range blocks {
+		if block.Type == blockTypeToolResult && block.IsError {
+			count++
+		}
+	}
+	return count
 }
 
 // gitCommandPatterns matches common git commit and push invocations inside

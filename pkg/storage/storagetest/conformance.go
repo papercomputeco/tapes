@@ -163,9 +163,14 @@ func RunListSessionsSpecs(label string, makeDriver DriverFactory) bool {
 			ginkgo.It("CountSessions reports correct totals", func() {
 				stats, err := driver.CountSessions(ctx, storage.ListOpts{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				gomega.Expect(stats.SessionCount).To(gomega.Equal(3)) // 3 leaves
-				gomega.Expect(stats.TurnCount).To(gomega.Equal(4))    // root + 3 leaves
+				gomega.Expect(stats.StemCount).To(gomega.Equal(3)) // 3 leaves
+				gomega.Expect(stats.TurnCount).To(gomega.Equal(4)) // root + 3 leaves
 				gomega.Expect(stats.RootCount).To(gomega.Equal(1))
+				// Nodes were Put directly (no session envelope), so there are
+				// no first-class sessions to count — session-grained metrics
+				// are 0 while StemCount carries the leaf-based total.
+				gomega.Expect(stats.SessionCount).To(gomega.Equal(0))
+				gomega.Expect(stats.CompletedCount).To(gomega.Equal(0))
 			})
 
 			ginkgo.It("CountSessions respects filters", func() {
@@ -175,9 +180,10 @@ func RunListSessionsSpecs(label string, makeDriver DriverFactory) bool {
 				// - 3 nodes have project=tapes (root, leafA, leafC)
 				// - 2 of those are leaves (leafA, leafC)
 				// - 1 of those is a root
-				gomega.Expect(stats.SessionCount).To(gomega.Equal(2))
+				gomega.Expect(stats.StemCount).To(gomega.Equal(2))
 				gomega.Expect(stats.TurnCount).To(gomega.Equal(3))
 				gomega.Expect(stats.RootCount).To(gomega.Equal(1))
+				gomega.Expect(stats.SessionCount).To(gomega.Equal(0))
 			})
 
 			ginkgo.It("rejects an invalid cursor", func() {

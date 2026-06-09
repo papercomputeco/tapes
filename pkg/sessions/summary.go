@@ -27,18 +27,18 @@ func BuildSummary(nodes []*merkle.Node, pricing PricingTable) (SessionSummary, m
 	inputTokens := int64(0)
 	outputTokens := int64(0)
 
-	hasToolError := false
+	toolResults := 0
+	toolErrors := 0
 	hasGitActivity := false
 	var lastModel string
 
-	// Walk every node once: derive tool errors, git activity, per-model cost,
-	// and running token totals in a single pass.
+	// Walk every node once: derive tool-result counts, git activity, per-model
+	// cost, and running token totals in a single pass.
 	for _, n := range nodes {
 		blocks := n.Bucket.Content
 		toolCalls += CountToolCalls(blocks)
-		if BlocksHaveToolError(blocks) {
-			hasToolError = true
-		}
+		toolResults += CountToolResults(blocks)
+		toolErrors += CountToolResultErrors(blocks)
 		if BlocksHaveGitActivity(blocks) {
 			hasGitActivity = true
 		}
@@ -82,7 +82,7 @@ func BuildSummary(nodes []*merkle.Node, pricing PricingTable) (SessionSummary, m
 	inputCost, outputCost, totalCost := SumModelCosts(modelCosts)
 
 	leaf := nodes[len(nodes)-1]
-	status := DetermineStatus(leaf, hasToolError, hasGitActivity)
+	status := DetermineStatus(leaf, hasGitActivity, toolResults, toolErrors)
 
 	project := ""
 	agentName := ""

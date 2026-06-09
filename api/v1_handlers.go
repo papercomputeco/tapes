@@ -106,6 +106,7 @@ type Turn struct {
 //     derived_status on Put + backfill).
 type StatsResponse struct {
 	SessionCount    int     `json:"session_count"`
+	StemCount       int     `json:"stem_count"`
 	TurnCount       int     `json:"turn_count"`
 	RootCount       int     `json:"root_count"`
 	CompletedCount  int     `json:"completed_count"`
@@ -262,6 +263,7 @@ func (s *Server) handleStats(c *fiber.Ctx) error {
 
 	return c.JSON(StatsResponse{
 		SessionCount:    stats.SessionCount,
+		StemCount:       stats.StemCount,
 		TurnCount:       stats.TurnCount,
 		RootCount:       stats.RootCount,
 		CompletedCount:  stats.CompletedCount,

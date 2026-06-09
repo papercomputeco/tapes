@@ -49,6 +49,7 @@ type SessionItem struct {
 	TotalInputTokens  int64          `json:"total_input_tokens"`
 	TotalOutputTokens int64          `json:"total_output_tokens"`
 	TotalCostUsd      float64        `json:"total_cost_usd"`
+	DerivedStatus     string         `json:"derived_status"`
 	HarnessMetadata   map[string]any `json:"harness_metadata,omitempty"`
 	Preview           string         `json:"preview,omitempty"`
 }
@@ -95,6 +96,7 @@ func sessionItemFromStorage(s storage.SessionRecord) SessionItem {
 		TotalInputTokens:  s.TotalInputTokens,
 		TotalOutputTokens: s.TotalOutputTokens,
 		TotalCostUsd:      s.TotalCostUsd,
+		DerivedStatus:     s.DerivedStatus,
 		HarnessMetadata:   s.HarnessMetadata,
 		Preview:           s.Preview,
 	}

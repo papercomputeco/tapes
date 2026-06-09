@@ -164,11 +164,13 @@ var _ = Describe("v1 session handlers", func() {
 
 			It("returns unfiltered totals with zero aggregates", func() {
 				body := decodeStats(server, "/v1/stats")
-				Expect(body.SessionCount).To(Equal(2))
+				// Nodes are Put directly (no session envelope), so the
+				// session-grained metrics are 0; StemCount carries the
+				// leaf-based total (2 leaves).
+				Expect(body.StemCount).To(Equal(2))
+				Expect(body.SessionCount).To(Equal(0))
 				Expect(body.TurnCount).To(Equal(3))
 				Expect(body.RootCount).To(Equal(1))
-				// No Usage on any node, no pricing match for model "m", no
-				// stop_reason → completed_count and the aggregates stay zero.
 				Expect(body.CompletedCount).To(Equal(0))
 				Expect(body.TotalCost).To(Equal(0.0))
 				Expect(body.InputTokens).To(Equal(int64(0)))
@@ -178,7 +180,8 @@ var _ = Describe("v1 session handlers", func() {
 
 			It("applies the project filter", func() {
 				body := decodeStats(server, "/v1/stats?project=tapes")
-				Expect(body.SessionCount).To(Equal(1))
+				Expect(body.StemCount).To(Equal(1))
+				Expect(body.SessionCount).To(Equal(0))
 				Expect(body.TurnCount).To(Equal(2))
 				Expect(body.RootCount).To(Equal(1))
 				Expect(body.CompletedCount).To(Equal(0))
@@ -277,7 +280,8 @@ var _ = Describe("v1 session handlers", func() {
 				seedSession(seedOpts{tag: "b", project: "tapes", inputTokens: 500_000, outputTok: 250_000, stop: ""})
 
 				body := decodeStats(richServer, "/v1/stats")
-				Expect(body.SessionCount).To(Equal(2))
+				Expect(body.StemCount).To(Equal(2))
+				Expect(body.SessionCount).To(Equal(0))
 				Expect(body.TurnCount).To(Equal(4))
 				Expect(body.RootCount).To(Equal(2))
 				Expect(body.InputTokens).To(Equal(int64(1_500_000)))
@@ -287,8 +291,10 @@ var _ = Describe("v1 session handlers", func() {
 				// (baseTime+4s) − (baseTime+1s) = 3s.
 				Expect(body.TotalDurationNs).To(Equal(3 * int64(time.Second)))
 				Expect(body.ToolCalls).To(Equal(2))
-				// Leaf-status: session 1's assistant leaf has stop_reason "stop"; session 2's is empty.
-				Expect(body.CompletedCount).To(Equal(1))
+				// completed_count is session-grained (sessions.derived_status);
+				// these nodes are Put without sessions, so it stays 0. Chain-
+				// aware completion is covered in the postgres ingest specs.
+				Expect(body.CompletedCount).To(Equal(0))
 			})
 
 			It("narrows folded aggregates by the project filter", func() {
@@ -297,26 +303,32 @@ var _ = Describe("v1 session handlers", func() {
 				seedSession(seedOpts{tag: "b", project: "other", inputTokens: 999_999, outputTok: 999_999, stop: "stop"})
 
 				body := decodeStats(richServer, "/v1/stats?project=tapes")
-				Expect(body.SessionCount).To(Equal(1))
+				Expect(body.StemCount).To(Equal(1))
+				Expect(body.SessionCount).To(Equal(0))
 				Expect(body.InputTokens).To(Equal(int64(1_000_000)))
 				Expect(body.OutputTokens).To(Equal(int64(500_000)))
 				Expect(body.TotalCost).To(BeNumerically("~", 25.0, 0.0001))
 				// Wall-clock window narrows to the tapes-project pair (+1s..+2s) = 1s.
 				Expect(body.TotalDurationNs).To(Equal(int64(time.Second)))
-				Expect(body.CompletedCount).To(Equal(1))
+				Expect(body.CompletedCount).To(Equal(0))
 			})
 
-			It("classifies completed_count using leaf stop_reason only", func() {
-				// Sessions across the spectrum of leaf states.
+			It("reports session-grained completed_count as 0 on a non-session (Put-only) store", func() {
+				// Five leaf-chains across the spectrum of leaf states. They are
+				// Put without a session envelope, so no sessions.derived_status
+				// rows exist: completed_count (session-grained) is 0 while
+				// StemCount counts the five leaves. Chain-aware completed_count
+				// is exercised by the postgres ingest specs.
 				seedSession(seedOpts{tag: "completed-stop", project: "tapes", stop: "stop"})
 				seedSession(seedOpts{tag: "completed-end_turn", project: "tapes", stop: "end_turn"})
-				seedSession(seedOpts{tag: "completed-eos", project: "tapes", stop: "EOS"}) // case-insensitive
+				seedSession(seedOpts{tag: "completed-eos", project: "tapes", stop: "EOS"})
 				seedSession(seedOpts{tag: "failed-length", project: "tapes", stop: "length"})
 				seedSession(seedOpts{tag: "unknown", project: "tapes", stop: ""})
 
 				body := decodeStats(richServer, "/v1/stats")
-				Expect(body.SessionCount).To(Equal(5))
-				Expect(body.CompletedCount).To(Equal(3))
+				Expect(body.StemCount).To(Equal(5))
+				Expect(body.SessionCount).To(Equal(0))
+				Expect(body.CompletedCount).To(Equal(0))
 			})
 
 			// Regression guard: nodes.total_duration_ns is currently never
@@ -337,6 +349,7 @@ var _ = Describe("v1 session handlers", func() {
 			It("returns zeros across every field for an empty store", func() {
 				body := decodeStats(richServer, "/v1/stats")
 				Expect(body.SessionCount).To(Equal(0))
+				Expect(body.StemCount).To(Equal(0))
 				Expect(body.TurnCount).To(Equal(0))
 				Expect(body.RootCount).To(Equal(0))
 				Expect(body.CompletedCount).To(Equal(0))
