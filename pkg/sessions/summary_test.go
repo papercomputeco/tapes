@@ -267,6 +267,11 @@ var _ = Describe("NormalizeModel", func() {
 	It("strips the Anthropic 1M-context marker", func() {
 		Expect(sessions.NormalizeModel("claude-fable-5[1m]")).To(Equal("claude-fable-5"))
 		Expect(sessions.NormalizeModel("claude-opus-4-8[1m]")).To(Equal("claude-opus-4.8"))
+		// Dated + marker: Anthropic puts the [1m] marker at the very end
+		// (claude-sonnet-4-5-20250929[1m]), so the marker must be stripped
+		// BEFORE the date suffix — otherwise the trailing "[1m]" hides the
+		// date from the -YYYYMMDD stripper.
+		Expect(sessions.NormalizeModel("claude-sonnet-4-5-20250929[1m]")).To(Equal("claude-sonnet-4.5"))
 	})
 	It("resolves claude-fable-5 pricing in bare and 1M-context form", func() {
 		// claude-fable-5 has no minor version, so the dotted-key round-trip
