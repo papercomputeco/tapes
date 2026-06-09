@@ -264,6 +264,21 @@ var _ = Describe("NormalizeModel", func() {
 	It("strips OpenAI-style date suffix", func() {
 		Expect(sessions.NormalizeModel("gpt-4o-2024-08-06")).To(Equal("gpt-4o"))
 	})
+	It("strips the Anthropic 1M-context marker", func() {
+		Expect(sessions.NormalizeModel("claude-fable-5[1m]")).To(Equal("claude-fable-5"))
+		Expect(sessions.NormalizeModel("claude-opus-4-8[1m]")).To(Equal("claude-opus-4.8"))
+	})
+	It("resolves claude-fable-5 pricing in bare and 1M-context form", func() {
+		// claude-fable-5 has no minor version, so the dotted-key round-trip
+		// loop below skips it — pin its lookup explicitly.
+		pricing := sessions.DefaultPricing()
+		for _, api := range []string{"claude-fable-5", "claude-fable-5[1m]"} {
+			price, ok := sessions.PricingForModel(pricing, api)
+			Expect(ok).To(BeTrue(), "PricingForModel(%q)", api)
+			Expect(price.Input).To(BeNumerically("==", 10.00), "input $/MTok for %q", api)
+			Expect(price.Output).To(BeNumerically("==", 50.00), "output $/MTok for %q", api)
+		}
+	})
 	It("every Anthropic pricing key is reachable from its canonical API form", func() {
 		// Guards against forgetting the matching `-N-M` → `-N.M` rewrite when
 		// adding a new Anthropic row to DefaultPricing. The dated variant
