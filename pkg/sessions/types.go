@@ -77,7 +77,8 @@ const (
 
 // Internal content-block constants used by the derivation helpers.
 const (
-	blockTypeToolUse = "tool_use"
-	roleAssistant    = "assistant"
-	roleUser         = "user"
+	blockTypeToolUse    = "tool_use"
+	blockTypeToolResult = "tool_result"
+	roleAssistant       = "assistant"
+	roleUser            = "user"
 )

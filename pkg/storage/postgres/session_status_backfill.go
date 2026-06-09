@@ -16,14 +16,20 @@ import (
 // capability so api can type-assert it without depending on this package.
 var _ storage.SessionStatusBackfiller = (*Driver)(nil)
 
-// BackfillSessionStatus recomputes derived_status (and the sticky
-// has_tool_error / has_git_activity flags) for every session by walking its
-// nodes with the same signal helpers ingest uses (sessions.BlocksHaveToolError
-// / BlocksHaveGitActivity over every node, sessions.DetermineStatus over the
-// chronologically-last node as the leaf). It exists for rows that predate the
-// ingest-time computation; live ingest keeps status current on its own.
+// BackfillSessionStatus recomputes derived_status (plus the sticky
+// has_git_activity flag and tool_result_count / tool_error_count) for sessions
+// still at the default 'unknown' status — the rows that predate the
+// ingest-time computation. It walks each session's nodes with the same signal
+// helpers ingest uses (sessions.CountToolResults / CountToolResultErrors /
+// BlocksHaveGitActivity over every node, sessions.DetermineStatus over the
+// chronologically-last node as the leaf). Live ingest keeps status current on
+// its own.
 //
-// Idempotent and safe to run online: a concurrent live turn re-runs the same
+// Scoping to 'unknown' keeps re-runs cheap and idempotent — already-classified
+// rows are skipped. Re-classifying already-decided rows after a classifier
+// change is intentionally out of scope for this endpoint.
+//
+// Safe to run online: a concurrent live turn re-runs the same
 // UpdateSessionStatus path, so the worst case is a redundant equal write.
 // Each session's recompute is its own statement; there is no global lock.
 func (d *Driver) BackfillSessionStatus(ctx context.Context) (storage.BackfillSessionStatusResult, error) {
@@ -31,7 +37,7 @@ func (d *Driver) BackfillSessionStatus(ctx context.Context) (storage.BackfillSes
 		return storage.BackfillSessionStatusResult{}, errors.New("postgres driver not open")
 	}
 
-	rows, err := d.conn.Query(ctx, `SELECT id FROM sessions`)
+	rows, err := d.conn.Query(ctx, `SELECT id FROM sessions WHERE derived_status = 'unknown'`)
 	if err != nil {
 		return storage.BackfillSessionStatusResult{}, fmt.Errorf("list sessions: %w", err)
 	}
@@ -67,32 +73,33 @@ func (d *Driver) BackfillSessionStatus(ctx context.Context) (storage.BackfillSes
 			return result, fmt.Errorf("rebuild session %s nodes: %w", uuidString(id), err)
 		}
 
-		hasToolError, hasGitActivity := false, false
+		// ListNodesBySession returns every node once, so unlike the ingest
+		// path (which sees the full chain re-sent each turn) we can count
+		// straight over the set.
+		hasGitActivity := false
+		toolResultCount, toolErrorCount := 0, 0
 		for _, n := range nodes {
-			if hasToolError && hasGitActivity {
-				break
-			}
 			if n == nil {
 				continue
 			}
-			if sessions.BlocksHaveToolError(n.Bucket.Content) {
-				hasToolError = true
-			}
-			if sessions.BlocksHaveGitActivity(n.Bucket.Content) {
+			if !hasGitActivity && sessions.BlocksHaveGitActivity(n.Bucket.Content) {
 				hasGitActivity = true
 			}
+			toolResultCount += sessions.CountToolResults(n.Bucket.Content)
+			toolErrorCount += sessions.CountToolResultErrors(n.Bucket.Content)
 		}
 		// ListNodesBySession orders by created_at ASC, so the last node is
 		// the most recently captured — the same "latest leaf" the per-turn
 		// ingest path classifies on.
 		leaf := nodes[len(nodes)-1]
-		status := sessions.DetermineStatus(leaf, hasToolError, hasGitActivity)
+		status := sessions.DetermineStatus(leaf, hasGitActivity, toolResultCount, toolErrorCount)
 
 		if err := d.q.UpdateSessionStatus(ctx, gensqlc.UpdateSessionStatusParams{
-			HasToolError:   hasToolError,
-			HasGitActivity: hasGitActivity,
-			DerivedStatus:  status,
-			ID:             id,
+			HasGitActivity:  hasGitActivity,
+			ToolResultCount: int32Count(toolResultCount),
+			ToolErrorCount:  int32Count(toolErrorCount),
+			DerivedStatus:   status,
+			ID:              id,
 		}); err != nil {
 			return result, fmt.Errorf("update session %s status: %w", uuidString(id), err)
 		}

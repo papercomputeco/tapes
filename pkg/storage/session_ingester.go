@@ -114,11 +114,11 @@ type SessionBackfillResult struct {
 }
 
 // SessionStatusBackfiller is an optional Driver capability that recomputes
-// the denormalized derived_status (and the sticky has_tool_error /
-// has_git_activity flags) for sessions whose rows predate the ingest-time
-// status computation. It walks each session's nodes with the same signal
-// helpers ingest uses, so a backfilled store matches what live ingest would
-// have written. Idempotent and safe to run online.
+// the denormalized derived_status (and the sticky has_git_activity flag,
+// tool_result_count, and tool_error_count) for sessions whose rows predate
+// the ingest-time status computation. It walks each session's nodes with the
+// same signal helpers ingest uses, so a backfilled store matches what live
+// ingest would have written. Idempotent and safe to run online.
 type SessionStatusBackfiller interface {
 	BackfillSessionStatus(ctx context.Context) (BackfillSessionStatusResult, error)
 }

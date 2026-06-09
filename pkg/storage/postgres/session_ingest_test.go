@@ -142,12 +142,13 @@ var _ = Describe("Driver.IngestTurn", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		var status string
-		var hasErr, hasGit bool
+		var toolErrors int
+		var hasGit bool
 		pg := driver.(*postgres.Driver)
-		Expect(pg.DB().QueryRow(ctx, `SELECT derived_status, has_tool_error, has_git_activity FROM sessions WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
-			mustUUID(orgID), "claude", "hs-complete").Scan(&status, &hasErr, &hasGit)).To(Succeed())
+		Expect(pg.DB().QueryRow(ctx, `SELECT derived_status, tool_error_count, has_git_activity FROM sessions WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
+			mustUUID(orgID), "claude", "hs-complete").Scan(&status, &toolErrors, &hasGit)).To(Succeed())
 		Expect(status).To(Equal(sessions.StatusCompleted))
-		Expect(hasErr).To(BeFalse())
+		Expect(toolErrors).To(Equal(0))
 		Expect(hasGit).To(BeFalse())
 	})
 
@@ -174,7 +175,7 @@ var _ = Describe("Driver.IngestTurn", func() {
 		Expect(hasGit).To(BeTrue())
 	})
 
-	It("derives 'failed' when any turn carries a tool_result error", func() {
+	It("derives 'failed' when the session ends on an unrecovered tool_result error", func() {
 		orgID := newTestOrgID()
 		env := &sessions.IngestEnvelope{OrgID: orgID, AuthSubject: "s", HarnessID: "claude", HarnessSessionID: "hs-err"}
 
@@ -186,12 +187,12 @@ var _ = Describe("Driver.IngestTurn", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		var status string
-		var hasErr bool
+		var toolErrors int
 		pg := driver.(*postgres.Driver)
-		Expect(pg.DB().QueryRow(ctx, `SELECT derived_status, has_tool_error FROM sessions WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
-			mustUUID(orgID), "claude", "hs-err").Scan(&status, &hasErr)).To(Succeed())
+		Expect(pg.DB().QueryRow(ctx, `SELECT derived_status, tool_error_count FROM sessions WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
+			mustUUID(orgID), "claude", "hs-err").Scan(&status, &toolErrors)).To(Succeed())
 		Expect(status).To(Equal(sessions.StatusFailed))
-		Expect(hasErr).To(BeTrue())
+		Expect(toolErrors).To(Equal(1))
 	})
 
 	It("backfills derived_status for session rows that predate the computation", func() {
@@ -203,7 +204,7 @@ var _ = Describe("Driver.IngestTurn", func() {
 		pg := driver.(*postgres.Driver)
 		// Simulate a pre-feature row: blank out the computed status so the
 		// backfill has something to recover.
-		_, err = pg.DB().Exec(ctx, `UPDATE sessions SET derived_status='unknown', has_tool_error=false, has_git_activity=false WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
+		_, err = pg.DB().Exec(ctx, `UPDATE sessions SET derived_status='unknown', has_git_activity=false, tool_result_count=0, tool_error_count=0 WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
 			mustUUID(orgID), "claude", "hs-backfill")
 		Expect(err).NotTo(HaveOccurred())
 

@@ -92,15 +92,45 @@ var _ = Describe("BuildSummary", func() {
 		Expect(modelCosts).To(HaveKey("test-model"))
 	})
 
-	It("reports failed status when a tool_result error appears anywhere in the chain", func() {
+	It("reports completed when tool errors are a recovered minority and the leaf ended cleanly", func() {
+		// 1 error out of 3 tool_results (33%), and a clean assistant turn
+		// followed — the model recovered, so this is not a failure.
 		root := newNode("user", "run something", "test-model", nil, baseTime, "", nil)
-		root.Bucket.Content = append(root.Bucket.Content, llm.ContentBlock{
-			Type:    "tool_result",
-			IsError: true,
-		})
+		root.Bucket.Content = append(root.Bucket.Content,
+			llm.ContentBlock{Type: "tool_result", IsError: true},
+			llm.ContentBlock{Type: "tool_result"},
+			llm.ContentBlock{Type: "tool_result"},
+		)
 		leaf := newNode("assistant", "done", "test-model", &root.Hash, baseTime.Add(time.Second), "stop", nil)
 
 		_, _, status, err := sessions.BuildSummary([]*merkle.Node{root, leaf}, pricing)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(sessions.StatusCompleted))
+	})
+
+	It("reports failed when tool errors exceed half of tool results", func() {
+		root := newNode("user", "run something", "test-model", nil, baseTime, "", nil)
+		root.Bucket.Content = append(root.Bucket.Content,
+			llm.ContentBlock{Type: "tool_result", IsError: true},
+			llm.ContentBlock{Type: "tool_result", IsError: true},
+			llm.ContentBlock{Type: "tool_result"},
+		)
+		leaf := newNode("assistant", "done", "test-model", &root.Hash, baseTime.Add(time.Second), "stop", nil)
+
+		_, _, status, err := sessions.BuildSummary([]*merkle.Node{root, leaf}, pricing)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(sessions.StatusFailed))
+	})
+
+	It("reports failed when the session ends on an unrecovered tool error", func() {
+		root := newNode("user", "run something", "test-model", nil, baseTime, "", nil)
+		asst := newNode("assistant", "calling a tool", "test-model", &root.Hash, baseTime.Add(time.Second), "tool_use", nil)
+		asst.Bucket.Content = []llm.ContentBlock{{Type: "tool_use", ToolName: "Bash"}}
+		// Leaf is a user-role tool_result error with no assistant turn after it.
+		errLeaf := newNode("user", "", "test-model", &asst.Hash, baseTime.Add(2*time.Second), "", nil)
+		errLeaf.Bucket.Content = []llm.ContentBlock{{Type: "tool_result", IsError: true}}
+
+		_, _, status, err := sessions.BuildSummary([]*merkle.Node{root, asst, errLeaf}, pricing)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(sessions.StatusFailed))
 	})
@@ -161,31 +191,48 @@ var _ = Describe("BuildSummary", func() {
 })
 
 var _ = Describe("DetermineStatus", func() {
+	errLeaf := func(role string) *merkle.Node {
+		return &merkle.Node{Bucket: merkle.Bucket{Role: role, Content: []llm.ContentBlock{{Type: "tool_result", IsError: true}}}}
+	}
+
 	It("returns unknown for a nil leaf", func() {
-		Expect(sessions.DetermineStatus(nil, false, false)).To(Equal(sessions.StatusUnknown))
+		Expect(sessions.DetermineStatus(nil, false, 0, 0)).To(Equal(sessions.StatusUnknown))
 	})
 
-	It("prefers failed over completed when both signals are present", func() {
+	It("returns failed when the session ends on an unrecovered tool error", func() {
+		Expect(sessions.DetermineStatus(errLeaf("user"), false, 1, 1)).To(Equal(sessions.StatusFailed))
+	})
+
+	It("does not fail on a recovered minority of tool errors", func() {
+		// Clean assistant leaf; only 1 of 4 tool_results errored (25%).
 		leaf := &merkle.Node{Bucket: merkle.Bucket{Role: "assistant"}, StopReason: "stop"}
-		Expect(sessions.DetermineStatus(leaf, true, true)).To(Equal(sessions.StatusFailed))
+		Expect(sessions.DetermineStatus(leaf, false, 4, 1)).To(Equal(sessions.StatusCompleted))
 	})
 
-	It("returns completed for git activity regardless of stop reason", func() {
+	It("returns failed when tool errors exceed half of tool results", func() {
+		leaf := &merkle.Node{Bucket: merkle.Bucket{Role: "assistant"}, StopReason: "stop"}
+		Expect(sessions.DetermineStatus(leaf, false, 4, 3)).To(Equal(sessions.StatusFailed))
+	})
+
+	It("returns completed for git activity, outranking a high error rate", func() {
 		leaf := &merkle.Node{Bucket: merkle.Bucket{Role: "assistant"}}
-		Expect(sessions.DetermineStatus(leaf, false, true)).To(Equal(sessions.StatusCompleted))
+		Expect(sessions.DetermineStatus(leaf, true, 4, 4)).To(Equal(sessions.StatusCompleted))
 	})
 
-	It("returns abandoned for a user-role leaf", func() {
+	It("returns failed for an unrecovered terminal error even with git activity", func() {
+		Expect(sessions.DetermineStatus(errLeaf("user"), true, 1, 1)).To(Equal(sessions.StatusFailed))
+	})
+
+	It("returns abandoned for a user-role leaf with no terminal error", func() {
 		leaf := &merkle.Node{Bucket: merkle.Bucket{Role: "user"}}
-		Expect(sessions.DetermineStatus(leaf, false, false)).To(Equal(sessions.StatusAbandoned))
+		Expect(sessions.DetermineStatus(leaf, false, 0, 0)).To(Equal(sessions.StatusAbandoned))
 	})
 
-	It("maps stop reasons to expected statuses", func() {
+	It("maps assistant-leaf stop reasons to expected statuses", func() {
 		// tool_use / tool_use_response are the designed terminus of a
-		// subagent or parallel-tool side-conversation — the model
-		// emitted a tool request, which is the contract. length /
-		// content_filter are real model-side failures (truncation,
-		// refusal).
+		// subagent or parallel-tool side-conversation — the model emitted a
+		// tool request, which is the contract. length / content_filter are
+		// real model-side failures (truncation, refusal).
 		cases := map[string]string{
 			"stop":              sessions.StatusCompleted,
 			"end_turn":          sessions.StatusCompleted,
@@ -200,7 +247,7 @@ var _ = Describe("DetermineStatus", func() {
 		}
 		for reason, want := range cases {
 			leaf := &merkle.Node{Bucket: merkle.Bucket{Role: "assistant"}, StopReason: reason}
-			Expect(sessions.DetermineStatus(leaf, false, false)).
+			Expect(sessions.DetermineStatus(leaf, false, 0, 0)).
 				To(Equal(want), "stop_reason=%q", reason)
 		}
 	})

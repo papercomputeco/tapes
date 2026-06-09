@@ -106,17 +106,18 @@ UPDATE sessions
  WHERE id = sqlc.arg(id);
 
 -- name: UpdateSessionStatus :exec
--- Persist the recomputed chain-aware status. has_tool_error and
--- has_git_activity are sticky signals OR-accumulated across all the
--- session's turns and stems — the caller computes the new values in Go
--- from the prior row state plus the current turn, so this query just
--- writes them. derived_status mirrors pkg/sessions.DetermineStatus over
--- those flags and the session's latest leaf. Called by ingest in the
--- same Tx as UpdateSessionCounters.
+-- Persist the recomputed chain-aware status. has_git_activity is a sticky
+-- flag and tool_result_count / tool_error_count are cumulative totals, all
+-- accumulated across the session's turns and stems — the caller computes the
+-- new values in Go from the prior row state plus this turn's new nodes, so
+-- this query just writes them. derived_status mirrors
+-- pkg/sessions.DetermineStatus over those signals and the session's latest
+-- leaf. Called by ingest in the same Tx as UpdateSessionCounters.
 UPDATE sessions
-   SET has_tool_error   = sqlc.arg(has_tool_error),
-       has_git_activity = sqlc.arg(has_git_activity),
-       derived_status   = sqlc.arg(derived_status)
+   SET has_git_activity  = sqlc.arg(has_git_activity),
+       tool_result_count = sqlc.arg(tool_result_count),
+       tool_error_count  = sqlc.arg(tool_error_count),
+       derived_status    = sqlc.arg(derived_status)
  WHERE id = sqlc.arg(id);
 
 -- name: ListSessionRecords :many
