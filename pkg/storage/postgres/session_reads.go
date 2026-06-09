@@ -167,6 +167,7 @@ func sessionRecordFromRow(row gensqlc.Session) storage.SessionRecord {
 		TotalInputTokens:  row.TotalInputTokens,
 		TotalOutputTokens: row.TotalOutputTokens,
 		TurnCount:         int(row.TurnCount),
+		DerivedStatus:     row.DerivedStatus,
 	}
 	if row.Name.Valid {
 		s.Name = row.Name.String

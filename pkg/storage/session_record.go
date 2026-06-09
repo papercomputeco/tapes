@@ -22,5 +22,9 @@ type SessionRecord struct {
 	TotalOutputTokens int64
 	TotalCostUsd      float64
 	TurnCount         int
-	Preview           string // first user turn text, truncated; empty when unavailable
+	// DerivedStatus is the chain-aware session status (completed / failed /
+	// abandoned / unknown), denormalized at ingest. 'unknown' until the first
+	// turn lands or, for pre-feature rows, until the status backfill runs.
+	DerivedStatus string
+	Preview       string // first user turn text, truncated; empty when unavailable
 }
