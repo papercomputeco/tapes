@@ -51,13 +51,17 @@ type turnState struct {
 }
 
 type blockState struct {
-	kind      string // "text" | "tool_use" | "thinking"
+	kind      string // "text" | "tool_use" | "thinking" | "server_tool_use" | "web_search_tool_result"
 	text      strings.Builder
 	thinking  strings.Builder
 	signature strings.Builder
 	toolID    string
 	toolName  string
 	toolInput map[string]any
+	// web_search_tool_result: tool_use_id links to the paired server_tool_use,
+	// content is the inline result payload (a JSON array), captured verbatim.
+	toolUseID string
+	content   json.RawMessage
 }
 
 func newTurnState() *turnState {
@@ -115,6 +119,19 @@ func (s *turnState) onContentBlockStart(data []byte) error {
 		if ev.ContentBlock.Signature != "" {
 			b.signature.WriteString(ev.ContentBlock.Signature)
 		}
+	case blockTypeServerToolUse:
+		// Same wire shape as tool_use — input streams via input_json_delta.
+		b.toolID = ev.ContentBlock.ID
+		b.toolName = ev.ContentBlock.Name
+		if len(ev.ContentBlock.Input) > 0 {
+			b.toolInput = ev.ContentBlock.Input
+		}
+	case blockTypeWebSearchToolResult:
+		// Arrives fully formed in content_block_start (no deltas follow).
+		b.toolUseID = ev.ContentBlock.ToolUseID
+		if len(ev.ContentBlock.Content) > 0 {
+			b.content = ev.ContentBlock.Content
+		}
 	}
 	s.blocks[ev.Index] = b
 	if ev.Index > s.maxIndex {
@@ -168,7 +185,7 @@ func (s *turnState) onContentBlockStop(data []byte) error {
 	if !ok {
 		return nil
 	}
-	if buf, ok := s.toolInputFragments[ev.Index]; ok && b.kind == blockTypeToolUse {
+	if buf, ok := s.toolInputFragments[ev.Index]; ok && (b.kind == blockTypeToolUse || b.kind == blockTypeServerToolUse) {
 		raw := buf.String()
 		if raw != "" {
 			var parsed map[string]any
@@ -254,6 +271,13 @@ func (s *turnState) finalize() *llm.ChatResponse {
 		case blockTypeThinking:
 			cb.Thinking = b.thinking.String()
 			cb.ThinkingSignature = b.signature.String()
+		case blockTypeServerToolUse:
+			cb.ToolUseID = b.toolID
+			cb.ToolName = b.toolName
+			cb.ToolInput = b.toolInput
+		case blockTypeWebSearchToolResult:
+			cb.ToolResultID = b.toolUseID
+			cb.Content = b.content
 		}
 		content = append(content, cb)
 	}

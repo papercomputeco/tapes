@@ -1,5 +1,7 @@
 package anthropic
 
+import "encoding/json"
+
 // anthropicRequest represents Anthropic's request format.
 type anthropicRequest struct {
 	Model       string             `json:"model"`
@@ -31,6 +33,8 @@ type anthropicContentBlock struct {
 	Input     map[string]any   `json:"input,omitempty"`
 	Thinking  string           `json:"thinking,omitempty"`
 	Signature string           `json:"signature,omitempty"`
+	ToolUseID string           `json:"tool_use_id,omitempty"`
+	Content   json.RawMessage  `json:"content,omitempty"`
 }
 
 type anthropicSource struct {

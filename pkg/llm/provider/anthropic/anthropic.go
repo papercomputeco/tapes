@@ -59,15 +59,20 @@ func (p *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 						}
 					}
 
-					// Tool use
-					if id, ok := block["id"].(string); ok {
-						cb.ToolUseID = id
-					}
-					if name, ok := block["name"].(string); ok {
-						cb.ToolName = name
-					}
-					if input, ok := block["input"].(map[string]any); ok {
-						cb.ToolInput = input
+					// tool_use and server_tool_use share the id / name / input
+					// shape. Guard on type so the extraction is explicit and
+					// symmetric with ParseResponse, rather than relying on these
+					// keys happening to be absent on other block types.
+					if cb.Type == "tool_use" || cb.Type == "server_tool_use" {
+						if id, ok := block["id"].(string); ok {
+							cb.ToolUseID = id
+						}
+						if name, ok := block["name"].(string); ok {
+							cb.ToolName = name
+						}
+						if input, ok := block["input"].(map[string]any); ok {
+							cb.ToolInput = input
+						}
 					}
 
 					// Tool result. Anthropic permits the `content` field to be
@@ -97,6 +102,19 @@ func (p *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 								}
 							}
 							cb.ToolOutput = strings.Join(parts, "\n")
+						}
+					}
+					// web_search_tool_result: server-tool result echoed back in
+					// request history. tool_use_id links to the server_tool_use;
+					// content is the raw result array, preserved verbatim.
+					if cb.Type == "web_search_tool_result" {
+						if toolUseID, ok := block["tool_use_id"].(string); ok {
+							cb.ToolResultID = toolUseID
+						}
+						if raw, ok := block["content"]; ok {
+							if encoded, err := json.Marshal(raw); err == nil {
+								cb.Content = encoded
+							}
 						}
 					}
 					converted.Content = append(converted.Content, cb)
@@ -173,6 +191,13 @@ func (p *Provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 		case "thinking":
 			cb.Thinking = block.Thinking
 			cb.ThinkingSignature = block.Signature
+		case "server_tool_use":
+			cb.ToolUseID = block.ID
+			cb.ToolName = block.Name
+			cb.ToolInput = block.Input
+		case "web_search_tool_result":
+			cb.ToolResultID = block.ToolUseID
+			cb.Content = block.Content
 		}
 		content = append(content, cb)
 	}

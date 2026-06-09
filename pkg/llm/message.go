@@ -1,6 +1,9 @@
 package llm
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // Message represents a single message in a conversation.
 // Content is stored as an array of ContentBlocks to support multimodal content
@@ -40,6 +43,16 @@ type ContentBlock struct {
 	// so downstream tooling can verify integrity.
 	Thinking          string `json:"thinking,omitempty"`
 	ThinkingSignature string `json:"thinking_signature,omitempty"`
+
+	// Server tool use (type="server_tool_use") - an Anthropic-hosted tool the
+	// model invokes server-side (e.g. web_search). Shaped exactly like
+	// tool_use, so it reuses ToolUseID / ToolName / ToolInput.
+
+	// Content (type="web_search_tool_result" and other server-tool results) -
+	// the raw result payload Anthropic returns inline on the block, captured
+	// verbatim as JSON so the variable result-object shapes survive without
+	// imposing a schema. ToolResultID links it to the paired server_tool_use.
+	Content json.RawMessage `json:"content,omitempty"`
 }
 
 // NewTextMessage creates a simple text message with the given role and content.
