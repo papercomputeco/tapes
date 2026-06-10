@@ -69,6 +69,10 @@ type RederiveReport struct {
 	// WebFetch/WebSearch tool_use.
 	WebSummaryAttached int `json:"web_summary_attached"`
 
+	// PlansAttached counts plan-name-gen calls linked to the
+	// ExitPlanMode tool_use that accepted the plan.
+	PlansAttached int `json:"plans_attached"`
+
 	// Upserted/Pruned are filled by the store after the write pass.
 	Upserted int `json:"upserted"`
 	Pruned   int `json:"pruned"`
@@ -266,6 +270,7 @@ func (dv *Deriver) AddTurn(rec *storage.RawTurnRecord) {
 func (dv *Deriver) Finish() *DerivedSet {
 	attachVerdicts(dv.turns, dv.toolUses, &dv.set.Report)
 	attachWebSummaries(dv.turns, dv.toolUses, &dv.set.Report)
+	attachPlans(dv.turns, dv.toolUses, &dv.set.Report)
 	dv.set.Report.Nodes = len(dv.set.Nodes)
 	return dv.set
 }

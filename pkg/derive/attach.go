@@ -106,6 +106,40 @@ func attachVerdicts(turns []*attachTurn, candidates []*toolUseRef, report *Reder
 	}
 }
 
+// attachPlans links plan-name-gen calls to the most recent preceding
+// ExitPlanMode tool_use — the moment the plan was accepted. The call's
+// request carries the full plan text (inside <conversation>), so the
+// read layer can render the plan where it happened.
+func attachPlans(turns []*attachTurn, candidates []*toolUseRef, report *RederiveReport) {
+	for _, t := range turns {
+		if t.kind != KindPlanNameGen {
+			continue
+		}
+		var best *toolUseRef
+		for _, u := range candidates {
+			if u.consumed || u.atTurn > t.index {
+				continue
+			}
+			if !strings.EqualFold(u.name, "ExitPlanMode") {
+				continue
+			}
+			if best == nil || u.atTurn >= best.atTurn {
+				best = u
+			}
+		}
+		if best == nil {
+			continue
+		}
+		best.consumed = true
+		report.PlansAttached++
+		for _, dn := range t.nodes {
+			if dn.Node.Kind == t.kind {
+				dn.Node.ParentToolUseID = best.id
+			}
+		}
+	}
+}
+
 // attachWebSummaries links web-summary calls to the most recent
 // preceding unconsumed WebFetch/WebSearch tool_use. The summary request
 // carries no id and no echo of the tool input, so recency is the

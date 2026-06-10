@@ -150,6 +150,9 @@ var _ = Describe("live-capture corpus (cb9a87e5)", func() {
 		// transcript message and stage pairs dedup their shared prefix.
 		Expect(r.Nodes).To(Equal(183))
 
+		// The plan ties to the ExitPlanMode that accepted it.
+		Expect(r.PlansAttached).To(Equal(1))
+
 		// The title-gen call's output folds onto the session.
 		Expect(set.SessionTitles).To(HaveKeyWithValue(
 			derive.SessionKey{HarnessID: "claude", HarnessSessionID: "cb9a87e5-b0e3-4eb3-a9b1-82ee4d72c29c"},
