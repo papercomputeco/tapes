@@ -78,4 +78,5 @@ type Session struct {
 	HasGitActivity    bool
 	ToolResultCount   int32
 	ToolErrorCount    int32
+	DerivedTitle      pgtype.Text
 }

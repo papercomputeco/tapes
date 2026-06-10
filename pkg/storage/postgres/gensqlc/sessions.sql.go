@@ -12,7 +12,7 @@ import (
 )
 
 const getSessionByNaturalKey = `-- name: GetSessionByNaturalKey :one
-SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count FROM sessions
+SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title FROM sessions
 WHERE org_id = $1
   AND harness_id = $2
   AND harness_session_id = $3
@@ -53,12 +53,13 @@ func (q *Queries) GetSessionByNaturalKey(ctx context.Context, arg GetSessionByNa
 		&i.HasGitActivity,
 		&i.ToolResultCount,
 		&i.ToolErrorCount,
+		&i.DerivedTitle,
 	)
 	return i, err
 }
 
 const getSessionRecord = `-- name: GetSessionRecord :one
-SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count FROM sessions
+SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title FROM sessions
 WHERE org_id = $1 AND id = $2
 `
 
@@ -92,6 +93,7 @@ func (q *Queries) GetSessionRecord(ctx context.Context, arg GetSessionRecordPara
 		&i.HasGitActivity,
 		&i.ToolResultCount,
 		&i.ToolErrorCount,
+		&i.DerivedTitle,
 	)
 	return i, err
 }
@@ -210,7 +212,7 @@ func (q *Queries) ListNodesBySession(ctx context.Context, sessionID pgtype.UUID)
 }
 
 const listSessionRecords = `-- name: ListSessionRecords :many
-SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count FROM sessions
+SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title FROM sessions
 WHERE org_id = $1
   AND (
     $2::timestamptz IS NULL
@@ -266,6 +268,7 @@ func (q *Queries) ListSessionRecords(ctx context.Context, arg ListSessionRecords
 			&i.HasGitActivity,
 			&i.ToolResultCount,
 			&i.ToolErrorCount,
+			&i.DerivedTitle,
 		); err != nil {
 			return nil, err
 		}
@@ -330,6 +333,23 @@ func (q *Queries) UpdateSessionCounters(ctx context.Context, arg UpdateSessionCo
 		arg.CostUsdDelta,
 		arg.ID,
 	)
+	return err
+}
+
+const updateSessionDerivedTitle = `-- name: UpdateSessionDerivedTitle :exec
+UPDATE sessions SET derived_title = $1 WHERE id = $2
+`
+
+type UpdateSessionDerivedTitleParams struct {
+	DerivedTitle pgtype.Text
+	ID           pgtype.UUID
+}
+
+// Fold the title-gen shadow call's output onto the session. Written at
+// capture time when the title call lands, and again on re-derive —
+// idempotent either way.
+func (q *Queries) UpdateSessionDerivedTitle(ctx context.Context, arg UpdateSessionDerivedTitleParams) error {
+	_, err := q.db.Exec(ctx, updateSessionDerivedTitle, arg.DerivedTitle, arg.ID)
 	return err
 }
 
@@ -404,7 +424,7 @@ SET last_seen_at     = $10,
     cwd              = COALESCE($7, sessions.cwd),
     harness_version  = COALESCE($8, sessions.harness_version),
     parent_session_id = COALESCE($9, sessions.parent_session_id)
-RETURNING id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count
+RETURNING id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title
 `
 
 type UpsertSessionParams struct {
@@ -474,6 +494,7 @@ func (q *Queries) UpsertSession(ctx context.Context, arg UpsertSessionParams) (S
 		&i.HasGitActivity,
 		&i.ToolResultCount,
 		&i.ToolErrorCount,
+		&i.DerivedTitle,
 	)
 	return i, err
 }

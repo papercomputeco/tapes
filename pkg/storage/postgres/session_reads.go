@@ -169,7 +169,12 @@ func sessionRecordFromRow(row gensqlc.Session) storage.SessionRecord {
 		TurnCount:         int(row.TurnCount),
 		DerivedStatus:     row.DerivedStatus,
 	}
-	if row.Name.Valid {
+	// The folded title-gen output is the session's display title; the
+	// envelope's internal name (a plan slug for Claude Code) is the
+	// fallback. See the derived_title migration.
+	if row.DerivedTitle.Valid && row.DerivedTitle.String != "" {
+		s.Name = row.DerivedTitle.String
+	} else if row.Name.Valid {
 		s.Name = row.Name.String
 	}
 	if row.Cwd.Valid {

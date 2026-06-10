@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/llm/provider"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
@@ -35,6 +36,11 @@ type DerivedSet struct {
 	// Sessions are the harness keys covered by the raw layer. The
 	// store prunes stale derived rows only within these sessions.
 	Sessions []SessionKey
+
+	// SessionTitles carries the folded title-gen output per session
+	// (latest call wins — the harness regenerates titles as the
+	// session evolves).
+	SessionTitles map[SessionKey]string
 
 	Report RederiveReport
 }
@@ -156,7 +162,7 @@ func NewDeriver(project string) (*Deriver, error) {
 		}
 		providers[name] = prov
 	}
-	set := &DerivedSet{}
+	set := &DerivedSet{SessionTitles: map[SessionKey]string{}}
 	set.Report.CallKinds = map[string]int{}
 	set.Report.NodeKinds = map[string]int{}
 	return &Deriver{
@@ -232,6 +238,15 @@ func (dv *Deriver) AddTurn(rec *storage.RawTurnRecord) {
 				atTurn:   turn.index,
 				rendered: renderToolUse(b.ToolName, b.ToolInput),
 			})
+		}
+	}
+
+	if kind == KindTitleGen {
+		var resp llm.ChatResponse
+		if json.Unmarshal(rec.Response, &resp) == nil {
+			if title := SessionTitle(kind, &resp); title != "" {
+				dv.set.SessionTitles[key] = title
+			}
 		}
 	}
 

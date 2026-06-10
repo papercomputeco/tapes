@@ -125,6 +125,15 @@ func (d *Driver) IngestTurn(ctx context.Context, req storage.IngestTurnRequest) 
 		return storage.IngestTurnResult{}, fmt.Errorf("upsert session: %w", err)
 	}
 
+	if req.DerivedTitle != "" {
+		if err := qtx.UpdateSessionDerivedTitle(ctx, gensqlc.UpdateSessionDerivedTitleParams{
+			DerivedTitle: nullStringValue(req.DerivedTitle),
+			ID:           sessionRow.ID,
+		}); err != nil {
+			return storage.IngestTurnResult{}, fmt.Errorf("fold derived title: %w", err)
+		}
+	}
+
 	var newNodes []*merkle.Node
 	for _, node := range req.Nodes {
 		if node == nil {

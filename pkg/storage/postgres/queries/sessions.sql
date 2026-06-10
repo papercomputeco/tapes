@@ -153,3 +153,9 @@ ORDER BY created_at ASC;
 UPDATE nodes
    SET session_id = $1
  WHERE org_id = $2 AND hash = $3;
+
+-- name: UpdateSessionDerivedTitle :exec
+-- Fold the title-gen shadow call's output onto the session. Written at
+-- capture time when the title call lands, and again on re-derive —
+-- idempotent either way.
+UPDATE sessions SET derived_title = sqlc.arg(derived_title) WHERE id = sqlc.arg(id);

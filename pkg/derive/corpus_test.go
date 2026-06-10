@@ -149,6 +149,12 @@ var _ = Describe("live-capture corpus (cb9a87e5)", func() {
 		// block became a side node, so check chains root at their own
 		// transcript message and stage pairs dedup their shared prefix.
 		Expect(r.Nodes).To(Equal(183))
+
+		// The title-gen call's output folds onto the session.
+		Expect(set.SessionTitles).To(HaveKeyWithValue(
+			derive.SessionKey{HarnessID: "claude", HarnessSessionID: "cb9a87e5-b0e3-4eb3-a9b1-82ee4d72c29c"},
+			"Exercise the Claude harness advanced",
+		))
 	})
 
 	It("is idempotent — a second derivation is byte-identical", func() {

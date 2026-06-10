@@ -348,6 +348,7 @@ func (p *Pool) ingestTurnViaSessionIngester(
 		InputTokens:  inputTokens,
 		OutputTokens: outputTokens,
 		CostUSD:      0, // pricing lookup not wired in this repo.
+		DerivedTitle: derive.SessionTitle(chain[len(chain)-1].Kind, job.Resp),
 	})
 	if err != nil {
 		return "", nil, fmt.Errorf("session ingester: %w", err)

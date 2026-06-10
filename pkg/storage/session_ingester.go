@@ -67,6 +67,12 @@ type IngestTurnRequest struct {
 	InputTokens  int64
 	OutputTokens int64
 	CostUSD      float64
+
+	// DerivedTitle folds a title-gen shadow call's output onto the
+	// session (sessions.derived_title). Empty for every other call
+	// kind; non-empty values overwrite (the harness regenerates the
+	// title as the session evolves, so the latest wins).
+	DerivedTitle string
 }
 
 // IngestTurnResult reports what the call actually did. Used by the
