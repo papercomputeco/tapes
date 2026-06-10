@@ -549,8 +549,8 @@ var _ = Describe("PresetConfig", func() {
 		Expect(cfg.Client.APITarget).To(Equal("http://localhost:8081"))
 		Expect(cfg.Embedding.Provider).To(Equal("openai"))
 		Expect(cfg.Embedding.Target).To(Equal("https://api.openai.com"))
-		Expect(cfg.Embedding.Model).To(Equal("text-embedding-3-small"))
-		Expect(cfg.Embedding.Dimensions).To(Equal(uint(1536)))
+		Expect(cfg.Embedding.Model).To(Equal("text-embedding-3-large"))
+		Expect(cfg.Embedding.Dimensions).To(Equal(uint(1024)))
 	})
 
 	It("returns anthropic preset with correct defaults", func() {
@@ -604,8 +604,8 @@ var _ = Describe("ResolveEmbeddingConfig", func() {
 		cfg := config.ResolveEmbeddingConfig("openai", "http://localhost:11434", "embeddinggemma", 768)
 		Expect(cfg.Provider).To(Equal("openai"))
 		Expect(cfg.Target).To(Equal("https://api.openai.com"))
-		Expect(cfg.Model).To(Equal("text-embedding-3-small"))
-		Expect(cfg.Dimensions).To(Equal(uint(1536)))
+		Expect(cfg.Model).To(Equal("text-embedding-3-large"))
+		Expect(cfg.Dimensions).To(Equal(uint(1024)))
 	})
 
 	It("preserves explicit OpenAI dimensions", func() {
@@ -618,7 +618,7 @@ var _ = Describe("ResolveEmbeddingConfig", func() {
 		)
 		Expect(cfg.Provider).To(Equal("openai"))
 		Expect(cfg.Target).To(Equal("https://api.openai.com"))
-		Expect(cfg.Model).To(Equal("text-embedding-3-small"))
+		Expect(cfg.Model).To(Equal("text-embedding-3-large"))
 		Expect(cfg.Dimensions).To(Equal(uint(768)))
 	})
 
