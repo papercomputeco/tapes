@@ -4,8 +4,8 @@ import "strings"
 
 const (
 	defaultOpenAIEmbeddingTarget     = "https://api.openai.com"
-	defaultOpenAIEmbeddingModel      = "text-embedding-3-small"
-	defaultOpenAIEmbeddingDimensions = 1536
+	defaultOpenAIEmbeddingModel      = "text-embedding-3-large"
+	defaultOpenAIEmbeddingDimensions = 1024
 
 	legacyOllamaEmbeddingModel = "nomic-embed-text"
 )

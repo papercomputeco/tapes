@@ -140,8 +140,8 @@ var _ = Describe("Init command execution", func() {
 			Expect(cfg.API.Listen).To(Equal(":8081"))
 			Expect(cfg.Embedding.Provider).To(Equal("openai"))
 			Expect(cfg.Embedding.Target).To(Equal("https://api.openai.com"))
-			Expect(cfg.Embedding.Model).To(Equal("text-embedding-3-small"))
-			Expect(cfg.Embedding.Dimensions).To(Equal(uint(1536)))
+			Expect(cfg.Embedding.Model).To(Equal("text-embedding-3-large"))
+			Expect(cfg.Embedding.Dimensions).To(Equal(uint(1024)))
 		})
 
 		It("creates config.toml with anthropic preset", func() {
