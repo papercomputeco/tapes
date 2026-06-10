@@ -2,6 +2,8 @@ package ingest
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -187,6 +189,7 @@ func New(config Config, driver storage.Driver, log *slog.Logger) (*Server, error
 	app.Get("/metrics", adaptor.HTTPHandler(s.metrics.Handler()))
 	app.Post("/v1/ingest", s.handleIngest)
 	app.Post("/v1/ingest/batch", s.handleBatchIngest)
+	app.Post("/v1/ingest/transcript", s.handleTranscriptIngest)
 	app.Get("/v1/ingest/nodes", s.handleListNodesByAgent)
 
 	return s, nil
@@ -326,6 +329,128 @@ func (s *Server) handleIngest(c *fiber.Ctx) error {
 	s.metrics.ObserveWrite(payload.Provider, ResultAccepted, bodySize)
 
 	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{"status": "accepted"})
+}
+
+// TranscriptPayload is the ingest body for one harness transcript file
+// — the main session transcript or one subagent's. The records land in
+// the immutable raw layer verbatim (source: transcript); the deriver
+// reconciles them against the wire capture to recover the causal/fork
+// skeleton. No node-path processing happens at ingest time.
+type TranscriptPayload struct {
+	// Session identifies the harness session the transcript belongs to.
+	Session *sessions.IngestEnvelope `json:"session"`
+
+	// AgentID is empty for the main transcript, or the subagent id for
+	// subagents/agent-<id>.jsonl files.
+	AgentID string `json:"agent_id,omitempty"`
+
+	// AgentType / Description / ToolUseID mirror the harness's
+	// subagent meta.json: ToolUseID is the Task tool_use that forked
+	// this agent — the causal fork edge the deriver attaches.
+	AgentType   string `json:"agent_type,omitempty"`
+	Description string `json:"description,omitempty"`
+	ToolUseID   string `json:"tool_use_id,omitempty"`
+
+	// Records is the transcript's JSONL content as a JSON array,
+	// verbatim.
+	Records json.RawMessage `json:"records"`
+}
+
+// transcriptMeta is the meta block stored alongside a transcript raw
+// row so the deriver can route and attribute it without decoding the
+// records.
+type transcriptMeta struct {
+	Transcript  bool   `json:"transcript"`
+	AgentID     string `json:"agent_id,omitempty"`
+	AgentType   string `json:"agent_type,omitempty"`
+	Description string `json:"description,omitempty"`
+	ToolUseID   string `json:"tool_use_id,omitempty"`
+	Records     int    `json:"records"`
+}
+
+// handleTranscriptIngest appends one transcript file to the raw layer.
+// Idempotent per content version: the dedup key includes a content
+// hash, so re-uploading an unchanged file is a no-op while a grown
+// transcript (session continued) appends a new version — append-only,
+// like everything in the raw layer. The deriver reads the latest
+// version per (session, agent).
+func (s *Server) handleTranscriptIngest(c *fiber.Ctx) error {
+	if s.rawStore == nil {
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{
+			Error: "transcript ingest requires the raw-turn layer (Postgres driver)",
+		})
+	}
+
+	var payload TranscriptPayload
+	if err := c.BodyParser(&payload); err != nil {
+		s.metrics.ObserveWrite("", ResultRejectEnv, len(c.Body()))
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{
+			Error: fmt.Sprintf("%s: %s", ErrEnvelope, err),
+		})
+	}
+	if err := payload.Session.Validate(); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{
+			Error: fmt.Sprintf("%s: %s", ErrEnvelope, err),
+		})
+	}
+	if payload.Session == nil || payload.Session.HarnessSessionID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{
+			Error: fmt.Sprintf("%s: transcript ingest requires session.harness_session_id", ErrEnvelope),
+		})
+	}
+	var records []json.RawMessage
+	if err := json.Unmarshal(payload.Records, &records); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{
+			Error: fmt.Sprintf("%s: records must be a JSON array: %s", ErrEnvelope, err),
+		})
+	}
+
+	agentKey := payload.AgentID
+	if agentKey == "" {
+		agentKey = "main"
+	}
+	sum := sha256.Sum256(payload.Records)
+	requestID := fmt.Sprintf("transcript:%s:%s:%s",
+		payload.Session.HarnessSessionID, agentKey, hex.EncodeToString(sum[:8]))
+
+	meta, err := json.Marshal(transcriptMeta{
+		Transcript:  true,
+		AgentID:     payload.AgentID,
+		AgentType:   payload.AgentType,
+		Description: payload.Description,
+		ToolUseID:   payload.ToolUseID,
+		Records:     len(records),
+	})
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: err.Error()})
+	}
+	sessionJSON, err := json.Marshal(payload.Session)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: err.Error()})
+	}
+
+	inserted, err := s.rawStore.PutRawTurn(c.Context(), storage.RawTurnRecord{
+		OrgID:            payload.Session.OrgID,
+		Source:           storage.RawTurnSourceTranscript,
+		HarnessID:        payload.Session.HarnessIDOrUnknown(),
+		HarnessSessionID: payload.Session.HarnessSessionID,
+		RequestID:        requestID,
+		RawRequest:       payload.Records,
+		Meta:             meta,
+		SessionEnvelope:  sessionJSON,
+	})
+	if err != nil {
+		s.logger.Error("transcript ingest failed", "error", err)
+		return c.Status(fiber.StatusBadGateway).JSON(llm.ErrorResponse{
+			Error: fmt.Sprintf("%s: %v", ErrDownstream, err),
+		})
+	}
+	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
+		"status":   "accepted",
+		"deduped":  !inserted,
+		"records":  len(records),
+		"agent_id": payload.AgentID,
+	})
 }
 
 // persistRawTurn appends one captured turn to the immutable raw layer.

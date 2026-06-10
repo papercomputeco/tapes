@@ -41,7 +41,7 @@ func (q *Queries) GetRawTurn(ctx context.Context, id int64) (RawTurn, error) {
 }
 
 const listRawTurnIndex = `-- name: ListRawTurnIndex :many
-SELECT id, org_id, harness_id, harness_session_id, received_at, meta
+SELECT id, org_id, source, harness_id, harness_session_id, received_at, meta
 FROM raw_turns
 WHERE id > $1
 ORDER BY id
@@ -56,6 +56,7 @@ type ListRawTurnIndexParams struct {
 type ListRawTurnIndexRow struct {
 	ID               int64
 	OrgID            pgtype.UUID
+	Source           string
 	HarnessID        string
 	HarnessSessionID string
 	ReceivedAt       pgtype.Timestamptz
@@ -77,6 +78,7 @@ func (q *Queries) ListRawTurnIndex(ctx context.Context, arg ListRawTurnIndexPara
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
+			&i.Source,
 			&i.HarnessID,
 			&i.HarnessSessionID,
 			&i.ReceivedAt,

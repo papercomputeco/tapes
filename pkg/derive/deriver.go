@@ -61,6 +61,10 @@ type RederiveReport struct {
 	// Upserted/Pruned are filled by the store after the write pass.
 	Upserted int `json:"upserted"`
 	Pruned   int `json:"pruned"`
+
+	// Reconcile reports the transcript↔wire fusion when transcript
+	// rows are present in the raw layer.
+	Reconcile *ReconcileStats `json:"reconcile,omitempty"`
 }
 
 // rawMetaFields is the minimal meta decode the deriver needs: original

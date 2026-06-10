@@ -53,7 +53,7 @@ WHERE org_id = $1
 -- Lightweight scan for the deriver's ordering pass: identity and
 -- timing only, no payloads. meta rides along because it carries the
 -- original capture time for backfilled rows.
-SELECT id, org_id, harness_id, harness_session_id, received_at, meta
+SELECT id, org_id, source, harness_id, harness_session_id, received_at, meta
 FROM raw_turns
 WHERE id > sqlc.arg(after_id)
 ORDER BY id

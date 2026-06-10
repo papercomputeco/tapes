@@ -48,8 +48,12 @@ func (d *Driver) RederiveFromRaw(ctx context.Context, project string) (map[strin
 		return nil, errors.New("postgres driver not open")
 	}
 
-	// Index scan: identity + timing only.
+	// Index scan: identity + timing only. Wire rows feed the chain
+	// deriver in capture order; transcript rows are routed to the
+	// reconciler, keeping only the LATEST version per (session, agent)
+	// — transcript ingest appends a new row each time a file grows.
 	byOrg := map[string][]rawTurnIndexEntry{}
+	transcriptRows := map[string]map[string]int64{} // org → fileKey → latest raw id
 	var afterID int64
 	for {
 		page, err := d.q.ListRawTurnIndex(ctx, gensqlc.ListRawTurnIndexParams{
@@ -64,8 +68,19 @@ func (d *Driver) RederiveFromRaw(ctx context.Context, project string) (map[strin
 		}
 		for _, row := range page {
 			afterID = row.ID
+			org := uuidString(row.OrgID)
+			if row.Source == storage.RawTurnSourceTranscript {
+				if transcriptRows[org] == nil {
+					transcriptRows[org] = map[string]int64{}
+				}
+				fileKey := row.HarnessSessionID + "/" + transcriptAgentKey(row.Meta)
+				if row.ID > transcriptRows[org][fileKey] {
+					transcriptRows[org][fileKey] = row.ID
+				}
+				continue
+			}
 			rec := storage.RawTurnRecord{ID: row.ID, Meta: row.Meta, ReceivedAt: row.ReceivedAt.Time}
-			byOrg[uuidString(row.OrgID)] = append(byOrg[uuidString(row.OrgID)], rawTurnIndexEntry{
+			byOrg[org] = append(byOrg[org], rawTurnIndexEntry{
 				id:         row.ID,
 				capturedAt: derive.CapturedAt(&rec),
 			})
@@ -89,6 +104,22 @@ func (d *Driver) RederiveFromRaw(ctx context.Context, project string) (map[strin
 			dv.AddTurn(&rec)
 		}
 		set := dv.Finish()
+
+		// Fuse the causal/fork skeleton from any transcript rows.
+		var files []*derive.TranscriptFile
+		for _, id := range transcriptRows[orgKey] {
+			row, err := d.q.GetRawTurn(ctx, id)
+			if err != nil {
+				return nil, fmt.Errorf("fetch transcript row %d: %w", id, err)
+			}
+			rec := rawTurnRecordFromRow(gensqlc.RawTurn(row))
+			file, err := derive.ParseTranscriptFile(&rec)
+			if err != nil {
+				return nil, fmt.Errorf("parse transcript row %d: %w", id, err)
+			}
+			files = append(files, file)
+		}
+		set.Report.Reconcile = derive.ReconcileTranscripts(set, files)
 
 		if err := d.writeDerivedSet(ctx, orgKey, set); err != nil {
 			return nil, fmt.Errorf("write derived set for org %s: %w", orgKey, err)
@@ -210,6 +241,19 @@ func (d *Driver) writeDerivedSet(ctx context.Context, orgKey string, set *derive
 	}
 
 	return tx.Commit(ctx)
+}
+
+// transcriptAgentKey extracts the agent id from a transcript row's
+// meta for latest-version grouping.
+func transcriptAgentKey(meta []byte) string {
+	var m struct {
+		AgentID string `json:"agent_id"`
+	}
+	_ = json.Unmarshal(meta, &m)
+	if m.AgentID == "" {
+		return "main"
+	}
+	return m.AgentID
 }
 
 // orgKeyForLookup maps the record's display org back to the canonical

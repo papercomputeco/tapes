@@ -43,6 +43,69 @@ func NewBackfillCmd() *cobra.Command {
 		Long:  backfillLongDesc,
 	}
 	cmd.AddCommand(newWireTraceCmd())
+	cmd.AddCommand(newTranscriptsCmd())
+	return cmd
+}
+
+type transcriptsCommander struct {
+	dir       string
+	ingestURL string
+	sessions  []string
+	verbose   bool
+}
+
+func newTranscriptsCmd() *cobra.Command {
+	cmder := &transcriptsCommander{}
+
+	cmd := &cobra.Command{
+		Use:   "transcripts",
+		Short: "Upload harness transcripts (main + subagents) into the raw layer",
+		Long: `Upload Claude Code transcripts into tapes' immutable raw layer.
+
+Reads <session>.jsonl files (and each session's subagents/ directory,
+including the agent meta.json fork edges) from a Claude Code project
+directory and POSTs them to {ingest-url}/v1/ingest/transcript. The
+deriver fuses them with the wire capture: transcripts supply the
+causal/fork skeleton, the wire supplies the complete call inventory.
+
+Idempotent: unchanged files dedup server-side; grown transcripts append
+a new version.
+
+Example (against a clearing):
+  tapes backfill transcripts     --dir ~/.claude/projects/-Users-you-src-repo     --session 0ea3c2cc-fe9d-41ff-aab1-4134ad00c350     --ingest-url http://127.0.0.1:18890`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			result, err := backfill.UploadTranscripts(cmd.Context(), backfill.TranscriptUploadOptions{
+				ProjectDir: cmder.dir,
+				SessionIDs: cmder.sessions,
+				IngestURL:  cmder.ingestURL,
+				Verbose:    cmder.verbose,
+				Logf: func(format string, args ...any) {
+					fmt.Fprintf(cmd.ErrOrStderr(), format+"\n", args...)
+				},
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(),
+				"sessions %d, files %d: uploaded %d, deduped %d, failed %d\n",
+				result.Sessions, result.Files, result.Uploaded, result.Deduped, result.Failed)
+			for _, f := range result.Failures {
+				fmt.Fprintf(cmd.OutOrStdout(), "  failure: %s\n", f)
+			}
+			if result.Failed > 0 {
+				return fmt.Errorf("%d file(s) failed to upload", result.Failed)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&cmder.dir, "dir", "", "Claude Code project directory holding <session>.jsonl files (required)")
+	cmd.Flags().StringVar(&cmder.ingestURL, "ingest-url", "http://127.0.0.1:8090", "base URL of the tapes-ingest server")
+	cmd.Flags().StringSliceVar(&cmder.sessions, "session", nil, "session id(s) to upload (default: all in the directory)")
+	cmd.Flags().BoolVarP(&cmder.verbose, "verbose", "v", false, "log each file's outcome")
+	_ = cmd.MarkFlagRequired("dir")
+
 	return cmd
 }
 
