@@ -9,6 +9,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/backfill"
 	"github.com/papercomputeco/tapes/pkg/deck"
+	"github.com/papercomputeco/tapes/pkg/derive"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
@@ -95,4 +96,26 @@ func (s *Server) handleBackfillSessionStatus(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: err.Error()})
 	}
 	return c.JSON(fiber.Map{"scanned": res.Scanned, "updated": res.Updated})
+}
+
+// handleDeriveVerify proves the raw→derived round-trip: re-derive node
+// chains from the immutable raw_turns layer and check every derived
+// hash against the node store. Read-only and idempotent; safe to run
+// any time. 501 when the driver doesn't host the raw layer.
+func (s *Server) handleDeriveVerify(c *fiber.Ctx) error {
+	rawStore, ok := s.driver.(storage.RawTurnStore)
+	if !ok {
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "driver does not host the raw-turn layer"})
+	}
+
+	result, err := derive.VerifyRederive(c.Context(), rawStore, s.driver, "")
+	if err != nil {
+		s.logger.Error("derive verify", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: err.Error()})
+	}
+
+	return c.JSON(fiber.Map{
+		"verified": result.Verified(),
+		"report":   result,
+	})
 }

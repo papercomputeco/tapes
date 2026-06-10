@@ -30,6 +30,27 @@ type Node struct {
 	ParentHash               pgtype.Text
 	SessionID                pgtype.UUID
 	OrgID                    pgtype.UUID
+	RequestSystem            pgtype.Text
+	RequestMaxTokens         pgtype.Int4
+	RequestTemperature       pgtype.Float8
+	RequestStream            pgtype.Bool
+	RequestToolCount         pgtype.Int4
+}
+
+type RawTurn struct {
+	ID               int64
+	OrgID            pgtype.UUID
+	Source           string
+	Provider         string
+	AgentName        string
+	HarnessID        string
+	HarnessSessionID string
+	RequestID        string
+	RawRequest       []byte
+	Response         []byte
+	Meta             []byte
+	SessionEnvelope  []byte
+	ReceivedAt       pgtype.Timestamptz
 }
 
 type Session struct {

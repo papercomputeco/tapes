@@ -33,6 +33,13 @@ type Node struct {
 	// Project is the git repository or project name that produced this node
 	Project string `json:"project,omitempty"`
 
+	// Request carries the request-envelope parameters of the API call
+	// that captured this node (system prompt, max_tokens, temperature,
+	// stream, tool count). Like StopReason/Usage it is call metadata,
+	// NOT part of the content-addressed hash: the same logical turn
+	// keeps the same hash regardless of which kind of call sent it.
+	Request *llm.RequestParams `json:"request_params,omitempty"`
+
 	// CreatedAt is the time the node was persisted to storage. It is populated
 	// by the storage layer (not by NewNode) and is NOT part of the content hash.
 	// Zero value means "unknown" — typically for nodes constructed in-memory
@@ -46,6 +53,7 @@ type NodeOptions struct {
 	StopReason string
 	Usage      *llm.Usage
 	Project    string
+	Request    *llm.RequestParams
 }
 
 // NewNode creates a new node with the computed hash for the provided bucket.
@@ -65,6 +73,7 @@ func NewNode(bucket Bucket, parent *Node, opts ...NodeOptions) *Node {
 		n.StopReason = opts[0].StopReason
 		n.Usage = opts[0].Usage
 		n.Project = opts[0].Project
+		n.Request = opts[0].Request
 	}
 
 	n.Hash = n.computeHash()

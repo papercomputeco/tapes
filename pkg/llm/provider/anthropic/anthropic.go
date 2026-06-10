@@ -135,6 +135,7 @@ func (p *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 		TopK:        req.TopK,
 		Stop:        req.Stop,
 		Stream:      req.Stream,
+		Tools:       req.Tools,
 		RawRequest:  payload,
 	}
 

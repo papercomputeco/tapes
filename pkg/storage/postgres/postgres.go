@@ -107,6 +107,8 @@ func (d *Driver) Put(ctx context.Context, n *merkle.Node) (bool, error) {
 		createdAt = time.Now().UTC()
 	}
 
+	reqSystem, reqMaxTokens, reqTemperature, reqStream, reqToolCount := requestParamColumns(n.Request)
+
 	rows, err := d.q.InsertNode(ctx, gensqlc.InsertNodeParams{
 		// Legacy Put has no org context: the Driver interface predates
 		// the session-tracking envelope. Use the nil-UUID sentinel so
@@ -132,6 +134,11 @@ func (d *Driver) Put(ctx context.Context, n *merkle.Node) (bool, error) {
 		Project:                  nullStringValue(n.Project),
 		CreatedAt:                pgtype.Timestamptz{Time: createdAt, Valid: true},
 		ParentHash:               nullStringPtr(n.ParentHash),
+		RequestSystem:            reqSystem,
+		RequestMaxTokens:         reqMaxTokens,
+		RequestTemperature:       reqTemperature,
+		RequestStream:            reqStream,
+		RequestToolCount:         reqToolCount,
 	})
 	if err != nil {
 		return false, fmt.Errorf("insert node: %w", err)
@@ -735,7 +742,7 @@ func merkleNodeFromAncestryRow(row gensqlc.AncestryChainsRow) (*merkle.Node, err
 // session_id or org_id should add a dedicated method that returns a
 // richer row type rather than retrofit merkle.Node.
 func merkleNodeFromRow(row gensqlc.Node) (*merkle.Node, error) {
-	return merkleNodeFromParts(
+	n, err := merkleNodeFromParts(
 		row.Hash,
 		row.ParentHash,
 		row.Bucket,
@@ -756,6 +763,14 @@ func merkleNodeFromRow(row gensqlc.Node) (*merkle.Node, error) {
 		row.Project,
 		row.CreatedAt,
 	)
+	if err != nil {
+		return nil, err
+	}
+	n.Request = requestParamsFromColumns(
+		row.RequestSystem, row.RequestMaxTokens, row.RequestTemperature,
+		row.RequestStream, row.RequestToolCount,
+	)
+	return n, nil
 }
 
 func merkleNodeFromParts(

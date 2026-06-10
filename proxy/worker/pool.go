@@ -14,6 +14,7 @@ import (
 	"math"
 	"sync"
 
+	"github.com/papercomputeco/tapes/pkg/derive"
 	"github.com/papercomputeco/tapes/pkg/embeddings"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
@@ -277,50 +278,11 @@ func (p *Pool) storeConversationTurn(ctx context.Context, job Job) (string, []*m
 }
 
 // buildTurnChain materializes the ordered (root → leaf) chain of nodes
-// for a single conversation turn: one node per request message,
-// followed by the assistant response node. ParentHash linkage is set
-// via merkle.NewNode so every node's hash is stable before any I/O.
+// for a single conversation turn. The construction lives in pkg/derive
+// so the offline re-deriver produces byte-identical chains from the
+// raw-turn store; this wrapper just adapts a worker Job.
 func buildTurnChain(job Job, project string) []*merkle.Node {
-	if job.Req == nil || job.Resp == nil {
-		return nil
-	}
-
-	chain := make([]*merkle.Node, 0, len(job.Req.Messages)+1)
-	var parent *merkle.Node
-
-	for _, msg := range job.Req.Messages {
-		bucket := merkle.Bucket{
-			Type:      "message",
-			Role:      msg.Role,
-			Content:   msg.Content,
-			Model:     job.Req.Model,
-			Provider:  job.Provider,
-			AgentName: job.AgentName,
-		}
-		node := merkle.NewNode(bucket, parent, merkle.NodeOptions{Project: project})
-		chain = append(chain, node)
-		parent = node
-	}
-
-	responseBucket := merkle.Bucket{
-		Type:      "message",
-		Role:      job.Resp.Message.Role,
-		Content:   job.Resp.Message.Content,
-		Model:     job.Resp.Model,
-		Provider:  job.Provider,
-		AgentName: job.AgentName,
-	}
-	responseNode := merkle.NewNode(
-		responseBucket,
-		parent,
-		merkle.NodeOptions{
-			StopReason: job.Resp.StopReason,
-			Usage:      job.Resp.Usage,
-			Project:    project,
-		},
-	)
-	chain = append(chain, responseNode)
-	return chain
+	return derive.TurnChain(job.Provider, job.AgentName, project, job.Req, job.Resp)
 }
 
 // putChainSequentially is the legacy per-node Put loop used when the

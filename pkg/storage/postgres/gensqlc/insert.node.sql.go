@@ -16,12 +16,14 @@ INSERT INTO nodes (
     org_id, hash, bucket, type, role, content, model, provider, agent_name, stop_reason,
     prompt_tokens, completion_tokens, total_tokens,
     cache_creation_input_tokens, cache_read_input_tokens,
-    total_duration_ns, prompt_duration_ns, project, created_at, parent_hash
+    total_duration_ns, prompt_duration_ns, project, created_at, parent_hash,
+    request_system, request_max_tokens, request_temperature, request_stream, request_tool_count
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
     $11, $12, $13,
     $14, $15,
-    $16, $17, $18, $19, $20
+    $16, $17, $18, $19, $20,
+    $21, $22, $23, $24, $25
 )
 ON CONFLICT (org_id, hash) DO NOTHING
 `
@@ -47,6 +49,11 @@ type InsertNodeParams struct {
 	Project                  pgtype.Text
 	CreatedAt                pgtype.Timestamptz
 	ParentHash               pgtype.Text
+	RequestSystem            pgtype.Text
+	RequestMaxTokens         pgtype.Int4
+	RequestTemperature       pgtype.Float8
+	RequestStream            pgtype.Bool
+	RequestToolCount         pgtype.Int4
 }
 
 // nodes is keyed by composite PK (org_id, hash) so the same content
@@ -77,6 +84,11 @@ func (q *Queries) InsertNode(ctx context.Context, arg InsertNodeParams) (int64, 
 		arg.Project,
 		arg.CreatedAt,
 		arg.ParentHash,
+		arg.RequestSystem,
+		arg.RequestMaxTokens,
+		arg.RequestTemperature,
+		arg.RequestStream,
+		arg.RequestToolCount,
 	)
 	if err != nil {
 		return 0, err

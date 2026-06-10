@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,6 +55,12 @@ type TurnPayload struct {
 	// Response is the already reduced, provider-agnostic response for the turn.
 	Response llm.ChatResponse `json:"response"`
 
+	// Meta is the capture adapter's metadata block. Parsed for the
+	// fields ingest promotes (request_id for raw-turn dedup); the
+	// verbatim JSON is persisted alongside the raw turn so fields
+	// unknown to this build survive.
+	Meta TurnMeta `json:"meta,omitempty"`
+
 	// Session is the optional session-tracking envelope. When present,
 	// ingest UPSERTs a `sessions` row keyed by
 	// (org_id, harness_id, harness_session_id), resolves the
@@ -80,6 +87,45 @@ type BatchResult struct {
 	Errors   []string `json:"errors,omitempty"`
 }
 
+// TurnMeta mirrors the capture adapter's meta block (tapes-extproc
+// TurnMeta). Every field is optional; adapters that predate a field
+// simply omit it. Ingest only reads RequestID directly (raw-turn
+// dedup) — the rest ride along verbatim in the raw layer and become
+// queryable post-derive.
+type TurnMeta struct {
+	RequestID   string `json:"request_id,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
+
+	Method              string  `json:"method,omitempty"`
+	Path                string  `json:"path,omitempty"`
+	Endpoint            string  `json:"endpoint,omitempty"`
+	Model               string  `json:"model,omitempty"`
+	ModelFamily         string  `json:"model_family,omitempty"`
+	Stream              string  `json:"stream,omitempty"`
+	ContentEncoding     string  `json:"content_encoding,omitempty"`
+	UpstreamStatus      int     `json:"upstream_status,omitempty"`
+	UpstreamStatusClass string  `json:"upstream_status_class,omitempty"`
+	RequestBytes        int     `json:"request_bytes,omitempty"`
+	ResponseBytes       int     `json:"response_bytes,omitempty"`
+	ElapsedSeconds      float64 `json:"elapsed_seconds,omitempty"`
+}
+
+// rawEnvelope is the shadow decode of an ingest body used for the
+// immutable raw-turn store: every block is kept as verbatim
+// json.RawMessage so persisting it never round-trips through parsed
+// structs (which would drop fields this build doesn't know about).
+type rawEnvelope struct {
+	Request  json.RawMessage `json:"request"`
+	Response json.RawMessage `json:"response"`
+	Meta     json.RawMessage `json:"meta"`
+	Session  json.RawMessage `json:"session"`
+}
+
+// rawBatchEnvelope is the batch-shaped shadow decode.
+type rawBatchEnvelope struct {
+	Turns []rawEnvelope `json:"turns"`
+}
+
 // Server is an HTTP server that accepts completed LLM conversation turns
 // for async storage in the Merkle DAG.
 type Server struct {
@@ -90,6 +136,11 @@ type Server struct {
 	server     *fiber.App
 	providers  map[string]provider.Provider
 	metrics    *Metrics
+
+	// rawStore is the optional immutable raw-capture layer. Non-nil
+	// only when the configured driver hosts it (Postgres). When nil,
+	// ingest behaves exactly as before the raw layer existed.
+	rawStore storage.RawTurnStore
 }
 
 // New creates a new ingest Server.
@@ -127,6 +178,9 @@ func New(config Config, driver storage.Driver, log *slog.Logger) (*Server, error
 		server:     app,
 		providers:  providers,
 		metrics:    NewMetrics(),
+	}
+	if rawStore, ok := driver.(storage.RawTurnStore); ok {
+		s.rawStore = rawStore
 	}
 
 	app.Get("/ping", s.handlePing)
@@ -253,6 +307,16 @@ func (s *Server) handleIngest(c *fiber.Ctx) error {
 		})
 	}
 
+	// Persist the immutable raw envelope BEFORE parsing: a turn that
+	// fails provider parsing (422) is still captured, so a future
+	// parser fix re-derives it instead of needing a re-capture.
+	if s.rawStore != nil {
+		var raw rawEnvelope
+		if err := json.Unmarshal(c.Body(), &raw); err == nil {
+			s.persistRawTurn(c.Context(), &payload, raw)
+		}
+	}
+
 	start := time.Now()
 	if err := s.processTurn(&payload); err != nil {
 		s.recordProcessTurnError(payload.Provider, err, bodySize)
@@ -262,6 +326,35 @@ func (s *Server) handleIngest(c *fiber.Ctx) error {
 	s.metrics.ObserveWrite(payload.Provider, ResultAccepted, bodySize)
 
 	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{"status": "accepted"})
+}
+
+// persistRawTurn appends one captured turn to the immutable raw layer.
+// Failures are logged, never propagated: the raw layer must not take
+// down the node-ingest path, and a Postgres-level outage will surface
+// through processTurn anyway.
+func (s *Server) persistRawTurn(ctx context.Context, turn *TurnPayload, raw rawEnvelope) {
+	rec := storage.RawTurnRecord{
+		Source:          storage.RawTurnSourceWire,
+		Provider:        turn.Provider,
+		AgentName:       turn.AgentName,
+		RequestID:       turn.Meta.RequestID,
+		RawRequest:      raw.Request,
+		Response:        raw.Response,
+		Meta:            raw.Meta,
+		SessionEnvelope: raw.Session,
+	}
+	if turn.Session != nil {
+		rec.OrgID = turn.Session.OrgID
+		rec.HarnessID = turn.Session.HarnessIDOrUnknown()
+		rec.HarnessSessionID = turn.Session.HarnessSessionID
+	}
+	if _, err := s.rawStore.PutRawTurn(ctx, rec); err != nil {
+		s.logger.Error("raw turn persist failed",
+			"provider", turn.Provider,
+			"request_id", turn.Meta.RequestID,
+			"error", err,
+		)
+	}
 }
 
 // recordProcessTurnError maps an internal error to the matching metric label
@@ -307,6 +400,13 @@ func (s *Server) handleBatchIngest(c *fiber.Ctx) error {
 		})
 	}
 
+	// Shadow-decode the batch for the raw layer; index-aligned with
+	// payload.Turns by construction (same JSON array).
+	var rawBatch rawBatchEnvelope
+	if s.rawStore != nil {
+		_ = json.Unmarshal(c.Body(), &rawBatch)
+	}
+
 	result := BatchResult{}
 	for i := range payload.Turns {
 		t := &payload.Turns[i]
@@ -327,6 +427,10 @@ func (s *Server) handleBatchIngest(c *fiber.Ctx) error {
 			result.Rejected++
 			result.Errors = append(result.Errors, fmt.Sprintf("turn[%d]: %s: %s", i, ErrEnvelope, err))
 			continue
+		}
+
+		if s.rawStore != nil && i < len(rawBatch.Turns) {
+			s.persistRawTurn(c.Context(), t, rawBatch.Turns[i])
 		}
 
 		start := time.Now()

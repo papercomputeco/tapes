@@ -565,6 +565,8 @@ func insertNodeParamsFromMerkle(orgID pgtype.UUID, n *merkle.Node) (gensqlc.Inse
 		createdAt = time.Now().UTC()
 	}
 
+	reqSystem, reqMaxTokens, reqTemperature, reqStream, reqToolCount := requestParamColumns(n.Request)
+
 	return gensqlc.InsertNodeParams{
 		OrgID:                    orgID,
 		Hash:                     n.Hash,
@@ -586,5 +588,10 @@ func insertNodeParamsFromMerkle(orgID pgtype.UUID, n *merkle.Node) (gensqlc.Inse
 		Project:                  nullStringValue(n.Project),
 		CreatedAt:                pgtype.Timestamptz{Time: createdAt, Valid: true},
 		ParentHash:               nullStringPtr(n.ParentHash),
+		RequestSystem:            reqSystem,
+		RequestMaxTokens:         reqMaxTokens,
+		RequestTemperature:       reqTemperature,
+		RequestStream:            reqStream,
+		RequestToolCount:         reqToolCount,
 	}, nil
 }
