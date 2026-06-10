@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	authcmder "github.com/papercomputeco/tapes/cmd/tapes/auth"
+	backfillcmder "github.com/papercomputeco/tapes/cmd/tapes/backfill"
 	chatcmder "github.com/papercomputeco/tapes/cmd/tapes/chat"
 	checkoutcmder "github.com/papercomputeco/tapes/cmd/tapes/checkout"
 	configcmder "github.com/papercomputeco/tapes/cmd/tapes/config"
@@ -97,6 +98,7 @@ func NewTapesCmd() *cobra.Command {
 	cmd.AddCommand(configcmder.NewConfigCmd())
 	cmd.AddCommand(deckcmder.NewDeckCmd())
 	cmd.AddCommand(authcmder.NewAuthCmd())
+	cmd.AddCommand(backfillcmder.NewBackfillCmd())
 	cmd.AddCommand(initcmder.NewInitCmd())
 	cmd.AddCommand(localcmder.NewLocalCmd())
 	cmd.AddCommand(searchcmder.NewSearchCmd())

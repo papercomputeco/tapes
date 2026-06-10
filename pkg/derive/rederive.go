@@ -40,6 +40,13 @@ type VerifyResult struct {
 	// intact and re-derivable later.
 	ParseFailures []string `json:"parse_failures,omitempty"`
 
+	// RawOnlyTurns counts raw rows whose response fails the same
+	// validation ingest applies (missing role/content — error
+	// captures, aborted streams). Ingest never derived nodes for
+	// these, so neither does the verifier; the raw row is their only
+	// representation, by design.
+	RawOnlyTurns int `json:"raw_only_turns"`
+
 	// DerivedNodes is the number of distinct node hashes produced by
 	// re-deriving every parsed raw turn.
 	DerivedNodes int `json:"derived_nodes"`
@@ -91,7 +98,11 @@ func VerifyRederive(ctx context.Context, raw storage.RawTurnStore, nodes storage
 			afterID = rec.ID
 			result.RawTurns++
 
-			chain, err := rederiveChain(providers, rec, project)
+			chain, rawOnly, err := rederiveChain(providers, rec, project)
+			if rawOnly {
+				result.RawOnlyTurns++
+				continue
+			}
 			if err != nil {
 				if len(result.ParseFailures) < maxReportedMissing {
 					result.ParseFailures = append(result.ParseFailures,
@@ -126,23 +137,33 @@ func VerifyRederive(ctx context.Context, raw storage.RawTurnStore, nodes storage
 
 // rederiveChain reconstructs the node chain for one raw turn: parse the
 // verbatim request with the row's provider, decode the reduced
-// response, and run the shared TurnChain construction.
-func rederiveChain(providers map[string]provider.Provider, rec *storage.RawTurnRecord, project string) ([]*merkle.Node, error) {
+// response, and run the shared TurnChain construction. rawOnly is true
+// for rows whose response would not have passed ingest validation —
+// those rows never produced nodes and are skipped, not failed.
+func rederiveChain(providers map[string]provider.Provider, rec *storage.RawTurnRecord, project string) (chain []*merkle.Node, rawOnly bool, err error) {
 	prov, ok := providers[rec.Provider]
 	if !ok {
-		return nil, fmt.Errorf("unsupported provider %q", rec.Provider)
+		return nil, false, fmt.Errorf("unsupported provider %q", rec.Provider)
 	}
 	req, err := prov.ParseRequest(rec.RawRequest)
 	if err != nil {
-		return nil, fmt.Errorf("parse request: %w", err)
+		return nil, false, fmt.Errorf("parse request: %w", err)
 	}
 	var resp llm.ChatResponse
-	if err := json.Unmarshal(rec.Response, &resp); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
+	if len(rec.Response) > 0 {
+		if err := json.Unmarshal(rec.Response, &resp); err != nil {
+			return nil, false, fmt.Errorf("decode response: %w", err)
+		}
 	}
-	chain := TurnChain(rec.Provider, rec.AgentName, project, req, &resp)
+	// Mirror ingest's validateReducedResponse gate: a response without
+	// a role or content blocks was rejected at ingest (422 after the
+	// raw row landed), so no nodes exist to verify against.
+	if resp.Message.Role == "" || len(resp.Message.Content) == 0 {
+		return nil, true, nil
+	}
+	chain = TurnChain(rec.Provider, rec.AgentName, project, req, &resp)
 	if len(chain) == 0 {
-		return nil, errors.New("empty chain")
+		return nil, false, errors.New("empty chain")
 	}
-	return chain, nil
+	return chain, false, nil
 }
