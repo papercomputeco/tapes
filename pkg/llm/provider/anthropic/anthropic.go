@@ -59,6 +59,21 @@ func (p *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 						}
 					}
 
+					// Thinking blocks echoed back as request history. Symmetric
+					// with ParseResponse: the text plus the signature that
+					// authenticates it. Harnesses that clear thinking server-side
+					// (context_management) echo these with empty text and only
+					// the signature — both fields must round-trip so the history
+					// echo hashes to the same node as the live capture.
+					if cb.Type == "thinking" {
+						if thinking, ok := block["thinking"].(string); ok {
+							cb.Thinking = thinking
+						}
+						if signature, ok := block["signature"].(string); ok {
+							cb.ThinkingSignature = signature
+						}
+					}
+
 					// tool_use and server_tool_use share the id / name / input
 					// shape. Guard on type so the extraction is explicit and
 					// symmetric with ParseResponse, rather than relying on these

@@ -65,6 +65,50 @@ var _ = Describe("Anthropic Provider", func() {
 				Expect(req.Messages[0].Content[0].Text).To(Equal("What's in this image?"))
 			})
 
+			It("parses thinking blocks echoed back as history", func() {
+				payload := []byte(`{
+					"model": "claude-opus-4-8",
+					"max_tokens": 1024,
+					"messages": [
+						{
+							"role": "assistant",
+							"content": [
+								{"type": "thinking", "thinking": "Let me reason about this.", "signature": "EqoBCkgIARgCIkBYp3d2"},
+								{"type": "text", "text": "Here's my answer."}
+							]
+						}
+					]
+				}`)
+
+				req, err := p.ParseRequest(payload)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(req.Messages[0].Content).To(HaveLen(2))
+				Expect(req.Messages[0].Content[0].Type).To(Equal("thinking"))
+				Expect(req.Messages[0].Content[0].Thinking).To(Equal("Let me reason about this."))
+				Expect(req.Messages[0].Content[0].ThinkingSignature).To(Equal("EqoBCkgIARgCIkBYp3d2"))
+			})
+
+			It("parses signature-only thinking blocks from cleared-context harnesses", func() {
+				payload := []byte(`{
+					"model": "claude-opus-4-8",
+					"max_tokens": 1024,
+					"messages": [
+						{
+							"role": "assistant",
+							"content": [
+								{"type": "thinking", "thinking": "", "signature": "EusCCmMIDhgC"}
+							]
+						}
+					]
+				}`)
+
+				req, err := p.ParseRequest(payload)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(req.Messages[0].Content[0].Type).To(Equal("thinking"))
+				Expect(req.Messages[0].Content[0].Thinking).To(Equal(""))
+				Expect(req.Messages[0].Content[0].ThinkingSignature).To(Equal("EusCCmMIDhgC"))
+			})
+
 			It("parses image content blocks with base64 source", func() {
 				payload := []byte(`{
 					"model": "claude-3-sonnet-20240229",
