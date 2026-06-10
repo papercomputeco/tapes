@@ -206,6 +206,14 @@ definitions:
         type: array
       session_id:
         type: string
+      tasks:
+        description: |-
+          Tasks is the session's task list, folded from the TaskCreate /
+          TaskUpdate tool calls across every thread — the checklist of
+          record with each task's final status.
+        items:
+          $ref: '#/definitions/api.TreeTask'
+        type: array
     type: object
   api.StatsResponse:
     properties:
@@ -359,6 +367,19 @@ definitions:
         description: |-
           Verdict is set on permission-check response nodes: the monitor's
           disposition for the judged action.
+    type: object
+  api.TreeTask:
+    properties:
+      description:
+        type: string
+      id:
+        type: string
+      status:
+        type: string
+      subject:
+        type: string
+      updates:
+        type: integer
     type: object
   api.TreeToolUse:
     properties:

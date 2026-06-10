@@ -2,6 +2,7 @@ package api
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +34,11 @@ type SessionTreeResponse struct {
 	// permission checks to the judged action, web summaries to their
 	// fetch/search.
 	Attachments []TreeAttachment `json:"attachments"`
+
+	// Tasks is the session's task list, folded from the TaskCreate /
+	// TaskUpdate tool calls across every thread — the checklist of
+	// record with each task's final status.
+	Tasks []TreeTask `json:"tasks"`
 
 	// KindCounts summarizes the session's call mix.
 	KindCounts map[string]int `json:"kind_counts"`
@@ -100,7 +106,91 @@ type TreeAttachment struct {
 	TargetID  string `json:"target_id,omitempty"`
 }
 
+// TreeTask is one task folded from the session's TaskCreate/TaskUpdate
+// calls.
+type TreeTask struct {
+	ID          string `json:"id"`
+	Subject     string `json:"subject"`
+	Description string `json:"description,omitempty"`
+	Status      string `json:"status"`
+	Updates     int    `json:"updates"`
+}
+
 var blockVerdictPattern = regexp.MustCompile(`(?i)<block>\s*(yes|no)`)
+
+// taskCreatedPattern extracts the task id the harness reports back in
+// the TaskCreate tool_result ("Task #3 created successfully: …").
+var taskCreatedPattern = regexp.MustCompile(`#(\d+)`)
+
+// foldTasks replays the session's TaskCreate/TaskUpdate calls (in
+// node order, which is capture-chronological) into the final task
+// list. The created task's id only exists in the tool_result, so the
+// fold joins tool_use → tool_result by id.
+func foldTasks(nodes []*merkle.Node) []TreeTask {
+	resultText := map[string]string{}
+	for _, n := range nodes {
+		for _, b := range n.Bucket.Content {
+			if b.Type == "tool_result" && b.ToolResultID != "" {
+				if _, ok := resultText[b.ToolResultID]; !ok {
+					resultText[b.ToolResultID] = b.ToolOutput
+				}
+			}
+		}
+	}
+
+	byID := map[string]*TreeTask{}
+	var order []*TreeTask
+	for _, n := range nodes {
+		for _, b := range n.Bucket.Content {
+			if b.Type != "tool_use" {
+				continue
+			}
+			switch b.ToolName {
+			case "TaskCreate":
+				subject, _ := b.ToolInput["subject"].(string)
+				description, _ := b.ToolInput["description"].(string)
+				id := ""
+				if m := taskCreatedPattern.FindStringSubmatch(resultText[b.ToolUseID]); m != nil {
+					id = m[1]
+				}
+				task := &TreeTask{ID: id, Subject: subject, Description: description, Status: "pending"}
+				if id != "" {
+					if _, dup := byID[id]; dup {
+						continue
+					}
+					byID[id] = task
+				}
+				order = append(order, task)
+			case "TaskUpdate":
+				id, _ := b.ToolInput["taskId"].(string)
+				if id == "" {
+					if f, ok := b.ToolInput["taskId"].(float64); ok {
+						id = strconv.Itoa(int(f))
+					}
+				}
+				task, ok := byID[id]
+				if !ok {
+					continue
+				}
+				task.Updates++
+				if status, ok := b.ToolInput["status"].(string); ok && status != "" {
+					task.Status = status
+				}
+				if subject, ok := b.ToolInput["subject"].(string); ok && subject != "" {
+					task.Subject = subject
+				}
+			}
+		}
+	}
+	out := make([]TreeTask, 0, len(order))
+	for _, t := range order {
+		if t.Status == "deleted" {
+			continue
+		}
+		out = append(out, *t)
+	}
+	return out
+}
 
 // handleGetSessionTree handles GET /v1/sessions/:id/tree.
 //
@@ -160,9 +250,11 @@ func buildSessionTree(sessionID, harnessSessionID string, nodes []*merkle.Node) 
 		Links:            []GraphLink{},
 		Forks:            []TreeFork{},
 		Attachments:      []TreeAttachment{},
+		Tasks:            []TreeTask{},
 		KindCounts:       map[string]int{},
 		Roots:            []string{},
 	}
+	resp.Tasks = foldTasks(nodes)
 
 	inSession := make(map[string]*merkle.Node, len(nodes))
 	hasChild := map[string]bool{}

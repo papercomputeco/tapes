@@ -915,6 +915,13 @@ const docTemplate = `{
                 },
                 "session_id": {
                     "type": "string"
+                },
+                "tasks": {
+                    "description": "Tasks is the session's task list, folded from the TaskCreate /\nTaskUpdate tool calls across every thread — the checklist of\nrecord with each task's final status.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.TreeTask"
+                    }
                 }
             }
         },
@@ -1115,6 +1122,26 @@ const docTemplate = `{
                             "$ref": "#/definitions/api.TreeVerdict"
                         }
                     ]
+                }
+            }
+        },
+        "api.TreeTask": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "subject": {
+                    "type": "string"
+                },
+                "updates": {
+                    "type": "integer"
                 }
             }
         },
