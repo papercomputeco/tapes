@@ -312,6 +312,13 @@ definitions:
     type: object
   api.TreeNode:
     properties:
+      content:
+        description: |-
+          Content is the node's full content blocks (raw, as captured) so
+          conversation renderers can format turns without a second fetch.
+        items:
+          $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ContentBlock'
+        type: array
       created_at:
         type: string
       id:

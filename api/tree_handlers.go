@@ -50,6 +50,10 @@ type TreeNode struct {
 	ParentToolUseID string     `json:"parent_tool_use_id,omitempty"`
 	ThreadID        string     `json:"thread_id,omitempty"`
 	Preview         string     `json:"preview,omitempty"`
+
+	// Content is the node's full content blocks (raw, as captured) so
+	// conversation renderers can format turns without a second fetch.
+	Content []llm.ContentBlock `json:"content,omitempty"`
 	Model           string     `json:"model,omitempty"`
 	StopReason      string     `json:"stop_reason,omitempty"`
 	Usage           *llm.Usage `json:"usage,omitempty"`
@@ -212,6 +216,7 @@ func buildSessionTree(sessionID, harnessSessionID string, nodes []*merkle.Node) 
 			ParentToolUseID: n.ParentToolUseID,
 			ThreadID:        n.ThreadID,
 			Preview:         makePreview(n),
+			Content:         n.Bucket.Content,
 			Model:           n.Bucket.Model,
 			StopReason:      n.StopReason,
 			Usage:           n.Usage,

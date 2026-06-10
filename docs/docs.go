@@ -1055,6 +1055,13 @@ const docTemplate = `{
         "api.TreeNode": {
             "type": "object",
             "properties": {
+                "content": {
+                    "description": "Content is the node's full content blocks (raw, as captured) so\nconversation renderers can format turns without a second fetch.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ContentBlock"
+                    }
+                },
                 "created_at": {
                     "type": "string"
                 },
