@@ -33,6 +33,19 @@ type Node struct {
 	// Project is the git repository or project name that produced this node
 	Project string `json:"project,omitempty"`
 
+	// Kind is the semantic classification of the call (or injected
+	// block) that produced this node — 'main', 'offshoot:…',
+	// 'injected:…' per the design taxonomy. Derived metadata, NOT part
+	// of the content-addressed hash, and recomputable from the raw
+	// layer at any time.
+	Kind string `json:"node_kind,omitempty"`
+
+	// ParentToolUseID is the semantic fork/attach edge: the tool_use id
+	// this node's call relates to (a permission verdict points at the
+	// tool_use it judged; a subagent fork points at its Task tool_use).
+	// Derived, non-hashed, recomputable.
+	ParentToolUseID string `json:"parent_tool_use_id,omitempty"`
+
 	// Request carries the request-envelope parameters of the API call
 	// that captured this node (system prompt, max_tokens, temperature,
 	// stream, tool count). Like StopReason/Usage it is call metadata,

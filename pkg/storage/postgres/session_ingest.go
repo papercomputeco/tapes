@@ -593,5 +593,7 @@ func insertNodeParamsFromMerkle(orgID pgtype.UUID, n *merkle.Node) (gensqlc.Inse
 		RequestTemperature:       reqTemperature,
 		RequestStream:            reqStream,
 		RequestToolCount:         reqToolCount,
+		NodeKind:                 nullStringValue(n.Kind),
+		ParentToolUseID:          nullStringValue(n.ParentToolUseID),
 	}, nil
 }

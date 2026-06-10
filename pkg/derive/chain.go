@@ -19,16 +19,24 @@ import (
 // assistant response node. ParentHash linkage is set via merkle.NewNode
 // so every node's hash is stable before any I/O.
 //
-// The request-envelope parameters (system, max_tokens, temperature,
-// stream, tool count) are stamped onto every node in the chain as
-// non-hashed metadata. On insert, nodes already present from an earlier
-// call keep that call's stamp (ON CONFLICT DO NOTHING), so each stored
-// node carries the parameters of the call that first captured it.
+// Every node is stamped with the call's classified kind (ClassifyCall)
+// and the request-envelope parameters — both as non-hashed metadata. On
+// insert, nodes already present from an earlier call keep that call's
+// stamp (ON CONFLICT DO NOTHING), so each stored node carries the
+// classification of the call that first captured it.
+//
+// Injected-context messages (MCP instructions, skills lists, mode
+// banners — see ClassifyInjected) become SIDE-BRANCH nodes: they hang
+// off the spine at the position they appeared but the next message's
+// parent bypasses them. These blocks drift between turns of the same
+// conversation, so chaining them would fork the spine at every drift;
+// as side branches they are preserved, marked injected:*, and inert.
 func TurnChain(provider, agentName, project string, req *llm.ChatRequest, resp *llm.ChatResponse) []*merkle.Node {
 	if req == nil || resp == nil {
 		return nil
 	}
 
+	kind := ClassifyCall(req, resp)
 	params := req.Params()
 	chain := make([]*merkle.Node, 0, len(req.Messages)+1)
 	var parent *merkle.Node
@@ -46,6 +54,15 @@ func TurnChain(provider, agentName, project string, req *llm.ChatRequest, resp *
 			Project: project,
 			Request: params,
 		})
+		if injectedKind := ClassifyInjected(msg); injectedKind != "" && kind == KindMain {
+			// Side branch: keep the node, mark it, do NOT advance the
+			// spine. Only meaningful on the conversation spine — a
+			// shadow call's whole body is already typed by its kind.
+			node.Kind = injectedKind
+			chain = append(chain, node)
+			continue
+		}
+		node.Kind = kind
 		chain = append(chain, node)
 		parent = node
 	}
@@ -68,6 +85,7 @@ func TurnChain(provider, agentName, project string, req *llm.ChatRequest, resp *
 			Request:    params,
 		},
 	)
+	responseNode.Kind = kind
 	chain = append(chain, responseNode)
 	return chain
 }

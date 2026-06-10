@@ -153,7 +153,7 @@ func (q *Queries) InsertSessionPlaceholder(ctx context.Context, arg InsertSessio
 }
 
 const listNodesBySession = `-- name: ListNodesBySession :many
-SELECT hash, bucket, type, role, content, model, provider, agent_name, stop_reason, prompt_tokens, completion_tokens, total_tokens, cache_creation_input_tokens, cache_read_input_tokens, total_duration_ns, prompt_duration_ns, project, created_at, parent_hash, session_id, org_id, request_system, request_max_tokens, request_temperature, request_stream, request_tool_count FROM nodes
+SELECT hash, bucket, type, role, content, model, provider, agent_name, stop_reason, prompt_tokens, completion_tokens, total_tokens, cache_creation_input_tokens, cache_read_input_tokens, total_duration_ns, prompt_duration_ns, project, created_at, parent_hash, session_id, org_id, request_system, request_max_tokens, request_temperature, request_stream, request_tool_count, node_kind, parent_tool_use_id FROM nodes
 WHERE session_id = $1
 ORDER BY created_at ASC
 `
@@ -195,6 +195,8 @@ func (q *Queries) ListNodesBySession(ctx context.Context, sessionID pgtype.UUID)
 			&i.RequestTemperature,
 			&i.RequestStream,
 			&i.RequestToolCount,
+			&i.NodeKind,
+			&i.ParentToolUseID,
 		); err != nil {
 			return nil, err
 		}

@@ -35,6 +35,8 @@ type Node struct {
 	RequestTemperature       pgtype.Float8
 	RequestStream            pgtype.Bool
 	RequestToolCount         pgtype.Int4
+	NodeKind                 pgtype.Text
+	ParentToolUseID          pgtype.Text
 }
 
 type RawTurn struct {

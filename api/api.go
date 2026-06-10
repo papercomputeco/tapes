@@ -85,6 +85,7 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	app.Post("/v1/admin/backfill/usage", s.handleBackfillUsage)
 	app.Post("/v1/admin/backfill/session-status", s.handleBackfillSessionStatus)
 	app.Post("/v1/admin/derive/verify", s.handleDeriveVerify)
+	app.Post("/v1/admin/derive/run", s.handleDeriveRun)
 
 	// API reference UI. Always mounted — the viewer JS comes from a CDN
 	// at view time, so the binary cost is negligible.

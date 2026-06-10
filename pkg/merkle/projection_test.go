@@ -304,4 +304,29 @@ var _ = Describe("Node.Hash with harness drift", func() {
 
 		Expect(user.Hash).NotTo(Equal(assistant.Hash))
 	})
+
+	It("strips harness tags from tool_result output, not just text", func() {
+		// The harness concatenates volatile blocks INTO a tool's output
+		// when re-sending it as history: the live capture and the
+		// re-sent history of the same result must hash together.
+		live := []llm.ContentBlock{{
+			Type: "tool_result", ToolResultID: "toolu_1",
+			ToolOutput: "total 8\ndrwxr-xr-x  2 u  staff",
+		}}
+		resent := []llm.ContentBlock{{
+			Type: "tool_result", ToolResultID: "toolu_1",
+			ToolOutput: "total 8\ndrwxr-xr-x  2 u  staff\n<system-reminder>\nclock ticked, skills changed\n</system-reminder>",
+		}}
+		a := merkle.NewNode(merkle.Bucket{Type: "message", Role: "user", Content: live}, nil)
+		b := merkle.NewNode(merkle.Bucket{Type: "message", Role: "user", Content: resent}, nil)
+		Expect(a.Hash).To(Equal(b.Hash))
+	})
+
+	It("projects volatile wrapper tags so their drift cannot fork the chain", func() {
+		v1 := []llm.ContentBlock{{Type: "text", Text: "judge this\n<new-diagnostics>\nfile.go:1 unused var\n</new-diagnostics>"}}
+		v2 := []llm.ContentBlock{{Type: "text", Text: "judge this\n<new-diagnostics>\nfile.go:9 other finding\n</new-diagnostics>"}}
+		a := merkle.NewNode(merkle.Bucket{Type: "message", Role: "user", Content: v1}, nil)
+		b := merkle.NewNode(merkle.Bucket{Type: "message", Role: "user", Content: v2}, nil)
+		Expect(a.Hash).To(Equal(b.Hash))
+	})
 })

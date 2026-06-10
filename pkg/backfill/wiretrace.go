@@ -97,6 +97,11 @@ type wireTraceMetaBlock struct {
 	ResponseBytes   int     `json:"response_bytes,omitempty"`
 	ElapsedSeconds  float64 `json:"elapsed_seconds,omitempty"`
 	BackfillSource  string  `json:"backfill_source,omitempty"`
+
+	// TsRequest preserves the bundle's original capture time so the
+	// deriver can order backfilled turns by when they actually
+	// happened, not when the backfill ran.
+	TsRequest string `json:"ts_request,omitempty"`
 }
 
 // BackfillWireTrace replays paperd wire-trace capture bundles through a
@@ -305,6 +310,7 @@ func buildWireTraceEnvelope(ctx context.Context, dir, turnDir string, reducer ca
 			ResponseBytes:   meta.ResponseBytes,
 			ElapsedSeconds:  meta.DurationMs / 1000.0,
 			BackfillSource:  "paperd-wire-trace",
+			TsRequest:       req.Timestamp,
 		},
 		Session: sessionEnvelopeFromHeaders(headers),
 	}

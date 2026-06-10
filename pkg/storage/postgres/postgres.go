@@ -139,6 +139,8 @@ func (d *Driver) Put(ctx context.Context, n *merkle.Node) (bool, error) {
 		RequestTemperature:       reqTemperature,
 		RequestStream:            reqStream,
 		RequestToolCount:         reqToolCount,
+		NodeKind:                 nullStringValue(n.Kind),
+		ParentToolUseID:          nullStringValue(n.ParentToolUseID),
 	})
 	if err != nil {
 		return false, fmt.Errorf("insert node: %w", err)
@@ -770,6 +772,8 @@ func merkleNodeFromRow(row gensqlc.Node) (*merkle.Node, error) {
 		row.RequestSystem, row.RequestMaxTokens, row.RequestTemperature,
 		row.RequestStream, row.RequestToolCount,
 	)
+	n.Kind = row.NodeKind.String
+	n.ParentToolUseID = row.ParentToolUseID.String
 	return n, nil
 }
 

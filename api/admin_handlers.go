@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -96,6 +97,32 @@ func (s *Server) handleBackfillSessionStatus(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: err.Error()})
 	}
 	return c.JSON(fiber.Map{"scanned": res.Scanned, "updated": res.Updated})
+}
+
+// deriveRunner is the optional driver capability behind
+// POST /v1/admin/derive/run.
+type deriveRunner interface {
+	RederiveFromRaw(ctx context.Context, project string) (map[string]*derive.RederiveReport, error)
+}
+
+// handleDeriveRun rebuilds the derived node layer (typing, edges,
+// projection) from the immutable raw-turn store. Idempotent and
+// re-runnable: this is the lever that makes data-model iteration cheap
+// — a classifier or projection change redeploys, re-runs, and every
+// captured session reclassifies without re-capture.
+func (s *Server) handleDeriveRun(c *fiber.Ctx) error {
+	runner, ok := s.driver.(deriveRunner)
+	if !ok {
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "driver does not host the raw-turn layer"})
+	}
+
+	reports, err := runner.RederiveFromRaw(c.Context(), "")
+	if err != nil {
+		s.logger.Error("derive run", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: err.Error()})
+	}
+
+	return c.JSON(fiber.Map{"orgs": reports})
 }
 
 // handleDeriveVerify proves the raw→derived round-trip: re-derive node

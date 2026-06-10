@@ -15,7 +15,8 @@ SELECT hash, bucket, type, role, content, model, provider, agent_name, stop_reas
        cache_creation_input_tokens, cache_read_input_tokens,
        total_duration_ns, prompt_duration_ns, project, created_at, parent_hash,
        session_id, org_id,
-       request_system, request_max_tokens, request_temperature, request_stream, request_tool_count
+       request_system, request_max_tokens, request_temperature, request_stream, request_tool_count,
+       node_kind, parent_tool_use_id
 FROM nodes
 WHERE parent_hash IS NULL
 ORDER BY created_at ASC, hash ASC
@@ -57,6 +58,8 @@ func (q *Queries) GetRootNodes(ctx context.Context) ([]Node, error) {
 			&i.RequestTemperature,
 			&i.RequestStream,
 			&i.RequestToolCount,
+			&i.NodeKind,
+			&i.ParentToolUseID,
 		); err != nil {
 			return nil, err
 		}
