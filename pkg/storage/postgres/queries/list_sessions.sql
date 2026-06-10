@@ -5,7 +5,7 @@ SELECT n.hash, n.bucket, n.type, n.role, n.content, n.model, n.provider, n.agent
        n.total_duration_ns, n.prompt_duration_ns, n.project, n.created_at, n.parent_hash,
        n.session_id, n.org_id,
        n.request_system, n.request_max_tokens, n.request_temperature, n.request_stream, n.request_tool_count,
-       n.node_kind, n.parent_tool_use_id
+       n.node_kind, n.parent_tool_use_id, n.thread_id
 FROM nodes n
 WHERE NOT EXISTS (
     SELECT 1 FROM nodes c WHERE c.parent_hash = n.hash

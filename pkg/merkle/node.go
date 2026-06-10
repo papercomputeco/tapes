@@ -40,6 +40,11 @@ type Node struct {
 	// layer at any time.
 	Kind string `json:"node_kind,omitempty"`
 
+	// ThreadID is the harness sub-thread that fired the capturing
+	// call (Claude Code: the subagent agent-id), "" for main-thread
+	// calls. Captured deterministically at the wire; non-hashed.
+	ThreadID string `json:"thread_id,omitempty"`
+
 	// ParentToolUseID is the semantic fork/attach edge: the tool_use id
 	// this node's call relates to (a permission verdict points at the
 	// tool_use it judged; a subagent fork points at its Task tool_use).

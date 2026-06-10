@@ -112,6 +112,7 @@ Example (against a clearing):
 type wireTraceCommander struct {
 	dir       string
 	ingestURL string
+	sessions  []string
 	dryRun    bool
 	verbose   bool
 }
@@ -128,6 +129,7 @@ func newWireTraceCmd() *cobra.Command {
 			opts := backfill.WireTraceOptions{
 				CapturesDir: cmder.dir,
 				IngestURL:   cmder.ingestURL,
+				SessionIDs:  cmder.sessions,
 				DryRun:      cmder.dryRun,
 				Verbose:     cmder.verbose,
 				Logf: func(format string, args ...any) {
@@ -153,6 +155,7 @@ func newWireTraceCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&cmder.dir, "dir", "", "paperd wire-trace directory holding turn-* bundles (required)")
 	cmd.Flags().StringVar(&cmder.ingestURL, "ingest-url", "http://127.0.0.1:8090", "base URL of the tapes-ingest server")
+	cmd.Flags().StringSliceVar(&cmder.sessions, "session", nil, "harness session id(s) to replay (default: all)")
 	cmd.Flags().BoolVar(&cmder.dryRun, "dry-run", false, "parse and reduce every bundle but skip the POST")
 	cmd.Flags().BoolVarP(&cmder.verbose, "verbose", "v", false, "log each turn's outcome")
 	_ = cmd.MarkFlagRequired("dir")

@@ -220,6 +220,7 @@ func (d *Driver) writeDerivedSet(ctx context.Context, orgKey string, set *derive
 			RequestToolCount:         reqToolCount,
 			NodeKind:                 nullStringValue(n.Kind),
 			ParentToolUseID:          nullStringValue(n.ParentToolUseID),
+			ThreadID:                 nullStringValue(n.ThreadID),
 			SessionID:                sessionID,
 		}); err != nil {
 			return fmt.Errorf("upsert node %s: %w", n.Hash, err)

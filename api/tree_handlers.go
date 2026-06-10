@@ -48,6 +48,7 @@ type TreeNode struct {
 	Role            string     `json:"role,omitempty"`
 	NodeKind        string     `json:"node_kind,omitempty"`
 	ParentToolUseID string     `json:"parent_tool_use_id,omitempty"`
+	ThreadID        string     `json:"thread_id,omitempty"`
 	Preview         string     `json:"preview,omitempty"`
 	Model           string     `json:"model,omitempty"`
 	StopReason      string     `json:"stop_reason,omitempty"`
@@ -209,6 +210,7 @@ func buildSessionTree(sessionID, harnessSessionID string, nodes []*merkle.Node) 
 			Role:            n.Bucket.Role,
 			NodeKind:        kind,
 			ParentToolUseID: n.ParentToolUseID,
+			ThreadID:        n.ThreadID,
 			Preview:         makePreview(n),
 			Model:           n.Bucket.Model,
 			StopReason:      n.StopReason,

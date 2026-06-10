@@ -54,6 +54,11 @@ type RederiveReport struct {
 	JudgedActions    int `json:"judged_actions"`
 	AttachedVerdicts int `json:"attached_verdicts"`
 
+	// UnattachedActions samples judged actions that found no matching
+	// tool_use (capped) — expected for non-tool events like subagent
+	// handbacks; anything else is matcher signal worth reading.
+	UnattachedActions []string `json:"unattached_actions,omitempty"`
+
 	// WebSummaryAttached counts web-summary calls linked back to their
 	// WebFetch/WebSearch tool_use.
 	WebSummaryAttached int `json:"web_summary_attached"`
@@ -72,6 +77,17 @@ type RederiveReport struct {
 // rows fall back to received_at).
 type rawMetaFields struct {
 	TsRequest string `json:"ts_request"`
+	ThreadID  string `json:"thread_id"`
+}
+
+// threadIDFromMeta resolves the capture-side harness sub-thread id
+// from a raw row's meta block.
+func threadIDFromMeta(meta json.RawMessage) string {
+	var m rawMetaFields
+	if len(meta) == 0 || json.Unmarshal(meta, &m) != nil {
+		return ""
+	}
+	return m.ThreadID
 }
 
 // CapturedAt resolves a raw record's original capture time: the
@@ -99,6 +115,10 @@ func CapturedAt(rec *storage.RawTurnRecord) time.Time {
 type attachTurn struct {
 	kind  string
 	index int
+
+	// threadID is the harness sub-thread that fired the call ("" =
+	// main thread) — scopes verdict matching to the right thread.
+	threadID string
 
 	// judgedAction is the rendered action a permission check judges
 	// (empty for non-check turns).
@@ -178,7 +198,7 @@ func (dv *Deriver) AddTurn(rec *storage.RawTurnRecord) {
 		dv.set.Sessions = append(dv.set.Sessions, key)
 	}
 
-	turn := &attachTurn{kind: kind, index: len(dv.turns)}
+	turn := &attachTurn{kind: kind, index: len(dv.turns), threadID: threadIDFromMeta(rec.Meta)}
 
 	for _, node := range chain {
 		retained, dup := dv.byHash[node.Hash]
@@ -207,6 +227,7 @@ func (dv *Deriver) AddTurn(rec *storage.RawTurnRecord) {
 			dv.toolUses = append(dv.toolUses, &toolUseRef{
 				id:       b.ToolUseID,
 				name:     b.ToolName,
+				threadID: turn.threadID,
 				webTool:  b.ToolName == "WebFetch" || b.ToolName == "WebSearch" || b.ToolName == "web_search" || b.ToolName == "web_fetch",
 				atTurn:   turn.index,
 				rendered: renderToolUse(b.ToolName, b.ToolInput),

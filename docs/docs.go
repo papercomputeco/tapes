@@ -704,6 +704,9 @@ const docTemplate = `{
                 "stop_reason": {
                     "type": "string"
                 },
+                "thread_id": {
+                    "type": "string"
+                },
                 "type": {
                     "type": "string"
                 },
@@ -1083,6 +1086,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "stop_reason": {
+                    "type": "string"
+                },
+                "thread_id": {
                     "type": "string"
                 },
                 "tool_uses": {

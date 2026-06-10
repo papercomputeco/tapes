@@ -79,7 +79,7 @@ func loadCorpus(path string) (wire []storage.RawTurnRecord, transcripts []storag
 
 func deriveCorpus() (*derive.DerivedSet, *derive.ReconcileStats) {
 	wire, transcriptRows := loadCorpus("testdata/corpus-cb9a87e5.jsonl.gz")
-	Expect(wire).To(HaveLen(85))
+	Expect(wire).To(HaveLen(87))
 	Expect(transcriptRows).To(HaveLen(3))
 
 	set, err := derive.BuildDerivedSet(wire, "")
@@ -100,6 +100,14 @@ var _ = Describe("live-capture corpus (cb9a87e5)", func() {
 		set, stats := deriveCorpus()
 		r := set.Report
 
+		// Thread attribution is deterministic from the capture-time
+		// agent-id header: both subagents' nodes carry their thread.
+		threads := map[string]int{}
+		for _, dn := range set.Nodes {
+			threads[dn.Node.ThreadID]++
+		}
+		Expect(threads).To(HaveLen(3)) // main ("") + 2 subagents
+
 		// Every call classifies — a non-zero unknown is either a new
 		// harness side-call to catalog or a classifier regression.
 		Expect(r.CallKinds).NotTo(HaveKey(derive.KindUnknown))
@@ -115,10 +123,16 @@ var _ = Describe("live-capture corpus (cb9a87e5)", func() {
 			derive.KindWebSummary:  2,
 		}))
 
-		// Verdict attach: one judged action is a non-tool subagent
-		// handback and correctly stays unattached.
-		Expect(r.JudgedActions).To(Equal(22))
+		// Verdict attach: the two misses are each subagent's non-tool
+		// handback event ("subagent has finished and is handing back
+		// control…") — byte-identical text that thread scoping
+		// correctly counts per thread instead of merging.
+		Expect(r.JudgedActions).To(Equal(23))
 		Expect(r.AttachedVerdicts).To(Equal(21))
+		Expect(r.UnattachedActions).To(HaveLen(2))
+		for _, u := range r.UnattachedActions {
+			Expect(u).To(ContainSubstring("subagent has finished"))
+		}
 
 		// Both subagents fork at their Task tool_use.
 		Expect(stats.SubagentForks).To(Equal(2))
@@ -131,7 +145,10 @@ var _ = Describe("live-capture corpus (cb9a87e5)", func() {
 		joinPct := float64(stats.ConversationJoined) / float64(stats.ConversationTotal)
 		Expect(joinPct).To(BeNumerically(">=", 0.90))
 
-		Expect(r.Nodes).To(Equal(222))
+		// 183 after the claude-md fan fix: the shared <user_claude_md>
+		// block became a side node, so check chains root at their own
+		// transcript message and stage pairs dedup their shared prefix.
+		Expect(r.Nodes).To(Equal(183))
 	})
 
 	It("is idempotent — a second derivation is byte-identical", func() {

@@ -31,7 +31,17 @@ import (
 // parent bypasses them. These blocks drift between turns of the same
 // conversation, so chaining them would fork the spine at every drift;
 // as side branches they are preserved, marked injected:*, and inert.
-func TurnChain(provider, agentName, project string, req *llm.ChatRequest, resp *llm.ChatResponse) []*merkle.Node {
+// CallContext carries the capture-side identity of one API call into
+// chain construction: who routed it (provider/agent), which harness
+// sub-thread fired it, and the project tag. All non-hashed metadata.
+type CallContext struct {
+	Provider  string
+	AgentName string
+	ThreadID  string
+	Project   string
+}
+
+func TurnChain(call CallContext, req *llm.ChatRequest, resp *llm.ChatResponse) []*merkle.Node {
 	if req == nil || resp == nil {
 		return nil
 	}
@@ -47,17 +57,21 @@ func TurnChain(provider, agentName, project string, req *llm.ChatRequest, resp *
 			Role:      msg.Role,
 			Content:   msg.Content,
 			Model:     req.Model,
-			Provider:  provider,
-			AgentName: agentName,
+			Provider:  call.Provider,
+			AgentName: call.AgentName,
 		}
 		node := merkle.NewNode(bucket, parent, merkle.NodeOptions{
-			Project: project,
+			Project: call.Project,
 			Request: params,
 		})
-		if injectedKind := ClassifyInjected(msg); injectedKind != "" && kind == KindMain {
+		node.ThreadID = call.ThreadID
+		if injectedKind := ClassifyInjected(msg); injectedKind != "" {
 			// Side branch: keep the node, mark it, do NOT advance the
-			// spine. Only meaningful on the conversation spine — a
-			// shadow call's whole body is already typed by its kind.
+			// spine. On the conversation spine this stops injected
+			// drift from forking the chain; on shadow calls it stops
+			// a shared context block (every permission check opens
+			// with the same <user_claude_md> blob) from fusing
+			// otherwise-independent calls into one fan.
 			node.Kind = injectedKind
 			chain = append(chain, node)
 			continue
@@ -72,8 +86,8 @@ func TurnChain(provider, agentName, project string, req *llm.ChatRequest, resp *
 		Role:      resp.Message.Role,
 		Content:   resp.Message.Content,
 		Model:     resp.Model,
-		Provider:  provider,
-		AgentName: agentName,
+		Provider:  call.Provider,
+		AgentName: call.AgentName,
 	}
 	responseNode := merkle.NewNode(
 		responseBucket,
@@ -81,11 +95,12 @@ func TurnChain(provider, agentName, project string, req *llm.ChatRequest, resp *
 		merkle.NodeOptions{
 			StopReason: resp.StopReason,
 			Usage:      resp.Usage,
-			Project:    project,
+			Project:    call.Project,
 			Request:    params,
 		},
 	)
 	responseNode.Kind = kind
+	responseNode.ThreadID = call.ThreadID
 	chain = append(chain, responseNode)
 	return chain
 }

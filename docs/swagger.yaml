@@ -50,6 +50,8 @@ definitions:
         type: boolean
       stop_reason:
         type: string
+      thread_id:
+        type: string
       type:
         type: string
       usage:
@@ -331,6 +333,8 @@ definitions:
       role:
         type: string
       stop_reason:
+        type: string
+      thread_id:
         type: string
       tool_uses:
         description: |-

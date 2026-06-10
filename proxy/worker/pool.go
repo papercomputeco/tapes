@@ -33,8 +33,12 @@ var (
 type Job struct {
 	Provider  string
 	AgentName string
-	Req       *llm.ChatRequest
-	Resp      *llm.ChatResponse
+	// ThreadID is the harness sub-thread that fired this call ("" for
+	// the main thread), captured at the wire and stamped onto the
+	// turn's nodes as non-hashed metadata.
+	ThreadID string
+	Req      *llm.ChatRequest
+	Resp     *llm.ChatResponse
 
 	// Session is the optional session-tracking envelope attached to
 	// the turn at the ingest HTTP boundary. When non-nil and the
@@ -282,7 +286,12 @@ func (p *Pool) storeConversationTurn(ctx context.Context, job Job) (string, []*m
 // so the offline re-deriver produces byte-identical chains from the
 // raw-turn store; this wrapper just adapts a worker Job.
 func buildTurnChain(job Job, project string) []*merkle.Node {
-	return derive.TurnChain(job.Provider, job.AgentName, project, job.Req, job.Resp)
+	return derive.TurnChain(derive.CallContext{
+		Provider:  job.Provider,
+		AgentName: job.AgentName,
+		ThreadID:  job.ThreadID,
+		Project:   project,
+	}, job.Req, job.Resp)
 }
 
 // putChainSequentially is the legacy per-node Put loop used when the

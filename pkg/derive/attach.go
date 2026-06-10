@@ -25,6 +25,7 @@ var toolHeadPattern = regexp.MustCompile(`^(Bash|Read|Write|Edit|MultiEdit|Noteb
 type toolUseRef struct {
 	id       string
 	name     string
+	threadID string // harness sub-thread that fired the carrying call
 	rendered string // normalized name+input body for content matching
 	webTool  bool   // WebFetch / WebSearch
 	atTurn   int    // turn index of first capture
@@ -35,11 +36,19 @@ type toolUseRef struct {
 // judged by stamping ParentToolUseID on the check's nodes. Stage-1 and
 // stage-2 checks for the same action share one attachment.
 func attachVerdicts(turns []*attachTurn, candidates []*toolUseRef, report *RederiveReport) {
+	// Group stage-1/stage-2 checks for the same action. Stage 1 fires
+	// from the thread whose action it judges (it carries that thread's
+	// id); the stage-2 escalation runs in the MAIN harness process and
+	// arrives without one — so the group key is the action text, and
+	// the group inherits the most specific thread id any member
+	// carries. Two threads issuing byte-identical actions still split:
+	// a non-empty member thread that disagrees starts its own group.
 	type group struct {
-		action string
-		turns  []*attachTurn
+		action   string
+		threadID string
+		turns    []*attachTurn
 	}
-	groups := map[string]*group{}
+	groups := map[string][]*group{}
 	var order []*group
 	for _, t := range turns {
 		if t.kind != KindCheckStage1 && t.kind != KindCheckStage2 {
@@ -48,19 +57,39 @@ func attachVerdicts(turns []*attachTurn, candidates []*toolUseRef, report *Reder
 		if t.judgedAction == "" {
 			continue
 		}
-		g, ok := groups[t.judgedAction]
-		if !ok {
-			g = &group{action: t.judgedAction}
-			groups[t.judgedAction] = g
+		var g *group
+		for _, cand := range groups[t.judgedAction] {
+			if t.threadID == "" || cand.threadID == "" || cand.threadID == t.threadID {
+				g = cand
+				break
+			}
+		}
+		if g == nil {
+			g = &group{action: t.judgedAction, threadID: t.threadID}
+			groups[t.judgedAction] = append(groups[t.judgedAction], g)
 			order = append(order, g)
 		}
 		g.turns = append(g.turns, t)
+		if g.threadID == "" {
+			g.threadID = t.threadID
+		}
 	}
 
 	report.JudgedActions = len(order)
 	for _, g := range order {
-		ref := matchToolUse(candidates, g.action)
+		// A check fires from the same harness sub-thread as the action
+		// it judges (the agent-id header rides on both), so match
+		// within that thread first; the global pass is the fallback
+		// for raw rows captured before thread ids existed.
+		ref := matchToolUse(candidates, g.action, g.threadID, true)
 		if ref == nil {
+			ref = matchToolUse(candidates, g.action, g.threadID, false)
+		}
+		if ref == nil {
+			if len(report.UnattachedActions) < maxReportedMissing {
+				report.UnattachedActions = append(report.UnattachedActions,
+					"thread="+g.threadID+" action="+truncateAction(g.action))
+			}
 			continue
 		}
 		ref.consumed = true
@@ -159,14 +188,19 @@ func judgedAction(req *llm.ChatRequest) string {
 
 // matchToolUse finds the first unconsumed candidate whose rendered form
 // matches the judged action: MCP tools by full tool-name prefix,
-// everything else by body-substring overlap in either direction.
-func matchToolUse(candidates []*toolUseRef, action string) *toolUseRef {
+// everything else by body-substring overlap in either direction. With
+// sameThreadOnly set, only candidates from the given harness sub-thread
+// are considered.
+func matchToolUse(candidates []*toolUseRef, action, threadID string, sameThreadOnly bool) *toolUseRef {
 	actionNorm := normalizeAction(action)
 	actionBody := stripToolHead(actionNorm)
 	isMCP := strings.HasPrefix(actionNorm, "mcp__")
 
 	for _, ref := range candidates {
 		if ref.consumed {
+			continue
+		}
+		if sameThreadOnly && ref.threadID != threadID {
 			continue
 		}
 		if isMCP {
@@ -239,6 +273,14 @@ func stripToolHead(s string) string {
 	head := fields[0]
 	if _, ok := toolHeads[head]; ok || strings.HasPrefix(head, "mcp__") {
 		return strings.Join(fields[1:], " ")
+	}
+	return s
+}
+
+// truncateAction bounds a rendered action for report sampling.
+func truncateAction(s string) string {
+	if len(s) > 120 {
+		return s[:120] + "…"
 	}
 	return s
 }

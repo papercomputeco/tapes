@@ -43,6 +43,11 @@ const (
 	KindInjectedMCPInstructions = "injected:mcp-instructions"
 	KindInjectedSkillsList      = "injected:skills-list"
 	KindInjectedModeBanner      = "injected:mode-banner"
+	// KindInjectedClaudeMD is the user-context blob the harness
+	// prepends to its security-monitor checks (<user_claude_md>…).
+	// Every check in a session shares it byte-for-byte, so left on the
+	// chain it fuses all checks into one fan rooted at the blob.
+	KindInjectedClaudeMD = "injected:claude-md"
 )
 
 // ClassifyCall determines the kind of a captured API call from its
@@ -162,6 +167,8 @@ func ClassifyInjected(msg llm.Message) string {
 		strings.HasPrefix(t, "Exited Plan Mode"),
 		strings.HasPrefix(t, "[SYSTEM NOTIFICATION"):
 		return KindInjectedModeBanner
+	case strings.HasPrefix(t, "<user_claude_md>"):
+		return KindInjectedClaudeMD
 	}
 	return ""
 }

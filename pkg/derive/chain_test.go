@@ -45,7 +45,7 @@ func chainResponse() *llm.ChatResponse {
 
 var _ = Describe("TurnChain", func() {
 	It("builds a root→leaf chain with one node per message plus the response", func() {
-		chain := derive.TurnChain("anthropic", "claude", "proj", chainRequest(), chainResponse())
+		chain := derive.TurnChain(derive.CallContext{Provider: "anthropic", AgentName: "claude", Project: "proj"}, chainRequest(), chainResponse())
 		Expect(chain).To(HaveLen(4))
 
 		Expect(chain[0].ParentHash).To(BeNil())
@@ -63,7 +63,7 @@ var _ = Describe("TurnChain", func() {
 	It("stamps the request params on every node without changing hashes", func() {
 		req := chainRequest()
 		resp := chainResponse()
-		chain := derive.TurnChain("anthropic", "claude", "proj", req, resp)
+		chain := derive.TurnChain(derive.CallContext{Provider: "anthropic", AgentName: "claude", Project: "proj"}, req, resp)
 
 		for _, node := range chain {
 			Expect(node.Request).NotTo(BeNil())
@@ -78,7 +78,7 @@ var _ = Describe("TurnChain", func() {
 		// stream, different system prompt) must produce identical
 		// hashes, or the conversation chain would fork per call kind.
 		bare := &llm.ChatRequest{Model: req.Model, Messages: req.Messages}
-		bareChain := derive.TurnChain("anthropic", "claude", "proj", bare, resp)
+		bareChain := derive.TurnChain(derive.CallContext{Provider: "anthropic", AgentName: "claude", Project: "proj"}, bare, resp)
 		Expect(bareChain).To(HaveLen(len(chain)))
 		for i := range chain {
 			Expect(bareChain[i].Hash).To(Equal(chain[i].Hash))
@@ -88,13 +88,13 @@ var _ = Describe("TurnChain", func() {
 	It("reports zero tools as a concrete count, distinct from absent params", func() {
 		req := chainRequest()
 		req.Tools = nil
-		chain := derive.TurnChain("anthropic", "claude", "", req, chainResponse())
+		chain := derive.TurnChain(derive.CallContext{Provider: "anthropic", AgentName: "claude"}, req, chainResponse())
 		Expect(chain[0].Request.ToolCount).To(HaveValue(Equal(0)))
 	})
 
 	It("returns nil for a missing request or response", func() {
-		Expect(derive.TurnChain("anthropic", "", "", nil, chainResponse())).To(BeNil())
-		Expect(derive.TurnChain("anthropic", "", "", chainRequest(), nil)).To(BeNil())
+		Expect(derive.TurnChain(derive.CallContext{Provider: "anthropic"}, nil, chainResponse())).To(BeNil())
+		Expect(derive.TurnChain(derive.CallContext{Provider: "anthropic"}, chainRequest(), nil)).To(BeNil())
 	})
 
 	It("re-derives identical hashes from the same raw provider request", func() {
@@ -119,8 +119,8 @@ var _ = Describe("TurnChain", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		resp := chainResponse()
-		chain1 := derive.TurnChain("anthropic", "claude", "proj", req1, resp)
-		chain2 := derive.TurnChain("anthropic", "claude", "proj", req2, resp)
+		chain1 := derive.TurnChain(derive.CallContext{Provider: "anthropic", AgentName: "claude", Project: "proj"}, req1, resp)
+		chain2 := derive.TurnChain(derive.CallContext{Provider: "anthropic", AgentName: "claude", Project: "proj"}, req2, resp)
 		Expect(chain1).To(HaveLen(2))
 		for i := range chain1 {
 			Expect(chain2[i].Hash).To(Equal(chain1[i].Hash))

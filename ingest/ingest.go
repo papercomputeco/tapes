@@ -98,6 +98,10 @@ type TurnMeta struct {
 	RequestID   string `json:"request_id,omitempty"`
 	ContentType string `json:"content_type,omitempty"`
 
+	// ThreadID is the harness sub-thread id resolved by the capture
+	// adapter (extproc headers.ThreadID); "" for main-thread calls.
+	ThreadID string `json:"thread_id,omitempty"`
+
 	Method              string  `json:"method,omitempty"`
 	Path                string  `json:"path,omitempty"`
 	Endpoint            string  `json:"endpoint,omitempty"`
@@ -666,6 +670,7 @@ func (s *Server) processTurn(turn *TurnPayload) error {
 	if ok := s.workerPool.Enqueue(worker.Job{
 		Provider:  prov.Name(),
 		AgentName: turn.AgentName,
+		ThreadID:  turn.Meta.ThreadID,
 		Req:       parsedReq,
 		Resp:      &parsedResp,
 		Session:   turn.Session,

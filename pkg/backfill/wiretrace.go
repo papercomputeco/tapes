@@ -30,6 +30,10 @@ type WireTraceOptions struct {
 	// captured turn to {IngestURL}/v1/ingest.
 	IngestURL string
 
+	// SessionIDs filters replay to bundles whose captured
+	// X-Tapes-Harness-Session-Id matches; empty replays everything.
+	SessionIDs []string
+
 	// DryRun parses and reduces every bundle but skips the POST.
 	DryRun bool
 
@@ -86,6 +90,7 @@ type wireTraceEnvelope struct {
 type wireTraceMetaBlock struct {
 	RequestID       string  `json:"request_id,omitempty"`
 	ContentType     string  `json:"content_type,omitempty"`
+	ThreadID        string  `json:"thread_id,omitempty"`
 	Method          string  `json:"method,omitempty"`
 	Path            string  `json:"path,omitempty"`
 	Endpoint        string  `json:"endpoint,omitempty"`
@@ -137,6 +142,11 @@ func BackfillWireTrace(ctx context.Context, opts WireTraceOptions) (*WireTraceRe
 	// + sequence, so a lexical sort is time order.
 	sort.Strings(turnDirs)
 
+	wantSession := map[string]bool{}
+	for _, id := range opts.SessionIDs {
+		wantSession[id] = true
+	}
+
 	reducer := capture.NewAnthropicReducer()
 	client := &http.Client{}
 	result := &WireTraceResult{}
@@ -144,6 +154,11 @@ func BackfillWireTrace(ctx context.Context, opts WireTraceOptions) (*WireTraceRe
 	for _, turnDir := range turnDirs {
 		result.Scanned++
 		envelope, skipReason, err := buildWireTraceEnvelope(ctx, opts.CapturesDir, turnDir, reducer)
+		if err == nil && envelope != nil && len(wantSession) > 0 &&
+			(envelope.Session == nil || !wantSession[envelope.Session.HarnessSessionID]) {
+			result.Skipped++
+			continue
+		}
 		if err != nil {
 			result.Failed++
 			if len(result.Failures) < 25 {
@@ -288,6 +303,11 @@ func buildWireTraceEnvelope(ctx context.Context, dir, turnDir string, reducer ca
 		return ""
 	}
 
+	// Mirror extproc's harness thread-id mapping (headers.ThreadID in
+	// tapes-extproc) so backfilled rows attribute threads exactly like
+	// live capture.
+	threadID := headers("x-claude-code-agent-id")
+
 	envelope := &wireTraceEnvelope{
 		Provider:  provider,
 		AgentName: headers("x-tapes-agent-name"),
@@ -299,6 +319,7 @@ func buildWireTraceEnvelope(ctx context.Context, dir, turnDir string, reducer ca
 			// raw layer wants.
 			RequestID:       turnDir,
 			ContentType:     meta.ContentType,
+			ThreadID:        threadID,
 			Method:          req.Method,
 			Path:            parsedURL.RequestURI(),
 			Endpoint:        "messages",

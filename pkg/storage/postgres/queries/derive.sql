@@ -11,18 +11,19 @@ INSERT INTO nodes (
     cache_creation_input_tokens, cache_read_input_tokens,
     total_duration_ns, prompt_duration_ns, project, created_at, parent_hash,
     request_system, request_max_tokens, request_temperature, request_stream, request_tool_count,
-    node_kind, parent_tool_use_id, session_id
+    node_kind, parent_tool_use_id, session_id, thread_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
     $11, $12, $13,
     $14, $15,
     $16, $17, $18, $19, $20,
     $21, $22, $23, $24, $25,
-    $26, $27, $28
+    $26, $27, $28, $29
 )
 ON CONFLICT (org_id, hash) DO UPDATE SET
     node_kind           = EXCLUDED.node_kind,
     parent_tool_use_id  = EXCLUDED.parent_tool_use_id,
+    thread_id           = EXCLUDED.thread_id,
     session_id          = COALESCE(nodes.session_id, EXCLUDED.session_id),
     request_system      = COALESCE(EXCLUDED.request_system, nodes.request_system),
     request_max_tokens  = COALESCE(EXCLUDED.request_max_tokens, nodes.request_max_tokens),

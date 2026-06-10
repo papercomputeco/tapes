@@ -61,8 +61,10 @@ func ReconcileTranscripts(set *DerivedSet, files []*TranscriptFile) *ReconcileSt
 			continue
 		}
 
-		// Walk this root's chain and score block overlap per file.
+		// Walk this root's chain: collect its nodes and score block
+		// overlap per file (overlap doubles as the join-rate metric).
 		overlap := make(map[*TranscriptFile]int, len(candidates))
+		var chain []*DerivedNode
 		var joined, total int
 		stack := []*DerivedNode{root}
 		seen := map[string]struct{}{}
@@ -73,6 +75,7 @@ func ReconcileTranscripts(set *DerivedSet, files []*TranscriptFile) *ReconcileSt
 				continue
 			}
 			seen[dn.Node.Hash] = struct{}{}
+			chain = append(chain, dn)
 			stack = append(stack, children[dn.Node.Hash]...)
 
 			nodeMatched := false
@@ -96,13 +99,31 @@ func ReconcileTranscripts(set *DerivedSet, files []*TranscriptFile) *ReconcileSt
 		stats.ConversationTotal += total
 		stats.ConversationJoined += joined
 
+		// Identity first: the chain's capture-time thread id equals the
+		// transcript's agent id, so the fork edge attaches
+		// deterministically. Content overlap is the fallback for raw
+		// rows captured before thread ids existed (and for harnesses
+		// without a thread header).
 		var best *TranscriptFile
-		for _, f := range candidates {
-			if best == nil || overlap[f] > overlap[best] {
-				best = f
+		if root.Node.ThreadID != "" {
+			for _, f := range candidates {
+				if f.AgentID == root.Node.ThreadID {
+					best = f
+					break
+				}
 			}
 		}
-		if best == nil || overlap[best] == 0 {
+		if best == nil {
+			for _, f := range candidates {
+				if best == nil || overlap[f] > overlap[best] {
+					best = f
+				}
+			}
+			if best != nil && overlap[best] == 0 {
+				best = nil
+			}
+		}
+		if best == nil {
 			continue
 		}
 		if best.AgentID == "" {
@@ -112,8 +133,14 @@ func ReconcileTranscripts(set *DerivedSet, files []*TranscriptFile) *ReconcileSt
 		if best.ToolUseID == "" {
 			continue
 		}
-		// Subagent thread: fork edge at the chain root.
-		root.Node.ParentToolUseID = best.ToolUseID
+		// Subagent thread: fork edge stamped down the whole chain so
+		// thread membership is queryable without a walk; the root
+		// carries it for the fork anchor, descendants for coloring.
+		for _, dn := range chain {
+			if dn.Node.Kind == KindMain {
+				dn.Node.ParentToolUseID = best.ToolUseID
+			}
+		}
 		stats.ForkedChains++
 	}
 

@@ -82,6 +82,7 @@ type GraphNode struct {
 	// (additive; empty for nodes that predate the deriver).
 	NodeKind        string `json:"node_kind,omitempty"`
 	ParentToolUseID string `json:"parent_tool_use_id,omitempty"`
+	ThreadID        string `json:"thread_id,omitempty"`
 }
 
 // GraphLink is a directed parent -> child edge between two included GraphNode IDs.
@@ -311,6 +312,7 @@ func (b *graphResponseBuilder) addNode(ctx context.Context, node *merkle.Node, p
 
 		NodeKind:        node.Kind,
 		ParentToolUseID: node.ParentToolUseID,
+		ThreadID:        node.ThreadID,
 	})
 
 	b.addLink(parentID, node.Hash)

@@ -37,6 +37,7 @@ type Node struct {
 	RequestToolCount         pgtype.Int4
 	NodeKind                 pgtype.Text
 	ParentToolUseID          pgtype.Text
+	ThreadID                 pgtype.Text
 }
 
 type RawTurn struct {
