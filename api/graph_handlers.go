@@ -77,6 +77,11 @@ type GraphNode struct {
 	IsLeaf        bool       `json:"is_leaf"`
 	IsBranchPoint bool       `json:"is_branch_point"`
 	Selected      bool       `json:"selected"`
+
+	// NodeKind / ParentToolUseID surface the derived semantic typing
+	// (additive; empty for nodes that predate the deriver).
+	NodeKind        string `json:"node_kind,omitempty"`
+	ParentToolUseID string `json:"parent_tool_use_id,omitempty"`
 }
 
 // GraphLink is a directed parent -> child edge between two included GraphNode IDs.
@@ -303,6 +308,9 @@ func (b *graphResponseBuilder) addNode(ctx context.Context, node *merkle.Node, p
 		IsLeaf:        childrenCount == 0,
 		IsBranchPoint: childrenCount > 1,
 		Selected:      node.Hash == b.requestedHash,
+
+		NodeKind:        node.Kind,
+		ParentToolUseID: node.ParentToolUseID,
 	})
 
 	b.addLink(parentID, node.Hash)

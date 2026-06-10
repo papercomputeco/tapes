@@ -27,9 +27,16 @@ definitions:
         type: boolean
       model:
         type: string
+      node_kind:
+        description: |-
+          NodeKind / ParentToolUseID surface the derived semantic typing
+          (additive; empty for nodes that predate the deriver).
+        type: string
       parent_hash:
         type: string
       parent_id:
+        type: string
+      parent_tool_use_id:
         type: string
       preview:
         type: string
@@ -114,6 +121,8 @@ definitions:
     properties:
       cwd:
         type: string
+      derived_status:
+        type: string
       ended_at:
         type: string
       harness_id:
@@ -155,6 +164,47 @@ definitions:
       next_cursor:
         type: string
     type: object
+  api.SessionTreeResponse:
+    properties:
+      attachments:
+        description: |-
+          Attachments link offshoot calls to the tool_use they relate to:
+          permission checks to the judged action, web summaries to their
+          fetch/search.
+        items:
+          $ref: '#/definitions/api.TreeAttachment'
+        type: array
+      forks:
+        description: |-
+          Forks are subagent threads: a chain whose root carries the Task
+          tool_use that spawned it. SourceID is the node holding the
+          tool_use block; RejoinID the node holding its tool_result.
+        items:
+          $ref: '#/definitions/api.TreeFork'
+        type: array
+      harness_session_id:
+        type: string
+      kind_counts:
+        additionalProperties:
+          type: integer
+        description: KindCounts summarizes the session's call mix.
+        type: object
+      links:
+        items:
+          $ref: '#/definitions/api.GraphLink'
+        type: array
+      nodes:
+        items:
+          $ref: '#/definitions/api.TreeNode'
+        type: array
+      roots:
+        description: Roots are the parentless chain roots, main thread first.
+        items:
+          type: string
+        type: array
+      session_id:
+        type: string
+    type: object
   api.StatsResponse:
     properties:
       completed_count:
@@ -166,6 +216,8 @@ definitions:
       root_count:
         type: integer
       session_count:
+        type: integer
+      stem_count:
         type: integer
       tool_calls:
         type: integer
@@ -233,6 +285,86 @@ definitions:
         type: string
       root_hash:
         type: string
+    type: object
+  api.TreeAttachment:
+    properties:
+      node_id:
+        type: string
+      node_kind:
+        type: string
+      target_id:
+        type: string
+      tool_use_id:
+        type: string
+    type: object
+  api.TreeFork:
+    properties:
+      rejoin_id:
+        type: string
+      root_id:
+        type: string
+      source_id:
+        type: string
+      tool_use_id:
+        type: string
+    type: object
+  api.TreeNode:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      is_leaf:
+        type: boolean
+      is_root:
+        type: boolean
+      model:
+        type: string
+      node_kind:
+        type: string
+      parent_id:
+        type: string
+      parent_tool_use_id:
+        type: string
+      preview:
+        type: string
+      role:
+        type: string
+      stop_reason:
+        type: string
+      tool_uses:
+        description: |-
+          ToolUses lists the tool_use blocks this node carries (assistant
+          turns), so clients can anchor forks/attachments without parsing
+          content.
+        items:
+          $ref: '#/definitions/api.TreeToolUse'
+        type: array
+      usage:
+        $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.Usage'
+      verdict:
+        allOf:
+        - $ref: '#/definitions/api.TreeVerdict'
+        description: |-
+          Verdict is set on permission-check response nodes: the monitor's
+          disposition for the judged action.
+    type: object
+  api.TreeToolUse:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  api.TreeVerdict:
+    properties:
+      disposition:
+        description: ALLOW | BLOCK
+        type: string
+      reasoned:
+        type: boolean
+      stage:
+        type: integer
     type: object
   api.Turn:
     properties:
@@ -338,6 +470,15 @@ definitions:
     type: object
   github_com_papercomputeco_tapes_pkg_llm.ContentBlock:
     properties:
+      content:
+        description: |-
+          Content (type="web_search_tool_result" and other server-tool results) -
+          the raw result payload Anthropic returns inline on the block, captured
+          verbatim as JSON so the variable result-object shapes survive without
+          imposing a schema. ToolResultID links it to the paired server_tool_use.
+        items:
+          type: integer
+        type: array
       image_base64:
         description: Base64-encoded image data
         type: string
@@ -695,6 +836,43 @@ paths:
           schema:
             $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
       summary: Get a session
+      tags:
+      - sessions
+  /v1/sessions/{id}/tree:
+    get:
+      description: Returns every captured node for the session typed by node_kind,
+        with spine links, subagent fork/rejoin edges, and offshoot attachments (permission
+        verdicts, web summaries) anchored to the tool_use they relate to.
+      parameters:
+      - description: Session id (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SessionTreeResponse'
+        "400":
+          description: Missing or malformed id
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "404":
+          description: Session not found
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Failed to load session
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Sessions not supported by this backend
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Get a session's reconciled conversation tree
       tags:
       - sessions
   /v1/stats:
