@@ -165,6 +165,9 @@ func ClassifyInjected(msg llm.Message) string {
 		return KindInjectedSkillsList
 	case strings.HasPrefix(t, "Plan mode is active"),
 		strings.HasPrefix(t, "Exited Plan Mode"),
+		strings.HasPrefix(t, "## Exited Plan Mode"),
+		strings.HasPrefix(t, "## Exit Plan Mode"),
+		strings.HasPrefix(t, "## Plan Mode"),
 		strings.HasPrefix(t, "[SYSTEM NOTIFICATION"):
 		return KindInjectedModeBanner
 	case strings.HasPrefix(t, "<user_claude_md>"):
