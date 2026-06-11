@@ -133,6 +133,30 @@ func RunDeriveQueueSpecs(label string, makeDriver DriverFactory) bool {
 			})
 		})
 
+		ginkgo.Describe("DeriveQueueStats", func() {
+			ginkgo.It("reports zero depth and a zero oldest mark for an empty queue", func() {
+				stats, err := queue.DeriveQueueStats(ctx)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(stats.Depth).To(gomega.BeZero())
+				gomega.Expect(stats.OldestDirtiedAt.IsZero()).To(gomega.BeTrue())
+			})
+
+			ginkgo.It("reports queue depth and the oldest dirty mark", func() {
+				mark(sessionA)
+				time.Sleep(10 * time.Millisecond)
+				mark(sessionB)
+
+				first := get(sessionA)
+				gomega.Expect(first).NotTo(gomega.BeNil())
+
+				stats, err := queue.DeriveQueueStats(ctx)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(stats.Depth).To(gomega.Equal(int64(2)))
+				gomega.Expect(stats.OldestDirtiedAt).To(gomega.BeTemporally("==", first.DirtiedAt),
+					"oldest must be the earliest still-queued dirty mark")
+			})
+		})
+
 		ginkgo.Describe("PutRawTurn coupling", func() {
 			rawRecord := func(requestID, session string) storage.RawTurnRecord {
 				return storage.RawTurnRecord{
@@ -194,7 +218,38 @@ func RunDeriveQueueSpecs(label string, makeDriver DriverFactory) bool {
 				_, err = queue.ClearDeriveDirty(ctx, *cur)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				enqueued, err := queue.SweepDeriveDirty(ctx)
+				enqueued, err := queue.SweepDeriveDirty(ctx, time.Time{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(enqueued).To(gomega.Equal(int64(1)))
+				gomega.Expect(get(sessionA)).NotTo(gomega.BeNil())
+			})
+
+			ginkgo.It("bounds the sweep to sessions active since the cutoff", func() {
+				_, err := raw.PutRawTurn(ctx, storage.RawTurnRecord{
+					Source:           storage.RawTurnSourceWire,
+					Provider:         "anthropic",
+					HarnessID:        harnessID,
+					HarnessSessionID: sessionA,
+					RequestID:        "req-sweep-bound",
+					RawRequest:       json.RawMessage(`{"model":"m","messages":[]}`),
+				})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Simulate the lost mark by clearing the queue.
+				cur := get(sessionA)
+				gomega.Expect(cur).NotTo(gomega.BeNil())
+				_, err = queue.ClearDeriveDirty(ctx, *cur)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// received_at is now; a future cutoff excludes the
+				// session, a past cutoff re-enqueues it.
+				enqueued, err := queue.SweepDeriveDirty(ctx, time.Now().Add(time.Hour))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(enqueued).To(gomega.BeZero(),
+					"sessions without raw activity since the cutoff must not enqueue")
+				gomega.Expect(get(sessionA)).To(gomega.BeNil())
+
+				enqueued, err = queue.SweepDeriveDirty(ctx, time.Now().Add(-time.Hour))
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Expect(enqueued).To(gomega.Equal(int64(1)))
 				gomega.Expect(get(sessionA)).NotTo(gomega.BeNil())
@@ -216,7 +271,7 @@ func RunDeriveQueueSpecs(label string, makeDriver DriverFactory) bool {
 				gomega.Expect(before).NotTo(gomega.BeNil())
 
 				time.Sleep(10 * time.Millisecond)
-				enqueued, err := queue.SweepDeriveDirty(ctx)
+				enqueued, err := queue.SweepDeriveDirty(ctx, time.Time{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Expect(enqueued).To(gomega.BeZero())
 
