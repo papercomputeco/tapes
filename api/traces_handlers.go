@@ -24,21 +24,27 @@ type spanModelReader interface {
 
 // TraceItem is one user-visible turn's header.
 type TraceItem struct {
-	ID                string         `json:"id"`
-	TraceID           string         `json:"trace_id"`
-	SessionID         string         `json:"session_id"`
-	HarnessID         string         `json:"harness_id"`
-	HarnessSessionID  string         `json:"harness_session_id"`
-	UserPrompt        string         `json:"user_prompt,omitempty"`
-	Status            string         `json:"status"`
-	StartedAt         time.Time      `json:"started_at"`
-	EndedAt           *time.Time     `json:"ended_at,omitempty"`
-	DurationNS        int64          `json:"duration_ns"`
-	TotalInputTokens  int64          `json:"total_input_tokens"`
-	TotalOutputTokens int64          `json:"total_output_tokens"`
-	TotalCostUSD      float64        `json:"total_cost_usd"`
-	SpanCount         int            `json:"span_count"`
-	Metadata          map[string]any `json:"metadata"`
+	ID                string     `json:"id"`
+	TraceID           string     `json:"trace_id"`
+	SessionID         string     `json:"session_id"`
+	HarnessID         string     `json:"harness_id"`
+	HarnessSessionID  string     `json:"harness_session_id"`
+	UserPrompt        string     `json:"user_prompt,omitempty"`
+	Status            string     `json:"status"`
+	StartedAt         time.Time  `json:"started_at"`
+	EndedAt           *time.Time `json:"ended_at,omitempty"`
+	DurationNS        int64      `json:"duration_ns"`
+	TotalInputTokens  int64      `json:"total_input_tokens"`
+	TotalOutputTokens int64      `json:"total_output_tokens"`
+	// Main* counts conversation-spine calls only; Total − Main is the
+	// harness's shadow spend on the turn.
+	MainInputTokens     int64          `json:"main_input_tokens"`
+	MainOutputTokens    int64          `json:"main_output_tokens"`
+	CacheReadTokens     int64          `json:"cache_read_tokens"`
+	CacheCreationTokens int64          `json:"cache_creation_tokens"`
+	TotalCostUSD        float64        `json:"total_cost_usd"`
+	SpanCount           int            `json:"span_count"`
+	Metadata            map[string]any `json:"metadata"`
 }
 
 // SpanItem is one observed unit of work. start_ns is the epoch-ns

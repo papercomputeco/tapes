@@ -81,9 +81,15 @@ type SpanTurn struct {
 	EndedAt   time.Time
 
 	// Token totals summed over every llm span in the trace — shadow
-	// calls included, because the turn really spent them.
-	TotalInputTokens  int64
-	TotalOutputTokens int64
+	// calls included, because the turn really spent them. The Main*
+	// pair counts only call_kind=main spans, so shadow spend is the
+	// difference and both numbers are visible to the read layer.
+	TotalInputTokens    int64
+	TotalOutputTokens   int64
+	MainInputTokens     int64
+	MainOutputTokens    int64
+	CacheReadTokens     int64
+	CacheCreationTokens int64
 
 	Spans []*Span
 	Links []*SpanLink
@@ -582,6 +588,12 @@ func (em *spanEmitter) finish() {
 			if s.Kind == SpanKindLLM && s.Usage != nil {
 				turn.TotalInputTokens += int64(s.Usage.PromptTokens)
 				turn.TotalOutputTokens += int64(s.Usage.CompletionTokens)
+				turn.CacheReadTokens += int64(s.Usage.CacheReadInputTokens)
+				turn.CacheCreationTokens += int64(s.Usage.CacheCreationInputTokens)
+				if s.CallKind == KindMain {
+					turn.MainInputTokens += int64(s.Usage.PromptTokens)
+					turn.MainOutputTokens += int64(s.Usage.CompletionTokens)
+				}
 			}
 		}
 		if root.Kind == SpanKindAgent {

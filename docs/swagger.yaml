@@ -424,6 +424,10 @@ definitions:
     type: object
   api.TraceItem:
     properties:
+      cache_creation_tokens:
+        type: integer
+      cache_read_tokens:
+        type: integer
       duration_ns:
         type: integer
       ended_at:
@@ -434,6 +438,13 @@ definitions:
         type: string
       id:
         type: string
+      main_input_tokens:
+        description: |-
+          Main* counts conversation-spine calls only; Total − Main is the
+          harness's shadow spend on the turn.
+        type: integer
+      main_output_tokens:
+        type: integer
       metadata:
         additionalProperties: {}
         type: object

@@ -6,22 +6,30 @@
 INSERT INTO span_turns (
     org_id, trace_id, session_id, user_prompt, synthetic, status,
     started_at, ended_at, duration_ns,
-    total_input_tokens, total_output_tokens
+    total_input_tokens, total_output_tokens,
+    main_input_tokens, main_output_tokens,
+    cache_read_tokens, cache_creation_tokens
 ) VALUES (
     $1, $2, $3, $4, $5, $6,
     $7, $8, $9,
-    $10, $11
+    $10, $11,
+    $12, $13,
+    $14, $15
 )
 ON CONFLICT (org_id, trace_id) DO UPDATE SET
-    session_id          = COALESCE(span_turns.session_id, EXCLUDED.session_id),
-    user_prompt         = EXCLUDED.user_prompt,
-    synthetic           = EXCLUDED.synthetic,
-    status              = EXCLUDED.status,
-    started_at          = EXCLUDED.started_at,
-    ended_at            = EXCLUDED.ended_at,
-    duration_ns         = EXCLUDED.duration_ns,
-    total_input_tokens  = EXCLUDED.total_input_tokens,
-    total_output_tokens = EXCLUDED.total_output_tokens;
+    session_id            = COALESCE(span_turns.session_id, EXCLUDED.session_id),
+    user_prompt           = EXCLUDED.user_prompt,
+    synthetic             = EXCLUDED.synthetic,
+    status                = EXCLUDED.status,
+    started_at            = EXCLUDED.started_at,
+    ended_at              = EXCLUDED.ended_at,
+    duration_ns           = EXCLUDED.duration_ns,
+    total_input_tokens    = EXCLUDED.total_input_tokens,
+    total_output_tokens   = EXCLUDED.total_output_tokens,
+    main_input_tokens     = EXCLUDED.main_input_tokens,
+    main_output_tokens    = EXCLUDED.main_output_tokens,
+    cache_read_tokens     = EXCLUDED.cache_read_tokens,
+    cache_creation_tokens = EXCLUDED.cache_creation_tokens;
 
 -- name: UpsertSpan :exec
 INSERT INTO spans (
@@ -126,7 +134,9 @@ WHERE org_id = $1 AND (from_trace_id = $2 OR to_trace_id = $2);
 -- Session detail's lazy view: turn headers only, no span payloads.
 SELECT t.org_id, t.trace_id, t.session_id, t.user_prompt, t.synthetic,
        t.status, t.started_at, t.ended_at, t.duration_ns,
-       t.total_input_tokens, t.total_output_tokens, t.total_cost_usd,
+       t.total_input_tokens, t.total_output_tokens,
+       t.main_input_tokens, t.main_output_tokens,
+       t.cache_read_tokens, t.cache_creation_tokens, t.total_cost_usd,
        count(s.span_id) AS span_count
 FROM span_turns t
 LEFT JOIN spans s ON s.org_id = t.org_id AND s.trace_id = t.trace_id

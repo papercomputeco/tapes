@@ -1467,6 +1467,12 @@ const docTemplate = `{
         "api.TraceItem": {
             "type": "object",
             "properties": {
+                "cache_creation_tokens": {
+                    "type": "integer"
+                },
+                "cache_read_tokens": {
+                    "type": "integer"
+                },
                 "duration_ns": {
                     "type": "integer"
                 },
@@ -1481,6 +1487,13 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "string"
+                },
+                "main_input_tokens": {
+                    "description": "Main* counts conversation-spine calls only; Total − Main is the\nharness's shadow spend on the turn.",
+                    "type": "integer"
+                },
+                "main_output_tokens": {
+                    "type": "integer"
                 },
                 "metadata": {
                     "type": "object",

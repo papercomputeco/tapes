@@ -22,7 +22,13 @@ type SpanTurnRecord struct {
 	DurationNS        int64
 	TotalInputTokens  int64
 	TotalOutputTokens int64
-	TotalCostUSD      float64
+	// Main* counts only conversation-spine llm calls; the difference
+	// from Total* is shadow spend.
+	MainInputTokens     int64
+	MainOutputTokens    int64
+	CacheReadTokens     int64
+	CacheCreationTokens int64
+	TotalCostUSD        float64
 }
 
 // SpanRecord is one observed unit of work within a trace. Input and

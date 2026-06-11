@@ -123,16 +123,20 @@ type SpanLink struct {
 }
 
 type SpanTurn struct {
-	OrgID             pgtype.UUID
-	TraceID           string
-	SessionID         pgtype.UUID
-	UserPrompt        string
-	Synthetic         string
-	Status            string
-	StartedAt         pgtype.Timestamptz
-	EndedAt           pgtype.Timestamptz
-	DurationNs        int64
-	TotalInputTokens  int64
-	TotalOutputTokens int64
-	TotalCostUsd      pgtype.Numeric
+	OrgID               pgtype.UUID
+	TraceID             string
+	SessionID           pgtype.UUID
+	UserPrompt          string
+	Synthetic           string
+	Status              string
+	StartedAt           pgtype.Timestamptz
+	EndedAt             pgtype.Timestamptz
+	DurationNs          int64
+	TotalInputTokens    int64
+	TotalOutputTokens   int64
+	TotalCostUsd        pgtype.Numeric
+	MainInputTokens     int64
+	MainOutputTokens    int64
+	CacheReadTokens     int64
+	CacheCreationTokens int64
 }

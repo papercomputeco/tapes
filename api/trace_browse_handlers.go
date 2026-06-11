@@ -46,19 +46,23 @@ func traceItemFromTurn(turn storage.SpanTurnRecord, spanCount int) TraceItem {
 		meta["synthetic"] = turn.Synthetic
 	}
 	return TraceItem{
-		ID:                turn.TraceID,
-		TraceID:           turn.TraceID,
-		SessionID:         turn.SessionID,
-		UserPrompt:        turn.UserPrompt,
-		Status:            turn.Status,
-		StartedAt:         turn.StartedAt,
-		EndedAt:           turn.EndedAt,
-		DurationNS:        turn.DurationNS,
-		TotalInputTokens:  turn.TotalInputTokens,
-		TotalOutputTokens: turn.TotalOutputTokens,
-		TotalCostUSD:      turn.TotalCostUSD,
-		SpanCount:         spanCount,
-		Metadata:          meta,
+		ID:                  turn.TraceID,
+		TraceID:             turn.TraceID,
+		SessionID:           turn.SessionID,
+		UserPrompt:          turn.UserPrompt,
+		Status:              turn.Status,
+		StartedAt:           turn.StartedAt,
+		EndedAt:             turn.EndedAt,
+		DurationNS:          turn.DurationNS,
+		TotalInputTokens:    turn.TotalInputTokens,
+		TotalOutputTokens:   turn.TotalOutputTokens,
+		MainInputTokens:     turn.MainInputTokens,
+		MainOutputTokens:    turn.MainOutputTokens,
+		CacheReadTokens:     turn.CacheReadTokens,
+		CacheCreationTokens: turn.CacheCreationTokens,
+		TotalCostUSD:        turn.TotalCostUSD,
+		SpanCount:           spanCount,
+		Metadata:            meta,
 	}
 }
 

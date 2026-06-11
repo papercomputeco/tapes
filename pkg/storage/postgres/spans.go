@@ -45,17 +45,21 @@ func writeSpanSet(
 		turnSession[turn.TraceID] = sid
 		keepTraces = append(keepTraces, turn.TraceID)
 		if err := qtx.UpsertSpanTurn(ctx, gensqlc.UpsertSpanTurnParams{
-			OrgID:             orgID,
-			TraceID:           turn.TraceID,
-			SessionID:         sid,
-			UserPrompt:        turn.UserPrompt,
-			Synthetic:         turn.Synthetic,
-			Status:            "ok",
-			StartedAt:         pgtype.Timestamptz{Time: turn.StartedAt, Valid: true},
-			EndedAt:           pgtype.Timestamptz{Time: turn.EndedAt, Valid: !turn.EndedAt.IsZero()},
-			DurationNs:        turn.EndedAt.Sub(turn.StartedAt).Nanoseconds(),
-			TotalInputTokens:  turn.TotalInputTokens,
-			TotalOutputTokens: turn.TotalOutputTokens,
+			OrgID:               orgID,
+			TraceID:             turn.TraceID,
+			SessionID:           sid,
+			UserPrompt:          turn.UserPrompt,
+			Synthetic:           turn.Synthetic,
+			Status:              "ok",
+			StartedAt:           pgtype.Timestamptz{Time: turn.StartedAt, Valid: true},
+			EndedAt:             pgtype.Timestamptz{Time: turn.EndedAt, Valid: !turn.EndedAt.IsZero()},
+			DurationNs:          turn.EndedAt.Sub(turn.StartedAt).Nanoseconds(),
+			TotalInputTokens:    turn.TotalInputTokens,
+			TotalOutputTokens:   turn.TotalOutputTokens,
+			MainInputTokens:     turn.MainInputTokens,
+			MainOutputTokens:    turn.MainOutputTokens,
+			CacheReadTokens:     turn.CacheReadTokens,
+			CacheCreationTokens: turn.CacheCreationTokens,
 		}); err != nil {
 			return fmt.Errorf("upsert span turn %s: %w", turn.TraceID, err)
 		}
@@ -263,20 +267,31 @@ func (d *Driver) ListSessionSpanModel(ctx context.Context, sessionID string) ([]
 }
 
 // spanTurnRecordFromRow converts a span_turns row to its flat record.
-func spanTurnRecordFromRow(traceID, userPrompt, synthetic, status string,
-	sessionID pgtype.UUID, startedAt, endedAt pgtype.Timestamptz,
-	durationNs, totalIn, totalOut int64, cost pgtype.Numeric,
-) storage.SpanTurnRecord {
+type spanTurnColumns struct {
+	traceID, userPrompt, synthetic, status    string
+	sessionID                                 pgtype.UUID
+	startedAt, endedAt                        pgtype.Timestamptz
+	durationNs, totalIn, totalOut             int64
+	mainIn, mainOut, cacheRead, cacheCreation int64
+	cost                                      pgtype.Numeric
+}
+
+func spanTurnRecordFromColumns(c spanTurnColumns) storage.SpanTurnRecord {
 	rec := storage.SpanTurnRecord{
-		TraceID:           traceID,
-		UserPrompt:        userPrompt,
-		Synthetic:         synthetic,
-		Status:            status,
-		StartedAt:         startedAt.Time,
-		DurationNS:        durationNs,
-		TotalInputTokens:  totalIn,
-		TotalOutputTokens: totalOut,
+		TraceID:             c.traceID,
+		UserPrompt:          c.userPrompt,
+		Synthetic:           c.synthetic,
+		Status:              c.status,
+		StartedAt:           c.startedAt.Time,
+		DurationNS:          c.durationNs,
+		TotalInputTokens:    c.totalIn,
+		TotalOutputTokens:   c.totalOut,
+		MainInputTokens:     c.mainIn,
+		MainOutputTokens:    c.mainOut,
+		CacheReadTokens:     c.cacheRead,
+		CacheCreationTokens: c.cacheCreation,
 	}
+	sessionID, endedAt, cost := c.sessionID, c.endedAt, c.cost
 	if sessionID.Valid {
 		rec.SessionID = uuidString(sessionID)
 	}
@@ -332,10 +347,16 @@ func (d *Driver) ListTraceSummaries(ctx context.Context, sessionID string) ([]st
 	out := make([]storage.TraceSummaryRecord, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, storage.TraceSummaryRecord{
-			SpanTurnRecord: spanTurnRecordFromRow(row.TraceID, row.UserPrompt,
-				row.Synthetic, row.Status, row.SessionID, row.StartedAt,
-				row.EndedAt, row.DurationNs, row.TotalInputTokens,
-				row.TotalOutputTokens, row.TotalCostUsd),
+			SpanTurnRecord: spanTurnRecordFromColumns(spanTurnColumns{
+				traceID: row.TraceID, userPrompt: row.UserPrompt,
+				synthetic: row.Synthetic, status: row.Status,
+				sessionID: row.SessionID, startedAt: row.StartedAt,
+				endedAt: row.EndedAt, durationNs: row.DurationNs,
+				totalIn: row.TotalInputTokens, totalOut: row.TotalOutputTokens,
+				mainIn: row.MainInputTokens, mainOut: row.MainOutputTokens,
+				cacheRead: row.CacheReadTokens, cacheCreation: row.CacheCreationTokens,
+				cost: row.TotalCostUsd,
+			}),
 			SpanCount: int(row.SpanCount),
 		})
 	}
@@ -359,9 +380,16 @@ func (d *Driver) GetTraceDetail(ctx context.Context, orgID, traceID string) (*st
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("get span turn: %w", err)
 	}
-	turn := spanTurnRecordFromRow(row.TraceID, row.UserPrompt, row.Synthetic,
-		row.Status, row.SessionID, row.StartedAt, row.EndedAt,
-		row.DurationNs, row.TotalInputTokens, row.TotalOutputTokens, row.TotalCostUsd)
+	turn := spanTurnRecordFromColumns(spanTurnColumns{
+		traceID: row.TraceID, userPrompt: row.UserPrompt,
+		synthetic: row.Synthetic, status: row.Status,
+		sessionID: row.SessionID, startedAt: row.StartedAt,
+		endedAt: row.EndedAt, durationNs: row.DurationNs,
+		totalIn: row.TotalInputTokens, totalOut: row.TotalOutputTokens,
+		mainIn: row.MainInputTokens, mainOut: row.MainOutputTokens,
+		cacheRead: row.CacheReadTokens, cacheCreation: row.CacheCreationTokens,
+		cost: row.TotalCostUsd,
+	})
 
 	spanRows, err := d.q.ListSpansByTrace(ctx, gensqlc.ListSpansByTraceParams{OrgID: org, TraceID: traceID})
 	if err != nil {
