@@ -194,10 +194,11 @@ func (c *ServeCommander) run() error {
 	defer driver.Close()
 
 	proxyConfig := proxy.Config{
-		ListenAddr:   c.proxyListen,
-		UpstreamURL:  c.upstream,
-		ProviderType: c.providerType,
-		Project:      c.project,
+		ListenAddr:        c.proxyListen,
+		UpstreamURL:       c.upstream,
+		ProviderType:      c.providerType,
+		ProviderUpstreams: proxy.LocalProviderUpstreams(c.providerType, c.upstream),
+		Project:           c.project,
 	}
 
 	proxyConfig.VectorDriver, err = pgvector.NewDriver(context.TODO(), &pgvector.Config{

@@ -709,6 +709,36 @@ var _ = Describe("reconstructStreamedResponse", func() {
 	})
 })
 
+var _ = Describe("Provider override routing", func() {
+	It("instantiates provider-upstream overrides and maps local OpenAI-compatible requests to Ollama /v1", func() {
+		var upstreamPath string
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			upstreamPath = r.URL.Path
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"chatcmpl-test","object":"chat.completion","model":"qwen3-coder:30b","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+		}))
+		defer upstream.Close()
+
+		driver := inmemory.NewDriver()
+		p, err := New(Config{
+			ListenAddr:        ":0",
+			UpstreamURL:       upstream.URL,
+			ProviderType:      "ollama",
+			ProviderUpstreams: LocalProviderUpstreams("ollama", upstream.URL),
+		}, driver, tapeslogger.NewNoop())
+		Expect(err).NotTo(HaveOccurred())
+		defer p.Close()
+
+		reqBody := makeOpenAIRequestBody("qwen3-coder:30b", []openaiTestMsgEntry{{Role: "user", Content: "hello"}}, nil)
+		resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/agents/pi/providers/openai/chat/completions", strings.NewReader(string(reqBody))), -1)
+		Expect(err).NotTo(HaveOccurred())
+		defer resp.Body.Close()
+
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		Expect(upstreamPath).To(Equal("/v1/chat/completions"))
+	})
+})
+
 var _ = Describe("New", func() {
 	It("returns an error for unrecognized provider type", func() {
 		logger := tapeslogger.NewNoop()

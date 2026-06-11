@@ -35,6 +35,10 @@ type Job struct {
 	Req       *llm.ChatRequest
 	Resp      *llm.ChatResponse
 
+	// SpanContext is optional harness-supplied trace/span identity attached
+	// to the provider request by an extension or ingest envelope.
+	SpanContext *storage.SpanContext
+
 	// Session is the optional session-tracking envelope attached to
 	// the turn at the ingest HTTP boundary. When non-nil and the
 	// driver supports session-aware ingest (Postgres), the worker
@@ -246,19 +250,33 @@ func (p *Pool) deriveRootHash(ctx context.Context, head string) (string, error) 
 	return root.Hash, nil
 }
 
-// storeConversationTurn stores a request-response pair in the merkle dag.
-// Returns the head hash and the slice of nodes that were newly Put.
+// storeConversationTurn stores a request-response pair.
 //
-// When the configured driver implements storage.SessionIngester AND
-// the job carries a session-tracking envelope, the entire turn (every
-// message node plus the response node) is folded into a single
-// transactional IngestTurn call — so a sessions row is UPSERTed,
-// nodes are inserted with a non-NULL session_id FK, and counters are
-// rolled up atomically.
+// Span-aware drivers use the experimental Lapdog-style read model first:
+// explicit session -> trace/turn -> span rows. In that mode prompt snapshots
+// are span payloads and no Merkle nodes are created for the turn.
 //
-// Otherwise (legacy in-memory driver, or a turn without an envelope),
-// the original per-node Put loop runs unchanged.
+// Legacy drivers continue to use the Merkle DAG path so existing tests,
+// publisher behavior, and in-memory local workflows remain compatible while
+// the span model is rolled out.
 func (p *Pool) storeConversationTurn(ctx context.Context, job Job) (string, []*merkle.Node, error) {
+	if ingester, ok := p.config.Driver.(storage.SpanIngester); ok {
+		res, err := ingester.IngestSpanTurn(ctx, storage.IngestSpanTurnRequest{
+			Session:     job.Session,
+			SpanContext: job.SpanContext,
+			Provider:    job.Provider,
+			AgentName:   job.AgentName,
+			Project:     p.config.Project,
+			Request:     job.Req,
+			Response:    job.Resp,
+			CostUSD:     0, // pricing lookup is not wired in this worker yet.
+		})
+		if err != nil {
+			return "", nil, fmt.Errorf("span ingester: %w", err)
+		}
+		return res.TraceID, nil, nil
+	}
+
 	chain := buildTurnChain(job, p.config.Project)
 	if len(chain) == 0 {
 		return "", nil, errors.New("conversation turn produced no nodes")

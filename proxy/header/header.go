@@ -26,6 +26,27 @@ func NewHandler() *Handler {
 // AgentNameHeader is the optional header used to tag agent requests.
 const AgentNameHeader = "X-Tapes-Agent-Name"
 
+// Span context headers are injected by harness extensions (for example the Pi
+// POC extension) so the proxy can persist the same trace/span ids the harness
+// generated before the provider request was sent.
+const (
+	TraceIDHeader      = "X-Tapes-Trace-Id"
+	TurnIDHeader       = "X-Tapes-Turn-Id"
+	RootSpanIDHeader   = "X-Tapes-Root-Span-Id"
+	LLMSpanIDHeader    = "X-Tapes-Llm-Span-Id"
+	ParentSpanIDHeader = "X-Tapes-Parent-Span-Id"
+	PiSessionIDHeader  = "X-Tapes-Pi-Session-Id"
+
+	// Pi-prefixed aliases avoid colliding with the X-Tapes session-envelope
+	// namespace in gateway/ext_proc deployments. The local proxy accepts and
+	// strips both families.
+	PiTraceIDHeader      = "X-Pi-Trace-Id"
+	PiTurnIDHeader       = "X-Pi-Turn-Id"
+	PiRootSpanIDHeader   = "X-Pi-Root-Span-Id"
+	PiLLMSpanIDHeader    = "X-Pi-Llm-Span-Id"
+	PiParentSpanIDHeader = "X-Pi-Parent-Span-Id"
+)
+
 // skipRequest is the set of request headers (client --> proxy --> upstream)
 // that are not forwarded to the upstream LLM provider.
 var skipRequest = map[string]struct{}{
@@ -42,8 +63,19 @@ var skipRequest = map[string]struct{}{
 	// response.
 	"Accept-Encoding": {},
 
-	// Internal agent routing header.
-	AgentNameHeader: {},
+	// Internal agent routing/header attribution fields.
+	AgentNameHeader:      {},
+	TraceIDHeader:        {},
+	TurnIDHeader:         {},
+	RootSpanIDHeader:     {},
+	LLMSpanIDHeader:      {},
+	ParentSpanIDHeader:   {},
+	PiSessionIDHeader:    {},
+	PiTraceIDHeader:      {},
+	PiTurnIDHeader:       {},
+	PiRootSpanIDHeader:   {},
+	PiLLMSpanIDHeader:    {},
+	PiParentSpanIDHeader: {},
 }
 
 // skipResponse is the set of upstream response headers (client <-- proxy <-- upstream)

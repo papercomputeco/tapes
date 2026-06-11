@@ -200,11 +200,12 @@ func (c *proxyCommander) run() error {
 	defer driver.Close()
 
 	config := proxy.Config{
-		ListenAddr:   c.listen,
-		UpstreamURL:  c.upstream,
-		ProviderType: c.providerType,
-		Publisher:    pub,
-		Project:      c.project,
+		ListenAddr:        c.listen,
+		UpstreamURL:       c.upstream,
+		ProviderType:      c.providerType,
+		ProviderUpstreams: proxy.LocalProviderUpstreams(c.providerType, c.upstream),
+		Publisher:         pub,
+		Project:           c.project,
 	}
 
 	if c.vectorStoreTarget != "" {
