@@ -78,6 +78,38 @@ func (d *sessionAwareDriver) Calls() []storage.IngestTurnRequest {
 	return out
 }
 
+type spanAwareDriver struct {
+	*inmemory.Driver
+
+	mu       sync.Mutex
+	calls    []storage.IngestSpanTurnRequest
+	failNext error
+}
+
+func newSpanAwareDriver() *spanAwareDriver {
+	return &spanAwareDriver{Driver: inmemory.NewDriver()}
+}
+
+func (d *spanAwareDriver) IngestSpanTurn(_ context.Context, req storage.IngestSpanTurnRequest) (storage.IngestSpanTurnResult, error) {
+	d.mu.Lock()
+	d.calls = append(d.calls, req)
+	failure := d.failNext
+	d.failNext = nil
+	d.mu.Unlock()
+	if failure != nil {
+		return storage.IngestSpanTurnResult{}, failure
+	}
+	return storage.IngestSpanTurnResult{SessionID: "session-1", TurnID: "turn-1", TraceID: "trace-1", SpanCount: 2}, nil
+}
+
+func (d *spanAwareDriver) SpanCalls() []storage.IngestSpanTurnRequest {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := make([]storage.IngestSpanTurnRequest, len(d.calls))
+	copy(out, d.calls)
+	return out
+}
+
 func newSessionTestPool(driver storage.Driver) *Pool {
 	logger := tapeslogger.NewNoop()
 	wp, err := NewPool(&Config{
@@ -113,6 +145,47 @@ func sampleJobWithEnvelope(envelope *sessions.IngestEnvelope) Job {
 }
 
 var _ = Describe("Worker pool session-ingester dispatch", func() {
+	Context("when the driver implements SpanIngester", func() {
+		It("routes the turn through the span model without building Merkle nodes", func() {
+			driver := newSpanAwareDriver()
+			wp := newSessionTestPool(driver)
+
+			envelope := &sessions.IngestEnvelope{
+				OrgID:            "550e8400-e29b-41d4-a716-446655440000",
+				AuthSubject:      "user-42",
+				HarnessID:        "pi",
+				HarnessSessionID: "harness-span",
+			}
+			wp.Enqueue(sampleJobWithEnvelope(envelope))
+			wp.Close()
+
+			calls := driver.SpanCalls()
+			Expect(calls).To(HaveLen(1))
+			Expect(calls[0].Session.HarnessSessionID).To(Equal("harness-span"))
+			Expect(calls[0].Provider).To(Equal("test-provider"))
+			Expect(calls[0].AgentName).To(Equal("test-agent"))
+			Expect(calls[0].Request.Model).To(Equal("test-model"))
+			Expect(calls[0].Response.Message.GetText()).To(Equal("pong"))
+
+			nodes, err := driver.List(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nodes).To(BeEmpty(), "span ingest path should not write Merkle nodes")
+		})
+
+		It("does not fall back to Merkle storage when span ingest fails", func() {
+			driver := newSpanAwareDriver()
+			driver.failNext = errors.New("span failure")
+			wp := newSessionTestPool(driver)
+			wp.Enqueue(sampleJobWithEnvelope(nil))
+			wp.Close()
+
+			Expect(driver.SpanCalls()).To(HaveLen(1))
+			nodes, err := driver.List(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nodes).To(BeEmpty())
+		})
+	})
+
 	Context("when the driver implements SessionIngester and the job carries a session envelope", func() {
 		It("routes the turn through IngestTurn with the full chain and token deltas", func() {
 			driver := newSessionAwareDriver()

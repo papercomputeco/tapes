@@ -576,6 +576,105 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/v1/traces": {
+            "get": {
+                "description": "Returns Lapdog-style span traces (one row per user turn), newest first. This is the experimental span read model; prompt snapshots live on child spans rather than Merkle node identity.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "traces"
+                ],
+                "summary": "List span traces",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Maximum number of traces to return (default 50, max 200)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Opaque pagination cursor returned by a previous response",
+                        "name": "cursor",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.TraceListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Not Implemented",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/traces/{trace_id}": {
+            "get": {
+                "description": "Returns one Lapdog-style trace with parent/child span tree and causal span links.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "traces"
+                ],
+                "summary": "Get a span trace",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Trace id",
+                        "name": "trace_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.TraceDetailResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Not Implemented",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -739,6 +838,9 @@ const docTemplate = `{
                 "cwd": {
                     "type": "string"
                 },
+                "derived_status": {
+                    "type": "string"
+                },
                 "ended_at": {
                     "type": "string"
                 },
@@ -801,6 +903,100 @@ const docTemplate = `{
                 }
             }
         },
+        "api.SpanItem": {
+            "type": "object",
+            "properties": {
+                "children_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "duration_ns": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "input": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "metrics": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "output": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "parent_span_id": {
+                    "type": "string"
+                },
+                "raw": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "span_id": {
+                    "type": "string"
+                },
+                "start_ns": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "trace_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.SpanLinkItem": {
+            "type": "object",
+            "properties": {
+                "from_io": {
+                    "type": "string"
+                },
+                "from_span_id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "to_io": {
+                    "type": "string"
+                },
+                "to_span_id": {
+                    "type": "string"
+                },
+                "trace_id": {
+                    "type": "string"
+                }
+            }
+        },
         "api.StatsResponse": {
             "type": "object",
             "properties": {
@@ -817,6 +1013,9 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "session_count": {
+                    "type": "integer"
+                },
+                "stem_count": {
                     "type": "integer"
                 },
                 "tool_calls": {
@@ -894,6 +1093,97 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "root_hash": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.TraceDetailResponse": {
+            "type": "object",
+            "properties": {
+                "links": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.SpanLinkItem"
+                    }
+                },
+                "spans": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.SpanItem"
+                    }
+                },
+                "trace": {
+                    "$ref": "#/definitions/api.TraceItem"
+                }
+            }
+        },
+        "api.TraceItem": {
+            "type": "object",
+            "properties": {
+                "cwd": {
+                    "type": "string"
+                },
+                "duration_ns": {
+                    "type": "integer"
+                },
+                "ended_at": {
+                    "type": "string"
+                },
+                "harness_id": {
+                    "type": "string"
+                },
+                "harness_session_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "name": {
+                    "type": "string"
+                },
+                "session_id": {
+                    "type": "string"
+                },
+                "span_count": {
+                    "type": "integer"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "total_cost_usd": {
+                    "type": "number"
+                },
+                "total_input_tokens": {
+                    "type": "integer"
+                },
+                "total_output_tokens": {
+                    "type": "integer"
+                },
+                "trace_id": {
+                    "type": "string"
+                },
+                "user_prompt": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.TraceListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.TraceItem"
+                    }
+                },
+                "next_cursor": {
                     "type": "string"
                 }
             }
@@ -1053,6 +1343,13 @@ const docTemplate = `{
         "github_com_papercomputeco_tapes_pkg_llm.ContentBlock": {
             "type": "object",
             "properties": {
+                "content": {
+                    "description": "Content (type=\"web_search_tool_result\" and other server-tool results) -\nthe raw result payload Anthropic returns inline on the block, captured\nverbatim as JSON so the variable result-object shapes survive without\nimposing a schema. ToolResultID links it to the paired server_tool_use.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
                 "image_base64": {
                     "description": "Base64-encoded image data",
                     "type": "string"
@@ -1212,7 +1509,6 @@ const docTemplate = `{
         },
         "time.Duration": {
             "type": "integer",
-            "format": "int64",
             "enum": [
                 -9223372036854775808,
                 9223372036854775807,

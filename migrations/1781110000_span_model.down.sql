@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS span_links;
+DROP TABLE IF EXISTS spans;
+DROP TABLE IF EXISTS span_turns;

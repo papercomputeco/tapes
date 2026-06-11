@@ -54,6 +54,11 @@ type TurnPayload struct {
 	// Response is the already reduced, provider-agnostic response for the turn.
 	Response llm.ChatResponse `json:"response"`
 
+	// SpanContext is optional harness-supplied trace/span identity. It is
+	// normally populated by a harness extension or proxy headers, not by
+	// provider payload content.
+	SpanContext *storage.SpanContext `json:"span_context,omitempty"`
+
 	// Session is the optional session-tracking envelope. When present,
 	// ingest UPSERTs a `sessions` row keyed by
 	// (org_id, harness_id, harness_session_id), resolves the
@@ -435,11 +440,12 @@ func (s *Server) processTurn(turn *TurnPayload) error {
 	)
 
 	if ok := s.workerPool.Enqueue(worker.Job{
-		Provider:  prov.Name(),
-		AgentName: turn.AgentName,
-		Req:       parsedReq,
-		Resp:      &parsedResp,
-		Session:   turn.Session,
+		Provider:    prov.Name(),
+		AgentName:   turn.AgentName,
+		Req:         parsedReq,
+		Resp:        &parsedResp,
+		Session:     turn.Session,
+		SpanContext: turn.SpanContext,
 	}); !ok {
 		s.logger.Error("ingest enqueue failed: worker queue full",
 			"provider", prov.Name(),

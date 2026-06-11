@@ -114,6 +114,8 @@ definitions:
     properties:
       cwd:
         type: string
+      derived_status:
+        type: string
       ended_at:
         type: string
       harness_id:
@@ -155,6 +157,68 @@ definitions:
       next_cursor:
         type: string
     type: object
+  api.SpanItem:
+    properties:
+      children_ids:
+        items:
+          type: string
+        type: array
+      duration_ns:
+        type: integer
+      id:
+        type: string
+      input:
+        items:
+          type: integer
+        type: array
+      kind:
+        type: string
+      metadata:
+        items:
+          type: integer
+        type: array
+      metrics:
+        items:
+          type: integer
+        type: array
+      name:
+        type: string
+      output:
+        items:
+          type: integer
+        type: array
+      parent_span_id:
+        type: string
+      raw:
+        items:
+          type: integer
+        type: array
+      span_id:
+        type: string
+      start_ns:
+        type: integer
+      status:
+        type: string
+      trace_id:
+        type: string
+    type: object
+  api.SpanLinkItem:
+    properties:
+      from_io:
+        type: string
+      from_span_id:
+        type: string
+      metadata:
+        items:
+          type: integer
+        type: array
+      to_io:
+        type: string
+      to_span_id:
+        type: string
+      trace_id:
+        type: string
+    type: object
   api.StatsResponse:
     properties:
       completed_count:
@@ -166,6 +230,8 @@ definitions:
       root_count:
         type: integer
       session_count:
+        type: integer
+      stem_count:
         type: integer
       tool_calls:
         type: integer
@@ -232,6 +298,66 @@ definitions:
       preview:
         type: string
       root_hash:
+        type: string
+    type: object
+  api.TraceDetailResponse:
+    properties:
+      links:
+        items:
+          $ref: '#/definitions/api.SpanLinkItem'
+        type: array
+      spans:
+        items:
+          $ref: '#/definitions/api.SpanItem'
+        type: array
+      trace:
+        $ref: '#/definitions/api.TraceItem'
+    type: object
+  api.TraceItem:
+    properties:
+      cwd:
+        type: string
+      duration_ns:
+        type: integer
+      ended_at:
+        type: string
+      harness_id:
+        type: string
+      harness_session_id:
+        type: string
+      id:
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      name:
+        type: string
+      session_id:
+        type: string
+      span_count:
+        type: integer
+      started_at:
+        type: string
+      status:
+        type: string
+      total_cost_usd:
+        type: number
+      total_input_tokens:
+        type: integer
+      total_output_tokens:
+        type: integer
+      trace_id:
+        type: string
+      user_prompt:
+        type: string
+    type: object
+  api.TraceListResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/api.TraceItem'
+        type: array
+      next_cursor:
         type: string
     type: object
   api.Turn:
@@ -338,6 +464,15 @@ definitions:
     type: object
   github_com_papercomputeco_tapes_pkg_llm.ContentBlock:
     properties:
+      content:
+        description: |-
+          Content (type="web_search_tool_result" and other server-tool results) -
+          the raw result payload Anthropic returns inline on the block, captured
+          verbatim as JSON so the variable result-object shapes survive without
+          imposing a schema. ToolResultID links it to the paired server_tool_use.
+        items:
+          type: integer
+        type: array
       image_base64:
         description: Base64-encoded image data
         type: string
@@ -477,7 +612,6 @@ definitions:
     - 1000000000
     - 60000000000
     - 3600000000000
-    format: int64
     type: integer
     x-enum-varnames:
     - minDuration
@@ -897,6 +1031,74 @@ paths:
       summary: Get a stem graph
       tags:
       - stems
+  /v1/traces:
+    get:
+      description: Returns Lapdog-style span traces (one row per user turn), newest
+        first. This is the experimental span read model; prompt snapshots live on
+        child spans rather than Merkle node identity.
+      parameters:
+      - description: Maximum number of traces to return (default 50, max 200)
+        in: query
+        name: limit
+        type: integer
+      - description: Opaque pagination cursor returned by a previous response
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.TraceListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: List span traces
+      tags:
+      - traces
+  /v1/traces/{trace_id}:
+    get:
+      description: Returns one Lapdog-style trace with parent/child span tree and
+        causal span links.
+      parameters:
+      - description: Trace id
+        in: path
+        name: trace_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.TraceDetailResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Get a span trace
+      tags:
+      - traces
 schemes:
 - http
 - https
