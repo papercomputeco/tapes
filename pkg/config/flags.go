@@ -63,6 +63,12 @@ const (
 	FlagProxyListenStandalone  = "proxy-listen-standalone"
 	FlagAPIListenStandalone    = "api-listen-standalone"
 	FlagIngestListenStandalone = "ingest-listen-standalone"
+
+	// Derive worker (`tapes serve derive-worker`) tunables.
+	FlagDeriveWorkerPoll          = "derive-worker-poll-interval"
+	FlagDeriveWorkerDebounce      = "derive-worker-debounce"
+	FlagDeriveWorkerSweep         = "derive-worker-sweep-interval"
+	FlagDeriveWorkerMetricsListen = "derive-worker-metrics-listen"
 )
 
 // AddStringFlag registers a string flag on cmd from the given FlagSet.
