@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/papercomputeco/tapes/pkg/derive"
@@ -259,4 +260,186 @@ func (d *Driver) ListSessionSpanModel(ctx context.Context, sessionID string) ([]
 	}
 
 	return turns, spans, links, nil
+}
+
+// spanTurnRecordFromRow converts a span_turns row to its flat record.
+func spanTurnRecordFromRow(traceID, userPrompt, synthetic, status string,
+	sessionID pgtype.UUID, startedAt, endedAt pgtype.Timestamptz,
+	durationNs, totalIn, totalOut int64, cost pgtype.Numeric,
+) storage.SpanTurnRecord {
+	rec := storage.SpanTurnRecord{
+		TraceID:           traceID,
+		UserPrompt:        userPrompt,
+		Synthetic:         synthetic,
+		Status:            status,
+		StartedAt:         startedAt.Time,
+		DurationNS:        durationNs,
+		TotalInputTokens:  totalIn,
+		TotalOutputTokens: totalOut,
+	}
+	if sessionID.Valid {
+		rec.SessionID = uuidString(sessionID)
+	}
+	if endedAt.Valid {
+		t := endedAt.Time
+		rec.EndedAt = &t
+	}
+	if cost.Valid {
+		if f, err := cost.Float64Value(); err == nil && f.Valid {
+			rec.TotalCostUSD = f.Float64
+		}
+	}
+	return rec
+}
+
+// spanRecordFromRow converts a spans row to its flat record.
+func spanRecordFromRow(row gensqlc.Span) storage.SpanRecord {
+	return storage.SpanRecord{
+		TraceID:      row.TraceID,
+		SpanID:       row.SpanID,
+		ParentSpanID: row.ParentSpanID,
+		Kind:         row.Kind,
+		Name:         row.Name,
+		Status:       row.Status,
+		CallKind:     row.CallKind,
+		ThreadID:     row.ThreadID,
+		Model:        row.Model,
+		StopReason:   row.StopReason,
+		StartedAt:    row.StartedAt.Time,
+		DurationNS:   row.DurationNs,
+		Input:        row.Input,
+		Output:       row.Output,
+		Usage:        row.Usage,
+		RawTurnID:    row.RawTurnID.Int64,
+		NodeHash:     row.NodeHash,
+	}
+}
+
+// ListTraceSummaries returns a session's turn headers with span counts
+// — the lazy session-detail rows. Implements storage.SpanModelReader.
+func (d *Driver) ListTraceSummaries(ctx context.Context, sessionID string) ([]storage.TraceSummaryRecord, error) {
+	if d == nil || d.conn == nil {
+		return nil, errors.New("postgres driver not open")
+	}
+	parsed, err := uuid.Parse(sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("parse session id: %w", err)
+	}
+	rows, err := d.q.ListTraceSummariesBySession(ctx, pgtype.UUID{Bytes: parsed, Valid: true})
+	if err != nil {
+		return nil, fmt.Errorf("list trace summaries: %w", err)
+	}
+	out := make([]storage.TraceSummaryRecord, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, storage.TraceSummaryRecord{
+			SpanTurnRecord: spanTurnRecordFromRow(row.TraceID, row.UserPrompt,
+				row.Synthetic, row.Status, row.SessionID, row.StartedAt,
+				row.EndedAt, row.DurationNs, row.TotalInputTokens,
+				row.TotalOutputTokens, row.TotalCostUsd),
+			SpanCount: int(row.SpanCount),
+		})
+	}
+	return out, nil
+}
+
+// GetTraceDetail returns one turn with its spans and links. Implements
+// storage.SpanModelReader.
+func (d *Driver) GetTraceDetail(ctx context.Context, orgID, traceID string) (*storage.SpanTurnRecord, []storage.SpanRecord, []storage.SpanLinkRecord, error) {
+	if d == nil || d.conn == nil {
+		return nil, nil, nil, errors.New("postgres driver not open")
+	}
+	org, err := orgIDFromString(orgKeyForLookup(orgID))
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("decode org_id: %w", err)
+	}
+	row, err := d.q.GetSpanTurn(ctx, gensqlc.GetSpanTurnParams{OrgID: org, TraceID: traceID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("get span turn: %w", err)
+	}
+	turn := spanTurnRecordFromRow(row.TraceID, row.UserPrompt, row.Synthetic,
+		row.Status, row.SessionID, row.StartedAt, row.EndedAt,
+		row.DurationNs, row.TotalInputTokens, row.TotalOutputTokens, row.TotalCostUsd)
+
+	spanRows, err := d.q.ListSpansByTrace(ctx, gensqlc.ListSpansByTraceParams{OrgID: org, TraceID: traceID})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("list spans by trace: %w", err)
+	}
+	spans := make([]storage.SpanRecord, 0, len(spanRows))
+	for _, r := range spanRows {
+		spans = append(spans, spanRecordFromRow(r))
+	}
+
+	linkRows, err := d.q.ListSpanLinksByTrace(ctx, gensqlc.ListSpanLinksByTraceParams{OrgID: org, FromTraceID: traceID})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("list span links by trace: %w", err)
+	}
+	links := make([]storage.SpanLinkRecord, 0, len(linkRows))
+	for _, r := range linkRows {
+		links = append(links, storage.SpanLinkRecord{
+			FromTraceID: r.FromTraceID, FromSpanID: r.FromSpanID, FromIO: r.FromIo,
+			ToTraceID: r.ToTraceID, ToSpanID: r.ToSpanID, ToIO: r.ToIo,
+			Kind: r.Kind,
+		})
+	}
+	return &turn, spans, links, nil
+}
+
+// GetSpanRecord returns one span with full payloads. Implements
+// storage.SpanModelReader.
+func (d *Driver) GetSpanRecord(ctx context.Context, orgID, traceID, spanID string) (*storage.SpanRecord, error) {
+	if d == nil || d.conn == nil {
+		return nil, errors.New("postgres driver not open")
+	}
+	org, err := orgIDFromString(orgKeyForLookup(orgID))
+	if err != nil {
+		return nil, fmt.Errorf("decode org_id: %w", err)
+	}
+	row, err := d.q.GetSpan(ctx, gensqlc.GetSpanParams{OrgID: org, TraceID: traceID, SpanID: spanID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get span: %w", err)
+	}
+	rec := spanRecordFromRow(row)
+	return &rec, nil
+}
+
+// ListRawTurnHeaders returns the wire log for one session: capture
+// identity and payload sizes, no blobs. Implements
+// storage.SpanModelReader.
+func (d *Driver) ListRawTurnHeaders(ctx context.Context, orgID, harnessID, harnessSessionID string) ([]storage.RawTurnHeader, error) {
+	if d == nil || d.conn == nil {
+		return nil, errors.New("postgres driver not open")
+	}
+	org, err := orgIDFromString(orgKeyForLookup(orgID))
+	if err != nil {
+		return nil, fmt.Errorf("decode org_id: %w", err)
+	}
+	rows, err := d.q.ListRawTurnHeadersBySession(ctx, gensqlc.ListRawTurnHeadersBySessionParams{
+		OrgID:            org,
+		HarnessID:        harnessID,
+		HarnessSessionID: harnessSessionID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list raw turn headers: %w", err)
+	}
+	out := make([]storage.RawTurnHeader, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, storage.RawTurnHeader{
+			ID:            r.ID,
+			Source:        r.Source,
+			Provider:      r.Provider,
+			AgentName:     r.AgentName,
+			RequestID:     r.RequestID,
+			ReceivedAt:    r.ReceivedAt.Time,
+			Meta:          r.Meta,
+			RequestBytes:  int64(r.RequestBytes),
+			ResponseBytes: int64(r.ResponseBytes),
+		})
+	}
+	return out, nil
 }

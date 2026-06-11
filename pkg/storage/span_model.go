@@ -60,7 +60,32 @@ type SpanLinkRecord struct {
 	Kind        string
 }
 
+// TraceSummaryRecord is a turn header with its span count — the lazy
+// session-detail row (no payloads).
+type TraceSummaryRecord struct {
+	SpanTurnRecord
+	SpanCount int
+}
+
+// RawTurnHeader is one wire-log row: capture identity and sizes, no
+// payloads. The operator surface onto the raw layer.
+type RawTurnHeader struct {
+	ID            int64
+	Source        string
+	Provider      string
+	AgentName     string
+	RequestID     string
+	ReceivedAt    time.Time
+	Meta          json.RawMessage
+	RequestBytes  int64
+	ResponseBytes int64
+}
+
 // SpanModelReader serves the span projection for session UIs.
 type SpanModelReader interface {
 	ListSessionSpanModel(ctx context.Context, sessionID string) ([]SpanTurnRecord, []SpanRecord, []SpanLinkRecord, error)
+	ListTraceSummaries(ctx context.Context, sessionID string) ([]TraceSummaryRecord, error)
+	GetTraceDetail(ctx context.Context, orgID, traceID string) (*SpanTurnRecord, []SpanRecord, []SpanLinkRecord, error)
+	GetSpanRecord(ctx context.Context, orgID, traceID, spanID string) (*SpanRecord, error)
+	ListRawTurnHeaders(ctx context.Context, orgID, harnessID, harnessSessionID string) ([]RawTurnHeader, error)
 }

@@ -11,6 +11,44 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getSpan = `-- name: GetSpan :one
+SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash FROM spans
+WHERE org_id = $1 AND trace_id = $2 AND span_id = $3
+`
+
+type GetSpanParams struct {
+	OrgID   pgtype.UUID
+	TraceID string
+	SpanID  string
+}
+
+func (q *Queries) GetSpan(ctx context.Context, arg GetSpanParams) (Span, error) {
+	row := q.db.QueryRow(ctx, getSpan, arg.OrgID, arg.TraceID, arg.SpanID)
+	var i Span
+	err := row.Scan(
+		&i.OrgID,
+		&i.TraceID,
+		&i.SpanID,
+		&i.ParentSpanID,
+		&i.SessionID,
+		&i.Kind,
+		&i.Name,
+		&i.Status,
+		&i.CallKind,
+		&i.ThreadID,
+		&i.Model,
+		&i.StopReason,
+		&i.StartedAt,
+		&i.DurationNs,
+		&i.Input,
+		&i.Output,
+		&i.Usage,
+		&i.RawTurnID,
+		&i.NodeHash,
+	)
+	return i, err
+}
+
 const getSpanTurn = `-- name: GetSpanTurn :one
 SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd FROM span_turns
 WHERE org_id = $1 AND trace_id = $2
@@ -297,6 +335,69 @@ func (q *Queries) ListSpansByTrace(ctx context.Context, arg ListSpansByTracePara
 			&i.Usage,
 			&i.RawTurnID,
 			&i.NodeHash,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTraceSummariesBySession = `-- name: ListTraceSummariesBySession :many
+SELECT t.org_id, t.trace_id, t.session_id, t.user_prompt, t.synthetic,
+       t.status, t.started_at, t.ended_at, t.duration_ns,
+       t.total_input_tokens, t.total_output_tokens, t.total_cost_usd,
+       count(s.span_id) AS span_count
+FROM span_turns t
+LEFT JOIN spans s ON s.org_id = t.org_id AND s.trace_id = t.trace_id
+WHERE t.session_id = $1
+GROUP BY t.org_id, t.trace_id
+ORDER BY t.started_at ASC, t.trace_id ASC
+`
+
+type ListTraceSummariesBySessionRow struct {
+	OrgID             pgtype.UUID
+	TraceID           string
+	SessionID         pgtype.UUID
+	UserPrompt        string
+	Synthetic         string
+	Status            string
+	StartedAt         pgtype.Timestamptz
+	EndedAt           pgtype.Timestamptz
+	DurationNs        int64
+	TotalInputTokens  int64
+	TotalOutputTokens int64
+	TotalCostUsd      pgtype.Numeric
+	SpanCount         int64
+}
+
+// Session detail's lazy view: turn headers only, no span payloads.
+func (q *Queries) ListTraceSummariesBySession(ctx context.Context, sessionID pgtype.UUID) ([]ListTraceSummariesBySessionRow, error) {
+	rows, err := q.db.Query(ctx, listTraceSummariesBySession, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTraceSummariesBySessionRow
+	for rows.Next() {
+		var i ListTraceSummariesBySessionRow
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.TraceID,
+			&i.SessionID,
+			&i.UserPrompt,
+			&i.Synthetic,
+			&i.Status,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.DurationNs,
+			&i.TotalInputTokens,
+			&i.TotalOutputTokens,
+			&i.TotalCostUsd,
+			&i.SpanCount,
 		); err != nil {
 			return nil, err
 		}

@@ -75,6 +75,68 @@ func (q *Queries) InsertRawTurn(ctx context.Context, arg InsertRawTurnParams) (i
 	return result.RowsAffected(), nil
 }
 
+const listRawTurnHeadersBySession = `-- name: ListRawTurnHeadersBySession :many
+SELECT id, org_id, source, provider, agent_name, request_id,
+       received_at, meta,
+       length(raw_request) AS request_bytes,
+       length(response) AS response_bytes
+FROM raw_turns
+WHERE org_id = $1 AND harness_id = $2 AND harness_session_id = $3
+ORDER BY id ASC
+`
+
+type ListRawTurnHeadersBySessionParams struct {
+	OrgID            pgtype.UUID
+	HarnessID        string
+	HarnessSessionID string
+}
+
+type ListRawTurnHeadersBySessionRow struct {
+	ID            int64
+	OrgID         pgtype.UUID
+	Source        string
+	Provider      string
+	AgentName     string
+	RequestID     string
+	ReceivedAt    pgtype.Timestamptz
+	Meta          []byte
+	RequestBytes  float64
+	ResponseBytes float64
+}
+
+// Operator wire log: identity + sizes, no payloads. The raw layer is
+// the capture truth; this surfaces it without shipping the blobs.
+func (q *Queries) ListRawTurnHeadersBySession(ctx context.Context, arg ListRawTurnHeadersBySessionParams) ([]ListRawTurnHeadersBySessionRow, error) {
+	rows, err := q.db.Query(ctx, listRawTurnHeadersBySession, arg.OrgID, arg.HarnessID, arg.HarnessSessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRawTurnHeadersBySessionRow
+	for rows.Next() {
+		var i ListRawTurnHeadersBySessionRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Source,
+			&i.Provider,
+			&i.AgentName,
+			&i.RequestID,
+			&i.ReceivedAt,
+			&i.Meta,
+			&i.RequestBytes,
+			&i.ResponseBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRawTurns = `-- name: ListRawTurns :many
 SELECT id, org_id, source, provider, agent_name,
        harness_id, harness_session_id, request_id,

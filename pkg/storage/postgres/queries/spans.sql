@@ -121,3 +121,19 @@ ORDER BY started_at ASC, span_id ASC;
 -- name: ListSpanLinksByTrace :many
 SELECT * FROM span_links
 WHERE org_id = $1 AND (from_trace_id = $2 OR to_trace_id = $2);
+
+-- name: ListTraceSummariesBySession :many
+-- Session detail's lazy view: turn headers only, no span payloads.
+SELECT t.org_id, t.trace_id, t.session_id, t.user_prompt, t.synthetic,
+       t.status, t.started_at, t.ended_at, t.duration_ns,
+       t.total_input_tokens, t.total_output_tokens, t.total_cost_usd,
+       count(s.span_id) AS span_count
+FROM span_turns t
+LEFT JOIN spans s ON s.org_id = t.org_id AND s.trace_id = t.trace_id
+WHERE t.session_id = $1
+GROUP BY t.org_id, t.trace_id
+ORDER BY t.started_at ASC, t.trace_id ASC;
+
+-- name: GetSpan :one
+SELECT * FROM spans
+WHERE org_id = $1 AND trace_id = $2 AND span_id = $3;

@@ -39,3 +39,14 @@ ORDER BY id;
 
 -- name: CountRawTurns :one
 SELECT COUNT(*) FROM raw_turns;
+
+-- name: ListRawTurnHeadersBySession :many
+-- Operator wire log: identity + sizes, no payloads. The raw layer is
+-- the capture truth; this surfaces it without shipping the blobs.
+SELECT id, org_id, source, provider, agent_name, request_id,
+       received_at, meta,
+       length(raw_request) AS request_bytes,
+       length(response) AS response_bytes
+FROM raw_turns
+WHERE org_id = $1 AND harness_id = $2 AND harness_session_id = $3
+ORDER BY id ASC;
