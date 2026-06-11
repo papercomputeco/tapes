@@ -12,6 +12,10 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
+// blockTypeText is the content-block type for plain text blocks, shared
+// by the transcript parsers below.
+const blockTypeText = "text"
+
 // TranscriptFile is one parsed harness transcript: the main session
 // file or one subagent's. ToolUseID (from the harness's subagent
 // meta.json) is the Task tool_use that forked the agent — the causal
@@ -116,7 +120,7 @@ func transcriptBlocks(content json.RawMessage) []llm.ContentBlock {
 	}
 	var asText string
 	if err := json.Unmarshal(content, &asText); err == nil {
-		return []llm.ContentBlock{{Type: "text", Text: asText}}
+		return []llm.ContentBlock{{Type: blockTypeText, Text: asText}}
 	}
 	var raw []transcriptBlock
 	if err := json.Unmarshal(content, &raw); err != nil {
@@ -126,8 +130,8 @@ func transcriptBlocks(content json.RawMessage) []llm.ContentBlock {
 	for _, b := range raw {
 		cb := llm.ContentBlock{Type: b.Type}
 		switch b.Type {
-		case "text", "":
-			cb.Type = "text"
+		case blockTypeText, "":
+			cb.Type = blockTypeText
 			cb.Text = b.Text
 		case "thinking":
 			cb.Thinking = b.Thinking
@@ -168,7 +172,7 @@ func flattenToolResult(content json.RawMessage) string {
 	}
 	var sb []string
 	for _, p := range parts {
-		if p.Type == "text" {
+		if p.Type == blockTypeText {
 			sb = append(sb, p.Text)
 		}
 	}

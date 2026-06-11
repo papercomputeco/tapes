@@ -86,9 +86,10 @@ var _ = Describe("ReconcileTranscripts", func() {
 			if dn.Node.ParentHash != nil || dn.Node.Kind != derive.KindMain {
 				continue
 			}
-			if dn.Node.ParentToolUseID == "toolu_task_1" {
+			switch dn.Node.ParentToolUseID {
+			case "toolu_task_1":
 				forkRoots++
-			} else if dn.Node.ParentToolUseID == "" {
+			case "":
 				plainRoots++
 			}
 		}

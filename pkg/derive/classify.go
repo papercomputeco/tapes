@@ -31,7 +31,7 @@ const (
 	KindSuggestion  = "offshoot:suggestion"
 	KindWebSummary  = "offshoot:web-summary"
 	KindProbe       = "offshoot:probe"
-	KindCompaction = "offshoot:compaction"
+	KindCompaction  = "offshoot:compaction"
 
 	// Injected context — whole messages the harness prepends inside
 	// otherwise-normal calls. They drift between turns (server lists
@@ -145,18 +145,18 @@ func ClassifyInjected(msg llm.Message) string {
 	if msg.Role != "user" && msg.Role != "system" {
 		return ""
 	}
-	text := ""
+	var text strings.Builder
 	for _, b := range msg.Content {
 		switch b.Type {
 		case "text", "":
-			text += b.Text
+			text.WriteString(b.Text)
 		default:
 			// tool_use / tool_result / image blocks are never injected
 			// context; a mixed message is conversation.
 			return ""
 		}
 	}
-	t := strings.TrimSpace(text)
+	t := strings.TrimSpace(text.String())
 	switch {
 	case strings.HasPrefix(t, "# MCP Server Instructions"):
 		return KindInjectedMCPInstructions

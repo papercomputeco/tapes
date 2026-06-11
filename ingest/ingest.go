@@ -61,7 +61,7 @@ type TurnPayload struct {
 	// fields ingest promotes (request_id for raw-turn dedup); the
 	// verbatim JSON is persisted alongside the raw turn so fields
 	// unknown to this build survive.
-	Meta TurnMeta `json:"meta,omitempty"`
+	Meta TurnMeta `json:"meta"`
 
 	// Session is the optional session-tracking envelope. When present,
 	// ingest UPSERTs a `sessions` row keyed by

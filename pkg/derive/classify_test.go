@@ -11,8 +11,8 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
-func intp(v int) *int      { return &v }
-func boolp(v bool) *bool   { return &v }
+func intp(v int) *int    { return &v }
+func boolp(v bool) *bool { return &v }
 func textMsg(role, text string) llm.Message {
 	return llm.Message{Role: role, Content: []llm.ContentBlock{{Type: "text", Text: text}}}
 }
@@ -26,7 +26,7 @@ var _ = Describe("ClassifyCall", func() {
 		stage1 := &llm.ChatRequest{
 			System:    "billing-header; You are a security monitor for autonomous AI coding agents.",
 			MaxTokens: intp(64),
-			Messages: []llm.Message{textMsg("user", "<transcript>\nBash ls -la\n</transcript>\nErr on the side of blocking. <block> immediately.")},
+			Messages:  []llm.Message{textMsg("user", "<transcript>\nBash ls -la\n</transcript>\nErr on the side of blocking. <block> immediately.")},
 		}
 		Expect(derive.ClassifyCall(stage1, assistantText("<block>no"))).To(Equal(derive.KindCheckStage1))
 

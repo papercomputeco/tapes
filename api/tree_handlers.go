@@ -13,6 +13,13 @@ import (
 	"github.com/papercomputeco/tapes/pkg/merkle"
 )
 
+// Content-block types the tree handler keys on when surfacing the
+// tool_use blocks clients anchor forks and attachments to.
+const (
+	blockTypeToolUse       = "tool_use"
+	blockTypeServerToolUse = "server_tool_use"
+)
+
 // SessionTreeResponse is the reconciled conversation tree for one
 // session: every captured node typed by kind, spine links from the
 // chain hashes, fork/rejoin edges recovered from the transcript
@@ -22,7 +29,7 @@ type SessionTreeResponse struct {
 	SessionID        string `json:"session_id"`
 	HarnessSessionID string `json:"harness_session_id,omitempty"`
 
-	Nodes []TreeNode `json:"nodes"`
+	Nodes []TreeNode  `json:"nodes"`
 	Links []GraphLink `json:"links"`
 
 	// Forks are subagent threads: a chain whose root carries the Task
@@ -49,23 +56,23 @@ type SessionTreeResponse struct {
 
 // TreeNode is one captured node plus its semantic typing.
 type TreeNode struct {
-	ID              string     `json:"id"`
-	ParentID        *string    `json:"parent_id,omitempty"`
-	Role            string     `json:"role,omitempty"`
-	NodeKind        string     `json:"node_kind,omitempty"`
-	ParentToolUseID string     `json:"parent_tool_use_id,omitempty"`
-	ThreadID        string     `json:"thread_id,omitempty"`
-	Preview         string     `json:"preview,omitempty"`
+	ID              string  `json:"id"`
+	ParentID        *string `json:"parent_id,omitempty"`
+	Role            string  `json:"role,omitempty"`
+	NodeKind        string  `json:"node_kind,omitempty"`
+	ParentToolUseID string  `json:"parent_tool_use_id,omitempty"`
+	ThreadID        string  `json:"thread_id,omitempty"`
+	Preview         string  `json:"preview,omitempty"`
 
 	// Content is the node's full content blocks (raw, as captured) so
 	// conversation renderers can format turns without a second fetch.
-	Content []llm.ContentBlock `json:"content,omitempty"`
-	Model           string     `json:"model,omitempty"`
-	StopReason      string     `json:"stop_reason,omitempty"`
-	Usage           *llm.Usage `json:"usage,omitempty"`
-	CreatedAt       time.Time  `json:"created_at,omitzero"`
-	IsRoot          bool       `json:"is_root"`
-	IsLeaf          bool       `json:"is_leaf"`
+	Content    []llm.ContentBlock `json:"content,omitempty"`
+	Model      string             `json:"model,omitempty"`
+	StopReason string             `json:"stop_reason,omitempty"`
+	Usage      *llm.Usage         `json:"usage,omitempty"`
+	CreatedAt  time.Time          `json:"created_at,omitzero"`
+	IsRoot     bool               `json:"is_root"`
+	IsLeaf     bool               `json:"is_leaf"`
 
 	// ToolUses lists the tool_use blocks this node carries (assistant
 	// turns), so clients can anchor forks/attachments without parsing
@@ -142,7 +149,7 @@ func foldTasks(nodes []*merkle.Node) []TreeTask {
 	var order []*TreeTask
 	for _, n := range nodes {
 		for _, b := range n.Bucket.Content {
-			if b.Type != "tool_use" {
+			if b.Type != blockTypeToolUse {
 				continue
 			}
 			switch b.ToolName {
@@ -274,7 +281,7 @@ func buildSessionTree(sessionID, harnessSessionID string, nodes []*merkle.Node) 
 	for _, n := range nodes {
 		for _, b := range n.Bucket.Content {
 			switch b.Type {
-			case "tool_use", "server_tool_use":
+			case blockTypeToolUse, blockTypeServerToolUse:
 				if b.ToolUseID != "" {
 					if _, ok := toolUseNode[b.ToolUseID]; !ok {
 						toolUseNode[b.ToolUseID] = n.Hash
@@ -317,7 +324,7 @@ func buildSessionTree(sessionID, harnessSessionID string, nodes []*merkle.Node) 
 			IsLeaf:          !hasChild[n.Hash],
 		}
 		for _, b := range n.Bucket.Content {
-			if (b.Type == "tool_use" || b.Type == "server_tool_use") && b.ToolUseID != "" {
+			if (b.Type == blockTypeToolUse || b.Type == blockTypeServerToolUse) && b.ToolUseID != "" {
 				tn.ToolUses = append(tn.ToolUses, TreeToolUse{ID: b.ToolUseID, Name: b.ToolName})
 			}
 		}

@@ -136,7 +136,7 @@ func newWireTraceCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), format+"\n", args...)
 				},
 			}
-			result, err := backfill.BackfillWireTrace(cmd.Context(), opts)
+			result, err := backfill.WireTrace(cmd.Context(), opts)
 			if err != nil {
 				return err
 			}

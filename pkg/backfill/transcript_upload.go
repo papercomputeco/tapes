@@ -38,12 +38,12 @@ type TranscriptUploadOptions struct {
 
 // TranscriptUploadResult summarizes an upload run.
 type TranscriptUploadResult struct {
-	Sessions  int      `json:"sessions"`
-	Files     int      `json:"files"`
-	Uploaded  int      `json:"uploaded"`
-	Deduped   int      `json:"deduped"`
-	Failed    int      `json:"failed"`
-	Failures  []string `json:"failures,omitempty"`
+	Sessions int      `json:"sessions"`
+	Files    int      `json:"files"`
+	Uploaded int      `json:"uploaded"`
+	Deduped  int      `json:"deduped"`
+	Failed   int      `json:"failed"`
+	Failures []string `json:"failures,omitempty"`
 }
 
 // transcriptIngestPayload mirrors ingest.TranscriptPayload.
@@ -177,7 +177,7 @@ func jsonlToArray(path string) (json.RawMessage, error) {
 		return nil, err
 	}
 	var records []json.RawMessage
-	for _, line := range bytes.Split(raw, []byte("\n")) {
+	for line := range bytes.SplitSeq(raw, []byte("\n")) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 || !json.Valid(line) {
 			continue
@@ -202,7 +202,7 @@ func postTranscript(ctx context.Context, client *http.Client, ingestURL string, 
 	if err != nil {
 		return false, err
 	}
-	defer resp.Body.Close() //nolint:errcheck // read-side close
+	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode >= 300 {
 		return false, fmt.Errorf("ingest returned %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))

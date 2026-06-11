@@ -100,7 +100,7 @@ func (d *Driver) RederiveFromRaw(ctx context.Context, project string) (map[strin
 			if err != nil {
 				return nil, fmt.Errorf("fetch raw turn %d: %w", entry.id, err)
 			}
-			rec := rawTurnRecordFromRow(gensqlc.RawTurn(row))
+			rec := rawTurnRecordFromRow(row)
 			dv.AddTurn(&rec)
 		}
 		set := dv.Finish()
@@ -112,7 +112,7 @@ func (d *Driver) RederiveFromRaw(ctx context.Context, project string) (map[strin
 			if err != nil {
 				return nil, fmt.Errorf("fetch transcript row %d: %w", id, err)
 			}
-			rec := rawTurnRecordFromRow(gensqlc.RawTurn(row))
+			rec := rawTurnRecordFromRow(row)
 			file, err := derive.ParseTranscriptFile(&rec)
 			if err != nil {
 				return nil, fmt.Errorf("parse transcript row %d: %w", id, err)

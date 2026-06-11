@@ -50,7 +50,7 @@ type corpusRow struct {
 func loadCorpus(path string) (wire []storage.RawTurnRecord, transcripts []storage.RawTurnRecord) {
 	f, err := os.Open(path)
 	Expect(err).NotTo(HaveOccurred())
-	defer f.Close() //nolint:errcheck // read-side close
+	defer f.Close()
 
 	gz, err := gzip.NewReader(f)
 	Expect(err).NotTo(HaveOccurred())
@@ -90,7 +90,7 @@ func deriveCorpus(path string, wantWire, wantTranscripts int) (*derive.DerivedSe
 	set, err := derive.BuildDerivedSet(wire, "")
 	Expect(err).NotTo(HaveOccurred())
 
-	var files []*derive.TranscriptFile
+	files := make([]*derive.TranscriptFile, 0, len(transcriptRows))
 	for i := range transcriptRows {
 		file, err := derive.ParseTranscriptFile(&transcriptRows[i])
 		Expect(err).NotTo(HaveOccurred())

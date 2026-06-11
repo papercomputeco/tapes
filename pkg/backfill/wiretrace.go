@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/papercomputeco/tapes/pkg/capture"
@@ -109,7 +111,7 @@ type wireTraceMetaBlock struct {
 	TsRequest string `json:"ts_request,omitempty"`
 }
 
-// BackfillWireTrace replays paperd wire-trace capture bundles through a
+// WireTrace replays paperd wire-trace capture bundles through a
 // tapes-ingest server, reconstructing the envelope tapes-extproc would
 // have dispatched live: verbatim request bytes, response reduced with
 // the same shared capture reducer, meta rebuilt from the bundle, and
@@ -124,7 +126,7 @@ type wireTraceMetaBlock struct {
 // Only provider chat-completion calls are replayed (…/v1/messages);
 // auxiliary traffic in the trace (count_tokens, tapes API reads) is
 // skipped.
-func BackfillWireTrace(ctx context.Context, opts WireTraceOptions) (*WireTraceResult, error) {
+func WireTrace(ctx context.Context, opts WireTraceOptions) (*WireTraceResult, error) {
 	if opts.Logf == nil {
 		opts.Logf = func(string, ...any) {}
 	}
@@ -237,7 +239,7 @@ func buildWireTraceEnvelope(ctx context.Context, dir, turnDir string, reducer ca
 		return nil, "no provider segment in path: " + parsedURL.Path, nil
 	}
 	if req.BodyTruncated {
-		return nil, "", fmt.Errorf("request body truncated at capture; raw replay would be lossy")
+		return nil, "", errors.New("request body truncated at capture; raw replay would be lossy")
 	}
 
 	body, err := base64.StdEncoding.DecodeString(req.BodyB64)
@@ -291,7 +293,7 @@ func buildWireTraceEnvelope(ctx context.Context, dir, turnDir string, reducer ca
 	_ = json.Unmarshal(body, &reqFields)
 	streamLabel := "absent"
 	if reqFields.Stream != nil {
-		streamLabel = fmt.Sprintf("%t", *reqFields.Stream)
+		streamLabel = strconv.FormatBool(*reqFields.Stream)
 	}
 
 	headers := func(name string) string {
@@ -410,7 +412,7 @@ func postWireTraceEnvelope(ctx context.Context, client *http.Client, ingestURL s
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close() //nolint:errcheck // read-side close
+	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		return resp.StatusCode, fmt.Errorf("ingest returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
