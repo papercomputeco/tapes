@@ -29,6 +29,7 @@ const (
 	DefaultSweepInterval  = time.Hour
 	DefaultPageSize       = 50
 	DefaultMaxPollBackoff = 30 * time.Second
+	DefaultDrainTimeout   = 30 * time.Second
 )
 
 // Store is the storage capability surface the worker drives. The
@@ -86,6 +87,12 @@ type Config struct {
 	// consecutive failure doubles the delay up to this cap.
 	MaxPollBackoff time.Duration
 
+	// DrainTimeout bounds the graceful-shutdown window: after the run
+	// context is canceled, the in-flight derive may keep running this
+	// long before its store operations are aborted. Locks release
+	// either way.
+	DrainTimeout time.Duration
+
 	// Metrics optionally injects a pre-built metrics surface so the
 	// hosting command can mount /metrics (and serve health probes)
 	// before the store is even reachable — e.g. while --wait-for-db
@@ -108,6 +115,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.MaxPollBackoff <= 0 {
 		c.MaxPollBackoff = DefaultMaxPollBackoff
+	}
+	if c.DrainTimeout <= 0 {
+		c.DrainTimeout = DefaultDrainTimeout
 	}
 	return c
 }
@@ -156,12 +166,41 @@ func (w *Worker) Metrics() *Metrics { return w.metrics }
 // Run blocks until ctx is canceled. One sweep runs immediately at
 // startup (catching anything queued — or never queued — before this
 // worker existed), then the poll and sweep tickers take over.
+//
+// Shutdown is graceful: canceling ctx stops polling, but the in-flight
+// derive keeps running on a detached context for up to DrainTimeout —
+// finishing and clearing rather than aborting mid-write. A derive
+// still running at the deadline is aborted; either way the advisory
+// lock releases (release runs on a fresh background context) and Run
+// returns nil.
 func (w *Worker) Run(ctx context.Context) error {
 	w.logger.Info("derive worker starting",
 		"poll_interval", w.cfg.PollInterval,
 		"debounce", w.cfg.Debounce,
 		"sweep_interval", w.cfg.SweepInterval,
+		"drain_timeout", w.cfg.DrainTimeout,
 	)
+
+	// workCtx carries store operations. It survives ctx cancellation by
+	// up to DrainTimeout so the in-flight derive can drain.
+	workCtx, cancelWork := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelWork()
+	go func() {
+		select {
+		case <-workCtx.Done():
+			// Run returned on its own; nothing to drain.
+		case <-ctx.Done():
+			w.logger.Info("derive worker draining", "drain_timeout", w.cfg.DrainTimeout)
+			drain := time.NewTimer(w.cfg.DrainTimeout)
+			defer drain.Stop()
+			select {
+			case <-workCtx.Done():
+			case <-drain.C:
+				w.logger.Warn("derive worker drain timeout, aborting in-flight work")
+				cancelWork()
+			}
+		}
+	}()
 
 	w.runSweep(ctx)
 
@@ -179,7 +218,7 @@ func (w *Worker) Run(ctx context.Context) error {
 			w.logger.Info("derive worker stopping")
 			return nil
 		case <-poll.C:
-			err := w.runPoll(ctx)
+			err := w.runPoll(ctx, workCtx)
 			switch {
 			case ctx.Err() != nil:
 				// Shutting down; the next select arm exits.
@@ -249,8 +288,15 @@ func backoffDelay(base, maxDelay time.Duration, failures int) time.Duration {
 // The returned error is an infrastructure failure (queue unreachable);
 // it aborts the rest of the page so an outage costs one line + backoff
 // instead of one error per queued session.
-func (w *Worker) runPoll(ctx context.Context) error {
-	stats, err := w.store.DeriveQueueStats(ctx)
+//
+// ctx is the run (shutdown) context, checked between sessions to stop
+// taking new work; workCtx carries the store operations so an in-
+// flight derive survives shutdown into the drain window.
+func (w *Worker) runPoll(ctx, workCtx context.Context) error {
+	if ctx.Err() != nil {
+		return nil
+	}
+	stats, err := w.store.DeriveQueueStats(workCtx)
 	if err != nil {
 		return err
 	}
@@ -262,7 +308,7 @@ func (w *Worker) runPoll(ctx context.Context) error {
 	w.metrics.DeriveLag.Set(lag)
 
 	cutoff := time.Now().Add(-w.cfg.Debounce)
-	entries, err := w.store.ListDeriveDirty(ctx, cutoff, w.cfg.PageSize)
+	entries, err := w.store.ListDeriveDirty(workCtx, cutoff, w.cfg.PageSize)
 	if err != nil {
 		return err
 	}
@@ -270,7 +316,7 @@ func (w *Worker) runPoll(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		if err := w.processEntry(ctx, e, cutoff); err != nil {
+		if err := w.processEntry(workCtx, e, cutoff); err != nil {
 			return err
 		}
 	}

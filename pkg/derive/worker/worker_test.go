@@ -56,8 +56,10 @@ type fakeStore struct {
 	deriveErr error
 
 	// onDerive runs inside RederiveSession (under no lock held by the
-	// test) — used to model a raw turn landing mid-derive.
-	onDerive func()
+	// test) before the derive is recorded — used to model a raw turn
+	// landing mid-derive, or to block so the test can cancel mid-
+	// derive. It receives the context the worker ran the derive on.
+	onDerive func(ctx context.Context)
 
 	derives []string
 	clears  []string
@@ -108,6 +110,12 @@ func (f *fakeStore) setListErr(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.listErr = err
+}
+
+func (f *fakeStore) lockCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.locks)
 }
 
 func (f *fakeStore) ListDeriveDirty(_ context.Context, dirtiedBefore time.Time, limit int32) ([]storage.DeriveQueueEntry, error) {
@@ -196,20 +204,25 @@ func (f *fakeStore) TryDeriveSessionLock(_ context.Context, org, harness, sessio
 	}, true, nil
 }
 
-func (f *fakeStore) RederiveSession(_ context.Context, _, org, harness, session string) (*derive.RederiveReport, error) {
+func (f *fakeStore) RederiveSession(ctx context.Context, _, org, harness, session string) (*derive.RederiveReport, error) {
 	f.mu.Lock()
 	err := f.deriveErr
 	hook := f.onDerive
-	if err == nil {
-		f.derives = append(f.derives, key(org, harness, session))
-	}
 	f.mu.Unlock()
 	if err != nil {
 		return nil, err
 	}
 	if hook != nil {
-		hook()
+		hook(ctx)
 	}
+	// A real derive's store operations fail once the work context is
+	// canceled (drain timeout); the fake honors the same contract.
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	f.mu.Lock()
+	f.derives = append(f.derives, key(org, harness, session))
+	f.mu.Unlock()
 	return &derive.RederiveReport{RawTurns: 3, Nodes: 7, Upserted: 7}, nil
 }
 
@@ -316,7 +329,7 @@ var _ = Describe("Worker", func() {
 			DirtiedAt:        time.Now().Add(-time.Minute).Add(time.Second),
 		}
 		var once sync.Once
-		store.onDerive = func() {
+		store.onDerive = func(_ context.Context) {
 			// A raw turn lands while the derive is running: dirtied_at
 			// bumps, so the conditional clear must miss.
 			once.Do(func() { store.mark(rederived) })
@@ -403,6 +416,60 @@ var _ = Describe("Worker", func() {
 		Eventually(func() float64 {
 			return gaugeValue(metrics.Registry(), "tapes_derive_worker_derive_lag_seconds")
 		}).Should(BeNumerically("~", 60, 5), "lag is now minus the oldest dirty mark")
+	})
+
+	It("finishes and clears the in-flight derive when canceled mid-derive", func() {
+		store.mark(settled("org-a", "claude-code", "sess-drain"))
+
+		started := make(chan struct{})
+		finish := make(chan struct{})
+		var startOnce sync.Once
+		store.onDerive = func(_ context.Context) {
+			startOnce.Do(func() { close(started) })
+			<-finish
+		}
+
+		startWorker(fastConfig())
+		Eventually(started).Should(BeClosed())
+
+		// The shutdown signal lands mid-derive. The worker must wait
+		// for the derive, not abort it.
+		cancel()
+		Consistently(done, "50ms").ShouldNot(BeClosed(),
+			"the worker must drain the in-flight derive before exiting")
+
+		close(finish)
+		Eventually(done).Should(BeClosed())
+		Expect(store.deriveCount()).To(Equal(1), "the in-flight derive must complete")
+		_, stillQueued := store.entry("org-a", "claude-code", "sess-drain")
+		Expect(stillQueued).To(BeFalse(), "the completed derive must still clear its entry")
+		Expect(store.lockCount()).To(BeZero(), "the advisory lock must release on shutdown")
+	})
+
+	It("aborts a stuck derive at the drain timeout and still releases the lock", func() {
+		store.mark(settled("org-a", "claude-code", "sess-stuck"))
+
+		started := make(chan struct{})
+		var startOnce sync.Once
+		store.onDerive = func(ctx context.Context) {
+			startOnce.Do(func() { close(started) })
+			// A derive that never finishes on its own: only the drain
+			// timeout's context cancellation can end it.
+			<-ctx.Done()
+		}
+
+		cfg := fastConfig()
+		cfg.DrainTimeout = 25 * time.Millisecond
+		startWorker(cfg)
+		Eventually(started).Should(BeClosed())
+
+		cancel()
+		Eventually(done, "1s").Should(BeClosed(),
+			"the drain timeout must bound shutdown even with a stuck derive")
+		Expect(store.deriveCount()).To(BeZero(), "the aborted derive must not count as completed")
+		_, stillQueued := store.entry("org-a", "claude-code", "sess-stuck")
+		Expect(stillQueued).To(BeTrue(), "an aborted derive must leave the session queued for the next worker")
+		Expect(store.lockCount()).To(BeZero(), "the advisory lock must release even on an aborted derive")
 	})
 
 	It("runs a backstop sweep at startup that feeds the normal path", func() {

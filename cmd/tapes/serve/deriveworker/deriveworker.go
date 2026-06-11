@@ -154,6 +154,14 @@ func (c *deriveWorkerCommander) run(ctx context.Context) error {
 
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	go func() {
+		// The first signal starts the graceful drain (the worker
+		// finishes its in-flight derive, bounded by its drain timeout).
+		// Restoring default signal handling here makes a second signal
+		// kill the process immediately — the operator's escape hatch.
+		<-ctx.Done()
+		stop()
+	}()
 
 	// The metrics/health listener starts BEFORE the database connect so
 	// /healthz answers (and /metrics scrapes don't 404) while
