@@ -199,7 +199,7 @@ func (c *proxyCommander) run() error {
 	}
 	defer driver.Close()
 
-	config := proxy.Config{
+	proxyConfig := proxy.Config{
 		ListenAddr:   c.listen,
 		UpstreamURL:  c.upstream,
 		ProviderType: c.providerType,
@@ -208,7 +208,7 @@ func (c *proxyCommander) run() error {
 	}
 
 	if c.vectorStoreTarget != "" {
-		config.Embedder, err = embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
+		proxyConfig.Embedder, err = embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
 			ProviderType: c.embeddingProvider,
 			TargetURL:    c.embeddingTarget,
 			Model:        c.embeddingModel,
@@ -218,26 +218,26 @@ func (c *proxyCommander) run() error {
 		if err != nil {
 			return fmt.Errorf("creating embedder: %w", err)
 		}
-		defer config.Embedder.Close()
+		defer proxyConfig.Embedder.Close()
 
-		config.VectorDriver, err = pgvector.NewDriver(context.TODO(), &pgvector.Config{
+		proxyConfig.VectorDriver, err = pgvector.NewDriver(context.TODO(), &pgvector.Config{
 			ConnString: c.vectorStoreTarget,
 			Dimensions: c.embeddingDimensions,
 		}, c.logger)
 		if err != nil {
 			return fmt.Errorf("could not create new vector driver: %w", err)
 		}
-		defer config.VectorDriver.Close()
+		defer proxyConfig.VectorDriver.Close()
 
 		c.logger.Info("vector storage enabled",
-			"vector_store_target", c.vectorStoreTarget,
+			"vector_store_target", config.RedactDSN(c.vectorStoreTarget),
 			"embedding_provider", c.embeddingProvider,
 			"embedding_target", c.embeddingTarget,
 			"embedding_model", c.embeddingModel,
 		)
 	}
 
-	p, err := proxy.New(config, driver, c.logger)
+	p, err := proxy.New(proxyConfig, driver, c.logger)
 	if err != nil {
 		return fmt.Errorf("creating proxy: %w", err)
 	}
