@@ -1,0 +1,63 @@
+-- name: MarkDeriveDirty :exec
+-- Mark one harness session dirty for the derive worker. Upsert: a
+-- session already queued just gets its dirtied_at bumped, which is
+-- exactly the debounce signal (the worker waits for dirtied_at to
+-- settle before deriving).
+INSERT INTO derive_queue (org_id, harness_id, harness_session_id)
+VALUES ($1, $2, $3)
+ON CONFLICT (org_id, harness_id, harness_session_id)
+DO UPDATE SET dirtied_at = CURRENT_TIMESTAMP;
+
+-- name: ListDeriveDirty :many
+-- The worker's poll: sessions whose dirty mark has settled (no new
+-- raw turn since the debounce window), oldest first.
+SELECT org_id, harness_id, harness_session_id, dirtied_at
+FROM derive_queue
+WHERE dirtied_at <= sqlc.arg(dirtied_before)
+ORDER BY dirtied_at
+LIMIT sqlc.arg(page_size);
+
+-- name: GetDeriveDirty :one
+-- Re-read one queue row (the worker does this under the advisory lock
+-- to catch a concurrent worker having already derived + cleared it).
+SELECT org_id, harness_id, harness_session_id, dirtied_at
+FROM derive_queue
+WHERE org_id = $1
+  AND harness_id = $2
+  AND harness_session_id = $3;
+
+-- name: ClearDeriveDirty :execrows
+-- Conditional clear: only removes the row if dirtied_at is unchanged
+-- since the worker read it. A raw turn landing mid-derive bumps
+-- dirtied_at, the DELETE matches nothing, and the session survives for
+-- the next poll — re-dirty during derive is never lost.
+DELETE FROM derive_queue
+WHERE org_id = $1
+  AND harness_id = $2
+  AND harness_session_id = $3
+  AND dirtied_at = sqlc.arg(dirtied_at);
+
+-- name: SweepDeriveDirty :execrows
+-- The worker's slow backstop: enqueue every harness session present in
+-- the raw layer. Sessions already queued keep their dirtied_at (DO
+-- NOTHING, not an upsert) so the sweep never resets an in-flight
+-- debounce window. Everything still funnels through the per-session
+-- locked derive path — the sweep itself never writes nodes, which is
+-- what makes it safe to run concurrently with session derives.
+INSERT INTO derive_queue (org_id, harness_id, harness_session_id)
+SELECT DISTINCT org_id, harness_id, harness_session_id
+FROM raw_turns
+WHERE harness_session_id <> ''
+ON CONFLICT (org_id, harness_id, harness_session_id) DO NOTHING;
+
+-- name: ListRawTurnIndexBySession :many
+-- Payload-free index of one harness session's raw turns, for the
+-- session-scoped deriver's ordering pass. Full rows are then streamed
+-- one at a time via GetRawTurn — same memory discipline as the
+-- full-org pass.
+SELECT id, org_id, source, harness_id, harness_session_id, received_at, meta
+FROM raw_turns
+WHERE org_id = $1
+  AND harness_id = $2
+  AND harness_session_id = $3
+ORDER BY id;

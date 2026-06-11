@@ -8,6 +8,13 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type DeriveQueue struct {
+	OrgID            pgtype.UUID
+	HarnessID        string
+	HarnessSessionID string
+	DirtiedAt        pgtype.Timestamptz
+}
+
 type Node struct {
 	Hash                     string
 	Bucket                   []byte

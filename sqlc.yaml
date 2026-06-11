@@ -7,6 +7,7 @@ sql:
       - "pkg/storage/postgres/queries/aggregate_sessions_by_model.sql"
       - "pkg/storage/postgres/queries/ancestry_chains.sql"
       - "pkg/storage/postgres/queries/derive.sql"
+      - "pkg/storage/postgres/queries/derive_queue.sql"
       - "pkg/storage/postgres/queries/duckdb_force_execution.sql"
       - "pkg/storage/postgres/queries/get_node.sql"
       - "pkg/storage/postgres/queries/get_nodes_by_parent.sql"

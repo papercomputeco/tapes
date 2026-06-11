@@ -18,6 +18,12 @@ var _ storage.RawTurnStore = (*Driver)(nil)
 // PutRawTurn implements storage.RawTurnStore. The row is appended
 // verbatim; a retried POST with the same (org_id, request_id) is a
 // no-op per the partial unique index.
+//
+// Session-keyed rows also mark the session dirty in derive_queue, in
+// the same transaction, so the derive worker picks the session up.
+// Marking happens even when the row deduped: a re-POST of an existing
+// turn is the natural "re-derive this session" signal, and a redundant
+// mark only costs one idempotent derive.
 func (d *Driver) PutRawTurn(ctx context.Context, rec storage.RawTurnRecord) (bool, error) {
 	if d == nil || d.conn == nil {
 		return false, errors.New("postgres driver not open")
@@ -33,7 +39,14 @@ func (d *Driver) PutRawTurn(ctx context.Context, rec storage.RawTurnRecord) (boo
 		source = storage.RawTurnSourceWire
 	}
 
-	rows, err := d.q.InsertRawTurn(ctx, gensqlc.InsertRawTurnParams{
+	tx, err := d.conn.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // commit shadows on success
+	qtx := d.q.WithTx(tx)
+
+	rows, err := qtx.InsertRawTurn(ctx, gensqlc.InsertRawTurnParams{
 		OrgID:            orgID,
 		Source:           source,
 		Provider:         rec.Provider,
@@ -48,6 +61,20 @@ func (d *Driver) PutRawTurn(ctx context.Context, rec storage.RawTurnRecord) (boo
 	})
 	if err != nil {
 		return false, fmt.Errorf("insert raw turn: %w", err)
+	}
+
+	if rec.HarnessSessionID != "" {
+		if err := qtx.MarkDeriveDirty(ctx, gensqlc.MarkDeriveDirtyParams{
+			OrgID:            orgID,
+			HarnessID:        rec.HarnessID,
+			HarnessSessionID: rec.HarnessSessionID,
+		}); err != nil {
+			return false, fmt.Errorf("mark derive dirty: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit raw turn: %w", err)
 	}
 	return rows > 0, nil
 }

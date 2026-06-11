@@ -129,6 +129,87 @@ func (d *Driver) RederiveFromRaw(ctx context.Context, project string) (map[strin
 	return reports, nil
 }
 
+// RederiveSession is the session-scoped sibling of RederiveFromRaw:
+// re-derive ONE harness session from its raw turns and apply the
+// result transactionally (upsert + prune scoped to that session). This
+// is the derive worker's unit of work — memory stays bounded by one
+// session's unique content, and the full rows stream through the
+// deriver one at a time exactly like the full-org pass.
+//
+// Same idempotence contract: re-running against an unchanged raw layer
+// upserts the same set and prunes nothing.
+func (d *Driver) RederiveSession(ctx context.Context, project, orgID, harnessID, harnessSessionID string) (*derive.RederiveReport, error) {
+	if d == nil || d.conn == nil {
+		return nil, errors.New("postgres driver not open")
+	}
+	org, err := orgIDFromString(orgKeyForLookup(orgID))
+	if err != nil {
+		return nil, fmt.Errorf("decode org_id: %w", err)
+	}
+
+	// Index scan: identity + timing only, no payloads. Transcript rows
+	// keep only the LATEST version per agent — transcript ingest
+	// appends a new row each time a file grows.
+	index, err := d.q.ListRawTurnIndexBySession(ctx, gensqlc.ListRawTurnIndexBySessionParams{
+		OrgID:            org,
+		HarnessID:        harnessID,
+		HarnessSessionID: harnessSessionID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list raw turn index for session: %w", err)
+	}
+
+	var wire []rawTurnIndexEntry
+	transcriptRows := map[string]int64{} // agentKey → latest raw id
+	for _, row := range index {
+		if row.Source == storage.RawTurnSourceTranscript {
+			agentKey := transcriptAgentKey(row.Meta)
+			if row.ID > transcriptRows[agentKey] {
+				transcriptRows[agentKey] = row.ID
+			}
+			continue
+		}
+		rec := storage.RawTurnRecord{ID: row.ID, Meta: row.Meta, ReceivedAt: row.ReceivedAt.Time}
+		wire = append(wire, rawTurnIndexEntry{id: row.ID, capturedAt: derive.CapturedAt(&rec)})
+	}
+	sort.SliceStable(wire, func(i, j int) bool { return wire[i].capturedAt.Before(wire[j].capturedAt) })
+
+	dv, err := derive.NewDeriver(project)
+	if err != nil {
+		return nil, fmt.Errorf("create deriver: %w", err)
+	}
+	for _, entry := range wire {
+		row, err := d.q.GetRawTurn(ctx, entry.id)
+		if err != nil {
+			return nil, fmt.Errorf("fetch raw turn %d: %w", entry.id, err)
+		}
+		rec := rawTurnRecordFromRow(row)
+		dv.AddTurn(&rec)
+	}
+	set := dv.Finish()
+
+	// Fuse the causal/fork skeleton from the session's transcript rows.
+	var files []*derive.TranscriptFile
+	for _, id := range transcriptRows {
+		row, err := d.q.GetRawTurn(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("fetch transcript row %d: %w", id, err)
+		}
+		rec := rawTurnRecordFromRow(row)
+		file, err := derive.ParseTranscriptFile(&rec)
+		if err != nil {
+			return nil, fmt.Errorf("parse transcript row %d: %w", id, err)
+		}
+		files = append(files, file)
+	}
+	set.Report.Reconcile = derive.ReconcileTranscripts(set, files)
+
+	if err := d.writeDerivedSet(ctx, uuidString(org), set); err != nil {
+		return nil, fmt.Errorf("write derived set for session %s/%s: %w", harnessID, harnessSessionID, err)
+	}
+	return &set.Report, nil
+}
+
 func orgDisplayKey(org string) string {
 	if org == "" || org == "00000000-0000-0000-0000-000000000000" {
 		return "default"
