@@ -57,14 +57,25 @@ The derive worker turns the immutable raw-turn layer into the derived node
 layer continuously: ingest marks a session dirty whenever a raw turn (wire or
 transcript) lands for it, and the worker polls that queue, waits for the burst
 to settle (debounce), then re-derives ONE session at a time under a per-session
-Postgres advisory lock — so concurrent workers never double-derive.
+Postgres advisory lock — so concurrent workers never double-derive. Run extra
+replicas to scale; the lock makes them safe.
 
-A slow backstop sweep (default hourly, plus once at startup) re-enqueues every
-session present in the raw layer, catching any lost dirty mark.
+A slow backstop sweep (default hourly, plus once at startup) re-enqueues
+sessions with raw activity inside --sweep-window (default 24h), catching any
+lost dirty mark without stampeding the queue on restart. Pass a negative
+window to sweep all of history — the full re-derive escape hatch after a
+deriver fix.
 
 Derivation is idempotent (re-running an unchanged session prunes 0 nodes), so
 everything here is safely at-least-once. The admin endpoints
 POST /v1/admin/derive/run and /verify remain available as escape hatches.
+
+Operations: an unreachable database fails startup fast unless --wait-for-db
+is set; poll failures back off exponentially (capped at 30s) and recover on
+their own. --metrics-listen serves Prometheus /metrics plus /healthz
+(liveness) and /readyz (readiness) for orchestrators. SIGTERM/SIGINT drains
+the in-flight derive (bounded at 30s) before exiting; a second signal kills
+immediately.
 
 Run this as its own process with its own memory budget — never inside the API
 server.`
