@@ -42,7 +42,32 @@ type DerivedSet struct {
 	// session evolves).
 	SessionTitles map[SessionKey]string
 
+	// SpanSources retains one slim record per parsed raw turn so the
+	// span emit stage (EmitSpans) can re-walk the capture in call
+	// order after the attach/reconcile passes have stamped fork and
+	// offshoot anchors. Holds only pointers to retained nodes plus
+	// scalar call identity — never payload copies.
+	SpanSources []*SpanSource
+
 	Report RederiveReport
+}
+
+// SpanSource is the per-call input to the span emit stage: the call's
+// wire identity, its classified kind, and which chain positions this
+// call captured first (the delta vs. re-sent history).
+type SpanSource struct {
+	RawTurnID  int64
+	RequestID  string
+	CapturedAt time.Time
+	Kind       string
+	ThreadID   string
+	Session    SessionKey
+
+	// Chain holds the retained node for every chain position of this
+	// call (root → leaf; last is the response). New marks positions
+	// first captured by THIS call.
+	Chain []*DerivedNode
+	New   []bool
 }
 
 // RederiveReport summarizes one derive pass.
@@ -209,6 +234,14 @@ func (dv *Deriver) AddTurn(rec *storage.RawTurnRecord) {
 	}
 
 	turn := &attachTurn{kind: kind, index: len(dv.turns), threadID: threadIDFromMeta(rec.Meta)}
+	source := &SpanSource{
+		RawTurnID:  rec.ID,
+		RequestID:  rec.RequestID,
+		CapturedAt: capturedAt,
+		Kind:       kind,
+		ThreadID:   turn.threadID,
+		Session:    key,
+	}
 
 	for _, node := range chain {
 		retained, dup := dv.byHash[node.Hash]
@@ -220,6 +253,8 @@ func (dv *Deriver) AddTurn(rec *storage.RawTurnRecord) {
 			dv.set.Report.NodeKinds[node.Kind]++
 		}
 		turn.nodes = append(turn.nodes, retained)
+		source.Chain = append(source.Chain, retained)
+		source.New = append(source.New, !dup)
 
 		// Tool-use registry for the attach passes, deduped by id so
 		// the first (earliest) capture wins.
@@ -263,6 +298,7 @@ func (dv *Deriver) AddTurn(rec *storage.RawTurnRecord) {
 	}
 
 	dv.turns = append(dv.turns, turn)
+	dv.set.SpanSources = append(dv.set.SpanSources, source)
 }
 
 // Finish runs the cross-call attach passes and returns the completed
