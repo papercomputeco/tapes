@@ -274,7 +274,13 @@ func spanItemFromRecord(sp storage.SpanRecord, childIDs []string) SpanItem {
 	switch sp.Kind {
 	case "tool":
 		if blocks := decodeBlocks(sp.Input); len(blocks) > 0 {
-			item.Input["arguments"] = blocks[0].ToolInput
+			args := blocks[0].ToolInput
+			if args == nil {
+				// no-argument tool calls (ExitPlanMode et al.) must
+				// still serialize as a record, not null
+				args = map[string]any{}
+			}
+			item.Input["arguments"] = args
 		}
 		if blocks := decodeBlocks(sp.Output); len(blocks) > 0 {
 			item.Output["content"] = blocks[0].ToolOutput
