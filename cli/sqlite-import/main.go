@@ -22,6 +22,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	pgvectorgo "github.com/pgvector/pgvector-go"
+
+	"github.com/papercomputeco/tapes/pkg/config"
 )
 
 const (
@@ -103,7 +105,7 @@ func run(ctx context.Context, cfg config) error {
 	cfg.sqlitePath = sqlitePath
 
 	log.Printf("source sqlite: %s", cfg.sqlitePath)
-	log.Printf("target postgres: %s", redactDSN(cfg.postgresDSN))
+	log.Printf("target postgres: %s", config.RedactDSN(cfg.postgresDSN))
 
 	sqlite_vec.Auto()
 
@@ -760,17 +762,6 @@ func expandPath(path string) (string, error) {
 		path = filepath.Join(home, path[2:])
 	}
 	return filepath.Abs(path)
-}
-
-func redactDSN(raw string) string {
-	cfg, err := pgxpool.ParseConfig(raw)
-	if err != nil {
-		return raw
-	}
-	if cfg.ConnConfig.Password != "" {
-		cfg.ConnConfig.Password = "xxxxx"
-	}
-	return cfg.ConnString()
 }
 
 func normalizeParentHash(parent sql.NullString) sql.NullString {

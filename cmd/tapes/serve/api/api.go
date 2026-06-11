@@ -167,7 +167,7 @@ func (c *apiCommander) run() error {
 		defer apiConfig.VectorDriver.Close()
 
 		c.logger.Info("vector search enabled",
-			"vector_store_target", c.vectorStoreTarget,
+			"vector_store_target", config.RedactDSN(c.vectorStoreTarget),
 			"embedding_provider", c.embeddingProvider,
 			"embedding_target", c.embeddingTarget,
 			"embedding_model", c.embeddingModel,
