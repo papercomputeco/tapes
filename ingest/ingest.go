@@ -40,6 +40,23 @@ var (
 	ErrDownstream = errors.New("downstream failure")
 )
 
+// Server-trusted identity headers, populated by the upstream gateway
+// from validated JWT claims. This is the same contract the wire-capture
+// path consumes (tapes-extproc's internal/headers package reads the
+// identical names into the session envelope): clients are not permitted
+// to send these themselves, and the gateway is responsible for
+// stripping inbound values so only edge-verified identity reaches the
+// handler. When the gateway is not configured to populate them, the
+// headers are absent and the payload envelope's own identity fields
+// stand.
+const (
+	// HeaderPaperAuthOrgID carries the verified org claim.
+	HeaderPaperAuthOrgID = "x-paper-auth-org-id"
+
+	// HeaderPaperAuthSubject carries the verified `sub` claim.
+	HeaderPaperAuthSubject = "x-paper-auth-subject"
+)
+
 // TurnPayload is the ingest request body for a single completed conversation turn.
 // It carries the raw provider request plus an already-reduced response.
 // Capture adapters such as tapes-extproc own protocol-specific stream reduction;
@@ -392,6 +409,7 @@ func (s *Server) handleTranscriptIngest(c *fiber.Ctx) error {
 			Error: fmt.Sprintf("%s: %s", ErrEnvelope, err),
 		})
 	}
+	resolveGatewayIdentity(c, payload.Session)
 	if err := payload.Session.Validate(); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{
 			Error: fmt.Sprintf("%s: %s", ErrEnvelope, err),
@@ -455,6 +473,29 @@ func (s *Server) handleTranscriptIngest(c *fiber.Ctx) error {
 		"records":  len(records),
 		"agent_id": payload.AgentID,
 	})
+}
+
+// resolveGatewayIdentity overrides the envelope's identity fields with
+// the server-trusted gateway headers when present. The transcript
+// client (paperd) cannot fill org_id itself — it holds a WorkOS org id,
+// not the platform org UUID the store keys on — so the payload value is
+// only trusted for direct in-cluster / override callers such as
+// `tapes backfill transcripts`. Anything arriving through the gateway
+// gets its identity from the edge-verified JWT, exactly like the
+// wire-capture path (tapes-extproc reads the same headers into the
+// session envelope at capture time). The override runs BEFORE envelope
+// validation so a malformed gateway-supplied org rejects loudly at the
+// HTTP boundary instead of corrupting attribution downstream.
+func resolveGatewayIdentity(c *fiber.Ctx, session *sessions.IngestEnvelope) {
+	if session == nil {
+		return
+	}
+	if org := c.Get(HeaderPaperAuthOrgID); org != "" {
+		session.OrgID = org
+	}
+	if sub := c.Get(HeaderPaperAuthSubject); sub != "" {
+		session.AuthSubject = sub
+	}
 }
 
 // persistRawTurn appends one captured turn to the immutable raw layer.
