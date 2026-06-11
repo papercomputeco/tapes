@@ -396,6 +396,10 @@ func (w *Worker) processEntry(ctx context.Context, e storage.DeriveQueueEntry, c
 	w.metrics.NodesUpserted.Add(float64(report.Upserted))
 	w.metrics.NodesPruned.Add(float64(report.Pruned))
 	w.metrics.DeriveDuration.Observe(duration.Seconds())
+	w.metrics.UnknownCalls.Add(float64(report.CallKinds[derive.KindUnknown]))
+	// ParseFailures samples are capped in the report; the exact count
+	// is everything that neither parsed nor was raw-only by design.
+	w.metrics.ParseFailures.Add(float64(report.RawTurns - report.ParsedTurns - report.RawOnlyTurns))
 	if !cleared {
 		// Re-dirtied while we derived; the session stays queued.
 		w.metrics.Requeued.Inc()

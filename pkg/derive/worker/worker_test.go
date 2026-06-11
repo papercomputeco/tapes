@@ -33,6 +33,21 @@ func gaugeValue(reg *prometheus.Registry, name string) float64 {
 	return 0
 }
 
+// counterValue scrapes one (label-less) counter from the registry.
+func counterValue(reg *prometheus.Registry, name string) float64 {
+	mfs, err := reg.Gather()
+	Expect(err).NotTo(HaveOccurred())
+	for _, mf := range mfs {
+		if mf.GetName() != name {
+			continue
+		}
+		for _, m := range mf.Metric {
+			return m.GetCounter().GetValue()
+		}
+	}
+	return 0
+}
+
 // fakeStore is an in-memory worker.Store. It models the queue's
 // conditional-clear semantics exactly (clear only when DirtiedAt is
 // unchanged) so the worker's race handling is testable without
@@ -56,6 +71,10 @@ type fakeStore struct {
 
 	// deriveErr makes RederiveSession fail.
 	deriveErr error
+
+	// report, when set, is what RederiveSession returns instead of the
+	// default healthy report.
+	report *derive.RederiveReport
 
 	// onDerive runs inside RederiveSession (under no lock held by the
 	// test) before the derive is recorded — used to model a raw turn
@@ -227,8 +246,12 @@ func (f *fakeStore) RederiveSession(ctx context.Context, _, org, harness, sessio
 	}
 	f.mu.Lock()
 	f.derives = append(f.derives, key(org, harness, session))
+	report := f.report
 	f.mu.Unlock()
-	return &derive.RederiveReport{RawTurns: 3, Nodes: 7, Upserted: 7}, nil
+	if report != nil {
+		return report, nil
+	}
+	return &derive.RederiveReport{RawTurns: 3, ParsedTurns: 3, Nodes: 7, Upserted: 7}, nil
 }
 
 var _ = Describe("Worker", func() {
@@ -475,6 +498,36 @@ var _ = Describe("Worker", func() {
 		_, stillQueued := store.entry("org-a", "claude-code", "sess-stuck")
 		Expect(stillQueued).To(BeTrue(), "an aborted derive must leave the session queued for the next worker")
 		Expect(store.lockCount()).To(BeZero(), "the advisory lock must release even on an aborted derive")
+	})
+
+	It("surfaces prune, unknown-kind, and parse-failure signals as counters", func() {
+		store.mark(settled("org-a", "claude-code", "sess-signals"))
+		store.report = &derive.RederiveReport{
+			// 6 raw turns: 3 parsed, 1 raw-only by design, 2 parse
+			// failures (the report's sample list is capped, so the
+			// counter must come from the arithmetic, not the samples).
+			RawTurns:     6,
+			ParsedTurns:  3,
+			RawOnlyTurns: 1,
+			CallKinds:    map[string]int{derive.KindMain: 2, derive.KindUnknown: 2},
+			Nodes:        7,
+			Upserted:     7,
+			Pruned:       1,
+		}
+
+		metrics := worker.NewMetrics()
+		cfg := fastConfig()
+		cfg.Metrics = metrics
+		startWorker(cfg)
+
+		Eventually(store.deriveCount).Should(Equal(1))
+		reg := metrics.Registry()
+		Eventually(func() float64 {
+			return counterValue(reg, "tapes_derive_worker_parse_failures_total")
+		}).Should(Equal(2.0))
+		Expect(counterValue(reg, "tapes_derive_worker_unknown_call_kinds_total")).To(Equal(2.0))
+		Expect(counterValue(reg, "tapes_derive_worker_nodes_pruned_total")).To(Equal(1.0),
+			"prune>0 on unchanged raw is the projection-bug alert signal")
 	})
 
 	It("runs a backstop sweep at startup that feeds the normal path", func() {
