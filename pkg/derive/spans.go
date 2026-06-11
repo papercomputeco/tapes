@@ -292,18 +292,15 @@ func (em *spanEmitter) compactionCall(src *SpanSource) {
 // (title-gen, suggestions — session-level by nature) land in the trace
 // that was live when they fired.
 func (em *spanEmitter) shadowCall(src *SpanSource) {
-	anchor := ""
-	for _, dn := range src.Chain {
-		if dn.Node.ParentToolUseID != "" {
-			anchor = dn.Node.ParentToolUseID
-			break
-		}
-	}
-	tool := em.toolSpans[anchor]
+	// per-call anchor from the attach passes — NOT the node stamps:
+	// checks share deduped prefix nodes, so a node's ParentToolUseID
+	// only carries the last writer's edge and fans every check into
+	// one tool.
+	tool := em.toolSpans[src.Anchor]
 	var turn *SpanTurn
 	var parent string
 	if tool != nil {
-		turn = em.toolTurn[anchor]
+		turn = em.toolTurn[src.Anchor]
 		parent = tool.SpanID
 	} else {
 		turn = em.traceAt(src)
@@ -315,7 +312,7 @@ func (em *spanEmitter) shadowCall(src *SpanSource) {
 	if tool != nil {
 		em.link(turn, &SpanLink{
 			FromTraceID: turn.TraceID, FromSpanID: span.SpanID, FromIO: "output",
-			ToTraceID: em.toolTurn[anchor].TraceID, ToSpanID: tool.SpanID, ToIO: "verdict",
+			ToTraceID: em.toolTurn[src.Anchor].TraceID, ToSpanID: tool.SpanID, ToIO: "verdict",
 			Kind: LinkVerdict,
 		})
 	}

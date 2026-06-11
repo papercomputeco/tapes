@@ -77,9 +77,13 @@ var _ = Describe("span emit over the corpus (cb9a87e5)", func() {
 
 		// Anchored shadows hang off the tool span they judge; the
 		// orphans are the session-level calls (title-gen, suggestion)
-		// plus the subagents' non-tool handback checks.
-		Expect(r.LinkKinds[derive.LinkVerdict]).To(Equal(26))
-		Expect(r.OrphanShadow).To(Equal(3))
+		// plus the subagents' non-tool handback checks — which the
+		// per-call anchor channel keeps honest (node stamps used to
+		// let a handback ride another check's shared-prefix stamp).
+		Expect(r.LinkKinds[derive.LinkVerdict]).To(Equal(24))
+		Expect(r.OrphanShadow).To(Equal(5))
+		Expect(verdictFanIn(spans)).To(BeNumerically("<=", 2),
+			"only a stage1+stage2 pair may share a judged tool")
 
 		// No cross-trace causality without compaction.
 		Expect(spans.Links).To(BeEmpty())
@@ -113,8 +117,10 @@ var _ = Describe("span emit over the corpus (9fec0da7 — compaction)", func() {
 		Expect(r.LinkKinds[derive.LinkEmits]).To(Equal(129))
 		Expect(r.LinkKinds[derive.LinkFeeds]).To(Equal(129))
 		Expect(r.LinkKinds[derive.LinkRejoin]).To(Equal(4))
-		Expect(r.LinkKinds[derive.LinkVerdict]).To(Equal(35))
-		Expect(r.OrphanShadow).To(Equal(6))
+		Expect(r.LinkKinds[derive.LinkVerdict]).To(Equal(31))
+		Expect(r.OrphanShadow).To(Equal(10))
+		Expect(verdictFanIn(spans)).To(BeNumerically("<=", 2),
+			"only a stage1+stage2 pair may share a judged tool")
 
 		// The compaction seam is the one cross-trace edge: the
 		// compaction llm span's output seeds the first llm call of the
@@ -187,4 +193,25 @@ var _ = Describe("span emit over the corpus (9fec0da7 — compaction)", func() {
 func mustDerive(fn func() (*derive.DerivedSet, *derive.ReconcileStats)) *derive.DerivedSet {
 	set, _ := fn()
 	return set
+}
+
+// verdictFanIn is the largest number of verdict links sharing one
+// judged tool span. >2 means anchoring collapsed (the 33-checks-on-
+// one-tool failure on cc 2.1.170's multi-message check format).
+func verdictFanIn(spans *derive.SpanSet) int {
+	targets := map[string]int{}
+	for _, turn := range spans.Turns {
+		for _, l := range turn.Links {
+			if l.Kind == derive.LinkVerdict {
+				targets[l.ToSpanID]++
+			}
+		}
+	}
+	most := 0
+	for _, n := range targets {
+		if n > most {
+			most = n
+		}
+	}
+	return most
 }

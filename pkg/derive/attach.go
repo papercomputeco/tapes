@@ -95,6 +95,7 @@ func attachVerdicts(turns []*attachTurn, candidates []*toolUseRef, report *Reder
 		ref.consumed = true
 		report.AttachedVerdicts++
 		for _, t := range g.turns {
+			t.source.Anchor = ref.id
 			for _, dn := range t.nodes {
 				// Stamp only this check's own nodes — a deduped node
 				// first captured by another call keeps its own edge.
@@ -132,6 +133,7 @@ func attachPlans(turns []*attachTurn, candidates []*toolUseRef, report *Rederive
 		}
 		best.consumed = true
 		report.PlansAttached++
+		t.source.Anchor = best.id
 		for _, dn := range t.nodes {
 			if dn.Node.Kind == t.kind {
 				dn.Node.ParentToolUseID = best.id
@@ -165,6 +167,7 @@ func attachWebSummaries(turns []*attachTurn, candidates []*toolUseRef, report *R
 		}
 		best.consumed = true
 		report.WebSummaryAttached++
+		t.source.Anchor = best.id
 		for _, dn := range t.nodes {
 			if dn.Node.Kind == t.kind {
 				dn.Node.ParentToolUseID = best.id
@@ -184,7 +187,14 @@ func judgedAction(req *llm.ChatRequest) string {
 	if req == nil || len(req.Messages) == 0 {
 		return ""
 	}
-	blocks := req.Messages[len(req.Messages)-1].Content
+	// Collect text blocks across ALL messages: older harnesses send
+	// the check as one message of many blocks, newer ones (cc 2.1.170)
+	// as many messages — the closing tag and the action can land in
+	// different messages.
+	var blocks []llm.ContentBlock
+	for _, m := range req.Messages {
+		blocks = append(blocks, m.Content...)
+	}
 
 	// Block-structured transcript: action = block before </transcript>.
 	for i := len(blocks) - 1; i > 0; i-- {

@@ -68,6 +68,12 @@ type SpanSource struct {
 	// first captured by THIS call.
 	Chain []*DerivedNode
 	New   []bool
+
+	// Anchor is the tool_use id this call attaches to, recorded
+	// per-call by the attach passes. Node stamps (ParentToolUseID)
+	// cannot carry this: checks share deduped prefix nodes, and a
+	// shared node holds only the last writer's edge.
+	Anchor string
 }
 
 // RederiveReport summarizes one derive pass.
@@ -162,6 +168,10 @@ type attachTurn struct {
 	// nodes are the retained DerivedNode objects this turn's chain
 	// resolved to after dedup — the stamping targets for attach edges.
 	nodes []*DerivedNode
+
+	// source is the turn's SpanSource — the attach passes record the
+	// per-call anchor on it.
+	source *SpanSource
 }
 
 // Deriver streams raw turns (in capture order) into a deduplicated
@@ -242,6 +252,7 @@ func (dv *Deriver) AddTurn(rec *storage.RawTurnRecord) {
 		ThreadID:   turn.threadID,
 		Session:    key,
 	}
+	turn.source = source
 
 	for _, node := range chain {
 		retained, dup := dv.byHash[node.Hash]
