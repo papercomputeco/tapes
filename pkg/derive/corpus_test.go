@@ -14,13 +14,18 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
-// The corpus is a full session captured LIVE through a clearing
-// (2026-06-10, exercise-claude-harness-advanced driven by a human):
-// 85 wire envelopes exactly as tapes-extproc dispatched them plus the
-// session's 3 transcript files (main + 2 subagents). It replaces the
+// The corpus is full sessions captured LIVE through a clearing
+// (2026-06-10, exercise-claude-harness skills driven by a human): wire
+// envelopes exactly as tapes-extproc dispatched them plus each
+// session's transcript files (main + subagents). It replaces the
 // "golden sessions in a long-lived clearing DB" pattern — the deriver
 // is a pure function of these rows, so the whole reconciliation
 // pipeline regression-tests here with no database and no clearing.
+//
+//   - cb9a87e5 (advanced): plan mode, 2 subagents, a stage-2 reasoned
+//     verdict overturn.
+//   - 9fec0da7 (super-advanced): context compaction mid-session, 4
+//     subagents, two accepted plans, haiku/opus mixed shadow calls.
 //
 // When the classifier or projection changes intentionally, re-pin the
 // numbers below and say why in the commit message. A drop you can't
@@ -77,10 +82,10 @@ func loadCorpus(path string) (wire []storage.RawTurnRecord, transcripts []storag
 	return wire, transcripts
 }
 
-func deriveCorpus() (*derive.DerivedSet, *derive.ReconcileStats) {
-	wire, transcriptRows := loadCorpus("testdata/corpus-cb9a87e5.jsonl.gz")
-	Expect(wire).To(HaveLen(87))
-	Expect(transcriptRows).To(HaveLen(3))
+func deriveCorpus(path string, wantWire, wantTranscripts int) (*derive.DerivedSet, *derive.ReconcileStats) {
+	wire, transcriptRows := loadCorpus(path)
+	Expect(wire).To(HaveLen(wantWire))
+	Expect(transcriptRows).To(HaveLen(wantTranscripts))
 
 	set, err := derive.BuildDerivedSet(wire, "")
 	Expect(err).NotTo(HaveOccurred())
@@ -95,9 +100,17 @@ func deriveCorpus() (*derive.DerivedSet, *derive.ReconcileStats) {
 	return set, stats
 }
 
+func deriveAdvanced() (*derive.DerivedSet, *derive.ReconcileStats) {
+	return deriveCorpus("testdata/corpus-cb9a87e5.jsonl.gz", 87, 3)
+}
+
+func deriveSuperAdvanced() (*derive.DerivedSet, *derive.ReconcileStats) {
+	return deriveCorpus("testdata/corpus-9fec0da7.jsonl.gz", 121, 5)
+}
+
 var _ = Describe("live-capture corpus (cb9a87e5)", func() {
 	It("re-derives the session with the pinned reconciliation quality", func() {
-		set, stats := deriveCorpus()
+		set, stats := deriveAdvanced()
 		r := set.Report
 
 		// Thread attribution is deterministic from the capture-time
@@ -161,8 +174,79 @@ var _ = Describe("live-capture corpus (cb9a87e5)", func() {
 	})
 
 	It("is idempotent — a second derivation is byte-identical", func() {
-		a, _ := deriveCorpus()
-		b, _ := deriveCorpus()
+		a, _ := deriveAdvanced()
+		b, _ := deriveAdvanced()
+		Expect(len(a.Nodes)).To(Equal(len(b.Nodes)))
+		for i := range a.Nodes {
+			Expect(b.Nodes[i].Node.Hash).To(Equal(a.Nodes[i].Node.Hash))
+			Expect(b.Nodes[i].Node.Kind).To(Equal(a.Nodes[i].Node.Kind))
+			Expect(b.Nodes[i].Node.ParentToolUseID).To(Equal(a.Nodes[i].Node.ParentToolUseID))
+		}
+	})
+})
+
+var _ = Describe("live-capture corpus (9fec0da7 — compaction + multi-model)", func() {
+	It("re-derives the session with the pinned reconciliation quality", func() {
+		set, stats := deriveSuperAdvanced()
+		r := set.Report
+
+		// main ("") + 4 subagents.
+		threads := map[string]int{}
+		for _, dn := range set.Nodes {
+			threads[dn.Node.ThreadID]++
+		}
+		Expect(threads).To(HaveLen(5))
+
+		Expect(r.CallKinds).NotTo(HaveKey(derive.KindUnknown))
+
+		// The session's call mix, pinned from the live capture. The
+		// compaction call is the reason this fixture exists: cc 2.1.x
+		// sends it streaming with the full tool set, so only the
+		// instruction text distinguishes it from a main turn.
+		Expect(r.CallKinds).To(Equal(map[string]int{
+			derive.KindMain:        79,
+			derive.KindCompaction:  1,
+			derive.KindCheckStage1: 33,
+			derive.KindTitleGen:    1,
+			derive.KindPlanNameGen: 2,
+			derive.KindSuggestion:  2,
+			derive.KindWebSummary:  3,
+		}))
+
+		// The misses are the subagents' non-tool handback events.
+		Expect(r.AttachedVerdicts).To(Equal(r.JudgedActions - 4))
+		for _, u := range r.UnattachedActions {
+			Expect(u).To(ContainSubstring("subagent has finished"))
+		}
+
+		// All four subagents fork at their Task tool_use; compaction
+		// re-roots the main thread, so TWO main chains join the same
+		// transcript.
+		Expect(stats.SubagentForks).To(Equal(4))
+		Expect(stats.ForkedChains).To(Equal(4))
+		Expect(stats.MainChainsJoined).To(Equal(2))
+
+		joinPct := float64(stats.ConversationJoined) / float64(stats.ConversationTotal)
+		Expect(joinPct).To(BeNumerically(">=", 0.90))
+
+		// Two more than the session's live tree shows: derived in
+		// isolation the session owns every node it produced, while in a
+		// multi-session store two content-identical side nodes dedup
+		// against an earlier session's copies.
+		Expect(r.Nodes).To(Equal(262))
+
+		// Both accepted plans tie to their ExitPlanMode calls.
+		Expect(r.PlansAttached).To(Equal(2))
+
+		Expect(set.SessionTitles).To(HaveKeyWithValue(
+			derive.SessionKey{HarnessID: "claude", HarnessSessionID: "9fec0da7-f439-49ae-8537-27713f8f30b6"},
+			"Test Claude harness session 3",
+		))
+	})
+
+	It("is idempotent — a second derivation is byte-identical", func() {
+		a, _ := deriveSuperAdvanced()
+		b, _ := deriveSuperAdvanced()
 		Expect(len(a.Nodes)).To(Equal(len(b.Nodes)))
 		for i := range a.Nodes {
 			Expect(b.Nodes[i].Node.Hash).To(Equal(a.Nodes[i].Node.Hash))
