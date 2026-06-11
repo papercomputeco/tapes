@@ -218,7 +218,38 @@ func RunDeriveQueueSpecs(label string, makeDriver DriverFactory) bool {
 				_, err = queue.ClearDeriveDirty(ctx, *cur)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				enqueued, err := queue.SweepDeriveDirty(ctx)
+				enqueued, err := queue.SweepDeriveDirty(ctx, time.Time{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(enqueued).To(gomega.Equal(int64(1)))
+				gomega.Expect(get(sessionA)).NotTo(gomega.BeNil())
+			})
+
+			ginkgo.It("bounds the sweep to sessions active since the cutoff", func() {
+				_, err := raw.PutRawTurn(ctx, storage.RawTurnRecord{
+					Source:           storage.RawTurnSourceWire,
+					Provider:         "anthropic",
+					HarnessID:        harnessID,
+					HarnessSessionID: sessionA,
+					RequestID:        "req-sweep-bound",
+					RawRequest:       json.RawMessage(`{"model":"m","messages":[]}`),
+				})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Simulate the lost mark by clearing the queue.
+				cur := get(sessionA)
+				gomega.Expect(cur).NotTo(gomega.BeNil())
+				_, err = queue.ClearDeriveDirty(ctx, *cur)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// received_at is now; a future cutoff excludes the
+				// session, a past cutoff re-enqueues it.
+				enqueued, err := queue.SweepDeriveDirty(ctx, time.Now().Add(time.Hour))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(enqueued).To(gomega.BeZero(),
+					"sessions without raw activity since the cutoff must not enqueue")
+				gomega.Expect(get(sessionA)).To(gomega.BeNil())
+
+				enqueued, err = queue.SweepDeriveDirty(ctx, time.Now().Add(-time.Hour))
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Expect(enqueued).To(gomega.Equal(int64(1)))
 				gomega.Expect(get(sessionA)).NotTo(gomega.BeNil())
@@ -240,7 +271,7 @@ func RunDeriveQueueSpecs(label string, makeDriver DriverFactory) bool {
 				gomega.Expect(before).NotTo(gomega.BeNil())
 
 				time.Sleep(10 * time.Millisecond)
-				enqueued, err := queue.SweepDeriveDirty(ctx)
+				enqueued, err := queue.SweepDeriveDirty(ctx, time.Time{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Expect(enqueued).To(gomega.BeZero())
 

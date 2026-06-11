@@ -30,6 +30,7 @@ const (
 	DefaultPageSize       = 50
 	DefaultMaxPollBackoff = 30 * time.Second
 	DefaultDrainTimeout   = 30 * time.Second
+	DefaultSweepWindow    = 24 * time.Hour
 )
 
 // Store is the storage capability surface the worker drives. The
@@ -44,8 +45,9 @@ type Store interface {
 	// ClearDeriveDirty removes the entry only if DirtiedAt is unchanged.
 	ClearDeriveDirty(ctx context.Context, e storage.DeriveQueueEntry) (bool, error)
 
-	// SweepDeriveDirty enqueues every session in the raw layer.
-	SweepDeriveDirty(ctx context.Context) (int64, error)
+	// SweepDeriveDirty enqueues every raw-layer session active at or
+	// after activeSince (zero time = everything).
+	SweepDeriveDirty(ctx context.Context, activeSince time.Time) (int64, error)
 
 	// DeriveQueueStats reports queue depth and the oldest dirty mark
 	// (the worker's depth/lag gauges and readiness probe).
@@ -76,6 +78,14 @@ type Config struct {
 	// present in the raw layer, catching lost marks. A sweep also runs
 	// once at startup.
 	SweepInterval time.Duration
+
+	// SweepWindow bounds the backstop sweep to sessions with raw
+	// activity in the last window, so a worker restart in a large org
+	// re-enqueues recent sessions instead of stampeding the queue with
+	// all of history (default 24h). Negative disables the bound and
+	// sweeps every session ever captured — the escape hatch for a full
+	// re-derive after a deriver fix.
+	SweepWindow time.Duration
 
 	// PageSize bounds one poll's batch. Sessions are still derived
 	// strictly one at a time.
@@ -109,6 +119,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.SweepInterval <= 0 {
 		c.SweepInterval = DefaultSweepInterval
+	}
+	if c.SweepWindow == 0 {
+		c.SweepWindow = DefaultSweepWindow
 	}
 	if c.PageSize <= 0 {
 		c.PageSize = DefaultPageSize
@@ -402,12 +415,17 @@ func (w *Worker) processEntry(ctx context.Context, e storage.DeriveQueueEntry, c
 	return nil
 }
 
-// runSweep enqueues every session present in the raw layer. The sweep
-// never writes nodes itself — every derive funnels through the locked
-// per-session path, so a sweep can never race a session derive's
-// prune.
+// runSweep enqueues every recently-active session present in the raw
+// layer (bounded by SweepWindow; negative window sweeps everything).
+// The sweep never writes nodes itself — every derive funnels through
+// the locked per-session path, so a sweep can never race a session
+// derive's prune.
 func (w *Worker) runSweep(ctx context.Context) {
-	enqueued, err := w.store.SweepDeriveDirty(ctx)
+	var activeSince time.Time
+	if w.cfg.SweepWindow > 0 {
+		activeSince = time.Now().Add(-w.cfg.SweepWindow)
+	}
+	enqueued, err := w.store.SweepDeriveDirty(ctx, activeSince)
 	if err != nil {
 		if ctx.Err() != nil {
 			return

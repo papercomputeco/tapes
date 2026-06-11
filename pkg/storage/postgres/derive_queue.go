@@ -122,11 +122,11 @@ func (d *Driver) DeriveQueueStats(ctx context.Context) (storage.DeriveQueueStats
 }
 
 // SweepDeriveDirty implements storage.DeriveQueue.
-func (d *Driver) SweepDeriveDirty(ctx context.Context) (int64, error) {
+func (d *Driver) SweepDeriveDirty(ctx context.Context, activeSince time.Time) (int64, error) {
 	if d == nil || d.conn == nil {
 		return 0, errors.New("postgres driver not open")
 	}
-	enqueued, err := d.q.SweepDeriveDirty(ctx)
+	enqueued, err := d.q.SweepDeriveDirty(ctx, pgtype.Timestamptz{Time: activeSince, Valid: true})
 	if err != nil {
 		return 0, fmt.Errorf("sweep derive dirty: %w", err)
 	}

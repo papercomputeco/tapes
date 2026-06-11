@@ -216,17 +216,22 @@ INSERT INTO derive_queue (org_id, harness_id, harness_session_id)
 SELECT DISTINCT org_id, harness_id, harness_session_id
 FROM raw_turns
 WHERE harness_session_id <> ''
+  AND received_at >= $1
 ON CONFLICT (org_id, harness_id, harness_session_id) DO NOTHING
 `
 
-// The worker's slow backstop: enqueue every harness session present in
-// the raw layer. Sessions already queued keep their dirtied_at (DO
-// NOTHING, not an upsert) so the sweep never resets an in-flight
-// debounce window. Everything still funnels through the per-session
-// locked derive path — the sweep itself never writes nodes, which is
-// what makes it safe to run concurrently with session derives.
-func (q *Queries) SweepDeriveDirty(ctx context.Context) (int64, error) {
-	result, err := q.db.Exec(ctx, sweepDeriveDirty)
+// The worker's slow backstop: enqueue every harness session with raw
+// activity since active_since. Bounding to recently-active sessions
+// keeps a worker restart in a large org from stampeding the queue with
+// the entire raw-layer history; passing the zero time sweeps
+// everything (the unbounded escape hatch). Sessions already queued
+// keep their dirtied_at (DO NOTHING, not an upsert) so the sweep never
+// resets an in-flight debounce window. Everything still funnels
+// through the per-session locked derive path — the sweep itself never
+// writes nodes, which is what makes it safe to run concurrently with
+// session derives.
+func (q *Queries) SweepDeriveDirty(ctx context.Context, activeSince pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepDeriveDirty, activeSince)
 	if err != nil {
 		return 0, err
 	}

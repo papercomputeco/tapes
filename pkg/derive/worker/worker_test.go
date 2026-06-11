@@ -44,7 +44,9 @@ type fakeStore struct {
 	queue map[string]storage.DeriveQueueEntry // key: org|harness|session
 	locks map[string]bool
 
-	// rawSessions is what SweepDeriveDirty enqueues.
+	// rawSessions is what SweepDeriveDirty enqueues; each entry's
+	// DirtiedAt doubles as the session's last raw activity for the
+	// sweep's activeSince bound.
 	rawSessions []storage.DeriveQueueEntry
 
 	// listErr makes ListDeriveDirty fail (models the DB outage the
@@ -173,12 +175,15 @@ func (f *fakeStore) ClearDeriveDirty(_ context.Context, e storage.DeriveQueueEnt
 	return true, nil
 }
 
-func (f *fakeStore) SweepDeriveDirty(_ context.Context) (int64, error) {
+func (f *fakeStore) SweepDeriveDirty(_ context.Context, activeSince time.Time) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sweeps++
 	var enqueued int64
 	for _, e := range f.rawSessions {
+		if !activeSince.IsZero() && e.DirtiedAt.Before(activeSince) {
+			continue
+		}
 		k := key(e.OrgID, e.HarnessID, e.HarnessSessionID)
 		if _, ok := f.queue[k]; ok {
 			continue
@@ -482,5 +487,37 @@ var _ = Describe("Worker", func() {
 
 		Eventually(store.sweepCount).Should(Equal(1))
 		Eventually(store.deriveCount).Should(Equal(2))
+	})
+
+	It("bounds the backstop sweep to recently-active sessions", func() {
+		stale := settled("org-a", "claude-code", "swept-stale")
+		stale.DirtiedAt = time.Now().Add(-48 * time.Hour)
+		store.rawSessions = []storage.DeriveQueueEntry{
+			stale,
+			settled("org-a", "claude-code", "swept-recent"),
+		}
+
+		// fastConfig leaves SweepWindow zero: the 24h default applies.
+		startWorker(fastConfig())
+
+		Eventually(store.deriveCount).Should(Equal(1))
+		Consistently(store.deriveCount, "50ms").Should(Equal(1),
+			"a session idle past the sweep window must not re-enqueue on restart")
+	})
+
+	It("sweeps all history when the sweep window is negative", func() {
+		stale := settled("org-a", "claude-code", "swept-stale")
+		stale.DirtiedAt = time.Now().Add(-48 * time.Hour)
+		store.rawSessions = []storage.DeriveQueueEntry{
+			stale,
+			settled("org-a", "claude-code", "swept-recent"),
+		}
+
+		cfg := fastConfig()
+		cfg.SweepWindow = -1
+		startWorker(cfg)
+
+		Eventually(store.deriveCount).Should(Equal(2),
+			"a negative window is the full re-derive escape hatch")
 	})
 })

@@ -59,11 +59,13 @@ type DeriveQueue interface {
 	// re-dirtied (or already cleared) in the meantime.
 	ClearDeriveDirty(ctx context.Context, e DeriveQueueEntry) (bool, error)
 
-	// SweepDeriveDirty enqueues every harness session present in the
-	// raw layer (the worker's slow backstop for lost marks). Sessions
+	// SweepDeriveDirty enqueues every harness session with raw-layer
+	// activity at or after activeSince (the worker's slow backstop for
+	// lost marks, bounded so a restart doesn't stampede the queue with
+	// all of history). The zero time sweeps every session. Sessions
 	// already queued keep their DirtiedAt. Returns how many sessions
 	// were newly enqueued.
-	SweepDeriveDirty(ctx context.Context) (int64, error)
+	SweepDeriveDirty(ctx context.Context, activeSince time.Time) (int64, error)
 
 	// DeriveQueueStats reports queue depth and the oldest dirty mark.
 	// Cheap (one aggregate over the small dirty-queue table); the
