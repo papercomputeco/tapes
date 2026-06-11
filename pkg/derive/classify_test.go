@@ -95,6 +95,21 @@ var _ = Describe("ClassifyCall", func() {
 		Expect(derive.ClassifyCall(req, assistantText("The page explains Arc."))).To(Equal(derive.KindWebSummary))
 	})
 
+	It("classifies compaction despite main-shaped params", func() {
+		// cc 2.1.x sends the compaction call streaming with the full
+		// tool set — only the final summarize instruction is the tell.
+		req := &llm.ChatRequest{
+			Stream:    boolp(true),
+			MaxTokens: intp(64000),
+			Tools:     []json.RawMessage{json.RawMessage(`{"name":"Bash"}`)},
+			Messages: []llm.Message{
+				textMsg("user", "real conversation history"),
+				textMsg("user", "Your entire response must be plain text: an <analysis> block followed by a <summary> block.\n\nYour task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests."),
+			},
+		}
+		Expect(derive.ClassifyCall(req, assistantText("<analysis>…</analysis><summary>…</summary>"))).To(Equal(derive.KindCompaction))
+	})
+
 	It("classifies the conversation spine", func() {
 		req := &llm.ChatRequest{
 			Stream:    boolp(true),

@@ -31,9 +31,6 @@ const (
 	KindSuggestion  = "offshoot:suggestion"
 	KindWebSummary  = "offshoot:web-summary"
 	KindProbe       = "offshoot:probe"
-	// KindCompaction is provisional: the tell is derived from the
-	// Claude Code structured-summary format and has only been observed
-	// in prod traffic, never yet in a dev capture.
 	KindCompaction = "offshoot:compaction"
 
 	// Injected context — whole messages the harness prepends inside
@@ -117,10 +114,12 @@ func ClassifyCall(req *llm.ChatRequest, resp *llm.ChatResponse) string {
 		return KindWebSummary
 	}
 
-	// Context compaction (provisional, prod-observed): the harness
-	// sends the full conversation plus a summarize instruction and the
-	// response is the Claude Code structured summary.
-	if toolCount == 0 {
+	// Context compaction: the harness sends the full conversation plus
+	// a summarize instruction as the final user message. The call SHAPE
+	// is not a tell — newer harnesses (cc 2.1.x) send it streaming with
+	// the full tool set, exactly like a main turn — only the instruction
+	// text and the structured-summary response are.
+	{
 		lt := strings.ToLower(lastText(req))
 		if strings.Contains(lt, "summary of the conversation so far") ||
 			strings.Contains(responseText(resp), "Primary Request and Intent") {
