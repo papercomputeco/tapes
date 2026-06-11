@@ -7,6 +7,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/sessions"
 )
 
 // Span emit — the RFD 00007 projection. EmitSpans re-walks the capture
@@ -90,6 +91,10 @@ type SpanTurn struct {
 	MainOutputTokens    int64
 	CacheReadTokens     int64
 	CacheCreationTokens int64
+
+	// TotalCostUSD prices every llm span's usage at derive time, so a
+	// re-derive reprices history when the table updates.
+	TotalCostUSD float64
 
 	Spans []*Span
 	Links []*SpanLink
@@ -569,6 +574,10 @@ func (em *spanEmitter) link(host *SpanTurn, l *SpanLink) {
 }
 
 func (em *spanEmitter) finish() {
+	// Default rates; override plumbing (sessions.LoadPricing) can ride
+	// the worker config later — the projection reprices on re-derive
+	// either way.
+	pricing := sessions.DefaultPricing()
 	em.set.Report.Traces = len(em.set.Turns)
 	for _, turn := range em.set.Turns {
 		root := turn.Spans[0]
@@ -593,6 +602,12 @@ func (em *spanEmitter) finish() {
 				if s.CallKind == KindMain {
 					turn.MainInputTokens += int64(s.Usage.PromptTokens)
 					turn.MainOutputTokens += int64(s.Usage.CompletionTokens)
+				}
+				if price, ok := sessions.PricingForModel(pricing, s.Model); ok {
+					_, _, total := sessions.CostForTokensWithCache(price,
+						int64(s.Usage.PromptTokens), int64(s.Usage.CompletionTokens),
+						int64(s.Usage.CacheCreationInputTokens), int64(s.Usage.CacheReadInputTokens))
+					turn.TotalCostUSD += total
 				}
 			}
 		}

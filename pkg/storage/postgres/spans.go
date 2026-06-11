@@ -44,6 +44,10 @@ func writeSpanSet(
 		sid := sessionOf(turn.Session)
 		turnSession[turn.TraceID] = sid
 		keepTraces = append(keepTraces, turn.TraceID)
+		costNumeric, err := numericFromFloat(turn.TotalCostUSD)
+		if err != nil {
+			return fmt.Errorf("encode trace cost %s: %w", turn.TraceID, err)
+		}
 		if err := qtx.UpsertSpanTurn(ctx, gensqlc.UpsertSpanTurnParams{
 			OrgID:               orgID,
 			TraceID:             turn.TraceID,
@@ -60,6 +64,7 @@ func writeSpanSet(
 			MainOutputTokens:    turn.MainOutputTokens,
 			CacheReadTokens:     turn.CacheReadTokens,
 			CacheCreationTokens: turn.CacheCreationTokens,
+			TotalCostUsd:        costNumeric,
 		}); err != nil {
 			return fmt.Errorf("upsert span turn %s: %w", turn.TraceID, err)
 		}
