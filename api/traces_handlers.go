@@ -46,21 +46,24 @@ type TraceItem struct {
 // instant losslessly for JS clients, since 1.7e18 exceeds
 // Number.MAX_SAFE_INTEGER.
 type SpanItem struct {
-	ID           string          `json:"id"`
-	TraceID      string          `json:"trace_id"`
-	SpanID       string          `json:"span_id"`
-	ParentSpanID string          `json:"parent_span_id,omitempty"`
-	Kind         string          `json:"kind"`
-	Name         string          `json:"name"`
-	Status       string          `json:"status"`
-	StartedAt    time.Time       `json:"started_at"`
-	StartNS      int64           `json:"start_ns"`
-	DurationNS   int64           `json:"duration_ns"`
-	Input        map[string]any  `json:"input"`
-	Output       map[string]any  `json:"output"`
-	Metadata     map[string]any  `json:"metadata"`
-	Metrics      json.RawMessage `json:"metrics,omitempty"`
-	ChildrenIDs  []string        `json:"children_ids,omitempty"`
+	ID           string         `json:"id"`
+	TraceID      string         `json:"trace_id"`
+	SpanID       string         `json:"span_id"`
+	ParentSpanID string         `json:"parent_span_id,omitempty"`
+	Kind         string         `json:"kind"`
+	Name         string         `json:"name"`
+	Status       string         `json:"status"`
+	StartedAt    time.Time      `json:"started_at"`
+	StartNS      int64          `json:"start_ns"`
+	DurationNS   int64          `json:"duration_ns"`
+	Input        map[string]any `json:"input"`
+	Output       map[string]any `json:"output"`
+	Metadata     map[string]any `json:"metadata"`
+	// Metrics is always an object on the wire — the contract fixture
+	// pins {} for usage-less spans (agent/tool/event), and the console
+	// schema requires it.
+	Metrics     json.RawMessage `json:"metrics"`
+	ChildrenIDs []string        `json:"children_ids,omitempty"`
 }
 
 // SpanLinkItem is a dataflow edge; from/to trace ids differ on
@@ -245,7 +248,7 @@ func spanItemFromRecord(sp storage.SpanRecord, childIDs []string) SpanItem {
 		Input:        map[string]any{},
 		Output:       map[string]any{},
 		Metadata:     map[string]any{},
-		Metrics:      sp.Usage,
+		Metrics:      emptyObjectIfNil(sp.Usage),
 		ChildrenIDs:  childIDs,
 	}
 
@@ -338,6 +341,15 @@ func verdictFromBlocks(callKind string, blocks []llm.ContentBlock) *TreeVerdict 
 		v.Reasoned = true
 	}
 	return v
+}
+
+// emptyObjectIfNil keeps wire fields object-typed when the stored
+// JSONB is NULL.
+func emptyObjectIfNil(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 || string(raw) == "null" {
+		return json.RawMessage("{}")
+	}
+	return raw
 }
 
 // decodeBlocks unmarshals a stored content-block array ("" / null →
