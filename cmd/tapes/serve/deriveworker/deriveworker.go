@@ -235,6 +235,11 @@ func (c *deriveWorkerCommander) run(ctx context.Context) error {
 	}
 
 	driver, err := c.connect(ctx)
+	if errors.Is(err, context.Canceled) {
+		// A shutdown signal during the startup wait is a clean exit,
+		// same as a signal during the run loop — not an error.
+		return nil
+	}
 	if err != nil {
 		return err
 	}
