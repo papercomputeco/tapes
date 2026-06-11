@@ -45,7 +45,8 @@ var _ = Describe("span emit over the corpus (cb9a87e5)", func() {
 			derive.SpanKindAgent: 5, // 3 trace roots + 2 subagents
 			derive.SpanKindLLM:   85,
 			derive.SpanKindTool:  97,
-			derive.SpanKindEvent: 7,
+			// injected context (7) + mid-spine system-role inserts (5)
+			derive.SpanKindEvent: 12,
 		}))
 		Expect(r.CallKinds[derive.KindMain]).To(Equal(56))
 		Expect(r.CallKinds[derive.KindCheckStage2]).To(Equal(1))
@@ -103,7 +104,8 @@ var _ = Describe("span emit over the corpus (9fec0da7 — compaction)", func() {
 			derive.SpanKindAgent: 7, // 3 trace roots + 4 subagents
 			derive.SpanKindLLM:   121,
 			derive.SpanKindTool:  129,
-			derive.SpanKindEvent: 10,
+			// injected context (10) + mid-spine system-role inserts (9)
+			derive.SpanKindEvent: 19,
 		}))
 		Expect(r.CallKinds[derive.KindMain]).To(Equal(79))
 		Expect(r.CallKinds[derive.KindCompaction]).To(Equal(1))

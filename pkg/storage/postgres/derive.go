@@ -335,6 +335,13 @@ func (d *Driver) writeDerivedSet(ctx context.Context, orgKey string, set *derive
 		set.Report.Pruned = int(pruned)
 	}
 
+	// The span projection rides the same transaction: traces, spans,
+	// and links are as derived as the nodes are, and a derive pass
+	// either lands both layers or neither.
+	if err := writeSpanSet(ctx, qtx, orgID, sessionIDs, coveredSessions, derive.EmitSpans(set)); err != nil {
+		return fmt.Errorf("write span set: %w", err)
+	}
+
 	return tx.Commit(ctx)
 }
 

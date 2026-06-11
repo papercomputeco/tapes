@@ -76,6 +76,7 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	app.Get("/v1/stats", s.handleStats)
 	app.Get("/v1/sessions", s.handleListSessions)
 	app.Get("/v1/sessions/:id/tree", s.handleGetSessionTree)
+	app.Get("/v1/sessions/:id/traces", s.handleGetSessionTraces)
 	app.Get("/v1/sessions/:id", s.handleGetSession)
 	app.Get("/v1/stems", s.handleListStems)
 	app.Get("/v1/stems/:hash/graph", s.handleGetStemGraph)

@@ -166,6 +166,27 @@ definitions:
       next_cursor:
         type: string
     type: object
+  api.SessionTracesResponse:
+    properties:
+      kind_counts:
+        additionalProperties:
+          type: integer
+        type: object
+      links:
+        items:
+          $ref: '#/definitions/api.SpanLinkItem'
+        type: array
+      session:
+        $ref: '#/definitions/api.SessionItem'
+      tasks:
+        items:
+          $ref: '#/definitions/api.TreeTask'
+        type: array
+      traces:
+        items:
+          $ref: '#/definitions/api.TraceDetail'
+        type: array
+    type: object
   api.SessionTreeResponse:
     properties:
       attachments:
@@ -214,6 +235,64 @@ definitions:
         items:
           $ref: '#/definitions/api.TreeTask'
         type: array
+    type: object
+  api.SpanItem:
+    properties:
+      children_ids:
+        items:
+          type: string
+        type: array
+      duration_ns:
+        type: integer
+      id:
+        type: string
+      input:
+        additionalProperties: {}
+        type: object
+      kind:
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      metrics:
+        items:
+          type: integer
+        type: array
+      name:
+        type: string
+      output:
+        additionalProperties: {}
+        type: object
+      parent_span_id:
+        type: string
+      span_id:
+        type: string
+      start_ns:
+        type: integer
+      started_at:
+        type: string
+      status:
+        type: string
+      trace_id:
+        type: string
+    type: object
+  api.SpanLinkItem:
+    properties:
+      from_io:
+        type: string
+      from_span_id:
+        type: string
+      from_trace_id:
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      to_io:
+        type: string
+      to_span_id:
+        type: string
+      to_trace_id:
+        type: string
     type: object
   api.StatsResponse:
     properties:
@@ -294,6 +373,53 @@ definitions:
       preview:
         type: string
       root_hash:
+        type: string
+    type: object
+  api.TraceDetail:
+    properties:
+      links:
+        items:
+          $ref: '#/definitions/api.SpanLinkItem'
+        type: array
+      spans:
+        items:
+          $ref: '#/definitions/api.SpanItem'
+        type: array
+      trace:
+        $ref: '#/definitions/api.TraceItem'
+    type: object
+  api.TraceItem:
+    properties:
+      duration_ns:
+        type: integer
+      ended_at:
+        type: string
+      harness_id:
+        type: string
+      harness_session_id:
+        type: string
+      id:
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      session_id:
+        type: string
+      span_count:
+        type: integer
+      started_at:
+        type: string
+      status:
+        type: string
+      total_cost_usd:
+        type: number
+      total_input_tokens:
+        type: integer
+      total_output_tokens:
+        type: integer
+      trace_id:
+        type: string
+      user_prompt:
         type: string
     type: object
   api.TreeAttachment:
@@ -868,6 +994,43 @@ paths:
           schema:
             $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
       summary: Get a session
+      tags:
+      - sessions
+  /v1/sessions/{id}/traces:
+    get:
+      description: Returns the session's user-visible turns as traces with nested
+        spans (llm calls, tools, subagents, shadow calls, injected context) and dataflow
+        links. Cross-trace links (compaction seams) are at the response top level.
+      parameters:
+      - description: Session id (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SessionTracesResponse'
+        "400":
+          description: Missing or malformed id
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "404":
+          description: Session not found
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Failed to load session
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Span traces not supported by this backend
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Get a session's trace/span projection
       tags:
       - sessions
   /v1/sessions/{id}/tree:

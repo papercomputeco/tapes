@@ -134,6 +134,40 @@ var _ = Describe("Derive worker storage (postgres)", func() {
 	})
 
 	Describe("RederiveSession", func() {
+		It("writes the span projection alongside nodes, idempotently", func() {
+			insertSessionRow(sessionARowID, sessionA)
+			putWireTurn("req-a-1", sessionA, "hello from session A")
+			putWireTurn("req-a-2", sessionA, "second turn in session A")
+
+			_, err := driver.RederiveSession(ctx, "", "", harnessID, sessionA)
+			Expect(err).NotTo(HaveOccurred())
+
+			countRows := func(table string) int {
+				var n int
+				Expect(driver.DB().QueryRow(ctx,
+					"SELECT COUNT(*) FROM "+table+" WHERE session_id = $1", sessionARowID).Scan(&n),
+				).To(Succeed())
+				return n
+			}
+			turns := countRows("span_turns")
+			spanRows := countRows("spans")
+			Expect(turns).To(BeNumerically(">", 0), "derive must land span turns")
+			Expect(spanRows).To(BeNumerically(">", turns), "each trace carries spans beyond its root")
+
+			var llmSpans int
+			Expect(driver.DB().QueryRow(ctx,
+				"SELECT COUNT(*) FROM spans WHERE session_id = $1 AND kind = 'llm' AND raw_turn_id IS NOT NULL",
+				sessionARowID).Scan(&llmSpans)).To(Succeed())
+			Expect(llmSpans).To(Equal(2), "one llm span per wire call, referencing its raw row")
+
+			// Idempotence: deterministic ids upsert in place; rerun
+			// changes nothing.
+			_, err = driver.RederiveSession(ctx, "", "", harnessID, sessionA)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(countRows("span_turns")).To(Equal(turns))
+			Expect(countRows("spans")).To(Equal(spanRows))
+		})
+
 		It("derives one session, is idempotent, and never touches siblings", func() {
 			insertSessionRow(sessionARowID, sessionA)
 			insertSessionRow(sessionBRowID, sessionB)

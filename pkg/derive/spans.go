@@ -80,6 +80,11 @@ type SpanTurn struct {
 	StartedAt time.Time
 	EndedAt   time.Time
 
+	// Token totals summed over every llm span in the trace — shadow
+	// calls included, because the turn really spent them.
+	TotalInputTokens  int64
+	TotalOutputTokens int64
+
 	Spans []*Span
 	Links []*SpanLink
 }
@@ -327,7 +332,19 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 		}
 		node := dn.Node
 		if strings.HasPrefix(node.Kind, "injected:") {
-			em.eventSpan(turn, parent, node.Kind, node.Hash, src.CapturedAt)
+			em.eventSpan(turn, parent, node.Kind, node.Hash, src.CapturedAt, node.Bucket.Content)
+			continue
+		}
+		if node.Bucket.Role == "system" {
+			// mid-spine system-role inserts (task reminders, CLAUDE.md
+			// re-injections, post-compaction replays) are harness
+			// context, not user input — same family as injected:*,
+			// surfaced as events so they keep rendering as chips. The
+			// classifier types them "main" today; the emit stage gives
+			// them an injected:* call_kind so span call-kind counts
+			// keep meaning "llm calls" for main. Candidate for a real
+			// classifier kind (injected:replay) later.
+			em.eventSpan(turn, parent, KindInjectedSystemInsert, node.Hash, src.CapturedAt, node.Bucket.Content)
 			continue
 		}
 		if node.Bucket.Role != roleUser {
@@ -513,7 +530,7 @@ func (em *spanEmitter) llmSpan(src *SpanSource, parentID string, input []llm.Con
 	return span
 }
 
-func (em *spanEmitter) eventSpan(turn *SpanTurn, parent *Span, kind, hash string, at time.Time) {
+func (em *spanEmitter) eventSpan(turn *SpanTurn, parent *Span, kind, hash string, at time.Time, content []llm.ContentBlock) {
 	em.addSpan(turn, &Span{
 		SpanID:       "evt_" + hash[:16],
 		ParentSpanID: parent.SpanID,
@@ -522,6 +539,8 @@ func (em *spanEmitter) eventSpan(turn *SpanTurn, parent *Span, kind, hash string
 		Status:       "ok",
 		StartedAt:    at,
 		CallKind:     kind,
+		Output:       content,
+		NodeHash:     hash,
 	})
 }
 
@@ -562,6 +581,10 @@ func (em *spanEmitter) finish() {
 		for _, s := range turn.Spans {
 			if end := s.StartedAt.Add(time.Duration(s.DurationNS)); end.After(turn.EndedAt) {
 				turn.EndedAt = end
+			}
+			if s.Kind == SpanKindLLM && s.Usage != nil {
+				turn.TotalInputTokens += int64(s.Usage.PromptTokens)
+				turn.TotalOutputTokens += int64(s.Usage.CompletionTokens)
 			}
 		}
 		if root.Kind == SpanKindAgent {

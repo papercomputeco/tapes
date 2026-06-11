@@ -45,6 +45,14 @@ const (
 	// Every check in a session shares it byte-for-byte, so left on the
 	// chain it fuses all checks into one fan rooted at the blob.
 	KindInjectedClaudeMD = "injected:claude-md"
+
+	// KindInjectedSystemInsert marks mid-spine system-role inserts
+	// (task reminders, CLAUDE.md re-injections, post-compaction
+	// replays). Currently minted only by the span emit stage — the
+	// node classifier still types these "main" because they ride
+	// inside main calls; a dedicated classifier kind is a candidate
+	// follow-up.
+	KindInjectedSystemInsert = "injected:system-insert"
 )
 
 // ClassifyCall determines the kind of a captured API call from its

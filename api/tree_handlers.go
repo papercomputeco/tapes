@@ -135,6 +135,7 @@ var taskCreatedPattern = regexp.MustCompile(`#(\d+)`)
 // fold joins tool_use → tool_result by id.
 func foldTasks(nodes []*merkle.Node) []TreeTask {
 	resultText := map[string]string{}
+	var uses []llm.ContentBlock
 	for _, n := range nodes {
 		for _, b := range n.Bucket.Content {
 			if b.Type == "tool_result" && b.ToolResultID != "" {
@@ -142,16 +143,23 @@ func foldTasks(nodes []*merkle.Node) []TreeTask {
 					resultText[b.ToolResultID] = b.ToolOutput
 				}
 			}
+			if b.Type == blockTypeToolUse {
+				uses = append(uses, b)
+			}
 		}
 	}
+	return foldTaskBlocks(uses, resultText)
+}
 
+// foldTaskBlocks replays TaskCreate/TaskUpdate tool_use blocks (in
+// capture order) against their results. Shared between the tree and
+// trace projections — the fold is a function of the calls, not of the
+// storage model.
+func foldTaskBlocks(uses []llm.ContentBlock, resultText map[string]string) []TreeTask {
 	byID := map[string]*TreeTask{}
 	var order []*TreeTask
-	for _, n := range nodes {
-		for _, b := range n.Bucket.Content {
-			if b.Type != blockTypeToolUse {
-				continue
-			}
+	{
+		for _, b := range uses {
 			switch b.ToolName {
 			case "TaskCreate":
 				subject, _ := b.ToolInput["subject"].(string)

@@ -87,3 +87,52 @@ type Session struct {
 	ToolErrorCount    int32
 	DerivedTitle      pgtype.Text
 }
+
+type Span struct {
+	OrgID        pgtype.UUID
+	TraceID      string
+	SpanID       string
+	ParentSpanID string
+	SessionID    pgtype.UUID
+	Kind         string
+	Name         string
+	Status       string
+	CallKind     string
+	ThreadID     string
+	Model        string
+	StopReason   string
+	StartedAt    pgtype.Timestamptz
+	DurationNs   int64
+	Input        []byte
+	Output       []byte
+	Usage        []byte
+	RawTurnID    pgtype.Int8
+	NodeHash     string
+}
+
+type SpanLink struct {
+	OrgID       pgtype.UUID
+	FromTraceID string
+	FromSpanID  string
+	FromIo      string
+	ToTraceID   string
+	ToSpanID    string
+	ToIo        string
+	Kind        string
+	SessionID   pgtype.UUID
+}
+
+type SpanTurn struct {
+	OrgID             pgtype.UUID
+	TraceID           string
+	SessionID         pgtype.UUID
+	UserPrompt        string
+	Synthetic         string
+	Status            string
+	StartedAt         pgtype.Timestamptz
+	EndedAt           pgtype.Timestamptz
+	DurationNs        int64
+	TotalInputTokens  int64
+	TotalOutputTokens int64
+	TotalCostUsd      pgtype.Numeric
+}
