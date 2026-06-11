@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -44,7 +45,7 @@ var deriveWorkerFlags = config.FlagSet{
 	config.FlagDeriveWorkerPoll:          {Name: "poll-interval", ViperKey: "derive_worker.poll_interval", Description: "How often to poll the dirty-session queue (Go duration, default 5s)"},
 	config.FlagDeriveWorkerDebounce:      {Name: "debounce", ViperKey: "derive_worker.debounce", Description: "How long a session's dirty mark must be quiet before deriving (Go duration, default 20s)"},
 	config.FlagDeriveWorkerSweep:         {Name: "sweep-interval", ViperKey: "derive_worker.sweep_interval", Description: "Backstop sweep cadence enqueuing every raw-layer session (Go duration, default 1h)"},
-	config.FlagDeriveWorkerMetricsListen: {Name: "metrics-listen", ViperKey: "derive_worker.metrics_listen", Description: "Address to serve /metrics and /ping on (empty disables)"},
+	config.FlagDeriveWorkerMetricsListen: {Name: "metrics-listen", ViperKey: "derive_worker.metrics_listen", Description: "Address to serve /metrics, /healthz (liveness), /readyz (readiness), and /ping on (empty disables)"},
 	config.FlagDeriveWorkerWaitForDB:     {Name: "wait-for-db", ViperKey: "derive_worker.wait_for_db", Description: "Retry an unreachable Postgres at startup with backoff instead of exiting (for orchestrated environments; default: fail fast)"},
 }
 
@@ -154,20 +155,43 @@ func (c *deriveWorkerCommander) run(ctx context.Context) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	driver, err := c.connect(ctx)
-	if err != nil {
-		return err
-	}
-	defer driver.Close()
-
-	w := worker.NewWorker(cfg, driver, c.logger)
+	// The metrics/health listener starts BEFORE the database connect so
+	// /healthz answers (and /metrics scrapes don't 404) while
+	// --wait-for-db retries an unreachable store. /readyz flips to 200
+	// only once the worker exists and can poll its queue.
+	metrics := worker.NewMetrics()
+	cfg.Metrics = metrics
+	var readyWorker atomic.Pointer[worker.Worker]
 
 	if c.metricsListen != "" {
 		mux := http.NewServeMux()
-		mux.Handle("/metrics", w.Metrics().Handler())
+		mux.Handle("/metrics", metrics.Handler())
 		mux.HandleFunc("/ping", func(rw http.ResponseWriter, _ *http.Request) {
 			rw.WriteHeader(http.StatusOK)
 			_, _ = rw.Write([]byte("pong"))
+		})
+		// Liveness: the process is up and serving. Never depends on
+		// the database — a DB outage must not get the pod killed.
+		mux.HandleFunc("/healthz", func(rw http.ResponseWriter, _ *http.Request) {
+			rw.WriteHeader(http.StatusOK)
+			_, _ = rw.Write([]byte("ok"))
+		})
+		// Readiness: the store answers and the dirty queue is
+		// pollable. 503 until the first successful connect.
+		mux.HandleFunc("/readyz", func(rw http.ResponseWriter, r *http.Request) {
+			w := readyWorker.Load()
+			if w == nil {
+				http.Error(rw, "initializing: database not connected", http.StatusServiceUnavailable)
+				return
+			}
+			probeCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+			defer cancel()
+			if err := w.Ready(probeCtx); err != nil {
+				http.Error(rw, "not ready: "+err.Error(), http.StatusServiceUnavailable)
+				return
+			}
+			rw.WriteHeader(http.StatusOK)
+			_, _ = rw.Write([]byte("ok"))
 		})
 		srv := &http.Server{
 			Addr:              c.metricsListen,
@@ -182,6 +206,15 @@ func (c *deriveWorkerCommander) run(ctx context.Context) error {
 		defer func() { _ = srv.Close() }()
 		c.logger.Info("metrics listener started", "listen", c.metricsListen)
 	}
+
+	driver, err := c.connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer driver.Close()
+
+	w := worker.NewWorker(cfg, driver, c.logger)
+	readyWorker.Store(w)
 
 	return w.Run(ctx)
 }

@@ -9,11 +9,29 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/papercomputeco/tapes/pkg/derive"
 	"github.com/papercomputeco/tapes/pkg/derive/worker"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
+
+// gaugeValue scrapes one gauge from the worker's registry. Mirrors the
+// API server's metrics-test convention of asserting on typed Gather()
+// output rather than regexing the HTTP exposition.
+func gaugeValue(reg *prometheus.Registry, name string) float64 {
+	mfs, err := reg.Gather()
+	Expect(err).NotTo(HaveOccurred())
+	for _, mf := range mfs {
+		if mf.GetName() != name {
+			continue
+		}
+		for _, m := range mf.Metric {
+			return m.GetGauge().GetValue()
+		}
+	}
+	return 0
+}
 
 // fakeStore is an in-memory worker.Store. It models the queue's
 // conditional-clear semantics exactly (clear only when DirtiedAt is
@@ -109,6 +127,18 @@ func (f *fakeStore) ListDeriveDirty(_ context.Context, dirtiedBefore time.Time, 
 		}
 	}
 	return out, nil
+}
+
+func (f *fakeStore) DeriveQueueStats(_ context.Context) (storage.DeriveQueueStats, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	stats := storage.DeriveQueueStats{Depth: int64(len(f.queue))}
+	for _, e := range f.queue {
+		if stats.OldestDirtiedAt.IsZero() || e.DirtiedAt.Before(stats.OldestDirtiedAt) {
+			stats.OldestDirtiedAt = e.DirtiedAt
+		}
+	}
+	return stats, nil
 }
 
 func (f *fakeStore) GetDeriveDirty(_ context.Context, org, harness, session string) (*storage.DeriveQueueEntry, error) {
@@ -326,9 +356,11 @@ var _ = Describe("Worker", func() {
 		store.setListErr(errors.New("connection refused"))
 		store.mark(settled("org-a", "claude-code", "sess-outage"))
 
+		metrics := worker.NewMetrics()
 		cfg := fastConfig()
 		cfg.PollInterval = time.Millisecond
 		cfg.MaxPollBackoff = 250 * time.Millisecond
+		cfg.Metrics = metrics
 		startWorker(cfg)
 
 		// Let failures accumulate. With exponential backoff the poll
@@ -337,11 +369,40 @@ var _ = Describe("Worker", func() {
 		time.Sleep(200 * time.Millisecond)
 		Expect(store.listCount()).To(BeNumerically("<", 25),
 			"polls must back off during an outage, not hot-loop")
+		Expect(gaugeValue(metrics.Registry(), "tapes_derive_worker_consecutive_poll_failures")).
+			To(BeNumerically(">=", 1), "the outage must be visible as a gauge")
 
-		// The store comes back: the next backed-off poll succeeds and
-		// the queued session derives.
+		// The store comes back: the next backed-off poll succeeds, the
+		// queued session derives, and the failure gauge resets.
 		store.setListErr(nil)
 		Eventually(store.deriveCount, "2s").Should(Equal(1))
+		Eventually(func() float64 {
+			return gaugeValue(metrics.Registry(), "tapes_derive_worker_consecutive_poll_failures")
+		}, "2s").Should(BeZero())
+	})
+
+	It("publishes queue depth and derive lag gauges each poll", func() {
+		// A long debounce keeps the entry queued so the gauges have a
+		// stable non-zero queue to report.
+		store.mark(storage.DeriveQueueEntry{
+			OrgID:            "org-a",
+			HarnessID:        "claude-code",
+			HarnessSessionID: "sess-gauges",
+			DirtiedAt:        time.Now().Add(-time.Minute),
+		})
+
+		metrics := worker.NewMetrics()
+		cfg := fastConfig()
+		cfg.Debounce = time.Hour
+		cfg.Metrics = metrics
+		startWorker(cfg)
+
+		Eventually(func() float64 {
+			return gaugeValue(metrics.Registry(), "tapes_derive_worker_queue_depth")
+		}).Should(Equal(1.0))
+		Eventually(func() float64 {
+			return gaugeValue(metrics.Registry(), "tapes_derive_worker_derive_lag_seconds")
+		}).Should(BeNumerically("~", 60, 5), "lag is now minus the oldest dirty mark")
 	})
 
 	It("runs a backstop sweep at startup that feeds the normal path", func() {

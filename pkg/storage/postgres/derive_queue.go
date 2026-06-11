@@ -105,6 +105,22 @@ func (d *Driver) ClearDeriveDirty(ctx context.Context, e storage.DeriveQueueEntr
 	return rows > 0, nil
 }
 
+// DeriveQueueStats implements storage.DeriveQueue.
+func (d *Driver) DeriveQueueStats(ctx context.Context) (storage.DeriveQueueStats, error) {
+	if d == nil || d.conn == nil {
+		return storage.DeriveQueueStats{}, errors.New("postgres driver not open")
+	}
+	row, err := d.q.DeriveQueueStats(ctx)
+	if err != nil {
+		return storage.DeriveQueueStats{}, fmt.Errorf("derive queue stats: %w", err)
+	}
+	stats := storage.DeriveQueueStats{Depth: row.Depth}
+	if row.OldestDirtiedAt.Valid {
+		stats.OldestDirtiedAt = row.OldestDirtiedAt.Time
+	}
+	return stats, nil
+}
+
 // SweepDeriveDirty implements storage.DeriveQueue.
 func (d *Driver) SweepDeriveDirty(ctx context.Context) (int64, error) {
 	if d == nil || d.conn == nil {

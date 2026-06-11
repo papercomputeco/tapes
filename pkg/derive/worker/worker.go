@@ -46,6 +46,10 @@ type Store interface {
 	// SweepDeriveDirty enqueues every session in the raw layer.
 	SweepDeriveDirty(ctx context.Context) (int64, error)
 
+	// DeriveQueueStats reports queue depth and the oldest dirty mark
+	// (the worker's depth/lag gauges and readiness probe).
+	DeriveQueueStats(ctx context.Context) (storage.DeriveQueueStats, error)
+
 	// TryDeriveSessionLock takes the per-session advisory lock.
 	// acquired=false (nil error) means another worker holds it.
 	TryDeriveSessionLock(ctx context.Context, orgID, harnessID, harnessSessionID string) (release func(), acquired bool, err error)
@@ -81,6 +85,12 @@ type Config struct {
 	// first failure retries after roughly PollInterval; each further
 	// consecutive failure doubles the delay up to this cap.
 	MaxPollBackoff time.Duration
+
+	// Metrics optionally injects a pre-built metrics surface so the
+	// hosting command can mount /metrics (and serve health probes)
+	// before the store is even reachable — e.g. while --wait-for-db
+	// retries. NewWorker builds a fresh one when nil.
+	Metrics *Metrics
 }
 
 func (c Config) withDefaults() Config {
@@ -118,12 +128,25 @@ type Worker struct {
 
 // NewWorker creates a derive worker. logger must be non-nil.
 func NewWorker(cfg Config, store Store, logger *slog.Logger) *Worker {
+	metrics := cfg.Metrics
+	if metrics == nil {
+		metrics = NewMetrics()
+	}
 	return &Worker{
 		cfg:     cfg.withDefaults(),
 		store:   store,
 		logger:  logger,
-		metrics: NewMetrics(),
+		metrics: metrics,
 	}
+}
+
+// Ready reports whether the worker can serve its purpose right now:
+// the store answers and the dirty queue is pollable. This is the
+// /readyz signal — it intentionally exercises the same query the poll
+// loop depends on rather than a bare connection ping.
+func (w *Worker) Ready(ctx context.Context) error {
+	_, err := w.store.DeriveQueueStats(ctx)
+	return err
 }
 
 // Metrics exposes the worker's Prometheus surface so the hosting
@@ -183,6 +206,7 @@ func (w *Worker) pollFailed(err error) time.Duration {
 	}
 	w.consecutiveFailures++
 	w.metrics.PollErrors.Inc()
+	w.metrics.ConsecutiveFailures.Set(float64(w.consecutiveFailures))
 
 	delay := backoffDelay(w.cfg.PollInterval, w.cfg.MaxPollBackoff, w.consecutiveFailures)
 	w.logger.Warn("derive worker poll failed",
@@ -203,6 +227,7 @@ func (w *Worker) pollRecovered() {
 		"outage", time.Since(w.firstFailureAt).Round(time.Millisecond),
 	)
 	w.consecutiveFailures = 0
+	w.metrics.ConsecutiveFailures.Set(0)
 }
 
 // backoffDelay computes the delay before retry number failures+1:
@@ -225,6 +250,17 @@ func backoffDelay(base, maxDelay time.Duration, failures int) time.Duration {
 // it aborts the rest of the page so an outage costs one line + backoff
 // instead of one error per queued session.
 func (w *Worker) runPoll(ctx context.Context) error {
+	stats, err := w.store.DeriveQueueStats(ctx)
+	if err != nil {
+		return err
+	}
+	w.metrics.QueueDepth.Set(float64(stats.Depth))
+	lag := 0.0
+	if stats.Depth > 0 && !stats.OldestDirtiedAt.IsZero() {
+		lag = time.Since(stats.OldestDirtiedAt).Seconds()
+	}
+	w.metrics.DeriveLag.Set(lag)
+
 	cutoff := time.Now().Add(-w.cfg.Debounce)
 	entries, err := w.store.ListDeriveDirty(ctx, cutoff, w.cfg.PageSize)
 	if err != nil {

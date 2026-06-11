@@ -40,6 +40,17 @@ type Metrics struct {
 	SweepEnqueued prometheus.Counter
 
 	PollErrors prometheus.Counter
+
+	// ConsecutiveFailures mirrors the worker's in-memory outage
+	// counter: non-zero means the queue is currently unreachable and
+	// polls are backing off. Alert on sustained non-zero.
+	ConsecutiveFailures prometheus.Gauge
+
+	// QueueDepth and DeriveLag are refreshed once per successful poll:
+	// how many sessions are dirty, and how stale the oldest dirty mark
+	// is (now - oldest dirtied_at, seconds; 0 when the queue is empty).
+	QueueDepth prometheus.Gauge
+	DeriveLag  prometheus.Gauge
 }
 
 // NewMetrics constructs the derive worker's counters on a fresh
@@ -87,11 +98,24 @@ func NewMetrics() *Metrics {
 			Name: "tapes_derive_worker_poll_errors_total",
 			Help: "Dirty-queue poll failures.",
 		}),
+		ConsecutiveFailures: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "tapes_derive_worker_consecutive_poll_failures",
+			Help: "Consecutive dirty-queue poll failures; non-zero means the store is unreachable and polls are backing off.",
+		}),
+		QueueDepth: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "tapes_derive_worker_queue_depth",
+			Help: "Dirty (queued) sessions awaiting derivation, sampled each poll.",
+		}),
+		DeriveLag: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "tapes_derive_worker_derive_lag_seconds",
+			Help: "Age of the oldest dirty mark still queued (now - oldest dirtied_at); 0 when the queue is empty.",
+		}),
 	}
 	reg.MustRegister(
 		m.Derives, m.Requeued,
 		m.NodesUpserted, m.NodesPruned, m.DeriveDuration,
 		m.Sweeps, m.SweepEnqueued, m.PollErrors,
+		m.ConsecutiveFailures, m.QueueDepth, m.DeriveLag,
 	)
 	return m
 }

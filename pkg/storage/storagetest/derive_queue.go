@@ -133,6 +133,30 @@ func RunDeriveQueueSpecs(label string, makeDriver DriverFactory) bool {
 			})
 		})
 
+		ginkgo.Describe("DeriveQueueStats", func() {
+			ginkgo.It("reports zero depth and a zero oldest mark for an empty queue", func() {
+				stats, err := queue.DeriveQueueStats(ctx)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(stats.Depth).To(gomega.BeZero())
+				gomega.Expect(stats.OldestDirtiedAt.IsZero()).To(gomega.BeTrue())
+			})
+
+			ginkgo.It("reports queue depth and the oldest dirty mark", func() {
+				mark(sessionA)
+				time.Sleep(10 * time.Millisecond)
+				mark(sessionB)
+
+				first := get(sessionA)
+				gomega.Expect(first).NotTo(gomega.BeNil())
+
+				stats, err := queue.DeriveQueueStats(ctx)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(stats.Depth).To(gomega.Equal(int64(2)))
+				gomega.Expect(stats.OldestDirtiedAt).To(gomega.BeTemporally("==", first.DirtiedAt),
+					"oldest must be the earliest still-queued dirty mark")
+			})
+		})
+
 		ginkgo.Describe("PutRawTurn coupling", func() {
 			rawRecord := func(requestID, session string) storage.RawTurnRecord {
 				return storage.RawTurnRecord{

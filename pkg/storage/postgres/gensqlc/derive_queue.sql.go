@@ -43,6 +43,27 @@ func (q *Queries) ClearDeriveDirty(ctx context.Context, arg ClearDeriveDirtyPara
 	return result.RowsAffected(), nil
 }
 
+const deriveQueueStats = `-- name: DeriveQueueStats :one
+SELECT COUNT(*) AS depth, MIN(dirtied_at)::timestamptz AS oldest_dirtied_at
+FROM derive_queue
+`
+
+type DeriveQueueStatsRow struct {
+	Depth           int64
+	OldestDirtiedAt pgtype.Timestamptz
+}
+
+// Queue depth plus the oldest dirty mark: the worker polls this for
+// its depth/lag gauges, and /readyz uses it as the "store reachable,
+// queue pollable" probe. oldest_dirtied_at is NULL when the queue is
+// empty.
+func (q *Queries) DeriveQueueStats(ctx context.Context) (DeriveQueueStatsRow, error) {
+	row := q.db.QueryRow(ctx, deriveQueueStats)
+	var i DeriveQueueStatsRow
+	err := row.Scan(&i.Depth, &i.OldestDirtiedAt)
+	return i, err
+}
+
 const getDeriveDirty = `-- name: GetDeriveDirty :one
 SELECT org_id, harness_id, harness_session_id, dirtied_at
 FROM derive_queue

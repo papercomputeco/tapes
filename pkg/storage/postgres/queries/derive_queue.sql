@@ -37,6 +37,14 @@ WHERE org_id = $1
   AND harness_session_id = $3
   AND dirtied_at = sqlc.arg(dirtied_at);
 
+-- name: DeriveQueueStats :one
+-- Queue depth plus the oldest dirty mark: the worker polls this for
+-- its depth/lag gauges, and /readyz uses it as the "store reachable,
+-- queue pollable" probe. oldest_dirtied_at is NULL when the queue is
+-- empty.
+SELECT COUNT(*) AS depth, MIN(dirtied_at)::timestamptz AS oldest_dirtied_at
+FROM derive_queue;
+
 -- name: SweepDeriveDirty :execrows
 -- The worker's slow backstop: enqueue every harness session present in
 -- the raw layer. Sessions already queued keep their dirtied_at (DO

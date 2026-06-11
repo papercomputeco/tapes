@@ -23,6 +23,17 @@ type DeriveQueueEntry struct {
 	DirtiedAt time.Time
 }
 
+// DeriveQueueStats is a point-in-time summary of the dirty-session
+// queue, feeding the worker's depth/lag gauges and readiness probe.
+type DeriveQueueStats struct {
+	// Depth is the number of queued (dirty) sessions.
+	Depth int64
+
+	// OldestDirtiedAt is the oldest dirty mark still queued — "derive
+	// lag" is now minus this. Zero when the queue is empty.
+	OldestDirtiedAt time.Time
+}
+
 // DeriveQueue is an optional capability for a Driver: the dirty-session
 // queue feeding the derive worker. Marking is at-least-once and
 // idempotent (an upsert that bumps DirtiedAt); deriving is idempotent
@@ -53,4 +64,10 @@ type DeriveQueue interface {
 	// already queued keep their DirtiedAt. Returns how many sessions
 	// were newly enqueued.
 	SweepDeriveDirty(ctx context.Context) (int64, error)
+
+	// DeriveQueueStats reports queue depth and the oldest dirty mark.
+	// Cheap (one aggregate over the small dirty-queue table); the
+	// worker calls it every poll and the readiness probe leans on it
+	// as the "store reachable, queue pollable" check.
+	DeriveQueueStats(ctx context.Context) (DeriveQueueStats, error)
 }
