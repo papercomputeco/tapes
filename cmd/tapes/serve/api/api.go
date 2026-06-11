@@ -45,7 +45,7 @@ var apiFlags = config.FlagSet{
 	config.FlagVectorStoreTgt:      {Name: "vector-store-target", ViperKey: "vector_store.target", Description: "pgvector connection string (defaults to storage.postgres_dsn when unset)"},
 	config.FlagEmbeddingProv:       {Name: "embedding-provider", ViperKey: "embedding.provider", Description: "Embedding provider type (e.g., ollama, openai)"},
 	config.FlagEmbeddingTgt:        {Name: "embedding-target", ViperKey: "embedding.target", Description: "Embedding provider URL"},
-	config.FlagEmbeddingModel:      {Name: "embedding-model", ViperKey: "embedding.model", Description: "Embedding model name (e.g., text-embedding-3-small)"},
+	config.FlagEmbeddingModel:      {Name: "embedding-model", ViperKey: "embedding.model", Description: "Embedding model name (e.g., text-embedding-3-large)"},
 	config.FlagEmbeddingDims:       {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Embedding dimensionality"},
 }
 
@@ -167,7 +167,7 @@ func (c *apiCommander) run() error {
 		defer apiConfig.VectorDriver.Close()
 
 		c.logger.Info("vector search enabled",
-			"vector_store_target", c.vectorStoreTarget,
+			"vector_store_target", config.RedactDSN(c.vectorStoreTarget),
 			"embedding_provider", c.embeddingProvider,
 			"embedding_target", c.embeddingTarget,
 			"embedding_model", c.embeddingModel,

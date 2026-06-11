@@ -22,7 +22,7 @@ import (
 
 const (
 	// DefaultEmbeddingModel is OpenAI's default Tapes embedding model.
-	DefaultEmbeddingModel = "text-embedding-3-small"
+	DefaultEmbeddingModel = "text-embedding-3-large"
 
 	// DefaultBaseURL is the OpenAI API base URL.
 	DefaultBaseURL = "https://api.openai.com/v1"

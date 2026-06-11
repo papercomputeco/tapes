@@ -17,6 +17,9 @@ import (
 const (
 	// DefaultTableName is the default table name for storing vector documents.
 	DefaultTableName = "tapes_embeddings"
+
+	// maxVectorDimensions is the upper bound pgvector supports for the vector type.
+	maxVectorDimensions = 16000
 )
 
 // Driver implements vector.Driver using PostgreSQL with the pgvector extension.
@@ -48,6 +51,9 @@ func NewDriver(ctx context.Context, c *Config, log *slog.Logger) (*Driver, error
 
 	if c.Dimensions == 0 {
 		return nil, errors.New("pgvector embedding dimensions cannot be 0, must be configured")
+	}
+	if c.Dimensions > maxVectorDimensions {
+		return nil, fmt.Errorf("pgvector embedding dimensions cannot exceed %d", maxVectorDimensions)
 	}
 
 	tableName := c.TableName
@@ -98,6 +104,29 @@ func (d *Driver) ensureSchema(ctx context.Context) error {
 	}
 	if !hasVector {
 		return errors.New("vector extension is not installed in this database")
+	}
+
+	// CREATE TABLE IF NOT EXISTS keeps an existing table's declared dimension,
+	// after which every insert of differently-sized vectors fails. pgvector
+	// cannot resize a column in place, so an existing table must match the
+	// configured dimensions exactly.
+	var existingDims int32
+	err := d.pool.QueryRow(ctx, `
+		SELECT a.atttypmod
+		FROM pg_attribute a
+		WHERE a.attrelid = to_regclass($1)
+		  AND a.attname = 'embedding'
+	`, table).Scan(&existingDims)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		// Table does not exist yet; create it below.
+	case err != nil:
+		return fmt.Errorf("checking existing embedding dimensions: %w", err)
+	case existingDims != int32(d.dimensions): // #nosec G115 -- NewDriver bounds dimensions to maxVectorDimensions
+		return fmt.Errorf(
+			"existing table %s stores vector(%d) embeddings but %d dimensions are configured; re-embed into a new table or drop the old one",
+			table, existingDims, d.dimensions,
+		)
 	}
 
 	// Create the embeddings table with a vector column sized to the configured dimensions.
