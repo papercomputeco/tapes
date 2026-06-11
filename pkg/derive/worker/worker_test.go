@@ -2,6 +2,7 @@ package worker_test
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -27,6 +28,11 @@ type fakeStore struct {
 
 	// rawSessions is what SweepDeriveDirty enqueues.
 	rawSessions []storage.DeriveQueueEntry
+
+	// listErr makes ListDeriveDirty fail (models the DB outage the
+	// worker must back off on instead of hot-looping).
+	listErr   error
+	listCalls int
 
 	// deriveErr makes RederiveSession fail.
 	deriveErr error
@@ -74,9 +80,25 @@ func (f *fakeStore) sweepCount() int {
 	return f.sweeps
 }
 
+func (f *fakeStore) listCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.listCalls
+}
+
+func (f *fakeStore) setListErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listErr = err
+}
+
 func (f *fakeStore) ListDeriveDirty(_ context.Context, dirtiedBefore time.Time, limit int32) ([]storage.DeriveQueueEntry, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.listCalls++
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
 	var out []storage.DeriveQueueEntry
 	for _, e := range f.queue {
 		if !e.DirtiedAt.After(dirtiedBefore) {
@@ -298,6 +320,28 @@ var _ = Describe("Worker", func() {
 		store.deriveErr = nil
 		store.mu.Unlock()
 		Eventually(store.deriveCount).Should(Equal(1))
+	})
+
+	It("backs off polling while the queue is unreachable, then recovers", func() {
+		store.setListErr(errors.New("connection refused"))
+		store.mark(settled("org-a", "claude-code", "sess-outage"))
+
+		cfg := fastConfig()
+		cfg.PollInterval = time.Millisecond
+		cfg.MaxPollBackoff = 250 * time.Millisecond
+		startWorker(cfg)
+
+		// Let failures accumulate. With exponential backoff the poll
+		// count stays far below the no-backoff rate (~1 per ms here);
+		// a generous bound keeps the spec timing-robust.
+		time.Sleep(200 * time.Millisecond)
+		Expect(store.listCount()).To(BeNumerically("<", 25),
+			"polls must back off during an outage, not hot-loop")
+
+		// The store comes back: the next backed-off poll succeeds and
+		// the queued session derives.
+		store.setListErr(nil)
+		Eventually(store.deriveCount, "2s").Should(Equal(1))
 	})
 
 	It("runs a backstop sweep at startup that feeds the normal path", func() {

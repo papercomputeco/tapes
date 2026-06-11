@@ -13,7 +13,9 @@ package worker
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"time"
 
 	"github.com/papercomputeco/tapes/pkg/derive"
@@ -22,10 +24,11 @@ import (
 
 // Defaults for Config fields left zero.
 const (
-	DefaultPollInterval  = 5 * time.Second
-	DefaultDebounce      = 20 * time.Second
-	DefaultSweepInterval = time.Hour
-	DefaultPageSize      = 50
+	DefaultPollInterval   = 5 * time.Second
+	DefaultDebounce       = 20 * time.Second
+	DefaultSweepInterval  = time.Hour
+	DefaultPageSize       = 50
+	DefaultMaxPollBackoff = 30 * time.Second
 )
 
 // Store is the storage capability surface the worker drives. The
@@ -72,6 +75,12 @@ type Config struct {
 	// PageSize bounds one poll's batch. Sessions are still derived
 	// strictly one at a time.
 	PageSize int32
+
+	// MaxPollBackoff caps the jittered exponential backoff applied
+	// between polls while the queue is unreachable (DB outage). The
+	// first failure retries after roughly PollInterval; each further
+	// consecutive failure doubles the delay up to this cap.
+	MaxPollBackoff time.Duration
 }
 
 func (c Config) withDefaults() Config {
@@ -87,6 +96,9 @@ func (c Config) withDefaults() Config {
 	if c.PageSize <= 0 {
 		c.PageSize = DefaultPageSize
 	}
+	if c.MaxPollBackoff <= 0 {
+		c.MaxPollBackoff = DefaultMaxPollBackoff
+	}
 	return c
 }
 
@@ -96,6 +108,12 @@ type Worker struct {
 	store   Store
 	logger  *slog.Logger
 	metrics *Metrics
+
+	// Consecutive poll-failure bookkeeping for backoff and the
+	// single-line outage/recovery logs. Only the Run goroutine touches
+	// these.
+	consecutiveFailures int
+	firstFailureAt      time.Time
 }
 
 // NewWorker creates a derive worker. logger must be non-nil.
@@ -124,7 +142,10 @@ func (w *Worker) Run(ctx context.Context) error {
 
 	w.runSweep(ctx)
 
-	poll := time.NewTicker(w.cfg.PollInterval)
+	// Polling uses a timer, not a ticker, so the interval can stretch
+	// into a backoff while the store is unreachable instead of hot-
+	// looping the failure every PollInterval.
+	poll := time.NewTimer(w.cfg.PollInterval)
 	defer poll.Stop()
 	sweep := time.NewTicker(w.cfg.SweepInterval)
 	defer sweep.Stop()
@@ -135,31 +156,89 @@ func (w *Worker) Run(ctx context.Context) error {
 			w.logger.Info("derive worker stopping")
 			return nil
 		case <-poll.C:
-			w.runPoll(ctx)
+			err := w.runPoll(ctx)
+			switch {
+			case ctx.Err() != nil:
+				// Shutting down; the next select arm exits.
+				poll.Reset(w.cfg.PollInterval)
+			case err != nil:
+				poll.Reset(w.pollFailed(err))
+			default:
+				w.pollRecovered()
+				poll.Reset(w.cfg.PollInterval)
+			}
 		case <-sweep.C:
 			w.runSweep(ctx)
 		}
 	}
 }
 
+// pollFailed records one consecutive poll failure and returns the
+// jittered, exponentially-backed-off delay until the next poll. One
+// WARN line per failure — the error text inline, never a stack — so an
+// outage reads as a counter ticking up, not a wall of spam.
+func (w *Worker) pollFailed(err error) time.Duration {
+	if w.consecutiveFailures == 0 {
+		w.firstFailureAt = time.Now()
+	}
+	w.consecutiveFailures++
+	w.metrics.PollErrors.Inc()
+
+	delay := backoffDelay(w.cfg.PollInterval, w.cfg.MaxPollBackoff, w.consecutiveFailures)
+	w.logger.Warn("derive worker poll failed",
+		"consecutive_failures", w.consecutiveFailures,
+		"retry_in", delay.Round(time.Millisecond),
+		"error", err.Error(),
+	)
+	return delay
+}
+
+// pollRecovered closes out an outage window with a single INFO line.
+func (w *Worker) pollRecovered() {
+	if w.consecutiveFailures == 0 {
+		return
+	}
+	w.logger.Info("derive worker reconnected",
+		"failures", w.consecutiveFailures,
+		"outage", time.Since(w.firstFailureAt).Round(time.Millisecond),
+	)
+	w.consecutiveFailures = 0
+}
+
+// backoffDelay computes the delay before retry number failures+1:
+// base doubled per consecutive failure, capped, then jittered to
+// 50–100% so restarted replicas don't repoll in lockstep.
+func backoffDelay(base, maxDelay time.Duration, failures int) time.Duration {
+	delay := base
+	for i := 1; i < failures && delay < maxDelay; i++ {
+		delay *= 2
+	}
+	if delay > maxDelay {
+		delay = maxDelay
+	}
+	half := delay / 2
+	return half + rand.N(half+1)
+}
+
 // runPoll drains one page of settled dirty sessions, one at a time.
-func (w *Worker) runPoll(ctx context.Context) {
+// The returned error is an infrastructure failure (queue unreachable);
+// it aborts the rest of the page so an outage costs one line + backoff
+// instead of one error per queued session.
+func (w *Worker) runPoll(ctx context.Context) error {
 	cutoff := time.Now().Add(-w.cfg.Debounce)
 	entries, err := w.store.ListDeriveDirty(ctx, cutoff, w.cfg.PageSize)
 	if err != nil {
-		if ctx.Err() != nil {
-			return
-		}
-		w.logger.Error("derive worker poll", "error", err)
-		w.metrics.PollErrors.Inc()
-		return
+		return err
 	}
 	for _, e := range entries {
 		if ctx.Err() != nil {
-			return
+			return nil
 		}
-		w.processEntry(ctx, e, cutoff)
+		if err := w.processEntry(ctx, e, cutoff); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // processEntry derives one dirty session under its advisory lock.
@@ -168,18 +247,22 @@ func (w *Worker) runPoll(ctx context.Context) {
 // clear is conditional on that read's dirtied_at — a raw turn landing
 // mid-derive bumps dirtied_at, the clear matches nothing, and the
 // session is re-derived on a later poll. At-least-once, never lost.
-func (w *Worker) processEntry(ctx context.Context, e storage.DeriveQueueEntry, cutoff time.Time) {
+//
+// The returned error is an infrastructure failure (lock, queue
+// re-read, or clear — all pure store plumbing): it aborts the page and
+// feeds the poll backoff. A derive failure stays per-session — it may
+// be specific to this session's data, so it must not stall the rest of
+// the queue — and returns nil.
+func (w *Worker) processEntry(ctx context.Context, e storage.DeriveQueueEntry, cutoff time.Time) error {
 	release, acquired, err := w.store.TryDeriveSessionLock(ctx, e.OrgID, e.HarnessID, e.HarnessSessionID)
 	if err != nil {
-		w.logger.Error("derive lock", "error", err,
-			"org", e.OrgID, "harness", e.HarnessID, "session", e.HarnessSessionID)
 		w.metrics.Derives.WithLabelValues(resultError).Inc()
-		return
+		return fmt.Errorf("derive lock %s/%s/%s: %w", e.OrgID, e.HarnessID, e.HarnessSessionID, err)
 	}
 	if !acquired {
 		// Another worker owns this session right now.
 		w.metrics.Derives.WithLabelValues(resultLocked).Inc()
-		return
+		return nil
 	}
 	defer release()
 
@@ -187,16 +270,14 @@ func (w *Worker) processEntry(ctx context.Context, e storage.DeriveQueueEntry, c
 	// derived and cleared this session between our list and our lock.
 	cur, err := w.store.GetDeriveDirty(ctx, e.OrgID, e.HarnessID, e.HarnessSessionID)
 	if err != nil {
-		w.logger.Error("derive queue re-read", "error", err,
-			"org", e.OrgID, "harness", e.HarnessID, "session", e.HarnessSessionID)
 		w.metrics.Derives.WithLabelValues(resultError).Inc()
-		return
+		return fmt.Errorf("derive queue re-read %s/%s/%s: %w", e.OrgID, e.HarnessID, e.HarnessSessionID, err)
 	}
 	if cur == nil || cur.DirtiedAt.After(cutoff) {
 		// Cleared by someone else, or re-dirtied inside the debounce
 		// window — either way it is not ours to derive this cycle.
 		w.metrics.Derives.WithLabelValues(resultSkipped).Inc()
-		return
+		return nil
 	}
 
 	start := time.Now()
@@ -206,15 +287,13 @@ func (w *Worker) processEntry(ctx context.Context, e storage.DeriveQueueEntry, c
 		w.logger.Error("derive session", "error", err,
 			"org", cur.OrgID, "harness", cur.HarnessID, "session", cur.HarnessSessionID)
 		w.metrics.Derives.WithLabelValues(resultError).Inc()
-		return
+		return nil
 	}
 
 	cleared, err := w.store.ClearDeriveDirty(ctx, *cur)
 	if err != nil {
-		w.logger.Error("derive queue clear", "error", err,
-			"org", cur.OrgID, "harness", cur.HarnessID, "session", cur.HarnessSessionID)
 		w.metrics.Derives.WithLabelValues(resultError).Inc()
-		return
+		return fmt.Errorf("derive queue clear %s/%s/%s: %w", cur.OrgID, cur.HarnessID, cur.HarnessSessionID, err)
 	}
 
 	duration := time.Since(start)
@@ -238,6 +317,7 @@ func (w *Worker) processEntry(ctx context.Context, e storage.DeriveQueueEntry, c
 		"duration", duration,
 		"requeued", !cleared,
 	)
+	return nil
 }
 
 // runSweep enqueues every session present in the raw layer. The sweep

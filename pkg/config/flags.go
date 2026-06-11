@@ -69,6 +69,7 @@ const (
 	FlagDeriveWorkerDebounce      = "derive-worker-debounce"
 	FlagDeriveWorkerSweep         = "derive-worker-sweep-interval"
 	FlagDeriveWorkerMetricsListen = "derive-worker-metrics-listen"
+	FlagDeriveWorkerWaitForDB     = "derive-worker-wait-for-db"
 )
 
 // AddStringFlag registers a string flag on cmd from the given FlagSet.

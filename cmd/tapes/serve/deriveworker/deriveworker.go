@@ -32,6 +32,7 @@ type deriveWorkerCommander struct {
 	debounce      string
 	sweepInterval string
 	metricsListen string
+	waitForDB     bool
 
 	logger *slog.Logger
 }
@@ -44,6 +45,7 @@ var deriveWorkerFlags = config.FlagSet{
 	config.FlagDeriveWorkerDebounce:      {Name: "debounce", ViperKey: "derive_worker.debounce", Description: "How long a session's dirty mark must be quiet before deriving (Go duration, default 20s)"},
 	config.FlagDeriveWorkerSweep:         {Name: "sweep-interval", ViperKey: "derive_worker.sweep_interval", Description: "Backstop sweep cadence enqueuing every raw-layer session (Go duration, default 1h)"},
 	config.FlagDeriveWorkerMetricsListen: {Name: "metrics-listen", ViperKey: "derive_worker.metrics_listen", Description: "Address to serve /metrics and /ping on (empty disables)"},
+	config.FlagDeriveWorkerWaitForDB:     {Name: "wait-for-db", ViperKey: "derive_worker.wait_for_db", Description: "Retry an unreachable Postgres at startup with backoff instead of exiting (for orchestrated environments; default: fail fast)"},
 }
 
 const deriveWorkerLongDesc string = `Run the derive worker.
@@ -90,6 +92,7 @@ func NewDeriveWorkerCmd() *cobra.Command {
 				config.FlagDeriveWorkerDebounce,
 				config.FlagDeriveWorkerSweep,
 				config.FlagDeriveWorkerMetricsListen,
+				config.FlagDeriveWorkerWaitForDB,
 			})
 
 			cmder.postgresDSN = v.GetString("storage.postgres_dsn")
@@ -98,6 +101,7 @@ func NewDeriveWorkerCmd() *cobra.Command {
 			cmder.debounce = v.GetString("derive_worker.debounce")
 			cmder.sweepInterval = v.GetString("derive_worker.sweep_interval")
 			cmder.metricsListen = v.GetString("derive_worker.metrics_listen")
+			cmder.waitForDB = v.GetBool("derive_worker.wait_for_db")
 
 			if cmder.project == "" {
 				cmder.project = git.RepoName(cmd.Context())
@@ -123,6 +127,7 @@ func NewDeriveWorkerCmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagDeriveWorkerDebounce, &cmder.debounce)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagDeriveWorkerSweep, &cmder.sweepInterval)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagDeriveWorkerMetricsListen, &cmder.metricsListen)
+	config.AddBoolFlag(cmd, cmder.flags, config.FlagDeriveWorkerWaitForDB, &cmder.waitForDB)
 
 	return cmd
 }
@@ -149,7 +154,7 @@ func (c *deriveWorkerCommander) run(ctx context.Context) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	driver, err := postgres.NewDriver(ctx, c.postgresDSN)
+	driver, err := c.connect(ctx)
 	if err != nil {
 		return err
 	}
@@ -179,6 +184,58 @@ func (c *deriveWorkerCommander) run(ctx context.Context) error {
 	}
 
 	return w.Run(ctx)
+}
+
+// Startup connection bounds. The worker derives one session at a time,
+// so a small pool (poll conn + pinned advisory-lock conn + derive conn
+// + headroom) beats pgx's NumCPU-based default; the connect timeout
+// keeps an unreachable host from hanging startup for the OS TCP
+// timeout.
+const (
+	connectTimeout    = 10 * time.Second
+	maxPoolConns      = 4
+	maxConnectBackoff = 30 * time.Second
+)
+
+// connect opens the Postgres driver. By default an unreachable
+// database is a startup error — fail fast and clearly so a bad DSN
+// surfaces immediately. With --wait-for-db the worker instead retries
+// with exponential backoff until the database appears or the context
+// is canceled (the right behavior under an orchestrator that starts
+// the worker and the database concurrently).
+func (c *deriveWorkerCommander) connect(ctx context.Context) (*postgres.Driver, error) {
+	opts := []postgres.PoolOption{
+		postgres.WithConnectTimeout(connectTimeout),
+		postgres.WithMaxConns(maxPoolConns),
+	}
+
+	driver, err := postgres.NewDriver(ctx, c.postgresDSN, opts...)
+	if err == nil {
+		return driver, nil
+	}
+	if !c.waitForDB {
+		return nil, fmt.Errorf("postgres unreachable at startup (pass --wait-for-db to retry instead): %w", err)
+	}
+
+	backoff := time.Second
+	for attempt := 1; ; attempt++ {
+		c.logger.Warn("postgres unreachable, retrying",
+			"attempt", attempt,
+			"retry_in", backoff,
+			"error", err.Error(),
+		)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(backoff):
+		}
+		driver, err = postgres.NewDriver(ctx, c.postgresDSN, opts...)
+		if err == nil {
+			c.logger.Info("postgres reachable", "attempts", attempt+1)
+			return driver, nil
+		}
+		backoff = min(backoff*2, maxConnectBackoff)
+	}
 }
 
 // parseDurationFlag parses an optional Go-duration flag value; empty

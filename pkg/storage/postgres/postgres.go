@@ -35,25 +35,53 @@ const (
 )
 
 type Driver struct {
-	dsn  string
-	conn *pgxpool.Pool
-	q    *gensqlc.Queries
+	dsn      string
+	poolOpts []PoolOption
+	conn     *pgxpool.Pool
+	q        *gensqlc.Queries
 }
 
-func NewDriver(ctx context.Context, connStr string) (*Driver, error) {
-	d := &Driver{dsn: connStr}
+// PoolOption tunes the pgx pool configuration built from the DSN.
+// Options are applied after the DSN is parsed, so they take precedence
+// over pool parameters embedded in the connection string.
+type PoolOption func(*pgxpool.Config)
+
+// WithMaxConns caps the pool size. Single-purpose services (e.g. the
+// derive worker, which processes one session at a time) should set a
+// small cap instead of inheriting pgx's NumCPU-based default.
+func WithMaxConns(n int32) PoolOption {
+	return func(c *pgxpool.Config) { c.MaxConns = n }
+}
+
+// WithConnectTimeout bounds each connection attempt. pgx has no
+// built-in connect timeout, so an unreachable-but-blackholed host can
+// otherwise hang a startup for the OS TCP timeout (minutes).
+func WithConnectTimeout(d time.Duration) PoolOption {
+	return func(c *pgxpool.Config) { c.ConnConfig.ConnectTimeout = d }
+}
+
+func NewDriver(ctx context.Context, connStr string, opts ...PoolOption) (*Driver, error) {
+	d := &Driver{dsn: connStr, poolOpts: opts}
 	if err := d.Open(ctx); err != nil {
 		return nil, err
 	}
 	return d, nil
 }
 
-func Open(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+func Open(ctx context.Context, dsn string, opts ...PoolOption) (*pgxpool.Pool, error) {
 	if err := migrateUp(dsn); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 
-	pool, err := pgxpool.New(ctx, dsn)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse dsn: %w", err)
+	}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("pool: %w", err)
 	}
@@ -77,7 +105,7 @@ func (d *Driver) Open(ctx context.Context) error {
 		d.q = nil
 	}
 
-	pool, err := Open(ctx, d.dsn)
+	pool, err := Open(ctx, d.dsn, d.poolOpts...)
 	if err != nil {
 		return fmt.Errorf("open postgres driver: %w", err)
 	}
