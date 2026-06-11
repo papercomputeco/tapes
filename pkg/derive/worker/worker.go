@@ -294,7 +294,7 @@ func backoffDelay(base, maxDelay time.Duration, failures int) time.Duration {
 		delay = maxDelay
 	}
 	half := delay / 2
-	return half + rand.N(half+1)
+	return half + rand.N(half+1) //nolint:gosec // retry jitter, not cryptographic material
 }
 
 // runPoll drains one page of settled dirty sessions, one at a time.
@@ -307,7 +307,7 @@ func backoffDelay(base, maxDelay time.Duration, failures int) time.Duration {
 // flight derive survives shutdown into the drain window.
 func (w *Worker) runPoll(ctx, workCtx context.Context) error {
 	if ctx.Err() != nil {
-		return nil
+		return nil //nolint:nilerr // shutdown is not a poll failure
 	}
 	stats, err := w.store.DeriveQueueStats(workCtx)
 	if err != nil {
@@ -327,7 +327,7 @@ func (w *Worker) runPoll(ctx, workCtx context.Context) error {
 	}
 	for _, e := range entries {
 		if ctx.Err() != nil {
-			return nil
+			return nil //nolint:nilerr // shutdown is not a poll failure
 		}
 		if err := w.processEntry(workCtx, e, cutoff); err != nil {
 			return err
