@@ -1,0 +1,45 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_01432258600f7c15006a2b3cca8f00819aa3844016990df817","object":"response","created_at":1781218506,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-mini-2024-07-18","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"context":null,"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+event: response.in_progress
+data: {"type":"response.in_progress","response":{"id":"resp_01432258600f7c15006a2b3cca8f00819aa3844016990df817","object":"response","created_at":1781218506,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-mini-2024-07-18","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"context":null,"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","item":{"id":"msg_01432258600f7c15006a2b3ccb103c819a849227fe4c5ee757","type":"message","status":"in_progress","content":[],"role":"assistant"},"output_index":0,"sequence_number":2}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_01432258600f7c15006a2b3ccb103c819a849227fe4c5ee757","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"paper","item_id":"msg_01432258600f7c15006a2b3ccb103c819a849227fe4c5ee757","logprobs":[],"obfuscation":"qSk1aLuJoed","output_index":0,"sequence_number":4}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"-c","item_id":"msg_01432258600f7c15006a2b3ccb103c819a849227fe4c5ee757","logprobs":[],"obfuscation":"4vS2vONszu6CC6","output_index":0,"sequence_number":5}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"od","item_id":"msg_01432258600f7c15006a2b3ccb103c819a849227fe4c5ee757","logprobs":[],"obfuscation":"1LVQn75MFUlUxF","output_index":0,"sequence_number":6}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"ex","item_id":"msg_01432258600f7c15006a2b3ccb103c819a849227fe4c5ee757","logprobs":[],"obfuscation":"navSA0fhxlnkKA","output_index":0,"sequence_number":7}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"-s","item_id":"msg_01432258600f7c15006a2b3ccb103c819a849227fe4c5ee757","logprobs":[],"obfuscation":"YhQ4IvLglIWvBa","output_index":0,"sequence_number":8}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"se","item_id":"msg_01432258600f7c15006a2b3ccb103c819a849227fe4c5ee757","logprobs":[],"obfuscation":"LRD7Eq26ObEsiB","output_index":0,"sequence_number":9}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"-ok","item_id":"msg_01432258600f7c15006a2b3ccb103c819a849227fe4c5ee757","logprobs":[],"obfuscation":"sRgpabsQD7Z6d","output_index":0,"sequence_number":10}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_01432258600f7c15006a2b3ccb103c819a849227fe4c5ee757","logprobs":[],"output_index":0,"sequence_number":11,"text":"paper-codex-sse-ok"}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_01432258600f7c15006a2b3ccb103c819a849227fe4c5ee757","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"paper-codex-sse-ok"},"sequence_number":12}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"id":"msg_01432258600f7c15006a2b3ccb103c819a849227fe4c5ee757","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"paper-codex-sse-ok"}],"role":"assistant"},"output_index":0,"sequence_number":13}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_01432258600f7c15006a2b3cca8f00819aa3844016990df817","object":"response","created_at":1781218506,"status":"completed","background":false,"completed_at":1781218507,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-mini-2024-07-18","moderation":null,"output":[{"id":"msg_01432258600f7c15006a2b3ccb103c819a849227fe4c5ee757","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"paper-codex-sse-ok"}],"role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"context":null,"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":18,"input_tokens_details":{"cached_tokens":0},"output_tokens":8,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":26},"user":null,"metadata":{}},"sequence_number":14}
+
