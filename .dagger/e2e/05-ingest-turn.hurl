@@ -1,6 +1,10 @@
 # Ingest one completed turn through the sidecar path. This lands a raw
 # turn (the derive input) plus a session row, so the derive -> embed ->
 # span-search legs that follow operate on real captured data.
+#
+# stream + a non-empty tool set matter: the classifier's tell for a
+# conversation-spine (call_kind=main) turn, and only main llm spans
+# are embed candidates.
 
 POST http://tapes-ingest:8082/v1/ingest
 {
@@ -9,6 +13,19 @@ POST http://tapes-ingest:8082/v1/ingest
   "request": {
     "model": "claude-sonnet-4-5",
     "max_tokens": 512,
+    "stream": true,
+    "tools": [
+      {
+        "name": "Bash",
+        "description": "Run a shell command",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "command": { "type": "string" }
+          }
+        }
+      }
+    ],
     "messages": [
       {
         "role": "user",
