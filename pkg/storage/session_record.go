@@ -27,4 +27,8 @@ type SessionRecord struct {
 	// turn lands or, for pre-feature rows, until the status backfill runs.
 	DerivedStatus string
 	Preview       string // first user turn text, truncated; empty when unavailable
+	// AuthSubject is the gateway-stamped JWT subject (the WorkOS user id)
+	// captured at ingest. Empty for rows captured before the edge began
+	// stamping the x-paper-auth-subject header.
+	AuthSubject string
 }

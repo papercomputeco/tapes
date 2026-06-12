@@ -27,13 +27,14 @@ type sessionsStubDriver struct {
 	storage.Driver
 
 	// ListSessionRecords stubbing.
-	listRecords  []storage.SessionRecord
-	listErr      error
-	listCalls    int
-	lastListOrg  string
-	lastLimit    int
-	lastCursorTs *time.Time
-	lastCursorID *string
+	listRecords     []storage.SessionRecord
+	listErr         error
+	listCalls       int
+	lastListOrg     string
+	lastAuthSubject string
+	lastLimit       int
+	lastCursorTs    *time.Time
+	lastCursorID    *string
 
 	// GetSessionRecordByHarness stubbing.
 	harnessRecord        *storage.SessionRecord
@@ -44,9 +45,10 @@ type sessionsStubDriver struct {
 	lastHarnessSessionID string
 }
 
-func (d *sessionsStubDriver) ListSessionRecords(_ context.Context, orgID string, limit int, cursorTs *time.Time, cursorID *string) ([]storage.SessionRecord, error) {
+func (d *sessionsStubDriver) ListSessionRecords(_ context.Context, orgID string, authSubject string, limit int, cursorTs *time.Time, cursorID *string) ([]storage.SessionRecord, error) {
 	d.listCalls++
 	d.lastListOrg = orgID
+	d.lastAuthSubject = authSubject
 	d.lastLimit = limit
 	d.lastCursorTs = cursorTs
 	d.lastCursorID = cursorID
@@ -214,6 +216,44 @@ var _ = Describe("harness natural-key filter on GET /v1/sessions", func() {
 		_, _, status = getSessionList(server, "/v1/sessions?harness_id=claude&harness_session_id=sess-xyz", "")
 		Expect(status).To(Equal(fiber.StatusOK))
 		Expect(drv.lastOrgID).To(Equal(nilOrgID))
+	})
+
+	It("threads auth_subject through to the paged list and echoes it on items", func() {
+		// Given a stored record attributed to a user
+		attributed := record
+		attributed.AuthSubject = "user_01HXYZ"
+		drv := &sessionsStubDriver{
+			Driver:      inmemory.NewDriver(),
+			listRecords: []storage.SessionRecord{attributed},
+		}
+		server := newSessionsServer(drv)
+
+		// When listing with the auth_subject filter
+		body, _, status := getSessionList(server, "/v1/sessions?auth_subject=user_01HXYZ", "")
+
+		// Then the subject reaches storage verbatim and the item
+		// carries it back
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(drv.listCalls).To(Equal(1))
+		Expect(drv.lastAuthSubject).To(Equal("user_01HXYZ"))
+		Expect(body.Items).To(HaveLen(1))
+		Expect(body.Items[0].AuthSubject).To(Equal("user_01HXYZ"))
+	})
+
+	It("lists every user's sessions when auth_subject is absent", func() {
+		// Given storage rows
+		drv := &sessionsStubDriver{
+			Driver:      inmemory.NewDriver(),
+			listRecords: []storage.SessionRecord{record},
+		}
+		server := newSessionsServer(drv)
+
+		// When listing without the filter
+		_, _, status := getSessionList(server, "/v1/sessions", "")
+
+		// Then storage sees the empty (no-filter) subject
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(drv.lastAuthSubject).To(BeEmpty())
 	})
 
 	It("keeps the unfiltered paged list behavior when no harness params are supplied", func() {
