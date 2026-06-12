@@ -12,7 +12,6 @@ import (
 	searchcmder "github.com/papercomputeco/tapes/cmd/tapes/search"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/credentials"
-	"github.com/papercomputeco/tapes/pkg/deck"
 	"github.com/papercomputeco/tapes/pkg/dotdir"
 	"github.com/papercomputeco/tapes/pkg/skill"
 )
@@ -44,25 +43,30 @@ func newGenerateCmd() *cobra.Command {
 	}
 
 	cmd := &cobra.Command{
-		Use:   "generate [hash...]",
-		Short: "Extract a skill from conversation(s)",
+		Use:   "generate [session-id...]",
+		Short: "Extract a skill from session(s)",
 		Long: `Generate a skill file by extracting reusable patterns from one or
-more tapes conversations using an LLM.
+more tapes sessions using an LLM.
 
-Hash resolution (in order):
-  1. Positional hash arguments
-  2. --search query (searches the API for matching sessions)
+Session resolution (in order):
+  1. Positional session ID arguments (/v1/sessions UUIDs)
+  2. --search query (span search for matching sessions)
   3. Current checkout state (from tapes checkout)
 
-Use --since and --until to filter which conversation turns are included,
+The transcript is built from the session's trace/span projection:
+turn-grain prompt/response pairs from the conversation spine, with
+harness shadow calls (permission checks, title-gen, injected context)
+excluded.
+
+Use --since and --until to filter which turns are included,
 like git log --since/--until.
 
 Examples:
-  tapes skill generate abc123 --name debug-react-hooks
+  tapes skill generate 0196fdb1-93f4-7c41-a53d-0fbe2c5e1f23 --name debug-react-hooks
   tapes skill generate --name my-skill
   tapes skill generate --search "gum glow charm" --name charm-cli-patterns
   tapes skill generate --search "react hooks" --search-top 3 --name react-debug
-  tapes skill generate abc123 --name morning-work --since 2026-02-17`,
+  tapes skill generate <session-id> --name morning-work --since 2026-02-17`,
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
 			configDir, _ := cmd.Flags().GetString("config-dir")
 			v, err := config.InitViper(configDir)
@@ -89,8 +93,8 @@ Examples:
 	cmd.Flags().StringVar(&cmder.model, "model", "", "LLM model for extraction")
 	cmd.Flags().StringVar(&cmder.apiKey, "api-key", "", "API key for LLM provider")
 	cmd.Flags().StringVar(&cmder.postgresDSN, "postgres", "", "PostgreSQL connection string for a local in-process API")
-	cmd.Flags().StringVar(&cmder.since, "since", "", "Only include messages on or after this date (YYYY-MM-DD or RFC3339)")
-	cmd.Flags().StringVar(&cmder.until, "until", "", "Only include messages on or before this date (YYYY-MM-DD or RFC3339)")
+	cmd.Flags().StringVar(&cmder.since, "since", "", "Only include turns on or after this date (YYYY-MM-DD or RFC3339)")
+	cmd.Flags().StringVar(&cmder.until, "until", "", "Only include turns on or before this date (YYYY-MM-DD or RFC3339)")
 	cmd.Flags().StringVar(&cmder.search, "search", "", "Search query to find sessions (requires running API server)")
 	cmd.Flags().IntVar(&cmder.searchTop, "search-top", 3, "Number of search results to use")
 	config.AddStringFlag(cmd, cmder.flags, config.FlagAPITarget, &cmder.apiTarget)
@@ -103,7 +107,7 @@ Examples:
 func (c *generateCommander) run(cmd *cobra.Command, args []string) error {
 	w := cmd.OutOrStdout()
 
-	hashes, err := c.resolveHashes(cmd, args)
+	sessionIDs, err := c.resolveSessionIDs(cmd, args)
 	if err != nil {
 		return err
 	}
@@ -117,16 +121,16 @@ func (c *generateCommander) run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Fprintf(w, "\nGenerating skill %q from %d conversation(s)\n\n", c.name, len(hashes))
+	fmt.Fprintf(w, "\nGenerating skill %q from %d session(s)\n\n", c.name, len(sessionIDs))
 
 	// Step 1: Connect to the tapes API. With --api-target we use the
 	// remote server; otherwise we spin up an in-process API server backed
-	// by --postgres, mirroring the pattern used by `tapes deck`.
-	var query deck.Querier
+	// by --postgres.
+	var query skill.Querier
 	var closeFn func()
 	if err := step(w, "Connecting to API", func() error {
 		if strings.TrimSpace(c.apiTarget) != "" {
-			query = deck.NewHTTPQuery(c.apiTarget, nil)
+			query = skill.NewAPIClient(c.apiTarget)
 			closeFn = func() {}
 			return nil
 		}
@@ -138,7 +142,7 @@ func (c *generateCommander) run(cmd *cobra.Command, args []string) error {
 		if startErr != nil {
 			return startErr
 		}
-		query = deck.NewHTTPQuery(target, nil)
+		query = skill.NewAPIClient(target)
 		closeFn = stop
 		return nil
 	}); err != nil {
@@ -147,14 +151,14 @@ func (c *generateCommander) run(cmd *cobra.Command, args []string) error {
 	defer closeFn()
 
 	// Step 2: Configure LLM
-	var llmCaller deck.LLMCallFunc
+	var llmCaller skill.LLMCallFunc
 	if err := step(w, "Configuring LLM provider", func() error {
 		credMgr, credErr := credentials.NewManager("")
 		if credErr != nil {
 			return fmt.Errorf("loading credentials: %w", credErr)
 		}
 		var llmErr error
-		llmCaller, llmErr = deck.NewLLMCaller(deck.LLMCallerConfig{
+		llmCaller, llmErr = skill.NewLLMCaller(skill.LLMCallerConfig{
 			Provider: c.provider,
 			Model:    c.model,
 			APIKey:   c.apiKey,
@@ -170,7 +174,7 @@ func (c *generateCommander) run(cmd *cobra.Command, args []string) error {
 	var sk *skill.Skill
 	if err := step(w, "Extracting skill from session transcript(s)", func() error {
 		var genErr error
-		sk, genErr = gen.Generate(cmd.Context(), hashes, c.name, c.skillType, opts)
+		sk, genErr = gen.Generate(cmd.Context(), sessionIDs, c.name, c.skillType, opts)
 		return genErr
 	}); err != nil {
 		return err
@@ -210,8 +214,8 @@ func (c *generateCommander) run(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// resolveHashes determines conversation hashes from args, --search, or checkout.
-func (c *generateCommander) resolveHashes(cmd *cobra.Command, args []string) ([]string, error) {
+// resolveSessionIDs determines session IDs from args, --search, or checkout.
+func (c *generateCommander) resolveSessionIDs(cmd *cobra.Command, args []string) ([]string, error) {
 	// 1. Positional args take priority
 	if len(args) > 0 {
 		return args, nil
@@ -219,7 +223,7 @@ func (c *generateCommander) resolveHashes(cmd *cobra.Command, args []string) ([]
 
 	// 2. --search query
 	if c.search != "" {
-		return c.searchForHashes(cmd)
+		return c.searchForSessions(cmd)
 	}
 
 	// 3. Fall back to current checkout
@@ -229,32 +233,38 @@ func (c *generateCommander) resolveHashes(cmd *cobra.Command, args []string) ([]
 		return nil, fmt.Errorf("loading checkout state: %w", err)
 	}
 	if state == nil {
-		return nil, errors.New("no hashes provided, no --search query, and no checkout state;\nprovide a hash, use --search, or run 'tapes checkout <hash>' first")
+		return nil, errors.New("no session IDs provided, no --search query, and no checkout state;\nprovide a session ID, use --search, or run 'tapes checkout <id>' first")
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Using current checkout: %s\n", state.Hash)
 	return []string{state.Hash}, nil
 }
 
-func (c *generateCommander) searchForHashes(cmd *cobra.Command) ([]string, error) {
+// searchForSessions resolves --search via the span search API: each
+// hit carries the session it belongs to, deduplicated in score order.
+func (c *generateCommander) searchForSessions(cmd *cobra.Command) ([]string, error) {
 	fmt.Fprintf(cmd.OutOrStdout(), "Searching for %q...\n", c.search)
 
-	output, err := searchcmder.SearchAPI(c.apiTarget, c.search, c.searchTop)
+	output, err := searchcmder.SearchSpansAPI(c.apiTarget, c.search, "", c.searchTop)
 	if err != nil {
 		return nil, fmt.Errorf("search: %w", err)
 	}
 
-	if output.Count == 0 {
+	var sessionIDs []string
+	seen := map[string]bool{}
+	for _, result := range output.Results {
+		if result.SessionID == "" || seen[result.SessionID] {
+			continue
+		}
+		seen[result.SessionID] = true
+		fmt.Fprintf(cmd.OutOrStdout(), "  found: %s (score: %.4f)\n", result.SessionID, result.Score)
+		sessionIDs = append(sessionIDs, result.SessionID)
+	}
+
+	if len(sessionIDs) == 0 {
 		return nil, fmt.Errorf("no sessions found for search %q", c.search)
 	}
 
-	var hashes []string
-	for _, result := range output.Results {
-		hash := searchcmder.LeafHash(result)
-		fmt.Fprintf(cmd.OutOrStdout(), "  found: %s (score: %.4f)\n", hash, result.Score)
-		hashes = append(hashes, hash)
-	}
-
-	return hashes, nil
+	return sessionIDs, nil
 }
 
 func (c *generateCommander) buildGenerateOptions() (*skill.GenerateOptions, error) {
