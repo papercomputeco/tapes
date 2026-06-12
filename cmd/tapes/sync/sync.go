@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 
@@ -54,7 +55,7 @@ func NewSyncCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&cmder.verbose, "verbose", "v", false, "Show per-node match details")
 	cmd.Flags().BoolVar(&cmder.sessions, "sessions", false, "Also backfill Claude session rows and link legacy nodes")
 	cmd.Flags().StringVar(&cmder.orgID, "org-id", "", "Organization UUID to use for backfilled sessions")
-	cmd.Flags().StringVar(&cmder.authSubject, "auth-subject", "", "Auth subject to use for backfilled sessions")
+	cmd.Flags().StringVar(&cmder.authSubject, "auth-subject", localUserSubject(), "Auth subject to attribute backfilled sessions to (defaults to the local username)")
 
 	return cmd
 }
@@ -123,4 +124,18 @@ func (c *syncCommander) resolveClaudeDir() string {
 	}
 
 	return filepath.Join(home, ".claude", "projects")
+}
+
+// localUserSubject is the default attribution subject for locally-run
+// backfills: the OS username of whoever is running tapes. Local
+// captures have no gateway-validated JWT to derive a subject from, so
+// the closest honest identity is the local user. This default lives at
+// the CLI flag — never inside pkg/backfill — because the same package
+// also runs server-side behind the admin endpoint, where the process
+// owner's username would mis-attribute every row.
+func localUserSubject() string {
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		return u.Username
+	}
+	return os.Getenv("USER")
 }
