@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-
-	"dagger/tapes/internal/dagger"
 )
 
 // TestE2E runs end-to-end tests against Postgres and Ollama services.
@@ -13,50 +11,18 @@ import (
 // builds the tapes binary, runs the proxy and API as Dagger services
 // backed by Postgres, and uses hurl to verify the full pipeline.
 func (t *Tapes) TestE2E(ctx context.Context) (string, error) {
-	postgresSvc := t.PostgresService()
+	postgresSvc, err := t.PostgresStack(ctx)
+	if err != nil {
+		return "", fmt.Errorf("could not bring up postgres stack: %v", err)
+	}
+
 	ollamaSvc, err := t.OllamaStack(ctx)
 	if err != nil {
 		return "", fmt.Errorf("could not bring up ollama stack: %v", err)
 	}
 
-	// --- Build the tapes binary ---
-	tapesBin := t.goContainer().
-		WithServiceBinding("postgres", postgresSvc).
-		WithExec([]string{"go", "build", "-o", "/usr/local/bin/tapes", "./cli/tapes/"}).
-		File("/usr/local/bin/tapes")
-
-	// Base container for running tapes services (needs the binary + service bindings).
-	tapesBase := dag.Container().
-		From("golang:1.25-bookworm").
-		WithFile("/usr/local/bin/tapes", tapesBin).
-		WithServiceBinding("postgres", postgresSvc).
-		WithServiceBinding("ollama", ollamaSvc)
-
-	// --- tapes proxy service ---
-	proxySvc := tapesBase.
-		WithExposedPort(8080).
-		AsService(dagger.ContainerAsServiceOpts{
-			Args: []string{
-				"tapes", "serve", "proxy",
-				"--postgres", newPostgresDSN(),
-				"--upstream", fmt.Sprintf("http://ollama:%d", ollamaPort),
-				"--provider", "ollama",
-				"--listen", ":8080",
-				"--vector-store-target", "",
-				"--project", "e2e-test",
-			},
-		})
-
-	// --- tapes API service ---
-	apiSvc := tapesBase.
-		WithExposedPort(8081).
-		AsService(dagger.ContainerAsServiceOpts{
-			Args: []string{
-				"tapes", "serve", "api",
-				"--postgres", newPostgresDSN(),
-				"--listen", ":8081",
-			},
-		})
+	tapesBase := t.BuildTapesDevImage(ctx)
+	tapesSvc := TapesSvc(ctx, tapesBase, WithPostgresSvc(postgresSvc), WithOllamaSvc(ollamaSvc))
 
 	// --- Test container ---
 	// Use a Nix container with hurl pre-installed to avoid Debian apt
@@ -68,8 +34,8 @@ func (t *Tapes) TestE2E(ctx context.Context) (string, error) {
 		WithExec([]string{"nix", "profile", "install", "nixpkgs#hurl", "nixpkgs#coreutils"}).
 		WithWorkdir("/src").
 		WithDirectory("/src", t.Source).
-		WithServiceBinding("tapes-proxy", proxySvc).
-		WithServiceBinding("tapes-api", apiSvc).
+		WithServiceBinding("tapes-proxy", tapesSvc).
+		WithServiceBinding("tapes-api", tapesSvc).
 
 		// Run hurl e2e tests.
 		WithExec([]string{"hurl", "--test", ".dagger/e2e/01-health.hurl"}).

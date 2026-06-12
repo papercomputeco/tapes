@@ -6,6 +6,11 @@ import (
 	"dagger/tapes/internal/dagger"
 )
 
+const (
+	TAPES_PROXY_DEFAULT_PORT = 8080
+	TAPES_API_DEFAULT_PORT   = 8081
+)
+
 // BuildTapesImage builds the local-platform tapes container image from the
 // repository Dockerfile.
 func (t *Tapes) BuildTapesImage(
@@ -25,6 +30,10 @@ func (t *Tapes) BuildTapesImage(
 		Name:  "LDFLAGS",
 		Value: t.releaseLDFlags(version, commit, postHogPublicKey, ""),
 	}})
+}
+
+func (t *Tapes) BuildTapesDevImage(ctx context.Context) *dagger.Container {
+	return t.BuildTapesImage(ctx, "dev-version", "dev-commit", "dev-posthog-key")
 }
 
 // BuildPushTapesImage builds a multi-arch image for tapes and publishes to the

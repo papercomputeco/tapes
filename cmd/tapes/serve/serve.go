@@ -3,10 +3,12 @@ package servecmder
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -21,6 +23,8 @@ import (
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
+	"github.com/papercomputeco/tapes/pkg/publisher"
+	kafkapublisher "github.com/papercomputeco/tapes/pkg/publisher/kafka"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 	"github.com/papercomputeco/tapes/pkg/telemetry"
 	"github.com/papercomputeco/tapes/pkg/vector/pgvector"
@@ -40,6 +44,10 @@ type ServeCommander struct {
 	project      string
 
 	providerType string
+
+	kafkaBrokers  string
+	kafkaTopic    string
+	kafkaClientID string
 
 	vectorStoreTarget string
 
@@ -67,6 +75,9 @@ var ServeFlags = config.FlagSet{
 	config.FlagEmbeddingTgt:   {Name: "embedding-target", ViperKey: "embedding.target", Description: "Embedding provider URL"},
 	config.FlagEmbeddingModel: {Name: "embedding-model", ViperKey: "embedding.model", Description: "Embedding model name (e.g., embeddinggemma, text-embedding-3-large)"},
 	config.FlagEmbeddingDims:  {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Embedding dimensionality"},
+	config.FlagKafkaBrokers:   {Name: "kafka-brokers", ViperKey: "publisher.kafka.brokers", Description: "Comma separated list of broker ip:port pairs"},
+	config.FlagKafkaClientID:  {Name: "kafka-client-id", ViperKey: "publisher.kafka.client_id", Description: "Optional Kafka client.id"},
+	config.FlagKafkaTopic:     {Name: "kafka-topic", ViperKey: "publisher.kafka.topic", Description: "Name of topic to publish session events (e.g. tapes.nodes.v1)"},
 }
 
 const serveLongDesc string = `Run Tapes services.
@@ -112,6 +123,9 @@ func NewServeCmd() *cobra.Command {
 				config.FlagEmbeddingTgt,
 				config.FlagEmbeddingModel,
 				config.FlagEmbeddingDims,
+				config.FlagKafkaBrokers,
+				config.FlagKafkaClientID,
+				config.FlagKafkaTopic,
 			})
 
 			// Default pgvector to the primary Postgres DSN.
@@ -144,6 +158,9 @@ func NewServeCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("could not load embedding credentials: %w", err)
 			}
+			cmder.kafkaBrokers = v.GetString("publisher.kafka.brokers")
+			cmder.kafkaClientID = v.GetString("publisher.kafka.client_id")
+			cmder.kafkaTopic = v.GetString("publisher.kafka.topic")
 			cmder.project = v.GetString("proxy.project")
 
 			if cmder.project == "" {
@@ -176,6 +193,9 @@ func NewServeCmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingModel, &cmder.embeddingModel)
 	config.AddUintFlag(cmd, cmder.flags, config.FlagEmbeddingDims, &cmder.embeddingDimensions)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagPostgres, &cmder.postgresDSN)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagKafkaBrokers, &cmder.kafkaBrokers)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagKafkaClientID, &cmder.kafkaClientID)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagKafkaTopic, &cmder.kafkaTopic)
 
 	cmd.AddCommand(apicmder.NewAPICmd())
 	cmd.AddCommand(ingestcmder.NewIngestCmd())
@@ -184,8 +204,78 @@ func NewServeCmd() *cobra.Command {
 	return cmd
 }
 
+func (c *ServeCommander) validatePublisherConfig() error {
+	kafkaBrokers := splitKafkaBrokers(c.kafkaBrokers)
+	kafkaTopic := strings.TrimSpace(c.kafkaTopic)
+
+	if len(kafkaBrokers) == 0 && kafkaTopic == "" {
+		return nil
+	}
+
+	if len(kafkaBrokers) == 0 {
+		return errors.New("kafka brokers are required when kafka topic is set")
+	}
+
+	if kafkaTopic == "" {
+		return errors.New("kafka topic is required when kafka brokers are set")
+	}
+
+	return nil
+}
+
+func splitKafkaBrokers(raw string) []string {
+	parts := strings.Split(raw, ",")
+	brokers := make([]string, 0, len(parts))
+	for _, part := range parts {
+		broker := strings.TrimSpace(part)
+		if broker != "" {
+			brokers = append(brokers, broker)
+		}
+	}
+
+	return brokers
+}
+
+func (c *ServeCommander) newPublisher() (publisher.Publisher, error) {
+	kafkaBrokers := splitKafkaBrokers(c.kafkaBrokers)
+	kafkaTopic := strings.TrimSpace(c.kafkaTopic)
+	if len(kafkaBrokers) == 0 && kafkaTopic == "" {
+		return nil, nil
+	}
+
+	return kafkapublisher.NewPublisher(kafkapublisher.Config{
+		Brokers:  kafkaBrokers,
+		Topic:    kafkaTopic,
+		ClientID: strings.TrimSpace(c.kafkaClientID),
+	})
+}
+
 func (c *ServeCommander) run() error {
 	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
+
+	if err := c.validatePublisherConfig(); err != nil {
+		return err
+	}
+
+	proxyPub, err := c.newPublisher()
+	if err != nil {
+		return fmt.Errorf("creating proxy publisher: %w", err)
+	}
+	defer func() {
+		if proxyPub != nil {
+			_ = proxyPub.Close()
+		}
+	}()
+
+	ingestPub, err := c.newPublisher()
+	if err != nil {
+		return fmt.Errorf("creating ingest publisher: %w", err)
+	}
+	defer func() {
+		if ingestPub != nil {
+			_ = ingestPub.Close()
+		}
+	}()
 
 	driver, err := postgres.NewDriver(context.TODO(), c.postgresDSN)
 	if err != nil {
@@ -197,6 +287,7 @@ func (c *ServeCommander) run() error {
 		ListenAddr:   c.proxyListen,
 		UpstreamURL:  c.upstream,
 		ProviderType: c.providerType,
+		Publisher:    proxyPub,
 		Project:      c.project,
 	}
 
@@ -262,6 +353,7 @@ func (c *ServeCommander) run() error {
 		ListenAddr:   c.ingestListen,
 		VectorDriver: proxyConfig.VectorDriver,
 		Embedder:     proxyConfig.Embedder,
+		Publisher:    ingestPub,
 		Project:      c.project,
 	}
 	ingestServer, err := ingest.New(ingestConfig, driver, c.logger)

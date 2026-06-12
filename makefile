@@ -139,6 +139,18 @@ build-push-tapes-images: ## Builds and publishes the multi-arch tapes container 
 up:
 	docker compose up --build
 
+.PHONY: up-flink
+up-flink:
+	docker compose --profile flink up --build --remove-orphans
+
+.PHONY: down
+down:
+	docker compose down --remove-orphans
+
+.PHONY: down-flink
+down-flink:
+	docker compose --profile flink down --remove-orphans
+
 .PHONY: clean
 clean: ## Removes the "build" directory with built artifacts
 	$(call print-target)
