@@ -13,6 +13,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/credentials"
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/logger"
+	"github.com/papercomputeco/tapes/pkg/spanembed"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 	"github.com/papercomputeco/tapes/pkg/telemetry"
 	"github.com/papercomputeco/tapes/pkg/vector/pgvector"
@@ -165,6 +166,17 @@ func (c *apiCommander) run() error {
 			return fmt.Errorf("could not create new vector driver: %w", err)
 		}
 		defer apiConfig.VectorDriver.Close()
+
+		// Span search reads the span-embedding projection written by
+		// the derive worker / embed-spans backfill. The store performs
+		// no schema work here: until a writer has run, the endpoint
+		// answers 503 with ErrNotInitialized instead of failing boot.
+		apiConfig.SpanSearcher, err = spanembed.NewStore(driver.DB(), spanembed.StoreConfig{
+			Dimensions: c.embeddingDimensions,
+		}, c.logger)
+		if err != nil {
+			return fmt.Errorf("could not create span embedding store: %w", err)
+		}
 
 		c.logger.Info("vector search enabled",
 			"vector_store_target", config.RedactDSN(c.vectorStoreTarget),

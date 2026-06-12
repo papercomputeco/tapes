@@ -85,6 +85,7 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	app.Get("/v1/stems", s.handleListStems)
 	app.Get("/v1/stems/:hash/graph", s.handleGetStemGraph)
 	app.Get("/v1/stems/:hash", s.handleGetStem)
+	app.Get("/v1/search/spans", s.handleSearchSpansEndpoint)
 	app.Get("/v1/search", s.handleSearchEndpoint)
 
 	app.Post("/v1/admin/seed/demo", s.handleSeedDemo)

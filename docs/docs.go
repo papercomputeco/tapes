@@ -178,6 +178,67 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/search/spans": {
+            "get": {
+                "description": "Embeds the query text and runs vector similarity over the embedded span projection (main llm spans, delta-only content). Each hit carries span, trace, and turn context.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "search"
+                ],
+                "summary": "Semantic search over span embeddings",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Search query",
+                        "name": "query",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Maximum number of results to return",
+                        "name": "top_k",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tenant org UUID (defaults to the nil org)",
+                        "name": "X-Tapes-Org-Id",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.SpanSearchOutput"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing or invalid query parameters",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Search execution failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Span search is not configured or not yet initialized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/sessions": {
             "get": {
                 "description": "Returns one row per harness session from the sessions table, newest first (last_seen_at desc), cursor-paginated. This is the product session view; the Merkle leaf-chain view lives at /v1/stems.",
@@ -1356,6 +1417,54 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "to_trace_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.SpanSearchOutput": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "query": {
+                    "type": "string"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.SpanSearchResult"
+                    }
+                }
+            }
+        },
+        "api.SpanSearchResult": {
+            "type": "object",
+            "properties": {
+                "model": {
+                    "type": "string"
+                },
+                "score": {
+                    "type": "number"
+                },
+                "session_id": {
+                    "type": "string"
+                },
+                "snippet": {
+                    "description": "Snippet previews the matched span's delta-only text.",
+                    "type": "string"
+                },
+                "span_id": {
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "trace_id": {
+                    "type": "string"
+                },
+                "user_prompt": {
+                    "description": "UserPrompt is the prompt of the turn (trace) the span belongs to.",
                     "type": "string"
                 }
             }

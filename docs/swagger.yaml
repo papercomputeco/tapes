@@ -334,6 +334,39 @@ definitions:
       to_trace_id:
         type: string
     type: object
+  api.SpanSearchOutput:
+    properties:
+      count:
+        type: integer
+      query:
+        type: string
+      results:
+        items:
+          $ref: '#/definitions/api.SpanSearchResult'
+        type: array
+    type: object
+  api.SpanSearchResult:
+    properties:
+      model:
+        type: string
+      score:
+        type: number
+      session_id:
+        type: string
+      snippet:
+        description: Snippet previews the matched span's delta-only text.
+        type: string
+      span_id:
+        type: string
+      started_at:
+        type: string
+      trace_id:
+        type: string
+      user_prompt:
+        description: UserPrompt is the prompt of the turn (trace) the span belongs
+          to.
+        type: string
+    type: object
   api.StatsResponse:
     properties:
       completed_count:
@@ -966,6 +999,49 @@ paths:
           schema:
             $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
       summary: Semantic search over stored sessions
+      tags:
+      - search
+  /v1/search/spans:
+    get:
+      description: Embeds the query text and runs vector similarity over the embedded
+        span projection (main llm spans, delta-only content). Each hit carries span,
+        trace, and turn context.
+      parameters:
+      - description: Search query
+        in: query
+        name: query
+        required: true
+        type: string
+      - default: 5
+        description: Maximum number of results to return
+        in: query
+        minimum: 1
+        name: top_k
+        type: integer
+      - description: Tenant org UUID (defaults to the nil org)
+        in: header
+        name: X-Tapes-Org-Id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SpanSearchOutput'
+        "400":
+          description: Missing or invalid query parameters
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Search execution failed
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "503":
+          description: Span search is not configured or not yet initialized
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Semantic search over span embeddings
       tags:
       - search
   /v1/sessions:
