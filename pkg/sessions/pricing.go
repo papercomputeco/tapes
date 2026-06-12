@@ -10,7 +10,7 @@ import (
 
 // DefaultPricing returns hardcoded pricing per million tokens for supported models.
 //
-// Last verified: 2026-06-09
+// Last verified: 2026-06-12
 // Sources:
 //   - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
 //   - OpenAI:    https://platform.openai.com/docs/pricing
@@ -50,6 +50,7 @@ func DefaultPricing() PricingTable {
 		"o3":                {Input: 2.00, Output: 8.00, CacheRead: 0.50, CacheWrite: 2.00},
 		"o3-mini":           {Input: 1.10, Output: 4.40, CacheRead: 0.55, CacheWrite: 1.10},
 		"o4-mini":           {Input: 1.10, Output: 4.40, CacheRead: 0.275, CacheWrite: 1.10},
+		"gpt-5.5":           {Input: 5.00, Output: 30.00, CacheRead: 0.50, CacheWrite: 5.00},
 		"gpt-5.4":           {Input: 2.50, Output: 15.00, CacheRead: 0.25, CacheWrite: 2.50},
 		"gpt-5.3-codex":     {Input: 1.75, Output: 14.00, CacheRead: 0.175, CacheWrite: 1.75},
 		"gpt-5.2-codex":     {Input: 1.75, Output: 14.00, CacheRead: 0.175, CacheWrite: 1.75},
@@ -148,6 +149,7 @@ func NormalizeModel(model string) string {
 	// Strip OpenAI-style date suffix: -YYYY-MM-DD
 	normalized = stripOpenAIDateSuffix(normalized)
 
+	normalized = strings.ReplaceAll(normalized, "-5-5", "-5.5")
 	normalized = strings.ReplaceAll(normalized, "-5-4", "-5.4")
 	normalized = strings.ReplaceAll(normalized, "-5-3", "-5.3")
 	normalized = strings.ReplaceAll(normalized, "-5-2", "-5.2")

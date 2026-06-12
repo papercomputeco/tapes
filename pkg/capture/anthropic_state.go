@@ -304,7 +304,7 @@ func (s *turnState) finalize() *llm.ChatResponse {
 	if !s.seenMessageStop && s.errorType == "" {
 		extra["incomplete"] = true
 		if s.stopReason == "" {
-			s.stopReason = "incomplete"
+			s.stopReason = stopReasonIncomplete
 		}
 	}
 
