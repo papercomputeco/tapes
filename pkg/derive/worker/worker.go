@@ -26,6 +26,7 @@ import (
 const (
 	DefaultPollInterval   = 5 * time.Second
 	DefaultDebounce       = 20 * time.Second
+	DefaultMaxDeriveLag   = 45 * time.Second
 	DefaultSweepInterval  = time.Hour
 	DefaultPageSize       = 50
 	DefaultMaxPollBackoff = 30 * time.Second
@@ -36,8 +37,9 @@ const (
 // Store is the storage capability surface the worker drives. The
 // Postgres driver satisfies it; tests substitute a fake.
 type Store interface {
-	// ListDeriveDirty returns settled dirty sessions, oldest first.
-	ListDeriveDirty(ctx context.Context, dirtiedBefore time.Time, limit int32) ([]storage.DeriveQueueEntry, error)
+	// ListDeriveDirty returns dirty sessions that have settled OR
+	// waited past the max-lag bound, oldest first.
+	ListDeriveDirty(ctx context.Context, dirtiedBefore, firstDirtiedBefore time.Time, limit int32) ([]storage.DeriveQueueEntry, error)
 
 	// GetDeriveDirty re-reads one queue entry (nil when clean).
 	GetDeriveDirty(ctx context.Context, orgID, harnessID, harnessSessionID string) (*storage.DeriveQueueEntry, error)
@@ -78,6 +80,12 @@ type Config struct {
 	// present in the raw layer, catching lost marks. A sweep also runs
 	// once at startup.
 	SweepInterval time.Duration
+
+	// MaxDeriveLag bounds debounce starvation: a continuously
+	// streaming session re-marks on every capture and never settles,
+	// so a mark that has waited this long derives anyway. Live views
+	// see bounded lag instead of waiting for a quiet gap.
+	MaxDeriveLag time.Duration
 
 	// SweepWindow bounds the backstop sweep to sessions with raw
 	// activity in the last window, so a worker restart in a large org
@@ -321,7 +329,8 @@ func (w *Worker) runPoll(ctx, workCtx context.Context) error {
 	w.metrics.DeriveLag.Set(lag)
 
 	cutoff := time.Now().Add(-w.cfg.Debounce)
-	entries, err := w.store.ListDeriveDirty(workCtx, cutoff, w.cfg.PageSize)
+	lagCutoff := time.Now().Add(-w.maxDeriveLag())
+	entries, err := w.store.ListDeriveDirty(workCtx, cutoff, lagCutoff, w.cfg.PageSize)
 	if err != nil {
 		return err
 	}
@@ -348,6 +357,14 @@ func (w *Worker) runPoll(ctx, workCtx context.Context) error {
 // feeds the poll backoff. A derive failure stays per-session — it may
 // be specific to this session's data, so it must not stall the rest of
 // the queue — and returns nil.
+// maxDeriveLag resolves the configured bound, defaulting when unset.
+func (w *Worker) maxDeriveLag() time.Duration {
+	if w.cfg.MaxDeriveLag > 0 {
+		return w.cfg.MaxDeriveLag
+	}
+	return DefaultMaxDeriveLag
+}
+
 func (w *Worker) processEntry(ctx context.Context, e storage.DeriveQueueEntry, cutoff time.Time) error {
 	release, acquired, err := w.store.TryDeriveSessionLock(ctx, e.OrgID, e.HarnessID, e.HarnessSessionID)
 	if err != nil {

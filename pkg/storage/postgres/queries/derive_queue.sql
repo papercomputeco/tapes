@@ -10,10 +10,13 @@ DO UPDATE SET dirtied_at = CURRENT_TIMESTAMP;
 
 -- name: ListDeriveDirty :many
 -- The worker's poll: sessions whose dirty mark has settled (no new
--- raw turn since the debounce window), oldest first.
+-- raw turn since the debounce window) OR whose first mark has waited
+-- past the max-lag bound — a streaming session re-marks continuously
+-- and would otherwise never settle. Oldest first.
 SELECT org_id, harness_id, harness_session_id, dirtied_at
 FROM derive_queue
 WHERE dirtied_at <= sqlc.arg(dirtied_before)
+   OR first_dirtied_at <= sqlc.arg(first_dirtied_before)
 ORDER BY dirtied_at
 LIMIT sqlc.arg(page_size);
 

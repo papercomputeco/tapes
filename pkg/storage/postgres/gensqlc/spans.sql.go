@@ -11,6 +11,21 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const foldSessionCostFromSpans = `-- name: FoldSessionCostFromSpans :exec
+UPDATE sessions SET total_cost_usd = COALESCE((
+    SELECT SUM(st.total_cost_usd) FROM span_turns st WHERE st.session_id = sessions.id
+), 0)
+WHERE id = ANY($1::uuid[])
+`
+
+// Session-level cost is a derive-time fold over the trace rollups —
+// the ingest path never priced wire turns, so the deriver is the only
+// writer of this column on span-model sessions.
+func (q *Queries) FoldSessionCostFromSpans(ctx context.Context, sessionIds []pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, foldSessionCostFromSpans, sessionIds)
+	return err
+}
+
 const getSpan = `-- name: GetSpan :one
 SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash FROM spans
 WHERE org_id = $1 AND trace_id = $2 AND span_id = $3

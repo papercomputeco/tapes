@@ -78,11 +78,18 @@ type GetDeriveDirtyParams struct {
 	HarnessSessionID string
 }
 
+type GetDeriveDirtyRow struct {
+	OrgID            pgtype.UUID
+	HarnessID        string
+	HarnessSessionID string
+	DirtiedAt        pgtype.Timestamptz
+}
+
 // Re-read one queue row (the worker does this under the advisory lock
 // to catch a concurrent worker having already derived + cleared it).
-func (q *Queries) GetDeriveDirty(ctx context.Context, arg GetDeriveDirtyParams) (DeriveQueue, error) {
+func (q *Queries) GetDeriveDirty(ctx context.Context, arg GetDeriveDirtyParams) (GetDeriveDirtyRow, error) {
 	row := q.db.QueryRow(ctx, getDeriveDirty, arg.OrgID, arg.HarnessID, arg.HarnessSessionID)
-	var i DeriveQueue
+	var i GetDeriveDirtyRow
 	err := row.Scan(
 		&i.OrgID,
 		&i.HarnessID,
@@ -96,26 +103,37 @@ const listDeriveDirty = `-- name: ListDeriveDirty :many
 SELECT org_id, harness_id, harness_session_id, dirtied_at
 FROM derive_queue
 WHERE dirtied_at <= $1
+   OR first_dirtied_at <= $2
 ORDER BY dirtied_at
-LIMIT $2
+LIMIT $3
 `
 
 type ListDeriveDirtyParams struct {
-	DirtiedBefore pgtype.Timestamptz
-	PageSize      int32
+	DirtiedBefore      pgtype.Timestamptz
+	FirstDirtiedBefore pgtype.Timestamptz
+	PageSize           int32
+}
+
+type ListDeriveDirtyRow struct {
+	OrgID            pgtype.UUID
+	HarnessID        string
+	HarnessSessionID string
+	DirtiedAt        pgtype.Timestamptz
 }
 
 // The worker's poll: sessions whose dirty mark has settled (no new
-// raw turn since the debounce window), oldest first.
-func (q *Queries) ListDeriveDirty(ctx context.Context, arg ListDeriveDirtyParams) ([]DeriveQueue, error) {
-	rows, err := q.db.Query(ctx, listDeriveDirty, arg.DirtiedBefore, arg.PageSize)
+// raw turn since the debounce window) OR whose first mark has waited
+// past the max-lag bound — a streaming session re-marks continuously
+// and would otherwise never settle. Oldest first.
+func (q *Queries) ListDeriveDirty(ctx context.Context, arg ListDeriveDirtyParams) ([]ListDeriveDirtyRow, error) {
+	rows, err := q.db.Query(ctx, listDeriveDirty, arg.DirtiedBefore, arg.FirstDirtiedBefore, arg.PageSize)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []DeriveQueue
+	var items []ListDeriveDirtyRow
 	for rows.Next() {
-		var i DeriveQueue
+		var i ListDeriveDirtyRow
 		if err := rows.Scan(
 			&i.OrgID,
 			&i.HarnessID,

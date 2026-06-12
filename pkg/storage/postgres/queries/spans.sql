@@ -150,3 +150,12 @@ ORDER BY t.started_at ASC, t.trace_id ASC;
 -- name: GetSpan :one
 SELECT * FROM spans
 WHERE org_id = $1 AND trace_id = $2 AND span_id = $3;
+
+-- name: FoldSessionCostFromSpans :exec
+-- Session-level cost is a derive-time fold over the trace rollups —
+-- the ingest path never priced wire turns, so the deriver is the only
+-- writer of this column on span-model sessions.
+UPDATE sessions SET total_cost_usd = COALESCE((
+    SELECT SUM(st.total_cost_usd) FROM span_turns st WHERE st.session_id = sessions.id
+), 0)
+WHERE id = ANY(sqlc.arg(session_ids)::uuid[]);

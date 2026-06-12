@@ -169,6 +169,9 @@ func writeSpanSet(
 			return fmt.Errorf("prune span turns: %w", err)
 		}
 	}
+	if err := qtx.FoldSessionCostFromSpans(ctx, coveredSessions); err != nil {
+		return fmt.Errorf("fold session cost: %w", err)
+	}
 	return nil
 }
 

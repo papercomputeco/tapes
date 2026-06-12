@@ -139,7 +139,7 @@ func (f *fakeStore) lockCount() int {
 	return len(f.locks)
 }
 
-func (f *fakeStore) ListDeriveDirty(_ context.Context, dirtiedBefore time.Time, limit int32) ([]storage.DeriveQueueEntry, error) {
+func (f *fakeStore) ListDeriveDirty(_ context.Context, dirtiedBefore, _ time.Time, limit int32) ([]storage.DeriveQueueEntry, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.listCalls++

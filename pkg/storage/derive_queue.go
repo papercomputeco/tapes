@@ -48,7 +48,7 @@ type DeriveQueue interface {
 
 	// ListDeriveDirty returns sessions whose dirty mark has settled
 	// (DirtiedAt <= dirtiedBefore), oldest first, capped at limit.
-	ListDeriveDirty(ctx context.Context, dirtiedBefore time.Time, limit int32) ([]DeriveQueueEntry, error)
+	ListDeriveDirty(ctx context.Context, dirtiedBefore, firstDirtiedBefore time.Time, limit int32) ([]DeriveQueueEntry, error)
 
 	// GetDeriveDirty re-reads one queue entry. Returns nil (no error)
 	// when the session is clean.

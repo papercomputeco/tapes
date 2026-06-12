@@ -40,13 +40,14 @@ func (d *Driver) MarkDeriveDirty(ctx context.Context, orgID, harnessID, harnessS
 }
 
 // ListDeriveDirty implements storage.DeriveQueue.
-func (d *Driver) ListDeriveDirty(ctx context.Context, dirtiedBefore time.Time, limit int32) ([]storage.DeriveQueueEntry, error) {
+func (d *Driver) ListDeriveDirty(ctx context.Context, dirtiedBefore, firstDirtiedBefore time.Time, limit int32) ([]storage.DeriveQueueEntry, error) {
 	if d == nil || d.conn == nil {
 		return nil, errors.New("postgres driver not open")
 	}
 	rows, err := d.q.ListDeriveDirty(ctx, gensqlc.ListDeriveDirtyParams{
-		DirtiedBefore: pgtype.Timestamptz{Time: dirtiedBefore, Valid: true},
-		PageSize:      limit,
+		DirtiedBefore:      pgtype.Timestamptz{Time: dirtiedBefore, Valid: true},
+		FirstDirtiedBefore: pgtype.Timestamptz{Time: firstDirtiedBefore, Valid: true},
+		PageSize:           limit,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list derive dirty: %w", err)
@@ -186,11 +187,28 @@ func deriveLockKey(orgID, harnessID, harnessSessionID string) int64 {
 	return int64(h.Sum64()) //nolint:gosec // deliberate wraparound into the signed advisory keyspace
 }
 
-func deriveQueueEntryFromRow(row gensqlc.DeriveQueue) storage.DeriveQueueEntry {
-	return storage.DeriveQueueEntry{
-		OrgID:            uuidString(row.OrgID),
-		HarnessID:        row.HarnessID,
-		HarnessSessionID: row.HarnessSessionID,
-		DirtiedAt:        row.DirtiedAt.Time,
+// queueRow is the shared shape of the per-query row structs sqlc
+// generates for the queue's identity+dirtied_at selects.
+type queueRow interface {
+	gensqlc.ListDeriveDirtyRow | gensqlc.GetDeriveDirtyRow
+}
+
+func deriveQueueEntryFromRow[R queueRow](row R) storage.DeriveQueueEntry {
+	switch r := any(row).(type) {
+	case gensqlc.ListDeriveDirtyRow:
+		return storage.DeriveQueueEntry{
+			OrgID:            uuidString(r.OrgID),
+			HarnessID:        r.HarnessID,
+			HarnessSessionID: r.HarnessSessionID,
+			DirtiedAt:        r.DirtiedAt.Time,
+		}
+	case gensqlc.GetDeriveDirtyRow:
+		return storage.DeriveQueueEntry{
+			OrgID:            uuidString(r.OrgID),
+			HarnessID:        r.HarnessID,
+			HarnessSessionID: r.HarnessSessionID,
+			DirtiedAt:        r.DirtiedAt.Time,
+		}
 	}
+	return storage.DeriveQueueEntry{}
 }

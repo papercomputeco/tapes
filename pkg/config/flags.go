@@ -69,6 +69,7 @@ const (
 	FlagDeriveWorkerDebounce      = "derive-worker-debounce"
 	FlagDeriveWorkerSweep         = "derive-worker-sweep-interval"
 	FlagDeriveWorkerSweepWindow   = "derive-worker-sweep-window" //nolint:gosec // flag registry key, not a credential
+	FlagDeriveWorkerMaxDeriveLag  = "derive-worker-max-derive-lag"
 	FlagDeriveWorkerMetricsListen = "derive-worker-metrics-listen"
 	FlagDeriveWorkerWaitForDB     = "derive-worker-wait-for-db"
 )

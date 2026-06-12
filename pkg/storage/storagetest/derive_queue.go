@@ -77,25 +77,43 @@ func RunDeriveQueueSpecs(label string, makeDriver DriverFactory) bool {
 				gomega.Expect(second.DirtiedAt.After(first.DirtiedAt)).To(gomega.BeTrue(),
 					"re-marking must bump dirtied_at (the debounce signal)")
 
-				entries, err := queue.ListDeriveDirty(ctx, future(), 10)
+				entries, err := queue.ListDeriveDirty(ctx, future(), past(), 10)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Expect(entries).To(gomega.HaveLen(1), "re-mark must not duplicate the row")
 			})
 		})
 
 		ginkgo.Describe("ListDeriveDirty", func() {
+			ginkgo.It("lists an unsettled entry once its first mark passes the max-lag bound", func() {
+				mark(sessionA)
+				time.Sleep(10 * time.Millisecond)
+				mark(sessionA) // re-mark: dirtied_at bumps, first_dirtied_at survives
+
+				// not settled (dirtied_before in the past), but the
+				// first mark is older than a permissive lag cutoff.
+				entries, err := queue.ListDeriveDirty(ctx, past(), future(), 10)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(entries).To(gomega.HaveLen(1),
+					"a streaming session must not be starved past the max-lag bound")
+
+				// strict on both cutoffs: nothing listed.
+				starved, err := queue.ListDeriveDirty(ctx, past(), past(), 10)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(starved).To(gomega.BeEmpty())
+			})
+
 			ginkgo.It("returns only settled entries, oldest first", func() {
 				mark(sessionA)
 				time.Sleep(10 * time.Millisecond)
 				mark(sessionB)
 
-				entries, err := queue.ListDeriveDirty(ctx, future(), 10)
+				entries, err := queue.ListDeriveDirty(ctx, future(), past(), 10)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Expect(entries).To(gomega.HaveLen(2))
 				gomega.Expect(entries[0].HarnessSessionID).To(gomega.Equal(sessionA))
 				gomega.Expect(entries[1].HarnessSessionID).To(gomega.Equal(sessionB))
 
-				settled, err := queue.ListDeriveDirty(ctx, past(), 10)
+				settled, err := queue.ListDeriveDirty(ctx, past(), past(), 10)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Expect(settled).To(gomega.BeEmpty(),
 					"entries dirtied after the cutoff are still debouncing")
@@ -194,7 +212,7 @@ func RunDeriveQueueSpecs(label string, makeDriver DriverFactory) bool {
 			ginkgo.It("does not mark rows without a session key", func() {
 				_, err := raw.PutRawTurn(ctx, rawRecord("req-no-session", ""))
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				entries, err := queue.ListDeriveDirty(ctx, future(), 10)
+				entries, err := queue.ListDeriveDirty(ctx, future(), past(), 10)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Expect(entries).To(gomega.BeEmpty())
 			})

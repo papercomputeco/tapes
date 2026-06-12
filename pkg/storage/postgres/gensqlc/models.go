@@ -13,6 +13,7 @@ type DeriveQueue struct {
 	HarnessID        string
 	HarnessSessionID string
 	DirtiedAt        pgtype.Timestamptz
+	FirstDirtiedAt   pgtype.Timestamptz
 }
 
 type Node struct {

@@ -33,6 +33,7 @@ type deriveWorkerCommander struct {
 	debounce      string
 	sweepInterval string
 	sweepWindow   string
+	maxDeriveLag  string
 	metricsListen string
 	waitForDB     bool
 
@@ -47,6 +48,7 @@ var deriveWorkerFlags = config.FlagSet{
 	config.FlagDeriveWorkerDebounce:      {Name: "debounce", ViperKey: "derive_worker.debounce", Description: "How long a session's dirty mark must be quiet before deriving (Go duration, default 20s)"},
 	config.FlagDeriveWorkerSweep:         {Name: "sweep-interval", ViperKey: "derive_worker.sweep_interval", Description: "Backstop sweep cadence re-enqueuing recently-active raw-layer sessions (Go duration, default 1h)"},
 	config.FlagDeriveWorkerSweepWindow:   {Name: "sweep-window", ViperKey: "derive_worker.sweep_window", Description: "Only sweep sessions with raw activity in this window (Go duration, default 24h; negative sweeps all history)"},
+	config.FlagDeriveWorkerMaxDeriveLag:  {Name: "max-derive-lag", ViperKey: "derive_worker.max_derive_lag", Description: "Derive a still-streaming session anyway once its dirty mark has waited this long (Go duration, default 45s)"},
 	config.FlagDeriveWorkerMetricsListen: {Name: "metrics-listen", ViperKey: "derive_worker.metrics_listen", Description: "Address to serve /metrics, /healthz (liveness), /readyz (readiness), and /ping on (empty disables)"},
 	config.FlagDeriveWorkerWaitForDB:     {Name: "wait-for-db", ViperKey: "derive_worker.wait_for_db", Description: "Retry an unreachable Postgres at startup with backoff instead of exiting (for orchestrated environments; default: fail fast)"},
 }
@@ -106,6 +108,7 @@ func NewDeriveWorkerCmd() *cobra.Command {
 				config.FlagDeriveWorkerDebounce,
 				config.FlagDeriveWorkerSweep,
 				config.FlagDeriveWorkerSweepWindow,
+				config.FlagDeriveWorkerMaxDeriveLag,
 				config.FlagDeriveWorkerMetricsListen,
 				config.FlagDeriveWorkerWaitForDB,
 			})
@@ -143,6 +146,7 @@ func NewDeriveWorkerCmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagDeriveWorkerDebounce, &cmder.debounce)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagDeriveWorkerSweep, &cmder.sweepInterval)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagDeriveWorkerSweepWindow, &cmder.sweepWindow)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagDeriveWorkerMaxDeriveLag, &cmder.maxDeriveLag)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagDeriveWorkerMetricsListen, &cmder.metricsListen)
 	config.AddBoolFlag(cmd, cmder.flags, config.FlagDeriveWorkerWaitForDB, &cmder.waitForDB)
 
@@ -168,6 +172,9 @@ func (c *deriveWorkerCommander) run(ctx context.Context) error {
 		return err
 	}
 	if cfg.SweepWindow, err = parseDurationFlag("sweep-window", c.sweepWindow); err != nil {
+		return err
+	}
+	if cfg.MaxDeriveLag, err = parseDurationFlag("max-derive-lag", c.maxDeriveLag); err != nil {
 		return err
 	}
 
