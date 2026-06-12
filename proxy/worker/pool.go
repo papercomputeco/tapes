@@ -1,9 +1,13 @@
 // Package worker provides an asynchronous worker pool and utils for persisting
-// conversation turns using the provided storage.Driver and generating embeddings
-// using the provided embeddings.Embedder.
+// conversation turns using the provided storage.Driver.
 //
 // The pool decouples storage operations from the proxy's HTTP hot path so that the
 // client-proxy-upstream interaction is fully transparent.
+//
+// Embedding writes deliberately do NOT happen here: the derive worker
+// family is the single writer of embeddings (pkg/spanembed), keyed by
+// deterministic span identity, so the ingest hot path stays pure
+// capture.
 package worker
 
 import (
@@ -15,13 +19,11 @@ import (
 	"sync"
 
 	"github.com/papercomputeco/tapes/pkg/derive"
-	"github.com/papercomputeco/tapes/pkg/embeddings"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/publisher"
 	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
-	"github.com/papercomputeco/tapes/pkg/vector"
 )
 
 var (
@@ -61,13 +63,6 @@ type Config struct {
 	// Publisher is an optional event publisher for newly inserted nodes.
 	// If nil, publishing is disabled.
 	Publisher publisher.Publisher
-
-	// VectorDriver is the optional vector store driver for embeddings.
-	VectorDriver vector.Driver
-
-	// Embedder generates optional text embeddings.
-	// A configured Embedder is required if VectorDriver is set.
-	Embedder embeddings.Embedder
 
 	// NumWorkers is the number of background workers in the pool.
 	NumWorkers uint
@@ -172,8 +167,7 @@ func (p *Pool) worker(id uint) {
 	p.logger.Debug("storage worker stopped", "worker_id", id)
 }
 
-// processJob processes a Job, storing the conversation turn and setting the
-// embedding if provided.
+// processJob processes a Job, storing the conversation turn.
 func (p *Pool) processJob(job Job) {
 	ctx := context.Background()
 
@@ -190,14 +184,6 @@ func (p *Pool) processJob(job Job) {
 		"head", head,
 		"provider", job.Provider,
 	)
-
-	// If the vector store is configured, process newly inserted nodes
-	if p.config.VectorDriver != nil && p.config.Embedder != nil && len(newNodes) > 0 {
-		p.logger.Debug("storing embeddings for new nodes",
-			"new_node_count", len(newNodes),
-		)
-		p.storeEmbeddings(ctx, newNodes)
-	}
 
 	// If Kafka is configured, publish newly inserted nodes
 	if p.config.Publisher != nil && len(newNodes) > 0 {
@@ -360,47 +346,4 @@ func (p *Pool) ingestTurnViaSessionIngester(
 		"counters_updated", res.CountersUpdated,
 	)
 	return head.Hash, res.NewNodes, nil
-}
-
-// storeEmbeddings generates and stores embeddings for the given nodes.
-// Only called for nodes that were newly inserted into the DAG.
-// Errors are logged but not returned to avoid failing the main storage operation.
-func (p *Pool) storeEmbeddings(ctx context.Context, nodes []*merkle.Node) {
-	for _, node := range nodes {
-		text := node.Bucket.ExtractText()
-		if text == "" {
-			p.logger.Debug("skipping embedding for node with no text content",
-				"hash", node.Hash,
-			)
-			continue
-		}
-
-		embedding, err := p.config.Embedder.Embed(ctx, text)
-		if err != nil {
-			p.logger.Warn("failed to generate embedding",
-				"hash", node.Hash,
-				"error", err,
-			)
-			continue
-		}
-
-		doc := vector.Document{
-			ID:        node.Hash,
-			Hash:      node.Hash,
-			Embedding: embedding,
-		}
-
-		if err := p.config.VectorDriver.Add(ctx, []vector.Document{doc}); err != nil {
-			p.logger.Warn("failed to store embedding",
-				"hash", node.Hash,
-				"error", err,
-			)
-			continue
-		}
-
-		p.logger.Debug("stored embedding",
-			"hash", node.Hash,
-			"embedding_dim", len(embedding),
-		)
-	}
 }
