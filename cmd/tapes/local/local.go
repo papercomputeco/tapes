@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path"
@@ -39,6 +40,7 @@ type localCommander struct {
 	ollamaPort    int
 	postgresImage string
 	ollamaImage   string
+	dockerOllama  bool
 }
 
 func NewLocalCmd() *cobra.Command {
@@ -58,6 +60,11 @@ This starts:
   - Postgres for tapes storage + pgvector + pg_duckdb
   - Ollama for local inference/embeddings
 
+When Ollama is already installed on the host, the existing install is used
+instead of a Docker container — native Ollama has direct GPU access, which a
+containerized Ollama does not on macOS. Pass --docker-ollama to force the
+container anyway.
+
 Examples:
   tapes local
   tapes local up
@@ -75,6 +82,7 @@ Examples:
 	cmd.Flags().IntVar(&cmder.ollamaPort, "ollama-port", cmder.ollamaPort, "Host port to bind Ollama to")
 	cmd.Flags().StringVar(&cmder.postgresImage, "postgres-image", cmder.postgresImage, "Docker image to use for Postgres")
 	cmd.Flags().StringVar(&cmder.ollamaImage, "ollama-image", cmder.ollamaImage, "Docker image to use for Ollama")
+	cmd.Flags().BoolVar(&cmder.dockerOllama, "docker-ollama", cmder.dockerOllama, "Run Ollama in Docker even if a native install is present")
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "up",
@@ -131,8 +139,24 @@ func (c *localCommander) runUp() error {
 	if err := ensureDockerImage(c.postgresImage, "Postgres"); err != nil {
 		return err
 	}
-	if err := ensureDockerImage(c.ollamaImage, "Ollama"); err != nil {
+
+	containerRunning, _, err := containerState(ollamaContainer)
+	if err != nil {
 		return err
+	}
+	nativeURL := fmt.Sprintf("http://127.0.0.1:%d", c.ollamaPort)
+	_, lookErr := exec.LookPath("ollama")
+	plan := planOllama(
+		c.dockerOllama,
+		containerRunning,
+		!containerRunning && ollamaServing(nativeURL),
+		lookErr == nil,
+	)
+
+	if plan.useDocker {
+		if err := ensureDockerImage(c.ollamaImage, "Ollama"); err != nil {
+			return err
+		}
 	}
 	postgresDir, err := ensureLocalPostgresDir(c.configDir)
 	if err != nil {
@@ -144,17 +168,30 @@ func (c *localCommander) runUp() error {
 	if err := ensurePostgresContainer(c); err != nil {
 		return err
 	}
-	if err := ensureOllamaContainer(c); err != nil {
-		return err
-	}
 	if err := cliui.Step(os.Stdout, "Waiting for Postgres", waitForPostgresReady); err != nil {
 		return err
 	}
-	if err := cliui.Step(os.Stdout, "Waiting for Ollama", waitForOllamaReady); err != nil {
-		return err
-	}
-	if err := ensureOllamaModel(ollamaEmbeddingModel); err != nil {
-		return err
+
+	ollamaURL := nativeURL
+	switch {
+	case plan.useDocker:
+		ollamaURL = fmt.Sprintf("http://localhost:%d", c.ollamaPort)
+		if err := ensureOllamaContainer(c); err != nil {
+			return err
+		}
+		if err := cliui.Step(os.Stdout, "Waiting for Ollama", waitForOllamaReady); err != nil {
+			return err
+		}
+		if err := ensureOllamaModel(ollamaEmbeddingModel); err != nil {
+			return err
+		}
+	case plan.needsStart:
+		fmt.Printf("  %s %s\n", cliui.WarnStyle.Render("●"), cliui.StepStyle.Render("Ollama is installed but not running — start it (ollama serve, or the Ollama app) and pull the embedding model: ollama pull "+ollamaEmbeddingModel))
+	default:
+		fmt.Printf("  %s %s\n", cliui.SuccessMark, cliui.StepStyle.Render("Using existing Ollama at "+nativeURL))
+		if err := ensureNativeOllamaModel(ollamaEmbeddingModel); err != nil {
+			return err
+		}
 	}
 
 	dsn := fmt.Sprintf("postgres://%s:%s@localhost:%d/%s?sslmode=disable", postgresUser, postgresPass, c.postgresPort, postgresDB)
@@ -162,19 +199,67 @@ func (c *localCommander) runUp() error {
 	fmt.Printf("\n%s\n", cliui.HeaderStyle.Render("Started local services"))
 	fmt.Printf("  %s %s\n", cliui.KeyStyle.Render("Postgres:"), cliui.ValueStyle.Render(dsn))
 	fmt.Printf("  %s %s\n", cliui.KeyStyle.Render("Data dir:"), cliui.ValueStyle.Render(postgresDir))
-	fmt.Printf("  %s %s\n\n", cliui.KeyStyle.Render("Ollama:  "), cliui.ValueStyle.Render(fmt.Sprintf("http://localhost:%d", c.ollamaPort)))
+	fmt.Printf("  %s %s\n\n", cliui.KeyStyle.Render("Ollama:  "), cliui.ValueStyle.Render(ollamaURL))
 	fmt.Printf("%s\n", cliui.HeaderStyle.Render("Suggested config"))
 	fmt.Printf("  tapes config set storage.postgres_dsn %q\n", dsn)
 	fmt.Printf("  tapes config set vector_store.provider %q\n", "pgvector")
 	fmt.Printf("  tapes config set vector_store.target %q\n", dsn)
-	fmt.Printf("  tapes config set proxy.upstream %q\n", fmt.Sprintf("http://localhost:%d", c.ollamaPort))
+	fmt.Printf("  tapes config set proxy.upstream %q\n", ollamaURL)
 	fmt.Printf("  tapes config set embedding.provider %q\n", "ollama")
-	fmt.Printf("  tapes config set embedding.target %q\n", fmt.Sprintf("http://localhost:%d", c.ollamaPort))
+	fmt.Printf("  tapes config set embedding.target %q\n", ollamaURL)
 	fmt.Printf("  tapes config set embedding.model %q\n\n", defaultEmbeddingModel)
 	fmt.Printf("Next steps:\n")
 	fmt.Printf("  1. Run: tapes serve --postgres %q\n", dsn)
-	fmt.Printf("  2. Optionally pull chat/completion models with: docker exec -it %s ollama pull qwen3-coder:30b\n\n", ollamaContainer)
+	if plan.useDocker {
+		fmt.Printf("  2. Optionally pull chat/completion models with: docker exec -it %s ollama pull qwen3-coder:30b\n\n", ollamaContainer)
+	} else {
+		fmt.Printf("  2. Optionally pull chat/completion models with: ollama pull qwen3-coder:30b\n\n")
+	}
 	return nil
+}
+
+// ollamaPlan describes how `tapes local up` satisfies the Ollama dependency.
+type ollamaPlan struct {
+	// useDocker provisions (or keeps) the tapes-local-ollama container.
+	useDocker bool
+	// needsStart is set when a native install was found but nothing answers
+	// on the port; the user has to start the server themselves.
+	needsStart bool
+}
+
+// planOllama prefers an Ollama already on the host over the Docker container.
+// Native Ollama has direct GPU access, which a container does not on macOS.
+// A container published on the same port also binds the wildcard addresses
+// and shadows a loopback-only native server for clients that resolve
+// localhost to ::1, so provisioning one next to a native install produces
+// silently split traffic.
+func planOllama(forceDocker, containerRunning, serving, installed bool) ollamaPlan {
+	switch {
+	case forceDocker || containerRunning:
+		return ollamaPlan{useDocker: true}
+	case serving:
+		return ollamaPlan{}
+	case installed:
+		return ollamaPlan{needsStart: true}
+	default:
+		return ollamaPlan{useDocker: true}
+	}
+}
+
+// ollamaServing reports whether an Ollama API answers at url.
+func ollamaServing(url string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+"/api/version", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 func (c *localCommander) runDown() error {
@@ -203,6 +288,12 @@ func (c *localCommander) runStatus() error {
 		}
 		status := strings.TrimSpace(out)
 		if status == "" {
+			if name == ollamaContainer {
+				if nativeURL := fmt.Sprintf("http://127.0.0.1:%d", c.ollamaPort); ollamaServing(nativeURL) {
+					fmt.Printf("  %s %s %s\n", cliui.SuccessMark, cliui.NameStyle.Render("ollama (native)"), cliui.ValueStyle.Render(nativeURL))
+					continue
+				}
+			}
 			fmt.Printf("  %s %s %s\n", cliui.DimStyle.Render("●"), cliui.NameStyle.Render(name), cliui.DimStyle.Render("not created"))
 			continue
 		}
@@ -343,6 +434,17 @@ func waitForOllamaReady() error {
 func ensureOllamaModel(model string) error {
 	fmt.Printf("  %s %s\n", cliui.WarnStyle.Render("↓"), cliui.StepStyle.Render("Pulling Ollama model "+model))
 	return runDocker("exec", ollamaContainer, "ollama", "pull", model)
+}
+
+func ensureNativeOllamaModel(model string) error {
+	fmt.Printf("  %s %s\n", cliui.WarnStyle.Render("↓"), cliui.StepStyle.Render("Pulling Ollama model "+model))
+	cmd := exec.CommandContext(context.Background(), "ollama", "pull", model)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("ollama pull %s: %w", model, err)
+	}
+	return nil
 }
 
 func resolveLocalTapesDir(configDir string) (string, error) {
