@@ -2,12 +2,23 @@
 # The async worker pool needs a moment to flush, so the orchestration script
 # should add a brief delay before running this file.
 #
-# session_count is session-grained (distinct sessions rows touched by the
-# matching nodes — PCC-565). The proxy path carries no session envelope, so
-# it contributes stems and turns but no first-class session; assert
-# stem_count here. The ingest leg (05+) is the one that creates a session.
+# /v1/stats reads the span layer on this backend, and the span
+# projection is empty until the derive leg (06) runs — so the bare
+# stats call asserts the pre-derive zero state. The node-layer numbers
+# the proxy leg wrote are still reachable through the legacy fallback,
+# which any per-node filter (here: the chat leg's model) forces;
+# stem_count only exists on that path. The proxy path carries no
+# session envelope, so it contributes stems and turns but no
+# first-class session (PCC-565) — the ingest leg (05+) creates the
+# session.
 
 GET http://tapes-api:8081/v1/stats
+HTTP 200
+[Asserts]
+jsonpath "$.turn_count" == 0
+jsonpath "$.session_count" == 0
+
+GET http://tapes-api:8081/v1/stats?model=qwen3:0.6b
 HTTP 200
 [Asserts]
 jsonpath "$.turn_count" >= 2

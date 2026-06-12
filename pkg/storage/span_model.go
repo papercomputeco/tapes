@@ -12,9 +12,12 @@ import (
 
 // SpanTurnRecord is one user-visible turn (trace).
 type SpanTurnRecord struct {
-	TraceID           string
-	SessionID         string
-	UserPrompt        string
+	TraceID    string
+	SessionID  string
+	UserPrompt string
+	// ResponsePreview is the derive-time fold of the closing spine llm
+	// call's text output — the turn card's answer line.
+	ResponsePreview   string
 	Synthetic         string
 	Status            string
 	StartedAt         time.Time
@@ -97,4 +100,29 @@ type SpanModelReader interface {
 	GetTraceDetail(ctx context.Context, orgID, traceID string) (*SpanTurnRecord, []SpanRecord, []SpanLinkRecord, error)
 	GetSpanRecord(ctx context.Context, orgID, traceID, spanID string) (*SpanRecord, error)
 	ListRawTurnHeaders(ctx context.Context, orgID, harnessID, harnessSessionID string) ([]RawTurnHeader, error)
+}
+
+// SpanStats is the span-layer aggregate behind /v1/stats: trace-grain
+// rollups summed over a time window, so the dashboard numbers agree
+// with the session detail and trace views. TotalDurationNS is the sum
+// of trace durations (agent time), not a wall-clock window.
+type SpanStats struct {
+	TurnCount           int
+	RootCount           int
+	SessionCount        int
+	CompletedCount      int
+	InputTokens         int64
+	OutputTokens        int64
+	CacheCreationTokens int64
+	CacheReadTokens     int64
+	TotalDurationNS     int64
+	TotalCostUSD        float64
+	ToolCalls           int
+}
+
+// SpanStatsReader is the capability interface for span-layer stats.
+// Backends without the span projection fall back to the node-layer
+// CountSessions aggregate.
+type SpanStatsReader interface {
+	AggregateSpanStats(ctx context.Context, orgID string, since, until *time.Time) (SpanStats, error)
 }

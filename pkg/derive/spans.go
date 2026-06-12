@@ -74,6 +74,12 @@ type SpanTurn struct {
 	// the turn ("" for synthetic openers).
 	UserPrompt string
 
+	// ResponsePreview is the text the closing conversation-spine llm
+	// call answered with, truncated for the turn card — the response
+	// counterpart of UserPrompt, folded at derive time so collapsed
+	// renderings never need span payloads.
+	ResponsePreview string
+
 	// Synthetic marks traces not opened by a human prompt
 	// ("post-compaction" for compaction continuations).
 	Synthetic string
@@ -625,7 +631,27 @@ func (em *spanEmitter) finish() {
 		if root.Kind == SpanKindAgent {
 			root.DurationNS = turn.EndedAt.Sub(turn.StartedAt).Nanoseconds()
 		}
+		turn.ResponsePreview = responsePreview(turn)
 	}
+}
+
+// responsePreview folds the closing conversation-spine llm call's text
+// output — the answer line on collapsed turn cards, mirroring
+// UserPrompt. Subagent and shadow calls never carry the turn's answer,
+// so only spine spans (call_kind main, no thread) qualify; a turn that
+// ends on tool_use or was interrupted simply previews the last text
+// the spine produced.
+func responsePreview(turn *SpanTurn) string {
+	for i := len(turn.Spans) - 1; i >= 0; i-- {
+		s := turn.Spans[i]
+		if s.Kind != SpanKindLLM || s.CallKind != KindMain || s.ThreadID != "" {
+			continue
+		}
+		if text := joinTextBlocks(s.Output, true); text != "" {
+			return text
+		}
+	}
+	return ""
 }
 
 // callIdentity mints the deterministic id suffix for one call: the
@@ -704,29 +730,45 @@ func toolID(ts *Span) string {
 	return ts.SpanID
 }
 
-// maxPromptText bounds the trace header's prompt rendering; the full
-// content stays on the opening llm span's input.
-const maxPromptText = 280
+// maxPreviewText bounds the trace header's prompt and response
+// renderings; the full content stays on the llm spans' payloads.
+const maxPreviewText = 280
 
 // promptText renders a prompt node's text blocks for the trace header,
-// truncated for display.
+// truncated for display. Harnesses prepend injected context (e.g. Claude
+// Code's claudeMd) as <system-reminder> text blocks ahead of the human
+// prompt; those would eat the whole preview budget, so blocks that open
+// with the marker only render when the turn carries nothing else.
 func promptText(node *merkle.Node) string {
+	text := joinTextBlocks(node.Bucket.Content, false)
+	if text == "" {
+		text = joinTextBlocks(node.Bucket.Content, true)
+	}
+	return text
+}
+
+const systemReminderMarker = "<system-reminder>"
+
+func joinTextBlocks(blocks []llm.ContentBlock, includeInjected bool) string {
 	var sb strings.Builder
-	for _, b := range node.Bucket.Content {
+	for _, b := range blocks {
 		if b.Type != blockText || b.Text == "" {
+			continue
+		}
+		if !includeInjected && strings.HasPrefix(strings.TrimSpace(b.Text), systemReminderMarker) {
 			continue
 		}
 		if sb.Len() > 0 {
 			sb.WriteString("\n")
 		}
 		sb.WriteString(b.Text)
-		if sb.Len() >= maxPromptText {
+		if sb.Len() >= maxPreviewText {
 			break
 		}
 	}
 	text := sb.String()
-	if len(text) > maxPromptText {
-		text = text[:maxPromptText]
+	if len(text) > maxPreviewText {
+		text = text[:maxPreviewText]
 	}
 	return text
 }

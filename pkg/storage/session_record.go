@@ -28,3 +28,15 @@ type SessionRecord struct {
 	DerivedStatus string
 	Preview       string // first user turn text, truncated; empty when unavailable
 }
+
+// SessionListOpts parameterizes the sessions-list read: keyset cursor
+// (last_seen_at DESC, id DESC) plus an optional activity window. The
+// since/until window filters on last_seen_at — the sort/cursor column —
+// so "sessions active in the period" pages consistently.
+type SessionListOpts struct {
+	Limit    int
+	CursorTs *time.Time
+	CursorID *string
+	Since    *time.Time
+	Until    *time.Time
+}

@@ -214,27 +214,35 @@ func (q *Queries) ListNodesBySession(ctx context.Context, sessionID pgtype.UUID)
 const listSessionRecords = `-- name: ListSessionRecords :many
 SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title FROM sessions
 WHERE org_id = $1
+  AND ($2::timestamptz IS NULL OR last_seen_at >= $2::timestamptz)
+  AND ($3::timestamptz IS NULL OR last_seen_at < $3::timestamptz)
   AND (
-    $2::timestamptz IS NULL
-    OR last_seen_at < $2::timestamptz
-    OR (last_seen_at = $2::timestamptz AND id < $3::uuid)
+    $4::timestamptz IS NULL
+    OR last_seen_at < $4::timestamptz
+    OR (last_seen_at = $4::timestamptz AND id < $5::uuid)
   )
 ORDER BY last_seen_at DESC, id DESC
-LIMIT $4
+LIMIT $6
 `
 
 type ListSessionRecordsParams struct {
-	OrgID    pgtype.UUID
-	CursorTs pgtype.Timestamptz
-	CursorID pgtype.UUID
-	Lim      int32
+	OrgID       pgtype.UUID
+	SinceFilter pgtype.Timestamptz
+	UntilFilter pgtype.Timestamptz
+	CursorTs    pgtype.Timestamptz
+	CursorID    pgtype.UUID
+	Lim         int32
 }
 
 // Paginated list of sessions for an org ordered newest-first (last_seen_at DESC, id DESC).
-// Pass NULL cursor values to start from the beginning.
+// Pass NULL cursor values to start from the beginning. The optional
+// since/until window filters on last_seen_at — the sort/cursor column —
+// so "sessions active in the period" pages consistently.
 func (q *Queries) ListSessionRecords(ctx context.Context, arg ListSessionRecordsParams) ([]Session, error) {
 	rows, err := q.db.Query(ctx, listSessionRecords,
 		arg.OrgID,
+		arg.SinceFilter,
+		arg.UntilFilter,
 		arg.CursorTs,
 		arg.CursorID,
 		arg.Lim,

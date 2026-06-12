@@ -122,9 +122,13 @@ UPDATE sessions
 
 -- name: ListSessionRecords :many
 -- Paginated list of sessions for an org ordered newest-first (last_seen_at DESC, id DESC).
--- Pass NULL cursor values to start from the beginning.
+-- Pass NULL cursor values to start from the beginning. The optional
+-- since/until window filters on last_seen_at — the sort/cursor column —
+-- so "sessions active in the period" pages consistently.
 SELECT * FROM sessions
 WHERE org_id = sqlc.arg(org_id)
+  AND (sqlc.narg(since_filter)::timestamptz IS NULL OR last_seen_at >= sqlc.narg(since_filter)::timestamptz)
+  AND (sqlc.narg(until_filter)::timestamptz IS NULL OR last_seen_at < sqlc.narg(until_filter)::timestamptz)
   AND (
     sqlc.narg(cursor_ts)::timestamptz IS NULL
     OR last_seen_at < sqlc.narg(cursor_ts)::timestamptz

@@ -50,12 +50,16 @@ func payloadModeFromQuery(v string) PayloadMode {
 
 // TraceItem is one user-visible turn's header.
 type TraceItem struct {
-	ID                string     `json:"id"`
-	TraceID           string     `json:"trace_id"`
-	SessionID         string     `json:"session_id"`
-	HarnessID         string     `json:"harness_id"`
-	HarnessSessionID  string     `json:"harness_session_id"`
-	UserPrompt        string     `json:"user_prompt,omitempty"`
+	ID               string `json:"id"`
+	TraceID          string `json:"trace_id"`
+	SessionID        string `json:"session_id"`
+	HarnessID        string `json:"harness_id"`
+	HarnessSessionID string `json:"harness_session_id"`
+	UserPrompt       string `json:"user_prompt,omitempty"`
+	// ResponsePreview is the derive-time fold of the closing
+	// conversation-spine llm call's text output — the answer line for
+	// collapsed turn cards, so summary consumers never need spans.
+	ResponsePreview   string     `json:"response_preview,omitempty"`
 	Status            string     `json:"status"`
 	StartedAt         time.Time  `json:"started_at"`
 	EndedAt           *time.Time `json:"ended_at,omitempty"`

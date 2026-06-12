@@ -1,6 +1,8 @@
 package derive_test
 
 import (
+	"strings"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -87,8 +89,28 @@ var _ = Describe("span emit over the corpus (cb9a87e5)", func() {
 
 		// No cross-trace causality without compaction.
 		Expect(spans.Links).To(BeEmpty())
+
+		expectTurnPreviews(spans)
 	})
 })
+
+// expectTurnPreviews pins the derive-time turn-card folds: the header
+// prompt is the human's text (Claude Code's claudeMd lands as a
+// <system-reminder> first block, which used to eat the preview), and
+// every human-opened turn carries the closing spine call's answer line.
+func expectTurnPreviews(spans *derive.SpanSet) {
+	for _, turn := range spans.Turns {
+		Expect(len(turn.UserPrompt)).To(BeNumerically("<=", 280))
+		Expect(len(turn.ResponsePreview)).To(BeNumerically("<=", 280))
+		if turn.Synthetic != "" {
+			continue
+		}
+		Expect(turn.UserPrompt).NotTo(BeEmpty(), "trace %s lost its prompt", turn.TraceID)
+		Expect(strings.HasPrefix(turn.UserPrompt, "<system-reminder>")).To(BeFalse(),
+			"trace %s previews injected context, not the human prompt", turn.TraceID)
+		Expect(turn.ResponsePreview).NotTo(BeEmpty(), "trace %s has no answer line", turn.TraceID)
+	}
+}
 
 var _ = Describe("span emit over the corpus (9fec0da7 — compaction)", func() {
 	It("projects the session into the pinned trace shape", func() {
@@ -145,6 +167,8 @@ var _ = Describe("span emit over the corpus (9fec0da7 — compaction)", func() {
 				Expect(byID[s.ParentSpanID].Name).To(Equal("Agent"), "agent %s", id)
 			}
 		}
+
+		expectTurnPreviews(spans)
 
 		// Structural invariants that hold for every emitted set:
 		// parents resolve within the trace, links reference real

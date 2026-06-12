@@ -11,9 +11,35 @@ jsonpath "$.orgs.default.upserted" >= 2
 
 # The ingest leg carried a session envelope, so a first-class session
 # row exists now (the proxy leg alone contributes none — see
-# 04-history.hurl).
+# 04-history.hurl). The session's token counters are the derive-time
+# span fold, not the ingest counters.
 
 GET http://tapes-api:8081/v1/sessions
 HTTP 200
+[Captures]
+session_id: jsonpath "$.items[0].id"
 [Asserts]
 jsonpath "$.items" count >= 1
+jsonpath "$.items[0].total_input_tokens" == 25
+jsonpath "$.items[0].total_output_tokens" == 30
+
+# Span-layer stats are live post-derive: trace-grain sums, agent time =
+# sum of trace durations, stem_count absent on this path.
+
+GET http://tapes-api:8081/v1/stats
+HTTP 200
+[Asserts]
+jsonpath "$.turn_count" >= 1
+jsonpath "$.session_count" >= 1
+jsonpath "$.input_tokens" >= 25
+jsonpath "$.output_tokens" >= 30
+jsonpath "$.stem_count" not exists
+
+# Turn cards render from summaries: the derive-time folds carry both
+# the prompt and the closing answer line.
+
+GET http://tapes-api:8081/v1/traces?session_id={{session_id}}
+HTTP 200
+[Asserts]
+jsonpath "$.items[0].user_prompt" contains "retry backoff"
+jsonpath "$.items[0].response_preview" contains "max-poll-backoff"

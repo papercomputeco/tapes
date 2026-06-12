@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -53,6 +54,7 @@ func writeSpanSet(
 			TraceID:             turn.TraceID,
 			SessionID:           sid,
 			UserPrompt:          turn.UserPrompt,
+			ResponsePreview:     turn.ResponsePreview,
 			Synthetic:           turn.Synthetic,
 			Status:              "ok",
 			StartedAt:           pgtype.Timestamptz{Time: turn.StartedAt, Valid: true},
@@ -170,8 +172,8 @@ func writeSpanSet(
 			return fmt.Errorf("prune span turns: %w", err)
 		}
 	}
-	if err := qtx.FoldSessionCostFromSpans(ctx, coveredSessions); err != nil {
-		return fmt.Errorf("fold session cost: %w", err)
+	if err := qtx.FoldSessionRollupsFromSpans(ctx, coveredSessions); err != nil {
+		return fmt.Errorf("fold session rollups: %w", err)
 	}
 	return nil
 }
@@ -215,7 +217,8 @@ func (d *Driver) ListSessionSpanModel(ctx context.Context, sessionID string) ([]
 	for _, row := range turnRows {
 		rec := spanTurnRecordFromColumns(spanTurnColumns{
 			traceID: row.TraceID, userPrompt: row.UserPrompt,
-			synthetic: row.Synthetic, status: row.Status,
+			responsePreview: row.ResponsePreview,
+			synthetic:       row.Synthetic, status: row.Status,
 			sessionID: row.SessionID, startedAt: row.StartedAt,
 			endedAt: row.EndedAt, durationNs: row.DurationNs,
 			totalIn: row.TotalInputTokens, totalOut: row.TotalOutputTokens,
@@ -249,7 +252,8 @@ func (d *Driver) ListSessionSpanModel(ctx context.Context, sessionID string) ([]
 
 // spanTurnRecordFromRow converts a span_turns row to its flat record.
 type spanTurnColumns struct {
-	traceID, userPrompt, synthetic, status    string
+	traceID, userPrompt, responsePreview      string
+	synthetic, status                         string
 	sessionID                                 pgtype.UUID
 	startedAt, endedAt                        pgtype.Timestamptz
 	durationNs, totalIn, totalOut             int64
@@ -261,6 +265,7 @@ func spanTurnRecordFromColumns(c spanTurnColumns) storage.SpanTurnRecord {
 	rec := storage.SpanTurnRecord{
 		TraceID:             c.traceID,
 		UserPrompt:          c.userPrompt,
+		ResponsePreview:     c.responsePreview,
 		Synthetic:           c.synthetic,
 		Status:              c.status,
 		StartedAt:           c.startedAt.Time,
@@ -331,7 +336,8 @@ func (d *Driver) ListTraceSummaries(ctx context.Context, sessionID string) ([]st
 		out = append(out, storage.TraceSummaryRecord{
 			SpanTurnRecord: spanTurnRecordFromColumns(spanTurnColumns{
 				traceID: row.TraceID, userPrompt: row.UserPrompt,
-				synthetic: row.Synthetic, status: row.Status,
+				responsePreview: row.ResponsePreview,
+				synthetic:       row.Synthetic, status: row.Status,
 				sessionID: row.SessionID, startedAt: row.StartedAt,
 				endedAt: row.EndedAt, durationNs: row.DurationNs,
 				totalIn: row.TotalInputTokens, totalOut: row.TotalOutputTokens,
@@ -364,7 +370,8 @@ func (d *Driver) GetTraceDetail(ctx context.Context, orgID, traceID string) (*st
 	}
 	turn := spanTurnRecordFromColumns(spanTurnColumns{
 		traceID: row.TraceID, userPrompt: row.UserPrompt,
-		synthetic: row.Synthetic, status: row.Status,
+		responsePreview: row.ResponsePreview,
+		synthetic:       row.Synthetic, status: row.Status,
 		sessionID: row.SessionID, startedAt: row.StartedAt,
 		endedAt: row.EndedAt, durationNs: row.DurationNs,
 		totalIn: row.TotalInputTokens, totalOut: row.TotalOutputTokens,
@@ -416,6 +423,45 @@ func (d *Driver) GetSpanRecord(ctx context.Context, orgID, traceID, spanID strin
 	}
 	rec := spanRecordFromRow(row)
 	return &rec, nil
+}
+
+// AggregateSpanStats sums the trace-grain rollups over a time window —
+// the span-layer aggregate behind /v1/stats. Implements
+// storage.SpanStatsReader.
+func (d *Driver) AggregateSpanStats(ctx context.Context, orgID string, since, until *time.Time) (storage.SpanStats, error) {
+	if d == nil || d.conn == nil {
+		return storage.SpanStats{}, errors.New("postgres driver not open")
+	}
+	org, err := orgIDFromString(orgKeyForLookup(orgID))
+	if err != nil {
+		return storage.SpanStats{}, fmt.Errorf("decode org_id: %w", err)
+	}
+	row, err := d.q.AggregateSpanStats(ctx, gensqlc.AggregateSpanStatsParams{
+		OrgID:       org,
+		SinceFilter: nullTimePtr(since),
+		UntilFilter: nullTimePtr(until),
+	})
+	if err != nil {
+		return storage.SpanStats{}, fmt.Errorf("aggregate span stats: %w", err)
+	}
+	stats := storage.SpanStats{
+		TurnCount:           int(row.TurnCount),
+		RootCount:           int(row.RootCount),
+		SessionCount:        int(row.SessionCount),
+		CompletedCount:      int(row.CompletedCount),
+		InputTokens:         row.InputTokens,
+		OutputTokens:        row.OutputTokens,
+		CacheCreationTokens: row.CacheCreationTokens,
+		CacheReadTokens:     row.CacheReadTokens,
+		TotalDurationNS:     row.TotalDurationNs,
+		ToolCalls:           int(row.ToolCalls),
+	}
+	if row.TotalCostUsd.Valid {
+		if f, err := row.TotalCostUsd.Float64Value(); err == nil && f.Valid {
+			stats.TotalCostUSD = f.Float64
+		}
+	}
+	return stats, nil
 }
 
 // ListRawTurnHeaders returns the wire log for one session: capture

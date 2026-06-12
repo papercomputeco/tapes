@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -19,27 +18,27 @@ import (
 )
 
 // ListSessionRecords returns a page of sessions for an org ordered by
-// last_seen_at DESC. Pass nil cursorTs/cursorID to start from the beginning.
+// last_seen_at DESC, optionally windowed by activity (last_seen_at).
+// Pass zero-value opts to start from the beginning, unwindowed.
 func (d *Driver) ListSessionRecords(
 	ctx context.Context,
 	orgID string,
-	limit int,
-	cursorTs *time.Time,
-	cursorID *string,
+	opts storage.SessionListOpts,
 ) ([]storage.SessionRecord, error) {
 	oid, err := orgIDFromString(orgID)
 	if err != nil {
 		return nil, fmt.Errorf("list session records: %w", err)
 	}
+	limit := opts.Limit
 	if limit <= 0 {
 		limit = storage.DefaultListLimit
 	}
 
 	var tsPg pgtype.Timestamptz
 	var idPg pgtype.UUID
-	if cursorTs != nil && cursorID != nil && *cursorID != "" {
-		tsPg = pgtype.Timestamptz{Time: *cursorTs, Valid: true}
-		parsed, err := uuid.Parse(*cursorID)
+	if opts.CursorTs != nil && opts.CursorID != nil && *opts.CursorID != "" {
+		tsPg = pgtype.Timestamptz{Time: *opts.CursorTs, Valid: true}
+		parsed, err := uuid.Parse(*opts.CursorID)
 		if err != nil {
 			return nil, fmt.Errorf("list session records: invalid cursor id: %w", err)
 		}
@@ -47,10 +46,12 @@ func (d *Driver) ListSessionRecords(
 	}
 
 	rows, err := d.q.ListSessionRecords(ctx, gensqlc.ListSessionRecordsParams{
-		OrgID:    oid,
-		CursorTs: tsPg,
-		CursorID: idPg,
-		Lim:      int32(limit), //nolint:gosec // bounded above by the API handler (maxSessionsLimit)
+		OrgID:       oid,
+		CursorTs:    tsPg,
+		CursorID:    idPg,
+		SinceFilter: nullTimePtr(opts.Since),
+		UntilFilter: nullTimePtr(opts.Until),
+		Lim:         int32(limit), //nolint:gosec // bounded above by the API handler (maxSessionsLimit)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list session records: %w", err)

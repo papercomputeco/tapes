@@ -77,36 +77,33 @@ type Turn struct {
 
 // StatsResponse is the response for GET /v1/stats.
 //
-// All fields are computed by a single storage-driver aggregate over the
-// matching node set — no per-session chain walk. This means:
+// On backends with the span projection (storage.SpanStatsReader) the
+// numbers come from the trace-grain rollups, so they agree with the
+// session detail and trace views:
 //
-//   - InputTokens / OutputTokens / ToolCalls are SUMs over every node
-//     matching the filter, NOT per-chain folds. Each piece of work (each
-//     token billed, each tool_use invoked) is counted exactly once
-//     regardless of how many leaves share its ancestor. This deliberately
-//     diverges from /v1/sessions/summary's per-chain numbers, which
-//     multi-count shared ancestors when leaves descend from a common
-//     branch.
-//   - TotalCost is folded in the handler from the per-model token rollup
-//     returned by the driver, using the configured pricing table.
-//   - TotalDurationNs is the wall-clock span MAX(created_at) − MIN(created_at)
-//     across matching nodes, in nanoseconds. It is NOT a sum of per-call
-//     durations. The underlying nodes.total_duration_ns column is now
-//     populated by the proxy with per-call wall-clock duration (PCC-514);
-//     switching this endpoint to SUM(total_duration_ns) is a separate
-//     decision since it changes the visible semantic.
-//   - CompletedCount uses leaf-status-only classification: an assistant leaf
-//     with a terminal stop_reason ("stop", "end_turn", "end-turn", "eos").
-//     This is a narrower set than pkg/sessions.DetermineStatus accepts:
-//     that classifier also treats "tool_use" / "tool_use_response" as
-//     terminal and considers tool errors and git activity from the full
-//     chain. Sessions terminating on a tool request, or where the agent
-//     shipped work (e.g. `git commit`) without a terminal leaf stop_reason,
-//     will undercount here. PCC-515 tracks the durable fix (denormalize
-//     derived_status on Put + backfill).
+//   - InputTokens / OutputTokens / TotalCost are SUMs of span_turns
+//     rollups — delta-only per-call usage, never the re-sent history
+//     that inflated the node-layer SUMs (each main call re-bills the
+//     whole conversation on the wire).
+//   - TotalDurationNs is the SUM of trace durations — agent time. Idle
+//     time between turns no longer counts (the node-layer value was
+//     wall-clock MAX−MIN over the window).
+//   - TurnCount counts traces (user-visible turns), not wire nodes.
+//     RootCount counts traces opened by a genuine prompt (synthetic
+//     compaction continuations excluded). StemCount has no span
+//     equivalent and is omitted.
+//   - CompletedCount counts distinct sessions whose denormalized
+//     derived_status is 'completed' (chain-aware, PCC-515).
+//
+// Backends without the span projection fall back to the legacy
+// node-layer aggregate (see CountSessions); the legacy per-node filters
+// (project / agent_name / model / provider) also force that path, since
+// trace rollups don't carry those columns.
 type StatsResponse struct {
-	SessionCount    int     `json:"session_count"`
-	StemCount       int     `json:"stem_count"`
+	SessionCount int `json:"session_count"`
+	// StemCount is a node-layer (Merkle leaf) concept with no span
+	// equivalent; it is only present on the legacy fallback path.
+	StemCount       int     `json:"stem_count,omitempty"`
 	TurnCount       int     `json:"turn_count"`
 	RootCount       int     `json:"root_count"`
 	CompletedCount  int     `json:"completed_count"`
@@ -228,13 +225,13 @@ func (s *Server) handleLoadSessionChainError(c *fiber.Ctx, hash string, err erro
 // handleStats handles GET /v1/stats.
 //
 //	@Summary		Get aggregate session stats
-//	@Description	Returns counts plus folded cost / token / duration / tool-call / completed-count totals across every node matching the supplied filters. Numeric aggregates come from a single storage-driver SQL aggregate; cost is folded in the handler from the per-model token rollup using the configured pricing table. total_duration_ns is wall-clock MAX-MIN over the matched window (see PCC-514). completed_count uses leaf-status-only classification (assistant leaf with a terminal stop_reason) — see StatsResponse and PCC-515 for the durable chain-aware fix.
+//	@Description	Returns counts plus cost / token / duration / tool-call / completed-count totals for the window. On span-projection backends the numbers are trace-grain rollup sums (delta-only usage, agent time = sum of trace durations) so they agree with the session and trace views; turn_count counts traces and stem_count is omitted. Supplying any legacy per-node filter (project / agent_name / model / provider) forces the legacy node-layer aggregate, whose sums re-bill re-sent history and whose duration is wall-clock MAX-MIN (PCC-514).
 //	@Tags			sessions
 //	@Produce		json
-//	@Param			project		query		string	false	"Filter by project name"
-//	@Param			agent_name	query		string	false	"Filter by agent name"
-//	@Param			model		query		string	false	"Filter by model name"
-//	@Param			provider	query		string	false	"Filter by provider name"
+//	@Param			project		query		string	false	"Filter by project name (forces the legacy node-layer aggregate)"
+//	@Param			agent_name	query		string	false	"Filter by agent name (forces the legacy node-layer aggregate)"
+//	@Param			model		query		string	false	"Filter by model name (forces the legacy node-layer aggregate)"
+//	@Param			provider	query		string	false	"Filter by provider name (forces the legacy node-layer aggregate)"
 //	@Param			since		query		string	false	"Only include records at or after this RFC3339 timestamp"	format(date-time)
 //	@Param			until		query		string	false	"Only include records before or at this RFC3339 timestamp"	format(date-time)
 //	@Success		200			{object}	StatsResponse
@@ -249,6 +246,29 @@ func (s *Server) handleStats(c *fiber.Ctx) error {
 	// Pagination fields are meaningless for stats.
 	opts.Limit = 0
 	opts.Cursor = ""
+
+	// Span-layer path: trace-grain rollups, the accounting the deriver
+	// writes. The legacy per-node filters force the node-layer fallback
+	// because trace rollups don't carry those columns.
+	legacyFilters := opts.Project != "" || opts.Agent != "" || opts.Model != "" || opts.Provider != ""
+	if reader, ok := s.driver.(storage.SpanStatsReader); ok && !legacyFilters {
+		stats, err := reader.AggregateSpanStats(c.Context(), orgIDFromCtx(c), opts.Since, opts.Until)
+		if err != nil {
+			s.logger.Error("aggregate span stats", "error", err)
+			return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to compute stats"})
+		}
+		return c.JSON(StatsResponse{
+			SessionCount:    stats.SessionCount,
+			TurnCount:       stats.TurnCount,
+			RootCount:       stats.RootCount,
+			CompletedCount:  stats.CompletedCount,
+			TotalCost:       stats.TotalCostUSD,
+			InputTokens:     stats.InputTokens,
+			OutputTokens:    stats.OutputTokens,
+			TotalDurationNs: stats.TotalDurationNS,
+			ToolCalls:       stats.ToolCalls,
+		})
+	}
 
 	stats, err := s.driver.CountSessions(c.Context(), opts)
 	if err != nil {

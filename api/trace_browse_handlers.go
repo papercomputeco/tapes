@@ -50,6 +50,7 @@ func traceItemFromTurn(turn storage.SpanTurnRecord, spanCount int) TraceItem {
 		TraceID:             turn.TraceID,
 		SessionID:           turn.SessionID,
 		UserPrompt:          turn.UserPrompt,
+		ResponsePreview:     turn.ResponsePreview,
 		Status:              turn.Status,
 		StartedAt:           turn.StartedAt,
 		EndedAt:             turn.EndedAt,

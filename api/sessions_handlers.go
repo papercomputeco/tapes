@@ -22,7 +22,7 @@ import (
 // (the sessions-table-backed surface at /v1/sessions). The Postgres driver
 // implements it; the handler returns 501 for drivers that don't.
 type sessionsReader interface {
-	ListSessionRecords(ctx context.Context, orgID string, limit int, cursorTs *time.Time, cursorID *string) ([]storage.SessionRecord, error)
+	ListSessionRecords(ctx context.Context, orgID string, opts storage.SessionListOpts) ([]storage.SessionRecord, error)
 	GetSessionRecord(ctx context.Context, orgID, id string) (*storage.SessionRecord, error)
 	ListNodesBySession(ctx context.Context, sessionID string) ([]*merkle.Node, error)
 }
@@ -144,6 +144,8 @@ func decodeSessionsCursor(token string) (sessionsCursor, error) {
 //	@Produce		json
 //	@Param			limit	query		int		false	"Maximum number of sessions to return (default 50, max 200)"	minimum(1)
 //	@Param			cursor	query		string	false	"Opaque pagination cursor returned by a previous response"
+//	@Param			since	query		string	false	"Only include sessions active (last_seen_at) at or after this RFC3339 timestamp"	format(date-time)
+//	@Param			until	query		string	false	"Only include sessions active (last_seen_at) before this RFC3339 timestamp"		format(date-time)
 //	@Success		200		{object}	SessionListResponse
 //	@Failure		400		{object}	llm.ErrorResponse	"Invalid query parameters"
 //	@Failure		500		{object}	llm.ErrorResponse	"Failed to list sessions"
@@ -167,20 +169,34 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 		limit = parsed
 	}
 
-	var cursorTs *time.Time
-	var cursorID *string
+	opts := storage.SessionListOpts{}
 	if raw := c.Query("cursor"); raw != "" {
 		cur, err := decodeSessionsCursor(raw)
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
 		}
-		cursorTs = &cur.LastSeenAt
-		cursorID = &cur.ID
+		opts.CursorTs = &cur.LastSeenAt
+		opts.CursorID = &cur.ID
+	}
+	if raw := c.Query("since"); raw != "" {
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "since must be an RFC3339 timestamp"})
+		}
+		opts.Since = &t
+	}
+	if raw := c.Query("until"); raw != "" {
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "until must be an RFC3339 timestamp"})
+		}
+		opts.Until = &t
 	}
 
 	orgID := orgIDFromCtx(c)
 	// Fetch one extra item to detect whether a next page exists.
-	sessions, err := reader.ListSessionRecords(c.Context(), orgID, limit+1, cursorTs, cursorID)
+	opts.Limit = limit + 1
+	sessions, err := reader.ListSessionRecords(c.Context(), orgID, opts)
 	if err != nil {
 		s.logger.Error("list sessions", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})

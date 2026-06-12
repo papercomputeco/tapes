@@ -262,6 +262,20 @@ const docTemplate = `{
                         "description": "Opaque pagination cursor returned by a previous response",
                         "name": "cursor",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Only include sessions active (last_seen_at) at or after this RFC3339 timestamp",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Only include sessions active (last_seen_at) before this RFC3339 timestamp",
+                        "name": "until",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -528,7 +542,7 @@ const docTemplate = `{
         },
         "/v1/stats": {
             "get": {
-                "description": "Returns counts plus folded cost / token / duration / tool-call / completed-count totals across every node matching the supplied filters. Numeric aggregates come from a single storage-driver SQL aggregate; cost is folded in the handler from the per-model token rollup using the configured pricing table. total_duration_ns is wall-clock MAX-MIN over the matched window (see PCC-514). completed_count uses leaf-status-only classification (assistant leaf with a terminal stop_reason) — see StatsResponse and PCC-515 for the durable chain-aware fix.",
+                "description": "Returns counts plus cost / token / duration / tool-call / completed-count totals for the window. On span-projection backends the numbers are trace-grain rollup sums (delta-only usage, agent time = sum of trace durations) so they agree with the session and trace views; turn_count counts traces and stem_count is omitted. Supplying any legacy per-node filter (project / agent_name / model / provider) forces the legacy node-layer aggregate, whose sums re-bill re-sent history and whose duration is wall-clock MAX-MIN (PCC-514).",
                 "produces": [
                     "application/json"
                 ],
@@ -539,25 +553,25 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Filter by project name",
+                        "description": "Filter by project name (forces the legacy node-layer aggregate)",
                         "name": "project",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "Filter by agent name",
+                        "description": "Filter by agent name (forces the legacy node-layer aggregate)",
                         "name": "agent_name",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "Filter by model name",
+                        "description": "Filter by model name (forces the legacy node-layer aggregate)",
                         "name": "model",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "Filter by provider name",
+                        "description": "Filter by provider name (forces the legacy node-layer aggregate)",
                         "name": "provider",
                         "in": "query"
                     },
@@ -1488,6 +1502,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "stem_count": {
+                    "description": "StemCount is a node-layer (Merkle leaf) concept with no span\nequivalent; it is only present on the legacy fallback path.",
                     "type": "integer"
                 },
                 "tool_calls": {
@@ -1623,6 +1638,10 @@ const docTemplate = `{
                 "metadata": {
                     "type": "object",
                     "additionalProperties": {}
+                },
+                "response_preview": {
+                    "description": "ResponsePreview is the derive-time fold of the closing\nconversation-spine llm call's text output — the answer line for\ncollapsed turn cards, so summary consumers never need spans.",
+                    "type": "string"
                 },
                 "session_id": {
                     "type": "string"

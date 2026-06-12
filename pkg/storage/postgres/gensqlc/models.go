@@ -141,4 +141,5 @@ type SpanTurn struct {
 	MainOutputTokens    int64
 	CacheReadTokens     int64
 	CacheCreationTokens int64
+	ResponsePreview     string
 }
