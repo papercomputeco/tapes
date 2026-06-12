@@ -110,7 +110,7 @@ ORDER BY session_id, created_at ASC
 		if err := json.Unmarshal(bucketBytes, &bucket); err != nil {
 			continue
 		}
-		text := strings.TrimSpace(bucket.ExtractText())
+		text := strings.TrimSpace(previewText(bucket))
 		if utf8.RuneCountInString(text) > sessionPreviewMaxRunes {
 			runes := []rune(text)
 			text = string(runes[:sessionPreviewMaxRunes])
@@ -118,6 +118,26 @@ ORDER BY session_id, created_at ASC
 		out[sessionID] = text
 	}
 	return out, rows.Err()
+}
+
+// previewText renders one user node as a session preview line. Harnesses
+// prepend injected context (Claude Code's claudeMd) as <system-reminder>
+// text blocks ahead of the human prompt; sessions with no derived title
+// fall back to this preview, so those blocks would otherwise become the
+// session's display name. Mirrors pkg/derive's promptText preference;
+// injected-only nodes keep the full extraction.
+func previewText(bucket merkle.Bucket) string {
+	var texts []string
+	for _, block := range bucket.Content {
+		if block.Text == "" || strings.HasPrefix(strings.TrimSpace(block.Text), "<system-reminder>") {
+			continue
+		}
+		texts = append(texts, block.Text)
+	}
+	if len(texts) == 0 {
+		return bucket.ExtractText()
+	}
+	return strings.Join(texts, "\n")
 }
 
 // GetSessionRecord returns a single session by its UUID, or nil if not found.
