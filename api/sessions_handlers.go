@@ -22,7 +22,7 @@ import (
 // (the sessions-table-backed surface at /v1/sessions). The Postgres driver
 // implements it; the handler returns 501 for drivers that don't.
 type sessionsReader interface {
-	ListSessionRecords(ctx context.Context, orgID string, limit int, cursorTs *time.Time, cursorID *string) ([]storage.SessionRecord, error)
+	ListSessionRecords(ctx context.Context, orgID string, authSubject string, limit int, cursorTs *time.Time, cursorID *string) ([]storage.SessionRecord, error)
 	GetSessionRecord(ctx context.Context, orgID, id string) (*storage.SessionRecord, error)
 	GetSessionRecordByHarness(ctx context.Context, orgID string, harnessID string, harnessSessionID string) (*storage.SessionRecord, error)
 	ListNodesBySession(ctx context.Context, sessionID string) ([]*merkle.Node, error)
@@ -53,6 +53,10 @@ type SessionItem struct {
 	DerivedStatus     string         `json:"derived_status"`
 	HarnessMetadata   map[string]any `json:"harness_metadata,omitempty"`
 	Preview           string         `json:"preview,omitempty"`
+	// AuthSubject is the gateway-stamped JWT subject (WorkOS user id)
+	// captured at ingest; empty for rows captured before the edge began
+	// stamping it.
+	AuthSubject string `json:"auth_subject,omitempty"`
 }
 
 // SessionListResponse is the response envelope for GET /v1/sessions.
@@ -100,6 +104,7 @@ func sessionItemFromStorage(s storage.SessionRecord) SessionItem {
 		DerivedStatus:     s.DerivedStatus,
 		HarnessMetadata:   s.HarnessMetadata,
 		Preview:           s.Preview,
+		AuthSubject:       s.AuthSubject,
 	}
 }
 
@@ -147,6 +152,7 @@ func decodeSessionsCursor(token string) (sessionsCursor, error) {
 //	@Param			cursor				query		string	false	"Opaque pagination cursor returned by a previous response"
 //	@Param			harness_id			query		string	false	"Filter to the single session with this harness id (exact match; requires harness_session_id, incompatible with cursor; limit is ignored when the filter is active)"
 //	@Param			harness_session_id	query		string	false	"Filter to the single session with this harness session id (exact match; requires harness_id, incompatible with cursor; limit is ignored when the filter is active)"
+//	@Param			auth_subject		query		string	false	"Filter the paged list to sessions captured for this gateway-stamped JWT subject (exact match; ignored on the harness filter path)"
 //	@Success		200					{object}	SessionListResponse
 //	@Failure		400					{object}	llm.ErrorResponse	"Invalid query parameters, a lone harness filter param, or cursor combined with the harness filter"
 //	@Failure		500					{object}	llm.ErrorResponse	"Failed to list sessions"
@@ -194,7 +200,11 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 
 	orgID := orgIDFromCtx(c)
 	// Fetch one extra item to detect whether a next page exists.
-	sessions, err := reader.ListSessionRecords(c.Context(), orgID, limit+1, cursorTs, cursorID)
+	// Trusted to the same degree as X-Tapes-Org-Id: client-asserted
+	// today, with the cloud edge able to stamp it server-side from the
+	// validated JWT once claim mapping is enabled on the read route.
+	authSubject := c.Query("auth_subject")
+	sessions, err := reader.ListSessionRecords(c.Context(), orgID, authSubject, limit+1, cursorTs, cursorID)
 	if err != nil {
 		s.logger.Error("list sessions", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})

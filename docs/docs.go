@@ -213,6 +213,12 @@ const docTemplate = `{
                         "description": "Filter to the single session with this harness session id (exact match; requires harness_id, incompatible with cursor; limit is ignored when the filter is active)",
                         "name": "harness_session_id",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter the paged list to sessions captured for this gateway-stamped JWT subject (exact match; ignored on the harness filter path)",
+                        "name": "auth_subject",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -748,6 +754,10 @@ const docTemplate = `{
         "api.SessionItem": {
             "type": "object",
             "properties": {
+                "auth_subject": {
+                    "description": "AuthSubject is the gateway-stamped JWT subject (WorkOS user id)\ncaptured at ingest; empty for rows captured before the edge began\nstamping it.",
+                    "type": "string"
+                },
                 "cwd": {
                     "type": "string"
                 },

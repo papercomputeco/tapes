@@ -205,26 +205,35 @@ const listSessionRecords = `-- name: ListSessionRecords :many
 SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count FROM sessions
 WHERE org_id = $1
   AND (
-    $2::timestamptz IS NULL
-    OR last_seen_at < $2::timestamptz
-    OR (last_seen_at = $2::timestamptz AND id < $3::uuid)
+    $2::text IS NULL
+    OR auth_subject = $2::text
+  )
+  AND (
+    $3::timestamptz IS NULL
+    OR last_seen_at < $3::timestamptz
+    OR (last_seen_at = $3::timestamptz AND id < $4::uuid)
   )
 ORDER BY last_seen_at DESC, id DESC
-LIMIT $4
+LIMIT $5
 `
 
 type ListSessionRecordsParams struct {
-	OrgID    pgtype.UUID
-	CursorTs pgtype.Timestamptz
-	CursorID pgtype.UUID
-	Lim      int32
+	OrgID       pgtype.UUID
+	AuthSubject pgtype.Text
+	CursorTs    pgtype.Timestamptz
+	CursorID    pgtype.UUID
+	Lim         int32
 }
 
 // Paginated list of sessions for an org ordered newest-first (last_seen_at DESC, id DESC).
-// Pass NULL cursor values to start from the beginning.
+// Pass NULL cursor values to start from the beginning. Pass a NULL
+// auth_subject to list every user's sessions; a non-NULL value is an
+// exact match against the gateway-stamped JWT subject captured at
+// ingest (sessions_auth_subject_idx).
 func (q *Queries) ListSessionRecords(ctx context.Context, arg ListSessionRecordsParams) ([]Session, error) {
 	rows, err := q.db.Query(ctx, listSessionRecords,
 		arg.OrgID,
+		arg.AuthSubject,
 		arg.CursorTs,
 		arg.CursorID,
 		arg.Lim,

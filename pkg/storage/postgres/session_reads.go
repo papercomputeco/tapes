@@ -20,10 +20,14 @@ import (
 )
 
 // ListSessionRecords returns a page of sessions for an org ordered by
-// last_seen_at DESC. Pass nil cursorTs/cursorID to start from the beginning.
+// last_seen_at DESC. Pass nil cursorTs/cursorID to start from the
+// beginning. A non-empty authSubject narrows the page to sessions
+// captured for that gateway-stamped JWT subject (exact match on the
+// indexed column); empty lists every user's sessions.
 func (d *Driver) ListSessionRecords(
 	ctx context.Context,
 	orgID string,
+	authSubject string,
 	limit int,
 	cursorTs *time.Time,
 	cursorID *string,
@@ -47,10 +51,16 @@ func (d *Driver) ListSessionRecords(
 		idPg = pgtype.UUID{Bytes: parsed, Valid: true}
 	}
 
+	var subjectPg pgtype.Text
+	if authSubject != "" {
+		subjectPg = pgtype.Text{String: authSubject, Valid: true}
+	}
+
 	rows, err := d.q.ListSessionRecords(ctx, gensqlc.ListSessionRecordsParams{
-		OrgID:    oid,
-		CursorTs: tsPg,
-		CursorID: idPg,
+		OrgID:       oid,
+		AuthSubject: subjectPg,
+		CursorTs:    tsPg,
+		CursorID:    idPg,
 		// The int32 conversion cannot overflow: limit is bounded above by
 		// the API handler's maxSessionsLimit.
 		Lim: int32(limit), //nolint:gosec // bounded above by the API handler (maxSessionsLimit)
@@ -212,6 +222,7 @@ func sessionRecordFromRow(row gensqlc.Session) storage.SessionRecord {
 		TotalOutputTokens: row.TotalOutputTokens,
 		TurnCount:         int(row.TurnCount),
 		DerivedStatus:     row.DerivedStatus,
+		AuthSubject:       row.AuthSubject,
 	}
 	if row.Name.Valid {
 		s.Name = row.Name.String

@@ -84,7 +84,7 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 		// Parity with the list path: the single filtered row must
 		// carry the same field population as a ListSessionRecords row,
 		// including Preview attached via getSessionPreviews.
-		listed, err := pgDriver.ListSessionRecords(ctx, orgID, 10, nil, nil)
+		listed, err := pgDriver.ListSessionRecords(ctx, orgID, "", 10, nil, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(listed).To(HaveLen(1))
 		Expect(listed[0].ID).To(Equal(rec.ID))
@@ -118,6 +118,42 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 		Expect(rec.ID).To(Equal(idA))
 		Expect(rec.ID).NotTo(Equal(idB), "org B's session UUID must never surface for org A")
 		Expect(rec.Preview).To(Equal("org A turn"))
+	})
+
+	It("filters the paged list by auth_subject within an org", func() {
+		// Given two sessions in one org captured for different users
+		orgID := newTestOrgID()
+		seedFor := func(subject, harnessSession, text string) string {
+			res, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
+				Session: &sessions.IngestEnvelope{
+					OrgID:            orgID,
+					AuthSubject:      subject,
+					HarnessID:        "claude",
+					HarnessSessionID: harnessSession,
+				},
+				Nodes:        sessionFixture(text),
+				InputTokens:  12,
+				OutputTokens: 8,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			return res.SessionID
+		}
+		idAlice := seedFor("user_alice", "sess-alice", "alice turn")
+		_ = seedFor("user_bob", "sess-bob", "bob turn")
+
+		// When listing with alice's subject
+		mine, err := pgDriver.ListSessionRecords(ctx, orgID, "user_alice", 10, nil, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Then only alice's session returns, carrying the subject
+		Expect(mine).To(HaveLen(1))
+		Expect(mine[0].ID).To(Equal(idAlice))
+		Expect(mine[0].AuthSubject).To(Equal("user_alice"))
+
+		// And the unfiltered list still returns both users' sessions
+		all, err := pgDriver.ListSessionRecords(ctx, orgID, "", 10, nil, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(all).To(HaveLen(2))
 	})
 
 	It("does not match case-folded, trimmed, or prefix variants of the harness ids", func() {
