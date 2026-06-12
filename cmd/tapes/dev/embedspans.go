@@ -199,5 +199,14 @@ func (c *embedSpansCommander) run(cmd *cobra.Command) error {
 		return fmt.Errorf("marshal report: %w", err)
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), string(out))
+
+	// Per-span failures are skip-and-continue inside the pass (the
+	// worker-integrated pass retries next round), but a one-shot
+	// backfill that embedded NOTHING while failing on every candidate
+	// is a configuration error — an unreachable target or a model that
+	// cannot embed — and must say so with its exit code.
+	if report.Failed > 0 && report.Embedded == 0 {
+		return fmt.Errorf("every eligible span failed to embed (%d failures): the embedding target/model is likely misconfigured", report.Failed)
+	}
 	return nil
 }

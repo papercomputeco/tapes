@@ -60,8 +60,8 @@ func (t *Tapes) TestE2E(ctx context.Context) (string, error) {
 				"--listen", ":8081",
 				"--embedding-provider", "ollama",
 				"--embedding-target", fmt.Sprintf("http://ollama:%d", ollamaPort),
-				"--embedding-model", ollamaModel,
-				"--embedding-dimensions", ollamaModelDimensions,
+				"--embedding-model", ollamaEmbedModel,
+				"--embedding-dimensions", ollamaEmbedDimensions,
 			},
 		})
 
@@ -116,8 +116,8 @@ func (t *Tapes) TestE2E(ctx context.Context) (string, error) {
 			"--postgres", newPostgresDSN(),
 			"--embedding-provider", "ollama",
 			"--embedding-target", fmt.Sprintf("http://ollama:%d", ollamaPort),
-			"--embedding-model", ollamaModel,
-			"--embedding-dimensions", ollamaModelDimensions,
+			"--embedding-model", ollamaEmbedModel,
+			"--embedding-dimensions", ollamaEmbedDimensions,
 		}).
 		WithExec([]string{"hurl", "--test", "--very-verbose", ".dagger/e2e/07-search-spans.hurl"})
 
