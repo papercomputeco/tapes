@@ -16,6 +16,18 @@ var _ = Describe("NewSyncCmd", func() {
 		Expect(cmd.Hidden).To(BeTrue())
 	})
 
+	It("defaults auth-subject to the local username", func() {
+		// Local backfills have no gateway-validated JWT to derive a
+		// subject from; the closest honest identity is whoever is
+		// running tapes. Explicit --auth-subject still overrides.
+		cmd := NewSyncCmd()
+		flag := cmd.Flags().Lookup("auth-subject")
+		Expect(flag).NotTo(BeNil())
+		Expect(flag.DefValue).To(Equal(localUserSubject()))
+		Expect(localUserSubject()).NotTo(BeEmpty(),
+			"test environments always have an OS user or $USER")
+	})
+
 	It("has the expected flags", func() {
 		cmd := NewSyncCmd()
 
