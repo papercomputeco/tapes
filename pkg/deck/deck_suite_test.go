@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func TestDemoSeed(t *testing.T) {
+func TestDeck(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Demo Seed Suite")
+	RunSpecs(t, "Deck Suite")
 }

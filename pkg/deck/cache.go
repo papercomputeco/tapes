@@ -9,45 +9,20 @@ const (
 	sessionCacheTTL = 30 * time.Second
 )
 
-// sessionCandidate is a cached entry in the session overview, paired with
-// its per-model cost breakdown and derived status. Used by HTTPQuery to
-// hold the results of /v1/sessions/summary calls so the grouping and
-// detail paths can look candidates up by ID without re-fetching.
-type sessionCandidate struct {
-	summary    SessionSummary
-	modelCosts map[string]ModelCost
-	status     string
-}
-
 // sessionCache is the small in-memory cache HTTPQuery uses to remember the
-// most recent session overview between TUI refreshes. Entries expire after
-// sessionCacheTTL so a stale dashboard doesn't keep showing data after the
-// underlying store has changed.
+// most recent overview page(s) between TUI refreshes, so SessionDetail can
+// reuse the already-fetched SessionSummary instead of refetching the row.
+// Entries expire after sessionCacheTTL so a stale dashboard doesn't keep
+// showing data after the underlying store has changed.
 type sessionCache struct {
-	mu         sync.RWMutex
-	candidates []sessionCandidate
-	byID       map[string]*sessionCandidate
-	loadedAt   time.Time
+	mu       sync.RWMutex
+	byID     map[string]SessionSummary
+	loadedAt time.Time
 }
 
-// cachedSessionCandidates returns a copy of the cached candidate list, or
-// nil if the cache is empty or stale.
-func (c *sessionCache) cachedSessionCandidates() []sessionCandidate {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if len(c.candidates) == 0 {
-		return nil
-	}
-	if time.Since(c.loadedAt) > sessionCacheTTL {
-		return nil
-	}
-	return copySessionCandidates(c.candidates)
-}
-
-// cachedSessionCandidate returns a single candidate by session ID from the
-// cache index, or nil if the cache is stale/empty or the ID is not found.
-func (c *sessionCache) cachedSessionCandidate(sessionID string) *sessionCandidate {
+// cachedSummary returns a copy of the cached summary for sessionID, or nil
+// if the cache is stale/empty or the ID is not present.
+func (c *sessionCache) cachedSummary(sessionID string) *SessionSummary {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -58,66 +33,34 @@ func (c *sessionCache) cachedSessionCandidate(sessionID string) *sessionCandidat
 		return nil
 	}
 
-	cand, ok := c.byID[sessionID]
+	summary, ok := c.byID[sessionID]
 	if !ok {
 		return nil
 	}
-	cp := *cand
-	return &cp
+	return &summary
 }
 
-// storeSessionCandidates replaces the cache contents with a fresh snapshot.
-func (c *sessionCache) storeSessionCandidates(candidates []sessionCandidate) {
+// storeSummaries replaces the cache contents with a fresh snapshot.
+func (c *sessionCache) storeSummaries(summaries []SessionSummary) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.candidates = copySessionCandidates(candidates)
-	c.byID = buildCandidateIndex(c.candidates)
+	c.byID = make(map[string]SessionSummary, len(summaries))
+	for _, summary := range summaries {
+		c.byID[summary.ID] = summary
+	}
 	c.loadedAt = time.Now()
 }
 
-// appendSessionCandidates merges candidates into the current cache snapshot,
-// replacing duplicate session IDs while preserving first-seen order.
-func (c *sessionCache) appendSessionCandidates(candidates []sessionCandidate) {
+// appendSummaries merges summaries into the current cache snapshot,
+// replacing duplicate session IDs.
+func (c *sessionCache) appendSummaries(summaries []SessionSummary) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	merged := copySessionCandidates(c.candidates)
-	if merged == nil {
-		merged = []sessionCandidate{}
+	if c.byID == nil {
+		c.byID = make(map[string]SessionSummary, len(summaries))
 	}
-	byID := make(map[string]int, len(merged)+len(candidates))
-	for i := range merged {
-		byID[merged[i].summary.ID] = i
+	for _, summary := range summaries {
+		c.byID[summary.ID] = summary
 	}
-	for _, candidate := range candidates {
-		if i, ok := byID[candidate.summary.ID]; ok {
-			merged[i] = candidate
-			continue
-		}
-		byID[candidate.summary.ID] = len(merged)
-		merged = append(merged, candidate)
-	}
-
-	c.candidates = merged
-	c.byID = buildCandidateIndex(c.candidates)
 	c.loadedAt = time.Now()
-}
-
-// buildCandidateIndex returns a map keyed by session ID pointing into the
-// given slice. The pointers are valid for the lifetime of the slice.
-func buildCandidateIndex(candidates []sessionCandidate) map[string]*sessionCandidate {
-	idx := make(map[string]*sessionCandidate, len(candidates))
-	for i := range candidates {
-		idx[candidates[i].summary.ID] = &candidates[i]
-	}
-	return idx
-}
-
-func copySessionCandidates(candidates []sessionCandidate) []sessionCandidate {
-	if len(candidates) == 0 {
-		return nil
-	}
-	cloned := make([]sessionCandidate, len(candidates))
-	copy(cloned, candidates)
-	return cloned
 }

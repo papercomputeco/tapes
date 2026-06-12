@@ -48,7 +48,7 @@ var _ = Describe("Deck TUI helpers", func() {
 					InputCost:    0.10,
 					OutputCost:   0.20,
 					TotalCost:    0.30,
-					ToolCalls:    2,
+					MessageCount: 2,
 				},
 				{
 					ID:           "s2",
@@ -60,7 +60,7 @@ var _ = Describe("Deck TUI helpers", func() {
 					InputCost:    0.05,
 					OutputCost:   0.05,
 					TotalCost:    0.10,
-					ToolCalls:    1,
+					MessageCount: 1,
 				},
 				{
 					ID:           "s3",
@@ -72,7 +72,7 @@ var _ = Describe("Deck TUI helpers", func() {
 					InputCost:    0.02,
 					OutputCost:   0.03,
 					TotalCost:    0.05,
-					ToolCalls:    0,
+					MessageCount: 0,
 				},
 			}
 
@@ -82,7 +82,7 @@ var _ = Describe("Deck TUI helpers", func() {
 			Expect(stats.InputTokens).To(Equal(int64(130)))
 			Expect(stats.OutputTokens).To(Equal(int64(85)))
 			Expect(stats.TotalDuration).To(Equal(6 * time.Minute))
-			Expect(stats.TotalToolCalls).To(Equal(3))
+			Expect(stats.TotalTurns).To(Equal(3))
 			Expect(stats.Completed).To(Equal(1))
 			Expect(stats.Failed).To(Equal(1))
 			Expect(stats.Abandoned).To(Equal(1))
@@ -218,6 +218,61 @@ var _ = Describe("Deck TUI helpers", func() {
 			Expect(start).To(Equal(7))
 			Expect(end).To(Equal(10))
 			Expect(offset).To(Equal(7))
+		})
+	})
+
+	Describe("turn drill-in", func() {
+		started := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+
+		conv := &deck.TurnConversation{
+			Turn: deck.TurnSummary{
+				TraceID:      "trace-1",
+				UserPrompt:   "fix the build",
+				Status:       "completed",
+				StartedAt:    started,
+				Duration:     30 * time.Second,
+				InputTokens:  100,
+				OutputTokens: 40,
+				TotalCost:    0.05,
+				SpanCount:    9,
+			},
+			Messages: []deck.SessionMessage{
+				{TraceID: "trace-1", Role: "user", Text: "fix the build", Timestamp: started},
+				{TraceID: "trace-1", Role: "assistant", Text: "done", Timestamp: started.Add(30 * time.Second)},
+			},
+			ToolFrequency: map[string]int{"Bash": 2, "Edit": 1},
+			OffshootCalls: 3,
+		}
+
+		It("synthesizes a turn-grain detail for the session view", func() {
+			parent := &deck.SessionDetail{
+				Summary: deck.SessionSummary{ID: "sess-1", Model: "m1", Project: "tapes", AgentName: "claude-code"},
+			}
+
+			detail := turnDetailFromConversation(parent, conv)
+			Expect(detail.Summary.ID).To(Equal("trace-1"))
+			Expect(detail.Summary.Label).To(Equal("fix the build"))
+			Expect(detail.Summary.Model).To(Equal("m1"))
+			Expect(detail.Summary.Project).To(Equal("tapes"))
+			Expect(detail.Summary.Duration).To(Equal(30 * time.Second))
+			Expect(detail.Summary.TotalCost).To(Equal(0.05))
+			Expect(detail.Summary.ToolCalls).To(Equal(3))
+			Expect(detail.Summary.MessageCount).To(Equal(2))
+			Expect(detail.Messages).To(HaveLen(2))
+		})
+
+		It("resolves the selected trace from the message cursor", func() {
+			model := deckModel{
+				detail: &deck.SessionDetail{
+					Messages: []deck.SessionMessage{
+						{TraceID: "trace-1", Role: "user", Timestamp: started},
+						{TraceID: "trace-1", Role: "assistant", Timestamp: started.Add(time.Second)},
+						{TraceID: "trace-2", Role: "user", Timestamp: started.Add(time.Minute)},
+					},
+				},
+				messageCursor: 2,
+			}
+			Expect(model.selectedTraceID()).To(Equal("trace-2"))
 		})
 	})
 

@@ -7,9 +7,10 @@ import (
 	"github.com/papercomputeco/tapes/pkg/sessions"
 )
 
-// Querier is the interface the deck TUI use to fetch
-// session data. The HTTPQuery implementation in this package talks to a
-// tapes API server (in-process or remote) over HTTP.
+// Querier is the interface the deck TUI uses to fetch session data. The
+// HTTPQuery implementation in this package talks to a tapes API server
+// (in-process or remote) over HTTP, reading the product session/trace
+// surface (/v1/sessions, /v1/traces).
 type Querier interface {
 	Overview(ctx context.Context, filters Filters) (*Overview, error)
 	SessionDetail(ctx context.Context, sessionID string) (*SessionDetail, error)
@@ -20,6 +21,14 @@ type Querier interface {
 // sessions without forcing every Querier implementation to support pagination.
 type OverviewPager interface {
 	OverviewPage(ctx context.Context, filters Filters, cursor string, limit int) (*OverviewPage, error)
+}
+
+// TurnQuerier is an optional extension implemented by query backends that can
+// drill into a single turn's conversation (GET /v1/traces/{trace_id}). The
+// TUI uses it for the per-turn drill-in; mock Queriers that don't implement
+// it simply don't offer the drill-in.
+type TurnQuerier interface {
+	TurnConversation(ctx context.Context, traceID string) (*TurnConversation, error)
 }
 
 // OverviewPage is one page of the deck overview plus the API cursor needed to
@@ -44,10 +53,55 @@ type SessionSummary = sessions.SessionSummary
 // ModelCost aliases sessions.ModelCost for the same reason.
 type ModelCost = sessions.ModelCost
 
-// SessionMessage is the per-turn render shape used by the deck's transcript
-// view. It is built client-side from the API's Turn objects in HTTPQuery
-// and is not part of any HTTP API surface.
+// TurnSummary is one user-visible turn header within a session, mirroring
+// the API's trace summary rows (GET /v1/traces?session_id=). It carries the
+// turn's folded rollups only; span payloads arrive via TurnConversation.
+type TurnSummary struct {
+	TraceID         string        `json:"trace_id"`
+	UserPrompt      string        `json:"user_prompt,omitempty"`
+	ResponsePreview string        `json:"response_preview,omitempty"`
+	Status          string        `json:"status"`
+	StartedAt       time.Time     `json:"started_at"`
+	EndedAt         *time.Time    `json:"ended_at,omitempty"`
+	Duration        time.Duration `json:"duration_ns"`
+	InputTokens     int64         `json:"input_tokens"`
+	OutputTokens    int64         `json:"output_tokens"`
+	// Main* counts conversation-spine llm calls only; Total − Main is the
+	// harness's shadow spend on the turn.
+	MainInputTokens     int64   `json:"main_input_tokens"`
+	MainOutputTokens    int64   `json:"main_output_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	TotalCost           float64 `json:"total_cost_usd"`
+	SpanCount           int     `json:"span_count"`
+}
+
+// TurnConversation is the drill-in view of one turn: the conversation
+// reconstructed from the trace's spans (GET /v1/traces/{trace_id}). Messages
+// carries the conversation-spine llm calls' input/output blocks rendered as
+// user/assistant messages in seq order; offshoot and injected spans are
+// counted rather than interleaved.
+type TurnConversation struct {
+	Turn            TurnSummary           `json:"turn"`
+	Messages        []SessionMessage      `json:"messages"`
+	GroupedMessages []SessionMessageGroup `json:"grouped_messages,omitempty"`
+	ToolFrequency   map[string]int        `json:"tool_frequency,omitempty"`
+	// OffshootCalls counts llm spans whose call_kind marks them as harness
+	// side-traffic (offshoot:*) rather than conversation spine.
+	OffshootCalls int `json:"offshoot_calls"`
+	// InjectedContexts counts injected:* spans (context the harness spliced
+	// into the conversation without the user typing it).
+	InjectedContexts int `json:"injected_contexts"`
+}
+
+// SessionMessage is the per-row render shape used by the deck's transcript
+// views. At session grain each turn contributes a user/assistant pair built
+// from the turn header (prompt + response preview); at turn grain rows come
+// from the conversation-spine spans. It is built client-side and is not part
+// of any HTTP API surface.
 type SessionMessage struct {
+	// TraceID is the turn this message belongs to — the drill-in key.
+	TraceID      string        `json:"trace_id,omitempty"`
 	Hash         string        `json:"hash"`
 	Role         string        `json:"role"`
 	Model        string        `json:"model"`
@@ -85,13 +139,14 @@ type SessionMessageGroup struct {
 }
 
 // SessionDetail is the response a Querier returns from SessionDetail. It
-// holds the per-session SessionSummary plus its rendered transcript.
+// holds the session's SessionSummary plus its turn summaries. Messages is
+// the turn list rendered as a user/assistant transcript (prompt + response
+// preview per turn) so transcript consumers keep working at the new grain.
 type SessionDetail struct {
 	Summary         SessionSummary        `json:"summary"`
+	Turns           []TurnSummary         `json:"turns,omitempty"`
 	Messages        []SessionMessage      `json:"messages"`
 	GroupedMessages []SessionMessageGroup `json:"grouped_messages,omitempty"`
-	ToolFrequency   map[string]int        `json:"tool_frequency"`
-	SubSessions     []SessionSummary      `json:"sub_sessions,omitempty"`
 }
 
 // Overview is the response a Querier returns from Overview. It holds the
@@ -103,7 +158,7 @@ type Overview struct {
 	InputTokens    int64                `json:"input_tokens"`
 	OutputTokens   int64                `json:"output_tokens"`
 	TotalDuration  time.Duration        `json:"total_duration_ns"`
-	TotalToolCalls int                  `json:"total_tool_calls"`
+	TotalTurns     int                  `json:"total_turns"`
 	SuccessRate    float64              `json:"success_rate"`
 	Completed      int                  `json:"completed"`
 	Failed         int                  `json:"failed"`
@@ -115,18 +170,19 @@ type Overview struct {
 // PeriodComparison holds the previous-period metrics shown alongside the
 // current period in the deck overview.
 type PeriodComparison struct {
-	TotalCost      float64       `json:"total_cost"`
-	TotalTokens    int64         `json:"total_tokens"`
-	TotalDuration  time.Duration `json:"total_duration_ns"`
-	TotalToolCalls int           `json:"total_tool_calls"`
-	SuccessRate    float64       `json:"success_rate"`
-	Completed      int           `json:"completed"`
+	TotalCost     float64       `json:"total_cost"`
+	TotalTokens   int64         `json:"total_tokens"`
+	TotalDuration time.Duration `json:"total_duration_ns"`
+	TotalTurns    int           `json:"total_turns"`
+	SuccessRate   float64       `json:"success_rate"`
+	Completed     int           `json:"completed"`
 }
 
-// Filters describes the user-facing filter set the deck applies on top
-// of the data returned by the API. Time filters are evaluated client-side
-// against SessionSummary.StartTime / EndTime; the per-field string filters
-// are also applied client-side after the rich /v1/sessions/summary fetch.
+// Filters describes the user-facing filter set the deck applies on top of
+// the data returned by the API. Time filters (Since/From/To) are pushed
+// down to /v1/sessions as since/until query params; Model, Status, and
+// Project are evaluated client-side against the returned page because the
+// sessions list endpoint does not filter on them.
 type Filters struct {
 	Since   time.Duration
 	From    *time.Time
@@ -141,6 +197,7 @@ type Filters struct {
 
 // Status constants re-exported from pkg/sessions so existing TUI callers
 // (`deck.StatusCompleted` etc.) keep working without an import change.
+// /v1/sessions rows carry the same vocabulary in derived_status.
 const (
 	StatusCompleted = sessions.StatusCompleted
 	StatusFailed    = sessions.StatusFailed
