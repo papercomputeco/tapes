@@ -23,6 +23,12 @@ func (o *Provider) DefaultStreaming() bool {
 }
 
 func (o *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
+	// Responses API requests (Codex et al.) carry `input` instead of
+	// `messages` and need their own item mapping.
+	if isResponsesRequest(payload) {
+		return parseResponsesRequest(payload)
+	}
+
 	var req openaiRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
 		return nil, err

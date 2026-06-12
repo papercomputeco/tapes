@@ -263,6 +263,9 @@ var _ = Describe("NormalizeModel", func() {
 	})
 	It("strips OpenAI-style date suffix", func() {
 		Expect(sessions.NormalizeModel("gpt-4o-2024-08-06")).To(Equal("gpt-4o"))
+		// Codex default model id as seen on the Responses wire.
+		Expect(sessions.NormalizeModel("gpt-5.5-2026-04-23")).To(Equal("gpt-5.5"))
+		Expect(sessions.NormalizeModel("gpt-5-5-2026-04-23")).To(Equal("gpt-5.5"))
 	})
 	It("strips the Anthropic 1M-context marker", func() {
 		Expect(sessions.NormalizeModel("claude-fable-5[1m]")).To(Equal("claude-fable-5"))
