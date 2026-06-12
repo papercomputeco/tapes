@@ -1,111 +1,5 @@
 basePath: /
 definitions:
-  api.GraphLink:
-    properties:
-      source:
-        type: string
-      target:
-        type: string
-    type: object
-  api.GraphNode:
-    properties:
-      agent_name:
-        type: string
-      children_count:
-        type: integer
-      created_at:
-        type: string
-      depth:
-        type: integer
-      id:
-        type: string
-      is_branch_point:
-        type: boolean
-      is_leaf:
-        type: boolean
-      is_root:
-        type: boolean
-      model:
-        type: string
-      node_kind:
-        description: |-
-          NodeKind / ParentToolUseID surface the derived semantic typing
-          (additive; empty for nodes that predate the deriver).
-        type: string
-      parent_hash:
-        type: string
-      parent_id:
-        type: string
-      parent_tool_use_id:
-        type: string
-      preview:
-        type: string
-      project:
-        type: string
-      provider:
-        type: string
-      role:
-        type: string
-      selected:
-        type: boolean
-      stop_reason:
-        type: string
-      thread_id:
-        type: string
-      type:
-        type: string
-      usage:
-        $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.Usage'
-    type: object
-  api.GraphResponse:
-    properties:
-      branch_points:
-        description: BranchPoints names included nodes with more than one child in
-          storage.
-        items:
-          type: string
-        type: array
-      cycle_detected:
-        description: CycleDetected is true when storage guarded the ancestry walk
-          out of a cycle.
-        type: boolean
-      hash:
-        description: Hash is the session/node hash requested by the caller.
-        type: string
-      leaves:
-        description: Leaves names included nodes that have no children in storage.
-        items:
-          type: string
-        type: array
-      links:
-        description: Links contains parent -> child edges between included nodes.
-        items:
-          $ref: '#/definitions/api.GraphLink'
-        type: array
-      missing_parent:
-        description: MissingParent names the unresolved parent hash when the ancestry
-          is incomplete.
-        type: string
-      node_limit:
-        description: NodeLimit is the maximum number of nodes the server will include.
-        type: integer
-      nodes:
-        description: Nodes is the flat node list consumed by graph visualizers.
-        items:
-          $ref: '#/definitions/api.GraphNode'
-        type: array
-      root_hash:
-        description: RootHash is the top-most resolvable node included in the response.
-        type: string
-      scope:
-        description: 'Scope describes which portion of the graph was loaded: root,
-          branch, or ancestry.'
-        type: string
-      truncated:
-        description: Truncated is true when the graph hit NodeLimit or the ancestry
-          chain is incomplete.
-        type: boolean
-    type: object
   api.RawTurnHeaderItem:
     properties:
       agent_name:
@@ -140,14 +34,6 @@ definitions:
     properties:
       session:
         $ref: '#/definitions/api.SessionItem'
-      stems:
-        items:
-          $ref: '#/definitions/api.StemSummary'
-        type: array
-      turns:
-        items:
-          $ref: '#/definitions/api.Turn'
-        type: array
     type: object
   api.SessionItem:
     properties:
@@ -220,55 +106,6 @@ definitions:
       traces:
         items:
           $ref: '#/definitions/api.TraceDetail'
-        type: array
-    type: object
-  api.SessionTreeResponse:
-    properties:
-      attachments:
-        description: |-
-          Attachments link offshoot calls to the tool_use they relate to:
-          permission checks to the judged action, web summaries to their
-          fetch/search.
-        items:
-          $ref: '#/definitions/api.TreeAttachment'
-        type: array
-      forks:
-        description: |-
-          Forks are subagent threads: a chain whose root carries the Task
-          tool_use that spawned it. SourceID is the node holding the
-          tool_use block; RejoinID the node holding its tool_result.
-        items:
-          $ref: '#/definitions/api.TreeFork'
-        type: array
-      harness_session_id:
-        type: string
-      kind_counts:
-        additionalProperties:
-          type: integer
-        description: KindCounts summarizes the session's call mix.
-        type: object
-      links:
-        items:
-          $ref: '#/definitions/api.GraphLink'
-        type: array
-      nodes:
-        items:
-          $ref: '#/definitions/api.TreeNode'
-        type: array
-      roots:
-        description: Roots are the parentless chain roots, main thread first.
-        items:
-          type: string
-        type: array
-      session_id:
-        type: string
-      tasks:
-        description: |-
-          Tasks is the session's task list, folded from the TaskCreate /
-          TaskUpdate tool calls across every thread — the checklist of
-          record with each task's final status.
-        items:
-          $ref: '#/definitions/api.TreeTask'
         type: array
     type: object
   api.SpanItem:
@@ -445,17 +282,6 @@ definitions:
           $ref: '#/definitions/api.Turn'
         type: array
     type: object
-  api.StemSummary:
-    properties:
-      length:
-        type: integer
-      model:
-        type: string
-      preview:
-        type: string
-      root_hash:
-        type: string
-    type: object
   api.TraceDetail:
     properties:
       links:
@@ -527,78 +353,6 @@ definitions:
           $ref: '#/definitions/api.TraceItem'
         type: array
     type: object
-  api.TreeAttachment:
-    properties:
-      node_id:
-        type: string
-      node_kind:
-        type: string
-      target_id:
-        type: string
-      tool_use_id:
-        type: string
-    type: object
-  api.TreeFork:
-    properties:
-      rejoin_id:
-        type: string
-      root_id:
-        type: string
-      source_id:
-        type: string
-      tool_use_id:
-        type: string
-    type: object
-  api.TreeNode:
-    properties:
-      content:
-        description: |-
-          Content is the node's full content blocks (raw, as captured) so
-          conversation renderers can format turns without a second fetch.
-        items:
-          $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ContentBlock'
-        type: array
-      created_at:
-        type: string
-      id:
-        type: string
-      is_leaf:
-        type: boolean
-      is_root:
-        type: boolean
-      model:
-        type: string
-      node_kind:
-        type: string
-      parent_id:
-        type: string
-      parent_tool_use_id:
-        type: string
-      preview:
-        type: string
-      role:
-        type: string
-      stop_reason:
-        type: string
-      thread_id:
-        type: string
-      tool_uses:
-        description: |-
-          ToolUses lists the tool_use blocks this node carries (assistant
-          turns), so clients can anchor forks/attachments without parsing
-          content.
-        items:
-          $ref: '#/definitions/api.TreeToolUse'
-        type: array
-      usage:
-        $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.Usage'
-      verdict:
-        allOf:
-        - $ref: '#/definitions/api.TreeVerdict'
-        description: |-
-          Verdict is set on permission-check response nodes: the monitor's
-          disposition for the judged action.
-    type: object
   api.TreeTask:
     properties:
       description:
@@ -610,23 +364,6 @@ definitions:
       subject:
         type: string
       updates:
-        type: integer
-    type: object
-  api.TreeToolUse:
-    properties:
-      id:
-        type: string
-      name:
-        type: string
-    type: object
-  api.TreeVerdict:
-    properties:
-      disposition:
-        description: ALLOW | BLOCK
-        type: string
-      reasoned:
-        type: boolean
-      stage:
         type: integer
     type: object
   api.Turn:
@@ -691,45 +428,6 @@ definitions:
       result:
         additionalProperties: {}
         type: object
-    type: object
-  github_com_papercomputeco_tapes_api_search.Output:
-    properties:
-      count:
-        type: integer
-      query:
-        type: string
-      results:
-        items:
-          $ref: '#/definitions/github_com_papercomputeco_tapes_api_search.Result'
-        type: array
-    type: object
-  github_com_papercomputeco_tapes_api_search.Result:
-    properties:
-      branch:
-        items:
-          $ref: '#/definitions/github_com_papercomputeco_tapes_api_search.Turn'
-        type: array
-      hash:
-        type: string
-      preview:
-        type: string
-      role:
-        type: string
-      score:
-        type: number
-      turns:
-        type: integer
-    type: object
-  github_com_papercomputeco_tapes_api_search.Turn:
-    properties:
-      hash:
-        type: string
-      matched:
-        type: boolean
-      role:
-        type: string
-      text:
-        type: string
     type: object
   github_com_papercomputeco_tapes_pkg_llm.ContentBlock:
     properties:
@@ -977,44 +675,6 @@ paths:
       summary: Invoke the streamable MCP endpoint
       tags:
       - mcp
-  /v1/search:
-    get:
-      description: Embeds the query text, searches the configured vector store, and
-        returns matching sessions with their full conversation branch.
-      parameters:
-      - description: Search query
-        in: query
-        name: query
-        required: true
-        type: string
-      - default: 5
-        description: Maximum number of results to return
-        in: query
-        minimum: 1
-        name: top_k
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_api_search.Output'
-        "400":
-          description: Missing or invalid query parameters
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-        "500":
-          description: Search execution failed
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-        "503":
-          description: Search is not configured
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-      summary: Semantic search over stored sessions
-      tags:
-      - search
   /v1/search/spans:
     get:
       description: Embeds the query text and runs vector similarity over the embedded
@@ -1109,26 +769,13 @@ paths:
       - sessions
   /v1/sessions/{id}:
     get:
-      description: Returns a single session, the selected stem of turns, and a summary
-        of every stem (root-to-leaf path) in the session. ?stem=longest (default)
-        returns the longest stem; ?stem=all returns every node ordered by created_at.
-        ?root=<hash> restricts turns to the subtree rooted at that node.
+      description: 'Returns a single session record. The conversation content lives
+        on the span model: GET /v1/sessions/{id}/traces.'
       parameters:
       - description: Session id (UUID)
         in: path
         name: id
         required: true
-        type: string
-      - description: 'Which turns to return: longest (default) or all'
-        enum:
-        - longest
-        - all
-        in: query
-        name: stem
-        type: string
-      - description: Restrict turns to the subtree rooted at this node hash
-        in: query
-        name: root
         type: string
       produces:
       - application/json
@@ -1138,7 +785,7 @@ paths:
           schema:
             $ref: '#/definitions/api.SessionDetailResponse'
         "400":
-          description: Missing id or unknown root
+          description: Missing or malformed id
           schema:
             $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
         "404":
@@ -1233,43 +880,6 @@ paths:
           schema:
             $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
       summary: Get a session's trace/span projection
-      tags:
-      - sessions
-  /v1/sessions/{id}/tree:
-    get:
-      description: Returns every captured node for the session typed by node_kind,
-        with spine links, subagent fork/rejoin edges, and offshoot attachments (permission
-        verdicts, web summaries) anchored to the tool_use they relate to.
-      parameters:
-      - description: Session id (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.SessionTreeResponse'
-        "400":
-          description: Missing or malformed id
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-        "404":
-          description: Session not found
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-        "500":
-          description: Failed to load session
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-        "501":
-          description: Sessions not supported by this backend
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-      summary: Get a session's reconciled conversation tree
       tags:
       - sessions
   /v1/stats:
@@ -1420,55 +1030,6 @@ paths:
           schema:
             $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
       summary: Get a stem (Merkle leaf chain)
-      tags:
-      - stems
-  /v1/stems/{hash}/graph:
-    get:
-      description: Returns a graph-shaped projection of the Merkle DAG around a node
-        hash (the same ancestry returned by GET /v1/stems/{hash}). scope=root loads
-        the requested node's resolvable root and all descendants, scope=branch loads
-        the ancestry plus descendants of the requested node, and scope=ancestry loads
-        only the parent chain.
-      parameters:
-      - description: Node (stem head) hash
-        in: path
-        name: hash
-        required: true
-        type: string
-      - description: 'Graph scope: root, branch, or ancestry'
-        enum:
-        - root
-        - branch
-        - ancestry
-        in: query
-        name: scope
-        type: string
-      - description: Maximum number of graph nodes to include
-        in: query
-        maximum: 5000
-        minimum: 1
-        name: max_nodes
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.GraphResponse'
-        "400":
-          description: Missing hash or invalid query parameters
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-        "404":
-          description: Stem not found
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-        "500":
-          description: Failed to load stem graph
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-      summary: Get a stem graph
       tags:
       - stems
   /v1/traces:

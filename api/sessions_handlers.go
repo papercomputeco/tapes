@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 	"time"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
-	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
@@ -24,7 +22,6 @@ import (
 type sessionsReader interface {
 	ListSessionRecords(ctx context.Context, orgID string, opts storage.SessionListOpts) ([]storage.SessionRecord, error)
 	GetSessionRecord(ctx context.Context, orgID, id string) (*storage.SessionRecord, error)
-	ListNodesBySession(ctx context.Context, sessionID string) ([]*merkle.Node, error)
 }
 
 const (
@@ -63,24 +60,11 @@ type SessionListResponse struct {
 	NextCursor string        `json:"next_cursor,omitempty"`
 }
 
-// StemSummary describes one root-to-deepest-leaf path (a "stem") within a
-// session. The Stems array in SessionDetailResponse lists every root so the
-// caller can switch between stems without a separate API call.
-type StemSummary struct {
-	RootHash string `json:"root_hash"`
-	Length   int    `json:"length"`
-	Preview  string `json:"preview,omitempty"`
-	Model    string `json:"model,omitempty"`
-}
-
-// SessionDetailResponse is the response for GET /v1/sessions/:id. Turns
-// contains the selected stem (controlled by ?stem= and ?root=). Stems lists
-// every root in the session sorted by length descending so callers can offer
-// a picker.
+// SessionDetailResponse is the response for GET /v1/sessions/:id: the
+// session record alone. The conversation content lives on the span model
+// (GET /v1/sessions/:id/traces).
 type SessionDetailResponse struct {
-	Session SessionItem   `json:"session"`
-	Turns   []Turn        `json:"turns"`
-	Stems   []StemSummary `json:"stems"`
+	Session SessionItem `json:"session"`
 }
 
 func sessionItemFromStorage(s storage.SessionRecord) SessionItem {
@@ -227,145 +211,18 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 	})
 }
 
-// sessionStems returns one StemSummary per root in nodes, sorted by length
-// descending (longest first).
-func sessionStems(nodes []*merkle.Node) []StemSummary {
-	inSet := make(map[string]bool, len(nodes))
-	for _, n := range nodes {
-		inSet[n.Hash] = true
-	}
-	children := make(map[string][]string, len(nodes))
-	for _, n := range nodes {
-		if n.ParentHash != nil && inSet[*n.ParentHash] {
-			children[*n.ParentHash] = append(children[*n.ParentHash], n.Hash)
-		}
-	}
-
-	var depth func(hash string) int
-	depth = func(hash string) int {
-		best := 0
-		for _, kid := range children[hash] {
-			if d := depth(kid); d > best {
-				best = d
-			}
-		}
-		return 1 + best
-	}
-
-	var stems []StemSummary
-	for _, n := range nodes {
-		if n.ParentHash == nil || !inSet[*n.ParentHash] {
-			stems = append(stems, StemSummary{
-				RootHash: n.Hash,
-				Length:   depth(n.Hash),
-				Preview:  makePreview(n),
-				Model:    n.Bucket.Model,
-			})
-		}
-	}
-	sort.Slice(stems, func(i, j int) bool {
-		return stems[i].Length > stems[j].Length
-	})
-	return stems
-}
-
-// subtreeFromRoot returns all nodes reachable from rootHash by following
-// parent→child edges, in the order they appear in nodes.
-func subtreeFromRoot(rootHash string, nodes []*merkle.Node) []*merkle.Node {
-	byHash := make(map[string]*merkle.Node, len(nodes))
-	inSet := make(map[string]bool, len(nodes))
-	children := make(map[string][]string, len(nodes))
-	for _, n := range nodes {
-		byHash[n.Hash] = n
-		inSet[n.Hash] = true
-	}
-	for _, n := range nodes {
-		if n.ParentHash != nil && inSet[*n.ParentHash] {
-			children[*n.ParentHash] = append(children[*n.ParentHash], n.Hash)
-		}
-	}
-
-	var result []*merkle.Node
-	var visit func(hash string)
-	visit = func(hash string) {
-		if n, ok := byHash[hash]; ok {
-			result = append(result, n)
-			for _, kid := range children[hash] {
-				visit(kid)
-			}
-		}
-	}
-	visit(rootHash)
-	return result
-}
-
-// longestStemFromNodes returns the nodes on the longest root-to-leaf path
-// (stem) in the session's DAG, in chronological order (root first). Roots are
-// nodes whose parent_hash is absent or points outside the supplied set.
-func longestStemFromNodes(nodes []*merkle.Node) []*merkle.Node {
-	if len(nodes) == 0 {
-		return nil
-	}
-
-	byHash := make(map[string]*merkle.Node, len(nodes))
-	inSet := make(map[string]bool, len(nodes))
-	for _, n := range nodes {
-		byHash[n.Hash] = n
-		inSet[n.Hash] = true
-	}
-
-	children := make(map[string][]string, len(nodes))
-	for _, n := range nodes {
-		if n.ParentHash != nil && inSet[*n.ParentHash] {
-			children[*n.ParentHash] = append(children[*n.ParentHash], n.Hash)
-		}
-	}
-
-	var deepest func(hash string) []string
-	deepest = func(hash string) []string {
-		kids := children[hash]
-		if len(kids) == 0 {
-			return []string{hash}
-		}
-		var best []string
-		for _, kid := range kids {
-			if path := deepest(kid); len(path) > len(best) {
-				best = path
-			}
-		}
-		return append([]string{hash}, best...)
-	}
-
-	var bestPath []string
-	for _, n := range nodes {
-		if n.ParentHash == nil || !inSet[*n.ParentHash] {
-			if path := deepest(n.Hash); len(path) > len(bestPath) {
-				bestPath = path
-			}
-		}
-	}
-
-	result := make([]*merkle.Node, len(bestPath))
-	for i, h := range bestPath {
-		result[i] = byHash[h]
-	}
-	return result
-}
-
 // handleGetSession handles GET /v1/sessions/:id.
 //
 //	@Summary		Get a session
-//	@Description	Returns a single session, the selected stem of turns, and a summary of every stem (root-to-leaf path) in the session. ?stem=longest (default) returns the longest stem; ?stem=all returns every node ordered by created_at. ?root=<hash> restricts turns to the subtree rooted at that node.
+//	@Description	Returns a single session record. The conversation content lives on the span model: GET /v1/sessions/{id}/traces.
 //	@Tags			sessions
 //	@Produce		json
-//	@Param			id		path		string	true	"Session id (UUID)"
-//	@Param			stem	query		string	false	"Which turns to return: longest (default) or all"	Enums(longest, all)
-//	@Param			root	query		string	false	"Restrict turns to the subtree rooted at this node hash"
-//	@Success		200		{object}	SessionDetailResponse
-//	@Failure		400		{object}	llm.ErrorResponse	"Missing id or unknown root"
-//	@Failure		404		{object}	llm.ErrorResponse	"Session not found"
-//	@Failure		500		{object}	llm.ErrorResponse	"Failed to load session"
-//	@Failure		501		{object}	llm.ErrorResponse	"Sessions not supported by this backend"
+//	@Param			id	path		string	true	"Session id (UUID)"
+//	@Success		200	{object}	SessionDetailResponse
+//	@Failure		400	{object}	llm.ErrorResponse	"Missing or malformed id"
+//	@Failure		404	{object}	llm.ErrorResponse	"Session not found"
+//	@Failure		500	{object}	llm.ErrorResponse	"Failed to load session"
+//	@Failure		501	{object}	llm.ErrorResponse	"Sessions not supported by this backend"
 //	@Router			/v1/sessions/{id} [get]
 func (s *Server) handleGetSession(c *fiber.Ctx) error {
 	reader, ok := s.driver.(sessionsReader)
@@ -393,49 +250,7 @@ func (s *Server) handleGetSession(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
 	}
 
-	nodes, err := reader.ListNodesBySession(c.Context(), id)
-	if err != nil {
-		s.logger.Error("list nodes by session", "session_id", id, "error", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session turns"})
-	}
-
-	// Always compute the stems summary so the caller can render a picker.
-	stems := sessionStems(nodes)
-
-	// ?root=<hash> restricts turns to the subtree rooted at that node.
-	// Validated against the computed stems so callers get a clear 400 rather
-	// than a silent empty response for an unknown hash.
-	working := nodes
-	if rootHash := c.Query("root"); rootHash != "" {
-		found := false
-		for _, st := range stems {
-			if st.RootHash == rootHash {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "root not found in this session"})
-		}
-		working = subtreeFromRoot(rootHash, nodes)
-	}
-
-	var selected []*merkle.Node
-	switch c.Query("stem", "longest") {
-	case "all":
-		selected = working
-	default:
-		selected = longestStemFromNodes(working)
-	}
-
-	turns := make([]Turn, len(selected))
-	for i, n := range selected {
-		turns[i] = turnFromNode(n)
-	}
-
 	return c.JSON(SessionDetailResponse{
 		Session: sessionItemFromStorage(*sess),
-		Turns:   turns,
-		Stems:   stems,
 	})
 }

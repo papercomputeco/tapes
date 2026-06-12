@@ -123,61 +123,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/v1/search": {
-            "get": {
-                "description": "Embeds the query text, searches the configured vector store, and returns matching sessions with their full conversation branch.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "search"
-                ],
-                "summary": "Semantic search over stored sessions",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Search query",
-                        "name": "query",
-                        "in": "query",
-                        "required": true
-                    },
-                    {
-                        "minimum": 1,
-                        "type": "integer",
-                        "default": 5,
-                        "description": "Maximum number of results to return",
-                        "name": "top_k",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_papercomputeco_tapes_api_search.Output"
-                        }
-                    },
-                    "400": {
-                        "description": "Missing or invalid query parameters",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Search execution failed",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
-                        }
-                    },
-                    "503": {
-                        "description": "Search is not configured",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/v1/search/spans": {
             "get": {
                 "description": "Embeds the query text and runs vector similarity over the embedded span projection (main llm spans, delta-only content). Each hit carries span, trace, and turn context.",
@@ -308,7 +253,7 @@ const docTemplate = `{
         },
         "/v1/sessions/{id}": {
             "get": {
-                "description": "Returns a single session, the selected stem of turns, and a summary of every stem (root-to-leaf path) in the session. ?stem=longest (default) returns the longest stem; ?stem=all returns every node ordered by created_at. ?root=\u003chash\u003e restricts turns to the subtree rooted at that node.",
+                "description": "Returns a single session record. The conversation content lives on the span model: GET /v1/sessions/{id}/traces.",
                 "produces": [
                     "application/json"
                 ],
@@ -323,22 +268,6 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
-                    },
-                    {
-                        "enum": [
-                            "longest",
-                            "all"
-                        ],
-                        "type": "string",
-                        "description": "Which turns to return: longest (default) or all",
-                        "name": "stem",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Restrict turns to the subtree rooted at this node hash",
-                        "name": "root",
-                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -349,7 +278,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Missing id or unknown root",
+                        "description": "Missing or malformed id",
                         "schema": {
                             "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
                         }
@@ -480,59 +409,6 @@ const docTemplate = `{
                     },
                     "501": {
                         "description": "Span traces not supported by this backend",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/sessions/{id}/tree": {
-            "get": {
-                "description": "Returns every captured node for the session typed by node_kind, with spine links, subagent fork/rejoin edges, and offshoot attachments (permission verdicts, web summaries) anchored to the tool_use they relate to.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "sessions"
-                ],
-                "summary": "Get a session's reconciled conversation tree",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Session id (UUID)",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/api.SessionTreeResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Missing or malformed id",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Session not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Failed to load session",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
-                        }
-                    },
-                    "501": {
-                        "description": "Sessions not supported by this backend",
                         "schema": {
                             "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
                         }
@@ -751,72 +627,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/v1/stems/{hash}/graph": {
-            "get": {
-                "description": "Returns a graph-shaped projection of the Merkle DAG around a node hash (the same ancestry returned by GET /v1/stems/{hash}). scope=root loads the requested node's resolvable root and all descendants, scope=branch loads the ancestry plus descendants of the requested node, and scope=ancestry loads only the parent chain.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "stems"
-                ],
-                "summary": "Get a stem graph",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Node (stem head) hash",
-                        "name": "hash",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "enum": [
-                            "root",
-                            "branch",
-                            "ancestry"
-                        ],
-                        "type": "string",
-                        "description": "Graph scope: root, branch, or ancestry",
-                        "name": "scope",
-                        "in": "query"
-                    },
-                    {
-                        "maximum": 5000,
-                        "minimum": 1,
-                        "type": "integer",
-                        "description": "Maximum number of graph nodes to include",
-                        "name": "max_nodes",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/api.GraphResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Missing hash or invalid query parameters",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Stem not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Failed to load stem graph",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/v1/traces": {
             "get": {
                 "description": "Returns turn headers for a session — no span payloads. Fetch GET /v1/traces/{trace_id} per turn for spans and links.",
@@ -973,150 +783,6 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "api.GraphLink": {
-            "type": "object",
-            "properties": {
-                "source": {
-                    "type": "string"
-                },
-                "target": {
-                    "type": "string"
-                }
-            }
-        },
-        "api.GraphNode": {
-            "type": "object",
-            "properties": {
-                "agent_name": {
-                    "type": "string"
-                },
-                "children_count": {
-                    "type": "integer"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "depth": {
-                    "type": "integer"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "is_branch_point": {
-                    "type": "boolean"
-                },
-                "is_leaf": {
-                    "type": "boolean"
-                },
-                "is_root": {
-                    "type": "boolean"
-                },
-                "model": {
-                    "type": "string"
-                },
-                "node_kind": {
-                    "description": "NodeKind / ParentToolUseID surface the derived semantic typing\n(additive; empty for nodes that predate the deriver).",
-                    "type": "string"
-                },
-                "parent_hash": {
-                    "type": "string"
-                },
-                "parent_id": {
-                    "type": "string"
-                },
-                "parent_tool_use_id": {
-                    "type": "string"
-                },
-                "preview": {
-                    "type": "string"
-                },
-                "project": {
-                    "type": "string"
-                },
-                "provider": {
-                    "type": "string"
-                },
-                "role": {
-                    "type": "string"
-                },
-                "selected": {
-                    "type": "boolean"
-                },
-                "stop_reason": {
-                    "type": "string"
-                },
-                "thread_id": {
-                    "type": "string"
-                },
-                "type": {
-                    "type": "string"
-                },
-                "usage": {
-                    "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.Usage"
-                }
-            }
-        },
-        "api.GraphResponse": {
-            "type": "object",
-            "properties": {
-                "branch_points": {
-                    "description": "BranchPoints names included nodes with more than one child in storage.",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "cycle_detected": {
-                    "description": "CycleDetected is true when storage guarded the ancestry walk out of a cycle.",
-                    "type": "boolean"
-                },
-                "hash": {
-                    "description": "Hash is the session/node hash requested by the caller.",
-                    "type": "string"
-                },
-                "leaves": {
-                    "description": "Leaves names included nodes that have no children in storage.",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "links": {
-                    "description": "Links contains parent -\u003e child edges between included nodes.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.GraphLink"
-                    }
-                },
-                "missing_parent": {
-                    "description": "MissingParent names the unresolved parent hash when the ancestry is incomplete.",
-                    "type": "string"
-                },
-                "node_limit": {
-                    "description": "NodeLimit is the maximum number of nodes the server will include.",
-                    "type": "integer"
-                },
-                "nodes": {
-                    "description": "Nodes is the flat node list consumed by graph visualizers.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.GraphNode"
-                    }
-                },
-                "root_hash": {
-                    "description": "RootHash is the top-most resolvable node included in the response.",
-                    "type": "string"
-                },
-                "scope": {
-                    "description": "Scope describes which portion of the graph was loaded: root, branch, or ancestry.",
-                    "type": "string"
-                },
-                "truncated": {
-                    "description": "Truncated is true when the graph hit NodeLimit or the ancestry chain is incomplete.",
-                    "type": "boolean"
-                }
-            }
-        },
         "api.RawTurnHeaderItem": {
             "type": "object",
             "properties": {
@@ -1168,18 +834,6 @@ const docTemplate = `{
             "properties": {
                 "session": {
                     "$ref": "#/definitions/api.SessionItem"
-                },
-                "stems": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.StemSummary"
-                    }
-                },
-                "turns": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.Turn"
-                    }
                 }
             }
         },
@@ -1286,64 +940,6 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/api.TraceDetail"
-                    }
-                }
-            }
-        },
-        "api.SessionTreeResponse": {
-            "type": "object",
-            "properties": {
-                "attachments": {
-                    "description": "Attachments link offshoot calls to the tool_use they relate to:\npermission checks to the judged action, web summaries to their\nfetch/search.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.TreeAttachment"
-                    }
-                },
-                "forks": {
-                    "description": "Forks are subagent threads: a chain whose root carries the Task\ntool_use that spawned it. SourceID is the node holding the\ntool_use block; RejoinID the node holding its tool_result.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.TreeFork"
-                    }
-                },
-                "harness_session_id": {
-                    "type": "string"
-                },
-                "kind_counts": {
-                    "description": "KindCounts summarizes the session's call mix.",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "integer"
-                    }
-                },
-                "links": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.GraphLink"
-                    }
-                },
-                "nodes": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.TreeNode"
-                    }
-                },
-                "roots": {
-                    "description": "Roots are the parentless chain roots, main thread first.",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "session_id": {
-                    "type": "string"
-                },
-                "tasks": {
-                    "description": "Tasks is the session's task list, folded from the TaskCreate /\nTaskUpdate tool calls across every thread — the checklist of\nrecord with each task's final status.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.TreeTask"
                     }
                 }
             }
@@ -1571,23 +1167,6 @@ const docTemplate = `{
                 }
             }
         },
-        "api.StemSummary": {
-            "type": "object",
-            "properties": {
-                "length": {
-                    "type": "integer"
-                },
-                "model": {
-                    "type": "string"
-                },
-                "preview": {
-                    "type": "string"
-                },
-                "root_hash": {
-                    "type": "string"
-                }
-            }
-        },
         "api.TraceDetail": {
             "type": "object",
             "properties": {
@@ -1687,106 +1266,6 @@ const docTemplate = `{
                 }
             }
         },
-        "api.TreeAttachment": {
-            "type": "object",
-            "properties": {
-                "node_id": {
-                    "type": "string"
-                },
-                "node_kind": {
-                    "type": "string"
-                },
-                "target_id": {
-                    "type": "string"
-                },
-                "tool_use_id": {
-                    "type": "string"
-                }
-            }
-        },
-        "api.TreeFork": {
-            "type": "object",
-            "properties": {
-                "rejoin_id": {
-                    "type": "string"
-                },
-                "root_id": {
-                    "type": "string"
-                },
-                "source_id": {
-                    "type": "string"
-                },
-                "tool_use_id": {
-                    "type": "string"
-                }
-            }
-        },
-        "api.TreeNode": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "description": "Content is the node's full content blocks (raw, as captured) so\nconversation renderers can format turns without a second fetch.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ContentBlock"
-                    }
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "is_leaf": {
-                    "type": "boolean"
-                },
-                "is_root": {
-                    "type": "boolean"
-                },
-                "model": {
-                    "type": "string"
-                },
-                "node_kind": {
-                    "type": "string"
-                },
-                "parent_id": {
-                    "type": "string"
-                },
-                "parent_tool_use_id": {
-                    "type": "string"
-                },
-                "preview": {
-                    "type": "string"
-                },
-                "role": {
-                    "type": "string"
-                },
-                "stop_reason": {
-                    "type": "string"
-                },
-                "thread_id": {
-                    "type": "string"
-                },
-                "tool_uses": {
-                    "description": "ToolUses lists the tool_use blocks this node carries (assistant\nturns), so clients can anchor forks/attachments without parsing\ncontent.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.TreeToolUse"
-                    }
-                },
-                "usage": {
-                    "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.Usage"
-                },
-                "verdict": {
-                    "description": "Verdict is set on permission-check response nodes: the monitor's\ndisposition for the judged action.",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/api.TreeVerdict"
-                        }
-                    ]
-                }
-            }
-        },
         "api.TreeTask": {
             "type": "object",
             "properties": {
@@ -1803,32 +1282,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updates": {
-                    "type": "integer"
-                }
-            }
-        },
-        "api.TreeToolUse": {
-            "type": "object",
-            "properties": {
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                }
-            }
-        },
-        "api.TreeVerdict": {
-            "type": "object",
-            "properties": {
-                "disposition": {
-                    "description": "ALLOW | BLOCK",
-                    "type": "string"
-                },
-                "reasoned": {
-                    "type": "boolean"
-                },
-                "stage": {
                     "type": "integer"
                 }
             }
@@ -1922,66 +1375,6 @@ const docTemplate = `{
                 "result": {
                     "type": "object",
                     "additionalProperties": {}
-                }
-            }
-        },
-        "github_com_papercomputeco_tapes_api_search.Output": {
-            "type": "object",
-            "properties": {
-                "count": {
-                    "type": "integer"
-                },
-                "query": {
-                    "type": "string"
-                },
-                "results": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_papercomputeco_tapes_api_search.Result"
-                    }
-                }
-            }
-        },
-        "github_com_papercomputeco_tapes_api_search.Result": {
-            "type": "object",
-            "properties": {
-                "branch": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_papercomputeco_tapes_api_search.Turn"
-                    }
-                },
-                "hash": {
-                    "type": "string"
-                },
-                "preview": {
-                    "type": "string"
-                },
-                "role": {
-                    "type": "string"
-                },
-                "score": {
-                    "type": "number"
-                },
-                "turns": {
-                    "type": "integer"
-                }
-            }
-        },
-        "github_com_papercomputeco_tapes_api_search.Turn": {
-            "type": "object",
-            "properties": {
-                "hash": {
-                    "type": "string"
-                },
-                "matched": {
-                    "type": "boolean"
-                },
-                "role": {
-                    "type": "string"
-                },
-                "text": {
-                    "type": "string"
                 }
             }
         },

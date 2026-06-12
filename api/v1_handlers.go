@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -14,10 +13,6 @@ import (
 	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
-
-// previewMaxChars is the maximum number of characters included in the
-// `preview` field of a stem turn.
-const previewMaxChars = 200
 
 // StemListResponse is the response envelope for GET /v1/stems. Items carry
 // the rich per-stem aggregates computed by pkg/sessions.BuildSummary.
@@ -377,16 +372,4 @@ func turnFromNode(n *merkle.Node) Turn {
 		Usage:      n.Usage,
 		CreatedAt:  n.CreatedAt,
 	}
-}
-
-// makePreview returns the first previewMaxChars runes of the node's
-// concatenated text content, with any surrounding whitespace trimmed.
-// Truncates on rune boundaries so multi-byte characters are never split.
-func makePreview(n *merkle.Node) string {
-	text := strings.TrimSpace(n.Bucket.ExtractText())
-	runes := []rune(text)
-	if len(runes) <= previewMaxChars {
-		return text
-	}
-	return string(runes[:previewMaxChars])
 }

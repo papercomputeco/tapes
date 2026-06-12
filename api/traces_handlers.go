@@ -2,7 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -399,10 +401,88 @@ func previewValue(v any) any {
 	}
 }
 
+// TreeTask is one task folded from the session's TaskCreate/TaskUpdate
+// calls.
+type TreeTask struct {
+	ID          string `json:"id"`
+	Subject     string `json:"subject"`
+	Description string `json:"description,omitempty"`
+	Status      string `json:"status"`
+	Updates     int    `json:"updates"`
+}
+
+// TreeVerdict is a security-monitor disposition.
+type TreeVerdict struct {
+	Disposition string `json:"disposition"` // ALLOW | BLOCK
+	Stage       int    `json:"stage"`
+	Reasoned    bool   `json:"reasoned"`
+}
+
+var blockVerdictPattern = regexp.MustCompile(`(?i)<block>\s*(yes|no)`)
+
+// taskCreatedPattern extracts the task id the harness reports back in
+// the TaskCreate tool_result ("Task #3 created successfully: …").
+var taskCreatedPattern = regexp.MustCompile(`#(\d+)`)
+
+// foldTaskBlocks replays TaskCreate/TaskUpdate tool_use blocks (in
+// capture order) against their results. The fold is a function of the
+// calls, not of the storage model.
+func foldTaskBlocks(uses []llm.ContentBlock, resultText map[string]string) []TreeTask {
+	byID := map[string]*TreeTask{}
+	var order []*TreeTask
+	{
+		for _, b := range uses {
+			switch b.ToolName {
+			case "TaskCreate":
+				subject, _ := b.ToolInput["subject"].(string)
+				description, _ := b.ToolInput["description"].(string)
+				id := ""
+				if m := taskCreatedPattern.FindStringSubmatch(resultText[b.ToolUseID]); m != nil {
+					id = m[1]
+				}
+				task := &TreeTask{ID: id, Subject: subject, Description: description, Status: "pending"}
+				if id != "" {
+					if _, dup := byID[id]; dup {
+						continue
+					}
+					byID[id] = task
+				}
+				order = append(order, task)
+			case "TaskUpdate":
+				id, _ := b.ToolInput["taskId"].(string)
+				if id == "" {
+					if f, ok := b.ToolInput["taskId"].(float64); ok {
+						id = strconv.Itoa(int(f))
+					}
+				}
+				task, ok := byID[id]
+				if !ok {
+					continue
+				}
+				task.Updates++
+				if status, ok := b.ToolInput["status"].(string); ok && status != "" {
+					task.Status = status
+				}
+				if subject, ok := b.ToolInput["subject"].(string); ok && subject != "" {
+					task.Subject = subject
+				}
+			}
+		}
+	}
+	out := make([]TreeTask, 0, len(order))
+	for _, t := range order {
+		if t.Status == "deleted" {
+			continue
+		}
+		out = append(out, *t)
+	}
+	return out
+}
+
 // foldTasksFromSpans replays TaskCreate/TaskUpdate from tool spans —
-// the same fold as the tree projection, sourced from span rows. The
-// replay must run in event order: storage hands spans back sorted by
-// trace_id, which is lexicographic, not chronological.
+// the same fold as the retired tree projection, sourced from span
+// rows. The replay must run in event order: storage hands spans back
+// sorted by trace_id, which is lexicographic, not chronological.
 func foldTasksFromSpans(spans []storage.SpanRecord) []TreeTask {
 	tools := make([]storage.SpanRecord, 0, len(spans))
 	for _, sp := range spans {
@@ -433,7 +513,7 @@ func foldTasksFromSpans(spans []storage.SpanRecord) []TreeTask {
 }
 
 // verdictFromBlocks extracts the security monitor's disposition from a
-// permission-check span's output — same tells as verdictFromNode.
+// permission-check span's output.
 func verdictFromBlocks(callKind string, blocks []llm.ContentBlock) *TreeVerdict {
 	var text strings.Builder
 	for _, b := range blocks {

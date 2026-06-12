@@ -75,7 +75,6 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	// Static paths are registered before parameterised ones.
 	app.Get("/v1/stats", s.handleStats)
 	app.Get("/v1/sessions", s.handleListSessions)
-	app.Get("/v1/sessions/:id/tree", s.handleGetSessionTree)
 	app.Get("/v1/sessions/:id/traces", s.handleGetSessionTraces)
 	app.Get("/v1/sessions/:id/raw_turns", s.handleListSessionRawTurns)
 	app.Get("/v1/traces", s.handleListTraceSummaries)
@@ -83,10 +82,8 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	app.Get("/v1/traces/:trace_id", s.handleGetTrace)
 	app.Get("/v1/sessions/:id", s.handleGetSession)
 	app.Get("/v1/stems", s.handleListStems)
-	app.Get("/v1/stems/:hash/graph", s.handleGetStemGraph)
 	app.Get("/v1/stems/:hash", s.handleGetStem)
 	app.Get("/v1/search/spans", s.handleSearchSpansEndpoint)
-	app.Get("/v1/search", s.handleSearchEndpoint)
 
 	app.Post("/v1/admin/seed/demo", s.handleSeedDemo)
 	app.Post("/v1/admin/backfill/usage", s.handleBackfillUsage)
