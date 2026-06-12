@@ -25,6 +25,10 @@ type sessionsReader interface {
 	ListSessionRecords(ctx context.Context, orgID string, limit int, cursorTs *time.Time, cursorID *string) ([]storage.SessionRecord, error)
 	GetSessionRecord(ctx context.Context, orgID, id string) (*storage.SessionRecord, error)
 	ListNodesBySession(ctx context.Context, sessionID string) ([]*merkle.Node, error)
+	// SessionTokensByModel returns a per-(session, model) token rollup for the
+	// given sessions, used to fold each row's USD cost at read time (the stored
+	// total_cost_usd column is stubbed at 0 by the ingest worker).
+	SessionTokensByModel(ctx context.Context, sessionIDs []string) (map[string]map[string]storage.ModelTokenStats, error)
 }
 
 const (
@@ -199,6 +203,25 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 	items := make([]SessionItem, len(sessions))
 	for i, sess := range sessions {
 		items[i] = sessionItemFromStorage(sess)
+	}
+
+	// Fold each row's cost from a per-model token rollup, the same way
+	// /v1/stats and the detail endpoint do. The stored total_cost_usd is
+	// stubbed at 0 by the ingest worker. A rollup failure is non-fatal: the
+	// list still renders with the stored (0) cost rather than 500-ing.
+	ids := make([]string, len(items))
+	for i := range items {
+		ids[i] = items[i].ID
+	}
+	if tokensByModel, err := reader.SessionTokensByModel(c.Context(), ids); err != nil {
+		s.logger.Warn("session tokens by model", "error", err)
+	} else {
+		pricing := s.pricingTable()
+		for i := range items {
+			if perModel, ok := tokensByModel[items[i].ID]; ok {
+				items[i].TotalCostUsd = totalCostFromPerModel(perModel, pricing)
+			}
+		}
 	}
 
 	return c.JSON(SessionListResponse{
@@ -413,8 +436,16 @@ func (s *Server) handleGetSession(c *fiber.Ctx) error {
 		turns[i] = turnFromNode(n)
 	}
 
+	item := sessionItemFromStorage(*sess)
+	// The stored total_cost_usd is stubbed at 0 by the ingest worker (no
+	// pricing lookup is wired into the proxy), so recompute it at read time
+	// from the session's nodes — the same per-model token fold /v1/stats
+	// uses. Folds over every node in the session (not just the selected
+	// stem) so the cost is stable regardless of ?stem / ?root.
+	item.TotalCostUsd = sessionCostFromNodes(nodes, s.pricingTable())
+
 	return c.JSON(SessionDetailResponse{
-		Session: sessionItemFromStorage(*sess),
+		Session: item,
 		Turns:   turns,
 		Stems:   stems,
 	})
