@@ -201,6 +201,18 @@ const docTemplate = `{
                         "description": "Opaque pagination cursor returned by a previous response",
                         "name": "cursor",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter to the single session with this harness id (exact match; requires harness_session_id, incompatible with cursor; limit is ignored when the filter is active)",
+                        "name": "harness_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter to the single session with this harness session id (exact match; requires harness_id, incompatible with cursor; limit is ignored when the filter is active)",
+                        "name": "harness_session_id",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -211,7 +223,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid query parameters",
+                        "description": "Invalid query parameters, a lone harness filter param, or cursor combined with the harness filter",
                         "schema": {
                             "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
                         }
@@ -739,6 +751,9 @@ const docTemplate = `{
                 "cwd": {
                     "type": "string"
                 },
+                "derived_status": {
+                    "type": "string"
+                },
                 "ended_at": {
                     "type": "string"
                 },
@@ -817,6 +832,9 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "session_count": {
+                    "type": "integer"
+                },
+                "stem_count": {
                     "type": "integer"
                 },
                 "tool_calls": {
@@ -1053,6 +1071,13 @@ const docTemplate = `{
         "github_com_papercomputeco_tapes_pkg_llm.ContentBlock": {
             "type": "object",
             "properties": {
+                "content": {
+                    "description": "Content (type=\"web_search_tool_result\" and other server-tool results) -\nthe raw result payload Anthropic returns inline on the block, captured\nverbatim as JSON so the variable result-object shapes survive without\nimposing a schema. ToolResultID links it to the paired server_tool_use.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
                 "image_base64": {
                     "description": "Base64-encoded image data",
                     "type": "string"
