@@ -9,8 +9,15 @@ import (
 const (
 	ollamaPort = 11434
 
-	// ollamaModel is the small model pulled for e2e testing.
+	// ollamaModel is the small model pulled for e2e testing. It serves
+	// both chat (the proxy leg) and embeddings (the span embed leg).
 	ollamaModel = "qwen3:0.6b"
+
+	// ollamaModelDimensions is qwen3:0.6b's embedding width (its
+	// hidden size). The embed pass and the API's query embedder must
+	// agree on this — the span vector table is created with exactly
+	// these dimensions and both fail fast on mismatch.
+	ollamaModelDimensions = "1024"
 )
 
 func (t *Tapes) OllamaStack(ctx context.Context) (*dagger.Service, error) {
