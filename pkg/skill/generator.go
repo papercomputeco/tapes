@@ -65,11 +65,7 @@ func (g *Generator) Generate(ctx context.Context, sessionIDs []string, name, ski
 			return nil, fmt.Errorf("no turns in session %s after applying time filters", sessionID)
 		}
 
-		transcript, err := g.buildTranscript(ctx, turns)
-		if err != nil {
-			return nil, fmt.Errorf("build transcript for session %s: %w", sessionID, err)
-		}
-		transcripts = append(transcripts, transcript)
+		transcripts = append(transcripts, g.buildTranscript(ctx, turns))
 	}
 
 	// Truncate large transcripts at session boundary
@@ -151,7 +147,7 @@ func filterTurns(turns []TraceSummary, opts *GenerateOptions) []TraceSummary {
 // When a turn's span detail is unavailable (or carries no spine text)
 // the derive-time response preview stands in, so the transcript always
 // has both halves of the exchange.
-func (g *Generator) buildTranscript(ctx context.Context, turns []TraceSummary) (string, error) {
+func (g *Generator) buildTranscript(ctx context.Context, turns []TraceSummary) string {
 	var b strings.Builder
 	for _, turn := range turns {
 		if turn.UserPrompt != "" {
@@ -170,7 +166,7 @@ func (g *Generator) buildTranscript(ctx context.Context, turns []TraceSummary) (
 			fmt.Fprintf(&b, "[assistant] %s\n", turn.ResponsePreview)
 		}
 	}
-	return b.String(), nil
+	return b.String()
 }
 
 // writeSpineResponses walks one turn's spans in presentation order,

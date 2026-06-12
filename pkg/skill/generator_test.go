@@ -107,12 +107,18 @@ var _ = Describe("Generator", func() {
 			},
 			traces: map[string]*skill.Trace{
 				"t1": {TraceID: "t1", Spans: []skill.Span{
-					{Kind: "llm", CallKind: "offshoot:title-gen", Seq: 1,
-						Output: []llm.ContentBlock{{Type: "text", Text: "shadow title text"}}},
-					{Kind: "event", CallKind: "injected:claude-md", Seq: 2,
-						Output: []llm.ContentBlock{{Type: "text", Text: "injected context text"}}},
-					{Kind: "llm", CallKind: "main", ThreadID: "subagent-1", Seq: 3,
-						Output: []llm.ContentBlock{{Type: "text", Text: "subagent thread text"}}},
+					{
+						Kind: "llm", CallKind: "offshoot:title-gen", Seq: 1,
+						Output: []llm.ContentBlock{{Type: "text", Text: "shadow title text"}},
+					},
+					{
+						Kind: "event", CallKind: "injected:claude-md", Seq: 2,
+						Output: []llm.ContentBlock{{Type: "text", Text: "injected context text"}},
+					},
+					{
+						Kind: "llm", CallKind: "main", ThreadID: "subagent-1", Seq: 3,
+						Output: []llm.ContentBlock{{Type: "text", Text: "subagent thread text"}},
+					},
 					mainSpan(4, "Fixed the bug in the handler."),
 				}},
 			},

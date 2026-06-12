@@ -27,6 +27,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -224,7 +225,10 @@ func replayThroughIngest(
 // port, mirroring the inprocessapi helper. The stop function is
 // idempotent and drains the async worker pool.
 func startIngest(ctx context.Context, driver storage.Driver, logger *slog.Logger) (string, func(), error) {
-	server, err := ingest.New(ingest.Config{Project: demoProject}, driver, logger)
+	// The ingest server owns an async worker pool whose jobs are
+	// deliberately detached from any request context — exactly like the
+	// production `tapes serve ingest` process.
+	server, err := ingest.New(ingest.Config{Project: demoProject}, driver, logger) //nolint:contextcheck // worker pool jobs are detached by design
 	if err != nil {
 		return "", nil, fmt.Errorf("creating in-process ingest server: %w", err)
 	}
@@ -351,10 +355,8 @@ func post(ctx context.Context, client *http.Client, url string, body []byte, okS
 		respBody, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 
-		for _, ok := range okStatuses {
-			if resp.StatusCode == ok {
-				return nil
-			}
+		if slices.Contains(okStatuses, resp.StatusCode) {
+			return nil
 		}
 		lastErr = fmt.Errorf("ingest returned status %d: %s", resp.StatusCode, bytes.TrimSpace(respBody))
 		if resp.StatusCode != http.StatusBadGateway {
