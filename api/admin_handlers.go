@@ -9,9 +9,9 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/papercomputeco/tapes/pkg/backfill"
-	"github.com/papercomputeco/tapes/pkg/deck"
 	"github.com/papercomputeco/tapes/pkg/derive"
 	"github.com/papercomputeco/tapes/pkg/llm"
+	"github.com/papercomputeco/tapes/pkg/seed"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
@@ -28,6 +28,26 @@ type backfillUsageRequest struct {
 	AuthSubject   string `json:"auth_subject,omitempty"`
 }
 
+// handleSeedDemo handles POST /v1/admin/seed/demo.
+//
+// Seeding replays bundled capture corpora through the normal ingest
+// write path (raw turns + sessions) and then derives the seeded
+// sessions, so demo data is indistinguishable from live capture and
+// exercises the full raw → derive → span pipeline. The operation is
+// idempotent: re-seeding dedupes at the raw layer and the derive pass
+// upserts the same projection.
+//
+//	@Summary		Seed demo sessions (operator)
+//	@Description	Replays the bundled demo capture corpora through the ingest write path into the caller's org, then derives the seeded sessions. Idempotent: raw-turn dedup makes repeat seeds no-ops.
+//	@Tags			admin
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		seedDemoRequest	false	"Seed options (overwrite is no longer supported)"
+//	@Success		200		{object}	seed.Result
+//	@Failure		400		{object}	llm.ErrorResponse	"Invalid payload or unsupported option"
+//	@Failure		500		{object}	llm.ErrorResponse	"Seeding failed"
+//	@Failure		501		{object}	llm.ErrorResponse	"Driver does not host the raw-turn layer"
+//	@Router			/v1/admin/seed/demo [post]
 func (s *Server) handleSeedDemo(c *fiber.Ctx) error {
 	var req seedDemoRequest
 	if len(c.Body()) > 0 {
@@ -37,15 +57,19 @@ func (s *Server) handleSeedDemo(c *fiber.Ctx) error {
 	}
 
 	if req.Overwrite {
-		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "overwrite is only supported for fresh local databases before the API starts"})
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "overwrite is no longer supported; seeding is idempotent against the raw layer"})
 	}
 
-	sessions, messages, err := deck.SeedDemoToDriver(c.Context(), s.driver)
+	report, err := seed.Run(c.Context(), s.driver, s.logger, orgIDFromCtx(c))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
+		if errors.Is(err, seed.ErrUnsupportedDriver) {
+			return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: err.Error()})
+		}
+		s.logger.Error("seed demo", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: err.Error()})
 	}
 
-	return c.JSON(deck.SeedDemoResponse{Sessions: sessions, Messages: messages})
+	return c.JSON(report)
 }
 
 func (s *Server) handleBackfillUsage(c *fiber.Ctx) error {

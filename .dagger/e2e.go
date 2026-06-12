@@ -119,7 +119,12 @@ func (t *Tapes) TestE2E(ctx context.Context) (string, error) {
 			"--embedding-model", ollamaEmbedModel,
 			"--embedding-dimensions", ollamaEmbedDimensions,
 		}).
-		WithExec([]string{"hurl", "--test", "--very-verbose", ".dagger/e2e/07-search-spans.hurl"})
+		WithExec([]string{"hurl", "--test", "--very-verbose", ".dagger/e2e/07-search-spans.hurl"}).
+
+		// Demo seed round trip: replay the bundled corpora through the
+		// ingest write path, derive, and browse the result — proving
+		// seeded data is indistinguishable from capture.
+		WithExec([]string{"hurl", "--test", ".dagger/e2e/08-seed-demo.hurl"})
 
 	return testCtr.Stdout(ctx)
 }

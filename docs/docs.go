@@ -35,6 +35,57 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/admin/seed/demo": {
+            "post": {
+                "description": "Replays the bundled demo capture corpora through the ingest write path into the caller's org, then derives the seeded sessions. Idempotent: raw-turn dedup makes repeat seeds no-ops.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Seed demo sessions (operator)",
+                "parameters": [
+                    {
+                        "description": "Seed options (overwrite is no longer supported)",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/api.seedDemoRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_seed.Result"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload or unsupported option",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Seeding failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Driver does not host the raw-turn layer",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/mcp": {
             "get": {
                 "description": "Opens the streamable MCP endpoint for server-sent events. Stateless clients can use this to receive streamed MCP messages.",
@@ -1324,6 +1375,14 @@ const docTemplate = `{
                 }
             }
         },
+        "api.seedDemoRequest": {
+            "type": "object",
+            "properties": {
+                "overwrite": {
+                    "type": "boolean"
+                }
+            }
+        },
         "api.swaggerMCPError": {
             "type": "object",
             "properties": {
@@ -1472,6 +1531,30 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "total_tokens": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_papercomputeco_tapes_pkg_seed.Result": {
+            "type": "object",
+            "properties": {
+                "nodes_derived": {
+                    "description": "NodesDerived counts derived rows upserted by the synchronous\nderive pass across the seeded sessions.",
+                    "type": "integer"
+                },
+                "raw_turns": {
+                    "description": "RawTurns is the total number of corpus rows replayed.",
+                    "type": "integer"
+                },
+                "raw_turns_deduped": {
+                    "type": "integer"
+                },
+                "raw_turns_inserted": {
+                    "description": "RawTurnsInserted counts rows that landed as new raw turns;\nRawTurnsDeduped counts replays the raw layer's dedup absorbed\n(a re-seed reports everything deduped).",
+                    "type": "integer"
+                },
+                "sessions": {
+                    "description": "Sessions is the number of demo sessions the corpora replay into.",
                     "type": "integer"
                 }
             }

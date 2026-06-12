@@ -391,6 +391,11 @@ definitions:
       usage:
         $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.Usage'
     type: object
+  api.seedDemoRequest:
+    properties:
+      overwrite:
+        type: boolean
+    type: object
   api.swaggerMCPError:
     properties:
       code:
@@ -516,6 +521,28 @@ definitions:
       total_tokens:
         type: integer
     type: object
+  github_com_papercomputeco_tapes_pkg_seed.Result:
+    properties:
+      nodes_derived:
+        description: |-
+          NodesDerived counts derived rows upserted by the synchronous
+          derive pass across the seeded sessions.
+        type: integer
+      raw_turns:
+        description: RawTurns is the total number of corpus rows replayed.
+        type: integer
+      raw_turns_deduped:
+        type: integer
+      raw_turns_inserted:
+        description: |-
+          RawTurnsInserted counts rows that landed as new raw turns;
+          RawTurnsDeduped counts replays the raw layer's dedup absorbed
+          (a re-seed reports everything deduped).
+        type: integer
+      sessions:
+        description: Sessions is the number of demo sessions the corpora replay into.
+        type: integer
+    type: object
   github_com_papercomputeco_tapes_pkg_sessions.SessionSummary:
     properties:
       agent_name:
@@ -612,6 +639,41 @@ paths:
       summary: Health check
       tags:
       - health
+  /v1/admin/seed/demo:
+    post:
+      consumes:
+      - application/json
+      description: 'Replays the bundled demo capture corpora through the ingest write
+        path into the caller''s org, then derives the seeded sessions. Idempotent:
+        raw-turn dedup makes repeat seeds no-ops.'
+      parameters:
+      - description: Seed options (overwrite is no longer supported)
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/api.seedDemoRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_seed.Result'
+        "400":
+          description: Invalid payload or unsupported option
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Seeding failed
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Driver does not host the raw-turn layer
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Seed demo sessions (operator)
+      tags:
+      - admin
   /v1/mcp:
     delete:
       description: Requests termination of a streamable MCP session when a client

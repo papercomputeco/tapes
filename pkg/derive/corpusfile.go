@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -43,9 +44,21 @@ func LoadCorpusFile(path string) (wire, transcripts []storage.RawTurnRecord, err
 	}
 	defer f.Close()
 
-	gz, err := gzip.NewReader(f)
+	wire, transcripts, err = LoadCorpus(f)
 	if err != nil {
-		return nil, nil, fmt.Errorf("gunzip corpus %s: %w", path, err)
+		return nil, nil, fmt.Errorf("corpus %s: %w", path, err)
+	}
+	return wire, transcripts, nil
+}
+
+// LoadCorpus reads a gzipped-JSONL corpus dump from r and returns its
+// rows split by source: wire captures and transcript pushes. The
+// io.Reader form serves embedded corpora (the demo seed bundles corpus
+// files into the binary); LoadCorpusFile wraps it for on-disk dumps.
+func LoadCorpus(r io.Reader) (wire, transcripts []storage.RawTurnRecord, err error) {
+	gz, err := gzip.NewReader(r)
+	if err != nil {
+		return nil, nil, fmt.Errorf("gunzip corpus: %w", err)
 	}
 
 	scanner := bufio.NewScanner(gz)
@@ -74,7 +87,7 @@ func LoadCorpusFile(path string) (wire, transcripts []storage.RawTurnRecord, err
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, nil, fmt.Errorf("scan corpus %s: %w", path, err)
+		return nil, nil, fmt.Errorf("scan corpus: %w", err)
 	}
 	return wire, transcripts, nil
 }
