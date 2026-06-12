@@ -157,6 +157,64 @@ func (d *Driver) ListNodesBySession(ctx context.Context, sessionID string) ([]*m
 	return merkleNodesFromRows(rows)
 }
 
+// SessionTokensByModel returns, for each requested session, a per-model token
+// rollup (summed prompt / completion / cache tokens across the session's
+// nodes). The API layer folds these into a USD cost so model pricing stays in
+// one place (pkg/sessions), exactly like /v1/stats. Sessions with no priceable
+// nodes are simply absent from the returned map.
+//
+// One grouped query covers the whole page — same ANY($1::uuid[]) batching as
+// getSessionPreviews — so the list endpoint stays a fixed number of queries
+// regardless of page size.
+func (d *Driver) SessionTokensByModel(
+	ctx context.Context,
+	sessionIDs []string,
+) (map[string]map[string]storage.ModelTokenStats, error) {
+	out := make(map[string]map[string]storage.ModelTokenStats, len(sessionIDs))
+	if len(sessionIDs) == 0 {
+		return out, nil
+	}
+
+	rows, err := d.conn.Query(ctx, `
+SELECT session_id::text,
+       model,
+       COALESCE(SUM(prompt_tokens), 0)::bigint                AS input_tokens,
+       COALESCE(SUM(completion_tokens), 0)::bigint            AS output_tokens,
+       COALESCE(SUM(cache_creation_input_tokens), 0)::bigint  AS cache_creation_tokens,
+       COALESCE(SUM(cache_read_input_tokens), 0)::bigint      AS cache_read_tokens
+FROM nodes
+WHERE session_id = ANY($1::uuid[])
+  AND model IS NOT NULL AND model <> ''
+GROUP BY session_id, model
+`, sessionIDs)
+	if err != nil {
+		return nil, fmt.Errorf("session tokens by model: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var sessionID, model string
+		var stats storage.ModelTokenStats
+		if err := rows.Scan(
+			&sessionID,
+			&model,
+			&stats.InputTokens,
+			&stats.OutputTokens,
+			&stats.CacheCreationTokens,
+			&stats.CacheReadTokens,
+		); err != nil {
+			return nil, fmt.Errorf("session tokens by model: scan: %w", err)
+		}
+		perModel := out[sessionID]
+		if perModel == nil {
+			perModel = make(map[string]storage.ModelTokenStats)
+			out[sessionID] = perModel
+		}
+		perModel[model] = stats
+	}
+	return out, rows.Err()
+}
+
 // sessionRecordFromRow converts a sqlc-generated Session row to
 // the storage-level SessionRecord type.
 func sessionRecordFromRow(row gensqlc.Session) storage.SessionRecord {

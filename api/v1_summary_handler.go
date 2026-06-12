@@ -43,10 +43,7 @@ func (s *Server) handleListStems(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list stems"})
 	}
 
-	pricing := s.config.Pricing
-	if pricing == nil {
-		pricing = sessions.DefaultPricing()
-	}
+	pricing := s.pricingTable()
 
 	// Batch-walk the ancestry of every leaf on the page in a single call.
 	// The naive per-leaf AncestryChain loop issues O(N × depth) queries,

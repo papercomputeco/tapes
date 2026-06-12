@@ -256,10 +256,7 @@ func (s *Server) handleStats(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to compute stats"})
 	}
 
-	pricing := s.config.Pricing
-	if pricing == nil {
-		pricing = sessions.DefaultPricing()
-	}
+	pricing := s.pricingTable()
 
 	return c.JSON(StatsResponse{
 		SessionCount:    stats.SessionCount,
@@ -273,6 +270,47 @@ func (s *Server) handleStats(c *fiber.Ctx) error {
 		TotalDurationNs: stats.TotalDurationNs,
 		ToolCalls:       stats.ToolCalls,
 	})
+}
+
+// pricingTable returns the configured model pricing table, falling back to
+// the built-in default when the server has no override. Shared by every
+// handler that folds tokens into a USD cost (/v1/stats, /v1/stems, and the
+// per-session cost on /v1/sessions/:id) so they price identically.
+func (s *Server) pricingTable() sessions.PricingTable {
+	if s.config.Pricing != nil {
+		return s.config.Pricing
+	}
+	return sessions.DefaultPricing()
+}
+
+// sessionCostFromNodes folds a session's full node set into a USD cost the
+// same way /v1/stats does: bucket tokens per model, then price each bucket
+// via the pricing table. Reusing totalCostFromPerModel keeps a single
+// session's cost and the aggregate stats cost from ever diverging. Nodes
+// without usage or a priceable model contribute zero.
+//
+// This is the read-time source of truth for a session's cost. The ingest
+// worker stubs the stored total_cost_usd column at 0 (no pricing lookup is
+// wired into the proxy — see proxy/worker/pool.go), so the handler recomputes
+// it here rather than trusting the column.
+func sessionCostFromNodes(nodes []*merkle.Node, pricing sessions.PricingTable) float64 {
+	perModel := make(map[string]storage.ModelTokenStats)
+	for _, n := range nodes {
+		if n == nil || n.Usage == nil {
+			continue
+		}
+		model := n.Bucket.Model
+		if model == "" {
+			continue
+		}
+		t := perModel[model]
+		t.InputTokens += int64(n.Usage.PromptTokens)
+		t.OutputTokens += int64(n.Usage.CompletionTokens)
+		t.CacheCreationTokens += int64(n.Usage.CacheCreationInputTokens)
+		t.CacheReadTokens += int64(n.Usage.CacheReadInputTokens)
+		perModel[model] = t
+	}
+	return totalCostFromPerModel(perModel, pricing)
 }
 
 // totalCostFromPerModel folds the driver's per-model token rollup into a
