@@ -189,6 +189,7 @@ func sessionRecordFromRow(row gensqlc.Session) storage.SessionRecord {
 		TotalOutputTokens: row.TotalOutputTokens,
 		TurnCount:         int(row.TurnCount),
 		DerivedStatus:     row.DerivedStatus,
+		Model:             row.DerivedModel,
 	}
 	// The folded title-gen output is the session's display title; the
 	// envelope's internal name (a plan slug for Claude Code) is the

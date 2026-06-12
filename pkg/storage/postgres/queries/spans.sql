@@ -156,20 +156,33 @@ SELECT * FROM spans
 WHERE org_id = $1 AND trace_id = $2 AND span_id = $3;
 
 -- name: FoldSessionRollupsFromSpans :exec
--- Session-level cost and token totals are a derive-time fold over the
--- trace rollups — the deriver is the single writer of accounting on
--- span-model sessions. The ingest path never priced wire turns, and
--- its token counters double-count re-sent history (each call re-bills
--- the whole conversation), so the span fold replaces both.
+-- Session-level accounting is a derive-time fold over the trace
+-- rollups — the deriver is the single writer of these columns on
+-- span-model sessions. The ingest path never priced wire turns, its
+-- token counters double-count re-sent history (each call re-bills the
+-- whole conversation), and its turn counter counts wire calls rather
+-- than user-visible turns, so the span fold replaces all of them.
+-- derived_model is the dominant conversation-spine model, so the
+-- session overview never needs span payloads.
 UPDATE sessions SET
     total_cost_usd = COALESCE(f.cost, 0),
     total_input_tokens = COALESCE(f.input_tokens, 0),
-    total_output_tokens = COALESCE(f.output_tokens, 0)
+    total_output_tokens = COALESCE(f.output_tokens, 0),
+    turn_count = COALESCE(f.turns, 0),
+    derived_model = COALESCE((
+        SELECT sp.model FROM spans sp
+        WHERE sp.session_id = sessions.id
+          AND sp.kind = 'llm' AND sp.call_kind = 'main' AND sp.model <> ''
+        GROUP BY sp.model
+        ORDER BY COUNT(*) DESC, sp.model
+        LIMIT 1
+    ), '')
 FROM (
     SELECT s.id,
            SUM(st.total_cost_usd)      AS cost,
            SUM(st.total_input_tokens)  AS input_tokens,
-           SUM(st.total_output_tokens) AS output_tokens
+           SUM(st.total_output_tokens) AS output_tokens,
+           COUNT(st.trace_id)          AS turns
     FROM sessions s
     LEFT JOIN span_turns st ON st.session_id = s.id
     WHERE s.id = ANY(sqlc.arg(session_ids)::uuid[])

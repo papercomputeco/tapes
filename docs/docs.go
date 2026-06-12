@@ -1214,6 +1214,10 @@ const docTemplate = `{
                 "last_seen_at": {
                     "type": "string"
                 },
+                "model": {
+                    "description": "Model is the dominant conversation-spine model, folded at derive\ntime; empty until the session first derives.",
+                    "type": "string"
+                },
                 "name": {
                     "type": "string"
                 },

@@ -26,7 +26,10 @@ type SessionRecord struct {
 	// abandoned / unknown), denormalized at ingest. 'unknown' until the first
 	// turn lands or, for pre-feature rows, until the status backfill runs.
 	DerivedStatus string
-	Preview       string // first user turn text, truncated; empty when unavailable
+	// Model is the dominant conversation-spine model, folded at derive
+	// time (sessions.derived_model). Empty until the session derives.
+	Model   string
+	Preview string // first user turn text, truncated; empty when unavailable
 }
 
 // SessionListOpts parameterizes the sessions-list read: keyset cursor

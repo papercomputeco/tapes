@@ -35,23 +35,26 @@ const (
 // SessionItem is the per-row shape returned by GET /v1/sessions. It mirrors
 // the sessions table directly — no ancestry walk, no stem aggregation.
 type SessionItem struct {
-	ID                string         `json:"id"`
-	HarnessID         string         `json:"harness_id"`
-	HarnessSessionID  string         `json:"harness_session_id"`
-	Name              string         `json:"name,omitempty"`
-	Cwd               string         `json:"cwd,omitempty"`
-	HarnessVersion    string         `json:"harness_version,omitempty"`
-	ParentSessionID   string         `json:"parent_session_id,omitempty"`
-	StartedAt         time.Time      `json:"started_at"`
-	LastSeenAt        time.Time      `json:"last_seen_at"`
-	EndedAt           *time.Time     `json:"ended_at,omitempty"`
-	TurnCount         int            `json:"turn_count"`
-	TotalInputTokens  int64          `json:"total_input_tokens"`
-	TotalOutputTokens int64          `json:"total_output_tokens"`
-	TotalCostUsd      float64        `json:"total_cost_usd"`
-	DerivedStatus     string         `json:"derived_status"`
-	HarnessMetadata   map[string]any `json:"harness_metadata,omitempty"`
-	Preview           string         `json:"preview,omitempty"`
+	ID                string     `json:"id"`
+	HarnessID         string     `json:"harness_id"`
+	HarnessSessionID  string     `json:"harness_session_id"`
+	Name              string     `json:"name,omitempty"`
+	Cwd               string     `json:"cwd,omitempty"`
+	HarnessVersion    string     `json:"harness_version,omitempty"`
+	ParentSessionID   string     `json:"parent_session_id,omitempty"`
+	StartedAt         time.Time  `json:"started_at"`
+	LastSeenAt        time.Time  `json:"last_seen_at"`
+	EndedAt           *time.Time `json:"ended_at,omitempty"`
+	TurnCount         int        `json:"turn_count"`
+	TotalInputTokens  int64      `json:"total_input_tokens"`
+	TotalOutputTokens int64      `json:"total_output_tokens"`
+	TotalCostUsd      float64    `json:"total_cost_usd"`
+	DerivedStatus     string     `json:"derived_status"`
+	// Model is the dominant conversation-spine model, folded at derive
+	// time; empty until the session first derives.
+	Model           string         `json:"model,omitempty"`
+	HarnessMetadata map[string]any `json:"harness_metadata,omitempty"`
+	Preview         string         `json:"preview,omitempty"`
 }
 
 // SessionListResponse is the response envelope for GET /v1/sessions.
@@ -97,6 +100,7 @@ func sessionItemFromStorage(s storage.SessionRecord) SessionItem {
 		TotalOutputTokens: s.TotalOutputTokens,
 		TotalCostUsd:      s.TotalCostUsd,
 		DerivedStatus:     s.DerivedStatus,
+		Model:             s.Model,
 		HarnessMetadata:   s.HarnessMetadata,
 		Preview:           s.Preview,
 	}
