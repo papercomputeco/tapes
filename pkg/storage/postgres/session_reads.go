@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -50,7 +51,9 @@ func (d *Driver) ListSessionRecords(
 		OrgID:    oid,
 		CursorTs: tsPg,
 		CursorID: idPg,
-		Lim:      int32(limit), //nolint:gosec // bounded above by the API handler (maxSessionsLimit)
+		// The int32 conversion cannot overflow: limit is bounded above by
+		// the API handler's maxSessionsLimit.
+		Lim: int32(limit), //nolint:gosec // bounded above by the API handler (maxSessionsLimit)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list session records: %w", err)
@@ -61,17 +64,27 @@ func (d *Driver) ListSessionRecords(
 		out[i] = sessionRecordFromRow(row)
 	}
 
-	previews, err := d.getSessionPreviews(ctx, out)
-	if err == nil {
-		for i := range out {
-			out[i].Preview = previews[out[i].ID]
-		}
-	}
+	d.attachPreviews(ctx, out)
 
 	return out, nil
 }
 
 const sessionPreviewMaxRunes = 120
+
+// attachPreviews populates Preview on each record in place from a single
+// batched preview query. It owns the best-effort policy for session reads:
+// previews are decoration, so a fetch failure is logged and the records are
+// returned without previews rather than failing the read.
+func (d *Driver) attachPreviews(ctx context.Context, records []storage.SessionRecord) {
+	previews, err := d.getSessionPreviews(ctx, records)
+	if err != nil {
+		slog.WarnContext(ctx, "attach session previews", "error", err)
+		return
+	}
+	for i := range records {
+		records[i].Preview = previews[records[i].ID]
+	}
+}
 
 // getSessionPreviews fetches the first user-role node text for each session in
 // the supplied list, in a single query. Returns a map of session UUID string →
@@ -141,6 +154,37 @@ func (d *Driver) GetSessionRecord(ctx context.Context, orgID, id string) (*stora
 	}
 	s := sessionRecordFromRow(row)
 	return &s, nil
+}
+
+// GetSessionRecordByHarness returns the single session matching the
+// org-scoped natural key (org_id, harness_id, harness_session_id), or nil
+// if no row matches. The lookup is an exact-match point read on the
+// sessions_harness_uq unique index, mirroring the GetSessionRecord
+// nil-on-no-rows contract.
+func (d *Driver) GetSessionRecordByHarness(
+	ctx context.Context,
+	orgID string,
+	harnessID string,
+	harnessSessionID string,
+) (*storage.SessionRecord, error) {
+	oid, err := orgIDFromString(orgID)
+	if err != nil {
+		return nil, fmt.Errorf("get session record by harness: %w", err)
+	}
+	row, err := d.q.GetSessionByNaturalKey(ctx, gensqlc.GetSessionByNaturalKeyParams{
+		OrgID:            oid,
+		HarnessID:        harnessID,
+		HarnessSessionID: harnessSessionID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get session record by harness: %w", err)
+	}
+	recs := []storage.SessionRecord{sessionRecordFromRow(row)}
+	d.attachPreviews(ctx, recs)
+	return &recs[0], nil
 }
 
 // ListNodesBySession returns all nodes attributed to a session ordered by
