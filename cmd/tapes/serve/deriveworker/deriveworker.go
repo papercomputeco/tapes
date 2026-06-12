@@ -15,9 +15,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/papercomputeco/tapes/pkg/config"
+	"github.com/papercomputeco/tapes/pkg/credentials"
 	"github.com/papercomputeco/tapes/pkg/derive/worker"
+	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
+	"github.com/papercomputeco/tapes/pkg/spanembed"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 	"github.com/papercomputeco/tapes/pkg/telemetry"
 )
@@ -37,6 +40,13 @@ type deriveWorkerCommander struct {
 	metricsListen string
 	waitForDB     bool
 
+	embedSpans          bool
+	embeddingProvider   string
+	embeddingTarget     string
+	embeddingModel      string
+	embeddingDimensions uint
+	embeddingAPIKey     string
+
 	logger *slog.Logger
 }
 
@@ -51,6 +61,11 @@ var deriveWorkerFlags = config.FlagSet{
 	config.FlagDeriveWorkerMaxDeriveLag:  {Name: "max-derive-lag", ViperKey: "derive_worker.max_derive_lag", Description: "Derive a still-streaming session anyway once its dirty mark has waited this long (Go duration, default 45s)"},
 	config.FlagDeriveWorkerMetricsListen: {Name: "metrics-listen", ViperKey: "derive_worker.metrics_listen", Description: "Address to serve /metrics, /healthz (liveness), /readyz (readiness), and /ping on (empty disables)"},
 	config.FlagDeriveWorkerWaitForDB:     {Name: "wait-for-db", ViperKey: "derive_worker.wait_for_db", Description: "Retry an unreachable Postgres at startup with backoff instead of exiting (for orchestrated environments; default: fail fast)"},
+	config.FlagDeriveWorkerEmbedSpans:    {Name: "embed-spans", ViperKey: "derive_worker.embed_spans", Description: "Embed main llm spans for semantic search after derives (off by default; requires the embedding flags)"},
+	config.FlagEmbeddingProv:             {Name: "embedding-provider", ViperKey: "embedding.provider", Description: "Embedding provider type (e.g., ollama, openai)"},
+	config.FlagEmbeddingTgt:              {Name: "embedding-target", ViperKey: "embedding.target", Description: "Embedding provider URL"},
+	config.FlagEmbeddingModel:            {Name: "embedding-model", ViperKey: "embedding.model", Description: "Embedding model name (e.g., embeddinggemma, text-embedding-3-large)"},
+	config.FlagEmbeddingDims:             {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Embedding dimensionality (must match the model's output)"},
 }
 
 const deriveWorkerLongDesc string = `Run the derive worker.
@@ -71,6 +86,14 @@ deriver fix.
 Derivation is idempotent (re-running an unchanged session prunes 0 nodes), so
 everything here is safely at-least-once. The admin endpoints
 POST /v1/admin/derive/run and /verify remain available as escape hatches.
+
+With --embed-spans the worker also embeds main-conversation llm spans for
+semantic search after each batch of derives (and once at startup, catching
+the backlog). Configure the backend with the --embedding-* flags; the model
+and dimensions must be an explicit, matching pair — the vector table is
+created with exactly the configured dimensions and startup fails fast when
+an existing table disagrees. Embeds are idempotent by span identity and
+content hash, so re-derives and extra runs never double-embed.
 
 Operations: an unreachable database fails startup fast unless --wait-for-db
 is set; poll failures back off exponentially (capped at 30s) and recover on
@@ -111,6 +134,11 @@ func NewDeriveWorkerCmd() *cobra.Command {
 				config.FlagDeriveWorkerMaxDeriveLag,
 				config.FlagDeriveWorkerMetricsListen,
 				config.FlagDeriveWorkerWaitForDB,
+				config.FlagDeriveWorkerEmbedSpans,
+				config.FlagEmbeddingProv,
+				config.FlagEmbeddingTgt,
+				config.FlagEmbeddingModel,
+				config.FlagEmbeddingDims,
 			})
 
 			cmder.postgresDSN = v.GetString("storage.postgres_dsn")
@@ -121,6 +149,25 @@ func NewDeriveWorkerCmd() *cobra.Command {
 			cmder.sweepWindow = v.GetString("derive_worker.sweep_window")
 			cmder.metricsListen = v.GetString("derive_worker.metrics_listen")
 			cmder.waitForDB = v.GetBool("derive_worker.wait_for_db")
+			cmder.embedSpans = v.GetBool("derive_worker.embed_spans")
+
+			embedding := config.ResolveEmbeddingConfigWithOptions(
+				v.GetString("embedding.provider"),
+				v.GetString("embedding.target"),
+				v.GetString("embedding.model"),
+				v.GetUint("embedding.dimensions"),
+				config.ResolveEmbeddingConfigOptions{
+					DimensionsSet: config.IsRegisteredFlagExplicitlySet(v, cmd, cmder.flags, config.FlagEmbeddingDims),
+				},
+			)
+			cmder.embeddingProvider = embedding.Provider
+			cmder.embeddingTarget = embedding.Target
+			cmder.embeddingModel = embedding.Model
+			cmder.embeddingDimensions = embedding.Dimensions
+			cmder.embeddingAPIKey, err = credentials.APIKeyForProvider(embedding.Provider, configDir)
+			if err != nil {
+				return fmt.Errorf("could not load embedding credentials: %w", err)
+			}
 
 			if cmder.project == "" {
 				cmder.project = git.RepoName(cmd.Context())
@@ -149,6 +196,11 @@ func NewDeriveWorkerCmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagDeriveWorkerMaxDeriveLag, &cmder.maxDeriveLag)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagDeriveWorkerMetricsListen, &cmder.metricsListen)
 	config.AddBoolFlag(cmd, cmder.flags, config.FlagDeriveWorkerWaitForDB, &cmder.waitForDB)
+	config.AddBoolFlag(cmd, cmder.flags, config.FlagDeriveWorkerEmbedSpans, &cmder.embedSpans)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingProv, &cmder.embeddingProvider)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingTgt, &cmder.embeddingTarget)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingModel, &cmder.embeddingModel)
+	config.AddUintFlag(cmd, cmder.flags, config.FlagEmbeddingDims, &cmder.embeddingDimensions)
 
 	return cmd
 }
@@ -252,10 +304,68 @@ func (c *deriveWorkerCommander) run(ctx context.Context) error {
 	}
 	defer driver.Close()
 
+	if c.embedSpans {
+		pass, cleanup, err := c.buildEmbedPass(ctx, driver)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		cfg.SpanEmbed = worker.SpanEmbedFunc(func(ctx context.Context) error {
+			_, err := pass.Run(ctx)
+			return err
+		})
+	}
+
 	w := worker.NewWorker(cfg, driver, c.logger)
 	readyWorker.Store(w)
 
 	return w.Run(ctx)
+}
+
+// buildEmbedPass wires the span-embedding pass onto the worker's
+// Postgres pool. Schema is ensured at startup so a model/dimensions
+// misconfiguration fails the process immediately and visibly instead
+// of failing every row later.
+func (c *deriveWorkerCommander) buildEmbedPass(ctx context.Context, driver *postgres.Driver) (*spanembed.Pass, func(), error) {
+	embedder, err := embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
+		ProviderType: c.embeddingProvider,
+		TargetURL:    c.embeddingTarget,
+		Model:        c.embeddingModel,
+		Dimensions:   c.embeddingDimensions,
+		APIKey:       c.embeddingAPIKey,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not create embedder: %w", err)
+	}
+
+	store, err := spanembed.NewStore(driver.DB(), spanembed.StoreConfig{
+		Dimensions: c.embeddingDimensions,
+	}, c.logger)
+	if err != nil {
+		_ = embedder.Close()
+		return nil, nil, fmt.Errorf("could not create span embedding store: %w", err)
+	}
+	if err := store.EnsureSchema(ctx); err != nil {
+		_ = embedder.Close()
+		return nil, nil, fmt.Errorf("span embedding schema: %w", err)
+	}
+
+	pass, err := spanembed.NewPass(store, store, embedder, spanembed.PassConfig{
+		Model:      c.embeddingModel,
+		Dimensions: c.embeddingDimensions,
+	}, c.logger)
+	if err != nil {
+		_ = embedder.Close()
+		return nil, nil, fmt.Errorf("could not create span embed pass: %w", err)
+	}
+
+	c.logger.Info("span embedding enabled",
+		"embedding_provider", c.embeddingProvider,
+		"embedding_target", c.embeddingTarget,
+		"embedding_model", c.embeddingModel,
+		"embedding_dimensions", c.embeddingDimensions,
+	)
+	return pass, func() { _ = embedder.Close() }, nil
 }
 
 // Startup connection bounds. The worker derives one session at a time,

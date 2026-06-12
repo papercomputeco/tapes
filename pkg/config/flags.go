@@ -72,6 +72,7 @@ const (
 	FlagDeriveWorkerMaxDeriveLag  = "derive-worker-max-derive-lag"
 	FlagDeriveWorkerMetricsListen = "derive-worker-metrics-listen"
 	FlagDeriveWorkerWaitForDB     = "derive-worker-wait-for-db"
+	FlagDeriveWorkerEmbedSpans    = "derive-worker-embed-spans"
 )
 
 // AddStringFlag registers a string flag on cmd from the given FlagSet.
