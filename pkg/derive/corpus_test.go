@@ -1,12 +1,6 @@
 package derive_test
 
 import (
-	"bufio"
-	"compress/gzip"
-	"encoding/json"
-	"os"
-	"time"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -31,54 +25,9 @@ import (
 // numbers below and say why in the commit message. A drop you can't
 // explain is a regression, exactly like the old oracle.
 
-type corpusRow struct {
-	ID               int64           `json:"id"`
-	OrgID            string          `json:"org_id"`
-	Source           string          `json:"source"`
-	Provider         string          `json:"provider"`
-	AgentName        string          `json:"agent_name"`
-	HarnessID        string          `json:"harness_id"`
-	HarnessSessionID string          `json:"harness_session_id"`
-	RequestID        string          `json:"request_id"`
-	RawRequest       json.RawMessage `json:"raw_request"`
-	Response         json.RawMessage `json:"response"`
-	Meta             json.RawMessage `json:"meta"`
-	SessionEnvelope  json.RawMessage `json:"session_envelope"`
-	ReceivedAt       time.Time       `json:"received_at"`
-}
-
 func loadCorpus(path string) (wire []storage.RawTurnRecord, transcripts []storage.RawTurnRecord) {
-	f, err := os.Open(path)
+	wire, transcripts, err := derive.LoadCorpusFile(path)
 	Expect(err).NotTo(HaveOccurred())
-	defer f.Close()
-
-	gz, err := gzip.NewReader(f)
-	Expect(err).NotTo(HaveOccurred())
-
-	scanner := bufio.NewScanner(gz)
-	scanner.Buffer(make([]byte, 0, 1<<20), 64<<20)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		var row corpusRow
-		Expect(json.Unmarshal(line, &row)).To(Succeed())
-		rec := storage.RawTurnRecord{
-			ID: row.ID, OrgID: row.OrgID, Source: row.Source,
-			Provider: row.Provider, AgentName: row.AgentName,
-			HarnessID: row.HarnessID, HarnessSessionID: row.HarnessSessionID,
-			RequestID: row.RequestID, RawRequest: row.RawRequest,
-			Response: row.Response, Meta: row.Meta,
-			SessionEnvelope: row.SessionEnvelope, ReceivedAt: row.ReceivedAt,
-		}
-		if rec.Source == storage.RawTurnSourceTranscript {
-			transcripts = append(transcripts, rec)
-		} else {
-			wire = append(wire, rec)
-		}
-	}
-	Expect(scanner.Err()).NotTo(HaveOccurred())
 	return wire, transcripts
 }
 

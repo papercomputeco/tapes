@@ -38,11 +38,11 @@ ON CONFLICT (org_id, trace_id) DO UPDATE SET
 INSERT INTO spans (
     org_id, trace_id, span_id, parent_span_id, session_id,
     kind, name, status, call_kind, thread_id, model, stop_reason,
-    started_at, duration_ns, input, output, usage, raw_turn_id, node_hash
+    started_at, duration_ns, seq, input, output, usage, raw_turn_id, node_hash
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11, $12,
-    $13, $14, $15, $16, $17, $18, $19
+    $13, $14, $15, $16, $17, $18, $19, $20
 )
 ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     parent_span_id = EXCLUDED.parent_span_id,
@@ -56,6 +56,7 @@ ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     stop_reason    = EXCLUDED.stop_reason,
     started_at     = EXCLUDED.started_at,
     duration_ns    = EXCLUDED.duration_ns,
+    seq            = EXCLUDED.seq,
     input          = EXCLUDED.input,
     output         = EXCLUDED.output,
     usage          = EXCLUDED.usage,
@@ -104,9 +105,11 @@ WHERE session_id = $1
 ORDER BY started_at ASC, trace_id ASC;
 
 -- name: ListSpansBySession :many
+-- seq is the deriver's emit ordinal (presentation order); started_at/
+-- span_id only break ties for pre-seq rows that haven't re-derived.
 SELECT * FROM spans
 WHERE session_id = $1
-ORDER BY trace_id ASC, started_at ASC, span_id ASC;
+ORDER BY trace_id ASC, seq ASC, started_at ASC, span_id ASC;
 
 -- name: ListSpanLinksBySession :many
 SELECT * FROM span_links
@@ -127,7 +130,7 @@ WHERE org_id = $1 AND trace_id = $2;
 -- name: ListSpansByTrace :many
 SELECT * FROM spans
 WHERE org_id = $1 AND trace_id = $2
-ORDER BY started_at ASC, span_id ASC;
+ORDER BY seq ASC, started_at ASC, span_id ASC;
 
 -- name: ListSpanLinksByTrace :many
 SELECT * FROM span_links

@@ -27,7 +27,7 @@ func (q *Queries) FoldSessionCostFromSpans(ctx context.Context, sessionIds []pgt
 }
 
 const getSpan = `-- name: GetSpan :one
-SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash FROM spans
+SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq FROM spans
 WHERE org_id = $1 AND trace_id = $2 AND span_id = $3
 `
 
@@ -60,6 +60,7 @@ func (q *Queries) GetSpan(ctx context.Context, arg GetSpanParams) (Span, error) 
 		&i.Usage,
 		&i.RawTurnID,
 		&i.NodeHash,
+		&i.Seq,
 	)
 	return i, err
 }
@@ -277,11 +278,13 @@ func (q *Queries) ListSpanTurnsBySession(ctx context.Context, sessionID pgtype.U
 }
 
 const listSpansBySession = `-- name: ListSpansBySession :many
-SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash FROM spans
+SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq FROM spans
 WHERE session_id = $1
-ORDER BY trace_id ASC, started_at ASC, span_id ASC
+ORDER BY trace_id ASC, seq ASC, started_at ASC, span_id ASC
 `
 
+// seq is the deriver's emit ordinal (presentation order); started_at/
+// span_id only break ties for pre-seq rows that haven't re-derived.
 func (q *Queries) ListSpansBySession(ctx context.Context, sessionID pgtype.UUID) ([]Span, error) {
 	rows, err := q.db.Query(ctx, listSpansBySession, sessionID)
 	if err != nil {
@@ -311,6 +314,7 @@ func (q *Queries) ListSpansBySession(ctx context.Context, sessionID pgtype.UUID)
 			&i.Usage,
 			&i.RawTurnID,
 			&i.NodeHash,
+			&i.Seq,
 		); err != nil {
 			return nil, err
 		}
@@ -323,9 +327,9 @@ func (q *Queries) ListSpansBySession(ctx context.Context, sessionID pgtype.UUID)
 }
 
 const listSpansByTrace = `-- name: ListSpansByTrace :many
-SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash FROM spans
+SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq FROM spans
 WHERE org_id = $1 AND trace_id = $2
-ORDER BY started_at ASC, span_id ASC
+ORDER BY seq ASC, started_at ASC, span_id ASC
 `
 
 type ListSpansByTraceParams struct {
@@ -362,6 +366,7 @@ func (q *Queries) ListSpansByTrace(ctx context.Context, arg ListSpansByTracePara
 			&i.Usage,
 			&i.RawTurnID,
 			&i.NodeHash,
+			&i.Seq,
 		); err != nil {
 			return nil, err
 		}
@@ -516,11 +521,11 @@ const upsertSpan = `-- name: UpsertSpan :exec
 INSERT INTO spans (
     org_id, trace_id, span_id, parent_span_id, session_id,
     kind, name, status, call_kind, thread_id, model, stop_reason,
-    started_at, duration_ns, input, output, usage, raw_turn_id, node_hash
+    started_at, duration_ns, seq, input, output, usage, raw_turn_id, node_hash
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11, $12,
-    $13, $14, $15, $16, $17, $18, $19
+    $13, $14, $15, $16, $17, $18, $19, $20
 )
 ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     parent_span_id = EXCLUDED.parent_span_id,
@@ -534,6 +539,7 @@ ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     stop_reason    = EXCLUDED.stop_reason,
     started_at     = EXCLUDED.started_at,
     duration_ns    = EXCLUDED.duration_ns,
+    seq            = EXCLUDED.seq,
     input          = EXCLUDED.input,
     output         = EXCLUDED.output,
     usage          = EXCLUDED.usage,
@@ -556,6 +562,7 @@ type UpsertSpanParams struct {
 	StopReason   string
 	StartedAt    pgtype.Timestamptz
 	DurationNs   int64
+	Seq          int64
 	Input        []byte
 	Output       []byte
 	Usage        []byte
@@ -579,6 +586,7 @@ func (q *Queries) UpsertSpan(ctx context.Context, arg UpsertSpanParams) error {
 		arg.StopReason,
 		arg.StartedAt,
 		arg.DurationNs,
+		arg.Seq,
 		arg.Input,
 		arg.Output,
 		arg.Usage,

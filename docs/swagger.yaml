@@ -299,6 +299,12 @@ definitions:
         type: object
       parent_span_id:
         type: string
+      seq:
+        description: |-
+          Seq is the span's presentation ordinal within its trace; spans
+          arrive sorted by it. start_ns cannot order spans inside one llm
+          call (parallel tool batches share an instant).
+        type: integer
       span_id:
         type: string
       start_ns:
@@ -1096,6 +1102,11 @@ paths:
         name: id
         required: true
         type: string
+      - description: 'Span payload mode: full (default) or preview (strings truncated;
+          fetch the span endpoint for full payloads)'
+        in: query
+        name: payload
+        type: string
       produces:
       - application/json
       responses:
@@ -1400,6 +1411,11 @@ paths:
         in: path
         name: trace_id
         required: true
+        type: string
+      - description: 'Span payload mode: full (default) or preview (strings truncated;
+          fetch the span endpoint for full payloads)'
+        in: query
+        name: payload
         type: string
       produces:
       - application/json

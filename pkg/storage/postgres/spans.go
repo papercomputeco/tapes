@@ -104,6 +104,7 @@ func writeSpanSet(
 				StopReason:   s.StopReason,
 				StartedAt:    pgtype.Timestamptz{Time: s.StartedAt, Valid: true},
 				DurationNs:   s.DurationNS,
+				Seq:          s.Seq,
 				Input:        input,
 				Output:       output,
 				Usage:        usage,
@@ -212,50 +213,22 @@ func (d *Driver) ListSessionSpanModel(ctx context.Context, sessionID string) ([]
 
 	turns := make([]storage.SpanTurnRecord, 0, len(turnRows))
 	for _, row := range turnRows {
-		rec := storage.SpanTurnRecord{
-			TraceID:           row.TraceID,
-			SessionID:         sessionID,
-			UserPrompt:        row.UserPrompt,
-			Synthetic:         row.Synthetic,
-			Status:            row.Status,
-			StartedAt:         row.StartedAt.Time,
-			DurationNS:        row.DurationNs,
-			TotalInputTokens:  row.TotalInputTokens,
-			TotalOutputTokens: row.TotalOutputTokens,
-		}
-		if row.EndedAt.Valid {
-			t := row.EndedAt.Time
-			rec.EndedAt = &t
-		}
-		if row.TotalCostUsd.Valid {
-			if f, err := row.TotalCostUsd.Float64Value(); err == nil && f.Valid {
-				rec.TotalCostUSD = f.Float64
-			}
-		}
+		rec := spanTurnRecordFromColumns(spanTurnColumns{
+			traceID: row.TraceID, userPrompt: row.UserPrompt,
+			synthetic: row.Synthetic, status: row.Status,
+			sessionID: row.SessionID, startedAt: row.StartedAt,
+			endedAt: row.EndedAt, durationNs: row.DurationNs,
+			totalIn: row.TotalInputTokens, totalOut: row.TotalOutputTokens,
+			mainIn: row.MainInputTokens, mainOut: row.MainOutputTokens,
+			cacheRead: row.CacheReadTokens, cacheCreation: row.CacheCreationTokens,
+			cost: row.TotalCostUsd,
+		})
 		turns = append(turns, rec)
 	}
 
 	spans := make([]storage.SpanRecord, 0, len(spanRows))
 	for _, row := range spanRows {
-		spans = append(spans, storage.SpanRecord{
-			TraceID:      row.TraceID,
-			SpanID:       row.SpanID,
-			ParentSpanID: row.ParentSpanID,
-			Kind:         row.Kind,
-			Name:         row.Name,
-			Status:       row.Status,
-			CallKind:     row.CallKind,
-			ThreadID:     row.ThreadID,
-			Model:        row.Model,
-			StopReason:   row.StopReason,
-			StartedAt:    row.StartedAt.Time,
-			DurationNS:   row.DurationNs,
-			Input:        row.Input,
-			Output:       row.Output,
-			Usage:        row.Usage,
-			RawTurnID:    row.RawTurnID.Int64,
-			NodeHash:     row.NodeHash,
-		})
+		spans = append(spans, spanRecordFromRow(row))
 	}
 
 	links := make([]storage.SpanLinkRecord, 0, len(linkRows))
@@ -330,6 +303,7 @@ func spanRecordFromRow(row gensqlc.Span) storage.SpanRecord {
 		StopReason:   row.StopReason,
 		StartedAt:    row.StartedAt.Time,
 		DurationNS:   row.DurationNs,
+		Seq:          row.Seq,
 		Input:        row.Input,
 		Output:       row.Output,
 		Usage:        row.Usage,

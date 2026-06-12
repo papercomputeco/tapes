@@ -95,11 +95,18 @@ func (s *Server) handleListTraceSummaries(c *fiber.Ctx) error {
 		s.logger.Error("list trace summaries", "session_id", sessionID, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list traces"})
 	}
+	return c.JSON(BuildTraceList(rows))
+}
+
+// BuildTraceList renders the turn-summary rows for one session.
+// Exported so `tapes dev trace-fixtures` emits byte-identical JSON to
+// the handler.
+func BuildTraceList(rows []storage.TraceSummaryRecord) TraceListResponse {
 	items := make([]TraceItem, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, traceItemFromTurn(row.SpanTurnRecord, row.SpanCount))
 	}
-	return c.JSON(TraceListResponse{Items: items})
+	return TraceListResponse{Items: items}
 }
 
 // handleGetTrace handles GET /v1/traces/:trace_id.
@@ -109,6 +116,7 @@ func (s *Server) handleListTraceSummaries(c *fiber.Ctx) error {
 //	@Tags			traces
 //	@Produce		json
 //	@Param			trace_id	path		string	true	"Trace id"
+//	@Param			payload		query		string	false	"Span payload mode: full (default) or preview (strings truncated; fetch the span endpoint for full payloads)"
 //	@Success		200			{object}	TraceDetail
 //	@Failure		404			{object}	llm.ErrorResponse
 //	@Failure		500			{object}	llm.ErrorResponse
@@ -128,7 +136,13 @@ func (s *Server) handleGetTrace(c *fiber.Ctx) error {
 	if turn == nil {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "trace not found"})
 	}
+	return c.JSON(BuildTraceDetail(*turn, spans, links, payloadModeFromQuery(c.Query("payload"))))
+}
 
+// BuildTraceDetail renders one turn with its spans and links. Exported
+// so `tapes dev trace-fixtures` emits byte-identical JSON to the
+// handler.
+func BuildTraceDetail(turn storage.SpanTurnRecord, spans []storage.SpanRecord, links []storage.SpanLinkRecord, mode PayloadMode) TraceDetail {
 	children := map[string][]string{}
 	for _, sp := range spans {
 		if sp.ParentSpanID != "" {
@@ -136,12 +150,12 @@ func (s *Server) handleGetTrace(c *fiber.Ctx) error {
 		}
 	}
 	detail := TraceDetail{
-		Trace: traceItemFromTurn(*turn, len(spans)),
+		Trace: traceItemFromTurn(turn, len(spans)),
 		Spans: make([]SpanItem, 0, len(spans)),
 		Links: make([]SpanLinkItem, 0, len(links)),
 	}
 	for _, sp := range spans {
-		detail.Spans = append(detail.Spans, spanItemFromRecord(sp, children[sp.SpanID]))
+		detail.Spans = append(detail.Spans, spanItemFromRecord(sp, children[sp.SpanID], mode))
 	}
 	for _, l := range links {
 		detail.Links = append(detail.Links, SpanLinkItem{
@@ -150,7 +164,7 @@ func (s *Server) handleGetTrace(c *fiber.Ctx) error {
 			Metadata: map[string]any{"kind": l.Kind},
 		})
 	}
-	return c.JSON(detail)
+	return detail
 }
 
 // handleGetSpan handles GET /v1/traces/:trace_id/spans/:span_id.
@@ -180,7 +194,7 @@ func (s *Server) handleGetSpan(c *fiber.Ctx) error {
 	if rec == nil {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "span not found"})
 	}
-	item := spanItemFromRecord(*rec, nil)
+	item := spanItemFromRecord(*rec, nil, PayloadFull)
 	return c.JSON(item)
 }
 

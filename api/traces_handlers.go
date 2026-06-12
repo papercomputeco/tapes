@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,6 +21,31 @@ import (
 
 type spanModelReader interface {
 	storage.SpanModelReader
+}
+
+// PayloadMode selects how much span payload a trace response carries.
+// Full embeds the stored content verbatim; preview truncates long
+// text so list-shaped reads stay O(structure), with the span drill-in
+// endpoint serving the full payload on demand.
+type PayloadMode string
+
+const (
+	PayloadFull    PayloadMode = "full"
+	PayloadPreview PayloadMode = "preview"
+)
+
+// previewPayloadRunes bounds every string carried by a preview-mode
+// payload. Long enough to read, short enough that a whole session of
+// previews stays smaller than one full tool result.
+const previewPayloadRunes = 512
+
+// payloadModeFromQuery maps the ?payload= query param to a mode;
+// anything but "preview" is the full default.
+func payloadModeFromQuery(v string) PayloadMode {
+	if v == string(PayloadPreview) {
+		return PayloadPreview
+	}
+	return PayloadFull
 }
 
 // TraceItem is one user-visible turn's header.
@@ -52,19 +78,23 @@ type TraceItem struct {
 // instant losslessly for JS clients, since 1.7e18 exceeds
 // Number.MAX_SAFE_INTEGER.
 type SpanItem struct {
-	ID           string         `json:"id"`
-	TraceID      string         `json:"trace_id"`
-	SpanID       string         `json:"span_id"`
-	ParentSpanID string         `json:"parent_span_id,omitempty"`
-	Kind         string         `json:"kind"`
-	Name         string         `json:"name"`
-	Status       string         `json:"status"`
-	StartedAt    time.Time      `json:"started_at"`
-	StartNS      int64          `json:"start_ns"`
-	DurationNS   int64          `json:"duration_ns"`
-	Input        map[string]any `json:"input"`
-	Output       map[string]any `json:"output"`
-	Metadata     map[string]any `json:"metadata"`
+	ID           string    `json:"id"`
+	TraceID      string    `json:"trace_id"`
+	SpanID       string    `json:"span_id"`
+	ParentSpanID string    `json:"parent_span_id,omitempty"`
+	Kind         string    `json:"kind"`
+	Name         string    `json:"name"`
+	Status       string    `json:"status"`
+	StartedAt    time.Time `json:"started_at"`
+	StartNS      int64     `json:"start_ns"`
+	DurationNS   int64     `json:"duration_ns"`
+	// Seq is the span's presentation ordinal within its trace; spans
+	// arrive sorted by it. start_ns cannot order spans inside one llm
+	// call (parallel tool batches share an instant).
+	Seq      int64          `json:"seq"`
+	Input    map[string]any `json:"input"`
+	Output   map[string]any `json:"output"`
+	Metadata map[string]any `json:"metadata"`
 	// Metrics is always an object on the wire — the contract fixture
 	// pins {} for usage-less spans (agent/tool/event), and the console
 	// schema requires it.
@@ -107,7 +137,8 @@ type SessionTracesResponse struct {
 //	@Description	Returns the session's user-visible turns as traces with nested spans (llm calls, tools, subagents, shadow calls, injected context) and dataflow links. Cross-trace links (compaction seams) are at the response top level.
 //	@Tags			sessions
 //	@Produce		json
-//	@Param			id	path		string	true	"Session id (UUID)"
+//	@Param			id		path		string	true	"Session id (UUID)"
+//	@Param			payload	query		string	false	"Span payload mode: full (default) or preview (strings truncated; fetch the span endpoint for full payloads)"
 //	@Success		200	{object}	SessionTracesResponse
 //	@Failure		400	{object}	llm.ErrorResponse	"Missing or malformed id"
 //	@Failure		404	{object}	llm.ErrorResponse	"Session not found"
@@ -148,17 +179,19 @@ func (s *Server) handleGetSessionTraces(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session traces"})
 	}
 
-	resp := buildSessionTraces(sessionItemFromStorage(*sess), turns, spans, links)
+	resp := BuildSessionTraces(sessionItemFromStorage(*sess), turns, spans, links, payloadModeFromQuery(c.Query("payload")))
 	return c.JSON(resp)
 }
 
-// buildSessionTraces assembles the composite response. Pure rendering:
-// every edge and kind here was computed by the deriver.
-func buildSessionTraces(
+// BuildSessionTraces assembles the composite response. Pure rendering:
+// every edge and kind here was computed by the deriver. Exported so
+// `tapes dev trace-fixtures` emits byte-identical JSON to the handler.
+func BuildSessionTraces(
 	session SessionItem,
 	turns []storage.SpanTurnRecord,
 	spans []storage.SpanRecord,
 	links []storage.SpanLinkRecord,
+	mode PayloadMode,
 ) *SessionTracesResponse {
 	resp := &SessionTracesResponse{
 		Session:    session,
@@ -199,35 +232,19 @@ func buildSessionTraces(
 	}
 
 	for _, turn := range turns {
+		item := traceItemFromTurn(turn, len(spansByTrace[turn.TraceID]))
+		item.HarnessID = session.HarnessID
+		item.HarnessSessionID = session.HarnessSessionID
 		detail := TraceDetail{
-			Trace: TraceItem{
-				ID:                turn.TraceID,
-				TraceID:           turn.TraceID,
-				SessionID:         turn.SessionID,
-				HarnessID:         session.HarnessID,
-				HarnessSessionID:  session.HarnessSessionID,
-				UserPrompt:        turn.UserPrompt,
-				Status:            turn.Status,
-				StartedAt:         turn.StartedAt,
-				EndedAt:           turn.EndedAt,
-				DurationNS:        turn.DurationNS,
-				TotalInputTokens:  turn.TotalInputTokens,
-				TotalOutputTokens: turn.TotalOutputTokens,
-				TotalCostUSD:      turn.TotalCostUSD,
-				SpanCount:         len(spansByTrace[turn.TraceID]),
-				Metadata:          map[string]any{},
-			},
+			Trace: item,
 			Spans: make([]SpanItem, 0, len(spansByTrace[turn.TraceID])),
 			Links: linksByTrace[turn.TraceID],
 		}
 		if detail.Links == nil {
 			detail.Links = []SpanLinkItem{}
 		}
-		if turn.Synthetic != "" {
-			detail.Trace.Metadata["synthetic"] = turn.Synthetic
-		}
 		for _, sp := range spansByTrace[turn.TraceID] {
-			detail.Spans = append(detail.Spans, spanItemFromRecord(sp, children[sp.SpanID]))
+			detail.Spans = append(detail.Spans, spanItemFromRecord(sp, children[sp.SpanID], mode))
 		}
 		resp.Traces = append(resp.Traces, detail)
 	}
@@ -238,8 +255,9 @@ func buildSessionTraces(
 
 // spanItemFromRecord renders one stored span. Tool spans unwrap their
 // single tool_use/tool_result block into arguments/output; llm and
-// event spans carry their content-block arrays.
-func spanItemFromRecord(sp storage.SpanRecord, childIDs []string) SpanItem {
+// event spans carry their content-block arrays. Preview mode truncates
+// payload strings and marks the item so clients know to drill in.
+func spanItemFromRecord(sp storage.SpanRecord, childIDs []string, mode PayloadMode) SpanItem {
 	item := SpanItem{
 		ID:           sp.SpanID,
 		TraceID:      sp.TraceID,
@@ -251,6 +269,7 @@ func spanItemFromRecord(sp storage.SpanRecord, childIDs []string) SpanItem {
 		StartedAt:    sp.StartedAt,
 		StartNS:      sp.StartedAt.UnixNano(),
 		DurationNS:   sp.DurationNS,
+		Seq:          sp.Seq,
 		Input:        map[string]any{},
 		Output:       map[string]any{},
 		Metadata:     map[string]any{},
@@ -286,18 +305,25 @@ func spanItemFromRecord(sp storage.SpanRecord, childIDs []string) SpanItem {
 				// still serialize as a record, not null
 				args = map[string]any{}
 			}
+			if mode == PayloadPreview {
+				args = previewValue(args).(map[string]any)
+			}
 			item.Input["arguments"] = args
 		}
 		if blocks := decodeBlocks(sp.Output); len(blocks) > 0 {
-			item.Output["content"] = blocks[0].ToolOutput
+			out := blocks[0].ToolOutput
+			if mode == PayloadPreview {
+				out = previewString(out)
+			}
+			item.Output["content"] = out
 			item.Output["is_error"] = blocks[0].IsError
 		}
 	default:
 		if len(sp.Input) > 0 {
-			item.Input["content"] = sp.Input
+			item.Input["content"] = payloadContent(sp.Input, mode)
 		}
 		if len(sp.Output) > 0 {
-			item.Output["content"] = sp.Output
+			item.Output["content"] = payloadContent(sp.Output, mode)
 		}
 		if strings.HasPrefix(sp.CallKind, "offshoot:permission-check") {
 			if v := verdictFromBlocks(sp.CallKind, decodeBlocks(sp.Output)); v != nil {
@@ -305,18 +331,91 @@ func spanItemFromRecord(sp storage.SpanRecord, childIDs []string) SpanItem {
 			}
 		}
 	}
+	if mode == PayloadPreview {
+		item.Metadata["payload"] = string(PayloadPreview)
+	}
 	return item
 }
 
+// payloadContent renders a stored content-block array for the wire. In
+// full mode the stored JSON passes through verbatim; preview mode
+// decodes, truncates every string, and re-encodes. A blob that fails
+// to decode passes through whole rather than silently vanishing.
+func payloadContent(raw json.RawMessage, mode PayloadMode) any {
+	if mode != PayloadPreview {
+		return raw
+	}
+	blocks := decodeBlocks(raw)
+	if blocks == nil {
+		return raw
+	}
+	for i := range blocks {
+		b := &blocks[i]
+		b.Text = previewString(b.Text)
+		b.Thinking = previewString(b.Thinking)
+		b.ToolOutput = previewString(b.ToolOutput)
+		// Previews never carry image bytes.
+		b.ImageBase64 = ""
+		if b.ToolInput != nil {
+			b.ToolInput = previewValue(b.ToolInput).(map[string]any)
+		}
+	}
+	return blocks
+}
+
+// previewString truncates one payload string to the preview bound.
+func previewString(s string) string {
+	r := []rune(s)
+	if len(r) <= previewPayloadRunes {
+		return s
+	}
+	return string(r[:previewPayloadRunes]) + "…"
+}
+
+// previewValue truncates every string reachable in a decoded JSON
+// value, preserving structure (tool arguments nest arbitrarily).
+func previewValue(v any) any {
+	switch t := v.(type) {
+	case string:
+		return previewString(t)
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			out[k] = previewValue(val)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, val := range t {
+			out[i] = previewValue(val)
+		}
+		return out
+	default:
+		return v
+	}
+}
+
 // foldTasksFromSpans replays TaskCreate/TaskUpdate from tool spans —
-// the same fold as the tree projection, sourced from span rows.
+// the same fold as the tree projection, sourced from span rows. The
+// replay must run in event order: storage hands spans back sorted by
+// trace_id, which is lexicographic, not chronological.
 func foldTasksFromSpans(spans []storage.SpanRecord) []TreeTask {
+	tools := make([]storage.SpanRecord, 0, len(spans))
+	for _, sp := range spans {
+		if sp.Kind == "tool" {
+			tools = append(tools, sp)
+		}
+	}
+	sort.SliceStable(tools, func(i, j int) bool {
+		if !tools[i].StartedAt.Equal(tools[j].StartedAt) {
+			return tools[i].StartedAt.Before(tools[j].StartedAt)
+		}
+		return tools[i].Seq < tools[j].Seq
+	})
+
 	resultText := map[string]string{}
 	var uses []llm.ContentBlock
-	for _, sp := range spans {
-		if sp.Kind != "tool" {
-			continue
-		}
+	for _, sp := range tools {
 		if in := decodeBlocks(sp.Input); len(in) > 0 {
 			uses = append(uses, in[0])
 		}

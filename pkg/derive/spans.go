@@ -114,6 +114,11 @@ type Span struct {
 	StartedAt    time.Time
 	DurationNS   int64
 
+	// Seq is the emit ordinal within the trace — presentation order.
+	// started_at cannot order spans inside one llm call (a parallel
+	// tool batch shares a single instant), so readers sort by seq.
+	Seq int64
+
 	// Input: llm — fresh request content blocks; tool — the tool_use
 	// input rendered as a single tool_use block.
 	Input []llm.ContentBlock
@@ -582,14 +587,20 @@ func (em *spanEmitter) finish() {
 	for _, turn := range em.set.Turns {
 		root := turn.Spans[0]
 		// phases append out of time order within a trace; StartedAt is
-		// the presentation order (root agent span stays first).
+		// the presentation order (root agent span stays first). No
+		// same-instant tie-break on purpose: the stable sort preserves
+		// walk order — an llm call's tool spans in block order — which
+		// a span_id comparison would scramble (parallel tool batches
+		// share one timestamp and provider ids are random).
 		sort.SliceStable(turn.Spans[1:], func(i, j int) bool {
 			a, b := turn.Spans[i+1], turn.Spans[j+1]
-			if a.StartedAt.Equal(b.StartedAt) {
-				return a.SpanID < b.SpanID
-			}
 			return a.StartedAt.Before(b.StartedAt)
 		})
+		// Seq freezes this order for storage: readers ORDER BY seq, so
+		// presentation order survives the round trip.
+		for i, s := range turn.Spans {
+			s.Seq = int64(i)
+		}
 		for _, s := range turn.Spans {
 			if end := s.StartedAt.Add(time.Duration(s.DurationNS)); end.After(turn.EndedAt) {
 				turn.EndedAt = end

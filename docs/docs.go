@@ -370,6 +370,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Span payload mode: full (default) or preview (strings truncated; fetch the span endpoint for full payloads)",
+                        "name": "payload",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -800,6 +806,12 @@ const docTemplate = `{
                         "name": "trace_id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Span payload mode: full (default) or preview (strings truncated; fetch the span endpoint for full payloads)",
+                        "name": "payload",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -1299,6 +1311,10 @@ const docTemplate = `{
                 },
                 "parent_span_id": {
                     "type": "string"
+                },
+                "seq": {
+                    "description": "Seq is the span's presentation ordinal within its trace; spans\narrive sorted by it. start_ns cannot order spans inside one llm\ncall (parallel tool batches share an instant).",
+                    "type": "integer"
                 },
                 "span_id": {
                     "type": "string"

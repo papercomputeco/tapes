@@ -109,6 +109,7 @@ type Span struct {
 	Usage        []byte
 	RawTurnID    pgtype.Int8
 	NodeHash     string
+	Seq          int64
 }
 
 type SpanLink struct {

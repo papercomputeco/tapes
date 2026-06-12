@@ -47,11 +47,14 @@ type SpanRecord struct {
 	StopReason   string
 	StartedAt    time.Time
 	DurationNS   int64
-	Input        json.RawMessage
-	Output       json.RawMessage
-	Usage        json.RawMessage
-	RawTurnID    int64
-	NodeHash     string
+	// Seq is the deriver's emit ordinal within the trace —
+	// presentation order, since started_at ties inside one llm call.
+	Seq       int64
+	Input     json.RawMessage
+	Output    json.RawMessage
+	Usage     json.RawMessage
+	RawTurnID int64
+	NodeHash  string
 }
 
 // SpanLinkRecord is a dataflow edge between spans, possibly across
