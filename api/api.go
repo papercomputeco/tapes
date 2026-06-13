@@ -7,6 +7,7 @@ import (
 
 	"github.com/gofiber/adaptor/v2"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/compress"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 
 	"github.com/papercomputeco/tapes/api/mcp"
@@ -49,6 +50,12 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	// the right status via the err (see Middleware in metrics.go).
 	app.Use(s.metrics.Middleware())
 	app.Use(recover.New())
+	// Trace payloads are large JSON (a full session detail measured
+	// 2.65MB raw, ~80KB gzipped) and every read crosses a network leg
+	// that honors Accept-Encoding — the console's server functions
+	// included. Compression is the single highest-leverage byte saver
+	// on the read surface.
+	app.Use(compress.New())
 
 	// Tenant context: canonicalise the client-asserted org_id header onto
 	// Locals so the read handlers can scope lookups to a single tenant.
