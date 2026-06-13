@@ -271,6 +271,7 @@ func (s *Server) listSessionsByHarness(c *fiber.Ctx, reader sessionsReader) erro
 	}
 	return c.JSON(SessionListResponse{Items: items})
 }
+
 // handleGetSession handles GET /v1/sessions/:id.
 //
 //	@Summary		Get a session

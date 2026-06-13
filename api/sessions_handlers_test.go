@@ -45,13 +45,13 @@ type sessionsStubDriver struct {
 	lastHarnessSessionID string
 }
 
-func (d *sessionsStubDriver) ListSessionRecords(_ context.Context, orgID string, authSubject string, limit int, cursorTs *time.Time, cursorID *string) ([]storage.SessionRecord, error) {
+func (d *sessionsStubDriver) ListSessionRecords(_ context.Context, orgID string, opts storage.SessionListOpts) ([]storage.SessionRecord, error) {
 	d.listCalls++
 	d.lastListOrg = orgID
-	d.lastAuthSubject = authSubject
-	d.lastLimit = limit
-	d.lastCursorTs = cursorTs
-	d.lastCursorID = cursorID
+	d.lastAuthSubject = opts.AuthSubject
+	d.lastLimit = opts.Limit
+	d.lastCursorTs = opts.CursorTs
+	d.lastCursorID = opts.CursorID
 	return d.listRecords, d.listErr
 }
 

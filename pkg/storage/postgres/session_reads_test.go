@@ -84,7 +84,7 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 		// Parity with the list path: the single filtered row must
 		// carry the same field population as a ListSessionRecords row,
 		// including Preview attached via getSessionPreviews.
-		listed, err := pgDriver.ListSessionRecords(ctx, orgID, "", 10, nil, nil)
+		listed, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{Limit: 10})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(listed).To(HaveLen(1))
 		Expect(listed[0].ID).To(Equal(rec.ID))
@@ -142,7 +142,7 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 		_ = seedFor("user_bob", "sess-bob", "bob turn")
 
 		// When listing with alice's subject
-		mine, err := pgDriver.ListSessionRecords(ctx, orgID, "user_alice", 10, nil, nil)
+		mine, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{AuthSubject: "user_alice", Limit: 10})
 		Expect(err).NotTo(HaveOccurred())
 
 		// Then only alice's session returns, carrying the subject
@@ -151,7 +151,7 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 		Expect(mine[0].AuthSubject).To(Equal("user_alice"))
 
 		// And the unfiltered list still returns both users' sessions
-		all, err := pgDriver.ListSessionRecords(ctx, orgID, "", 10, nil, nil)
+		all, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{Limit: 10})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(all).To(HaveLen(2))
 	})
