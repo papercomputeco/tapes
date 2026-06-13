@@ -57,6 +57,10 @@ func deriveSuperAdvanced() (*derive.DerivedSet, *derive.ReconcileStats) {
 	return deriveCorpus("testdata/corpus-9fec0da7.jsonl.gz", 121, 5)
 }
 
+func deriveResume() (*derive.DerivedSet, *derive.ReconcileStats) {
+	return deriveCorpus("testdata/corpus-0440f43d.jsonl.gz", 108, 19)
+}
+
 var _ = Describe("live-capture corpus (cb9a87e5)", func() {
 	It("re-derives the session with the pinned reconciliation quality", func() {
 		set, stats := deriveAdvanced()

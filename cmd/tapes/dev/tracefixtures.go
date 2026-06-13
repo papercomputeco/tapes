@@ -57,6 +57,7 @@ Example:
   tapes dev trace-fixtures \
     --corpus pkg/derive/testdata/corpus-cb9a87e5.jsonl.gz \
     --corpus pkg/derive/testdata/corpus-9fec0da7.jsonl.gz \
+    --corpus pkg/derive/testdata/corpus-0440f43d.jsonl.gz \
     --out ../console/src/lib/sessions/__fixtures__`
 
 type traceFixturesCommander struct {
