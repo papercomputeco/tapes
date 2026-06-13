@@ -13,7 +13,7 @@ import (
 // Commands reference flags by registry key rather than hard-coding names,
 // shorthands, defaults, and descriptions inline. This prevents flag drift
 // when the same logical flag appears on multiple commands (e.g., --upstream
-// on both "tapes serve" and "tapes serve proxy" and "tapes chat").
+// on both "tapes serve" and "tapes serve proxy").
 type Flag struct {
 	// Name is the long flag name (e.g. "upstream").
 	Name string

@@ -8,7 +8,6 @@ import (
 
 	authcmder "github.com/papercomputeco/tapes/cmd/tapes/auth"
 	backfillcmder "github.com/papercomputeco/tapes/cmd/tapes/backfill"
-	chatcmder "github.com/papercomputeco/tapes/cmd/tapes/chat"
 	checkoutcmder "github.com/papercomputeco/tapes/cmd/tapes/checkout"
 	configcmder "github.com/papercomputeco/tapes/cmd/tapes/config"
 	deckcmder "github.com/papercomputeco/tapes/cmd/tapes/deck"
@@ -40,8 +39,7 @@ Run services using:
   tapes serve proxy    Run the proxy server
   tapes serve          Run both servers together
 
-Experimental: Chat through the proxy:
-  tapes chat               Start an interactive chat session
+Experimental: Inspect conversation state:
   tapes checkout <hash>    Checkout a conversation point
   tapes checkout           Clear checkout state, start fresh
   tapes status             Show current checkout state
@@ -94,7 +92,6 @@ func NewTapesCmd() *cobra.Command {
 
 	// Add subcommands
 	cmd.AddCommand(synccmder.NewSyncCmd())
-	cmd.AddCommand(chatcmder.NewChatCmd())
 	cmd.AddCommand(checkoutcmder.NewCheckoutCmd())
 	cmd.AddCommand(configcmder.NewConfigCmd())
 	cmd.AddCommand(deckcmder.NewDeckCmd())
