@@ -16,7 +16,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/papercomputeco/tapes/api"
-	apisearch "github.com/papercomputeco/tapes/api/search"
 	"github.com/papercomputeco/tapes/pkg/cliui"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/logger"
@@ -44,27 +43,21 @@ var searchFlags = config.FlagSet{
 
 const searchLongDesc string = `Search session data via the Tapes API.
 
-Search over stored sessions, returning the most relevant sessions based on the
-query text. Requires a running Tapes API server with search configured
-(vector store and embedder).
+Searches the span projection: hits are individual main-conversation llm
+spans with their trace and turn context ("find the turn where X
+happened"). Requires a running Tapes API server with the span embeddings
+written (tapes serve derive-worker --embed-spans, or tapes dev
+embed-spans).
 
-For each result, the full session branch is displayed, including all ancestors
-(from root to matched node) and all descendants (from matched node to leaves).
-
-Use --quiet to output only leaf hashes, one per line. This is useful for piping
-into other commands like tapes skill generate.
-
-Use --spans to search the span projection instead: hits are individual
-main-conversation llm spans with their trace and turn context ("find the
-turn where X happened"). Requires the span embeddings to have been written
-(tapes serve derive-worker --embed-spans, or tapes dev embed-spans).
+Use --quiet to output only session IDs, one per line, deduplicated in
+score order. This is useful for piping into other commands like
+tapes skill generate.
 
 Example:
   tapes search "how to configure logging"
   tapes search "error handling patterns" --api-target http://localhost:8081
   tapes search "how to configure logging" --top 10
   tapes search "gum glow charm" --quiet
-  tapes search "retry backoff change" --spans
   tapes skill generate $(tapes search "charm CLI" --quiet --top 1) --name charm-patterns`
 
 const searchShortDesc string = "Search session data"
@@ -111,8 +104,9 @@ func NewSearchCmd() *cobra.Command {
 	}
 
 	cmd.Flags().IntVarP(&cmder.topK, "top", "k", 5, "Number of results to return")
-	cmd.Flags().BoolVarP(&cmder.quiet, "quiet", "q", false, "Output only leaf hashes, one per line (for piping)")
-	cmd.Flags().BoolVar(&cmder.spans, "spans", false, "Search span embeddings (per-turn hits with trace context)")
+	cmd.Flags().BoolVarP(&cmder.quiet, "quiet", "q", false, "Output only session IDs, one per line (for piping)")
+	cmd.Flags().BoolVar(&cmder.spans, "spans", false, "Deprecated: span search is the default; this flag is a no-op")
+	_ = cmd.Flags().MarkDeprecated("spans", "span search is the default mode now")
 	cmd.Flags().StringVar(&cmder.orgID, "org", "", "Tenant org UUID sent as X-Tapes-Org-Id (default: the nil org)")
 	config.AddStringFlag(cmd, cmder.flags, config.FlagAPITarget, &cmder.apiTarget)
 
@@ -122,93 +116,9 @@ func NewSearchCmd() *cobra.Command {
 func (c *searchCommander) run() error {
 	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
 
-	if c.spans {
-		return c.runSpans()
-	}
-
-	output, err := SearchAPI(c.apiTarget, c.query, c.topK)
-	if err != nil {
-		return err
-	}
-	c.resultCount = output.Count
-
-	if output.Count == 0 {
-		if !c.quiet {
-			fmt.Println("No results found.")
-		}
-		return nil
-	}
-
-	if c.quiet {
-		for _, result := range output.Results {
-			fmt.Println(LeafHash(result))
-		}
-		return nil
-	}
-
-	fmt.Printf("\n%s %s\n\n",
-		cliui.HeaderStyle.Render("Search Results for:"),
-		cliui.HashStyle.Render(fmt.Sprintf("%q", output.Query)),
-	)
-
-	for i, result := range output.Results {
-		c.printResult(i+1, result)
-	}
-
-	return nil
-}
-
-func (c *searchCommander) printResult(rank int, result apisearch.Result) {
-	fmt.Printf("  %s  %s  %s\n",
-		cliui.RankStyle.Render(fmt.Sprintf("#%d", rank)),
-		cliui.ScoreStyle.Render(fmt.Sprintf("score: %.4f", result.Score)),
-		cliui.HashStyle.Render(result.Hash),
-	)
-
-	if result.Turns == 0 {
-		fmt.Printf("  %s\n\n", cliui.DimStyle.Render("(no session found)"))
-		return
-	}
-
-	preview := result.Preview
-	if len(preview) > 80 {
-		preview = preview[:77] + "..."
-	}
-	preview = strings.ReplaceAll(preview, "\n", " ")
-
-	fmt.Printf("  %s %s\n", cliui.RoleStyle.Render(result.Role+":"), cliui.PreviewStyle.Render(preview))
-	fmt.Printf("  %s\n", cliui.DimStyle.Render(fmt.Sprintf("%d turns", result.Turns)))
-
-	if len(result.Branch) > 0 {
-		for _, turn := range result.Branch {
-			text := turn.Text
-			if text == "" {
-				text = "(no text content)"
-			}
-			if len(text) > 60 {
-				text = text[:57] + "..."
-			}
-			text = strings.ReplaceAll(text, "\n", " ")
-
-			if turn.Matched {
-				fmt.Printf("  %s %s %s %s\n",
-					cliui.MatchedStyle.Render(">>>"),
-					cliui.RoleStyle.Render("["+turn.Role+"]"),
-					cliui.PreviewStyle.Render(text),
-					cliui.DimStyle.Render(turn.Hash[:12]),
-				)
-			} else {
-				fmt.Printf("  %s %s %s %s\n",
-					cliui.BranchStyle.Render(" ├─"),
-					cliui.RoleStyle.Render("["+turn.Role+"]"),
-					cliui.BranchStyle.Render(text),
-					cliui.DimStyle.Render(turn.Hash[:12]),
-				)
-			}
-		}
-	}
-
-	fmt.Println()
+	// Span search is the only mode; the deprecated --spans flag is
+	// accepted as a no-op for muscle memory.
+	return c.runSpans()
 }
 
 // runSpans executes a span search and renders per-span hits with
@@ -228,8 +138,15 @@ func (c *searchCommander) runSpans() error {
 	}
 
 	if c.quiet {
+		// Session IDs, deduplicated in score order — the shape
+		// tapes skill generate takes as positional arguments.
+		seen := map[string]bool{}
 		for _, result := range output.Results {
-			fmt.Printf("%s %s\n", result.TraceID, result.SpanID)
+			if result.SessionID == "" || seen[result.SessionID] {
+				continue
+			}
+			seen[result.SessionID] = true
+			fmt.Println(result.SessionID)
 		}
 		return nil
 	}
@@ -289,20 +206,6 @@ func SearchSpansAPI(apiTarget, query, orgID string, topK int) (*api.SpanSearchOu
 	return &output, nil
 }
 
-// SearchAPI calls the tapes search API and returns the parsed output.
-// Exported so other commands (e.g. skill generate --search) can reuse it.
-func SearchAPI(apiTarget, query string, topK int) (*apisearch.Output, error) {
-	body, err := getSearch(apiTarget, "/v1/search", query, "", topK)
-	if err != nil {
-		return nil, err
-	}
-	var output apisearch.Output
-	if err := json.Unmarshal(body, &output); err != nil {
-		return nil, fmt.Errorf("failed to parse search response: %w", err)
-	}
-	return &output, nil
-}
-
 // getSearch issues one search GET against the tapes API and returns
 // the raw response body.
 func getSearch(apiTarget, path, query, orgID string, topK int) ([]byte, error) {
@@ -342,13 +245,4 @@ func getSearch(apiTarget, path, query, orgID string, topK int) ([]byte, error) {
 		return nil, fmt.Errorf("search request failed (HTTP %d): %s", resp.StatusCode, string(body))
 	}
 	return body, nil
-}
-
-// LeafHash returns the leaf (last) hash from a search result's branch.
-// Falls back to the matched node hash if the branch is empty.
-func LeafHash(result apisearch.Result) string {
-	if len(result.Branch) > 0 {
-		return result.Branch[len(result.Branch)-1].Hash
-	}
-	return result.Hash
 }
