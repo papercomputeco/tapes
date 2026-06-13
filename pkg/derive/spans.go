@@ -224,6 +224,17 @@ func EmitSpans(set *DerivedSet) *SpanSet {
 			continue
 		}
 		switch {
+		case src.Kind == KindCompaction && src.ThreadID != "":
+			// #27 structural guard: a compaction is a main-thread session
+			// event — the harness summarizes the user's conversation, not
+			// a subagent's. A subagent call classified compaction is a
+			// false positive (the classifier's response tell tripped on a
+			// subagent that READ classify.go and quoted the summary
+			// header), so route it as the ordinary thread call it is and
+			// never arm a seam from it. ClassifyCall types from the
+			// request/response alone and does not see thread_id; this is
+			// the first stage that does.
+			threadCalls = append(threadCalls, src)
 		case src.Kind == KindMain && src.ThreadID == "":
 			em.mainCall(src)
 		case src.Kind == KindMain:
@@ -533,7 +544,7 @@ func (em *spanEmitter) llmSpan(src *SpanSource, parentID string, input []llm.Con
 		StartedAt:    src.CapturedAt,
 		Input:        input,
 		Output:       resp.Bucket.Content,
-		CallKind:     src.Kind,
+		CallKind:     spanCallKind(src),
 		ThreadID:     src.ThreadID,
 		Model:        resp.Bucket.Model,
 		StopReason:   resp.StopReason,
@@ -653,6 +664,19 @@ func responsePreview(turn *SpanTurn) string {
 		}
 	}
 	return ""
+}
+
+// spanCallKind is the call kind an llm span carries. It is src.Kind
+// verbatim except for the #27 structural guard: a compaction is a
+// main-thread session event, so a subagent call (ThreadID != "") can
+// never be one. Such a call is routed as an ordinary thread call by
+// EmitSpans; here its kind is normalized to main so its span never
+// reads as a compaction either.
+func spanCallKind(src *SpanSource) string {
+	if src.Kind == KindCompaction && src.ThreadID != "" {
+		return KindMain
+	}
+	return src.Kind
 }
 
 // callIdentity mints the deterministic id suffix for one call: the

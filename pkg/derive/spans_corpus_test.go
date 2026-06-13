@@ -220,24 +220,22 @@ var _ = Describe("span emit over the corpus (9fec0da7 — compaction)", func() {
 // haiku subagents). It is the gate for two derive fixes: #27 (subagent
 // false-positive compaction) and #29 (duplicate traces on resume).
 //
-// These numbers are pinned at the CURRENT (pre-fix) shape so the gate
-// is green when the corpus lands; the #27 and #29 commits walk the pins
-// to the corrected shape and say why. The pre-fix pathologies are
-// asserted explicitly below so the fix commits flip a live assertion.
+// Numbers reflect the #27 fix (the three haiku-subagent false-positive
+// compactions are reclassified to ordinary thread calls, so their tool
+// I/O now emits and the spurious seam is gone). The #29 pathology — the
+// resume re-send still opening a duplicate "Nice work bro." trace — is
+// still asserted as a live PRE-FIX expectation; the #29 commit flips it.
 var _ = Describe("span emit over the corpus (0440f43d — resume + multi-model)", func() {
 	It("projects the session into the pinned trace shape", func() {
 		set, _ := deriveResume()
 		spans := derive.EmitSpans(set)
 		r := spans.Report
 
-		// Eight traces. PRE-FIX one of them is the spurious duplicate
-		// "Nice work bro." trace the resume re-send opened (#29); the
-		// #29 commit replaces it with the genuine "Ok hey. I resumed…"
-		// trace, keeping the count at 8.
 		Expect(r.Traces).To(Equal(8))
 
-		// PRE-FIX: "Nice work bro." opens TWO traces — the genuine one
-		// plus the resume re-send duplicate (#29).
+		// #29 PRE-FIX: "Nice work bro." opens TWO traces — the genuine
+		// one plus the resume re-send duplicate. The #29 commit flips
+		// this to 1.
 		niceWork := 0
 		for _, turn := range spans.Turns {
 			if turn.UserPrompt == "Nice work bro." {
@@ -246,10 +244,12 @@ var _ = Describe("span emit over the corpus (0440f43d — resume + multi-model)"
 		}
 		Expect(niceWork).To(Equal(2))
 
-		// PRE-FIX: four compaction spans — one real main-thread
-		// continuation plus three haiku-subagent false positives (the
-		// subagent read classify.go and quoted "Primary Request and
-		// Intent") (#27).
+		// #27: the only compaction span is the real main-thread one. The
+		// three haiku subagent calls that quoted "Primary Request and
+		// Intent" while reading classify.go are no longer typed
+		// compaction — a subagent call can never be a session-level
+		// compaction event (structural guard), and the bare header
+		// substring no longer trips the classifier (semantic tighten).
 		compMain, compThread := 0, 0
 		for _, turn := range spans.Turns {
 			for _, s := range turn.Spans {
@@ -264,38 +264,45 @@ var _ = Describe("span emit over the corpus (0440f43d — resume + multi-model)"
 			}
 		}
 		Expect(compMain).To(Equal(1))
-		Expect(compThread).To(Equal(3))
+		Expect(compThread).To(Equal(0))
 
-		// PRE-FIX: two compaction seams — the real one and a spurious
-		// one armed by a subagent false-positive (#27).
-		Expect(r.LinkKinds[derive.LinkCompactionSeam]).To(Equal(2))
-		Expect(spans.Links).To(HaveLen(2))
+		// Exactly one compaction seam survives — the real one — from a
+		// main-thread compaction span into the post-compaction synthetic.
+		Expect(r.LinkKinds[derive.LinkCompactionSeam]).To(Equal(1))
+		Expect(spans.Links).To(HaveLen(1))
+		seam := spans.Links[0]
+		Expect(seam.Kind).To(Equal(derive.LinkCompactionSeam))
+		Expect(seam.FromTraceID).NotTo(Equal(seam.ToTraceID))
+		byID, turnOf := spanIndex(spans)
+		Expect(byID[seam.FromSpanID].CallKind).To(Equal(derive.KindCompaction))
+		Expect(byID[seam.FromSpanID].ThreadID).To(Equal(""))
+		Expect(turnOf[seam.ToSpanID].Synthetic).To(Equal("post-compaction"))
 
-		// Two synthetic traces (the real post-compaction continuation
-		// and the post-resume continuation).
-		Expect(r.Synthetic).To(Equal(2))
+		// One synthetic trace: the real post-compaction continuation.
+		// (Pre-#27 a false subagent seam mislabeled a second trace.)
+		Expect(r.Synthetic).To(Equal(1))
 
 		Expect(r.SpanKinds).To(Equal(map[string]int{
 			derive.SpanKindAgent: 11, // 8 trace roots + 3 subagents
 			derive.SpanKindLLM:   108,
-			derive.SpanKindTool:  94,
+			derive.SpanKindTool:  96,
 			derive.SpanKindEvent: 23,
 		}))
-		Expect(r.CallKinds[derive.KindMain]).To(Equal(73))
-		Expect(r.CallKinds[derive.KindCompaction]).To(Equal(4))
+		Expect(r.CallKinds[derive.KindMain]).To(Equal(76))
+		Expect(r.CallKinds[derive.KindCompaction]).To(Equal(1))
 
-		Expect(r.LinkKinds[derive.LinkEmits]).To(Equal(94))
-		Expect(r.LinkKinds[derive.LinkFeeds]).To(Equal(91))
+		Expect(r.LinkKinds[derive.LinkEmits]).To(Equal(96))
+		Expect(r.LinkKinds[derive.LinkFeeds]).To(Equal(96))
 		Expect(r.LinkKinds[derive.LinkRejoin]).To(Equal(3))
 		Expect(r.OrphanShadow).To(Equal(9))
 		Expect(verdictFanIn(spans)).To(BeNumerically("<=", 2))
 
-		// NOTE: expectTurnPreviews is NOT asserted on this corpus yet.
-		// PRE-FIX, two continuation traces (model-switch, resume) preview
-		// a re-sent <system-reminder> instead of the human prompt — the
-		// same first-fresh-vs-trailing-fresh confusion (#29) that opens
-		// the duplicate "Nice work bro." trace. The #29 commit picks the
-		// trailing genuine prompt and enables the preview gate here.
+		// NOTE: expectTurnPreviews is NOT yet asserted here — two traces
+		// (the model-switch and resume continuations) preview a re-sent
+		// <system-reminder> instead of the human prompt, the same #29
+		// first-fresh-vs-trailing-fresh confusion that opens the
+		// duplicate "Nice work bro." trace. The #29 commit picks the
+		// trailing genuine prompt and re-enables the preview gate.
 	})
 })
 

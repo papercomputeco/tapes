@@ -127,10 +127,19 @@ func ClassifyCall(req *llm.ChatRequest, resp *llm.ChatResponse) string {
 	// is not a tell — newer harnesses (cc 2.1.x) send it streaming with
 	// the full tool set, exactly like a main turn — only the instruction
 	// text and the structured-summary response are.
+	//
+	// The request-side instruction is the strongest tell. The response
+	// side is a fallback (some captures don't surface the instruction
+	// message cleanly), but the bare "Primary Request and Intent"
+	// substring is too loose: a normal turn that merely QUOTES the
+	// header — e.g. a subagent that read this very file (#27) — would
+	// trip it. So the response tell requires the FULL structured summary
+	// (the header plus at least one more section), which prose quoting a
+	// single header never carries.
 	{
 		lt := strings.ToLower(lastText(req))
 		if strings.Contains(lt, "summary of the conversation so far") ||
-			strings.Contains(responseText(resp), "Primary Request and Intent") {
+			isCompactionSummary(responseText(resp)) {
 			return KindCompaction
 		}
 	}
@@ -181,6 +190,42 @@ func ClassifyInjected(msg llm.Message) string {
 		return KindInjectedClaudeMD
 	}
 	return ""
+}
+
+// compactionSummaryHeader is the lead section of the Claude Code
+// compaction summary template; its presence is necessary but, on its
+// own, not sufficient (prose can quote it — see #27).
+const compactionSummaryHeader = "Primary Request and Intent"
+
+// compactionSummarySections are the remaining canonical section
+// headers of the compaction summary. A genuine summary carries several
+// of them under the lead header; a turn that merely mentions the lead
+// header in prose carries none.
+var compactionSummarySections = []string{
+	"Key Technical Concepts",
+	"Files and Code Sections",
+	"Pending Tasks",
+	"Current Work",
+	"Errors and fixes",
+	"Problem Solving",
+	"All user messages",
+	"Optional Next Step",
+}
+
+// isCompactionSummary reports whether a response carries the real
+// Claude Code compaction summary structure: the lead header plus at
+// least one further canonical section. Quoting the lead header alone
+// (as a subagent reading classify.go did) is not enough.
+func isCompactionSummary(resp string) bool {
+	if !strings.Contains(resp, compactionSummaryHeader) {
+		return false
+	}
+	for _, h := range compactionSummarySections {
+		if strings.Contains(resp, h) {
+			return true
+		}
+	}
+	return false
 }
 
 // firstText returns the text of the first request message.
