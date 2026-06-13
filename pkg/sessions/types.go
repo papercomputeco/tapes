@@ -20,9 +20,9 @@ type Pricing struct {
 // PricingTable maps model names (after normalization) to their Pricing.
 type PricingTable map[string]Pricing
 
-// SessionSummary is the aggregate view of a single session (a root-to-leaf
-// chain). It is produced by BuildSummary and consumed by both the API's
-// /v1/sessions/summary response and the deck TUI overview.
+// SessionSummary is the aggregate view of a single session. The deck TUI
+// renders it (deck.SessionSummary aliases it), folding it from the
+// /v1/sessions rows.
 type SessionSummary struct {
 	ID               string        `json:"id"`
 	HarnessID        string        `json:"harness_id,omitempty"`
@@ -80,5 +80,4 @@ const (
 	blockTypeToolUse    = "tool_use"
 	blockTypeToolResult = "tool_result"
 	roleAssistant       = "assistant"
-	roleUser            = "user"
 )

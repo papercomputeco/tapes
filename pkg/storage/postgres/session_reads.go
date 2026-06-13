@@ -164,20 +164,6 @@ func (d *Driver) GetSessionRecord(ctx context.Context, orgID, id string) (*stora
 	return &s, nil
 }
 
-// ListNodesBySession returns all nodes attributed to a session ordered by
-// created_at ASC (chronological order).
-func (d *Driver) ListNodesBySession(ctx context.Context, sessionID string) ([]*merkle.Node, error) {
-	parsed, err := uuid.Parse(sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("list nodes by session: invalid session id %q: %w", sessionID, err)
-	}
-	rows, err := d.q.ListNodesBySession(ctx, pgtype.UUID{Bytes: parsed, Valid: true})
-	if err != nil {
-		return nil, fmt.Errorf("list nodes by session: %w", err)
-	}
-	return merkleNodesFromRows(rows)
-}
-
 // sessionRecordFromRow converts a sqlc-generated Session row to
 // the storage-level SessionRecord type.
 func sessionRecordFromRow(row gensqlc.Session) storage.SessionRecord {
