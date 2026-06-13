@@ -689,13 +689,37 @@ func callIdentity(src *SpanSource) string {
 	return src.Chain[len(src.Chain)-1].Node.Hash[:16]
 }
 
-// freshGenuinePrompt returns the user node first captured by this call
-// that reads as a human prompt: no tool_result blocks, not injected
-// context. Re-sent history is never fresh, so retries don't reopen
-// traces.
+// freshGenuinePrompt returns the user node this call captured first that
+// opens a new turn: a human prompt (no tool_result blocks, not injected
+// context) that the model has not yet answered within this call.
+//
+// "First captured" (src.New) is the usual fresh-vs-replayed signal —
+// re-sent history shares the earlier call's content hashes, so a retry
+// never re-opens a trace. But a /exit + resume (#29) re-sends recent
+// turns under FRESH hashes: the harness prepends a continuation summary,
+// which rewrites the merkle context of every following node, so a swath
+// of already-seen history reads as new. The first such fresh user node
+// is then a re-sent old prompt ("Nice work bro." sent two turns ago),
+// not what the user just typed — opening a duplicate trace.
+//
+// The tell that separates the two is the assistant's own reply. A
+// genuine new prompt is the LAST thing on the wire: the user spoke and
+// the model has not answered yet (the response is the leaf, emitted as
+// this call's llm span). A re-sent history prompt is followed by its
+// already-happened answer, which the resume re-hashed into a fresh
+// assistant node. So the genuine prompt is the last fresh genuine user
+// node that sits AFTER the last fresh assistant node; anything before
+// that boundary is replayed history wearing a fresh hash.
 func freshGenuinePrompt(src *SpanSource) *DerivedNode {
+	lastFreshAssistant := -1
+	for i := range src.Chain[:len(src.Chain)-1] {
+		if src.New[i] && src.Chain[i].Node.Bucket.Role == "assistant" {
+			lastFreshAssistant = i
+		}
+	}
+	var prompt *DerivedNode
 	for i, dn := range src.Chain[:len(src.Chain)-1] {
-		if !src.New[i] {
+		if !src.New[i] || i <= lastFreshAssistant {
 			continue
 		}
 		node := dn.Node
@@ -710,10 +734,10 @@ func freshGenuinePrompt(src *SpanSource) *DerivedNode {
 			}
 		}
 		if genuine {
-			return dn
+			prompt = dn
 		}
 	}
-	return nil
+	return prompt
 }
 
 // freshInput collects the delta request content: blocks of user nodes

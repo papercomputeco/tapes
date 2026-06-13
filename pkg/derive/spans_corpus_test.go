@@ -233,16 +233,27 @@ var _ = Describe("span emit over the corpus (0440f43d — resume + multi-model)"
 
 		Expect(r.Traces).To(Equal(8))
 
-		// #29 PRE-FIX: "Nice work bro." opens TWO traces — the genuine
-		// one plus the resume re-send duplicate. The #29 commit flips
-		// this to 1.
+		// #29: "Nice work bro." opens exactly ONE trace. The /exit +
+		// resume re-sent recent prompts under fresh content hashes (the
+		// prepended continuation summary rewrote their merkle context),
+		// but freshGenuinePrompt now picks the TRAILING unanswered user
+		// turn — a re-sent prompt is followed by its already-emitted
+		// assistant answer, the genuine one is not — so the re-send no
+		// longer reopens a trace. The slot that the duplicate used to
+		// fill is now the genuine "Ok hey. I resumed the session" prompt,
+		// keeping the count at eight.
 		niceWork := 0
+		var resumePrompt bool
 		for _, turn := range spans.Turns {
 			if turn.UserPrompt == "Nice work bro." {
 				niceWork++
 			}
+			if turn.UserPrompt == "Ok hey. I resumed the session. What happens now?" {
+				resumePrompt = true
+			}
 		}
-		Expect(niceWork).To(Equal(2))
+		Expect(niceWork).To(Equal(1))
+		Expect(resumePrompt).To(BeTrue())
 
 		// #27: the only compaction span is the real main-thread one. The
 		// three haiku subagent calls that quoted "Primary Request and
@@ -297,12 +308,10 @@ var _ = Describe("span emit over the corpus (0440f43d — resume + multi-model)"
 		Expect(r.OrphanShadow).To(Equal(9))
 		Expect(verdictFanIn(spans)).To(BeNumerically("<=", 2))
 
-		// NOTE: expectTurnPreviews is NOT yet asserted here — two traces
-		// (the model-switch and resume continuations) preview a re-sent
-		// <system-reminder> instead of the human prompt, the same #29
-		// first-fresh-vs-trailing-fresh confusion that opens the
-		// duplicate "Nice work bro." trace. The #29 commit picks the
-		// trailing genuine prompt and re-enables the preview gate.
+		// With #29 fixed, every human-opened trace previews the human's
+		// own prompt: the model-switch and resume continuations no longer
+		// preview a re-sent <system-reminder>.
+		expectTurnPreviews(spans)
 	})
 })
 
