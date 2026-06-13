@@ -7,7 +7,8 @@ import (
 )
 
 // tapesWebUIHTML is intentionally a tiny, Prometheus-style UI served directly
-// from the API binary. D3 is loaded from a CDN so there is no frontend build.
+// from the API binary. It browses the session/trace read surface with plain
+// DOM rendering, so there is no frontend build and no external scripts.
 //
 //go:embed web_ui.html
 var tapesWebUIHTML string

@@ -33,7 +33,7 @@ var _ = Describe("minimal web UI", func() {
 		Expect(resp.StatusCode).To(Equal(fiber.StatusNotFound))
 	})
 
-	It("serves the D3 UI from / without a frontend build", func() {
+	It("serves the session browser UI from / without a frontend build", func() {
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 		Expect(err).NotTo(HaveOccurred())
 		resp, err := server.app.Test(req)
@@ -43,11 +43,13 @@ var _ = Describe("minimal web UI", func() {
 
 		raw, err := io.ReadAll(resp.Body)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(string(raw)).To(ContainSubstring("d3@7.9.0"))
-		Expect(string(raw)).To(ContainSubstring("integrity=\"sha256-8glLv2FBs1lyLE/kVOtsSw8OQswQzHr5IfwVj864ZTk=\""))
-		Expect(string(raw)).To(ContainSubstring("/v1/stems/"))
-		Expect(string(raw)).To(ContainSubstring("/v1/stems?limit="))
-		Expect(string(raw)).NotTo(ContainSubstring("/v1/sessions/summary"))
+		// The UI reads the session/trace surface only; the node-view
+		// /v1/stems endpoints (and the D3 graph pane that consumed
+		// them) are gone, as are all external script tags.
+		Expect(string(raw)).To(ContainSubstring("/v1/sessions?limit="))
+		Expect(string(raw)).To(ContainSubstring("/traces?payload=preview"))
+		Expect(string(raw)).NotTo(ContainSubstring("/v1/stems"))
+		Expect(string(raw)).NotTo(ContainSubstring("<script src="))
 	})
 
 	It("does not catch all unknown routes", func() {
