@@ -173,6 +173,10 @@ UPDATE sessions SET
         SELECT sp.model FROM spans sp
         WHERE sp.session_id = sessions.id
           AND sp.kind = 'llm' AND sp.call_kind = 'main' AND sp.model <> ''
+          -- main thread only: subagents run their own (often cheaper)
+          -- model, and a fan-out of subagent calls would otherwise
+          -- out-vote the user's actual conversation model.
+          AND sp.thread_id = ''
         GROUP BY sp.model
         ORDER BY COUNT(*) DESC, sp.model
         LIMIT 1
