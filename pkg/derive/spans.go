@@ -61,7 +61,26 @@ type SpanSet struct {
 	// interrupted tool feed); intra-trace links live on their turn.
 	Links []*SpanLink
 
+	// ModelUsage is the per-session, per-model spend breakdown folded at
+	// derive time across ALL threads (subagent models included). The
+	// session detail surfaces it so the UI can show a dominant model and
+	// per-model share; the share basis is cost, not call count, so a
+	// fan-out of cheap subagent calls never out-votes the expensive
+	// main-spine model (#28).
+	ModelUsage map[SessionKey][]ModelUsage
+
 	Report SpanReport
+}
+
+// ModelUsage is one model's contribution to a session: how many llm
+// calls ran on it and what they spent. Cost is priced at derive time
+// (like the trace fold), so a re-derive reprices history.
+type ModelUsage struct {
+	Model        string  `json:"model"`
+	Calls        int64   `json:"calls"`
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	CostUSD      float64 `json:"cost_usd"`
 }
 
 // SpanTurn is one user-visible turn: a trace. Everything the harness
@@ -602,6 +621,10 @@ func (em *spanEmitter) finish() {
 	// either way.
 	pricing := sessions.DefaultPricing()
 	em.set.Report.Traces = len(em.set.Turns)
+	// Per-session, per-model spend fold (#28). Accumulated across every
+	// trace's llm spans below — subagent models included — then sorted
+	// into ModelUsage at the end.
+	modelFold := map[SessionKey]map[string]*ModelUsage{}
 	for _, turn := range em.set.Turns {
 		root := turn.Spans[0]
 		// phases append out of time order within a trace; StartedAt is
@@ -632,11 +655,28 @@ func (em *spanEmitter) finish() {
 					turn.MainInputTokens += int64(s.Usage.PromptTokens)
 					turn.MainOutputTokens += int64(s.Usage.CompletionTokens)
 				}
+				var total float64
 				if price, ok := sessions.PricingForModel(pricing, s.Model); ok {
-					_, _, total := sessions.CostForTokensWithCache(price,
+					_, _, total = sessions.CostForTokensWithCache(price,
 						int64(s.Usage.PromptTokens), int64(s.Usage.CompletionTokens),
 						int64(s.Usage.CacheCreationInputTokens), int64(s.Usage.CacheReadInputTokens))
 					turn.TotalCostUSD += total
+				}
+				if s.Model != "" {
+					byModel := modelFold[turn.Session]
+					if byModel == nil {
+						byModel = map[string]*ModelUsage{}
+						modelFold[turn.Session] = byModel
+					}
+					mu := byModel[s.Model]
+					if mu == nil {
+						mu = &ModelUsage{Model: s.Model}
+						byModel[s.Model] = mu
+					}
+					mu.Calls++
+					mu.InputTokens += int64(s.Usage.PromptTokens)
+					mu.OutputTokens += int64(s.Usage.CompletionTokens)
+					mu.CostUSD += total
 				}
 			}
 		}
@@ -644,6 +684,30 @@ func (em *spanEmitter) finish() {
 			root.DurationNS = turn.EndedAt.Sub(turn.StartedAt).Nanoseconds()
 		}
 		turn.ResponsePreview = responsePreview(turn)
+	}
+	em.foldModelUsage(modelFold)
+}
+
+// foldModelUsage flattens the per-session model accumulator into the
+// SpanSet, ordered by cost descending then model name so the dominant
+// model leads and re-derive yields a stable order.
+func (em *spanEmitter) foldModelUsage(fold map[SessionKey]map[string]*ModelUsage) {
+	if len(fold) == 0 {
+		return
+	}
+	em.set.ModelUsage = map[SessionKey][]ModelUsage{}
+	for key, byModel := range fold {
+		usages := make([]ModelUsage, 0, len(byModel))
+		for _, mu := range byModel {
+			usages = append(usages, *mu)
+		}
+		sort.SliceStable(usages, func(i, j int) bool {
+			if usages[i].CostUSD != usages[j].CostUSD {
+				return usages[i].CostUSD > usages[j].CostUSD
+			}
+			return usages[i].Model < usages[j].Model
+		})
+		em.set.ModelUsage[key] = usages
 	}
 }
 

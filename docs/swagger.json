@@ -709,6 +709,26 @@
         }
     },
     "definitions": {
+        "api.ModelUsage": {
+            "type": "object",
+            "properties": {
+                "calls": {
+                    "type": "integer"
+                },
+                "cost_usd": {
+                    "type": "number"
+                },
+                "input_tokens": {
+                    "type": "integer"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "output_tokens": {
+                    "type": "integer"
+                }
+            }
+        },
         "api.RawTurnHeaderItem": {
             "type": "object",
             "properties": {
@@ -801,6 +821,13 @@
                 "model": {
                     "description": "Model is the dominant conversation-spine model, folded at derive\ntime; empty until the session first derives.",
                     "type": "string"
+                },
+                "model_usage": {
+                    "description": "ModelUsage is the per-model spend breakdown folded at derive time\nacross every thread (subagent models included), ordered\ndominant-model-first by cost. The share basis is cost, not call\ncount, so the UI can show \"dominant model + per-model %\" without a\ncheap-subagent fan-out skewing it. Populated on the session detail;\nnil until the session first derives.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.ModelUsage"
+                    }
                 },
                 "name": {
                     "type": "string"

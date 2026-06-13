@@ -88,6 +88,7 @@ type Session struct {
 	ToolErrorCount    int32
 	DerivedTitle      pgtype.Text
 	DerivedModel      string
+	ModelUsage        []byte
 }
 
 type Span struct {

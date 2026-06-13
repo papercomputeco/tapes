@@ -261,6 +261,12 @@ func sessionRecordFromRow(row gensqlc.Session) storage.SessionRecord {
 			s.HarnessMetadata = m
 		}
 	}
+	if len(row.ModelUsage) > 0 {
+		var mu []storage.ModelUsage
+		if err := json.Unmarshal(row.ModelUsage, &mu); err == nil {
+			s.ModelUsage = mu
+		}
+	}
 	if row.TotalCostUsd.Valid {
 		if f, err := row.TotalCostUsd.Float64Value(); err == nil && f.Valid {
 			s.TotalCostUsd = f.Float64

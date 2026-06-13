@@ -50,13 +50,31 @@ type SessionItem struct {
 	DerivedStatus     string     `json:"derived_status"`
 	// Model is the dominant conversation-spine model, folded at derive
 	// time; empty until the session first derives.
-	Model           string         `json:"model,omitempty"`
+	Model string `json:"model,omitempty"`
+	// ModelUsage is the per-model spend breakdown folded at derive time
+	// across every thread (subagent models included), ordered
+	// dominant-model-first by cost. The share basis is cost, not call
+	// count, so the UI can show "dominant model + per-model %" without a
+	// cheap-subagent fan-out skewing it. Populated on the session detail;
+	// nil until the session first derives.
+	ModelUsage      []ModelUsage   `json:"model_usage,omitempty"`
 	HarnessMetadata map[string]any `json:"harness_metadata,omitempty"`
 	Preview         string         `json:"preview,omitempty"`
 	// AuthSubject is the gateway-stamped JWT subject (WorkOS user id)
 	// captured at ingest; empty for rows captured before the edge began
 	// stamping it.
 	AuthSubject string `json:"auth_subject,omitempty"`
+}
+
+// ModelUsage is one model's contribution to a session in the API: how
+// many llm calls ran on it and what they spent. Cost-weighted (priced
+// at derive time) so a per-model share reflects spend, not call count.
+type ModelUsage struct {
+	Model        string  `json:"model"`
+	Calls        int64   `json:"calls"`
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	CostUsd      float64 `json:"cost_usd"`
 }
 
 // SessionListResponse is the response envelope for GET /v1/sessions.
@@ -90,10 +108,30 @@ func sessionItemFromStorage(s storage.SessionRecord) SessionItem {
 		TotalCostUsd:      s.TotalCostUsd,
 		DerivedStatus:     s.DerivedStatus,
 		Model:             s.Model,
+		ModelUsage:        modelUsageFromStorage(s.ModelUsage),
 		HarnessMetadata:   s.HarnessMetadata,
 		Preview:           s.Preview,
 		AuthSubject:       s.AuthSubject,
 	}
+}
+
+// modelUsageFromStorage maps the storage-layer per-model breakdown to
+// the API shape. Nil in stays nil out (omitted from the response).
+func modelUsageFromStorage(in []storage.ModelUsage) []ModelUsage {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ModelUsage, len(in))
+	for i, mu := range in {
+		out[i] = ModelUsage{
+			Model:        mu.Model,
+			Calls:        mu.Calls,
+			InputTokens:  mu.InputTokens,
+			OutputTokens: mu.OutputTokens,
+			CostUsd:      mu.CostUSD,
+		}
+	}
+	return out
 }
 
 // sessionsCursor is the decoded pagination cursor for the sessions list,

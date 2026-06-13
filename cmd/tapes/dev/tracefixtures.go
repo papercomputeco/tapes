@@ -123,6 +123,7 @@ func (cmder *traceFixturesCommander) renderCorpus(cmd *cobra.Command, path strin
 
 	turns, spans, links := recordsFromSpanSet(spanSet, sessionID)
 	session := foldSessionItem(key, sessionID, set, wire, transcriptRows, turns)
+	session.ModelUsage = modelUsageItems(spanSet.ModelUsage[key])
 
 	short := key.HarnessSessionID
 	if len(short) > 8 {
@@ -415,6 +416,26 @@ func foldSessionItem(
 		}
 	}
 	return item
+}
+
+// modelUsageItems maps the deriver's per-model breakdown to the API
+// shape the session detail carries, so fixtures mirror the live
+// response field-for-field.
+func modelUsageItems(in []derive.ModelUsage) []api.ModelUsage {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]api.ModelUsage, len(in))
+	for i, mu := range in {
+		out[i] = api.ModelUsage{
+			Model:        mu.Model,
+			Calls:        mu.Calls,
+			InputTokens:  mu.InputTokens,
+			OutputTokens: mu.OutputTokens,
+			CostUsd:      mu.CostUSD,
+		}
+	}
+	return out
 }
 
 // writeJSONFile writes indented JSON without HTML escaping — payload

@@ -313,6 +313,52 @@ var _ = Describe("span emit over the corpus (0440f43d — resume + multi-model)"
 		// preview a re-sent <system-reminder>.
 		expectTurnPreviews(spans)
 	})
+
+	It("folds a cost-weighted per-model breakdown (#28)", func() {
+		set, _ := deriveResume()
+		spans := derive.EmitSpans(set)
+
+		key := derive.SessionKey{HarnessID: "claude", HarnessSessionID: "0440f43d-5d24-4a5a-8385-da5d0a1f60f6"}
+		usage := spans.ModelUsage[key]
+		Expect(usage).NotTo(BeEmpty())
+
+		byModel := map[string]derive.ModelUsage{}
+		var totalCost float64
+		var totalCalls int64
+		for _, mu := range usage {
+			byModel[mu.Model] = mu
+			totalCost += mu.CostUSD
+			totalCalls += mu.Calls
+		}
+
+		// All three models appear — the opus/sonnet main spine plus the
+		// haiku subagents (the breakdown spans every thread).
+		Expect(byModel).To(HaveKey("claude-opus-4-8"))
+		Expect(byModel).To(HaveKey("claude-sonnet-4-6"))
+		Expect(byModel).To(HaveKey("claude-haiku-4-5-20251001"))
+
+		// The calls sum to every llm span (108).
+		Expect(totalCalls).To(Equal(int64(108)))
+
+		// THE #28 INVARIANT: the share basis is cost, not call count.
+		// Haiku ran the most non-opus calls (the subagent fan-out), so a
+		// call-count basis would crown it; cost-weighted, opus dominates
+		// because its tokens cost an order of magnitude more.
+		opus := byModel["claude-opus-4-8"]
+		haiku := byModel["claude-haiku-4-5-20251001"]
+		Expect(haiku.Calls).To(BeNumerically(">", opus.Calls/2),
+			"haiku really is a heavy share of CALLS")
+		Expect(opus.CostUSD).To(BeNumerically(">", haiku.CostUSD*5),
+			"but opus dominates COST — the share must not be call-count")
+		Expect(opus.CostUSD/totalCost).To(BeNumerically(">", 0.5),
+			"the dominant model by cost is opus")
+
+		// Ordered dominant-model-first by cost (stable for the read layer).
+		Expect(usage[0].Model).To(Equal("claude-opus-4-8"))
+		for i := 1; i < len(usage); i++ {
+			Expect(usage[i-1].CostUSD).To(BeNumerically(">=", usage[i].CostUSD))
+		}
+	})
 })
 
 func mustDerive(fn func() (*derive.DerivedSet, *derive.ReconcileStats)) *derive.DerivedSet {

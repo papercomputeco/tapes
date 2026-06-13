@@ -1,5 +1,18 @@
 basePath: /
 definitions:
+  api.ModelUsage:
+    properties:
+      calls:
+        type: integer
+      cost_usd:
+        type: number
+      input_tokens:
+        type: integer
+      model:
+        type: string
+      output_tokens:
+        type: integer
+    type: object
   api.RawTurnHeaderItem:
     properties:
       agent_name:
@@ -67,6 +80,17 @@ definitions:
           Model is the dominant conversation-spine model, folded at derive
           time; empty until the session first derives.
         type: string
+      model_usage:
+        description: |-
+          ModelUsage is the per-model spend breakdown folded at derive time
+          across every thread (subagent models included), ordered
+          dominant-model-first by cost. The share basis is cost, not call
+          count, so the UI can show "dominant model + per-model %" without a
+          cheap-subagent fan-out skewing it. Populated on the session detail;
+          nil until the session first derives.
+        items:
+          $ref: '#/definitions/api.ModelUsage'
+        type: array
       name:
         type: string
       parent_session_id:

@@ -175,6 +175,26 @@ func writeSpanSet(
 	if err := qtx.FoldSessionRollupsFromSpans(ctx, coveredSessions); err != nil {
 		return fmt.Errorf("fold session rollups: %w", err)
 	}
+
+	// Per-model spend breakdown (#28): the deriver priced it in Go (the
+	// price table lives there, not in SQL), so it writes directly as a
+	// JSONB array rather than riding the SQL rollup fold above.
+	for key, usage := range spans.ModelUsage {
+		sid := sessionOf(key)
+		if !sid.Valid {
+			continue
+		}
+		payload, err := json.Marshal(usage)
+		if err != nil {
+			return fmt.Errorf("marshal model usage: %w", err)
+		}
+		if err := qtx.UpdateSessionModelUsage(ctx, gensqlc.UpdateSessionModelUsageParams{
+			ID:         sid,
+			ModelUsage: payload,
+		}); err != nil {
+			return fmt.Errorf("update session model usage: %w", err)
+		}
+	}
 	return nil
 }
 

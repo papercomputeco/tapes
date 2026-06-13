@@ -170,3 +170,11 @@ UPDATE nodes
 -- capture time when the title call lands, and again on re-derive —
 -- idempotent either way.
 UPDATE sessions SET derived_title = sqlc.arg(derived_title) WHERE id = sqlc.arg(id);
+
+-- name: UpdateSessionModelUsage :exec
+-- Fold the per-model spend breakdown onto the session (#28). Unlike the
+-- token/cost rollups (a pure SQL fold over span_turns), this is priced
+-- per model in Go at derive time — the price table lives there, not in
+-- SQL — so the deriver writes it directly as a JSONB array. Re-derive
+-- overwrites it idempotently.
+UPDATE sessions SET model_usage = sqlc.arg(model_usage) WHERE id = sqlc.arg(id);
