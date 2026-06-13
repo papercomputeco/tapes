@@ -41,6 +41,13 @@ type TraceSummary struct {
 	// excluded from skill transcripts.
 	Synthetic string
 	StartedAt time.Time
+	// Token counts folded by the deriver for the turn. Total* spans the
+	// whole turn (spine + harness shadow calls); Main* counts only the
+	// conversation-spine calls. Surfaced by the checkout export.
+	TotalInputTokens  int64
+	TotalOutputTokens int64
+	MainInputTokens   int64
+	MainOutputTokens  int64
 }
 
 // Trace is one turn's span detail.
@@ -101,11 +108,15 @@ func normalizeAPITarget(apiTarget string) string {
 
 // wireTrace mirrors api.TraceItem.
 type wireTrace struct {
-	TraceID         string         `json:"trace_id"`
-	UserPrompt      string         `json:"user_prompt"`
-	ResponsePreview string         `json:"response_preview"`
-	StartedAt       time.Time      `json:"started_at"`
-	Metadata        map[string]any `json:"metadata"`
+	TraceID           string         `json:"trace_id"`
+	UserPrompt        string         `json:"user_prompt"`
+	ResponsePreview   string         `json:"response_preview"`
+	StartedAt         time.Time      `json:"started_at"`
+	TotalInputTokens  int64          `json:"total_input_tokens"`
+	TotalOutputTokens int64          `json:"total_output_tokens"`
+	MainInputTokens   int64          `json:"main_input_tokens"`
+	MainOutputTokens  int64          `json:"main_output_tokens"`
+	Metadata          map[string]any `json:"metadata"`
 }
 
 // wireSpan mirrors the subset of api.SpanItem the builder consumes.
@@ -148,11 +159,15 @@ func (c *APIClient) TraceSummaries(ctx context.Context, sessionID string) ([]Tra
 	out := make([]TraceSummary, 0, len(list.Items))
 	for _, item := range list.Items {
 		out = append(out, TraceSummary{
-			TraceID:         item.TraceID,
-			UserPrompt:      item.UserPrompt,
-			ResponsePreview: item.ResponsePreview,
-			Synthetic:       metadataString(item.Metadata, "synthetic"),
-			StartedAt:       item.StartedAt,
+			TraceID:           item.TraceID,
+			UserPrompt:        item.UserPrompt,
+			ResponsePreview:   item.ResponsePreview,
+			Synthetic:         metadataString(item.Metadata, "synthetic"),
+			StartedAt:         item.StartedAt,
+			TotalInputTokens:  item.TotalInputTokens,
+			TotalOutputTokens: item.TotalOutputTokens,
+			MainInputTokens:   item.MainInputTokens,
+			MainOutputTokens:  item.MainOutputTokens,
 		})
 	}
 	return out, nil
