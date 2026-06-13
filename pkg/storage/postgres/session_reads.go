@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"unicode/utf8"
 
@@ -18,8 +19,10 @@ import (
 )
 
 // ListSessionRecords returns a page of sessions for an org ordered by
-// last_seen_at DESC, optionally windowed by activity (last_seen_at).
-// Pass zero-value opts to start from the beginning, unwindowed.
+// last_seen_at DESC, optionally windowed by activity (last_seen_at)
+// and narrowed to one gateway-stamped JWT subject (exact match on the
+// indexed column; empty lists every user's sessions). Pass zero-value
+// opts to start from the beginning, unwindowed and unfiltered.
 func (d *Driver) ListSessionRecords(
 	ctx context.Context,
 	orgID string,
@@ -45,8 +48,14 @@ func (d *Driver) ListSessionRecords(
 		idPg = pgtype.UUID{Bytes: parsed, Valid: true}
 	}
 
+	var subjectPg pgtype.Text
+	if opts.AuthSubject != "" {
+		subjectPg = pgtype.Text{String: opts.AuthSubject, Valid: true}
+	}
+
 	rows, err := d.q.ListSessionRecords(ctx, gensqlc.ListSessionRecordsParams{
 		OrgID:       oid,
+		AuthSubject: subjectPg,
 		CursorTs:    tsPg,
 		CursorID:    idPg,
 		SinceFilter: nullTimePtr(opts.Since),
@@ -62,17 +71,27 @@ func (d *Driver) ListSessionRecords(
 		out[i] = sessionRecordFromRow(row)
 	}
 
-	previews, err := d.getSessionPreviews(ctx, out)
-	if err == nil {
-		for i := range out {
-			out[i].Preview = previews[out[i].ID]
-		}
-	}
+	d.attachPreviews(ctx, out)
 
 	return out, nil
 }
 
 const sessionPreviewMaxRunes = 120
+
+// attachPreviews populates Preview on each record in place from a single
+// batched preview query. It owns the best-effort policy for session reads:
+// previews are decoration, so a fetch failure is logged and the records are
+// returned without previews rather than failing the read.
+func (d *Driver) attachPreviews(ctx context.Context, records []storage.SessionRecord) {
+	previews, err := d.getSessionPreviews(ctx, records)
+	if err != nil {
+		slog.WarnContext(ctx, "attach session previews", "error", err)
+		return
+	}
+	for i := range records {
+		records[i].Preview = previews[records[i].ID]
+	}
+}
 
 // getSessionPreviews fetches the first user-role node text for each session in
 // the supplied list, in a single query. Returns a map of session UUID string →
@@ -164,6 +183,37 @@ func (d *Driver) GetSessionRecord(ctx context.Context, orgID, id string) (*stora
 	return &s, nil
 }
 
+// GetSessionRecordByHarness returns the single session matching the
+// org-scoped natural key (org_id, harness_id, harness_session_id), or nil
+// if no row matches. The lookup is an exact-match point read on the
+// sessions_harness_uq unique index, mirroring the GetSessionRecord
+// nil-on-no-rows contract.
+func (d *Driver) GetSessionRecordByHarness(
+	ctx context.Context,
+	orgID string,
+	harnessID string,
+	harnessSessionID string,
+) (*storage.SessionRecord, error) {
+	oid, err := orgIDFromString(orgID)
+	if err != nil {
+		return nil, fmt.Errorf("get session record by harness: %w", err)
+	}
+	row, err := d.q.GetSessionByNaturalKey(ctx, gensqlc.GetSessionByNaturalKeyParams{
+		OrgID:            oid,
+		HarnessID:        harnessID,
+		HarnessSessionID: harnessSessionID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get session record by harness: %w", err)
+	}
+	recs := []storage.SessionRecord{sessionRecordFromRow(row)}
+	d.attachPreviews(ctx, recs)
+	return &recs[0], nil
+}
+
 // sessionRecordFromRow converts a sqlc-generated Session row to
 // the storage-level SessionRecord type.
 func sessionRecordFromRow(row gensqlc.Session) storage.SessionRecord {
@@ -176,6 +226,7 @@ func sessionRecordFromRow(row gensqlc.Session) storage.SessionRecord {
 		TurnCount:         int(row.TurnCount),
 		DerivedStatus:     row.DerivedStatus,
 		Model:             row.DerivedModel,
+		AuthSubject:       row.AuthSubject,
 	}
 	// The folded title-gen output is the session's display title; the
 	// envelope's internal name (a plan slug for Claude Code) is the

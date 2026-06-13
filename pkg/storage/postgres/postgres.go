@@ -9,6 +9,7 @@ import (
 	"maps"
 	"math"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -393,9 +394,9 @@ func (d *Driver) LoadDag(ctx context.Context, hash string) (*merkle.Dag, error) 
 		return nil, fmt.Errorf("node %s not found", hash)
 	}
 
-	for i := len(ancestry) - 1; i >= 0; i-- {
-		if _, err := dag.AddNode(ancestry[i]); err != nil {
-			return nil, fmt.Errorf("adding ancestor node %s: %w", ancestry[i].Hash, err)
+	for _, v := range slices.Backward(ancestry) {
+		if _, err := dag.AddNode(v); err != nil {
+			return nil, fmt.Errorf("adding ancestor node %s: %w", v.Hash, err)
 		}
 	}
 

@@ -30,16 +30,24 @@ type SessionRecord struct {
 	// time (sessions.derived_model). Empty until the session derives.
 	Model   string
 	Preview string // first user turn text, truncated; empty when unavailable
+	// AuthSubject is the gateway-stamped JWT subject (the WorkOS user id)
+	// captured at ingest. Empty for rows captured before the edge began
+	// stamping the x-paper-auth-subject header.
+	AuthSubject string
 }
 
 // SessionListOpts parameterizes the sessions-list read: keyset cursor
-// (last_seen_at DESC, id DESC) plus an optional activity window. The
-// since/until window filters on last_seen_at — the sort/cursor column —
-// so "sessions active in the period" pages consistently.
+// (last_seen_at DESC, id DESC), an optional activity window, and an
+// optional attribution filter. The since/until window filters on
+// last_seen_at — the sort/cursor column — so "sessions active in the
+// period" pages consistently. AuthSubject "" lists every user's
+// sessions; non-empty is an exact match on the gateway-stamped JWT
+// subject.
 type SessionListOpts struct {
-	Limit    int
-	CursorTs *time.Time
-	CursorID *string
-	Since    *time.Time
-	Until    *time.Time
+	Limit       int
+	CursorTs    *time.Time
+	CursorID    *string
+	Since       *time.Time
+	Until       *time.Time
+	AuthSubject string
 }

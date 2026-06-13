@@ -124,11 +124,18 @@ UPDATE sessions
 -- Paginated list of sessions for an org ordered newest-first (last_seen_at DESC, id DESC).
 -- Pass NULL cursor values to start from the beginning. The optional
 -- since/until window filters on last_seen_at — the sort/cursor column —
--- so "sessions active in the period" pages consistently.
+-- so "sessions active in the period" pages consistently. Pass a NULL
+-- auth_subject to list every user's sessions; a non-NULL value is an
+-- exact match against the gateway-stamped JWT subject captured at
+-- ingest (sessions_auth_subject_idx).
 SELECT * FROM sessions
 WHERE org_id = sqlc.arg(org_id)
   AND (sqlc.narg(since_filter)::timestamptz IS NULL OR last_seen_at >= sqlc.narg(since_filter)::timestamptz)
   AND (sqlc.narg(until_filter)::timestamptz IS NULL OR last_seen_at < sqlc.narg(until_filter)::timestamptz)
+  AND (
+    sqlc.narg(auth_subject)::text IS NULL
+    OR auth_subject = sqlc.narg(auth_subject)::text
+  )
   AND (
     sqlc.narg(cursor_ts)::timestamptz IS NULL
     OR last_seen_at < sqlc.narg(cursor_ts)::timestamptz

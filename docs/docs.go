@@ -272,6 +272,24 @@ const docTemplate = `{
                         "description": "Only include sessions active (last_seen_at) before this RFC3339 timestamp",
                         "name": "until",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter to the single session with this harness id (exact match; requires harness_session_id, incompatible with cursor; limit is ignored when the filter is active)",
+                        "name": "harness_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter to the single session with this harness session id (exact match; requires harness_id, incompatible with cursor; limit is ignored when the filter is active)",
+                        "name": "harness_session_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter the paged list to sessions captured for this gateway-stamped JWT subject (exact match; ignored on the harness filter path)",
+                        "name": "auth_subject",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -282,7 +300,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid query parameters",
+                        "description": "Invalid query parameters, a lone harness filter param, or cursor combined with the harness filter",
                         "schema": {
                             "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
                         }
@@ -752,6 +770,10 @@ const docTemplate = `{
         "api.SessionItem": {
             "type": "object",
             "properties": {
+                "auth_subject": {
+                    "description": "AuthSubject is the gateway-stamped JWT subject (WorkOS user id)\ncaptured at ingest; empty for rows captured before the edge began\nstamping it.",
+                    "type": "string"
+                },
                 "cwd": {
                     "type": "string"
                 },

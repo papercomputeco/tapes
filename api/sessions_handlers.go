@@ -22,6 +22,7 @@ import (
 type sessionsReader interface {
 	ListSessionRecords(ctx context.Context, orgID string, opts storage.SessionListOpts) ([]storage.SessionRecord, error)
 	GetSessionRecord(ctx context.Context, orgID, id string) (*storage.SessionRecord, error)
+	GetSessionRecordByHarness(ctx context.Context, orgID string, harnessID string, harnessSessionID string) (*storage.SessionRecord, error)
 }
 
 const (
@@ -52,6 +53,10 @@ type SessionItem struct {
 	Model           string         `json:"model,omitempty"`
 	HarnessMetadata map[string]any `json:"harness_metadata,omitempty"`
 	Preview         string         `json:"preview,omitempty"`
+	// AuthSubject is the gateway-stamped JWT subject (WorkOS user id)
+	// captured at ingest; empty for rows captured before the edge began
+	// stamping it.
+	AuthSubject string `json:"auth_subject,omitempty"`
 }
 
 // SessionListResponse is the response envelope for GET /v1/sessions.
@@ -87,6 +92,7 @@ func sessionItemFromStorage(s storage.SessionRecord) SessionItem {
 		Model:             s.Model,
 		HarnessMetadata:   s.HarnessMetadata,
 		Preview:           s.Preview,
+		AuthSubject:       s.AuthSubject,
 	}
 }
 
@@ -130,19 +136,33 @@ func decodeSessionsCursor(token string) (sessionsCursor, error) {
 //	@Description	Returns one row per harness session from the sessions table, newest first (last_seen_at desc), cursor-paginated.
 //	@Tags			sessions
 //	@Produce		json
-//	@Param			limit	query		int		false	"Maximum number of sessions to return (default 50, max 200)"	minimum(1)
-//	@Param			cursor	query		string	false	"Opaque pagination cursor returned by a previous response"
-//	@Param			since	query		string	false	"Only include sessions active (last_seen_at) at or after this RFC3339 timestamp"	format(date-time)
-//	@Param			until	query		string	false	"Only include sessions active (last_seen_at) before this RFC3339 timestamp"		format(date-time)
-//	@Success		200		{object}	SessionListResponse
-//	@Failure		400		{object}	llm.ErrorResponse	"Invalid query parameters"
-//	@Failure		500		{object}	llm.ErrorResponse	"Failed to list sessions"
-//	@Failure		501		{object}	llm.ErrorResponse	"Sessions not supported by this backend"
+//	@Param			limit				query		int		false	"Maximum number of sessions to return (default 50, max 200)"	minimum(1)
+//	@Param			cursor				query		string	false	"Opaque pagination cursor returned by a previous response"
+//	@Param			since				query		string	false	"Only include sessions active (last_seen_at) at or after this RFC3339 timestamp"	format(date-time)
+//	@Param			until				query		string	false	"Only include sessions active (last_seen_at) before this RFC3339 timestamp"		format(date-time)
+//	@Param			harness_id			query		string	false	"Filter to the single session with this harness id (exact match; requires harness_session_id, incompatible with cursor; limit is ignored when the filter is active)"
+//	@Param			harness_session_id	query		string	false	"Filter to the single session with this harness session id (exact match; requires harness_id, incompatible with cursor; limit is ignored when the filter is active)"
+//	@Param			auth_subject		query		string	false	"Filter the paged list to sessions captured for this gateway-stamped JWT subject (exact match; ignored on the harness filter path)"
+//	@Success		200					{object}	SessionListResponse
+//	@Failure		400					{object}	llm.ErrorResponse	"Invalid query parameters, a lone harness filter param, or cursor combined with the harness filter"
+//	@Failure		500					{object}	llm.ErrorResponse	"Failed to list sessions"
+//	@Failure		501					{object}	llm.ErrorResponse	"Sessions not supported by this backend"
 //	@Router			/v1/sessions [get]
 func (s *Server) handleListSessions(c *fiber.Ctx) error {
 	reader, ok := s.driver.(sessionsReader)
 	if !ok {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
+	}
+
+	// The harness natural-key filter is a point lookup that bypasses the
+	// paged-list path entirely. Route to it whenever either param is
+	// non-empty — an empty value is treated as absent, since ingest
+	// guarantees no stored row carries an empty harness id, so an empty
+	// value could never address a row anyway. Both-or-neither validation
+	// (and cursor incompatibility) happens in the filter handler; requests
+	// without the params take the existing path untouched.
+	if c.Query("harness_id") != "" || c.Query("harness_session_id") != "" {
+		return s.listSessionsByHarness(c, reader)
 	}
 
 	limit := defaultSessionsLimit
@@ -183,6 +203,10 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 
 	orgID := orgIDFromCtx(c)
 	// Fetch one extra item to detect whether a next page exists.
+	// Trusted to the same degree as X-Tapes-Org-Id: client-asserted
+	// today, with the cloud edge able to stamp it server-side from the
+	// validated JWT once claim mapping is enabled on the read route.
+	opts.AuthSubject = c.Query("auth_subject")
 	opts.Limit = limit + 1
 	sessions, err := reader.ListSessionRecords(c.Context(), orgID, opts)
 	if err != nil {
@@ -211,6 +235,42 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 	})
 }
 
+// listSessionsByHarness handles GET /v1/sessions when the harness
+// natural-key filter params are present. It validates that harness_id and
+// harness_session_id are supplied both-or-neither (400 on a lone param),
+// rejects cursor combined with the filter (400), then performs a single
+// org-scoped exact-match lookup via GetSessionRecordByHarness and returns
+// the standard SessionListResponse envelope with 0 or 1 items and no
+// next_cursor.
+func (s *Server) listSessionsByHarness(c *fiber.Ctx, reader sessionsReader) error {
+	harnessID := c.Query("harness_id")
+	harnessSessionID := c.Query("harness_session_id")
+	if harnessID == "" || harnessSessionID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{
+			Error: "harness_id and harness_session_id must be supplied together",
+		})
+	}
+	if c.Query("cursor") != "" {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{
+			Error: "cursor cannot be combined with the harness filter",
+		})
+	}
+
+	orgID := orgIDFromCtx(c)
+	sess, err := reader.GetSessionRecordByHarness(c.Context(), orgID, harnessID, harnessSessionID)
+	if err != nil {
+		s.logger.Error("get session by harness", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
+	}
+
+	// A nil record is a normal no-match: the list envelope's empty items
+	// form expresses it (never 404 — that's the :id endpoint's vocabulary).
+	items := []SessionItem{}
+	if sess != nil {
+		items = append(items, sessionItemFromStorage(*sess))
+	}
+	return c.JSON(SessionListResponse{Items: items})
+}
 // handleGetSession handles GET /v1/sessions/:id.
 //
 //	@Summary		Get a session

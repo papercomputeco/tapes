@@ -37,6 +37,12 @@ definitions:
     type: object
   api.SessionItem:
     properties:
+      auth_subject:
+        description: |-
+          AuthSubject is the gateway-stamped JWT subject (WorkOS user id)
+          captured at ingest; empty for rows captured before the edge began
+          stamping it.
+        type: string
       cwd:
         type: string
       derived_status:
@@ -578,6 +584,23 @@ paths:
         in: query
         name: until
         type: string
+      - description: Filter to the single session with this harness id (exact match;
+          requires harness_session_id, incompatible with cursor; limit is ignored
+          when the filter is active)
+        in: query
+        name: harness_id
+        type: string
+      - description: Filter to the single session with this harness session id (exact
+          match; requires harness_id, incompatible with cursor; limit is ignored when
+          the filter is active)
+        in: query
+        name: harness_session_id
+        type: string
+      - description: Filter the paged list to sessions captured for this gateway-stamped
+          JWT subject (exact match; ignored on the harness filter path)
+        in: query
+        name: auth_subject
+        type: string
       produces:
       - application/json
       responses:
@@ -586,7 +609,8 @@ paths:
           schema:
             $ref: '#/definitions/api.SessionListResponse'
         "400":
-          description: Invalid query parameters
+          description: Invalid query parameters, a lone harness filter param, or cursor
+            combined with the harness filter
           schema:
             $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
         "500":

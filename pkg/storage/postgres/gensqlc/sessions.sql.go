@@ -219,18 +219,23 @@ WHERE org_id = $1
   AND ($2::timestamptz IS NULL OR last_seen_at >= $2::timestamptz)
   AND ($3::timestamptz IS NULL OR last_seen_at < $3::timestamptz)
   AND (
-    $4::timestamptz IS NULL
-    OR last_seen_at < $4::timestamptz
-    OR (last_seen_at = $4::timestamptz AND id < $5::uuid)
+    $4::text IS NULL
+    OR auth_subject = $4::text
+  )
+  AND (
+    $5::timestamptz IS NULL
+    OR last_seen_at < $5::timestamptz
+    OR (last_seen_at = $5::timestamptz AND id < $6::uuid)
   )
 ORDER BY last_seen_at DESC, id DESC
-LIMIT $6
+LIMIT $7
 `
 
 type ListSessionRecordsParams struct {
 	OrgID       pgtype.UUID
 	SinceFilter pgtype.Timestamptz
 	UntilFilter pgtype.Timestamptz
+	AuthSubject pgtype.Text
 	CursorTs    pgtype.Timestamptz
 	CursorID    pgtype.UUID
 	Lim         int32
@@ -239,12 +244,16 @@ type ListSessionRecordsParams struct {
 // Paginated list of sessions for an org ordered newest-first (last_seen_at DESC, id DESC).
 // Pass NULL cursor values to start from the beginning. The optional
 // since/until window filters on last_seen_at — the sort/cursor column —
-// so "sessions active in the period" pages consistently.
+// so "sessions active in the period" pages consistently. Pass a NULL
+// auth_subject to list every user's sessions; a non-NULL value is an
+// exact match against the gateway-stamped JWT subject captured at
+// ingest (sessions_auth_subject_idx).
 func (q *Queries) ListSessionRecords(ctx context.Context, arg ListSessionRecordsParams) ([]Session, error) {
 	rows, err := q.db.Query(ctx, listSessionRecords,
 		arg.OrgID,
 		arg.SinceFilter,
 		arg.UntilFilter,
+		arg.AuthSubject,
 		arg.CursorTs,
 		arg.CursorID,
 		arg.Lim,
