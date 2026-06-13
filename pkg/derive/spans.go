@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
@@ -768,7 +769,14 @@ func joinTextBlocks(blocks []llm.ContentBlock, includeInjected bool) string {
 	}
 	text := sb.String()
 	if len(text) > maxPreviewText {
-		text = text[:maxPreviewText]
+		// Truncate on a rune boundary: a byte slice can split a
+		// multi-byte rune, and Postgres rejects the resulting invalid
+		// UTF-8 when the preview lands in span_turns (22021).
+		cut := maxPreviewText
+		for cut > 0 && !utf8.RuneStart(text[cut]) {
+			cut--
+		}
+		text = text[:cut]
 	}
 	return text
 }
