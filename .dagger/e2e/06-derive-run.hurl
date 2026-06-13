@@ -11,7 +11,7 @@ jsonpath "$.orgs.default.upserted" >= 2
 
 # The ingest leg carried a session envelope, so a first-class session
 # row exists now (the proxy leg alone contributes none — see
-# 04-history.hurl). The session's counters are the derive-time span
+# 03-verify-storage.hurl). The session's counters are the derive-time span
 # fold, not the ingest counters: turn_count counts traces, and
 # derived_model is the dominant spine model.
 

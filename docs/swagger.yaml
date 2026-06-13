@@ -235,53 +235,6 @@ definitions:
       turn_count:
         type: integer
     type: object
-  api.StemListResponse:
-    properties:
-      items:
-        items:
-          $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_sessions.SessionSummary'
-        type: array
-      next_cursor:
-        type: string
-    type: object
-  api.StemResponse:
-    properties:
-      depth:
-        description: |-
-          Depth is the total number of turns in the full ancestry of Hash.
-          When the client passes ?depth=N, the Turns array may contain fewer
-          than Depth items.
-        type: integer
-      harness_id:
-        description: |-
-          HarnessID and HarnessSessionID identify the upstream agent session when
-          session tracking metadata is available. For Claude Code, HarnessID is
-          "claude" and HarnessSessionID is Claude's session id.
-        type: string
-      harness_session_id:
-        type: string
-      hash:
-        description: Hash is the head of the returned chain (== the requested hash).
-        type: string
-      missing_parent:
-        type: string
-      truncated:
-        description: |-
-          Truncated is true when the ancestry walk stopped at a parent_hash
-          that could not be resolved in the current store. MissingParent
-          names that hash. This is an expected edge case on stores that
-          trim older data, merge foreign content, or offload history to
-          another source — not an error.
-        type: boolean
-      turns:
-        description: |-
-          Turns contains the chain in chronological order (root-first).
-          When ?depth=N is supplied, only the last N turns (head + N-1 ancestors)
-          are returned, still in chronological order.
-        items:
-          $ref: '#/definitions/api.Turn'
-        type: array
-    type: object
   api.TraceDetail:
     properties:
       links:
@@ -366,31 +319,6 @@ definitions:
       updates:
         type: integer
     type: object
-  api.Turn:
-    properties:
-      agent_name:
-        type: string
-      content:
-        items:
-          $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ContentBlock'
-        type: array
-      created_at:
-        type: string
-      hash:
-        type: string
-      model:
-        type: string
-      parent_hash:
-        type: string
-      provider:
-        type: string
-      role:
-        type: string
-      stop_reason:
-        type: string
-      usage:
-        $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.Usage'
-    type: object
   api.seedDemoRequest:
     properties:
       overwrite:
@@ -434,92 +362,10 @@ definitions:
         additionalProperties: {}
         type: object
     type: object
-  github_com_papercomputeco_tapes_pkg_llm.ContentBlock:
-    properties:
-      content:
-        description: |-
-          Content (type="web_search_tool_result" and other server-tool results) -
-          the raw result payload Anthropic returns inline on the block, captured
-          verbatim as JSON so the variable result-object shapes survive without
-          imposing a schema. ToolResultID links it to the paired server_tool_use.
-        items:
-          type: integer
-        type: array
-      image_base64:
-        description: Base64-encoded image data
-        type: string
-      image_url:
-        description: Image content (type="image")
-        type: string
-      is_error:
-        type: boolean
-      media_type:
-        description: MIME type (e.g., "image/png")
-        type: string
-      text:
-        description: Text content (type="text")
-        type: string
-      thinking:
-        description: |-
-          Thinking (type="thinking") - Anthropic extended-thinking blocks.
-          Anthropic emits thinking as content_block_delta frames with type
-          "thinking_delta" followed by a "signature_delta" that authenticates the
-          block. Consumers treat Thinking as opaque text; the signature is persisted
-          so downstream tooling can verify integrity.
-        type: string
-      thinking_signature:
-        type: string
-      tool_input:
-        additionalProperties: {}
-        type: object
-      tool_name:
-        type: string
-      tool_output:
-        type: string
-      tool_result_id:
-        description: Tool result (type="tool_result") - result from tool execution
-        type: string
-      tool_use_id:
-        description: Tool use (type="tool_use") - assistant requesting tool execution
-        type: string
-      type:
-        description: '"text", "image", "tool_use", "tool_result", "thinking"'
-        type: string
-    type: object
   github_com_papercomputeco_tapes_pkg_llm.ErrorResponse:
     properties:
       error:
         type: string
-    type: object
-  github_com_papercomputeco_tapes_pkg_llm.Usage:
-    properties:
-      cache_creation_input_tokens:
-        description: Cache token counts (Anthropic prompt caching)
-        type: integer
-      cache_read_input_tokens:
-        type: integer
-      completion_tokens:
-        type: integer
-      prompt_duration_ns:
-        description: |-
-          PromptDurationNs is provider-reported prompt-evaluation time, in
-          nanoseconds. Populated by providers that surface it (currently Ollama
-          only); left at zero otherwise.
-        type: integer
-      prompt_tokens:
-        description: Token counts
-        type: integer
-      total_duration_ns:
-        description: |-
-          TotalDurationNs is the proxy-measured wall-clock time, in nanoseconds,
-          from when the proxy received the client request to when the upstream
-          response was fully assembled. Set uniformly by the proxy across providers
-          — Anthropic and OpenAI don't surface a duration field on the wire, and
-          Ollama's server-internal `total_duration` is intentionally overwritten so
-          aggregate stats compare apples to apples.
-        type: integer
-      total_tokens:
-        type: integer
     type: object
   github_com_papercomputeco_tapes_pkg_seed.Result:
     properties:
@@ -543,80 +389,6 @@ definitions:
         description: Sessions is the number of demo sessions the corpora replay into.
         type: integer
     type: object
-  github_com_papercomputeco_tapes_pkg_sessions.SessionSummary:
-    properties:
-      agent_name:
-        type: string
-      duration_ns:
-        $ref: '#/definitions/time.Duration'
-      end_time:
-        type: string
-      harness_id:
-        type: string
-      harness_session_id:
-        type: string
-      id:
-        type: string
-      input_cost:
-        type: number
-      input_tokens:
-        type: integer
-      label:
-        type: string
-      message_count:
-        type: integer
-      missing_parent:
-        type: string
-      model:
-        type: string
-      output_cost:
-        type: number
-      output_tokens:
-        type: integer
-      project:
-        type: string
-      session_count:
-        type: integer
-      start_time:
-        type: string
-      status:
-        type: string
-      tool_calls:
-        type: integer
-      total_cost:
-        type: number
-      truncated:
-        description: |-
-          Truncated is true when this summary was built from a partial chain
-          because an ancestor's parent_hash could not be resolved in the
-          current store. MissingParent names the hash that would have
-          continued the walk if the referenced node existed. Both fields are
-          informational — they signal that higher ancestors may live outside
-          this store (trimmed history, foreign chain, offloaded data) rather
-          than an error.
-        type: boolean
-    type: object
-  time.Duration:
-    enum:
-    - -9223372036854775808
-    - 9223372036854775807
-    - 1
-    - 1000
-    - 1000000
-    - 1000000000
-    - 60000000000
-    - 3600000000000
-    format: int64
-    type: integer
-    x-enum-varnames:
-    - minDuration
-    - maxDuration
-    - Nanosecond
-    - Microsecond
-    - Millisecond
-    - Second
-    - Minute
-    - Hour
 info:
   contact: {}
   description: |-
@@ -783,8 +555,7 @@ paths:
   /v1/sessions:
     get:
       description: Returns one row per harness session from the sessions table, newest
-        first (last_seen_at desc), cursor-paginated. This is the product session view;
-        the Merkle leaf-chain view lives at /v1/stems.
+        first (last_seen_at desc), cursor-paginated.
       parameters:
       - description: Maximum number of sessions to return (default 50, max 200)
         in: query
@@ -998,102 +769,6 @@ paths:
       summary: Get aggregate session stats
       tags:
       - sessions
-  /v1/stems:
-    get:
-      description: Returns paginated per-stem summaries including derived labels,
-        status, token counts, cost, duration, and truncation metadata.
-      parameters:
-      - description: Filter by project name
-        in: query
-        name: project
-        type: string
-      - description: Filter by agent name
-        in: query
-        name: agent_name
-        type: string
-      - description: Filter by model name
-        in: query
-        name: model
-        type: string
-      - description: Filter by provider name
-        in: query
-        name: provider
-        type: string
-      - description: Only include stems updated at or after this RFC3339 timestamp
-        format: date-time
-        in: query
-        name: since
-        type: string
-      - description: Only include stems updated before or at this RFC3339 timestamp
-        format: date-time
-        in: query
-        name: until
-        type: string
-      - description: Opaque pagination cursor returned by a previous response
-        in: query
-        name: cursor
-        type: string
-      - description: Maximum number of stems to return
-        in: query
-        minimum: 1
-        name: limit
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.StemListResponse'
-        "400":
-          description: Invalid query parameters
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-        "500":
-          description: Failed to list or summarize stems
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-      summary: List stems (Merkle leaf chains) with aggregates
-      tags:
-      - stems
-  /v1/stems/{hash}:
-    get:
-      description: Returns the ancestry chain of a single Merkle leaf in chronological
-        order (root first). When depth is provided, only the last N turns are returned
-        while the full chain depth is still reported.
-      parameters:
-      - description: Stem head (leaf) hash
-        in: path
-        name: hash
-        required: true
-        type: string
-      - description: Maximum number of most-recent turns to include
-        in: query
-        minimum: 1
-        name: depth
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.StemResponse'
-        "400":
-          description: Missing or invalid hash/depth
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-        "404":
-          description: Stem not found
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-        "500":
-          description: Failed to load stem
-          schema:
-            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
-      summary: Get a stem (Merkle leaf chain)
-      tags:
-      - stems
   /v1/traces:
     get:
       description: Returns turn headers for a session — no span payloads. Fetch GET

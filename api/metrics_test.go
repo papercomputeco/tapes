@@ -23,7 +23,7 @@ import (
 // recover.New). Use it for specs that exercise middleware behavior in
 // isolation — registering ad-hoc routes against the returned app — and
 // don't need the full Server's v1 routes, swagger, or MCP surface. Specs
-// that need real handlers (`/ping`, `/v1/sessions/:hash`) should keep
+// that need real handlers (`/ping`, `/v1/sessions/:id`) should keep
 // using NewServer via the suite-level BeforeEach.
 func newTestApp() (*Metrics, *fiber.App) {
 	m := NewMetrics()
@@ -134,35 +134,35 @@ var _ = Describe("API server Prometheus metrics", func() {
 
 	Describe("RED counter labels", func() {
 		It("uses the templated route, not the materialized URL, for parameterised paths", func() {
-			// /v1/stems/:hash matches even though the hash slot is empty
-			// or fake — we only care that the registered template is what
+			// /v1/traces/:trace_id matches even though the id slot is
+			// fake — we only care that the registered template is what
 			// lands in the `route` label. We hit it twice with different
-			// :hash values and assert they collapse to a single series.
-			for _, hash := range []string{"abc123", "def456"} {
+			// :trace_id values and assert they collapse to a single series.
+			for _, traceID := range []string{"abc123", "def456"} {
 				req, err := http.NewRequestWithContext(
-					context.Background(), http.MethodGet, "/v1/stems/"+hash, nil)
+					context.Background(), http.MethodGet, "/v1/traces/"+traceID, nil)
 				Expect(err).NotTo(HaveOccurred())
 				_, err = server.app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 			}
 
 			// Both requests should hit the same templated row. The actual
-			// status the handler returns for an unknown hash is 404, but
-			// the precise code is not what this test asserts — only that
-			// the row exists and counts both hits.
+			// status the handler returns (the inmemory driver has no span
+			// projection, so 501 today) is not what this test asserts —
+			// only that the row exists and counts both hits.
 			total := 0.0
-			for _, status := range []string{"200", "404", "500"} {
+			for _, status := range []string{"200", "400", "404", "500", "501"} {
 				total += counterValue(server.metrics.Registry(),
-					"/v1/stems/:hash", http.MethodGet, status)
+					"/v1/traces/:trace_id", http.MethodGet, status)
 			}
 			Expect(total).To(BeNumerically(">=", 2.0),
-				"both /v1/stems/<hash> hits should land on the templated row")
+				"both /v1/traces/<id> hits should land on the templated row")
 
 			// And no row should carry the materialized URL as the route.
 			Expect(countSeriesWithRoute(server.metrics.Registry(),
-				"/v1/stems/abc123")).To(Equal(0))
+				"/v1/traces/abc123")).To(Equal(0))
 			Expect(countSeriesWithRoute(server.metrics.Registry(),
-				"/v1/stems/def456")).To(Equal(0))
+				"/v1/traces/def456")).To(Equal(0))
 		})
 
 		It("collapses unmatched 404s to a single 'unmatched' sentinel row", func() {

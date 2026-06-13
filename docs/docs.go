@@ -237,7 +237,7 @@ const docTemplate = `{
         },
         "/v1/sessions": {
             "get": {
-                "description": "Returns one row per harness session from the sessions table, newest first (last_seen_at desc), cursor-paginated. This is the product session view; the Merkle leaf-chain view lives at /v1/stems.",
+                "description": "Returns one row per harness session from the sessions table, newest first (last_seen_at desc), cursor-paginated.",
                 "produces": [
                     "application/json"
                 ],
@@ -532,145 +532,6 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Failed to compute stats",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/stems": {
-            "get": {
-                "description": "Returns paginated per-stem summaries including derived labels, status, token counts, cost, duration, and truncation metadata.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "stems"
-                ],
-                "summary": "List stems (Merkle leaf chains) with aggregates",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Filter by project name",
-                        "name": "project",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by agent name",
-                        "name": "agent_name",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by model name",
-                        "name": "model",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by provider name",
-                        "name": "provider",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "format": "date-time",
-                        "description": "Only include stems updated at or after this RFC3339 timestamp",
-                        "name": "since",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "format": "date-time",
-                        "description": "Only include stems updated before or at this RFC3339 timestamp",
-                        "name": "until",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Opaque pagination cursor returned by a previous response",
-                        "name": "cursor",
-                        "in": "query"
-                    },
-                    {
-                        "minimum": 1,
-                        "type": "integer",
-                        "description": "Maximum number of stems to return",
-                        "name": "limit",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/api.StemListResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid query parameters",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Failed to list or summarize stems",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/stems/{hash}": {
-            "get": {
-                "description": "Returns the ancestry chain of a single Merkle leaf in chronological order (root first). When depth is provided, only the last N turns are returned while the full chain depth is still reported.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "stems"
-                ],
-                "summary": "Get a stem (Merkle leaf chain)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Stem head (leaf) hash",
-                        "name": "hash",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "minimum": 1,
-                        "type": "integer",
-                        "description": "Maximum number of most-recent turns to include",
-                        "name": "depth",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/api.StemResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Missing or invalid hash/depth",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Stem not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Failed to load stem",
                         "schema": {
                             "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
                         }
@@ -1170,54 +1031,6 @@ const docTemplate = `{
                 }
             }
         },
-        "api.StemListResponse": {
-            "type": "object",
-            "properties": {
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_sessions.SessionSummary"
-                    }
-                },
-                "next_cursor": {
-                    "type": "string"
-                }
-            }
-        },
-        "api.StemResponse": {
-            "type": "object",
-            "properties": {
-                "depth": {
-                    "description": "Depth is the total number of turns in the full ancestry of Hash.\nWhen the client passes ?depth=N, the Turns array may contain fewer\nthan Depth items.",
-                    "type": "integer"
-                },
-                "harness_id": {
-                    "description": "HarnessID and HarnessSessionID identify the upstream agent session when\nsession tracking metadata is available. For Claude Code, HarnessID is\n\"claude\" and HarnessSessionID is Claude's session id.",
-                    "type": "string"
-                },
-                "harness_session_id": {
-                    "type": "string"
-                },
-                "hash": {
-                    "description": "Hash is the head of the returned chain (== the requested hash).",
-                    "type": "string"
-                },
-                "missing_parent": {
-                    "type": "string"
-                },
-                "truncated": {
-                    "description": "Truncated is true when the ancestry walk stopped at a parent_hash\nthat could not be resolved in the current store. MissingParent\nnames that hash. This is an expected edge case on stores that\ntrim older data, merge foreign content, or offload history to\nanother source — not an error.",
-                    "type": "boolean"
-                },
-                "turns": {
-                    "description": "Turns contains the chain in chronological order (root-first).\nWhen ?depth=N is supplied, only the last N turns (head + N-1 ancestors)\nare returned, still in chronological order.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.Turn"
-                    }
-                }
-            }
-        },
         "api.TraceDetail": {
             "type": "object",
             "properties": {
@@ -1337,44 +1150,6 @@ const docTemplate = `{
                 }
             }
         },
-        "api.Turn": {
-            "type": "object",
-            "properties": {
-                "agent_name": {
-                    "type": "string"
-                },
-                "content": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ContentBlock"
-                    }
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "hash": {
-                    "type": "string"
-                },
-                "model": {
-                    "type": "string"
-                },
-                "parent_hash": {
-                    "type": "string"
-                },
-                "provider": {
-                    "type": "string"
-                },
-                "role": {
-                    "type": "string"
-                },
-                "stop_reason": {
-                    "type": "string"
-                },
-                "usage": {
-                    "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.Usage"
-                }
-            }
-        },
         "api.seedDemoRequest": {
             "type": "object",
             "properties": {
@@ -1437,101 +1212,11 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_papercomputeco_tapes_pkg_llm.ContentBlock": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "description": "Content (type=\"web_search_tool_result\" and other server-tool results) -\nthe raw result payload Anthropic returns inline on the block, captured\nverbatim as JSON so the variable result-object shapes survive without\nimposing a schema. ToolResultID links it to the paired server_tool_use.",
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "image_base64": {
-                    "description": "Base64-encoded image data",
-                    "type": "string"
-                },
-                "image_url": {
-                    "description": "Image content (type=\"image\")",
-                    "type": "string"
-                },
-                "is_error": {
-                    "type": "boolean"
-                },
-                "media_type": {
-                    "description": "MIME type (e.g., \"image/png\")",
-                    "type": "string"
-                },
-                "text": {
-                    "description": "Text content (type=\"text\")",
-                    "type": "string"
-                },
-                "thinking": {
-                    "description": "Thinking (type=\"thinking\") - Anthropic extended-thinking blocks.\nAnthropic emits thinking as content_block_delta frames with type\n\"thinking_delta\" followed by a \"signature_delta\" that authenticates the\nblock. Consumers treat Thinking as opaque text; the signature is persisted\nso downstream tooling can verify integrity.",
-                    "type": "string"
-                },
-                "thinking_signature": {
-                    "type": "string"
-                },
-                "tool_input": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "tool_name": {
-                    "type": "string"
-                },
-                "tool_output": {
-                    "type": "string"
-                },
-                "tool_result_id": {
-                    "description": "Tool result (type=\"tool_result\") - result from tool execution",
-                    "type": "string"
-                },
-                "tool_use_id": {
-                    "description": "Tool use (type=\"tool_use\") - assistant requesting tool execution",
-                    "type": "string"
-                },
-                "type": {
-                    "description": "\"text\", \"image\", \"tool_use\", \"tool_result\", \"thinking\"",
-                    "type": "string"
-                }
-            }
-        },
         "github_com_papercomputeco_tapes_pkg_llm.ErrorResponse": {
             "type": "object",
             "properties": {
                 "error": {
                     "type": "string"
-                }
-            }
-        },
-        "github_com_papercomputeco_tapes_pkg_llm.Usage": {
-            "type": "object",
-            "properties": {
-                "cache_creation_input_tokens": {
-                    "description": "Cache token counts (Anthropic prompt caching)",
-                    "type": "integer"
-                },
-                "cache_read_input_tokens": {
-                    "type": "integer"
-                },
-                "completion_tokens": {
-                    "type": "integer"
-                },
-                "prompt_duration_ns": {
-                    "description": "PromptDurationNs is provider-reported prompt-evaluation time, in\nnanoseconds. Populated by providers that surface it (currently Ollama\nonly); left at zero otherwise.",
-                    "type": "integer"
-                },
-                "prompt_tokens": {
-                    "description": "Token counts",
-                    "type": "integer"
-                },
-                "total_duration_ns": {
-                    "description": "TotalDurationNs is the proxy-measured wall-clock time, in nanoseconds,\nfrom when the proxy received the client request to when the upstream\nresponse was fully assembled. Set uniformly by the proxy across providers\n— Anthropic and OpenAI don't surface a duration field on the wire, and\nOllama's server-internal ` + "`" + `total_duration` + "`" + ` is intentionally overwritten so\naggregate stats compare apples to apples.",
-                    "type": "integer"
-                },
-                "total_tokens": {
-                    "type": "integer"
                 }
             }
         },
@@ -1558,99 +1243,6 @@ const docTemplate = `{
                     "type": "integer"
                 }
             }
-        },
-        "github_com_papercomputeco_tapes_pkg_sessions.SessionSummary": {
-            "type": "object",
-            "properties": {
-                "agent_name": {
-                    "type": "string"
-                },
-                "duration_ns": {
-                    "$ref": "#/definitions/time.Duration"
-                },
-                "end_time": {
-                    "type": "string"
-                },
-                "harness_id": {
-                    "type": "string"
-                },
-                "harness_session_id": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "input_cost": {
-                    "type": "number"
-                },
-                "input_tokens": {
-                    "type": "integer"
-                },
-                "label": {
-                    "type": "string"
-                },
-                "message_count": {
-                    "type": "integer"
-                },
-                "missing_parent": {
-                    "type": "string"
-                },
-                "model": {
-                    "type": "string"
-                },
-                "output_cost": {
-                    "type": "number"
-                },
-                "output_tokens": {
-                    "type": "integer"
-                },
-                "project": {
-                    "type": "string"
-                },
-                "session_count": {
-                    "type": "integer"
-                },
-                "start_time": {
-                    "type": "string"
-                },
-                "status": {
-                    "type": "string"
-                },
-                "tool_calls": {
-                    "type": "integer"
-                },
-                "total_cost": {
-                    "type": "number"
-                },
-                "truncated": {
-                    "description": "Truncated is true when this summary was built from a partial chain\nbecause an ancestor's parent_hash could not be resolved in the\ncurrent store. MissingParent names the hash that would have\ncontinued the walk if the referenced node existed. Both fields are\ninformational — they signal that higher ancestors may live outside\nthis store (trimmed history, foreign chain, offloaded data) rather\nthan an error.",
-                    "type": "boolean"
-                }
-            }
-        },
-        "time.Duration": {
-            "type": "integer",
-            "format": "int64",
-            "enum": [
-                -9223372036854775808,
-                9223372036854775807,
-                1,
-                1000,
-                1000000,
-                1000000000,
-                60000000000,
-                3600000000000
-            ],
-            "x-enum-varnames": [
-                "minDuration",
-                "maxDuration",
-                "Nanosecond",
-                "Microsecond",
-                "Millisecond",
-                "Second",
-                "Minute",
-                "Hour"
-            ]
         }
     }
 }`

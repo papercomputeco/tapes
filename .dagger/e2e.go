@@ -101,9 +101,11 @@ func (t *Tapes) TestE2E(ctx context.Context) (string, error) {
 		WithExec([]string{"hurl", "--test", "--very-verbose", ".dagger/e2e/02-chat-nonstreaming.hurl"}).
 
 		// Brief pause for async worker pool to flush to Postgres.
+		// 03 doubles as the proxy-leg persistence check: the legacy
+		// node-layer stats fallback proves the captured chain landed
+		// (the old 04-history leg read /v1/stems, which is gone).
 		WithExec([]string{"sleep", "3"}).
 		WithExec([]string{"hurl", "--test", ".dagger/e2e/03-verify-storage.hurl"}).
-		WithExec([]string{"hurl", "--test", ".dagger/e2e/04-history.hurl"}).
 
 		// Span pipeline round trip: ingest a turn into the raw layer,
 		// derive the span projection, embed eligible spans via Ollama

@@ -127,7 +127,7 @@ func decodeSessionsCursor(token string) (sessionsCursor, error) {
 // handleListSessions handles GET /v1/sessions.
 //
 //	@Summary		List sessions
-//	@Description	Returns one row per harness session from the sessions table, newest first (last_seen_at desc), cursor-paginated. This is the product session view; the Merkle leaf-chain view lives at /v1/stems.
+//	@Description	Returns one row per harness session from the sessions table, newest first (last_seen_at desc), cursor-paginated.
 //	@Tags			sessions
 //	@Produce		json
 //	@Param			limit	query		int		false	"Maximum number of sessions to return (default 50, max 200)"	minimum(1)

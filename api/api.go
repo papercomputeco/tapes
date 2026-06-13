@@ -69,10 +69,9 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 		app.Get("/", s.handleWebUI)
 	}
 
-	// v1 surface. Two models share the namespace:
-	//   /v1/sessions  — product sessions (sessions-table, UUID-keyed)
-	//   /v1/stems     — Merkle leaf chains (hash-keyed, forensic view)
-	// Static paths are registered before parameterised ones.
+	// v1 surface: product sessions (sessions-table, UUID-keyed) and the
+	// span projection beneath them. Static paths are registered before
+	// parameterised ones.
 	app.Get("/v1/stats", s.handleStats)
 	app.Get("/v1/sessions", s.handleListSessions)
 	app.Get("/v1/sessions/:id/traces", s.handleGetSessionTraces)
@@ -81,8 +80,6 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	app.Get("/v1/traces/:trace_id/spans/:span_id", s.handleGetSpan)
 	app.Get("/v1/traces/:trace_id", s.handleGetTrace)
 	app.Get("/v1/sessions/:id", s.handleGetSession)
-	app.Get("/v1/stems", s.handleListStems)
-	app.Get("/v1/stems/:hash", s.handleGetStem)
 	app.Get("/v1/search/spans", s.handleSearchSpansEndpoint)
 
 	app.Post("/v1/admin/seed/demo", s.handleSeedDemo)

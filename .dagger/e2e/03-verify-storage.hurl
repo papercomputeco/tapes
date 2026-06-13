@@ -11,6 +11,10 @@
 # session envelope, so it contributes stems and turns but no
 # first-class session (PCC-565) — the ingest leg (05+) creates the
 # session.
+#
+# With /v1/stems gone, this legacy-fallback read is also the e2e's
+# proxy-leg persistence check: stem_count >= 1 proves the proxy's
+# captured chain landed as Merkle leaves in Postgres.
 
 GET http://tapes-api:8081/v1/stats
 HTTP 200
