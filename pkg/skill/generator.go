@@ -8,8 +8,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"github.com/papercomputeco/tapes/pkg/llm"
 )
 
 const maxGenerateRetries = 3
@@ -55,17 +53,11 @@ func (g *Generator) Generate(ctx context.Context, sessionIDs []string, name, ski
 
 	var transcripts []string
 	for _, sessionID := range sessionIDs {
-		turns, err := g.query.TraceSummaries(ctx, sessionID)
+		transcript, err := BuildSessionTranscript(ctx, g.query, sessionID, WithTimeFilter(opts))
 		if err != nil {
-			return nil, fmt.Errorf("load session %s: %w", sessionID, err)
+			return nil, err
 		}
-
-		turns = filterTurns(turns, opts)
-		if len(turns) == 0 {
-			return nil, fmt.Errorf("no turns in session %s after applying time filters", sessionID)
-		}
-
-		transcripts = append(transcripts, g.buildTranscript(ctx, turns))
+		transcripts = append(transcripts, transcript)
 	}
 
 	// Truncate large transcripts at session boundary
@@ -117,123 +109,6 @@ func (g *Generator) Generate(ctx context.Context, sessionIDs []string, name, ski
 	}
 
 	return nil, lastErr
-}
-
-// filterTurns drops synthetic turns (compaction seams, resume replays —
-// no user intent to extract from) and applies the --since/--until
-// window at turn grain.
-func filterTurns(turns []TraceSummary, opts *GenerateOptions) []TraceSummary {
-	var filtered []TraceSummary
-	for _, turn := range turns {
-		if turn.Synthetic != "" {
-			continue
-		}
-		if opts != nil {
-			if opts.Since != nil && turn.StartedAt.Before(*opts.Since) {
-				continue
-			}
-			if opts.Until != nil && turn.StartedAt.After(*opts.Until) {
-				continue
-			}
-		}
-		filtered = append(filtered, turn)
-	}
-	return filtered
-}
-
-// buildTranscript renders the turn-grain transcript for one session.
-// Per turn: the user prompt, then the main-thread conversation-spine
-// llm responses in span order with tool usage summarized between them.
-// When a turn's span detail is unavailable (or carries no spine text)
-// the derive-time response preview stands in, so the transcript always
-// has both halves of the exchange.
-func (g *Generator) buildTranscript(ctx context.Context, turns []TraceSummary) string {
-	var b strings.Builder
-	for _, turn := range turns {
-		if turn.UserPrompt != "" {
-			fmt.Fprintf(&b, "[user] %s\n", turn.UserPrompt)
-		}
-
-		trace, err := g.query.Trace(ctx, turn.TraceID)
-		if err != nil || trace == nil {
-			if turn.ResponsePreview != "" {
-				fmt.Fprintf(&b, "[assistant] %s\n", turn.ResponsePreview)
-			}
-			continue
-		}
-
-		if !writeSpineResponses(&b, trace.Spans) && turn.ResponsePreview != "" {
-			fmt.Fprintf(&b, "[assistant] %s\n", turn.ResponsePreview)
-		}
-	}
-	return b.String()
-}
-
-// writeSpineResponses walks one turn's spans in presentation order,
-// emitting an [assistant] line per conversation-spine llm span with
-// text and a [tools] summary line for the tool calls in between.
-// Offshoot and injected call kinds, and subagent threads, are skipped.
-// Reports whether any assistant text was written.
-func writeSpineResponses(b *strings.Builder, spans []Span) bool {
-	wrote := false
-	pendingTools := map[string]int{}
-	var pendingOrder []string
-
-	flushTools := func() {
-		if len(pendingOrder) == 0 {
-			return
-		}
-		parts := make([]string, 0, len(pendingOrder))
-		for _, name := range pendingOrder {
-			if count := pendingTools[name]; count > 1 {
-				parts = append(parts, fmt.Sprintf("%s ×%d", name, count))
-			} else {
-				parts = append(parts, name)
-			}
-		}
-		fmt.Fprintf(b, "[tools] %s\n", strings.Join(parts, ", "))
-		pendingTools = map[string]int{}
-		pendingOrder = nil
-	}
-
-	for _, sp := range spans {
-		switch sp.Kind {
-		case "tool":
-			if sp.ThreadID != "" {
-				continue
-			}
-			if _, seen := pendingTools[sp.Name]; !seen {
-				pendingOrder = append(pendingOrder, sp.Name)
-			}
-			pendingTools[sp.Name]++
-		case "llm":
-			if sp.CallKind != "main" || sp.ThreadID != "" {
-				continue
-			}
-			text := blocksText(sp.Output)
-			if text == "" {
-				continue
-			}
-			flushTools()
-			fmt.Fprintf(b, "[assistant] %s\n", text)
-			wrote = true
-		}
-	}
-	flushTools()
-	return wrote
-}
-
-// blocksText joins the visible text blocks of an llm span's output.
-// Thinking blocks are intentionally excluded: they are model-internal
-// and bloat the extraction prompt without adding workflow signal.
-func blocksText(blocks []llm.ContentBlock) string {
-	var texts []string
-	for _, block := range blocks {
-		if block.Text != "" {
-			texts = append(texts, block.Text)
-		}
-	}
-	return strings.Join(texts, "\n")
 }
 
 func buildSkillPrompt(transcript, name, skillType string) string {
