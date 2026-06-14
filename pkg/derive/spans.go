@@ -375,6 +375,14 @@ func (em *spanEmitter) shadowCall(src *SpanSource) {
 // results delivered with this request, emit the llm span (delta input
 // only), then open tool spans for the response's tool_use blocks.
 func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent *Span) {
+	// #29 resume boundary: a /exit + resume or /model switch re-hashes
+	// recent injected:* and system-role context as fresh. Gate their
+	// event-span emission on the boundary so the new trace does not
+	// re-emit replayed reminders (jason saw "Hey sonnet" buried under 9
+	// re-sent system reminders). tool_result feeds below are NOT gated —
+	// fillToolResult's first-result-wins guard already dedupes re-sent
+	// results, and gating them could break feeds links.
+	lastFreshAssistant := lastFreshAssistantIdx(src)
 	var feeds []*Span
 	for i, dn := range src.Chain[:len(src.Chain)-1] {
 		if !src.New[i] {
@@ -382,7 +390,9 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 		}
 		node := dn.Node
 		if strings.HasPrefix(node.Kind, "injected:") {
-			em.eventSpan(turn, parent, node.Kind, node.Hash, src.CapturedAt, node.Bucket.Content)
+			if i > lastFreshAssistant {
+				em.eventSpan(turn, parent, node.Kind, node.Hash, src.CapturedAt, node.Bucket.Content)
+			}
 			continue
 		}
 		if node.Bucket.Role == "system" {
@@ -394,7 +404,9 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 			// them an injected:* call_kind so span call-kind counts
 			// keep meaning "llm calls" for main. Candidate for a real
 			// classifier kind (injected:replay) later.
-			em.eventSpan(turn, parent, KindInjectedSystemInsert, node.Hash, src.CapturedAt, node.Bucket.Content)
+			if i > lastFreshAssistant {
+				em.eventSpan(turn, parent, KindInjectedSystemInsert, node.Hash, src.CapturedAt, node.Bucket.Content)
+			}
 			continue
 		}
 		if node.Bucket.Role != roleUser {
@@ -753,6 +765,32 @@ func callIdentity(src *SpanSource) string {
 	return src.Chain[len(src.Chain)-1].Node.Hash[:16]
 }
 
+// lastFreshAssistantIdx is the resume/compaction boundary (#29): the
+// index in src.Chain[:len-1] (the request, response leaf excluded) of
+// the LAST node that both reads as first-captured (src.New) and is an
+// assistant turn, or -1 when there is none.
+//
+// In a normal call there is no fresh mid-chain assistant — every prior
+// turn shares an earlier call's content hash, so only the trailing user
+// prompt and the response leaf are new — and the boundary is -1, gating
+// nothing. But a /exit + resume or /model switch prepends a continuation
+// summary that re-hashes a swath of recent history under FRESH hashes,
+// so already-seen turns (their assistant replies included) read as new.
+// The genuine new turn is whatever sits AFTER the last such replayed
+// assistant reply; everything at or before this index is replayed
+// history wearing a fresh hash. freshGenuinePrompt, freshInput, and
+// emitConversation's event loop all gate on it so the resume trace
+// carries only its genuine turn, not the re-sent prior conversation.
+func lastFreshAssistantIdx(src *SpanSource) int {
+	last := -1
+	for i := range src.Chain[:len(src.Chain)-1] {
+		if src.New[i] && src.Chain[i].Node.Bucket.Role == "assistant" {
+			last = i
+		}
+	}
+	return last
+}
+
 // freshGenuinePrompt returns the user node this call captured first that
 // opens a new turn: a human prompt (no tool_result blocks, not injected
 // context) that the model has not yet answered within this call.
@@ -775,12 +813,7 @@ func callIdentity(src *SpanSource) string {
 // node that sits AFTER the last fresh assistant node; anything before
 // that boundary is replayed history wearing a fresh hash.
 func freshGenuinePrompt(src *SpanSource) *DerivedNode {
-	lastFreshAssistant := -1
-	for i := range src.Chain[:len(src.Chain)-1] {
-		if src.New[i] && src.Chain[i].Node.Bucket.Role == "assistant" {
-			lastFreshAssistant = i
-		}
-	}
+	lastFreshAssistant := lastFreshAssistantIdx(src)
 	var prompt *DerivedNode
 	for i, dn := range src.Chain[:len(src.Chain)-1] {
 		if !src.New[i] || i <= lastFreshAssistant {
@@ -807,10 +840,19 @@ func freshGenuinePrompt(src *SpanSource) *DerivedNode {
 // freshInput collects the delta request content: blocks of user nodes
 // first captured by this call, minus tool_results (those live on tool
 // spans) and injected context (event spans).
+//
+// Gated on the #29 resume boundary like freshGenuinePrompt: a /exit +
+// resume or /model switch re-hashes recent turns as fresh, so without
+// the gate this would render the RE-SENT prior turns as the new turn's
+// input (jason saw "Nice work bro."/"Right on chief."/"/exit" bundled
+// into the resume trace). Skipping user nodes at or before the last
+// fresh assistant collects only the genuine new turn's input; in a
+// normal call the boundary is -1 and nothing is skipped.
 func freshInput(src *SpanSource) []llm.ContentBlock {
+	lastFreshAssistant := lastFreshAssistantIdx(src)
 	var out []llm.ContentBlock
 	for i, dn := range src.Chain[:len(src.Chain)-1] {
-		if !src.New[i] {
+		if !src.New[i] || i <= lastFreshAssistant {
 			continue
 		}
 		node := dn.Node

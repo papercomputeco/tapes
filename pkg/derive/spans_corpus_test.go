@@ -7,6 +7,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/papercomputeco/tapes/pkg/derive"
+	"github.com/papercomputeco/tapes/pkg/llm"
 )
 
 // The span-model corpus gate — decision 7 re-pinned as span trees. The
@@ -296,8 +297,14 @@ var _ = Describe("span emit over the corpus (0440f43d — resume + multi-model)"
 		Expect(r.SpanKinds).To(Equal(map[string]int{
 			derive.SpanKindAgent: 11, // 8 trace roots + 3 subagents
 			derive.SpanKindLLM:   108,
+			// #32: event spans fall 23 -> 14. agent/llm/tool counts are
+			// untouched (the call graph is unchanged) — the nine dropped
+			// events are the injected:* / system-role reminders the resume
+			// re-hashed as fresh and re-piled into the continuation trace.
+			// The #29 boundary now gates the emitConversation event loop, so
+			// they no longer re-emit.
 			derive.SpanKindTool:  96,
-			derive.SpanKindEvent: 23,
+			derive.SpanKindEvent: 14,
 		}))
 		Expect(r.CallKinds[derive.KindMain]).To(Equal(76))
 		Expect(r.CallKinds[derive.KindCompaction]).To(Equal(1))
@@ -312,6 +319,14 @@ var _ = Describe("span emit over the corpus (0440f43d — resume + multi-model)"
 		// own prompt: the model-switch and resume continuations no longer
 		// preview a re-sent <system-reminder>.
 		expectTurnPreviews(spans)
+
+		// #32 declutter: #29 fixed which prompt OPENS the resume/model-
+		// switch trace, but the trace CONTENT collectors (freshInput and
+		// the emitConversation event loop) still walked every fresh block,
+		// so the re-hashed prior turns and re-sent reminders piled into the
+		// new trace's input and event spans. The boundary now gates them.
+		expectResumeDecluttered(spans)
+		expectModelSwitchDecluttered(spans)
 	})
 
 	It("folds a cost-weighted per-model breakdown (#28)", func() {
@@ -360,6 +375,103 @@ var _ = Describe("span emit over the corpus (0440f43d — resume + multi-model)"
 		}
 	})
 })
+
+// openingLLMInput returns the input blocks of the trace's first llm
+// span — the delta request content freshInput collected for the call
+// that opened the turn.
+func openingLLMInput(turn *derive.SpanTurn) []llm.ContentBlock {
+	for _, s := range turn.Spans {
+		if s.Kind == derive.SpanKindLLM {
+			return s.Input
+		}
+	}
+	return nil
+}
+
+// blockTexts joins the text of a block slice for substring assertions.
+func blockTexts(blocks []llm.ContentBlock) string {
+	var sb strings.Builder
+	for _, b := range blocks {
+		sb.WriteString(b.Text)
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+func countEventSpans(turn *derive.SpanTurn) int {
+	n := 0
+	for _, s := range turn.Spans {
+		if s.Kind == derive.SpanKindEvent {
+			n++
+		}
+	}
+	return n
+}
+
+func findTurn(spans *derive.SpanSet, pred func(*derive.SpanTurn) bool) *derive.SpanTurn {
+	for _, turn := range spans.Turns {
+		if pred(turn) {
+			return turn
+		}
+	}
+	return nil
+}
+
+// expectResumeDecluttered pins the #32 fix on the /exit + resume trace
+// ("Ok hey. I resumed the session…"). Pre-fix its opening llm span
+// carried SIX input blocks — the re-sent "Nice work bro.", "Right on
+// chief.", and the /exit command machinery ahead of the genuine prompt —
+// and TEN event spans (nine re-hashed injected reminders + the one
+// genuine new event). Post-fix it carries ONE input block (the genuine
+// prompt) and ONE event span. The boundary drops the replayed history.
+func expectResumeDecluttered(spans *derive.SpanSet) {
+	turn := findTurn(spans, func(t *derive.SpanTurn) bool {
+		return t.UserPrompt == "Ok hey. I resumed the session. What happens now?"
+	})
+	Expect(turn).NotTo(BeNil(), "resume trace missing")
+
+	input := openingLLMInput(turn)
+	Expect(input).To(HaveLen(1), "resume input must be only the genuine prompt (was 6 pre-fix)")
+	Expect(input[0].Text).To(Equal("Ok hey. I resumed the session. What happens now?"))
+
+	// The re-sent prior turns must be gone from this trace's input.
+	all := blockTexts(input)
+	Expect(all).NotTo(ContainSubstring("Nice work bro."))
+	Expect(all).NotTo(ContainSubstring("Right on chief."))
+	Expect(all).NotTo(ContainSubstring("/exit"))
+
+	// Event spans fall from 10 (9 re-sent reminders + 1 genuine) to 1.
+	Expect(countEventSpans(turn)).To(Equal(1),
+		"resume trace must emit only its genuine new event (was 10 pre-fix)")
+}
+
+// expectModelSwitchDecluttered pins the #32 fix on the /model switch
+// trace (the one carrying "Hey sonnet"). Pre-fix its opening llm span
+// carried EIGHTEEN input blocks: nine re-sent <system-reminder> tool-
+// replay blocks, the /compact machinery, the prior post-compaction turn,
+// the prior "Sick…" turn, then the /model machinery and "Hey sonnet".
+// Post-fix it carries FOUR — the /model slash-command caveat/command/
+// stdout (the genuine new turn's own machinery) and "Hey sonnet".
+func expectModelSwitchDecluttered(spans *derive.SpanSet) {
+	turn := findTurn(spans, func(t *derive.SpanTurn) bool {
+		return strings.Contains(blockTexts(openingLLMInput(t)), "Hey sonnet")
+	})
+	Expect(turn).NotTo(BeNil(), "model-switch trace missing")
+
+	input := openingLLMInput(turn)
+	Expect(input).To(HaveLen(4), "model-switch input must be the genuine /model turn (was 18 pre-fix)")
+
+	all := blockTexts(input)
+	Expect(all).To(ContainSubstring("Hey sonnet"))
+	Expect(all).To(ContainSubstring("/model"))
+
+	// The re-sent reminders and prior turns must be gone.
+	Expect(all).NotTo(ContainSubstring("<system-reminder>"),
+		"replayed tool-call reminders must not pile into the model-switch trace")
+	Expect(all).NotTo(ContainSubstring("/compact"))
+	Expect(all).NotTo(ContainSubstring("post-compaction turn"))
+	Expect(all).NotTo(ContainSubstring("Switching your model."))
+}
 
 func mustDerive(fn func() (*derive.DerivedSet, *derive.ReconcileStats)) *derive.DerivedSet {
 	set, _ := fn()
