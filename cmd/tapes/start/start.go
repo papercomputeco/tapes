@@ -27,6 +27,7 @@ import (
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
+	"github.com/papercomputeco/tapes/pkg/spanembed"
 	"github.com/papercomputeco/tapes/pkg/start"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 	"github.com/papercomputeco/tapes/pkg/vector/pgvector"
@@ -443,8 +444,6 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 			"openai":    "https://api.openai.com/v1",
 			"ollama":    startCfg.OllamaUpstream,
 		},
-		VectorDriver: pgVecDriver,
-		Embedder:     embedder,
 	}
 
 	proxyServer, err := proxy.New(proxyConfig, driver, log) //nolint:contextcheck // Proxy lifecycle manages its own background context.
@@ -453,10 +452,18 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 	}
 	defer proxyServer.Close()
 
+	spanSearcher, err := spanembed.NewStore(driver.DB(), spanembed.StoreConfig{
+		Dimensions: startCfg.EmbeddingDimensions,
+	}, log)
+	if err != nil {
+		return fmt.Errorf("could not create span embedding store: %w", err)
+	}
+
 	apiConfig := api.Config{
 		ListenAddr:   apiListener.Addr().String(),
 		VectorDriver: pgVecDriver,
 		Embedder:     embedder,
+		SpanSearcher: spanSearcher,
 		EnableWebUI:  startCfg.APIWebUI,
 	}
 	apiServer, err := api.NewServer(apiConfig, driver, log)

@@ -21,7 +21,9 @@ SELECT
     COALESCE(walk.project::text, '') AS project,
     walk.created_at::timestamptz AS created_at,
     walk.depth::integer AS depth,
-    walk.has_usage::boolean AS has_usage
+    walk.has_usage::boolean AS has_usage,
+    COALESCE(walk.node_kind::text, '') AS node_kind,
+    COALESCE(walk.parent_tool_use_id::text, '') AS parent_tool_use_id
 FROM ancestry_chains_rows(sqlc.arg(hashes)::text[], sqlc.arg(max_depth)::integer) AS walk(
     start_hash,
     hash,
@@ -44,6 +46,8 @@ FROM ancestry_chains_rows(sqlc.arg(hashes)::text[], sqlc.arg(max_depth)::integer
     project,
     created_at,
     depth,
-    has_usage
+    has_usage,
+    node_kind,
+    parent_tool_use_id
 )
 ORDER BY walk.start_hash, walk.depth;

@@ -14,7 +14,7 @@ import (
 )
 
 // The oneshot.json and stream.sse fixtures are real api.openai.com Responses
-// wire captures recorded through the papermeetcodex clearing (gpt-4o-mini),
+// wire captures recorded through a gateway (gpt-4o-mini),
 // not hand-written approximations.
 var _ = Describe("OpenAI Responses reducer", func() {
 	var r capture.Reducer

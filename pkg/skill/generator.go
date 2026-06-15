@@ -8,38 +8,43 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"github.com/papercomputeco/tapes/pkg/deck"
 )
 
 const maxGenerateRetries = 3
 
 // GenerateOptions controls filtering for skill generation.
 type GenerateOptions struct {
-	Since *time.Time // only include messages on or after this time
-	Until *time.Time // only include messages on or before this time
+	Since *time.Time // only include turns starting on or after this time
+	Until *time.Time // only include turns starting on or before this time
 }
 
 // Generator extracts skills from session transcripts via an LLM.
+//
+// Transcripts are built from the span model: each user-visible turn
+// contributes its prompt plus the conversation-spine ("main" call-kind,
+// main-thread) llm span outputs, with tool usage summarized between
+// responses. Offshoot calls (permission checks, title-gen, …) and
+// injected context never reach the prompt — the extraction LLM sees the
+// actual conversation, not the harness's shadow traffic.
 type Generator struct {
-	query   deck.Querier
-	llmCall deck.LLMCallFunc
+	query   Querier
+	llmCall LLMCallFunc
 }
 
 // NewGenerator creates a new skill Generator.
-func NewGenerator(query deck.Querier, llmCall deck.LLMCallFunc) *Generator {
+func NewGenerator(query Querier, llmCall LLMCallFunc) *Generator {
 	return &Generator{
 		query:   query,
 		llmCall: llmCall,
 	}
 }
 
-// Generate extracts a skill from one or more conversation hashes.
-// Each hash is a leaf node in the Merkle DAG; its ancestry chain is loaded
-// as the conversation transcript.
-func (g *Generator) Generate(ctx context.Context, hashes []string, name, skillType string, opts *GenerateOptions) (*Skill, error) {
-	if len(hashes) == 0 {
-		return nil, errors.New("at least one hash is required")
+// Generate extracts a skill from one or more session IDs. Each ID is a
+// product session (a /v1/sessions UUID); its derived turn/span
+// projection is loaded as the conversation transcript.
+func (g *Generator) Generate(ctx context.Context, sessionIDs []string, name, skillType string, opts *GenerateOptions) (*Skill, error) {
+	if len(sessionIDs) == 0 {
+		return nil, errors.New("at least one session ID is required")
 	}
 
 	if !ValidSkillType(skillType) {
@@ -47,21 +52,15 @@ func (g *Generator) Generate(ctx context.Context, hashes []string, name, skillTy
 	}
 
 	var transcripts []string
-	for _, hash := range hashes {
-		detail, err := g.query.SessionDetail(ctx, hash)
+	for _, sessionID := range sessionIDs {
+		transcript, err := BuildSessionTranscript(ctx, g.query, sessionID, WithTimeFilter(opts))
 		if err != nil {
-			return nil, fmt.Errorf("load conversation %s: %w", hash, err)
+			return nil, err
 		}
-
-		messages := filterMessages(detail.Messages, opts)
-		if len(messages) == 0 {
-			return nil, fmt.Errorf("no messages in conversation %s after applying time filters", hash)
-		}
-
-		transcripts = append(transcripts, buildTranscript(messages))
+		transcripts = append(transcripts, transcript)
 	}
 
-	// Truncate large transcripts at message boundary
+	// Truncate large transcripts at session boundary
 	const maxChars = 30000
 	var totalLen int
 	for i, t := range transcripts {
@@ -71,8 +70,8 @@ func (g *Generator) Generate(ctx context.Context, hashes []string, name, skillTy
 		}
 		if totalLen > maxChars {
 			transcripts = transcripts[:i]
-			fmt.Fprintf(os.Stderr, "warning: transcript truncated to %d of %d conversation(s) to fit within %d char limit\n",
-				len(transcripts), len(hashes), maxChars)
+			fmt.Fprintf(os.Stderr, "warning: transcript truncated to %d of %d session(s) to fit within %d char limit\n",
+				len(transcripts), len(sessionIDs), maxChars)
 			break
 		}
 	}
@@ -102,7 +101,7 @@ func (g *Generator) Generate(ctx context.Context, hashes []string, name, skillTy
 		// Override with caller-supplied values
 		skill.Name = name
 		skill.Type = skillType
-		skill.Sessions = hashes
+		skill.Sessions = sessionIDs
 		skill.Version = "0.1.0"
 		skill.CreatedAt = time.Now()
 
@@ -112,36 +111,14 @@ func (g *Generator) Generate(ctx context.Context, hashes []string, name, skillTy
 	return nil, lastErr
 }
 
-func filterMessages(messages []deck.SessionMessage, opts *GenerateOptions) []deck.SessionMessage {
-	if opts == nil {
-		return messages
-	}
-
-	var filtered []deck.SessionMessage
-	for _, msg := range messages {
-		if opts.Since != nil && msg.Timestamp.Before(*opts.Since) {
-			continue
-		}
-		if opts.Until != nil && msg.Timestamp.After(*opts.Until) {
-			continue
-		}
-		filtered = append(filtered, msg)
-	}
-	return filtered
-}
-
-func buildTranscript(messages []deck.SessionMessage) string {
-	var b strings.Builder
-	for _, msg := range messages {
-		fmt.Fprintf(&b, "[%s] %s\n", msg.Role, msg.Text)
-	}
-	return b.String()
-}
-
 func buildSkillPrompt(transcript, name, skillType string) string {
 	return fmt.Sprintf(`Analyze the following LLM coding session transcript(s) and extract a reusable skill.
 
 The skill should be named %q and categorized as %q.
+
+Transcript format: [user] lines are the human's prompts, [assistant]
+lines are the agent's responses, and [tools] lines summarize the tools
+the agent invoked between responses.
 
 Return ONLY valid JSON with these fields:
 
@@ -156,6 +133,7 @@ Guidelines for extraction:
 - Write a clear description with trigger phrases (e.g. "Use when debugging React hooks issues")
 - Write step-by-step instructions in imperative form
 - Focus on the generalizable technique, not session-specific details
+- Use the [tools] lines to capture which tools the workflow relies on
 - Include any important caveats or edge cases observed
 
 Transcript(s):

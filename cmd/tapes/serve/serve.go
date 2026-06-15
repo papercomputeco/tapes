@@ -13,6 +13,7 @@ import (
 
 	"github.com/papercomputeco/tapes/api"
 	apicmder "github.com/papercomputeco/tapes/cmd/tapes/serve/api"
+	deriveworkercmder "github.com/papercomputeco/tapes/cmd/tapes/serve/deriveworker"
 	ingestcmder "github.com/papercomputeco/tapes/cmd/tapes/serve/ingest"
 	proxycmder "github.com/papercomputeco/tapes/cmd/tapes/serve/proxy"
 	"github.com/papercomputeco/tapes/ingest"
@@ -21,6 +22,7 @@ import (
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
+	"github.com/papercomputeco/tapes/pkg/spanembed"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 	"github.com/papercomputeco/tapes/pkg/telemetry"
 	"github.com/papercomputeco/tapes/pkg/vector/pgvector"
@@ -76,6 +78,7 @@ Use subcommands to run individual services or all services together:
   tapes serve api        Run just the API server
   tapes serve proxy      Run just the proxy server
   tapes serve ingest     Run just the ingest server (sidecar mode)
+  tapes serve derive-worker  Run the derive worker (raw → derived layer)
 
 Optionally configure vector storage and embeddings of text content for "tapes search"
 agentic functionality.`
@@ -178,6 +181,7 @@ func NewServeCmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagPostgres, &cmder.postgresDSN)
 
 	cmd.AddCommand(apicmder.NewAPICmd())
+	cmd.AddCommand(deriveworkercmder.NewDeriveWorkerCmd())
 	cmd.AddCommand(ingestcmder.NewIngestCmd())
 	cmd.AddCommand(proxycmder.NewProxyCmd())
 
@@ -200,16 +204,20 @@ func (c *ServeCommander) run() error {
 		Project:      c.project,
 	}
 
-	proxyConfig.VectorDriver, err = pgvector.NewDriver(context.TODO(), &pgvector.Config{
+	// The vector store and embedder serve the API's search read path
+	// only. Capture-time embedding is retired: the derive worker
+	// family is the single writer of embeddings (tapes serve
+	// derive-worker --embed-spans).
+	vectorDriver, err := pgvector.NewDriver(context.TODO(), &pgvector.Config{
 		ConnString: c.vectorStoreTarget,
 		Dimensions: c.embeddingDimensions,
 	}, c.logger)
 	if err != nil {
 		return fmt.Errorf("could not create new vector driver: %w", err)
 	}
-	defer proxyConfig.VectorDriver.Close()
+	defer vectorDriver.Close()
 
-	proxyConfig.Embedder, err = embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
+	embedder, err := embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
 		ProviderType: c.embeddingProvider,
 		TargetURL:    c.embeddingTarget,
 		Model:        c.embeddingModel,
@@ -219,9 +227,16 @@ func (c *ServeCommander) run() error {
 	if err != nil {
 		return fmt.Errorf("creating embedder: %w", err)
 	}
-	defer proxyConfig.Embedder.Close()
+	defer embedder.Close()
 
-	c.logger.Info("vector storage enabled",
+	spanSearcher, err := spanembed.NewStore(driver.DB(), spanembed.StoreConfig{
+		Dimensions: c.embeddingDimensions,
+	}, c.logger)
+	if err != nil {
+		return fmt.Errorf("could not create span embedding store: %w", err)
+	}
+
+	c.logger.Info("vector search enabled",
 		"vector_store_target", config.RedactDSN(c.vectorStoreTarget),
 		"embedding_provider", c.embeddingProvider,
 		"embedding_target", c.embeddingTarget,
@@ -244,8 +259,9 @@ func (c *ServeCommander) run() error {
 	// Create API server
 	apiConfig := api.Config{
 		ListenAddr:   c.apiListen,
-		VectorDriver: proxyConfig.VectorDriver,
-		Embedder:     proxyConfig.Embedder,
+		VectorDriver: vectorDriver,
+		Embedder:     embedder,
+		SpanSearcher: spanSearcher,
 		EnableWebUI:  c.apiWebUI,
 	}
 	apiServer, err := api.NewServer(apiConfig, driver, c.logger)
@@ -259,10 +275,8 @@ func (c *ServeCommander) run() error {
 
 	// Optionally create ingest server for sidecar mode
 	ingestConfig := ingest.Config{
-		ListenAddr:   c.ingestListen,
-		VectorDriver: proxyConfig.VectorDriver,
-		Embedder:     proxyConfig.Embedder,
-		Project:      c.project,
+		ListenAddr: c.ingestListen,
+		Project:    c.project,
 	}
 	ingestServer, err := ingest.New(ingestConfig, driver, c.logger)
 	if err != nil {

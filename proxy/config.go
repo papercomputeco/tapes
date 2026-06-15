@@ -1,9 +1,7 @@
 package proxy
 
 import (
-	"github.com/papercomputeco/tapes/pkg/embeddings"
 	"github.com/papercomputeco/tapes/pkg/publisher"
-	"github.com/papercomputeco/tapes/pkg/vector"
 )
 
 // Config is the proxy server configuration.
@@ -23,14 +21,6 @@ type Config struct {
 
 	// ProviderUpstreams optionally overrides upstream URLs per provider.
 	ProviderUpstreams map[string]string
-
-	// VectorDriver is an optional vector store for storing embeddings.
-	// If nil, vector storage is disabled.
-	VectorDriver vector.Driver
-
-	// Embedder is an optional embedder for generating embeddings.
-	// Required if VectorDriver is set.
-	Embedder embeddings.Embedder
 
 	// Publisher is an optional event publisher for new DAG nodes.
 	// If nil, publishing is disabled.

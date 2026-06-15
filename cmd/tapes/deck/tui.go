@@ -59,10 +59,18 @@ const (
 )
 
 type deckModel struct {
-	query               deck.Querier
-	filters             deck.Filters
-	overview            *deck.Overview
-	detail              *deck.SessionDetail
+	query    deck.Querier
+	filters  deck.Filters
+	overview *deck.Overview
+	detail   *deck.SessionDetail
+	// Turn drill-in state: when inTurn is set, detail holds a synthesized
+	// turn-grain SessionDetail (the selected turn's conversation) and
+	// parentDetail holds the session-grain detail to restore on back.
+	inTurn              bool
+	currentTurn         *deck.TurnConversation
+	parentDetail        *deck.SessionDetail
+	parentCursor        int
+	parentSort          int
 	view                deckView
 	cursor              int
 	scrollOffset        int
@@ -121,6 +129,11 @@ type sessionLoadedMsg struct {
 	detail *deck.SessionDetail
 	err    error
 	keepUI bool
+}
+
+type turnLoadedMsg struct {
+	conv *deck.TurnConversation
+	err  error
 }
 
 type overviewLoadedMsg struct {
@@ -328,11 +341,28 @@ func (m deckModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.metricsReady = true
 		m.overviewStats = &msg.stats
 		return m, nil
+	case turnLoadedMsg:
+		if msg.err != nil || msg.conv == nil {
+			return m, nil
+		}
+		m.parentDetail = m.detail
+		m.parentCursor = m.messageCursor
+		m.parentSort = m.messageSort
+		m.inTurn = true
+		m.currentTurn = msg.conv
+		m.detail = turnDetailFromConversation(m.parentDetail, msg.conv)
+		m.resetSortedCache()
+		m.resetSortedGroupCache()
+		m.messageCursor = 0
+		m.messageSort = 0
+		m.view = viewSession
+		return m, nil
 	case sessionLoadedMsg:
 		if msg.err != nil {
 			return m, nil
 		}
 		m.detail = msg.detail
+		m = m.clearTurnState()
 		m.resetSortedCache()
 		m.view = viewSession
 		if msg.keepUI {
@@ -454,7 +484,21 @@ func (m deckModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.view == viewOverview {
 			return m.enterSession()
 		}
+		if m.view == viewSession && !m.inTurn {
+			return m.enterTurn()
+		}
 	case "h", "esc":
+		if m.view == viewSession && m.inTurn {
+			// Pop back from the turn conversation to the session's turn list.
+			m.detail = m.parentDetail
+			m.messageCursor = m.parentCursor
+			m.messageSort = m.parentSort
+			m = m.clearTurnState()
+			m.resetSortedCache()
+			m.resetSortedGroupCache()
+			m.replayActive = false
+			return m, nil
+		}
 		if m.view == viewSession {
 			m.view = viewOverview
 			m.replayActive = false
@@ -633,6 +677,90 @@ func (m deckModel) enterSession() (tea.Model, tea.Cmd) {
 
 	session := sessions[m.cursor]
 	return m, loadSessionCmd(m.query, session.ID, false)
+}
+
+// enterTurn drills from the session's turn list into the selected turn's
+// conversation (GET /v1/traces/{trace_id}). No-op when the query backend
+// cannot drill into turns or no turn is selected.
+func (m deckModel) enterTurn() (tea.Model, tea.Cmd) {
+	turnQuery, ok := m.query.(deck.TurnQuerier)
+	if !ok {
+		return m, nil
+	}
+	traceID := m.selectedTraceID()
+	if traceID == "" {
+		return m, nil
+	}
+	return m, loadTurnCmd(turnQuery, traceID)
+}
+
+// selectedTraceID resolves the turn the message cursor currently points at.
+func (m deckModel) selectedTraceID() string {
+	if m.detail == nil {
+		return ""
+	}
+	if m.useGroupedConversations() {
+		group := m.selectedGroup()
+		if group == nil || group.StartIndex >= len(m.detail.Messages) {
+			return ""
+		}
+		return m.detail.Messages[group.StartIndex].TraceID
+	}
+	messages := m.sortedMessages()
+	if len(messages) == 0 {
+		return ""
+	}
+	return messages[clamp(m.messageCursor, len(messages)-1)].TraceID
+}
+
+// clearTurnState clears the drill-in bookkeeping without touching detail.
+func (m deckModel) clearTurnState() deckModel {
+	m.inTurn = false
+	m.currentTurn = nil
+	m.parentDetail = nil
+	m.parentCursor = 0
+	m.parentSort = 0
+	return m
+}
+
+// turnDetailFromConversation synthesizes a turn-grain SessionDetail so the
+// session view renders the drilled turn with the same layout: the metrics
+// header shows the turn's rollups and the transcript shows the
+// conversation-spine llm calls.
+func turnDetailFromConversation(parent *deck.SessionDetail, conv *deck.TurnConversation) *deck.SessionDetail {
+	summary := deck.SessionSummary{
+		ID:           conv.Turn.TraceID,
+		Label:        firstNonEmptyLine(stripSystemContent(conv.Turn.UserPrompt)),
+		Status:       conv.Turn.Status,
+		StartTime:    conv.Turn.StartedAt,
+		Duration:     conv.Turn.Duration,
+		InputTokens:  conv.Turn.InputTokens,
+		OutputTokens: conv.Turn.OutputTokens,
+		TotalCost:    conv.Turn.TotalCost,
+		MessageCount: len(conv.Messages),
+		SessionCount: 1,
+	}
+	if parent != nil {
+		summary.Model = parent.Summary.Model
+		summary.Project = parent.Summary.Project
+		summary.AgentName = parent.Summary.AgentName
+	}
+	if summary.Label == "" {
+		summary.Label = "turn " + conv.Turn.TraceID
+	}
+	if conv.Turn.EndedAt != nil {
+		summary.EndTime = *conv.Turn.EndedAt
+	} else {
+		summary.EndTime = conv.Turn.StartedAt.Add(conv.Turn.Duration)
+	}
+	for _, count := range conv.ToolFrequency {
+		summary.ToolCalls += count
+	}
+	return &deck.SessionDetail{
+		Summary:         summary,
+		Messages:        conv.Messages,
+		GroupedMessages: conv.GroupedMessages,
+	}
 }
 
 func (m deckModel) cyclePeriod() (tea.Model, tea.Cmd) {
@@ -878,6 +1006,13 @@ func loadSessionCmd(query deck.Querier, sessionID string, keepUI bool) tea.Cmd {
 	}
 }
 
+func loadTurnCmd(query deck.TurnQuerier, traceID string) tea.Cmd {
+	return func() tea.Msg {
+		conv, err := query.TurnConversation(context.Background(), traceID)
+		return turnLoadedMsg{conv: conv, err: err}
+	}
+}
+
 func formatOptionalTime(t *time.Time) string {
 	if t == nil {
 		return ""
@@ -957,7 +1092,9 @@ func (m deckModel) refreshCmd() tea.Cmd {
 	if m.view == viewOverview {
 		return loadOverviewCmd(m.query, m.filters)
 	}
-	if m.view == viewSession && m.detail != nil {
+	// While drilled into a turn the detail is an immutable trace; skip
+	// auto-refresh so the reload doesn't clobber the drill-in.
+	if m.view == viewSession && m.detail != nil && !m.inTurn {
 		return loadSessionCmd(m.query, m.detail.Summary.ID, true)
 	}
 	return nil

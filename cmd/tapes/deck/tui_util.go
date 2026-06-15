@@ -161,7 +161,7 @@ func formatCostWithScale(cost float64, allSessions []deck.SessionSummary) string
 
 // renderCostWeightedBarbell creates a mini visualization showing token distribution and cost
 // Format: ●──◍ where circle size = tokens, color = cost
-func renderCostWeightedBarbell(inputTokens, outputTokens int64, inputCost, outputCost float64, allSessions []deck.SessionSummary) string {
+func renderCostWeightedBarbell(inputTokens, outputTokens int64, totalCost float64, allSessions []deck.SessionSummary) string {
 	if len(allSessions) == 0 {
 		return "●──●"
 	}
@@ -189,7 +189,6 @@ func renderCostWeightedBarbell(inputTokens, outputTokens int64, inputCost, outpu
 	outputSize := getCircleSize(outputTokens, maxOutputTokens)
 
 	// Determine colors based on cost (using orange gradient)
-	totalCost := inputCost + outputCost
 	var costRatio float64
 	if maxCost > minCost {
 		costRatio = (totalCost - minCost) / (maxCost - minCost)
@@ -542,17 +541,17 @@ func renderTokenSplitBar(inputPercent float64, width int) string {
 }
 
 type deckOverviewStats struct {
-	TotalSessions  int
-	TotalCost      float64
-	InputTokens    int64
-	OutputTokens   int64
-	TotalDuration  time.Duration
-	TotalToolCalls int
-	SuccessRate    float64
-	Completed      int
-	Failed         int
-	Abandoned      int
-	CostByModel    map[string]deck.ModelCost
+	TotalSessions int
+	TotalCost     float64
+	InputTokens   int64
+	OutputTokens  int64
+	TotalDuration time.Duration
+	TotalTurns    int
+	SuccessRate   float64
+	Completed     int
+	Failed        int
+	Abandoned     int
+	CostByModel   map[string]deck.ModelCost
 }
 
 func summarizeSessions(sessions []deck.SessionSummary) deckOverviewStats {
@@ -565,7 +564,7 @@ func summarizeSessions(sessions []deck.SessionSummary) deckOverviewStats {
 		stats.InputTokens += session.InputTokens
 		stats.OutputTokens += session.OutputTokens
 		stats.TotalDuration += session.Duration
-		stats.TotalToolCalls += session.ToolCalls
+		stats.TotalTurns += session.MessageCount
 		switch session.Status {
 		case deck.StatusCompleted:
 			stats.Completed++

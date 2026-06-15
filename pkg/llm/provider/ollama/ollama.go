@@ -63,6 +63,7 @@ func (o *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 		Model:      req.Model,
 		Messages:   messages,
 		Stream:     req.Stream,
+		Tools:      req.Tools,
 		RawRequest: payload,
 	}
 

@@ -25,9 +25,8 @@ Examples:
   tapes deck --since 24h
   tapes deck --from 2026-01-30 --to 2026-01-31
   tapes deck --sort cost --model claude-sonnet-4.5
-  tapes deck --session sess_a8f2c1d3
+  tapes deck --session 9f0d8a4e-1b2c-4d5e-8f90-123456789abc
   tapes deck --pricing ./pricing.json
-  tapes deck --demo
 `
 	deckShortDesc = "Deck - ROI dashboard for agent sessions"
 	sortDirDesc   = "desc"
@@ -46,7 +45,6 @@ type deckCommander struct {
 	project     string
 	session     string
 	refresh     uint
-	demo        bool
 	theme       string
 }
 
@@ -59,7 +57,7 @@ func NewDeckCmd() *cobra.Command {
 		Long:  deckLongDesc,
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmder.run(cmd.Context(), cmd)
+			return cmder.run(cmd.Context())
 		},
 	}
 
@@ -75,13 +73,12 @@ func NewDeckCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cmder.project, "project", "", "Filter by project name")
 	cmd.Flags().StringVar(&cmder.session, "session", "", "Drill into a specific session ID")
 	cmd.Flags().UintVar(&cmder.refresh, "refresh", 0, "Auto-refresh interval in seconds (0 to disable)")
-	cmd.Flags().BoolVarP(&cmder.demo, "demo", "m", false, "Seed demo data and open the deck UI")
 	cmd.Flags().StringVar(&cmder.theme, "theme", "", "Force color theme: dark or light (auto-detected by default)")
 
 	return cmd
 }
 
-func (c *deckCommander) run(ctx context.Context, cmd *cobra.Command) error {
+func (c *deckCommander) run(ctx context.Context) error {
 	if c.theme != "" {
 		switch c.theme {
 		case "dark", "light":
@@ -102,14 +99,6 @@ func (c *deckCommander) run(ctx context.Context, cmd *cobra.Command) error {
 	}
 
 	apiTarget := normalizeAPITarget(c.apiTarget)
-	if c.demo {
-		sessionCount, messageCount, err := deck.SeedDemoViaAPI(ctx, apiTarget, false)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Seeded %d demo sessions (%d messages) via API\n", sessionCount, messageCount)
-	}
-
 	query := deck.NewHTTPQuery(apiTarget, pricing)
 
 	filters, err := c.parseFilters()

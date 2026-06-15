@@ -1,0 +1,7 @@
+# Generated trees: sqlc output (make generate) and swaggo/swag output
+# (make swag). Marked linguist-generated so review tooling collapses
+# them by default and language stats skip them.
+pkg/storage/postgres/gensqlc/** linguist-generated=true
+docs/docs.go linguist-generated=true
+docs/swagger.json linguist-generated=true
+docs/swagger.yaml linguist-generated=true

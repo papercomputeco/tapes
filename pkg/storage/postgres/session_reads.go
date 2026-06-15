@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -20,31 +19,29 @@ import (
 )
 
 // ListSessionRecords returns a page of sessions for an org ordered by
-// last_seen_at DESC. Pass nil cursorTs/cursorID to start from the
-// beginning. A non-empty authSubject narrows the page to sessions
-// captured for that gateway-stamped JWT subject (exact match on the
-// indexed column); empty lists every user's sessions.
+// last_seen_at DESC, optionally windowed by activity (last_seen_at)
+// and narrowed to one gateway-stamped JWT subject (exact match on the
+// indexed column; empty lists every user's sessions). Pass zero-value
+// opts to start from the beginning, unwindowed and unfiltered.
 func (d *Driver) ListSessionRecords(
 	ctx context.Context,
 	orgID string,
-	authSubject string,
-	limit int,
-	cursorTs *time.Time,
-	cursorID *string,
+	opts storage.SessionListOpts,
 ) ([]storage.SessionRecord, error) {
 	oid, err := orgIDFromString(orgID)
 	if err != nil {
 		return nil, fmt.Errorf("list session records: %w", err)
 	}
+	limit := opts.Limit
 	if limit <= 0 {
 		limit = storage.DefaultListLimit
 	}
 
 	var tsPg pgtype.Timestamptz
 	var idPg pgtype.UUID
-	if cursorTs != nil && cursorID != nil && *cursorID != "" {
-		tsPg = pgtype.Timestamptz{Time: *cursorTs, Valid: true}
-		parsed, err := uuid.Parse(*cursorID)
+	if opts.CursorTs != nil && opts.CursorID != nil && *opts.CursorID != "" {
+		tsPg = pgtype.Timestamptz{Time: *opts.CursorTs, Valid: true}
+		parsed, err := uuid.Parse(*opts.CursorID)
 		if err != nil {
 			return nil, fmt.Errorf("list session records: invalid cursor id: %w", err)
 		}
@@ -52,8 +49,8 @@ func (d *Driver) ListSessionRecords(
 	}
 
 	var subjectPg pgtype.Text
-	if authSubject != "" {
-		subjectPg = pgtype.Text{String: authSubject, Valid: true}
+	if opts.AuthSubject != "" {
+		subjectPg = pgtype.Text{String: opts.AuthSubject, Valid: true}
 	}
 
 	rows, err := d.q.ListSessionRecords(ctx, gensqlc.ListSessionRecordsParams{
@@ -61,9 +58,9 @@ func (d *Driver) ListSessionRecords(
 		AuthSubject: subjectPg,
 		CursorTs:    tsPg,
 		CursorID:    idPg,
-		// The int32 conversion cannot overflow: limit is bounded above by
-		// the API handler's maxSessionsLimit.
-		Lim: int32(limit), //nolint:gosec // bounded above by the API handler (maxSessionsLimit)
+		SinceFilter: nullTimePtr(opts.Since),
+		UntilFilter: nullTimePtr(opts.Until),
+		Lim:         int32(limit), //nolint:gosec // bounded above by the API handler (maxSessionsLimit)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list session records: %w", err)
@@ -132,7 +129,7 @@ ORDER BY session_id, created_at ASC
 		if err := json.Unmarshal(bucketBytes, &bucket); err != nil {
 			continue
 		}
-		text := strings.TrimSpace(bucket.ExtractText())
+		text := strings.TrimSpace(previewText(bucket))
 		if utf8.RuneCountInString(text) > sessionPreviewMaxRunes {
 			runes := []rune(text)
 			text = string(runes[:sessionPreviewMaxRunes])
@@ -140,6 +137,26 @@ ORDER BY session_id, created_at ASC
 		out[sessionID] = text
 	}
 	return out, rows.Err()
+}
+
+// previewText renders one user node as a session preview line. Harnesses
+// prepend injected context (Claude Code's claudeMd) as <system-reminder>
+// text blocks ahead of the human prompt; sessions with no derived title
+// fall back to this preview, so those blocks would otherwise become the
+// session's display name. Mirrors pkg/derive's promptText preference;
+// injected-only nodes keep the full extraction.
+func previewText(bucket merkle.Bucket) string {
+	var texts []string
+	for _, block := range bucket.Content {
+		if block.Text == "" || strings.HasPrefix(strings.TrimSpace(block.Text), "<system-reminder>") {
+			continue
+		}
+		texts = append(texts, block.Text)
+	}
+	if len(texts) == 0 {
+		return bucket.ExtractText()
+	}
+	return strings.Join(texts, "\n")
 }
 
 // GetSessionRecord returns a single session by its UUID, or nil if not found.
@@ -197,20 +214,6 @@ func (d *Driver) GetSessionRecordByHarness(
 	return &recs[0], nil
 }
 
-// ListNodesBySession returns all nodes attributed to a session ordered by
-// created_at ASC (chronological order).
-func (d *Driver) ListNodesBySession(ctx context.Context, sessionID string) ([]*merkle.Node, error) {
-	parsed, err := uuid.Parse(sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("list nodes by session: invalid session id %q: %w", sessionID, err)
-	}
-	rows, err := d.q.ListNodesBySession(ctx, pgtype.UUID{Bytes: parsed, Valid: true})
-	if err != nil {
-		return nil, fmt.Errorf("list nodes by session: %w", err)
-	}
-	return merkleNodesFromRows(rows)
-}
-
 // sessionRecordFromRow converts a sqlc-generated Session row to
 // the storage-level SessionRecord type.
 func sessionRecordFromRow(row gensqlc.Session) storage.SessionRecord {
@@ -222,9 +225,15 @@ func sessionRecordFromRow(row gensqlc.Session) storage.SessionRecord {
 		TotalOutputTokens: row.TotalOutputTokens,
 		TurnCount:         int(row.TurnCount),
 		DerivedStatus:     row.DerivedStatus,
+		Model:             row.DerivedModel,
 		AuthSubject:       row.AuthSubject,
 	}
-	if row.Name.Valid {
+	// The folded title-gen output is the session's display title; the
+	// envelope's internal name (a plan slug for Claude Code) is the
+	// fallback. See the derived_title migration.
+	if row.DerivedTitle.Valid && row.DerivedTitle.String != "" {
+		s.Name = row.DerivedTitle.String
+	} else if row.Name.Valid {
 		s.Name = row.Name.String
 	}
 	if row.Cwd.Valid {
@@ -250,6 +259,12 @@ func sessionRecordFromRow(row gensqlc.Session) storage.SessionRecord {
 		var m map[string]any
 		if err := json.Unmarshal(row.HarnessMetadata, &m); err == nil {
 			s.HarnessMetadata = m
+		}
+	}
+	if len(row.ModelUsage) > 0 {
+		var mu []storage.ModelUsage
+		if err := json.Unmarshal(row.ModelUsage, &mu); err == nil {
+			s.ModelUsage = mu
 		}
 	}
 	if row.TotalCostUsd.Valid {

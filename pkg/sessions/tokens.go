@@ -29,14 +29,3 @@ func TokensForNode(n *merkle.Node) NodeTokens {
 	}
 	return t
 }
-
-// FirstModel returns the normalized model of the first node in the chain
-// that has a non-empty Model field, or the empty string.
-func FirstModel(nodes []*merkle.Node) string {
-	for _, n := range nodes {
-		if n.Bucket.Model != "" {
-			return NormalizeModel(n.Bucket.Model)
-		}
-	}
-	return ""
-}

@@ -139,7 +139,7 @@ func (m deckModel) viewMetrics(stats deckOverviewStats) string {
 	// Calculate metrics
 	avgCost := safeDivide(stats.TotalCost, float64(max(1, stats.TotalSessions)))
 	avgTime := time.Duration(int64(stats.TotalDuration) / int64(max(1, stats.TotalSessions)))
-	avgTools := stats.TotalToolCalls / max(1, stats.TotalSessions)
+	avgTurns := stats.TotalTurns / max(1, stats.TotalSessions)
 
 	// Prepare metric data with comparisons
 	type metricData struct {
@@ -164,8 +164,8 @@ func (m deckModel) viewMetrics(stats deckOverviewStats) string {
 			value: formatDuration(stats.TotalDuration),
 		},
 		{
-			label: "TOOL CALLS",
-			value: strconv.Itoa(stats.TotalToolCalls),
+			label: "TURNS",
+			value: strconv.Itoa(stats.TotalTurns),
 		},
 		{
 			label: "SUCCESS RATE",
@@ -203,9 +203,9 @@ func (m deckModel) viewMetrics(stats deckOverviewStats) string {
 			metrics[2].isPositive = change > 0 // More time means more work
 		}
 
-		// Tool calls comparison
-		if prev.TotalToolCalls > 0 {
-			change := ((float64(stats.TotalToolCalls) - float64(prev.TotalToolCalls)) / float64(prev.TotalToolCalls)) * 100
+		// Turn count comparison
+		if prev.TotalTurns > 0 {
+			change := ((float64(stats.TotalTurns) - float64(prev.TotalTurns)) / float64(prev.TotalTurns)) * 100
 			metrics[3].change = fmt.Sprintf("%.1f%%", abs(change))
 			metrics[3].changeIcon = changeArrow(change)
 			metrics[3].isPositive = change > 0
@@ -289,7 +289,7 @@ func (m deckModel) viewMetrics(stats deckOverviewStats) string {
 		formatCost(avgCost) + " avg",
 		fmt.Sprintf("%s / %s avg", formatTokens(avgTokenCount(stats.InputTokens, stats.TotalSessions)), formatTokens(avgTokenCount(stats.OutputTokens, stats.TotalSessions))),
 		formatDuration(avgTime) + " avg",
-		fmt.Sprintf("%d avg", avgTools),
+		fmt.Sprintf("%d avg", avgTurns),
 		fmt.Sprintf("%d/%d complete", stats.Completed, stats.TotalSessions),
 	}
 	avgLine := make([]string, 0)
@@ -561,8 +561,7 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 		costInd      string
 		cost         string
 		costRaw      string
-		tools        string
-		msgs         string
+		turns        string
 		statusCircle string
 		statusText   string
 	}
@@ -591,8 +590,7 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 	maxBarbellW := 7 // Fixed width for barbell (e.g., "⬤──—●")
 	maxCostIndW := 0 // Calculate from actual data
 	maxCostW := len(sortKeyCost)
-	maxToolsW := len("tools")
-	maxMsgsW := len("msgs")
+	maxTurnsW := len("turns")
 	maxStatusW := len("status")
 
 	// First pass: collect data and measure widths
@@ -607,12 +605,11 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 		rows[rowIdx].modelColored = colorizeModel(session.Model)
 		rows[rowIdx].dur = formatDurationMinutes(session.Duration)
 		rows[rowIdx].tokens = formatTokens(session.InputTokens + session.OutputTokens)
-		rows[rowIdx].barbell = renderCostWeightedBarbell(session.InputTokens, session.OutputTokens, session.InputCost, session.OutputCost, m.overview.Sessions)
+		rows[rowIdx].barbell = renderCostWeightedBarbell(session.InputTokens, session.OutputTokens, session.TotalCost, m.overview.Sessions)
 		rows[rowIdx].costInd = formatCostIndicator(session.TotalCost, m.overview.Sessions)
 		rows[rowIdx].costRaw = formatCost(session.TotalCost)
 		rows[rowIdx].cost = formatCostWithScale(session.TotalCost, m.overview.Sessions)
-		rows[rowIdx].tools = strconv.Itoa(session.ToolCalls)
-		rows[rowIdx].msgs = strconv.Itoa(session.MessageCount)
+		rows[rowIdx].turns = strconv.Itoa(session.MessageCount)
 		rows[rowIdx].statusCircle, rows[rowIdx].statusText = formatStatusWithCircle(session.Status)
 
 		// Measure widths (without ANSI codes for models/status)
@@ -644,11 +641,8 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 		if costWidth > maxCostW {
 			maxCostW = costWidth
 		}
-		if len(rows[rowIdx].tools) > maxToolsW {
-			maxToolsW = len(rows[rowIdx].tools)
-		}
-		if len(rows[rowIdx].msgs) > maxMsgsW {
-			maxMsgsW = len(rows[rowIdx].msgs)
+		if len(rows[rowIdx].turns) > maxTurnsW {
+			maxTurnsW = len(rows[rowIdx].turns)
 		}
 		if len(session.Status) > maxStatusW {
 			maxStatusW = len(session.Status)
@@ -656,10 +650,10 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 	}
 
 	// Calculate total width used by fixed columns (excluding label)
-	// Format: "  " + rowNum + " " + label + [gap + project] + gap + model + gap + dur + gap + tokens + gap + barbell + gap + costInd + " " + cost + gap + tools + gap + msgs + gap + status
+	// Format: "  " + rowNum + " " + label + [gap + project] + gap + model + gap + dur + gap + tokens + gap + barbell + gap + costInd + " " + cost + gap + turns + gap + status
 	colGap := 3
 	statusColW := 2 + maxStatusW // circle + space + text
-	fixedWidth := 2 + 1 + 1 + colGap + maxDateW + colGap + maxModelW + colGap + maxDurW + colGap + maxTokensW + colGap + maxBarbellW + colGap + maxCostIndW + 1 + maxCostW + colGap + maxToolsW + colGap + maxMsgsW + colGap + statusColW
+	fixedWidth := 2 + 1 + 1 + colGap + maxDateW + colGap + maxModelW + colGap + maxDurW + colGap + maxTokensW + colGap + maxBarbellW + colGap + maxCostIndW + 1 + maxCostW + colGap + maxTurnsW + colGap + statusColW
 	if hasProject {
 		fixedWidth += colGap + maxProjectW
 	}
@@ -697,8 +691,7 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 			}
 			return ""
 		}(), maxCostIndW+1+maxCostW),
-		padRight("tools", maxToolsW),
-		padRight("msgs", maxMsgsW),
+		padRight("turns", maxTurnsW),
 		padRight("status", statusColW),
 		padRight("date", maxDateW),
 	)
@@ -727,8 +720,7 @@ func (m deckModel) viewSessionList(availableHeight int) string {
 			padRight(rows[rowIdx].tokens, maxTokensW),
 			barbellPadded, // Cost-weighted barbell visualization
 			costIndPadded+" "+costPadded,
-			padRight(rows[rowIdx].tools, maxToolsW),
-			padRight(rows[rowIdx].msgs, maxMsgsW),
+			padRight(rows[rowIdx].turns, maxTurnsW),
 			padRightWithColor(rows[rowIdx].statusCircle+" "+rows[rowIdx].statusText, statusColW),
 			deckMutedStyle.Render(padRight(rows[rowIdx].date, maxDateW)),
 		)

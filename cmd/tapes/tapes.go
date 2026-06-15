@@ -7,10 +7,11 @@ import (
 	"github.com/spf13/cobra"
 
 	authcmder "github.com/papercomputeco/tapes/cmd/tapes/auth"
-	chatcmder "github.com/papercomputeco/tapes/cmd/tapes/chat"
+	backfillcmder "github.com/papercomputeco/tapes/cmd/tapes/backfill"
 	checkoutcmder "github.com/papercomputeco/tapes/cmd/tapes/checkout"
 	configcmder "github.com/papercomputeco/tapes/cmd/tapes/config"
 	deckcmder "github.com/papercomputeco/tapes/cmd/tapes/deck"
+	devcmder "github.com/papercomputeco/tapes/cmd/tapes/dev"
 	initcmder "github.com/papercomputeco/tapes/cmd/tapes/init"
 	localcmder "github.com/papercomputeco/tapes/cmd/tapes/local"
 	searchcmder "github.com/papercomputeco/tapes/cmd/tapes/search"
@@ -38,8 +39,7 @@ Run services using:
   tapes serve proxy    Run the proxy server
   tapes serve          Run both servers together
 
-Experimental: Chat through the proxy:
-  tapes chat               Start an interactive chat session
+Experimental: Inspect conversation state:
   tapes checkout <hash>    Checkout a conversation point
   tapes checkout           Clear checkout state, start fresh
   tapes status             Show current checkout state
@@ -92,11 +92,12 @@ func NewTapesCmd() *cobra.Command {
 
 	// Add subcommands
 	cmd.AddCommand(synccmder.NewSyncCmd())
-	cmd.AddCommand(chatcmder.NewChatCmd())
 	cmd.AddCommand(checkoutcmder.NewCheckoutCmd())
 	cmd.AddCommand(configcmder.NewConfigCmd())
 	cmd.AddCommand(deckcmder.NewDeckCmd())
+	cmd.AddCommand(devcmder.NewDevCmd())
 	cmd.AddCommand(authcmder.NewAuthCmd())
+	cmd.AddCommand(backfillcmder.NewBackfillCmd())
 	cmd.AddCommand(initcmder.NewInitCmd())
 	cmd.AddCommand(localcmder.NewLocalCmd())
 	cmd.AddCommand(searchcmder.NewSearchCmd())

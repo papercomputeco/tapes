@@ -35,6 +35,57 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/admin/seed/demo": {
+            "post": {
+                "description": "Replays the bundled demo capture corpora through the ingest write path into the caller's org, then derives the seeded sessions. Idempotent: raw-turn dedup makes repeat seeds no-ops.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Seed demo sessions (operator)",
+                "parameters": [
+                    {
+                        "description": "Seed options (overwrite is no longer supported)",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/api.seedDemoRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_seed.Result"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload or unsupported option",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Seeding failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Driver does not host the raw-turn layer",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/mcp": {
             "get": {
                 "description": "Opens the streamable MCP endpoint for server-sent events. Stateless clients can use this to receive streamed MCP messages.",
@@ -123,16 +174,16 @@ const docTemplate = `{
                 }
             }
         },
-        "/v1/search": {
+        "/v1/search/spans": {
             "get": {
-                "description": "Embeds the query text, searches the configured vector store, and returns matching sessions with their full conversation branch.",
+                "description": "Embeds the query text and runs vector similarity over the embedded span projection (main llm spans, delta-only content). Each hit carries span, trace, and turn context.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "search"
                 ],
-                "summary": "Semantic search over stored sessions",
+                "summary": "Semantic search over span embeddings",
                 "parameters": [
                     {
                         "type": "string",
@@ -148,13 +199,19 @@ const docTemplate = `{
                         "description": "Maximum number of results to return",
                         "name": "top_k",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tenant org UUID (defaults to the nil org)",
+                        "name": "X-Tapes-Org-Id",
+                        "in": "header"
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_papercomputeco_tapes_api_search.Output"
+                            "$ref": "#/definitions/api.SpanSearchOutput"
                         }
                     },
                     "400": {
@@ -170,7 +227,7 @@ const docTemplate = `{
                         }
                     },
                     "503": {
-                        "description": "Search is not configured",
+                        "description": "Span search is not configured or not yet initialized",
                         "schema": {
                             "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
                         }
@@ -180,7 +237,7 @@ const docTemplate = `{
         },
         "/v1/sessions": {
             "get": {
-                "description": "Returns one row per harness session from the sessions table, newest first (last_seen_at desc), cursor-paginated. This is the product session view; the Merkle leaf-chain view lives at /v1/stems.",
+                "description": "Returns one row per harness session from the sessions table, newest first (last_seen_at desc), cursor-paginated.",
                 "produces": [
                     "application/json"
                 ],
@@ -200,6 +257,20 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Opaque pagination cursor returned by a previous response",
                         "name": "cursor",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Only include sessions active (last_seen_at) at or after this RFC3339 timestamp",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Only include sessions active (last_seen_at) before this RFC3339 timestamp",
+                        "name": "until",
                         "in": "query"
                     },
                     {
@@ -251,7 +322,7 @@ const docTemplate = `{
         },
         "/v1/sessions/{id}": {
             "get": {
-                "description": "Returns a single session, the selected stem of turns, and a summary of every stem (root-to-leaf path) in the session. ?stem=longest (default) returns the longest stem; ?stem=all returns every node ordered by created_at. ?root=\u003chash\u003e restricts turns to the subtree rooted at that node.",
+                "description": "Returns a single session record. The conversation content lives on the span model: GET /v1/sessions/{id}/traces.",
                 "produces": [
                     "application/json"
                 ],
@@ -266,22 +337,6 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
-                    },
-                    {
-                        "enum": [
-                            "longest",
-                            "all"
-                        ],
-                        "type": "string",
-                        "description": "Which turns to return: longest (default) or all",
-                        "name": "stem",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Restrict turns to the subtree rooted at this node hash",
-                        "name": "root",
-                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -292,7 +347,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Missing id or unknown root",
+                        "description": "Missing or malformed id",
                         "schema": {
                             "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
                         }
@@ -318,9 +373,121 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/sessions/{id}/raw_turns": {
+            "get": {
+                "description": "The raw layer's wire log: one row per captured call or transcript push, identity and sizes only. ` + "`" + `source` + "`" + ` distinguishes what crossed the wire from what the harness pushed as its own account.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "List a session's raw capture log (operator)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session id (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.RawTurnListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Not Implemented",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sessions/{id}/traces": {
+            "get": {
+                "description": "Returns the session's user-visible turns as traces with nested spans (llm calls, tools, subagents, shadow calls, injected context) and dataflow links. Cross-trace links (compaction seams) are at the response top level.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Get a session's trace/span projection",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session id (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Span payload mode: full (default) or preview (strings truncated; fetch the span endpoint for full payloads)",
+                        "name": "payload",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.SessionTracesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing or malformed id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Session not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to load session",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Span traces not supported by this backend",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/stats": {
             "get": {
-                "description": "Returns counts plus folded cost / token / duration / tool-call / completed-count totals across every node matching the supplied filters. Numeric aggregates come from a single storage-driver SQL aggregate; cost is folded in the handler from the per-model token rollup using the configured pricing table. total_duration_ns is wall-clock MAX-MIN over the matched window (see PCC-514). completed_count uses leaf-status-only classification (assistant leaf with a terminal stop_reason) — see StatsResponse and PCC-515 for the durable chain-aware fix.",
+                "description": "Returns counts plus cost / token / duration / tool-call / completed-count totals for the window. On span-projection backends the numbers are trace-grain rollup sums (delta-only usage, agent time = sum of trace durations) so they agree with the session and trace views; turn_count counts traces and stem_count is omitted. Supplying any legacy per-node filter (project / agent_name / model / provider) forces the legacy node-layer aggregate, whose sums re-bill re-sent history and whose duration is wall-clock MAX-MIN (PCC-514).",
                 "produces": [
                     "application/json"
                 ],
@@ -331,25 +498,25 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Filter by project name",
+                        "description": "Filter by project name (forces the legacy node-layer aggregate)",
                         "name": "project",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "Filter by agent name",
+                        "description": "Filter by agent name (forces the legacy node-layer aggregate)",
                         "name": "agent_name",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "Filter by model name",
+                        "description": "Filter by model name (forces the legacy node-layer aggregate)",
                         "name": "model",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "Filter by provider name",
+                        "description": "Filter by provider name (forces the legacy node-layer aggregate)",
                         "name": "provider",
                         "in": "query"
                     },
@@ -390,84 +557,46 @@ const docTemplate = `{
                 }
             }
         },
-        "/v1/stems": {
+        "/v1/traces": {
             "get": {
-                "description": "Returns paginated per-stem summaries including derived labels, status, token counts, cost, duration, and truncation metadata.",
+                "description": "Returns turn headers for a session — no span payloads. Fetch GET /v1/traces/{trace_id} per turn for spans and links.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "stems"
+                    "traces"
                 ],
-                "summary": "List stems (Merkle leaf chains) with aggregates",
+                "summary": "List a session's traces (summaries)",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Filter by project name",
-                        "name": "project",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by agent name",
-                        "name": "agent_name",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by model name",
-                        "name": "model",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by provider name",
-                        "name": "provider",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "format": "date-time",
-                        "description": "Only include stems updated at or after this RFC3339 timestamp",
-                        "name": "since",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "format": "date-time",
-                        "description": "Only include stems updated before or at this RFC3339 timestamp",
-                        "name": "until",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Opaque pagination cursor returned by a previous response",
-                        "name": "cursor",
-                        "in": "query"
-                    },
-                    {
-                        "minimum": 1,
-                        "type": "integer",
-                        "description": "Maximum number of stems to return",
-                        "name": "limit",
-                        "in": "query"
+                        "description": "Session id (UUID)",
+                        "name": "session_id",
+                        "in": "query",
+                        "required": true
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/api.StemListResponse"
+                            "$ref": "#/definitions/api.TraceListResponse"
                         }
                     },
                     "400": {
-                        "description": "Invalid query parameters",
+                        "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
                         }
                     },
                     "500": {
-                        "description": "Failed to list or summarize stems",
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Not Implemented",
                         "schema": {
                             "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
                         }
@@ -475,29 +604,28 @@ const docTemplate = `{
                 }
             }
         },
-        "/v1/stems/{hash}": {
+        "/v1/traces/{trace_id}": {
             "get": {
-                "description": "Returns the ancestry chain of a single Merkle leaf in chronological order (root first). When depth is provided, only the last N turns are returned while the full chain depth is still reported.",
+                "description": "Returns one user-visible turn: its spans nested by parent_span_id and its dataflow links (links touching other traces included).",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "stems"
+                    "traces"
                 ],
-                "summary": "Get a stem (Merkle leaf chain)",
+                "summary": "Get one trace with spans and links",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Stem head (leaf) hash",
-                        "name": "hash",
+                        "description": "Trace id",
+                        "name": "trace_id",
                         "in": "path",
                         "required": true
                     },
                     {
-                        "minimum": 1,
-                        "type": "integer",
-                        "description": "Maximum number of most-recent turns to include",
-                        "name": "depth",
+                        "type": "string",
+                        "description": "Span payload mode: full (default) or preview (strings truncated; fetch the span endpoint for full payloads)",
+                        "name": "payload",
                         "in": "query"
                     }
                 ],
@@ -505,23 +633,23 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/api.StemResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Missing or invalid hash/depth",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                            "$ref": "#/definitions/api.TraceDetail"
                         }
                     },
                     "404": {
-                        "description": "Stem not found",
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
                         }
                     },
                     "500": {
-                        "description": "Failed to load stem",
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Not Implemented",
                         "schema": {
                             "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
                         }
@@ -529,65 +657,53 @@ const docTemplate = `{
                 }
             }
         },
-        "/v1/stems/{hash}/graph": {
+        "/v1/traces/{trace_id}/spans/{span_id}": {
             "get": {
-                "description": "Returns a graph-shaped projection of the Merkle DAG around a node hash (the same ancestry returned by GET /v1/stems/{hash}). scope=root loads the requested node's resolvable root and all descendants, scope=branch loads the ancestry plus descendants of the requested node, and scope=ancestry loads only the parent chain.",
+                "description": "The payload drill-in: one span's complete input/output content.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "stems"
+                    "traces"
                 ],
-                "summary": "Get a stem graph",
+                "summary": "Get one span with full payloads",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Node (stem head) hash",
-                        "name": "hash",
+                        "description": "Trace id",
+                        "name": "trace_id",
                         "in": "path",
                         "required": true
                     },
                     {
-                        "enum": [
-                            "root",
-                            "branch",
-                            "ancestry"
-                        ],
                         "type": "string",
-                        "description": "Graph scope: root, branch, or ancestry",
-                        "name": "scope",
-                        "in": "query"
-                    },
-                    {
-                        "maximum": 5000,
-                        "minimum": 1,
-                        "type": "integer",
-                        "description": "Maximum number of graph nodes to include",
-                        "name": "max_nodes",
-                        "in": "query"
+                        "description": "Span id",
+                        "name": "span_id",
+                        "in": "path",
+                        "required": true
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/api.GraphResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Missing hash or invalid query parameters",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                            "$ref": "#/definitions/api.SpanItem"
                         }
                     },
                     "404": {
-                        "description": "Stem not found",
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
                         }
                     },
                     "500": {
-                        "description": "Failed to load stem graph",
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Not Implemented",
                         "schema": {
                             "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
                         }
@@ -597,137 +713,69 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "api.GraphLink": {
+        "api.ModelUsage": {
             "type": "object",
             "properties": {
-                "source": {
+                "calls": {
+                    "type": "integer"
+                },
+                "cost_usd": {
+                    "type": "number"
+                },
+                "input_tokens": {
+                    "type": "integer"
+                },
+                "model": {
                     "type": "string"
                 },
-                "target": {
-                    "type": "string"
+                "output_tokens": {
+                    "type": "integer"
                 }
             }
         },
-        "api.GraphNode": {
+        "api.RawTurnHeaderItem": {
             "type": "object",
             "properties": {
                 "agent_name": {
                     "type": "string"
                 },
-                "children_count": {
-                    "type": "integer"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "depth": {
-                    "type": "integer"
-                },
                 "id": {
-                    "type": "string"
+                    "type": "integer"
                 },
-                "is_branch_point": {
-                    "type": "boolean"
-                },
-                "is_leaf": {
-                    "type": "boolean"
-                },
-                "is_root": {
-                    "type": "boolean"
-                },
-                "model": {
-                    "type": "string"
-                },
-                "parent_hash": {
-                    "type": "string"
-                },
-                "parent_id": {
-                    "type": "string"
-                },
-                "preview": {
-                    "type": "string"
-                },
-                "project": {
-                    "type": "string"
+                "meta": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
                 },
                 "provider": {
                     "type": "string"
                 },
-                "role": {
+                "received_at": {
                     "type": "string"
                 },
-                "selected": {
-                    "type": "boolean"
+                "request_bytes": {
+                    "type": "integer"
                 },
-                "stop_reason": {
+                "request_id": {
                     "type": "string"
                 },
-                "type": {
-                    "type": "string"
+                "response_bytes": {
+                    "type": "integer"
                 },
-                "usage": {
-                    "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.Usage"
+                "source": {
+                    "type": "string"
                 }
             }
         },
-        "api.GraphResponse": {
+        "api.RawTurnListResponse": {
             "type": "object",
             "properties": {
-                "branch_points": {
-                    "description": "BranchPoints names included nodes with more than one child in storage.",
+                "items": {
                     "type": "array",
                     "items": {
-                        "type": "string"
+                        "$ref": "#/definitions/api.RawTurnHeaderItem"
                     }
-                },
-                "cycle_detected": {
-                    "description": "CycleDetected is true when storage guarded the ancestry walk out of a cycle.",
-                    "type": "boolean"
-                },
-                "hash": {
-                    "description": "Hash is the session/node hash requested by the caller.",
-                    "type": "string"
-                },
-                "leaves": {
-                    "description": "Leaves names included nodes that have no children in storage.",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "links": {
-                    "description": "Links contains parent -\u003e child edges between included nodes.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.GraphLink"
-                    }
-                },
-                "missing_parent": {
-                    "description": "MissingParent names the unresolved parent hash when the ancestry is incomplete.",
-                    "type": "string"
-                },
-                "node_limit": {
-                    "description": "NodeLimit is the maximum number of nodes the server will include.",
-                    "type": "integer"
-                },
-                "nodes": {
-                    "description": "Nodes is the flat node list consumed by graph visualizers.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.GraphNode"
-                    }
-                },
-                "root_hash": {
-                    "description": "RootHash is the top-most resolvable node included in the response.",
-                    "type": "string"
-                },
-                "scope": {
-                    "description": "Scope describes which portion of the graph was loaded: root, branch, or ancestry.",
-                    "type": "string"
-                },
-                "truncated": {
-                    "description": "Truncated is true when the graph hit NodeLimit or the ancestry chain is incomplete.",
-                    "type": "boolean"
                 }
             }
         },
@@ -736,18 +784,6 @@ const docTemplate = `{
             "properties": {
                 "session": {
                     "$ref": "#/definitions/api.SessionItem"
-                },
-                "stems": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.StemSummary"
-                    }
-                },
-                "turns": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.Turn"
-                    }
                 }
             }
         },
@@ -785,6 +821,17 @@ const docTemplate = `{
                 },
                 "last_seen_at": {
                     "type": "string"
+                },
+                "model": {
+                    "description": "Model is the dominant conversation-spine model, folded at derive\ntime; empty until the session first derives.",
+                    "type": "string"
+                },
+                "model_usage": {
+                    "description": "ModelUsage is the per-model spend breakdown folded at derive time\nacross every thread (subagent models included), ordered\ndominant-model-first by cost. The share basis is cost, not call\ncount, so the UI can show \"dominant model + per-model %\" without a\ncheap-subagent fan-out skewing it. Populated on the session detail;\nnil until the session first derives.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.ModelUsage"
+                    }
                 },
                 "name": {
                     "type": "string"
@@ -826,6 +873,177 @@ const docTemplate = `{
                 }
             }
         },
+        "api.SessionTracesResponse": {
+            "type": "object",
+            "properties": {
+                "kind_counts": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "links": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.SpanLinkItem"
+                    }
+                },
+                "session": {
+                    "$ref": "#/definitions/api.SessionItem"
+                },
+                "tasks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.TreeTask"
+                    }
+                },
+                "traces": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.TraceDetail"
+                    }
+                }
+            }
+        },
+        "api.SpanItem": {
+            "type": "object",
+            "properties": {
+                "children_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "duration_ns": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "input": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "metrics": {
+                    "description": "Metrics is always an object on the wire — the contract fixture\npins {} for usage-less spans (agent/tool/event), and the console\nschema requires it.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "output": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "parent_span_id": {
+                    "type": "string"
+                },
+                "seq": {
+                    "description": "Seq is the span's presentation ordinal within its trace; spans\narrive sorted by it. start_ns cannot order spans inside one llm\ncall (parallel tool batches share an instant).",
+                    "type": "integer"
+                },
+                "span_id": {
+                    "type": "string"
+                },
+                "start_ns": {
+                    "type": "integer"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "trace_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.SpanLinkItem": {
+            "type": "object",
+            "properties": {
+                "from_io": {
+                    "type": "string"
+                },
+                "from_span_id": {
+                    "type": "string"
+                },
+                "from_trace_id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "to_io": {
+                    "type": "string"
+                },
+                "to_span_id": {
+                    "type": "string"
+                },
+                "to_trace_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.SpanSearchOutput": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "query": {
+                    "type": "string"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.SpanSearchResult"
+                    }
+                }
+            }
+        },
+        "api.SpanSearchResult": {
+            "type": "object",
+            "properties": {
+                "model": {
+                    "type": "string"
+                },
+                "score": {
+                    "type": "number"
+                },
+                "session_id": {
+                    "type": "string"
+                },
+                "snippet": {
+                    "description": "Snippet previews the matched span's delta-only text.",
+                    "type": "string"
+                },
+                "span_id": {
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "trace_id": {
+                    "type": "string"
+                },
+                "user_prompt": {
+                    "description": "UserPrompt is the prompt of the turn (trace) the span belongs to.",
+                    "type": "string"
+                }
+            }
+        },
         "api.StatsResponse": {
             "type": "object",
             "properties": {
@@ -845,6 +1063,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "stem_count": {
+                    "description": "StemCount is a node-layer (Merkle leaf) concept with no span\nequivalent; it is only present on the legacy fallback path.",
                     "type": "integer"
                 },
                 "tool_calls": {
@@ -861,106 +1080,130 @@ const docTemplate = `{
                 }
             }
         },
-        "api.StemListResponse": {
+        "api.TraceDetail": {
             "type": "object",
             "properties": {
-                "items": {
+                "links": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_sessions.SessionSummary"
+                        "$ref": "#/definitions/api.SpanLinkItem"
                     }
                 },
-                "next_cursor": {
-                    "type": "string"
+                "spans": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.SpanItem"
+                    }
+                },
+                "trace": {
+                    "$ref": "#/definitions/api.TraceItem"
                 }
             }
         },
-        "api.StemResponse": {
+        "api.TraceItem": {
             "type": "object",
             "properties": {
-                "depth": {
-                    "description": "Depth is the total number of turns in the full ancestry of Hash.\nWhen the client passes ?depth=N, the Turns array may contain fewer\nthan Depth items.",
+                "cache_creation_tokens": {
                     "type": "integer"
                 },
+                "cache_read_tokens": {
+                    "type": "integer"
+                },
+                "duration_ns": {
+                    "type": "integer"
+                },
+                "ended_at": {
+                    "type": "string"
+                },
                 "harness_id": {
-                    "description": "HarnessID and HarnessSessionID identify the upstream agent session when\nsession tracking metadata is available. For Claude Code, HarnessID is\n\"claude\" and HarnessSessionID is Claude's session id.",
                     "type": "string"
                 },
                 "harness_session_id": {
                     "type": "string"
                 },
-                "hash": {
-                    "description": "Hash is the head of the returned chain (== the requested hash).",
+                "id": {
                     "type": "string"
                 },
-                "missing_parent": {
-                    "type": "string"
-                },
-                "truncated": {
-                    "description": "Truncated is true when the ancestry walk stopped at a parent_hash\nthat could not be resolved in the current store. MissingParent\nnames that hash. This is an expected edge case on stores that\ntrim older data, merge foreign content, or offload history to\nanother source — not an error.",
-                    "type": "boolean"
-                },
-                "turns": {
-                    "description": "Turns contains the chain in chronological order (root-first).\nWhen ?depth=N is supplied, only the last N turns (head + N-1 ancestors)\nare returned, still in chronological order.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.Turn"
-                    }
-                }
-            }
-        },
-        "api.StemSummary": {
-            "type": "object",
-            "properties": {
-                "length": {
+                "main_input_tokens": {
+                    "description": "Main* counts conversation-spine calls only; Total − Main is the\nharness's shadow spend on the turn.",
                     "type": "integer"
                 },
-                "model": {
+                "main_output_tokens": {
+                    "type": "integer"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "response_preview": {
+                    "description": "ResponsePreview is the derive-time fold of the closing\nconversation-spine llm call's text output — the answer line for\ncollapsed turn cards, so summary consumers never need spans.",
                     "type": "string"
                 },
-                "preview": {
+                "session_id": {
                     "type": "string"
                 },
-                "root_hash": {
+                "span_count": {
+                    "type": "integer"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "total_cost_usd": {
+                    "type": "number"
+                },
+                "total_input_tokens": {
+                    "type": "integer"
+                },
+                "total_output_tokens": {
+                    "type": "integer"
+                },
+                "trace_id": {
+                    "type": "string"
+                },
+                "user_prompt": {
                     "type": "string"
                 }
             }
         },
-        "api.Turn": {
+        "api.TraceListResponse": {
             "type": "object",
             "properties": {
-                "agent_name": {
-                    "type": "string"
-                },
-                "content": {
+                "items": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ContentBlock"
+                        "$ref": "#/definitions/api.TraceItem"
                     }
-                },
-                "created_at": {
+                }
+            }
+        },
+        "api.TreeTask": {
+            "type": "object",
+            "properties": {
+                "description": {
                     "type": "string"
                 },
-                "hash": {
+                "id": {
                     "type": "string"
                 },
-                "model": {
+                "status": {
                     "type": "string"
                 },
-                "parent_hash": {
+                "subject": {
                     "type": "string"
                 },
-                "provider": {
-                    "type": "string"
-                },
-                "role": {
-                    "type": "string"
-                },
-                "stop_reason": {
-                    "type": "string"
-                },
-                "usage": {
-                    "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.Usage"
+                "updates": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.seedDemoRequest": {
+            "type": "object",
+            "properties": {
+                "overwrite": {
+                    "type": "boolean"
                 }
             }
         },
@@ -1018,126 +1261,6 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_papercomputeco_tapes_api_search.Output": {
-            "type": "object",
-            "properties": {
-                "count": {
-                    "type": "integer"
-                },
-                "query": {
-                    "type": "string"
-                },
-                "results": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_papercomputeco_tapes_api_search.Result"
-                    }
-                }
-            }
-        },
-        "github_com_papercomputeco_tapes_api_search.Result": {
-            "type": "object",
-            "properties": {
-                "branch": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_papercomputeco_tapes_api_search.Turn"
-                    }
-                },
-                "hash": {
-                    "type": "string"
-                },
-                "preview": {
-                    "type": "string"
-                },
-                "role": {
-                    "type": "string"
-                },
-                "score": {
-                    "type": "number"
-                },
-                "turns": {
-                    "type": "integer"
-                }
-            }
-        },
-        "github_com_papercomputeco_tapes_api_search.Turn": {
-            "type": "object",
-            "properties": {
-                "hash": {
-                    "type": "string"
-                },
-                "matched": {
-                    "type": "boolean"
-                },
-                "role": {
-                    "type": "string"
-                },
-                "text": {
-                    "type": "string"
-                }
-            }
-        },
-        "github_com_papercomputeco_tapes_pkg_llm.ContentBlock": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "description": "Content (type=\"web_search_tool_result\" and other server-tool results) -\nthe raw result payload Anthropic returns inline on the block, captured\nverbatim as JSON so the variable result-object shapes survive without\nimposing a schema. ToolResultID links it to the paired server_tool_use.",
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "image_base64": {
-                    "description": "Base64-encoded image data",
-                    "type": "string"
-                },
-                "image_url": {
-                    "description": "Image content (type=\"image\")",
-                    "type": "string"
-                },
-                "is_error": {
-                    "type": "boolean"
-                },
-                "media_type": {
-                    "description": "MIME type (e.g., \"image/png\")",
-                    "type": "string"
-                },
-                "text": {
-                    "description": "Text content (type=\"text\")",
-                    "type": "string"
-                },
-                "thinking": {
-                    "description": "Thinking (type=\"thinking\") - Anthropic extended-thinking blocks.\nAnthropic emits thinking as content_block_delta frames with type\n\"thinking_delta\" followed by a \"signature_delta\" that authenticates the\nblock. Consumers treat Thinking as opaque text; the signature is persisted\nso downstream tooling can verify integrity.",
-                    "type": "string"
-                },
-                "thinking_signature": {
-                    "type": "string"
-                },
-                "tool_input": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "tool_name": {
-                    "type": "string"
-                },
-                "tool_output": {
-                    "type": "string"
-                },
-                "tool_result_id": {
-                    "description": "Tool result (type=\"tool_result\") - result from tool execution",
-                    "type": "string"
-                },
-                "tool_use_id": {
-                    "description": "Tool use (type=\"tool_use\") - assistant requesting tool execution",
-                    "type": "string"
-                },
-                "type": {
-                    "description": "\"text\", \"image\", \"tool_use\", \"tool_result\", \"thinking\"",
-                    "type": "string"
-                }
-            }
-        },
         "github_com_papercomputeco_tapes_pkg_llm.ErrorResponse": {
             "type": "object",
             "properties": {
@@ -1146,128 +1269,29 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_papercomputeco_tapes_pkg_llm.Usage": {
+        "github_com_papercomputeco_tapes_pkg_seed.Result": {
             "type": "object",
             "properties": {
-                "cache_creation_input_tokens": {
-                    "description": "Cache token counts (Anthropic prompt caching)",
+                "nodes_derived": {
+                    "description": "NodesDerived counts derived rows upserted by the synchronous\nderive pass across the seeded sessions.",
                     "type": "integer"
                 },
-                "cache_read_input_tokens": {
+                "raw_turns": {
+                    "description": "RawTurns is the total number of corpus rows replayed.",
                     "type": "integer"
                 },
-                "completion_tokens": {
+                "raw_turns_deduped": {
                     "type": "integer"
                 },
-                "prompt_duration_ns": {
-                    "description": "PromptDurationNs is provider-reported prompt-evaluation time, in\nnanoseconds. Populated by providers that surface it (currently Ollama\nonly); left at zero otherwise.",
+                "raw_turns_inserted": {
+                    "description": "RawTurnsInserted counts rows that landed as new raw turns;\nRawTurnsDeduped counts replays the raw layer's dedup absorbed\n(a re-seed reports everything deduped).",
                     "type": "integer"
                 },
-                "prompt_tokens": {
-                    "description": "Token counts",
-                    "type": "integer"
-                },
-                "total_duration_ns": {
-                    "description": "TotalDurationNs is the proxy-measured wall-clock time, in nanoseconds,\nfrom when the proxy received the client request to when the upstream\nresponse was fully assembled. Set uniformly by the proxy across providers\n— Anthropic and OpenAI don't surface a duration field on the wire, and\nOllama's server-internal ` + "`" + `total_duration` + "`" + ` is intentionally overwritten so\naggregate stats compare apples to apples.",
-                    "type": "integer"
-                },
-                "total_tokens": {
+                "sessions": {
+                    "description": "Sessions is the number of demo sessions the corpora replay into.",
                     "type": "integer"
                 }
             }
-        },
-        "github_com_papercomputeco_tapes_pkg_sessions.SessionSummary": {
-            "type": "object",
-            "properties": {
-                "agent_name": {
-                    "type": "string"
-                },
-                "duration_ns": {
-                    "$ref": "#/definitions/time.Duration"
-                },
-                "end_time": {
-                    "type": "string"
-                },
-                "harness_id": {
-                    "type": "string"
-                },
-                "harness_session_id": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "input_cost": {
-                    "type": "number"
-                },
-                "input_tokens": {
-                    "type": "integer"
-                },
-                "label": {
-                    "type": "string"
-                },
-                "message_count": {
-                    "type": "integer"
-                },
-                "missing_parent": {
-                    "type": "string"
-                },
-                "model": {
-                    "type": "string"
-                },
-                "output_cost": {
-                    "type": "number"
-                },
-                "output_tokens": {
-                    "type": "integer"
-                },
-                "project": {
-                    "type": "string"
-                },
-                "session_count": {
-                    "type": "integer"
-                },
-                "start_time": {
-                    "type": "string"
-                },
-                "status": {
-                    "type": "string"
-                },
-                "tool_calls": {
-                    "type": "integer"
-                },
-                "total_cost": {
-                    "type": "number"
-                },
-                "truncated": {
-                    "description": "Truncated is true when this summary was built from a partial chain\nbecause an ancestor's parent_hash could not be resolved in the\ncurrent store. MissingParent names the hash that would have\ncontinued the walk if the referenced node existed. Both fields are\ninformational — they signal that higher ancestors may live outside\nthis store (trimmed history, foreign chain, offloaded data) rather\nthan an error.",
-                    "type": "boolean"
-                }
-            }
-        },
-        "time.Duration": {
-            "type": "integer",
-            "format": "int64",
-            "enum": [
-                -9223372036854775808,
-                9223372036854775807,
-                1,
-                1000,
-                1000000,
-                1000000000,
-                60000000000,
-                3600000000000
-            ],
-            "x-enum-varnames": [
-                "minDuration",
-                "maxDuration",
-                "Nanosecond",
-                "Microsecond",
-                "Millisecond",
-                "Second",
-                "Minute",
-                "Hour"
-            ]
         }
     }
 }`

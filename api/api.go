@@ -7,6 +7,7 @@ import (
 
 	"github.com/gofiber/adaptor/v2"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/compress"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 
 	"github.com/papercomputeco/tapes/api/mcp"
@@ -49,6 +50,12 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	// the right status via the err (see Middleware in metrics.go).
 	app.Use(s.metrics.Middleware())
 	app.Use(recover.New())
+	// Trace payloads are large JSON (a full session detail measured
+	// 2.65MB raw, ~80KB gzipped) and every read crosses a network leg
+	// that honors Accept-Encoding — the console's server functions
+	// included. Compression is the single highest-leverage byte saver
+	// on the read surface.
+	app.Use(compress.New())
 
 	// Tenant context: canonicalise the client-asserted org_id header onto
 	// Locals so the read handlers can scope lookups to a single tenant.
@@ -69,33 +76,36 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 		app.Get("/", s.handleWebUI)
 	}
 
-	// v1 surface. Two models share the namespace:
-	//   /v1/sessions  — product sessions (sessions-table, UUID-keyed)
-	//   /v1/stems     — Merkle leaf chains (hash-keyed, forensic view)
-	// Static paths are registered before parameterised ones.
+	// v1 surface: product sessions (sessions-table, UUID-keyed) and the
+	// span projection beneath them. Static paths are registered before
+	// parameterised ones.
 	app.Get("/v1/stats", s.handleStats)
 	app.Get("/v1/sessions", s.handleListSessions)
+	app.Get("/v1/sessions/:id/traces", s.handleGetSessionTraces)
+	app.Get("/v1/sessions/:id/raw_turns", s.handleListSessionRawTurns)
+	app.Get("/v1/traces", s.handleListTraceSummaries)
+	app.Get("/v1/traces/:trace_id/spans/:span_id", s.handleGetSpan)
+	app.Get("/v1/traces/:trace_id", s.handleGetTrace)
 	app.Get("/v1/sessions/:id", s.handleGetSession)
-	app.Get("/v1/stems", s.handleListStems)
-	app.Get("/v1/stems/:hash/graph", s.handleGetStemGraph)
-	app.Get("/v1/stems/:hash", s.handleGetStem)
-	app.Get("/v1/search", s.handleSearchEndpoint)
+	app.Get("/v1/search/spans", s.handleSearchSpansEndpoint)
 
 	app.Post("/v1/admin/seed/demo", s.handleSeedDemo)
 	app.Post("/v1/admin/backfill/usage", s.handleBackfillUsage)
 	app.Post("/v1/admin/backfill/session-status", s.handleBackfillSessionStatus)
+	app.Post("/v1/admin/derive/verify", s.handleDeriveVerify)
+	app.Post("/v1/admin/derive/run", s.handleDeriveRun)
 
 	// API reference UI. Always mounted — the viewer JS comes from a CDN
 	// at view time, so the binary cost is negligible.
 	s.mountSwagger(app)
 
-	// Register MCP server if vector driver and embedder are configured
+	// Register MCP server if span search and embedder are configured. The
+	// MCP `search` tool runs the same span search as GET /v1/search/spans.
 	var mcpServer *mcp.Server
-	if config.VectorDriver != nil && config.Embedder != nil {
+	if config.SpanSearcher != nil && config.Embedder != nil {
 		s.logger.Debug("creating mcp server")
 		mcpServer, err = mcp.NewServer(mcp.Config{
-			Driver:       driver,
-			VectorDriver: config.VectorDriver,
+			SpanSearcher: config.SpanSearcher,
 			Embedder:     config.Embedder,
 			Logger:       log,
 		})

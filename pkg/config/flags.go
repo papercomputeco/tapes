@@ -13,7 +13,7 @@ import (
 // Commands reference flags by registry key rather than hard-coding names,
 // shorthands, defaults, and descriptions inline. This prevents flag drift
 // when the same logical flag appears on multiple commands (e.g., --upstream
-// on both "tapes serve" and "tapes serve proxy" and "tapes chat").
+// on both "tapes serve" and "tapes serve proxy").
 type Flag struct {
 	// Name is the long flag name (e.g. "upstream").
 	Name string
@@ -63,6 +63,16 @@ const (
 	FlagProxyListenStandalone  = "proxy-listen-standalone"
 	FlagAPIListenStandalone    = "api-listen-standalone"
 	FlagIngestListenStandalone = "ingest-listen-standalone"
+
+	// Derive worker (`tapes serve derive-worker`) tunables.
+	FlagDeriveWorkerPoll          = "derive-worker-poll-interval"
+	FlagDeriveWorkerDebounce      = "derive-worker-debounce"
+	FlagDeriveWorkerSweep         = "derive-worker-sweep-interval"
+	FlagDeriveWorkerSweepWindow   = "derive-worker-sweep-window" //nolint:gosec // flag registry key, not a credential
+	FlagDeriveWorkerMaxDeriveLag  = "derive-worker-max-derive-lag"
+	FlagDeriveWorkerMetricsListen = "derive-worker-metrics-listen"
+	FlagDeriveWorkerWaitForDB     = "derive-worker-wait-for-db"
+	FlagDeriveWorkerEmbedSpans    = "derive-worker-embed-spans"
 )
 
 // AddStringFlag registers a string flag on cmd from the given FlagSet.

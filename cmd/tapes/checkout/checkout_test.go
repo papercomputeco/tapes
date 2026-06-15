@@ -1,173 +1,247 @@
 package checkoutcmder_test
 
 import (
+	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	checkoutcmder "github.com/papercomputeco/tapes/cmd/tapes/checkout"
 	"github.com/papercomputeco/tapes/pkg/llm"
+	"github.com/papercomputeco/tapes/pkg/skill"
 )
 
+// fakeQuerier implements skill.Querier for export tests, mirroring the
+// generator_test.go pattern.
+type fakeQuerier struct {
+	summaries map[string][]skill.TraceSummary
+	traces    map[string]*skill.Trace
+}
+
+func (f *fakeQuerier) TraceSummaries(_ context.Context, sessionID string) ([]skill.TraceSummary, error) {
+	turns, ok := f.summaries[sessionID]
+	if !ok {
+		return nil, fmt.Errorf("session %s not found", sessionID)
+	}
+	return turns, nil
+}
+
+func (f *fakeQuerier) Trace(_ context.Context, traceID string) (*skill.Trace, error) {
+	trace, ok := f.traces[traceID]
+	if !ok {
+		return nil, fmt.Errorf("trace %s not found", traceID)
+	}
+	return trace, nil
+}
+
+func mainSpan(seq int64, text string) skill.Span {
+	return skill.Span{Kind: "llm", CallKind: "main", Seq: seq, Output: []llm.ContentBlock{{Type: "text", Text: text}}}
+}
+
+func toolSpan(seq int64, name string) skill.Span {
+	return skill.Span{Kind: "tool", Name: name, Seq: seq}
+}
+
 var _ = Describe("NewCheckoutCmd", func() {
-	It("creates a command with the correct use string", func() {
+	It("uses the session-id argument form", func() {
 		cmd := checkoutcmder.NewCheckoutCmd()
-		Expect(cmd.Use).To(Equal("checkout [hash]"))
+		Expect(cmd.Use).To(Equal("checkout <session-id>"))
 	})
 
-	It("accepts zero arguments for clearing checkout", func() {
+	It("describes export, not chat/replay/stems", func() {
 		cmd := checkoutcmder.NewCheckoutCmd()
-		err := cmd.Args(cmd, []string{})
-		Expect(err).NotTo(HaveOccurred())
+		Expect(cmd.Long).To(ContainSubstring("Export"))
+		Expect(cmd.Long).NotTo(ContainSubstring("chat"))
+		Expect(cmd.Long).NotTo(ContainSubstring("replay"))
+		Expect(cmd.Long).NotTo(ContainSubstring("stem"))
 	})
 
-	It("accepts one argument for a hash", func() {
+	It("requires exactly one argument", func() {
 		cmd := checkoutcmder.NewCheckoutCmd()
-		err := cmd.Args(cmd, []string{"abc123"})
-		Expect(err).NotTo(HaveOccurred())
+		Expect(cmd.Args(cmd, []string{})).To(HaveOccurred())
+		Expect(cmd.Args(cmd, []string{"session-1"})).NotTo(HaveOccurred())
+		Expect(cmd.Args(cmd, []string{"a", "b"})).To(HaveOccurred())
 	})
 
-	It("rejects more than one argument", func() {
+	It("exposes the export flags", func() {
 		cmd := checkoutcmder.NewCheckoutCmd()
-		err := cmd.Args(cmd, []string{"abc123", "def456"})
+		Expect(cmd.Flags().Lookup("trace")).NotTo(BeNil())
+		Expect(cmd.Flags().Lookup("format")).NotTo(BeNil())
+		Expect(cmd.Flags().Lookup("output")).NotTo(BeNil())
+		Expect(cmd.Flags().Lookup("format").DefValue).To(Equal("md"))
+	})
+})
+
+var _ = Describe("Export", func() {
+	var (
+		ctx     context.Context
+		querier *fakeQuerier
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		base := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
+		querier = &fakeQuerier{
+			summaries: map[string][]skill.TraceSummary{
+				"session-1": {
+					{
+						TraceID: "t1", UserPrompt: "Fix the infinite loop", StartedAt: base,
+						TotalInputTokens: 100, TotalOutputTokens: 40, MainInputTokens: 80, MainOutputTokens: 30,
+					},
+					{
+						TraceID: "t2", UserPrompt: "Thanks", StartedAt: base.Add(time.Minute),
+						TotalInputTokens: 50, TotalOutputTokens: 10,
+					},
+					// synthetic turn — must be filtered out of both formats.
+					{TraceID: "t3", Synthetic: "compaction", UserPrompt: "compacted context", StartedAt: base.Add(2 * time.Minute)},
+				},
+			},
+			traces: map[string]*skill.Trace{
+				"t1": {TraceID: "t1", Spans: []skill.Span{
+					mainSpan(1, "Let me check the dependency array."),
+					toolSpan(2, "Read"),
+					mainSpan(3, "Fixed the object reference."),
+				}},
+				"t2": {TraceID: "t2", Spans: []skill.Span{mainSpan(1, "Glad it helped.")}},
+			},
+		}
+	})
+
+	Context("markdown format", func() {
+		It("renders the whole session as a [user]/[assistant]/[tools] transcript", func() {
+			out, err := checkoutcmder.Export(ctx, querier, checkoutcmder.ExportOptions{
+				SessionID: "session-1", Format: "md",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(ContainSubstring("[user] Fix the infinite loop"))
+			Expect(out).To(ContainSubstring("[assistant] Let me check the dependency array."))
+			Expect(out).To(ContainSubstring("[tools] Read"))
+			Expect(out).To(ContainSubstring("[assistant] Fixed the object reference."))
+			Expect(out).To(ContainSubstring("[user] Thanks"))
+			Expect(out).To(ContainSubstring("[assistant] Glad it helped."))
+			// Synthetic turn excluded.
+			Expect(out).NotTo(ContainSubstring("compacted context"))
+		})
+
+		It("defaults to markdown when format is empty", func() {
+			out, err := checkoutcmder.Export(ctx, querier, checkoutcmder.ExportOptions{SessionID: "session-1"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(ContainSubstring("[user] Fix the infinite loop"))
+		})
+
+		It("exports a single turn with --trace", func() {
+			out, err := checkoutcmder.Export(ctx, querier, checkoutcmder.ExportOptions{
+				SessionID: "session-1", TraceID: "t2", Format: "md",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(ContainSubstring("[user] Thanks"))
+			Expect(out).To(ContainSubstring("[assistant] Glad it helped."))
+			Expect(out).NotTo(ContainSubstring("Fix the infinite loop"))
+		})
+
+		It("errors when --trace names an unknown turn", func() {
+			_, err := checkoutcmder.Export(ctx, querier, checkoutcmder.ExportOptions{
+				SessionID: "session-1", TraceID: "nope", Format: "md",
+			})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("nope"))
+		})
+	})
+
+	Context("jsonl format", func() {
+		It("emits one JSON object per non-synthetic turn", func() {
+			out, err := checkoutcmder.Export(ctx, querier, checkoutcmder.ExportOptions{
+				SessionID: "session-1", Format: "jsonl",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			lines := nonEmptyLines(out)
+			Expect(lines).To(HaveLen(2))
+
+			var first map[string]any
+			Expect(json.Unmarshal([]byte(lines[0]), &first)).To(Succeed())
+			Expect(first["trace_id"]).To(Equal("t1"))
+			Expect(first["session_id"]).To(Equal("session-1"))
+			Expect(first["user_prompt"]).To(Equal("Fix the infinite loop"))
+			Expect(first["response"]).To(ContainSubstring("[assistant] Let me check the dependency array."))
+			Expect(first["response"]).To(ContainSubstring("[tools] Read"))
+			// The user line is dropped from the response body (it has its own field).
+			Expect(first["response"]).NotTo(ContainSubstring("[user]"))
+			Expect(first["total_input_tokens"]).To(BeNumerically("==", 100))
+			Expect(first["main_output_tokens"]).To(BeNumerically("==", 30))
+
+			var second map[string]any
+			Expect(json.Unmarshal([]byte(lines[1]), &second)).To(Succeed())
+			Expect(second["trace_id"]).To(Equal("t2"))
+		})
+
+		It("emits a single object with --trace", func() {
+			out, err := checkoutcmder.Export(ctx, querier, checkoutcmder.ExportOptions{
+				SessionID: "session-1", TraceID: "t1", Format: "jsonl",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			lines := nonEmptyLines(out)
+			Expect(lines).To(HaveLen(1))
+			var rec map[string]any
+			Expect(json.Unmarshal([]byte(lines[0]), &rec)).To(Succeed())
+			Expect(rec["trace_id"]).To(Equal("t1"))
+		})
+	})
+
+	It("rejects an unknown format", func() {
+		_, err := checkoutcmder.Export(ctx, querier, checkoutcmder.ExportOptions{
+			SessionID: "session-1", Format: "yaml",
+		})
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("invalid format"))
+	})
+
+	It("errors on an unknown session", func() {
+		_, err := checkoutcmder.Export(ctx, querier, checkoutcmder.ExportOptions{
+			SessionID: "missing", Format: "md",
+		})
 		Expect(err).To(HaveOccurred())
 	})
 })
 
-var _ = Describe("Session API response parsing", func() {
-	// This tests that the checkout command can correctly parse the
-	// API response format used by GET /v1/stems/:hash
-
-	type turn struct {
-		Hash       string             `json:"hash"`
-		ParentHash *string            `json:"parent_hash,omitempty"`
-		Role       string             `json:"role"`
-		Content    []llm.ContentBlock `json:"content"`
-		Model      string             `json:"model,omitempty"`
-		Provider   string             `json:"provider,omitempty"`
-		StopReason string             `json:"stop_reason,omitempty"`
-	}
-
-	type sessionResponse struct {
-		Hash  string `json:"hash"`
-		Depth int    `json:"depth"`
-		Turns []turn `json:"turns"`
-	}
-
-	It("parses a valid API session response", func() {
-		parentHash := "hash1"
-		resp := sessionResponse{
-			Hash:  "hash2",
-			Depth: 2,
-			Turns: []turn{
-				{
-					Hash: "hash1",
-					Role: "user",
-					Content: []llm.ContentBlock{
-						{Type: "text", Text: "Hello!"},
-					},
-					Model:    "llama3.2",
-					Provider: "ollama",
-				},
-				{
-					Hash:       "hash2",
-					ParentHash: &parentHash,
-					Role:       "assistant",
-					Content: []llm.ContentBlock{
-						{Type: "text", Text: "Hi there!"},
-					},
-					Model:      "llama3.2",
-					Provider:   "ollama",
-					StopReason: "stop",
-				},
+// The -o file-write path is exercised here against the rendered output,
+// since Export returns the string the command then writes.
+var _ = Describe("writing export output", func() {
+	It("writes rendered content to a file path", func() {
+		ctx := context.Background()
+		querier := &fakeQuerier{
+			summaries: map[string][]skill.TraceSummary{
+				"session-1": {{TraceID: "t1", UserPrompt: "hi", StartedAt: time.Now()}},
+			},
+			traces: map[string]*skill.Trace{
+				"t1": {TraceID: "t1", Spans: []skill.Span{mainSpan(1, "hello")}},
 			},
 		}
 
-		data, err := json.Marshal(resp)
+		out, err := checkoutcmder.Export(ctx, querier, checkoutcmder.ExportOptions{SessionID: "session-1", Format: "md"})
 		Expect(err).NotTo(HaveOccurred())
 
-		var parsed sessionResponse
-		err = json.Unmarshal(data, &parsed)
+		path := filepath.Join(GinkgoT().TempDir(), "export.md")
+		Expect(os.WriteFile(path, []byte(out), 0o644)).To(Succeed())
+
+		data, err := os.ReadFile(path)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(parsed.Hash).To(Equal("hash2"))
-		Expect(parsed.Depth).To(Equal(2))
-		Expect(parsed.Turns).To(HaveLen(2))
-		Expect(parsed.Turns[0].Role).To(Equal("user"))
-		Expect(parsed.Turns[1].Role).To(Equal("assistant"))
-
-		// Extract text from content blocks
-		var b strings.Builder
-		for _, block := range parsed.Turns[1].Content {
-			if block.Type == "text" {
-				b.WriteString(block.Text)
-			}
-		}
-		Expect(b.String()).To(Equal("Hi there!"))
-	})
-
-	It("correctly handles a mock API server returning a session", func() {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			Expect(r.URL.Path).To(Equal("/v1/stems/abc123"))
-			Expect(r.Method).To(Equal("GET"))
-
-			resp := sessionResponse{
-				Hash:  "abc123",
-				Depth: 2,
-				Turns: []turn{
-					{
-						Hash: "root",
-						Role: "user",
-						Content: []llm.ContentBlock{
-							{Type: "text", Text: "What is Go?"},
-						},
-					},
-					{
-						Hash: "abc123",
-						Role: "assistant",
-						Content: []llm.ContentBlock{
-							{Type: "text", Text: "Go is a programming language."},
-						},
-					},
-				},
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resp)
-		}))
-		defer server.Close()
-
-		// Fetch from mock server
-		url := server.URL + "/v1/stems/abc123"
-		resp, err := http.Get(url)
-		Expect(err).NotTo(HaveOccurred())
-		defer resp.Body.Close()
-
-		Expect(resp.StatusCode).To(Equal(http.StatusOK))
-
-		var session sessionResponse
-		err = json.NewDecoder(resp.Body).Decode(&session)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(session.Hash).To(Equal("abc123"))
-		Expect(session.Turns).To(HaveLen(2))
-	})
-
-	It("handles API returning 404 for unknown hash", func() {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "session not found",
-			})
-		}))
-		defer server.Close()
-
-		resp, err := http.Get(server.URL + "/v1/stems/unknown")
-		Expect(err).NotTo(HaveOccurred())
-		defer resp.Body.Close()
-
-		Expect(resp.StatusCode).To(Equal(http.StatusNotFound))
+		Expect(string(data)).To(ContainSubstring("[assistant] hello"))
 	})
 })
+
+func nonEmptyLines(s string) []string {
+	var out []string
+	for line := range strings.SplitSeq(s, "\n") {
+		if strings.TrimSpace(line) != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}

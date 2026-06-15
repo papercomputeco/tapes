@@ -125,6 +125,15 @@ func (d *Driver) IngestTurn(ctx context.Context, req storage.IngestTurnRequest) 
 		return storage.IngestTurnResult{}, fmt.Errorf("upsert session: %w", err)
 	}
 
+	if req.DerivedTitle != "" {
+		if err := qtx.UpdateSessionDerivedTitle(ctx, gensqlc.UpdateSessionDerivedTitleParams{
+			DerivedTitle: nullStringValue(req.DerivedTitle),
+			ID:           sessionRow.ID,
+		}); err != nil {
+			return storage.IngestTurnResult{}, fmt.Errorf("fold derived title: %w", err)
+		}
+	}
+
 	var newNodes []*merkle.Node
 	for _, node := range req.Nodes {
 		if node == nil {
@@ -565,6 +574,8 @@ func insertNodeParamsFromMerkle(orgID pgtype.UUID, n *merkle.Node) (gensqlc.Inse
 		createdAt = time.Now().UTC()
 	}
 
+	reqSystem, reqMaxTokens, reqTemperature, reqStream, reqToolCount := requestParamColumns(n.Request)
+
 	return gensqlc.InsertNodeParams{
 		OrgID:                    orgID,
 		Hash:                     n.Hash,
@@ -586,5 +597,13 @@ func insertNodeParamsFromMerkle(orgID pgtype.UUID, n *merkle.Node) (gensqlc.Inse
 		Project:                  nullStringValue(n.Project),
 		CreatedAt:                pgtype.Timestamptz{Time: createdAt, Valid: true},
 		ParentHash:               nullStringPtr(n.ParentHash),
+		RequestSystem:            reqSystem,
+		RequestMaxTokens:         reqMaxTokens,
+		RequestTemperature:       reqTemperature,
+		RequestStream:            reqStream,
+		RequestToolCount:         reqToolCount,
+		NodeKind:                 nullStringValue(n.Kind),
+		ParentToolUseID:          nullStringValue(n.ParentToolUseID),
+		ThreadID:                 nullStringValue(n.ThreadID),
 	}, nil
 }

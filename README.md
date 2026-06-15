@@ -37,7 +37,26 @@
 
 `tapes` is an Agentic telemetry system for content-addressable LLM interactions.
 It provides durable storage of agent sessions, plug-and-play OpenTelemetry instrumentation,
-and deterministic replay of past agent messages.
+and a derived sessions/traces/spans model for querying and exporting past agent work.
+
+## About
+
+Capture is **append-only**: every intercepted LLM interaction is persisted to an
+immutable `raw_turns` log. A pure, idempotent **deriver** projects that log into
+the read model — **sessions → traces → spans** (with span links) — and re-running
+the deriver simply reproduces the same projection (re-derive prunes anything no
+longer present down to 0). Derived IDs are deterministic, so the same raw input
+always yields the same sessions, traces, and spans.
+
+Reads happen over that derived surface: list and inspect sessions
+(`/v1/sessions`, cursor-paginated, with model/token/cost/turn-count folds),
+browse traces and spans (`/v1/traces`, `/v1/sessions/{id}/traces`), aggregate at
+span grain (`/v1/stats`), and run span-grain semantic search (`/v1/search/spans`).
+The original capture is always available verbatim via
+`/v1/sessions/{id}/raw_turns`.
+
+Content addressing (the merkle node layer) is retained **internally** for
+provenance and dedup; it is not a user-facing browsing surface.
 
 ---
 
@@ -82,21 +101,21 @@ You can also provide the key with `OPENAI_API_KEY` instead of `tapes auth openai
 When OpenAI is selected without a key, Tapes fails at startup with an authentication
 configuration error from the OpenAI embedder.
 
-Start a chat session:
-
-```bash
-tapes chat --model gemma3
-```
-
-Search conversation turns:
+Search across captured spans (individual main-conversation LLM spans, with
+their trace and turn context):
 
 ```bash
 tapes search "What's the weather like in New York?"
 ```
 
-Checkout a previous conversation state for context check-pointing and retry:
+Export a captured conversation as a transcript (Markdown by default, or JSONL):
 
 ```bash
-tapes checkout abc123xyz987
-tapes chat
+tapes checkout <session-id> --format md -o session.md
+```
+
+Browse sessions and drill into a single session in the deck TUI:
+
+```bash
+tapes deck
 ```

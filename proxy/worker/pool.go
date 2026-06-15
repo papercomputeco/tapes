@@ -1,9 +1,13 @@
 // Package worker provides an asynchronous worker pool and utils for persisting
-// conversation turns using the provided storage.Driver and generating embeddings
-// using the provided embeddings.Embedder.
+// conversation turns using the provided storage.Driver.
 //
 // The pool decouples storage operations from the proxy's HTTP hot path so that the
 // client-proxy-upstream interaction is fully transparent.
+//
+// Embedding writes deliberately do NOT happen here: the derive worker
+// family is the single writer of embeddings (pkg/spanembed), keyed by
+// deterministic span identity, so the ingest hot path stays pure
+// capture.
 package worker
 
 import (
@@ -14,13 +18,12 @@ import (
 	"math"
 	"sync"
 
-	"github.com/papercomputeco/tapes/pkg/embeddings"
+	"github.com/papercomputeco/tapes/pkg/derive"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/publisher"
 	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
-	"github.com/papercomputeco/tapes/pkg/vector"
 )
 
 var (
@@ -32,8 +35,12 @@ var (
 type Job struct {
 	Provider  string
 	AgentName string
-	Req       *llm.ChatRequest
-	Resp      *llm.ChatResponse
+	// ThreadID is the harness sub-thread that fired this call ("" for
+	// the main thread), captured at the wire and stamped onto the
+	// turn's nodes as non-hashed metadata.
+	ThreadID string
+	Req      *llm.ChatRequest
+	Resp     *llm.ChatResponse
 
 	// Session is the optional session-tracking envelope attached to
 	// the turn at the ingest HTTP boundary. When non-nil and the
@@ -56,13 +63,6 @@ type Config struct {
 	// Publisher is an optional event publisher for newly inserted nodes.
 	// If nil, publishing is disabled.
 	Publisher publisher.Publisher
-
-	// VectorDriver is the optional vector store driver for embeddings.
-	VectorDriver vector.Driver
-
-	// Embedder generates optional text embeddings.
-	// A configured Embedder is required if VectorDriver is set.
-	Embedder embeddings.Embedder
 
 	// NumWorkers is the number of background workers in the pool.
 	NumWorkers uint
@@ -167,8 +167,7 @@ func (p *Pool) worker(id uint) {
 	p.logger.Debug("storage worker stopped", "worker_id", id)
 }
 
-// processJob processes a Job, storing the conversation turn and setting the
-// embedding if provided.
+// processJob processes a Job, storing the conversation turn.
 func (p *Pool) processJob(job Job) {
 	ctx := context.Background()
 
@@ -185,14 +184,6 @@ func (p *Pool) processJob(job Job) {
 		"head", head,
 		"provider", job.Provider,
 	)
-
-	// If the vector store is configured, process newly inserted nodes
-	if p.config.VectorDriver != nil && p.config.Embedder != nil && len(newNodes) > 0 {
-		p.logger.Debug("storing embeddings for new nodes",
-			"new_node_count", len(newNodes),
-		)
-		p.storeEmbeddings(ctx, newNodes)
-	}
 
 	// If Kafka is configured, publish newly inserted nodes
 	if p.config.Publisher != nil && len(newNodes) > 0 {
@@ -277,50 +268,16 @@ func (p *Pool) storeConversationTurn(ctx context.Context, job Job) (string, []*m
 }
 
 // buildTurnChain materializes the ordered (root → leaf) chain of nodes
-// for a single conversation turn: one node per request message,
-// followed by the assistant response node. ParentHash linkage is set
-// via merkle.NewNode so every node's hash is stable before any I/O.
+// for a single conversation turn. The construction lives in pkg/derive
+// so the offline re-deriver produces byte-identical chains from the
+// raw-turn store; this wrapper just adapts a worker Job.
 func buildTurnChain(job Job, project string) []*merkle.Node {
-	if job.Req == nil || job.Resp == nil {
-		return nil
-	}
-
-	chain := make([]*merkle.Node, 0, len(job.Req.Messages)+1)
-	var parent *merkle.Node
-
-	for _, msg := range job.Req.Messages {
-		bucket := merkle.Bucket{
-			Type:      "message",
-			Role:      msg.Role,
-			Content:   msg.Content,
-			Model:     job.Req.Model,
-			Provider:  job.Provider,
-			AgentName: job.AgentName,
-		}
-		node := merkle.NewNode(bucket, parent, merkle.NodeOptions{Project: project})
-		chain = append(chain, node)
-		parent = node
-	}
-
-	responseBucket := merkle.Bucket{
-		Type:      "message",
-		Role:      job.Resp.Message.Role,
-		Content:   job.Resp.Message.Content,
-		Model:     job.Resp.Model,
+	return derive.TurnChain(derive.CallContext{
 		Provider:  job.Provider,
 		AgentName: job.AgentName,
-	}
-	responseNode := merkle.NewNode(
-		responseBucket,
-		parent,
-		merkle.NodeOptions{
-			StopReason: job.Resp.StopReason,
-			Usage:      job.Resp.Usage,
-			Project:    project,
-		},
-	)
-	chain = append(chain, responseNode)
-	return chain
+		ThreadID:  job.ThreadID,
+		Project:   project,
+	}, job.Req, job.Resp)
 }
 
 // putChainSequentially is the legacy per-node Put loop used when the
@@ -377,6 +334,7 @@ func (p *Pool) ingestTurnViaSessionIngester(
 		InputTokens:  inputTokens,
 		OutputTokens: outputTokens,
 		CostUSD:      0, // pricing lookup not wired in this repo.
+		DerivedTitle: derive.SessionTitle(chain[len(chain)-1].Kind, job.Resp),
 	})
 	if err != nil {
 		return "", nil, fmt.Errorf("session ingester: %w", err)
@@ -388,47 +346,4 @@ func (p *Pool) ingestTurnViaSessionIngester(
 		"counters_updated", res.CountersUpdated,
 	)
 	return head.Hash, res.NewNodes, nil
-}
-
-// storeEmbeddings generates and stores embeddings for the given nodes.
-// Only called for nodes that were newly inserted into the DAG.
-// Errors are logged but not returned to avoid failing the main storage operation.
-func (p *Pool) storeEmbeddings(ctx context.Context, nodes []*merkle.Node) {
-	for _, node := range nodes {
-		text := node.Bucket.ExtractText()
-		if text == "" {
-			p.logger.Debug("skipping embedding for node with no text content",
-				"hash", node.Hash,
-			)
-			continue
-		}
-
-		embedding, err := p.config.Embedder.Embed(ctx, text)
-		if err != nil {
-			p.logger.Warn("failed to generate embedding",
-				"hash", node.Hash,
-				"error", err,
-			)
-			continue
-		}
-
-		doc := vector.Document{
-			ID:        node.Hash,
-			Hash:      node.Hash,
-			Embedding: embedding,
-		}
-
-		if err := p.config.VectorDriver.Add(ctx, []vector.Document{doc}); err != nil {
-			p.logger.Warn("failed to store embedding",
-				"hash", node.Hash,
-				"error", err,
-			)
-			continue
-		}
-
-		p.logger.Debug("stored embedding",
-			"hash", node.Hash,
-			"embedding_dim", len(embedding),
-		)
-	}
 }

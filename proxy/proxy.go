@@ -90,12 +90,10 @@ func New(config Config, driver storage.Driver, log *slog.Logger) (*Proxy, error)
 	app.Use(compress.New())
 
 	wp, err := worker.NewPool(&worker.Config{
-		Driver:       driver,
-		Publisher:    config.Publisher,
-		VectorDriver: config.VectorDriver,
-		Embedder:     config.Embedder,
-		Project:      config.Project,
-		Logger:       log,
+		Driver:    driver,
+		Publisher: config.Publisher,
+		Project:   config.Project,
+		Logger:    log,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("could not create worker pool: %w", err)

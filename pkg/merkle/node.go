@@ -33,6 +33,31 @@ type Node struct {
 	// Project is the git repository or project name that produced this node
 	Project string `json:"project,omitempty"`
 
+	// Kind is the semantic classification of the call (or injected
+	// block) that produced this node — 'main', 'offshoot:…',
+	// 'injected:…' per the design taxonomy. Derived metadata, NOT part
+	// of the content-addressed hash, and recomputable from the raw
+	// layer at any time.
+	Kind string `json:"node_kind,omitempty"`
+
+	// ThreadID is the harness sub-thread that fired the capturing
+	// call (Claude Code: the subagent agent-id), "" for main-thread
+	// calls. Captured deterministically at the wire; non-hashed.
+	ThreadID string `json:"thread_id,omitempty"`
+
+	// ParentToolUseID is the semantic fork/attach edge: the tool_use id
+	// this node's call relates to (a permission verdict points at the
+	// tool_use it judged; a subagent fork points at its Task tool_use).
+	// Derived, non-hashed, recomputable.
+	ParentToolUseID string `json:"parent_tool_use_id,omitempty"`
+
+	// Request carries the request-envelope parameters of the API call
+	// that captured this node (system prompt, max_tokens, temperature,
+	// stream, tool count). Like StopReason/Usage it is call metadata,
+	// NOT part of the content-addressed hash: the same logical turn
+	// keeps the same hash regardless of which kind of call sent it.
+	Request *llm.RequestParams `json:"request_params,omitempty"`
+
 	// CreatedAt is the time the node was persisted to storage. It is populated
 	// by the storage layer (not by NewNode) and is NOT part of the content hash.
 	// Zero value means "unknown" — typically for nodes constructed in-memory
@@ -46,6 +71,7 @@ type NodeOptions struct {
 	StopReason string
 	Usage      *llm.Usage
 	Project    string
+	Request    *llm.RequestParams
 }
 
 // NewNode creates a new node with the computed hash for the provided bucket.
@@ -65,6 +91,7 @@ func NewNode(bucket Bucket, parent *Node, opts ...NodeOptions) *Node {
 		n.StopReason = opts[0].StopReason
 		n.Usage = opts[0].Usage
 		n.Project = opts[0].Project
+		n.Request = opts[0].Request
 	}
 
 	n.Hash = n.computeHash()
