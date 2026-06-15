@@ -109,7 +109,7 @@ func (t *Tapes) TestE2E(ctx context.Context) (string, error) {
 
 		// Span pipeline round trip: ingest a turn into the raw layer,
 		// derive the span projection, embed eligible spans via Ollama
-		// (the one-shot backfill the clearing demo uses), then search.
+		// (the one-shot backfill the e2e backfill uses), then search.
 		WithExec([]string{"hurl", "--test", "--very-verbose", ".dagger/e2e/05-ingest-turn.hurl"}).
 		WithExec([]string{"sleep", "3"}).
 		WithExec([]string{"hurl", "--test", ".dagger/e2e/06-derive-run.hurl"}).

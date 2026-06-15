@@ -163,12 +163,12 @@ var _ = Describe("BuildDerivedSet", func() {
 		mainTurn := mkRaw(1, "r1", `{
 			"model":"claude-test","max_tokens":32000,"stream":true,
 			"tools":[{"name":"Bash"}],
-			"messages":[{"role":"user","content":"check the clearing status"}]
+			"messages":[{"role":"user","content":"check the build status"}]
 		}`, `{
 			"model":"claude-test",
 			"message":{"role":"assistant","content":[
 				{"type":"text","text":"running it"},
-				{"type":"tool_use","tool_use_id":"toolu_123","tool_name":"Bash","tool_input":{"command":"clearing status --json"}}
+				{"type":"tool_use","tool_use_id":"toolu_123","tool_name":"Bash","tool_input":{"command":"git status --short"}}
 			]},
 			"stop_reason":"tool_use"
 		}`)
@@ -177,8 +177,8 @@ var _ = Describe("BuildDerivedSet", func() {
 			"system":"You are a security monitor for autonomous AI coding agents.",
 			"messages":[{"role":"user","content":[
 				{"type":"text","text":"<transcript>"},
-				{"type":"text","text":"User: check the clearing status"},
-				{"type":"text","text":"Bash clearing status --json"},
+				{"type":"text","text":"User: check the build status"},
+				{"type":"text","text":"Bash git status --short"},
 				{"type":"text","text":"</transcript>"},
 				{"type":"text","text":"Err on the side of blocking. <block> immediately."}
 			]}]

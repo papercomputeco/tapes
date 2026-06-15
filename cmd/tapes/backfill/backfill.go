@@ -29,11 +29,10 @@ the captured X-Tapes-* headers — and POSTs each to {ingest-url}/v1/ingest.
 Idempotent: re-running is a no-op for turns already backfilled, and
 turns that already landed via live capture only gain their raw row.
 
-Example (against a clearing):
-  kubectl port-forward -n tenant-develop svc/local-gw-ingest 18890:8090 &
+Example:
   tapes backfill wire-trace \
-    --dir "$GROVE_ROOT/.grove/clearings/develop/wire-trace" \
-    --ingest-url http://127.0.0.1:18890`
+    --dir ./wire-trace \
+    --ingest-url http://localhost:8090`
 
 // NewBackfillCmd creates the `tapes backfill` command tree.
 func NewBackfillCmd() *cobra.Command {
@@ -71,8 +70,8 @@ causal/fork skeleton, the wire supplies the complete call inventory.
 Idempotent: unchanged files dedup server-side; grown transcripts append
 a new version.
 
-Example (against a clearing):
-  tapes backfill transcripts     --dir ~/.claude/projects/-Users-you-src-repo     --session 0ea3c2cc-fe9d-41ff-aab1-4134ad00c350     --ingest-url http://127.0.0.1:18890`,
+Example:
+  tapes backfill transcripts     --dir ~/.claude/projects/<project>     --session 0ea3c2cc-fe9d-41ff-aab1-4134ad00c350     --ingest-url http://localhost:8090`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			result, err := backfill.UploadTranscripts(cmd.Context(), backfill.TranscriptUploadOptions{

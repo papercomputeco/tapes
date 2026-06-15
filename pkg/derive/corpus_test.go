@@ -8,13 +8,13 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
-// The corpus is full sessions captured LIVE through a clearing
+// The corpus is full sessions captured LIVE through a gateway
 // (2026-06-10, exercise-claude-harness skills driven by a human): wire
 // envelopes exactly as tapes-extproc dispatched them plus each
 // session's transcript files (main + subagents). It replaces the
-// "golden sessions in a long-lived clearing DB" pattern — the deriver
-// is a pure function of these rows, so the whole reconciliation
-// pipeline regression-tests here with no database and no clearing.
+// "golden sessions in a long-lived live deployment DB" pattern — the
+// deriver is a pure function of these rows, so the whole reconciliation
+// pipeline regression-tests here with no database and no live deployment.
 //
 //   - cb9a87e5 (advanced): plan mode, 2 subagents, a stage-2 reasoned
 //     verdict overturn.

@@ -13,7 +13,7 @@ import (
 )
 
 // A corpus file is a gzipped JSONL dump of one session's raw_turns
-// rows, captured live through a clearing. The corpus regression tests
+// rows, captured live through a gateway. The corpus regression tests
 // and the `tapes dev trace-fixtures` generator both replay these rows
 // through the deriver, so the loader lives here rather than in test
 // code.

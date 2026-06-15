@@ -38,7 +38,7 @@ type StoreConfig struct {
 	// column is created with exactly this size and EnsureSchema
 	// fail-fasts when an existing table disagrees — model and dims are
 	// a deliberate, explicit pairing (e.g. text-embedding-3-large@1024
-	// in cloud, embeddinggemma@768 on a clearing).
+	// in cloud, embeddinggemma@768 on a local/dev deployment).
 	Dimensions uint
 
 	// OrgID optionally scopes candidate listing and orphan pruning to

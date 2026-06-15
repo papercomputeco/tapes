@@ -59,7 +59,7 @@ created with exactly --embedding-dimensions and the run fails fast if
 an existing table or the model's actual output disagrees.
 
 Examples:
-  # Against a clearing DB (port-forwarded), embedding via Ollama on the host:
+  # Against a remote/port-forwarded Postgres, embedding via Ollama:
   tapes dev embed-spans \
     --postgres "postgres://user:pass@127.0.0.1:15432/tapes" \
     --embedding-provider ollama \
