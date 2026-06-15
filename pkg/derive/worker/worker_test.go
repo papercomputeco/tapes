@@ -139,7 +139,7 @@ func (f *fakeStore) lockCount() int {
 	return len(f.locks)
 }
 
-func (f *fakeStore) ListDeriveDirty(_ context.Context, dirtiedBefore, _ time.Time, limit int32) ([]storage.DeriveQueueEntry, error) {
+func (f *fakeStore) ListDeriveDirty(_ context.Context, dirtiedBefore, firstDirtiedBefore time.Time, limit int32) ([]storage.DeriveQueueEntry, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.listCalls++
@@ -148,7 +148,12 @@ func (f *fakeStore) ListDeriveDirty(_ context.Context, dirtiedBefore, _ time.Tim
 	}
 	var out []storage.DeriveQueueEntry
 	for _, e := range f.queue {
-		if !e.DirtiedAt.After(dirtiedBefore) {
+		// Mirror the SQL: a session lists when it has SETTLED (dirtied_at
+		// past the debounce cutoff) OR when its FIRST mark has aged past
+		// the lag bound — a streaming session that never settles.
+		settled := !e.DirtiedAt.After(dirtiedBefore)
+		lagBounded := !e.FirstDirtiedAt.IsZero() && !e.FirstDirtiedAt.After(firstDirtiedBefore)
+		if settled || lagBounded {
 			out = append(out, e)
 		}
 		if int32(len(out)) >= limit {
@@ -263,11 +268,13 @@ var _ = Describe("Worker", func() {
 	)
 
 	settled := func(org, harness, session string) storage.DeriveQueueEntry {
+		t := time.Now().Add(-time.Minute)
 		return storage.DeriveQueueEntry{
 			OrgID:            org,
 			HarnessID:        harness,
 			HarnessSessionID: session,
-			DirtiedAt:        time.Now().Add(-time.Minute),
+			DirtiedAt:        t,
+			FirstDirtiedAt:   t,
 		}
 	}
 
@@ -330,6 +337,44 @@ var _ = Describe("Worker", func() {
 
 		Consistently(store.deriveCount, "60ms").Should(BeZero(),
 			"a freshly dirtied session must wait out the debounce")
+	})
+
+	It("derives a continuously-streaming session once its first mark crosses the lag bound", func() {
+		// A streaming session re-marks on every capture: dirtied_at keeps
+		// bumping inside the debounce window so it never settles. Without
+		// the max-lag bound it would be listed-then-skipped forever. Its
+		// FIRST mark is what ages out, so once first_dirtied_at crosses
+		// MaxDeriveLag the worker must derive it anyway.
+		now := time.Now()
+		streaming := storage.DeriveQueueEntry{
+			OrgID:            "org-a",
+			HarnessID:        "claude-code",
+			HarnessSessionID: "sess-streaming",
+			// dirtied_at is always recent (just streamed) — never settles.
+			DirtiedAt: now,
+			// first mark is old — past the lag bound below.
+			FirstDirtiedAt: now.Add(-time.Minute),
+		}
+		store.mark(streaming)
+
+		// onDerive keeps the session streaming: every derive re-marks
+		// dirtied_at to "now" so the debounce never settles. The lag bound
+		// is the only thing that can make it derive.
+		store.onDerive = func(_ context.Context) {
+			cur := streaming
+			cur.DirtiedAt = time.Now()
+			store.mark(cur)
+		}
+
+		cfg := fastConfig()
+		// A long debounce guarantees dirtied_at never settles on its own;
+		// only the (short) lag bound can trigger the derive.
+		cfg.Debounce = time.Hour
+		cfg.MaxDeriveLag = 30 * time.Millisecond
+		startWorker(cfg)
+
+		Eventually(store.deriveCount).Should(BeNumerically(">=", 1),
+			"a streaming session must derive once its first mark crosses the lag bound")
 	})
 
 	It("skips sessions whose advisory lock is held elsewhere", func() {

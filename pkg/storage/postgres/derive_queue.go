@@ -187,28 +187,15 @@ func deriveLockKey(orgID, harnessID, harnessSessionID string) int64 {
 	return int64(h.Sum64()) //nolint:gosec // deliberate wraparound into the signed advisory keyspace
 }
 
-// queueRow is the shared shape of the per-query row structs sqlc
-// generates for the queue's identity+dirtied_at selects.
-type queueRow interface {
-	gensqlc.ListDeriveDirtyRow | gensqlc.GetDeriveDirtyRow
-}
-
-func deriveQueueEntryFromRow[R queueRow](row R) storage.DeriveQueueEntry {
-	switch r := any(row).(type) {
-	case gensqlc.ListDeriveDirtyRow:
-		return storage.DeriveQueueEntry{
-			OrgID:            uuidString(r.OrgID),
-			HarnessID:        r.HarnessID,
-			HarnessSessionID: r.HarnessSessionID,
-			DirtiedAt:        r.DirtiedAt.Time,
-		}
-	case gensqlc.GetDeriveDirtyRow:
-		return storage.DeriveQueueEntry{
-			OrgID:            uuidString(r.OrgID),
-			HarnessID:        r.HarnessID,
-			HarnessSessionID: r.HarnessSessionID,
-			DirtiedAt:        r.DirtiedAt.Time,
-		}
+// deriveQueueEntryFromRow maps one queue row to its storage entry. Both
+// the list and re-read selects now return the full derive_queue row, so
+// a single concrete mapping serves both.
+func deriveQueueEntryFromRow(r gensqlc.DeriveQueue) storage.DeriveQueueEntry {
+	return storage.DeriveQueueEntry{
+		OrgID:            uuidString(r.OrgID),
+		HarnessID:        r.HarnessID,
+		HarnessSessionID: r.HarnessSessionID,
+		DirtiedAt:        r.DirtiedAt.Time,
+		FirstDirtiedAt:   r.FirstDirtiedAt.Time,
 	}
-	return storage.DeriveQueueEntry{}
 }

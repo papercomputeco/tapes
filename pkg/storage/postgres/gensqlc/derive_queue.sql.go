@@ -65,7 +65,7 @@ func (q *Queries) DeriveQueueStats(ctx context.Context) (DeriveQueueStatsRow, er
 }
 
 const getDeriveDirty = `-- name: GetDeriveDirty :one
-SELECT org_id, harness_id, harness_session_id, dirtied_at
+SELECT org_id, harness_id, harness_session_id, dirtied_at, first_dirtied_at
 FROM derive_queue
 WHERE org_id = $1
   AND harness_id = $2
@@ -78,29 +78,27 @@ type GetDeriveDirtyParams struct {
 	HarnessSessionID string
 }
 
-type GetDeriveDirtyRow struct {
-	OrgID            pgtype.UUID
-	HarnessID        string
-	HarnessSessionID string
-	DirtiedAt        pgtype.Timestamptz
-}
-
 // Re-read one queue row (the worker does this under the advisory lock
 // to catch a concurrent worker having already derived + cleared it).
-func (q *Queries) GetDeriveDirty(ctx context.Context, arg GetDeriveDirtyParams) (GetDeriveDirtyRow, error) {
+// first_dirtied_at rides along so the re-read can honor the max-lag
+// bound: a continuously streaming session bumps dirtied_at past the
+// debounce cutoff on every poll, but its first mark is what crossed the
+// lag bound, and the worker must derive on that.
+func (q *Queries) GetDeriveDirty(ctx context.Context, arg GetDeriveDirtyParams) (DeriveQueue, error) {
 	row := q.db.QueryRow(ctx, getDeriveDirty, arg.OrgID, arg.HarnessID, arg.HarnessSessionID)
-	var i GetDeriveDirtyRow
+	var i DeriveQueue
 	err := row.Scan(
 		&i.OrgID,
 		&i.HarnessID,
 		&i.HarnessSessionID,
 		&i.DirtiedAt,
+		&i.FirstDirtiedAt,
 	)
 	return i, err
 }
 
 const listDeriveDirty = `-- name: ListDeriveDirty :many
-SELECT org_id, harness_id, harness_session_id, dirtied_at
+SELECT org_id, harness_id, harness_session_id, dirtied_at, first_dirtied_at
 FROM derive_queue
 WHERE dirtied_at <= $1
    OR first_dirtied_at <= $2
@@ -114,31 +112,25 @@ type ListDeriveDirtyParams struct {
 	PageSize           int32
 }
 
-type ListDeriveDirtyRow struct {
-	OrgID            pgtype.UUID
-	HarnessID        string
-	HarnessSessionID string
-	DirtiedAt        pgtype.Timestamptz
-}
-
 // The worker's poll: sessions whose dirty mark has settled (no new
 // raw turn since the debounce window) OR whose first mark has waited
 // past the max-lag bound — a streaming session re-marks continuously
 // and would otherwise never settle. Oldest first.
-func (q *Queries) ListDeriveDirty(ctx context.Context, arg ListDeriveDirtyParams) ([]ListDeriveDirtyRow, error) {
+func (q *Queries) ListDeriveDirty(ctx context.Context, arg ListDeriveDirtyParams) ([]DeriveQueue, error) {
 	rows, err := q.db.Query(ctx, listDeriveDirty, arg.DirtiedBefore, arg.FirstDirtiedBefore, arg.PageSize)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListDeriveDirtyRow
+	var items []DeriveQueue
 	for rows.Next() {
-		var i ListDeriveDirtyRow
+		var i DeriveQueue
 		if err := rows.Scan(
 			&i.OrgID,
 			&i.HarnessID,
 			&i.HarnessSessionID,
 			&i.DirtiedAt,
+			&i.FirstDirtiedAt,
 		); err != nil {
 			return nil, err
 		}

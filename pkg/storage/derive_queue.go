@@ -21,6 +21,13 @@ type DeriveQueueEntry struct {
 	// The worker debounces on it and clears the entry only if it is
 	// unchanged since read — a bump mid-derive survives the clear.
 	DirtiedAt time.Time
+
+	// FirstDirtiedAt is when the session was first marked dirty in this
+	// queued window (it survives re-marks, unlike DirtiedAt). The worker
+	// derives a continuously-streaming session — whose DirtiedAt never
+	// settles past the debounce cutoff — once FirstDirtiedAt crosses the
+	// max-lag bound, so live views see bounded lag.
+	FirstDirtiedAt time.Time
 }
 
 // DeriveQueueStats is a point-in-time summary of the dirty-session

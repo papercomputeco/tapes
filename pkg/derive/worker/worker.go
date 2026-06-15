@@ -368,7 +368,7 @@ func (w *Worker) runPoll(ctx, workCtx context.Context) (int, error) {
 		if ctx.Err() != nil {
 			return derived, nil //nolint:nilerr // shutdown is not a poll failure
 		}
-		ok, err := w.processEntry(workCtx, e, cutoff)
+		ok, err := w.processEntry(workCtx, e, cutoff, lagCutoff)
 		if err != nil {
 			return derived, err
 		}
@@ -399,7 +399,7 @@ func (w *Worker) maxDeriveLag() time.Duration {
 	return DefaultMaxDeriveLag
 }
 
-func (w *Worker) processEntry(ctx context.Context, e storage.DeriveQueueEntry, cutoff time.Time) (bool, error) {
+func (w *Worker) processEntry(ctx context.Context, e storage.DeriveQueueEntry, cutoff, lagCutoff time.Time) (bool, error) {
 	release, acquired, err := w.store.TryDeriveSessionLock(ctx, e.OrgID, e.HarnessID, e.HarnessSessionID)
 	if err != nil {
 		w.metrics.Derives.WithLabelValues(resultError).Inc()
@@ -419,9 +419,17 @@ func (w *Worker) processEntry(ctx context.Context, e storage.DeriveQueueEntry, c
 		w.metrics.Derives.WithLabelValues(resultError).Inc()
 		return false, fmt.Errorf("derive queue re-read %s/%s/%s: %w", e.OrgID, e.HarnessID, e.HarnessSessionID, err)
 	}
-	if cur == nil || cur.DirtiedAt.After(cutoff) {
-		// Cleared by someone else, or re-dirtied inside the debounce
-		// window — either way it is not ours to derive this cycle.
+	// Derive when the session has SETTLED (no raw turn since the debounce
+	// window) OR when it is LAG-BOUNDED (its first mark has waited past
+	// the max-lag bound). A continuously-streaming session bumps
+	// dirtied_at on every capture and never settles, so without the
+	// first-mark bound it would be listed-then-skipped forever — the lag
+	// bound is what forces it to derive. We skip only when it is neither:
+	// cleared already, or still inside the debounce window with a
+	// first-mark that has not yet aged out.
+	settled := cur != nil && !cur.DirtiedAt.After(cutoff)
+	lagBounded := cur != nil && !cur.FirstDirtiedAt.IsZero() && !cur.FirstDirtiedAt.After(lagCutoff)
+	if cur == nil || (!settled && !lagBounded) {
 		w.metrics.Derives.WithLabelValues(resultSkipped).Inc()
 		return false, nil
 	}

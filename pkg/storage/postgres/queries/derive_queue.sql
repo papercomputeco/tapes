@@ -13,7 +13,7 @@ DO UPDATE SET dirtied_at = CURRENT_TIMESTAMP;
 -- raw turn since the debounce window) OR whose first mark has waited
 -- past the max-lag bound — a streaming session re-marks continuously
 -- and would otherwise never settle. Oldest first.
-SELECT org_id, harness_id, harness_session_id, dirtied_at
+SELECT org_id, harness_id, harness_session_id, dirtied_at, first_dirtied_at
 FROM derive_queue
 WHERE dirtied_at <= sqlc.arg(dirtied_before)
    OR first_dirtied_at <= sqlc.arg(first_dirtied_before)
@@ -23,7 +23,11 @@ LIMIT sqlc.arg(page_size);
 -- name: GetDeriveDirty :one
 -- Re-read one queue row (the worker does this under the advisory lock
 -- to catch a concurrent worker having already derived + cleared it).
-SELECT org_id, harness_id, harness_session_id, dirtied_at
+-- first_dirtied_at rides along so the re-read can honor the max-lag
+-- bound: a continuously streaming session bumps dirtied_at past the
+-- debounce cutoff on every poll, but its first mark is what crossed the
+-- lag bound, and the worker must derive on that.
+SELECT org_id, harness_id, harness_session_id, dirtied_at, first_dirtied_at
 FROM derive_queue
 WHERE org_id = $1
   AND harness_id = $2
