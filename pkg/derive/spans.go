@@ -1,6 +1,7 @@
 package derive
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -758,11 +759,20 @@ func spanCallKind(src *SpanSource) string {
 // callIdentity mints the deterministic id suffix for one call: the
 // wire request_id when the capture has one, else the response node
 // hash — both pure functions of the raw layer.
+//
+// An empty request_id is documented-legal (it disables dedup for the
+// row), so two distinct calls can share both a chain position and an
+// empty request_id; the response hash alone then collides, and the
+// span/trace upsert silently overwrites the first call with the second.
+// The store-assigned RawTurnID is unique and stable across re-derive,
+// so the empty-request_id branch folds it in to keep the id distinct.
+// The non-empty branch is left byte-identical: span ids for rows WITH a
+// request id must not move.
 func callIdentity(src *SpanSource) string {
 	if src.RequestID != "" {
 		return src.RequestID
 	}
-	return src.Chain[len(src.Chain)-1].Node.Hash[:16]
+	return fmt.Sprintf("%s_%d", src.Chain[len(src.Chain)-1].Node.Hash[:16], src.RawTurnID)
 }
 
 // lastFreshAssistantIdx is the resume/compaction boundary (#29): the

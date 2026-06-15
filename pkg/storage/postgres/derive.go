@@ -105,9 +105,18 @@ func (d *Driver) RederiveFromRaw(ctx context.Context, project string) (map[strin
 		}
 		set := dv.Finish()
 
-		// Fuse the causal/fork skeleton from any transcript rows.
-		var files []*derive.TranscriptFile
+		// Fuse the causal/fork skeleton from any transcript rows. The
+		// rows come out of a map, so sort by raw id first: on no-thread-id
+		// chains the reconciler's overlap tie-break is first-wins, and a
+		// nondeterministic file order would flip which parent_tool_use_id
+		// is stamped across re-derives.
+		transcriptIDs := make([]int64, 0, len(transcriptRows[orgKey]))
 		for _, id := range transcriptRows[orgKey] {
+			transcriptIDs = append(transcriptIDs, id)
+		}
+		sort.SliceStable(transcriptIDs, func(i, j int) bool { return transcriptIDs[i] < transcriptIDs[j] })
+		var files []*derive.TranscriptFile
+		for _, id := range transcriptIDs {
 			row, err := d.q.GetRawTurn(ctx, id)
 			if err != nil {
 				return nil, fmt.Errorf("fetch transcript row %d: %w", id, err)
@@ -189,8 +198,17 @@ func (d *Driver) RederiveSession(ctx context.Context, project, orgID, harnessID,
 	set := dv.Finish()
 
 	// Fuse the causal/fork skeleton from the session's transcript rows.
-	var files []*derive.TranscriptFile
+	// The rows come out of a map, so sort by raw id first: on no-thread-id
+	// chains the reconciler's overlap tie-break is first-wins, and a
+	// nondeterministic file order would flip which parent_tool_use_id is
+	// stamped across re-derives.
+	transcriptIDs := make([]int64, 0, len(transcriptRows))
 	for _, id := range transcriptRows {
+		transcriptIDs = append(transcriptIDs, id)
+	}
+	sort.SliceStable(transcriptIDs, func(i, j int) bool { return transcriptIDs[i] < transcriptIDs[j] })
+	var files []*derive.TranscriptFile
+	for _, id := range transcriptIDs {
 		row, err := d.q.GetRawTurn(ctx, id)
 		if err != nil {
 			return nil, fmt.Errorf("fetch transcript row %d: %w", id, err)
