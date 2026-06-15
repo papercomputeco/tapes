@@ -147,6 +147,7 @@ func NewDeriveWorkerCmd() *cobra.Command {
 			cmder.debounce = v.GetString("derive_worker.debounce")
 			cmder.sweepInterval = v.GetString("derive_worker.sweep_interval")
 			cmder.sweepWindow = v.GetString("derive_worker.sweep_window")
+			cmder.maxDeriveLag = v.GetString("derive_worker.max_derive_lag")
 			cmder.metricsListen = v.GetString("derive_worker.metrics_listen")
 			cmder.waitForDB = v.GetBool("derive_worker.wait_for_db")
 			cmder.embedSpans = v.GetBool("derive_worker.embed_spans")

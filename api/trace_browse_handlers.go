@@ -80,6 +80,10 @@ func traceItemFromTurn(turn storage.SpanTurnRecord, spanCount int) TraceItem {
 //	@Failure		501			{object}	llm.ErrorResponse
 //	@Router			/v1/traces [get]
 func (s *Server) handleListTraceSummaries(c *fiber.Ctx) error {
+	sessions, ok := s.driver.(sessionsReader)
+	if !ok {
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
+	}
 	reader, ok := s.driver.(spanModelReader)
 	if !ok {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "span traces not supported by this backend"})
@@ -90,6 +94,15 @@ func (s *Server) handleListTraceSummaries(c *fiber.Ctx) error {
 	}
 	if _, err := uuid.Parse(sessionID); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "session_id must be a valid UUID"})
+	}
+	orgID := orgIDFromCtx(c)
+	sess, err := sessions.GetSessionRecord(c.Context(), orgID, sessionID)
+	if err != nil {
+		s.logger.Error("get session for trace summaries", "session_id", sessionID, "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session"})
+	}
+	if sess == nil {
+		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
 	}
 	rows, err := reader.ListTraceSummaries(c.Context(), sessionID)
 	if err != nil {

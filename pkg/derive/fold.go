@@ -3,6 +3,7 @@ package derive
 import (
 	"encoding/json"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 )
@@ -38,7 +39,11 @@ func SessionTitle(kind string, resp *llm.ChatResponse) string {
 	}
 	title := strings.TrimSpace(out.Title)
 	if len(title) > maxFoldedTitleLen {
-		title = title[:maxFoldedTitleLen]
+		cut := maxFoldedTitleLen
+		for cut > 0 && !utf8.RuneStart(title[cut]) {
+			cut--
+		}
+		title = title[:cut]
 	}
 	return title
 }
