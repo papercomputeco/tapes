@@ -16,8 +16,8 @@ import (
 
 const (
 	// DefaultTableName is the span-embedding table. It lives in the
-	// same database as the spans projection — candidate selection and
-	// search both join against spans/span_turns.
+	// same database as the versioned spans projection — candidate selection
+	// and search both join against the current physical table family.
 	DefaultTableName = "span_embeddings"
 
 	// maxVectorDimensions is the upper bound pgvector supports for the
@@ -178,7 +178,7 @@ func (s *Store) ListCandidates(ctx context.Context, after Key, limit int) ([]Can
 	query := fmt.Sprintf(`
 		SELECT s.org_id, s.trace_id, s.span_id, s.session_id, s.input, s.output,
 		       COALESCE(e.content_hash, ''), COALESCE(e.model, '')
-		FROM spans s
+		FROM spans_20260615 s
 		LEFT JOIN %s e
 		  ON e.org_id = s.org_id AND e.trace_id = s.trace_id AND e.span_id = s.span_id
 		WHERE s.kind = 'llm' AND s.call_kind = 'main'
@@ -289,7 +289,7 @@ func (s *Store) PruneOrphans(ctx context.Context) (int64, error) {
 		DELETE FROM %s e
 		WHERE (NOT @scoped::boolean OR e.org_id = @scope_org)
 		  AND NOT EXISTS (
-			SELECT 1 FROM spans s
+			SELECT 1 FROM spans_20260615 s
 			WHERE s.org_id = e.org_id AND s.trace_id = e.trace_id AND s.span_id = e.span_id
 			  AND s.kind = 'llm' AND s.call_kind = 'main'
 		)
@@ -325,9 +325,9 @@ func (s *Store) Search(ctx context.Context, orgID string, embedding []float32, t
 		       1 - (e.embedding <=> @embedding) AS score,
 		       t.user_prompt, s.model, s.started_at, s.input, s.output
 		FROM %s e
-		JOIN spans s
+		JOIN spans_20260615 s
 		  ON s.org_id = e.org_id AND s.trace_id = e.trace_id AND s.span_id = e.span_id
-		JOIN span_turns t
+		JOIN span_turns_20260615 t
 		  ON t.org_id = e.org_id AND t.trace_id = e.trace_id
 		WHERE e.org_id = @org
 		ORDER BY e.embedding <=> @embedding

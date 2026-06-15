@@ -16,6 +16,14 @@ type DeriveQueue struct {
 	FirstDirtiedAt   pgtype.Timestamptz
 }
 
+type DerivedProjectionSchema struct {
+	CompatibilityDate pgtype.Date
+	SpanTurnsTable    string
+	SpansTable        string
+	SpanLinksTable    string
+	CreatedAt         pgtype.Timestamptz
+}
+
 type Node struct {
 	Hash                     string
 	Bucket                   []byte
@@ -91,7 +99,42 @@ type Session struct {
 	ModelUsage        []byte
 }
 
-type Span struct {
+// Derived span-link projection schema version 2026-06-15.
+type SpanLinks20260615 struct {
+	OrgID       pgtype.UUID
+	FromTraceID string
+	FromSpanID  string
+	FromIo      string
+	ToTraceID   string
+	ToSpanID    string
+	ToIo        string
+	Kind        string
+	SessionID   pgtype.UUID
+}
+
+// Derived span-turn projection schema version 2026-06-15.
+type SpanTurns20260615 struct {
+	OrgID               pgtype.UUID
+	TraceID             string
+	SessionID           pgtype.UUID
+	UserPrompt          string
+	Synthetic           string
+	Status              string
+	StartedAt           pgtype.Timestamptz
+	EndedAt             pgtype.Timestamptz
+	DurationNs          int64
+	TotalInputTokens    int64
+	TotalOutputTokens   int64
+	TotalCostUsd        pgtype.Numeric
+	MainInputTokens     int64
+	MainOutputTokens    int64
+	CacheReadTokens     int64
+	CacheCreationTokens int64
+	ResponsePreview     string
+}
+
+// Derived span projection schema version 2026-06-15.
+type Spans20260615 struct {
 	OrgID        pgtype.UUID
 	TraceID      string
 	SpanID       string
@@ -112,36 +155,4 @@ type Span struct {
 	RawTurnID    pgtype.Int8
 	NodeHash     string
 	Seq          int64
-}
-
-type SpanLink struct {
-	OrgID       pgtype.UUID
-	FromTraceID string
-	FromSpanID  string
-	FromIo      string
-	ToTraceID   string
-	ToSpanID    string
-	ToIo        string
-	Kind        string
-	SessionID   pgtype.UUID
-}
-
-type SpanTurn struct {
-	OrgID               pgtype.UUID
-	TraceID             string
-	SessionID           pgtype.UUID
-	UserPrompt          string
-	Synthetic           string
-	Status              string
-	StartedAt           pgtype.Timestamptz
-	EndedAt             pgtype.Timestamptz
-	DurationNs          int64
-	TotalInputTokens    int64
-	TotalOutputTokens   int64
-	TotalCostUsd        pgtype.Numeric
-	MainInputTokens     int64
-	MainOutputTokens    int64
-	CacheReadTokens     int64
-	CacheCreationTokens int64
-	ResponsePreview     string
 }

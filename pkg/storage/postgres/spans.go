@@ -335,8 +335,8 @@ func spanTurnRecordFromColumns(c spanTurnColumns) storage.SpanTurnRecord {
 	return rec
 }
 
-// spanRecordFromRow converts a spans row to its flat record.
-func spanRecordFromRow(row gensqlc.Span) storage.SpanRecord {
+// spanRecordFromRow converts a versioned spans row to its flat record.
+func spanRecordFromRow(row gensqlc.Spans20260615) storage.SpanRecord {
 	return storage.SpanRecord{
 		TraceID:      row.TraceID,
 		SpanID:       row.SpanID,
