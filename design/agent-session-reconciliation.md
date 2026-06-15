@@ -1,5 +1,14 @@
 # Agent Session Capture & Reconciled Conversation Tree — Design
 
+> **Historical — superseded by the span model.** This is the original execution
+> plan. The shipped model is append-only `raw_turns` → a pure idempotent deriver
+> → **sessions / traces / spans** (with span links), read over `/v1/sessions`,
+> `/v1/traces`, `/v1/stats`, and `/v1/search/spans`. The merkle/content-addressed
+> node layer is retained as **internal** provenance/dedup only and is no longer a
+> user-facing surface; references below to a browsable node graph or to
+> `/stems/:hash/graph` as a current/extendable API are obsolete (those endpoints
+> have been removed). Read this for design rationale, not for the current API.
+
 **Status:** Draft for execution by a broadly-scoped implementation agent.
 **Scope:** Local changes across `telemetry/tapes`, `telemetry/tapes-extproc`, and `platform/console`, verifiable in a `clearing`. Prod is the north star, not the deliverable of this doc.
 **Working/prototyping surface (unchanged):** `tools/clearing/debug-viz.mjs` stays the fast local exploration UI. This doc is for the *larger* codebase changes.
