@@ -328,19 +328,6 @@ func (d *Driver) writeDerivedSet(ctx context.Context, orgKey string, set *derive
 		keepHashes = append(keepHashes, n.Hash)
 	}
 
-	for key, title := range set.SessionTitles {
-		id, ok := sessionIDs[key]
-		if !ok {
-			continue
-		}
-		if err := qtx.UpdateSessionDerivedTitle(ctx, gensqlc.UpdateSessionDerivedTitleParams{
-			DerivedTitle: nullStringValue(title),
-			ID:           id,
-		}); err != nil {
-			return fmt.Errorf("fold derived title for %s: %w", key.HarnessSessionID, err)
-		}
-	}
-
 	if len(coveredSessions) > 0 && len(keepHashes) > 0 {
 		pruned, err := qtx.PruneDerivedNodes(ctx, gensqlc.PruneDerivedNodesParams{
 			OrgID:      orgID,
@@ -358,6 +345,23 @@ func (d *Driver) writeDerivedSet(ctx context.Context, orgKey string, set *derive
 	// either lands both layers or neither.
 	if err := writeSpanSet(ctx, qtx, orgID, sessionIDs, coveredSessions, derive.EmitSpans(set)); err != nil {
 		return fmt.Errorf("write span set: %w", err)
+	}
+
+	// Fold derived_title AFTER writeSpanSet: its FoldSessionRollupsFromSpans
+	// pass reset derived_title to NULL for every covered session, so a
+	// re-derive that drops a title clears the stale value. Re-writing here
+	// overwrites only the sessions that still produce one.
+	for key, title := range set.SessionTitles {
+		id, ok := sessionIDs[key]
+		if !ok {
+			continue
+		}
+		if err := qtx.UpdateSessionDerivedTitle(ctx, gensqlc.UpdateSessionDerivedTitleParams{
+			DerivedTitle: nullStringValue(title),
+			ID:           id,
+		}); err != nil {
+			return fmt.Errorf("fold derived title for %s: %w", key.HarnessSessionID, err)
+		}
 	}
 
 	return tx.Commit(ctx)

@@ -102,6 +102,8 @@ UPDATE sessions SET
     total_input_tokens = COALESCE(f.input_tokens, 0),
     total_output_tokens = COALESCE(f.output_tokens, 0),
     turn_count = COALESCE(f.turns, 0),
+    model_usage = NULL,
+    derived_title = NULL,
     derived_model = COALESCE((
         SELECT sp.model FROM spans sp
         WHERE sp.session_id = sessions.id
@@ -136,6 +138,13 @@ WHERE sessions.id = f.id
 // than user-visible turns, so the span fold replaces all of them.
 // derived_model is the dominant conversation-spine model, so the
 // session overview never needs span payloads.
+//
+// model_usage and derived_title are reset to NULL here for every covered
+// session and re-written afterward only for the sessions that still
+// produce one (priced/titled in Go, so they ride a per-key loop, not
+// this fold). Without the reset a re-derive that drops a session's last
+// model entry or its title would leave the previous value stale — not a
+// pure function of raw.
 func (q *Queries) FoldSessionRollupsFromSpans(ctx context.Context, sessionIds []pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, foldSessionRollupsFromSpans, sessionIds)
 	return err
@@ -575,18 +584,42 @@ const pruneSpanLinks = `-- name: PruneSpanLinks :execrows
 DELETE FROM span_links
 WHERE org_id = $1
   AND session_id = ANY($2::uuid[])
-  AND NOT (from_trace_id || '|' || from_span_id || '|' || to_trace_id || '|' || to_span_id || '|' || from_io || '|' || to_io
-           = ANY($3::text[]))
+  AND NOT EXISTS (
+      SELECT 1
+      FROM generate_subscripts($3::text[], 1) AS i
+      WHERE ($3::text[])[i] = span_links.from_trace_id
+        AND ($4::text[])[i]  = span_links.from_span_id
+        AND ($5::text[])[i]   = span_links.to_trace_id
+        AND ($6::text[])[i]    = span_links.to_span_id
+        AND ($7::text[])[i]       = span_links.from_io
+        AND ($8::text[])[i]         = span_links.to_io
+  )
 `
 
 type PruneSpanLinksParams struct {
-	OrgID      pgtype.UUID
-	SessionIds []pgtype.UUID
-	KeepKeys   []string
+	OrgID            pgtype.UUID
+	SessionIds       []pgtype.UUID
+	KeepFromTraceIds []string
+	KeepFromSpanIds  []string
+	KeepToTraceIds   []string
+	KeepToSpanIds    []string
+	KeepFromIos      []string
+	KeepToIos        []string
 }
 
+// Same tuple-membership guard as PruneSpans: the six link key columns
+// carry wire ids and cannot be safely '|'-joined into one string.
 func (q *Queries) PruneSpanLinks(ctx context.Context, arg PruneSpanLinksParams) (int64, error) {
-	result, err := q.db.Exec(ctx, pruneSpanLinks, arg.OrgID, arg.SessionIds, arg.KeepKeys)
+	result, err := q.db.Exec(ctx, pruneSpanLinks,
+		arg.OrgID,
+		arg.SessionIds,
+		arg.KeepFromTraceIds,
+		arg.KeepFromSpanIds,
+		arg.KeepToTraceIds,
+		arg.KeepToSpanIds,
+		arg.KeepFromIos,
+		arg.KeepToIos,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -620,17 +653,33 @@ const pruneSpans = `-- name: PruneSpans :execrows
 DELETE FROM spans
 WHERE org_id = $1
   AND session_id = ANY($2::uuid[])
-  AND NOT (trace_id || '|' || span_id = ANY($3::text[]))
+  AND NOT EXISTS (
+      SELECT 1
+      FROM generate_subscripts($3::text[], 1) AS i
+      WHERE ($3::text[])[i] = spans.trace_id
+        AND ($4::text[])[i]  = spans.span_id
+  )
 `
 
 type PruneSpansParams struct {
-	OrgID      pgtype.UUID
-	SessionIds []pgtype.UUID
-	KeepKeys   []string
+	OrgID        pgtype.UUID
+	SessionIds   []pgtype.UUID
+	KeepTraceIds []string
+	KeepSpanIds  []string
 }
 
+// Keep-set membership is a tuple test over parallel arrays, NOT a
+// delimiter-joined string: trace_id/span_id embed externally-supplied
+// wire ids (request_id, tool_use_id) that can contain any byte, so a '|'
+// delimiter would collapse distinct (trace, span) pairs and delete the
+// wrong row inside the derive tx.
 func (q *Queries) PruneSpans(ctx context.Context, arg PruneSpansParams) (int64, error) {
-	result, err := q.db.Exec(ctx, pruneSpans, arg.OrgID, arg.SessionIds, arg.KeepKeys)
+	result, err := q.db.Exec(ctx, pruneSpans,
+		arg.OrgID,
+		arg.SessionIds,
+		arg.KeepTraceIds,
+		arg.KeepSpanIds,
+	)
 	if err != nil {
 		return 0, err
 	}

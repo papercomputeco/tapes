@@ -86,17 +86,37 @@ WHERE org_id = $1
   AND NOT (trace_id = ANY(sqlc.arg(keep_trace_ids)::text[]));
 
 -- name: PruneSpans :execrows
+-- Keep-set membership is a tuple test over parallel arrays, NOT a
+-- delimiter-joined string: trace_id/span_id embed externally-supplied
+-- wire ids (request_id, tool_use_id) that can contain any byte, so a '|'
+-- delimiter would collapse distinct (trace, span) pairs and delete the
+-- wrong row inside the derive tx.
 DELETE FROM spans
 WHERE org_id = $1
   AND session_id = ANY(sqlc.arg(session_ids)::uuid[])
-  AND NOT (trace_id || '|' || span_id = ANY(sqlc.arg(keep_keys)::text[]));
+  AND NOT EXISTS (
+      SELECT 1
+      FROM generate_subscripts(sqlc.arg(keep_trace_ids)::text[], 1) AS i
+      WHERE (sqlc.arg(keep_trace_ids)::text[])[i] = spans.trace_id
+        AND (sqlc.arg(keep_span_ids)::text[])[i]  = spans.span_id
+  );
 
 -- name: PruneSpanLinks :execrows
+-- Same tuple-membership guard as PruneSpans: the six link key columns
+-- carry wire ids and cannot be safely '|'-joined into one string.
 DELETE FROM span_links
 WHERE org_id = $1
   AND session_id = ANY(sqlc.arg(session_ids)::uuid[])
-  AND NOT (from_trace_id || '|' || from_span_id || '|' || to_trace_id || '|' || to_span_id || '|' || from_io || '|' || to_io
-           = ANY(sqlc.arg(keep_keys)::text[]));
+  AND NOT EXISTS (
+      SELECT 1
+      FROM generate_subscripts(sqlc.arg(keep_from_trace_ids)::text[], 1) AS i
+      WHERE (sqlc.arg(keep_from_trace_ids)::text[])[i] = span_links.from_trace_id
+        AND (sqlc.arg(keep_from_span_ids)::text[])[i]  = span_links.from_span_id
+        AND (sqlc.arg(keep_to_trace_ids)::text[])[i]   = span_links.to_trace_id
+        AND (sqlc.arg(keep_to_span_ids)::text[])[i]    = span_links.to_span_id
+        AND (sqlc.arg(keep_from_ios)::text[])[i]       = span_links.from_io
+        AND (sqlc.arg(keep_to_ios)::text[])[i]         = span_links.to_io
+  );
 
 -- Span model reads.
 
@@ -164,11 +184,20 @@ WHERE org_id = $1 AND trace_id = $2 AND span_id = $3;
 -- than user-visible turns, so the span fold replaces all of them.
 -- derived_model is the dominant conversation-spine model, so the
 -- session overview never needs span payloads.
+--
+-- model_usage and derived_title are reset to NULL here for every covered
+-- session and re-written afterward only for the sessions that still
+-- produce one (priced/titled in Go, so they ride a per-key loop, not
+-- this fold). Without the reset a re-derive that drops a session's last
+-- model entry or its title would leave the previous value stale — not a
+-- pure function of raw.
 UPDATE sessions SET
     total_cost_usd = COALESCE(f.cost, 0),
     total_input_tokens = COALESCE(f.input_tokens, 0),
     total_output_tokens = COALESCE(f.output_tokens, 0),
     turn_count = COALESCE(f.turns, 0),
+    model_usage = NULL,
+    derived_title = NULL,
     derived_model = COALESCE((
         SELECT sp.model FROM spans sp
         WHERE sp.session_id = sessions.id

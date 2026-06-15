@@ -31,18 +31,22 @@ func writeSpanSet(
 	spans *derive.SpanSet,
 ) error {
 	keepTraces := make([]string, 0, len(spans.Turns))
-	var keepSpans, keepLinks []string
-
-	sessionOf := func(key derive.SessionKey) pgtype.UUID {
-		if id, ok := sessionIDs[key]; ok {
-			return id
-		}
-		return pgtype.UUID{}
-	}
+	// Parallel keep-key arrays for the tuple-membership prune (a '|'-
+	// joined key would collide on wire ids that contain the delimiter).
+	var keepSpanTraceIDs, keepSpanIDs []string
+	var keepLinkFromTrace, keepLinkFromSpan, keepLinkToTrace, keepLinkToSpan, keepLinkFromIO, keepLinkToIO []string
 
 	turnSession := map[string]pgtype.UUID{}
 	for _, turn := range spans.Turns {
-		sid := sessionOf(turn.Session)
+		sid, ok := sessionIDs[turn.Session]
+		if !ok {
+			// Unresolved session (raw rows whose sessions row never
+			// landed). A NULL-session span row is unreachable by every
+			// prune path (they scope by session_id = ANY(covered)), so it
+			// would leak as an orphan — don't write it at all. Mirrors how
+			// SessionTitles and ModelUsage skip unresolved keys.
+			continue
+		}
 		turnSession[turn.TraceID] = sid
 		keepTraces = append(keepTraces, turn.TraceID)
 		costNumeric, err := numericFromFloat(turn.TotalCostUSD)
@@ -72,7 +76,8 @@ func writeSpanSet(
 		}
 
 		for _, s := range turn.Spans {
-			keepSpans = append(keepSpans, turn.TraceID+"|"+s.SpanID)
+			keepSpanTraceIDs = append(keepSpanTraceIDs, turn.TraceID)
+			keepSpanIDs = append(keepSpanIDs, s.SpanID)
 			input, err := contentJSON(s.Input)
 			if err != nil {
 				return fmt.Errorf("marshal span %s input: %w", s.SpanID, err)
@@ -119,8 +124,19 @@ func writeSpanSet(
 	}
 
 	writeLink := func(l *derive.SpanLink) error {
-		keepLinks = append(keepLinks,
-			l.FromTraceID+"|"+l.FromSpanID+"|"+l.ToTraceID+"|"+l.ToSpanID+"|"+l.FromIO+"|"+l.ToIO)
+		sid, ok := turnSession[l.FromTraceID]
+		if !ok {
+			// The from-trace's turn resolved to no session (or was
+			// skipped above), so this link would carry a NULL session_id
+			// no prune path can reach. Skip it for the same reason.
+			return nil
+		}
+		keepLinkFromTrace = append(keepLinkFromTrace, l.FromTraceID)
+		keepLinkFromSpan = append(keepLinkFromSpan, l.FromSpanID)
+		keepLinkToTrace = append(keepLinkToTrace, l.ToTraceID)
+		keepLinkToSpan = append(keepLinkToSpan, l.ToSpanID)
+		keepLinkFromIO = append(keepLinkFromIO, l.FromIO)
+		keepLinkToIO = append(keepLinkToIO, l.ToIO)
 		return qtx.UpsertSpanLink(ctx, gensqlc.UpsertSpanLinkParams{
 			OrgID:       orgID,
 			FromTraceID: l.FromTraceID,
@@ -130,7 +146,7 @@ func writeSpanSet(
 			ToSpanID:    l.ToSpanID,
 			ToIo:        l.ToIO,
 			Kind:        l.Kind,
-			SessionID:   turnSession[l.FromTraceID],
+			SessionID:   sid,
 		})
 	}
 	for _, turn := range spans.Turns {
@@ -151,16 +167,22 @@ func writeSpanSet(
 	}
 	if len(keepTraces) > 0 {
 		if _, err := qtx.PruneSpanLinks(ctx, gensqlc.PruneSpanLinksParams{
-			OrgID:      orgID,
-			SessionIds: coveredSessions,
-			KeepKeys:   keepLinks,
+			OrgID:            orgID,
+			SessionIds:       coveredSessions,
+			KeepFromTraceIds: keepLinkFromTrace,
+			KeepFromSpanIds:  keepLinkFromSpan,
+			KeepToTraceIds:   keepLinkToTrace,
+			KeepToSpanIds:    keepLinkToSpan,
+			KeepFromIos:      keepLinkFromIO,
+			KeepToIos:        keepLinkToIO,
 		}); err != nil {
 			return fmt.Errorf("prune span links: %w", err)
 		}
 		if _, err := qtx.PruneSpans(ctx, gensqlc.PruneSpansParams{
-			OrgID:      orgID,
-			SessionIds: coveredSessions,
-			KeepKeys:   keepSpans,
+			OrgID:        orgID,
+			SessionIds:   coveredSessions,
+			KeepTraceIds: keepSpanTraceIDs,
+			KeepSpanIds:  keepSpanIDs,
 		}); err != nil {
 			return fmt.Errorf("prune spans: %w", err)
 		}
@@ -180,8 +202,8 @@ func writeSpanSet(
 	// price table lives there, not in SQL), so it writes directly as a
 	// JSONB array rather than riding the SQL rollup fold above.
 	for key, usage := range spans.ModelUsage {
-		sid := sessionOf(key)
-		if !sid.Valid {
+		sid, ok := sessionIDs[key]
+		if !ok || !sid.Valid {
 			continue
 		}
 		payload, err := json.Marshal(usage)
