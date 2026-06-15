@@ -63,7 +63,7 @@ var _ = Describe("Store", func() {
 		dsn, err = testPostgresDSN()
 		Expect(err).NotTo(HaveOccurred())
 
-		// Open the tapes driver once so migrations (spans, span_turns)
+		// Open the tapes driver once so migrations (spans_20260615, span_turns_20260615)
 		// are applied, then keep a plain pool for the store under test.
 		driver, err := postgres.NewDriver(ctx, dsn)
 		Expect(err).NotTo(HaveOccurred())
@@ -79,23 +79,23 @@ var _ = Describe("Store", func() {
 	AfterEach(func() {
 		_, err := pool.Exec(ctx, "DROP TABLE IF EXISTS "+pgx.Identifier{tableName}.Sanitize())
 		Expect(err).NotTo(HaveOccurred())
-		_, err = pool.Exec(ctx, "DELETE FROM spans WHERE org_id = $1", org)
+		_, err = pool.Exec(ctx, "DELETE FROM spans_20260615 WHERE org_id = $1", org)
 		Expect(err).NotTo(HaveOccurred())
-		_, err = pool.Exec(ctx, "DELETE FROM span_turns WHERE org_id = $1", org)
+		_, err = pool.Exec(ctx, "DELETE FROM span_turns_20260615 WHERE org_id = $1", org)
 		Expect(err).NotTo(HaveOccurred())
 		pool.Close()
 	})
 
 	insertSpan := func(spanID, kind, callKind string, input, output string) {
 		_, err := pool.Exec(ctx, `
-			INSERT INTO span_turns (org_id, trace_id, user_prompt, started_at)
+			INSERT INTO span_turns_20260615 (org_id, trace_id, user_prompt, started_at)
 			VALUES ($1, $2, 'find the turn', now())
 			ON CONFLICT (org_id, trace_id) DO NOTHING
 		`, org, traceA)
 		Expect(err).NotTo(HaveOccurred())
 
 		_, err = pool.Exec(ctx, `
-			INSERT INTO spans (org_id, trace_id, span_id, kind, call_kind, started_at, input, output)
+			INSERT INTO spans_20260615 (org_id, trace_id, span_id, kind, call_kind, started_at, input, output)
 			VALUES ($1, $2, $3, $4, $5, now(), NULLIF($6, '')::jsonb, NULLIF($7, '')::jsonb)
 		`, org, traceA, spanID, kind, callKind, input, output)
 		Expect(err).NotTo(HaveOccurred())
@@ -125,7 +125,7 @@ var _ = Describe("Store", func() {
 	})
 
 	Describe("candidate selection and search round trip", func() {
-		It("lists only main llm spans, upserts by identity, prunes orphans, and searches with turn context", func() {
+		It("lists only main llm spans_20260615, upserts by identity, prunes orphans, and searches with turn context", func() {
 			input := `[{"type":"text","text":"how do I configure retry backoff"}]`
 			output := `[{"type":"text","text":"set max-poll-backoff"}]`
 			insertSpan("llm_main", "llm", "main", input, output)
@@ -170,7 +170,7 @@ var _ = Describe("Store", func() {
 			Expect(hits[0].Score).To(BeNumerically("~", 1.0, 1e-4))
 
 			// Pruning: drop the span, the embedding follows.
-			_, err = pool.Exec(ctx, "DELETE FROM spans WHERE org_id = $1 AND span_id = 'llm_main'", org)
+			_, err = pool.Exec(ctx, "DELETE FROM spans_20260615 WHERE org_id = $1 AND span_id = 'llm_main'", org)
 			Expect(err).NotTo(HaveOccurred())
 			pruned, err := store.PruneOrphans(ctx)
 			Expect(err).NotTo(HaveOccurred())

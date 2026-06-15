@@ -16,7 +16,7 @@ WITH matched AS (
     SELECT t.org_id, t.trace_id, t.session_id, t.synthetic, t.duration_ns,
            t.total_input_tokens, t.total_output_tokens,
            t.cache_read_tokens, t.cache_creation_tokens, t.total_cost_usd
-    FROM span_turns t
+    FROM span_turns_20260615 t
     WHERE t.org_id = $1
       AND ($2::timestamptz IS NULL OR t.started_at >= $2::timestamptz)
       AND ($3::timestamptz IS NULL OR t.started_at < $3::timestamptz)
@@ -37,7 +37,7 @@ SELECT
     COALESCE(SUM(cache_read_tokens), 0)::bigint             AS cache_read_tokens,
     COALESCE(SUM(duration_ns), 0)::bigint                   AS total_duration_ns,
     COALESCE(SUM(total_cost_usd), 0)::numeric               AS total_cost_usd,
-    (SELECT COUNT(*) FROM spans sp
+    (SELECT COUNT(*) FROM spans_20260615 sp
      WHERE sp.org_id = $1
        AND sp.kind = 'tool'
        AND ($2::timestamptz IS NULL OR sp.started_at >= $2::timestamptz)
@@ -76,7 +76,7 @@ type AggregateSpanStatsRow struct {
 //	total_duration_ns = SUM of trace durations — agent time, not the
 //	                    wall-clock MAX-MIN window (idle time between
 //	                    turns no longer counts)
-//	tool_calls        = tool spans started in the window
+//	tool_calls        = tool spans_20260615 started in the window
 func (q *Queries) AggregateSpanStats(ctx context.Context, arg AggregateSpanStatsParams) (AggregateSpanStatsRow, error) {
 	row := q.db.QueryRow(ctx, aggregateSpanStats, arg.OrgID, arg.SinceFilter, arg.UntilFilter)
 	var i AggregateSpanStatsRow
@@ -105,7 +105,7 @@ UPDATE sessions SET
     model_usage = NULL,
     derived_title = NULL,
     derived_model = COALESCE((
-        SELECT sp.model FROM spans sp
+        SELECT sp.model FROM spans_20260615 sp
         WHERE sp.session_id = sessions.id
           AND sp.kind = 'llm' AND sp.call_kind = 'main' AND sp.model <> ''
           -- main thread only: subagents run their own (often cheaper)
@@ -123,7 +123,7 @@ FROM (
            SUM(st.total_output_tokens) AS output_tokens,
            COUNT(st.trace_id)          AS turns
     FROM sessions s
-    LEFT JOIN span_turns st ON st.session_id = s.id
+    LEFT JOIN span_turns_20260615 st ON st.session_id = s.id
     WHERE s.id = ANY($1::uuid[])
     GROUP BY s.id
 ) f
@@ -151,7 +151,7 @@ func (q *Queries) FoldSessionRollupsFromSpans(ctx context.Context, sessionIds []
 }
 
 const getSpan = `-- name: GetSpan :one
-SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq FROM spans
+SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq FROM spans_20260615
 WHERE org_id = $1 AND trace_id = $2 AND span_id = $3
 `
 
@@ -161,9 +161,9 @@ type GetSpanParams struct {
 	SpanID  string
 }
 
-func (q *Queries) GetSpan(ctx context.Context, arg GetSpanParams) (Span, error) {
+func (q *Queries) GetSpan(ctx context.Context, arg GetSpanParams) (Spans20260615, error) {
 	row := q.db.QueryRow(ctx, getSpan, arg.OrgID, arg.TraceID, arg.SpanID)
-	var i Span
+	var i Spans20260615
 	err := row.Scan(
 		&i.OrgID,
 		&i.TraceID,
@@ -190,7 +190,7 @@ func (q *Queries) GetSpan(ctx context.Context, arg GetSpanParams) (Span, error) 
 }
 
 const getSpanTurn = `-- name: GetSpanTurn :one
-SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview FROM span_turns
+SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview FROM span_turns_20260615
 WHERE org_id = $1 AND trace_id = $2
 `
 
@@ -199,9 +199,9 @@ type GetSpanTurnParams struct {
 	TraceID string
 }
 
-func (q *Queries) GetSpanTurn(ctx context.Context, arg GetSpanTurnParams) (SpanTurn, error) {
+func (q *Queries) GetSpanTurn(ctx context.Context, arg GetSpanTurnParams) (SpanTurns20260615, error) {
 	row := q.db.QueryRow(ctx, getSpanTurn, arg.OrgID, arg.TraceID)
-	var i SpanTurn
+	var i SpanTurns20260615
 	err := row.Scan(
 		&i.OrgID,
 		&i.TraceID,
@@ -225,19 +225,19 @@ func (q *Queries) GetSpanTurn(ctx context.Context, arg GetSpanTurnParams) (SpanT
 }
 
 const listSpanLinksBySession = `-- name: ListSpanLinksBySession :many
-SELECT org_id, from_trace_id, from_span_id, from_io, to_trace_id, to_span_id, to_io, kind, session_id FROM span_links
+SELECT org_id, from_trace_id, from_span_id, from_io, to_trace_id, to_span_id, to_io, kind, session_id FROM span_links_20260615
 WHERE session_id = $1
 `
 
-func (q *Queries) ListSpanLinksBySession(ctx context.Context, sessionID pgtype.UUID) ([]SpanLink, error) {
+func (q *Queries) ListSpanLinksBySession(ctx context.Context, sessionID pgtype.UUID) ([]SpanLinks20260615, error) {
 	rows, err := q.db.Query(ctx, listSpanLinksBySession, sessionID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []SpanLink
+	var items []SpanLinks20260615
 	for rows.Next() {
-		var i SpanLink
+		var i SpanLinks20260615
 		if err := rows.Scan(
 			&i.OrgID,
 			&i.FromTraceID,
@@ -260,7 +260,7 @@ func (q *Queries) ListSpanLinksBySession(ctx context.Context, sessionID pgtype.U
 }
 
 const listSpanLinksByTrace = `-- name: ListSpanLinksByTrace :many
-SELECT org_id, from_trace_id, from_span_id, from_io, to_trace_id, to_span_id, to_io, kind, session_id FROM span_links
+SELECT org_id, from_trace_id, from_span_id, from_io, to_trace_id, to_span_id, to_io, kind, session_id FROM span_links_20260615
 WHERE org_id = $1 AND (from_trace_id = $2 OR to_trace_id = $2)
 `
 
@@ -269,15 +269,15 @@ type ListSpanLinksByTraceParams struct {
 	FromTraceID string
 }
 
-func (q *Queries) ListSpanLinksByTrace(ctx context.Context, arg ListSpanLinksByTraceParams) ([]SpanLink, error) {
+func (q *Queries) ListSpanLinksByTrace(ctx context.Context, arg ListSpanLinksByTraceParams) ([]SpanLinks20260615, error) {
 	rows, err := q.db.Query(ctx, listSpanLinksByTrace, arg.OrgID, arg.FromTraceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []SpanLink
+	var items []SpanLinks20260615
 	for rows.Next() {
-		var i SpanLink
+		var i SpanLinks20260615
 		if err := rows.Scan(
 			&i.OrgID,
 			&i.FromTraceID,
@@ -300,7 +300,7 @@ func (q *Queries) ListSpanLinksByTrace(ctx context.Context, arg ListSpanLinksByT
 }
 
 const listSpanTurns = `-- name: ListSpanTurns :many
-SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview FROM span_turns
+SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview FROM span_turns_20260615
 WHERE org_id = $1
   AND ($3::timestamptz IS NULL
        OR (started_at, trace_id) < ($3::timestamptz, $4::text))
@@ -315,7 +315,7 @@ type ListSpanTurnsParams struct {
 	CursorTraceID   pgtype.Text
 }
 
-func (q *Queries) ListSpanTurns(ctx context.Context, arg ListSpanTurnsParams) ([]SpanTurn, error) {
+func (q *Queries) ListSpanTurns(ctx context.Context, arg ListSpanTurnsParams) ([]SpanTurns20260615, error) {
 	rows, err := q.db.Query(ctx, listSpanTurns,
 		arg.OrgID,
 		arg.Limit,
@@ -326,9 +326,9 @@ func (q *Queries) ListSpanTurns(ctx context.Context, arg ListSpanTurnsParams) ([
 		return nil, err
 	}
 	defer rows.Close()
-	var items []SpanTurn
+	var items []SpanTurns20260615
 	for rows.Next() {
-		var i SpanTurn
+		var i SpanTurns20260615
 		if err := rows.Scan(
 			&i.OrgID,
 			&i.TraceID,
@@ -360,21 +360,21 @@ func (q *Queries) ListSpanTurns(ctx context.Context, arg ListSpanTurnsParams) ([
 
 const listSpanTurnsBySession = `-- name: ListSpanTurnsBySession :many
 
-SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview FROM span_turns
+SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview FROM span_turns_20260615
 WHERE session_id = $1
 ORDER BY started_at ASC, trace_id ASC
 `
 
 // Span model reads.
-func (q *Queries) ListSpanTurnsBySession(ctx context.Context, sessionID pgtype.UUID) ([]SpanTurn, error) {
+func (q *Queries) ListSpanTurnsBySession(ctx context.Context, sessionID pgtype.UUID) ([]SpanTurns20260615, error) {
 	rows, err := q.db.Query(ctx, listSpanTurnsBySession, sessionID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []SpanTurn
+	var items []SpanTurns20260615
 	for rows.Next() {
-		var i SpanTurn
+		var i SpanTurns20260615
 		if err := rows.Scan(
 			&i.OrgID,
 			&i.TraceID,
@@ -405,22 +405,22 @@ func (q *Queries) ListSpanTurnsBySession(ctx context.Context, sessionID pgtype.U
 }
 
 const listSpansBySession = `-- name: ListSpansBySession :many
-SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq FROM spans
+SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq FROM spans_20260615
 WHERE session_id = $1
 ORDER BY trace_id ASC, seq ASC, started_at ASC, span_id ASC
 `
 
 // seq is the deriver's emit ordinal (presentation order); started_at/
 // span_id only break ties for pre-seq rows that haven't re-derived.
-func (q *Queries) ListSpansBySession(ctx context.Context, sessionID pgtype.UUID) ([]Span, error) {
+func (q *Queries) ListSpansBySession(ctx context.Context, sessionID pgtype.UUID) ([]Spans20260615, error) {
 	rows, err := q.db.Query(ctx, listSpansBySession, sessionID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Span
+	var items []Spans20260615
 	for rows.Next() {
-		var i Span
+		var i Spans20260615
 		if err := rows.Scan(
 			&i.OrgID,
 			&i.TraceID,
@@ -454,7 +454,7 @@ func (q *Queries) ListSpansBySession(ctx context.Context, sessionID pgtype.UUID)
 }
 
 const listSpansByTrace = `-- name: ListSpansByTrace :many
-SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq FROM spans
+SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq FROM spans_20260615
 WHERE org_id = $1 AND trace_id = $2
 ORDER BY seq ASC, started_at ASC, span_id ASC
 `
@@ -464,15 +464,15 @@ type ListSpansByTraceParams struct {
 	TraceID string
 }
 
-func (q *Queries) ListSpansByTrace(ctx context.Context, arg ListSpansByTraceParams) ([]Span, error) {
+func (q *Queries) ListSpansByTrace(ctx context.Context, arg ListSpansByTraceParams) ([]Spans20260615, error) {
 	rows, err := q.db.Query(ctx, listSpansByTrace, arg.OrgID, arg.TraceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Span
+	var items []Spans20260615
 	for rows.Next() {
-		var i Span
+		var i Spans20260615
 		if err := rows.Scan(
 			&i.OrgID,
 			&i.TraceID,
@@ -512,8 +512,8 @@ SELECT t.org_id, t.trace_id, t.session_id, t.user_prompt, t.response_preview, t.
        t.main_input_tokens, t.main_output_tokens,
        t.cache_read_tokens, t.cache_creation_tokens, t.total_cost_usd,
        count(s.span_id) AS span_count
-FROM span_turns t
-LEFT JOIN spans s ON s.org_id = t.org_id AND s.trace_id = t.trace_id
+FROM span_turns_20260615 t
+LEFT JOIN spans_20260615 s ON s.org_id = t.org_id AND s.trace_id = t.trace_id
 WHERE t.session_id = $1
 GROUP BY t.org_id, t.trace_id
 ORDER BY t.started_at ASC, t.trace_id ASC
@@ -581,18 +581,18 @@ func (q *Queries) ListTraceSummariesBySession(ctx context.Context, sessionID pgt
 }
 
 const pruneSpanLinks = `-- name: PruneSpanLinks :execrows
-DELETE FROM span_links
+DELETE FROM span_links_20260615
 WHERE org_id = $1
   AND session_id = ANY($2::uuid[])
   AND NOT EXISTS (
       SELECT 1
       FROM generate_subscripts($3::text[], 1) AS i
-      WHERE ($3::text[])[i] = span_links.from_trace_id
-        AND ($4::text[])[i]  = span_links.from_span_id
-        AND ($5::text[])[i]   = span_links.to_trace_id
-        AND ($6::text[])[i]    = span_links.to_span_id
-        AND ($7::text[])[i]       = span_links.from_io
-        AND ($8::text[])[i]         = span_links.to_io
+      WHERE ($3::text[])[i] = span_links_20260615.from_trace_id
+        AND ($4::text[])[i]  = span_links_20260615.from_span_id
+        AND ($5::text[])[i]   = span_links_20260615.to_trace_id
+        AND ($6::text[])[i]    = span_links_20260615.to_span_id
+        AND ($7::text[])[i]       = span_links_20260615.from_io
+        AND ($8::text[])[i]         = span_links_20260615.to_io
   )
 `
 
@@ -627,7 +627,7 @@ func (q *Queries) PruneSpanLinks(ctx context.Context, arg PruneSpanLinksParams) 
 }
 
 const pruneSpanTurns = `-- name: PruneSpanTurns :execrows
-DELETE FROM span_turns
+DELETE FROM span_turns_20260615
 WHERE org_id = $1
   AND session_id = ANY($2::uuid[])
   AND NOT (trace_id = ANY($3::text[]))
@@ -650,14 +650,14 @@ func (q *Queries) PruneSpanTurns(ctx context.Context, arg PruneSpanTurnsParams) 
 }
 
 const pruneSpans = `-- name: PruneSpans :execrows
-DELETE FROM spans
+DELETE FROM spans_20260615
 WHERE org_id = $1
   AND session_id = ANY($2::uuid[])
   AND NOT EXISTS (
       SELECT 1
       FROM generate_subscripts($3::text[], 1) AS i
-      WHERE ($3::text[])[i] = spans.trace_id
-        AND ($4::text[])[i]  = spans.span_id
+      WHERE ($3::text[])[i] = spans_20260615.trace_id
+        AND ($4::text[])[i]  = spans_20260615.span_id
   )
 `
 
@@ -687,7 +687,7 @@ func (q *Queries) PruneSpans(ctx context.Context, arg PruneSpansParams) (int64, 
 }
 
 const upsertSpan = `-- name: UpsertSpan :exec
-INSERT INTO spans (
+INSERT INTO spans_20260615 (
     org_id, trace_id, span_id, parent_span_id, session_id,
     kind, name, status, call_kind, thread_id, model, stop_reason,
     started_at, duration_ns, seq, input, output, usage, raw_turn_id, node_hash
@@ -698,7 +698,7 @@ INSERT INTO spans (
 )
 ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     parent_span_id = EXCLUDED.parent_span_id,
-    session_id     = COALESCE(spans.session_id, EXCLUDED.session_id),
+    session_id     = COALESCE(spans_20260615.session_id, EXCLUDED.session_id),
     kind           = EXCLUDED.kind,
     name           = EXCLUDED.name,
     status         = EXCLUDED.status,
@@ -766,7 +766,7 @@ func (q *Queries) UpsertSpan(ctx context.Context, arg UpsertSpanParams) error {
 }
 
 const upsertSpanLink = `-- name: UpsertSpanLink :exec
-INSERT INTO span_links (
+INSERT INTO span_links_20260615 (
     org_id, from_trace_id, from_span_id, from_io,
     to_trace_id, to_span_id, to_io, kind, session_id
 ) VALUES (
@@ -776,7 +776,7 @@ INSERT INTO span_links (
 ON CONFLICT (org_id, from_trace_id, from_span_id, to_trace_id, to_span_id, from_io, to_io)
 DO UPDATE SET
     kind       = EXCLUDED.kind,
-    session_id = COALESCE(span_links.session_id, EXCLUDED.session_id)
+    session_id = COALESCE(span_links_20260615.session_id, EXCLUDED.session_id)
 `
 
 type UpsertSpanLinkParams struct {
@@ -808,7 +808,7 @@ func (q *Queries) UpsertSpanLink(ctx context.Context, arg UpsertSpanLinkParams) 
 
 const upsertSpanTurn = `-- name: UpsertSpanTurn :exec
 
-INSERT INTO span_turns (
+INSERT INTO span_turns_20260615 (
     org_id, trace_id, session_id, user_prompt, response_preview, synthetic, status,
     started_at, ended_at, duration_ns,
     total_input_tokens, total_output_tokens,
@@ -824,7 +824,7 @@ INSERT INTO span_turns (
     $17
 )
 ON CONFLICT (org_id, trace_id) DO UPDATE SET
-    session_id            = COALESCE(span_turns.session_id, EXCLUDED.session_id),
+    session_id            = COALESCE(span_turns_20260615.session_id, EXCLUDED.session_id),
     user_prompt           = EXCLUDED.user_prompt,
     response_preview      = EXCLUDED.response_preview,
     synthetic             = EXCLUDED.synthetic,

@@ -149,14 +149,14 @@ var _ = Describe("Derive worker storage (postgres)", func() {
 				).To(Succeed())
 				return n
 			}
-			turns := countRows("span_turns")
-			spanRows := countRows("spans")
+			turns := countRows("span_turns_20260615")
+			spanRows := countRows("spans_20260615")
 			Expect(turns).To(BeNumerically(">", 0), "derive must land span turns")
-			Expect(spanRows).To(BeNumerically(">", turns), "each trace carries spans beyond its root")
+			Expect(spanRows).To(BeNumerically(">", turns), "each trace carries spans_20260615 beyond its root")
 
 			var llmSpans int
 			Expect(driver.DB().QueryRow(ctx,
-				"SELECT COUNT(*) FROM spans WHERE session_id = $1 AND kind = 'llm' AND raw_turn_id IS NOT NULL",
+				"SELECT COUNT(*) FROM spans_20260615 WHERE session_id = $1 AND kind = 'llm' AND raw_turn_id IS NOT NULL",
 				sessionARowID).Scan(&llmSpans)).To(Succeed())
 			Expect(llmSpans).To(Equal(2), "one llm span per wire call, referencing its raw row")
 
@@ -164,8 +164,8 @@ var _ = Describe("Derive worker storage (postgres)", func() {
 			// changes nothing.
 			_, err = driver.RederiveSession(ctx, "", "", harnessID, sessionA)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(countRows("span_turns")).To(Equal(turns))
-			Expect(countRows("spans")).To(Equal(spanRows))
+			Expect(countRows("span_turns_20260615")).To(Equal(turns))
+			Expect(countRows("spans_20260615")).To(Equal(spanRows))
 		})
 
 		It("derives one session, is idempotent, and never touches siblings", func() {
