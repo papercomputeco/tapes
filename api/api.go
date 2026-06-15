@@ -99,13 +99,13 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	// at view time, so the binary cost is negligible.
 	s.mountSwagger(app)
 
-	// Register MCP server if vector driver and embedder are configured
+	// Register MCP server if span search and embedder are configured. The
+	// MCP `search` tool runs the same span search as GET /v1/search/spans.
 	var mcpServer *mcp.Server
-	if config.VectorDriver != nil && config.Embedder != nil {
+	if config.SpanSearcher != nil && config.Embedder != nil {
 		s.logger.Debug("creating mcp server")
 		mcpServer, err = mcp.NewServer(mcp.Config{
-			Driver:       driver,
-			VectorDriver: config.VectorDriver,
+			SpanSearcher: config.SpanSearcher,
 			Embedder:     config.Embedder,
 			Logger:       log,
 		})
