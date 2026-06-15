@@ -13,6 +13,9 @@ type anthropicRequest struct {
 	TopK        *int               `json:"top_k,omitempty"`
 	Stop        []string           `json:"stop_sequences,omitempty"`
 	Stream      *bool              `json:"stream,omitempty"`
+	// Tools stay raw JSON: the definitions are passed through to
+	// llm.ChatRequest.Tools verbatim, never interpreted here.
+	Tools []json.RawMessage `json:"tools,omitempty"`
 }
 
 // anthropicMessage represents a message in Anthropic's format.

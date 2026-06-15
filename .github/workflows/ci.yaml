@@ -35,6 +35,25 @@ jobs:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
         run: make test-kafka-e2e
 
+  test-e2e:
+    name: E2E Test (proxy / ingest / derive / span search)
+    runs-on: depot-ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Dagger
+        uses: dagger/dagger-for-github@v8.2.0
+        with:
+          verb: version
+          version: ${{ env.DAGGER_VERSION }}
+
+      - name: Run E2E tests via Dagger
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+        run: make e2e-test
+
   build:
     name: Build
     runs-on: depot-ubuntu-24.04

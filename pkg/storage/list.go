@@ -90,8 +90,9 @@ type SessionStats struct {
 	SessionCount int
 
 	// StemCount is the number of leaf nodes (Merkle chains) matching the
-	// filter — one per /v1/stems entry. This is the value SessionCount
-	// reported before the sessions table existed.
+	// filter. This is the value SessionCount reported before the
+	// sessions table existed; it only surfaces on the legacy node-layer
+	// /v1/stats fallback.
 	StemCount int
 
 	// TurnCount is the number of nodes (turns) matching the filter.

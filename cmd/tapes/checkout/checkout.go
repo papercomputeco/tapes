@@ -1,92 +1,81 @@
-// Package checkoutcmder provides the checkout subcommand for checking out
-// a point in the conversation DAG.
+// Package checkoutcmder provides the checkout subcommand: a conversation
+// export primitive. It renders a captured session (or a single turn) from
+// the trace surface as Markdown or JSONL, to stdout or a file.
 package checkoutcmder
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"log/slog"
-	"net/http"
-	"net/url"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/papercomputeco/tapes/pkg/cliui"
+	"github.com/papercomputeco/tapes/cmd/tapes/inprocessapi"
 	"github.com/papercomputeco/tapes/pkg/config"
-	"github.com/papercomputeco/tapes/pkg/dotdir"
-	"github.com/papercomputeco/tapes/pkg/llm"
-	"github.com/papercomputeco/tapes/pkg/logger"
-	"github.com/papercomputeco/tapes/pkg/utils"
+	"github.com/papercomputeco/tapes/pkg/skill"
 )
 
 type checkoutCommander struct {
 	flags config.FlagSet
 
-	hash      string
+	sessionID string
+	traceID   string
+	format    string
+	output    string
 	apiTarget string
-	debug     bool
-
-	logger *slog.Logger
+	postgres  string
 }
 
-// sessionResponse mirrors the API's SessionResponse type for JSON deserialization.
-type sessionResponse struct {
-	Hash  string `json:"hash"`
-	Depth int    `json:"depth"`
-	Turns []turn `json:"turns"`
-}
-
-// turn mirrors the API's Turn type.
-type turn struct {
-	Hash       string             `json:"hash"`
-	ParentHash *string            `json:"parent_hash,omitempty"`
-	Role       string             `json:"role"`
-	Content    []llm.ContentBlock `json:"content"`
-	Model      string             `json:"model,omitempty"`
-	Provider   string             `json:"provider,omitempty"`
-	AgentName  string             `json:"agent_name,omitempty"`
-	StopReason string             `json:"stop_reason,omitempty"`
-	Usage      *llm.Usage         `json:"usage,omitempty"`
-}
+const (
+	formatMarkdown = "md"
+	formatJSONL    = "jsonl"
+)
 
 var checkoutFlags = config.FlagSet{
 	config.FlagAPITarget: {Name: "api-target", Shorthand: "a", ViperKey: "client.api_target", Description: "Tapes API server URL"},
 }
 
-const checkoutLongDesc string = `Experimental: Checkout a point in the conversation for replay.
+const checkoutLongDesc string = `Export a captured conversation from a tapes session.
 
-Fetches the conversation history up to the given hash from the API server
-and saves the state as the starting point for a "tapes chat" session.
+Reads a session's derived turn/span projection from the trace surface and
+renders it as a transcript. The whole session is exported by default; pass
+--trace to export a single turn.
 
-If no hash is provided, clears the checkout state so the next chat session
-starts a new root conversation.
+Formats:
+  md     human-readable Markdown transcript ([user]/[assistant]/[tools] lines)
+  jsonl  one JSON object per turn (prompt, response, token counts)
+
+The session must already be captured; checkout owns no state and only reads
+the existing /v1/traces surface. Connect to a running API with --api-target,
+or run an in-process API over a database with --postgres.
 
 Examples:
-  tapes checkout abc123def456   Checkout a specific conversation point
-  tapes checkout                Clear checkout state, start fresh`
+  tapes checkout 0196fdb1-93f4-7c41-a53d-0fbe2c5e1f23 --api-target http://127.0.0.1:8081
+  tapes checkout <session-id> --trace <trace-id> -o turn.md
+  tapes checkout <session-id> --format jsonl -o session.jsonl`
 
-const checkoutShortDesc string = "Checkout a conversation point"
+const checkoutShortDesc string = "Export a captured conversation"
 
+// NewCheckoutCmd builds the checkout export command.
 func NewCheckoutCmd() *cobra.Command {
 	cmder := &checkoutCommander{
 		flags: checkoutFlags,
 	}
 
 	cmd := &cobra.Command{
-		Use:   "checkout [hash]",
+		Use:   "checkout <session-id>",
 		Short: checkoutShortDesc,
 		Long:  checkoutLongDesc,
-		Args:  cobra.MaximumNArgs(1),
+		Args:  cobra.ExactArgs(1),
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
 			configDir, _ := cmd.Flags().GetString("config-dir")
 			v, err := config.InitViper(configDir)
 			if err != nil {
-				return fmt.Errorf("loading config: %w", err)
+				return nil //nolint:nilerr // non-fatal, fall back to default
 			}
 
 			config.BindRegisteredFlags(v, cmd, cmder.flags, []string{
@@ -97,130 +86,156 @@ func NewCheckoutCmd() *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) > 0 {
-				cmder.hash = args[0]
-			}
-
-			var err error
-			cmder.debug, err = cmd.Flags().GetBool("debug")
-			if err != nil {
-				return fmt.Errorf("could not get debug flag: %w", err)
-			}
-
-			return cmder.run()
+			cmder.sessionID = args[0]
+			return cmder.run(cmd)
 		},
 	}
 
+	cmd.Flags().StringVar(&cmder.traceID, "trace", "", "Export only this trace (turn) instead of the whole session")
+	cmd.Flags().StringVar(&cmder.format, "format", formatMarkdown, "Output format: md|jsonl")
+	cmd.Flags().StringVarP(&cmder.output, "output", "o", "", "Write to this path instead of stdout")
+	cmd.Flags().StringVar(&cmder.postgres, "postgres", "", "PostgreSQL connection string for a local in-process API")
 	config.AddStringFlag(cmd, cmder.flags, config.FlagAPITarget, &cmder.apiTarget)
 
 	return cmd
 }
 
-func (c *checkoutCommander) run() error {
-	dotdirManager := dotdir.NewManager()
-	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
-
-	// If no hash provided, clear checkout state
-	if c.hash == "" {
-		if err := dotdirManager.ClearCheckout(""); err != nil {
-			return fmt.Errorf("clearing checkout: %w", err)
-		}
-		fmt.Printf("\n  %s Checkout cleared. Next chat will start a new conversation.\n\n", cliui.SuccessMark)
-		return nil
+func (c *checkoutCommander) run(cmd *cobra.Command) error {
+	if c.format != formatMarkdown && c.format != formatJSONL {
+		return fmt.Errorf("invalid --format %q; valid formats: %s, %s", c.format, formatMarkdown, formatJSONL)
 	}
 
-	c.logger.Debug("checking out conversation",
-		"hash", c.hash,
-		"api_target", c.apiTarget,
-	)
+	query, closeFn, err := c.connect(cmd.Context())
+	if err != nil {
+		return err
+	}
+	defer closeFn()
 
-	// Fetch the session from the API
-	var session *sessionResponse
-	if err := cliui.Step(os.Stdout, "Fetching session", func() error {
-		var fetchErr error
-		session, fetchErr = c.fetchSession(c.hash)
-		return fetchErr
-	}); err != nil {
+	rendered, err := Export(cmd.Context(), query, ExportOptions{
+		SessionID: c.sessionID,
+		TraceID:   c.traceID,
+		Format:    c.format,
+	})
+	if err != nil {
 		return err
 	}
 
-	// Convert API turns to checkout messages
-	messages := make([]dotdir.CheckoutMessage, 0, len(session.Turns))
-	for _, t := range session.Turns {
-		text := extractText(t.Content)
-		messages = append(messages, dotdir.CheckoutMessage{
-			Role:    t.Role,
-			Content: text,
-		})
-	}
-
-	// Save the checkout state
-	state := &dotdir.CheckoutState{
-		Hash:     session.Hash,
-		Messages: messages,
-	}
-	if err := dotdirManager.SaveCheckout(state, ""); err != nil {
-		return fmt.Errorf("saving checkout: %w", err)
-	}
-
-	fmt.Printf("\n  %s Checked out %s %s\n\n",
-		cliui.SuccessMark,
-		cliui.HashStyle.Render(utils.Truncate(session.Hash, 16)),
-		cliui.DimStyle.Render(fmt.Sprintf("(%d messages)", len(messages))),
-	)
-
-	for _, msg := range messages {
-		preview := utils.Truncate(msg.Content, 60)
-		fmt.Printf("  %s %s\n",
-			cliui.RoleStyle.Render("["+msg.Role+"]"),
-			cliui.PreviewStyle.Render(preview),
-		)
-	}
-
-	fmt.Println()
-	return nil
+	return c.write(rendered)
 }
 
-// fetchSession calls the API to get the session chain for a given hash.
-func (c *checkoutCommander) fetchSession(hash string) (*sessionResponse, error) {
-	endpoint := fmt.Sprintf("%s/v1/stems/%s", c.apiTarget, url.PathEscape(hash))
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("requesting session from API: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading API response: %w", err)
-	}
-
-	var session sessionResponse
-	if err := json.Unmarshal(body, &session); err != nil {
-		return nil, fmt.Errorf("parsing API response: %w", err)
-	}
-
-	return &session, nil
+// ExportOptions configures a conversation export.
+type ExportOptions struct {
+	SessionID string
+	TraceID   string // when non-empty, export only this turn
+	Format    string // formatMarkdown ("md") or formatJSONL ("jsonl")
 }
 
-// extractText concatenates all text content blocks from a message.
-func extractText(content []llm.ContentBlock) string {
+// Export renders a captured session (or single turn) from the trace
+// surface in the requested format. It is the testable seam behind the
+// checkout command: callers supply any skill.Querier.
+func Export(ctx context.Context, query skill.Querier, opts ExportOptions) (string, error) {
+	var transcriptOpts []skill.TranscriptOption
+	if opts.TraceID != "" {
+		transcriptOpts = append(transcriptOpts, skill.WithTraceFilter(opts.TraceID))
+	}
+
+	switch opts.Format {
+	case formatJSONL:
+		return exportJSONL(ctx, query, opts.SessionID, transcriptOpts)
+	case formatMarkdown, "":
+		return skill.BuildSessionTranscript(ctx, query, opts.SessionID, transcriptOpts...)
+	default:
+		return "", fmt.Errorf("invalid format %q; valid formats: %s, %s", opts.Format, formatMarkdown, formatJSONL)
+	}
+}
+
+// connect resolves a skill.Querier against either the remote API
+// (--api-target) or an in-process API over --postgres.
+func (c *checkoutCommander) connect(ctx context.Context) (skill.Querier, func(), error) {
+	if strings.TrimSpace(c.apiTarget) != "" {
+		return skill.NewAPIClient(c.apiTarget), func() {}, nil
+	}
+	if strings.TrimSpace(c.postgres) == "" {
+		return nil, nil, errors.New("no API target configured: pass --api-target or --postgres")
+	}
+	target, stop, startErr := inprocessapi.Start(ctx, c.postgres, nil)
+	if startErr != nil {
+		return nil, nil, startErr
+	}
+	return skill.NewAPIClient(target), stop, nil
+}
+
+// exportTurn is one turn's structured (jsonl) export record.
+type exportTurn struct {
+	TraceID           string `json:"trace_id"`
+	SessionID         string `json:"session_id"`
+	UserPrompt        string `json:"user_prompt,omitempty"`
+	Response          string `json:"response,omitempty"`
+	StartedAt         string `json:"started_at,omitempty"`
+	TotalInputTokens  int64  `json:"total_input_tokens"`
+	TotalOutputTokens int64  `json:"total_output_tokens"`
+	MainInputTokens   int64  `json:"main_input_tokens"`
+	MainOutputTokens  int64  `json:"main_output_tokens"`
+}
+
+// exportJSONL emits one JSON object per turn. The response is the
+// rendered spine transcript for the turn (assistant + tool lines, prompt
+// excluded since it has its own field).
+func exportJSONL(ctx context.Context, query skill.Querier, sessionID string, opts []skill.TranscriptOption) (string, error) {
+	turns, err := skill.SessionTurns(ctx, query, sessionID, opts...)
+	if err != nil {
+		return "", err
+	}
+
 	var b strings.Builder
-	for _, block := range content {
-		if block.Type == "text" {
-			b.WriteString(block.Text)
+	enc := json.NewEncoder(&b)
+	for _, turn := range turns {
+		rec := exportTurn{
+			TraceID:           turn.TraceID,
+			SessionID:         sessionID,
+			UserPrompt:        turn.UserPrompt,
+			Response:          turnResponse(ctx, query, turn),
+			TotalInputTokens:  turn.TotalInputTokens,
+			TotalOutputTokens: turn.TotalOutputTokens,
+			MainInputTokens:   turn.MainInputTokens,
+			MainOutputTokens:  turn.MainOutputTokens,
+		}
+		if !turn.StartedAt.IsZero() {
+			rec.StartedAt = turn.StartedAt.Format("2006-01-02T15:04:05Z07:00")
+		}
+		if err := enc.Encode(rec); err != nil {
+			return "", fmt.Errorf("encoding turn %s: %w", turn.TraceID, err)
 		}
 	}
-	return b.String()
+	return b.String(), nil
+}
+
+// turnResponse renders just the assistant/tool half of a turn by
+// stripping the leading [user] line from the shared turn transcript.
+func turnResponse(ctx context.Context, query skill.Querier, turn skill.TraceSummary) string {
+	transcript := skill.TurnTranscript(ctx, query, turn)
+	var lines []string
+	for line := range strings.SplitSeq(transcript, "\n") {
+		if strings.HasPrefix(line, "[user] ") {
+			continue
+		}
+		if line == "" {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// write sends the rendered export to stdout or the -o path.
+func (c *checkoutCommander) write(content string) error {
+	if strings.TrimSpace(c.output) == "" {
+		_, err := io.WriteString(os.Stdout, content)
+		return err
+	}
+	if err := os.WriteFile(c.output, []byte(content), 0o644); err != nil { //nolint:gosec // export artifact, not a secret
+		return fmt.Errorf("writing %s: %w", c.output, err)
+	}
+	fmt.Fprintf(os.Stderr, "wrote %s\n", c.output)
+	return nil
 }

@@ -188,33 +188,6 @@ func isDigits(value string) bool {
 	return true
 }
 
-// DominantModel returns the model with the highest total cost in the map,
-// or the empty string if none.
-func DominantModel(costs map[string]ModelCost) string {
-	var model string
-	maxCost := float64(0)
-	for name, cost := range costs {
-		if cost.TotalCost > maxCost {
-			maxCost = cost.TotalCost
-			model = name
-		}
-	}
-	return model
-}
-
-// SumModelCosts totals input/output/total cost across all models in the map.
-func SumModelCosts(costs map[string]ModelCost) (float64, float64, float64) {
-	inputCost := 0.0
-	outputCost := 0.0
-	totalCost := 0.0
-	for _, cost := range costs {
-		inputCost += cost.InputCost
-		outputCost += cost.OutputCost
-		totalCost += cost.TotalCost
-	}
-	return inputCost, outputCost, totalCost
-}
-
 // CopyModelCosts returns a shallow copy of the map, or an empty map if nil.
 func CopyModelCosts(costs map[string]ModelCost) map[string]ModelCost {
 	if costs == nil {

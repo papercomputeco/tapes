@@ -29,6 +29,9 @@ func (m deckModel) viewSession() string {
 	if lipgloss.Width(title) > titleMaxWidth {
 		title = truncateText(title, titleMaxWidth)
 	}
+	if m.inTurn {
+		breadcrumb += deckMutedStyle.Render(" > turn")
+	}
 	breadcrumb += deckMutedStyle.Render(" > ") + deckTitleStyle.Render(title)
 	statusRight := statusDot + " " + deckMutedStyle.Render(m.detail.Summary.Status)
 	header := renderHeaderLine(m.width, breadcrumb, statusRight)
@@ -38,8 +41,11 @@ func (m deckModel) viewSession() string {
 		sessionID = sessionID[:7]
 	}
 	idText := deckMutedStyle.Render(sessionID)
-	if len(m.detail.SubSessions) > 1 {
-		idText = deckMutedStyle.Render(fmt.Sprintf("%s · %d sessions", sessionID, len(m.detail.SubSessions)))
+	switch {
+	case m.inTurn && m.currentTurn != nil:
+		idText = deckMutedStyle.Render(fmt.Sprintf("%s · %d spans", sessionID, m.currentTurn.Turn.SpanCount))
+	case len(m.detail.Turns) > 0:
+		idText = deckMutedStyle.Render(fmt.Sprintf("%s · %d turns", sessionID, len(m.detail.Turns)))
 	}
 	idLine := renderHeaderLine(m.width, "", idText)
 
@@ -82,29 +88,44 @@ func (m deckModel) viewSession() string {
 
 func (m deckModel) renderSessionMetrics() []string {
 	// Calculate averages from overview for comparisons
-	var avgCost, avgDuration, avgTokens, avgToolCalls float64
+	var avgCost, avgDuration, avgTokens, avgTurns float64
 	if m.overview != nil && len(m.overview.Sessions) > 0 {
 		var totalCost, totalDuration float64
-		var totalTokens, totalToolCalls int64
+		var totalTokens, totalTurns int64
 		for _, s := range m.overview.Sessions {
 			totalCost += s.TotalCost
 			totalDuration += float64(s.Duration)
 			totalTokens += s.InputTokens + s.OutputTokens
-			totalToolCalls += int64(s.ToolCalls)
+			totalTurns += int64(s.MessageCount)
 		}
 		count := float64(len(m.overview.Sessions))
 		avgCost = totalCost / count
 		avgDuration = totalDuration / count
 		avgTokens = float64(totalTokens) / count
-		avgToolCalls = float64(totalToolCalls) / count
+		avgTurns = float64(totalTurns) / count
 	}
 
 	// Calculate this session's values
 	thisCost := m.detail.Summary.TotalCost
 	thisDuration := float64(m.detail.Summary.Duration)
 	thisTokens := float64(m.detail.Summary.InputTokens + m.detail.Summary.OutputTokens)
-	thisToolCalls := float64(m.detail.Summary.ToolCalls)
-	toolsPerTurn := thisToolCalls / float64(max(1, m.detail.Summary.MessageCount))
+
+	// Fourth metric: turn count at session grain, span breakdown when
+	// drilled into one turn.
+	countLabel := "TURNS"
+	countValue := strconv.Itoa(len(m.detail.Turns))
+	countSecondary := fmt.Sprintf("%.1f turns avg", avgTurns)
+	thisCount := float64(len(m.detail.Turns))
+	if len(m.detail.Turns) == 0 && !m.inTurn {
+		countValue = strconv.Itoa(m.detail.Summary.MessageCount)
+		thisCount = float64(m.detail.Summary.MessageCount)
+	}
+	if m.inTurn && m.currentTurn != nil {
+		countLabel = "SPANS"
+		countValue = strconv.Itoa(m.currentTurn.Turn.SpanCount)
+		countSecondary = fmt.Sprintf("%d tools · %d offshoots", m.detail.Summary.ToolCalls, m.currentTurn.OffshootCalls)
+		thisCount = float64(m.currentTurn.Turn.SpanCount)
+	}
 
 	// Prepare metric data (matching overview page style)
 	type metricData struct {
@@ -133,9 +154,9 @@ func (m deckModel) renderSessionMetrics() []string {
 			secondary: formatDuration(time.Duration(avgDuration)) + " avg",
 		},
 		{
-			label:     "TOOL CALLS",
-			value:     strconv.Itoa(m.detail.Summary.ToolCalls),
-			secondary: fmt.Sprintf("%.1f tools/turn", toolsPerTurn),
+			label:     countLabel,
+			value:     countValue,
+			secondary: countSecondary,
 		},
 	}
 
@@ -165,12 +186,12 @@ func (m deckModel) renderSessionMetrics() []string {
 			metrics[2].isPositive = change > 0 // More time = more work
 		}
 
-		// Tool calls comparison
-		if avgToolCalls > 0 {
-			change := ((thisToolCalls - avgToolCalls) / avgToolCalls) * 100
+		// Turn count comparison (only meaningful at session grain)
+		if !m.inTurn && avgTurns > 0 {
+			change := ((thisCount - avgTurns) / avgTurns) * 100
 			metrics[3].change = fmt.Sprintf("%.1f%% vs avg", abs(change))
 			metrics[3].changeIcon = changeArrow(change)
-			metrics[3].isPositive = change > 0 // More tools = more work
+			metrics[3].isPositive = change > 0 // More turns = more work
 		}
 	}
 

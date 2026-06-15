@@ -104,3 +104,26 @@ func BlocksHaveGitActivity(blocks []llm.ContentBlock) bool {
 	}
 	return false
 }
+
+// StripTaggedSection removes all occurrences of a given XML-like tagged
+// section (e.g. <system-reminder>…</system-reminder>) from text.
+func StripTaggedSection(text, tag string) string {
+	openTag := "<" + tag + ">"
+	closeTag := "</" + tag + ">"
+
+	for {
+		start := strings.Index(text, openTag)
+		if start == -1 {
+			break
+		}
+		end := strings.Index(text[start:], closeTag)
+		if end == -1 {
+			text = strings.TrimSpace(text[:start])
+			break
+		}
+		end = start + end + len(closeTag)
+		text = strings.TrimSpace(text[:start] + text[end:])
+	}
+
+	return strings.TrimSpace(text)
+}

@@ -8,6 +8,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type DeriveQueue struct {
+	OrgID            pgtype.UUID
+	HarnessID        string
+	HarnessSessionID string
+	DirtiedAt        pgtype.Timestamptz
+	FirstDirtiedAt   pgtype.Timestamptz
+}
+
 type Node struct {
 	Hash                     string
 	Bucket                   []byte
@@ -30,6 +38,30 @@ type Node struct {
 	ParentHash               pgtype.Text
 	SessionID                pgtype.UUID
 	OrgID                    pgtype.UUID
+	RequestSystem            pgtype.Text
+	RequestMaxTokens         pgtype.Int4
+	RequestTemperature       pgtype.Float8
+	RequestStream            pgtype.Bool
+	RequestToolCount         pgtype.Int4
+	NodeKind                 pgtype.Text
+	ParentToolUseID          pgtype.Text
+	ThreadID                 pgtype.Text
+}
+
+type RawTurn struct {
+	ID               int64
+	OrgID            pgtype.UUID
+	Source           string
+	Provider         string
+	AgentName        string
+	HarnessID        string
+	HarnessSessionID string
+	RequestID        string
+	RawRequest       []byte
+	Response         []byte
+	Meta             []byte
+	SessionEnvelope  []byte
+	ReceivedAt       pgtype.Timestamptz
 }
 
 type Session struct {
@@ -54,4 +86,62 @@ type Session struct {
 	HasGitActivity    bool
 	ToolResultCount   int32
 	ToolErrorCount    int32
+	DerivedTitle      pgtype.Text
+	DerivedModel      string
+	ModelUsage        []byte
+}
+
+type Span struct {
+	OrgID        pgtype.UUID
+	TraceID      string
+	SpanID       string
+	ParentSpanID string
+	SessionID    pgtype.UUID
+	Kind         string
+	Name         string
+	Status       string
+	CallKind     string
+	ThreadID     string
+	Model        string
+	StopReason   string
+	StartedAt    pgtype.Timestamptz
+	DurationNs   int64
+	Input        []byte
+	Output       []byte
+	Usage        []byte
+	RawTurnID    pgtype.Int8
+	NodeHash     string
+	Seq          int64
+}
+
+type SpanLink struct {
+	OrgID       pgtype.UUID
+	FromTraceID string
+	FromSpanID  string
+	FromIo      string
+	ToTraceID   string
+	ToSpanID    string
+	ToIo        string
+	Kind        string
+	SessionID   pgtype.UUID
+}
+
+type SpanTurn struct {
+	OrgID               pgtype.UUID
+	TraceID             string
+	SessionID           pgtype.UUID
+	UserPrompt          string
+	Synthetic           string
+	Status              string
+	StartedAt           pgtype.Timestamptz
+	EndedAt             pgtype.Timestamptz
+	DurationNs          int64
+	TotalInputTokens    int64
+	TotalOutputTokens   int64
+	TotalCostUsd        pgtype.Numeric
+	MainInputTokens     int64
+	MainOutputTokens    int64
+	CacheReadTokens     int64
+	CacheCreationTokens int64
+	ResponsePreview     string
 }

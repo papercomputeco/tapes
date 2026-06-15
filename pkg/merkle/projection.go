@@ -28,6 +28,24 @@ var HarnessTags = []string{
 	"local-command-stdout",
 	"local-command-stderr",
 	"local-command-caveat",
+	// Second wave (reconciled conversation tree, Phase 2): wrappers and
+	// volatile blocks measured fracturing the golden sessions' chains.
+	// <session> wraps the opener in harness side-calls; <conversation>
+	// wraps plan re-injections; the rest are volatile per-turn noise
+	// (LSP diagnostics, background-task notifications, harness event
+	// framing) that drifts between a live capture and the re-sent
+	// history of the same turn.
+	"session",
+	"conversation",
+	"new-diagnostics",
+	"task-notification",
+	"status",
+	"summary",
+	"transcript",
+	"event",
+	"tool-use-id",
+	"output-file",
+	"task-id",
 }
 
 // ProjectContent returns the projection of content blocks used when
@@ -67,6 +85,15 @@ func ProjectContent(blocks []llm.ContentBlock) []llm.ContentBlock {
 		}
 		if b.ThinkingSignature != "" {
 			b.ThinkingSignature = ""
+		}
+		// Tool results need the same treatment as text: the harness
+		// concatenates volatile blocks (<system-reminder>, …) INTO a
+		// tool's output when re-sending it as history, so a live
+		// capture and the re-sent history of the same tool result
+		// otherwise hash apart and fork the chain. This was the bulk
+		// of the measured join-residual on the golden sessions.
+		if b.ToolOutput != "" {
+			b.ToolOutput = normalizeWhitespace(stripHarnessTags(b.ToolOutput))
 		}
 		out = append(out, b)
 	}

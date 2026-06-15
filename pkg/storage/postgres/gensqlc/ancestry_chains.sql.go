@@ -34,7 +34,9 @@ SELECT
     COALESCE(walk.project::text, '') AS project,
     walk.created_at::timestamptz AS created_at,
     walk.depth::integer AS depth,
-    walk.has_usage::boolean AS has_usage
+    walk.has_usage::boolean AS has_usage,
+    COALESCE(walk.node_kind::text, '') AS node_kind,
+    COALESCE(walk.parent_tool_use_id::text, '') AS parent_tool_use_id
 FROM ancestry_chains_rows($1::text[], $2::integer) AS walk(
     start_hash,
     hash,
@@ -57,7 +59,9 @@ FROM ancestry_chains_rows($1::text[], $2::integer) AS walk(
     project,
     created_at,
     depth,
-    has_usage
+    has_usage,
+    node_kind,
+    parent_tool_use_id
 )
 ORDER BY walk.start_hash, walk.depth
 `
@@ -90,6 +94,8 @@ type AncestryChainsRow struct {
 	CreatedAt                pgtype.Timestamptz
 	Depth                    int32
 	HasUsage                 bool
+	NodeKind                 interface{}
+	ParentToolUseID          interface{}
 }
 
 func (q *Queries) AncestryChains(ctx context.Context, arg AncestryChainsParams) ([]AncestryChainsRow, error) {
@@ -124,6 +130,8 @@ func (q *Queries) AncestryChains(ctx context.Context, arg AncestryChainsParams) 
 			&i.CreatedAt,
 			&i.Depth,
 			&i.HasUsage,
+			&i.NodeKind,
+			&i.ParentToolUseID,
 		); err != nil {
 			return nil, err
 		}

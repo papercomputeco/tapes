@@ -40,7 +40,7 @@ type IngestConfig struct {
 }
 
 // ClientConfig holds settings for CLI commands that connect to the running
-// proxy and API servers (e.g. tapes chat, tapes search, tapes checkout).
+// proxy and API servers (e.g. tapes search, tapes checkout).
 // Values are full URLs (scheme + host + port).
 type ClientConfig struct {
 	ProxyTarget string `toml:"proxy_target,omitempty" mapstructure:"proxy_target"`

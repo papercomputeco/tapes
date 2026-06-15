@@ -13,14 +13,12 @@ import (
 	"github.com/papercomputeco/tapes/ingest"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/credentials"
-	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/publisher"
 	kafkapublisher "github.com/papercomputeco/tapes/pkg/publisher/kafka"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 	"github.com/papercomputeco/tapes/pkg/telemetry"
-	"github.com/papercomputeco/tapes/pkg/vector/pgvector"
 )
 
 type ingestCommander struct {
@@ -54,10 +52,10 @@ var ingestFlags = config.FlagSet{
 	config.FlagPostgres:               {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
 	config.FlagProject:                {Name: "project", ViperKey: "proxy.project", Description: "Project name to tag sessions (default: auto-detect from git)"},
 	config.FlagVectorStoreTgt:         {Name: "vector-store-target", ViperKey: "vector_store.target", Description: "pgvector connection string (defaults to storage.postgres_dsn when unset)"},
-	config.FlagEmbeddingProv:          {Name: "embedding-provider", ViperKey: "embedding.provider", Description: "Embedding provider type (e.g., ollama, openai)"},
-	config.FlagEmbeddingTgt:           {Name: "embedding-target", ViperKey: "embedding.target", Description: "Embedding provider URL"},
-	config.FlagEmbeddingModel:         {Name: "embedding-model", ViperKey: "embedding.model", Description: "Embedding model name (e.g., embeddinggemma, text-embedding-3-large)"},
-	config.FlagEmbeddingDims:          {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Embedding dimensionality"},
+	config.FlagEmbeddingProv:          {Name: "embedding-provider", ViperKey: "embedding.provider", Description: "Deprecated here; embeddings are written by the derive worker (--embed-spans)"},
+	config.FlagEmbeddingTgt:           {Name: "embedding-target", ViperKey: "embedding.target", Description: "Deprecated here; embeddings are written by the derive worker (--embed-spans)"},
+	config.FlagEmbeddingModel:         {Name: "embedding-model", ViperKey: "embedding.model", Description: "Deprecated here; embeddings are written by the derive worker (--embed-spans)"},
+	config.FlagEmbeddingDims:          {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Deprecated here; embeddings are written by the derive worker (--embed-spans)"},
 	config.FlagKafkaBrokers:           {Name: "kafka-brokers", ViperKey: "publisher.kafka.brokers", Description: "Comma separated list of broker ip:port pairs"},
 	config.FlagKafkaClientID:          {Name: "kafka-client-id", ViperKey: "publisher.kafka.client_id", Description: "Optional Kafka client.id"},
 	config.FlagKafkaTopic:             {Name: "kafka-topic", ViperKey: "publisher.kafka.topic", Description: "Name of topic to publish session events (e.g. tapes.nodes.v1)"},
@@ -73,7 +71,9 @@ Endpoints:
   POST /v1/ingest        Accept a single conversation turn
   POST /v1/ingest/batch  Accept multiple conversation turns
 
-Optionally configure vector storage and embeddings for "tapes search" functionality.`
+Embeddings are no longer written at ingest time: the derive worker family is
+the single writer (tapes serve derive-worker --embed-spans). The embedding
+flags remain accepted for deployment compatibility but have no effect here.`
 
 const ingestShortDesc string = "Run the Tapes ingest server (sidecar mode)"
 
@@ -198,33 +198,14 @@ func (c *ingestCommander) run() error {
 		Project:    c.project,
 	}
 
-	if c.vectorStoreTarget != "" {
-		cfg.Embedder, err = embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
-			ProviderType: c.embeddingProvider,
-			TargetURL:    c.embeddingTarget,
-			Model:        c.embeddingModel,
-			Dimensions:   c.embeddingDimensions,
-			APIKey:       c.embeddingAPIKey,
-		})
-		if err != nil {
-			return fmt.Errorf("could not create new embedder: %w", err)
-		}
-		defer cfg.Embedder.Close()
-
-		cfg.VectorDriver, err = pgvector.NewDriver(context.TODO(), &pgvector.Config{
-			ConnString: c.vectorStoreTarget,
-			Dimensions: c.embeddingDimensions,
-		}, c.logger)
-		if err != nil {
-			return fmt.Errorf("could not create new vector driver: %w", err)
-		}
-		defer cfg.VectorDriver.Close()
-
-		c.logger.Info("vector storage enabled",
-			"vector_store_target", config.RedactDSN(c.vectorStoreTarget),
-			"embedding_provider", c.embeddingProvider,
-			"embedding_target", c.embeddingTarget,
-			"embedding_model", c.embeddingModel,
+	// Ingest-time embedding is retired: the derive worker family is the
+	// single writer of embeddings (tapes serve derive-worker
+	// --embed-spans, or the tapes dev embed-spans backfill). The
+	// embedding flags remain accepted so existing deployments keep
+	// booting, but they no longer have any effect here.
+	if c.embeddingTarget != "" || c.embeddingModel != "" {
+		c.logger.Info("ingest-time embedding is retired; embeddings are written by the derive worker",
+			"see", "tapes serve derive-worker --embed-spans",
 		)
 	}
 

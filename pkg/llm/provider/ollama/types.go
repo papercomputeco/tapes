@@ -1,7 +1,10 @@
 // Package ollama
 package ollama
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // ollamaRequest represents Ollama's request format.
 type ollamaRequest struct {
@@ -11,6 +14,8 @@ type ollamaRequest struct {
 	Format    string          `json:"format,omitempty"`
 	KeepAlive string          `json:"keep_alive,omitempty"`
 	Options   *ollamaOptions  `json:"options,omitempty"`
+	// Tools stay raw JSON: passed through to llm.ChatRequest.Tools verbatim.
+	Tools []json.RawMessage `json:"tools,omitempty"`
 }
 
 type ollamaMessage struct {

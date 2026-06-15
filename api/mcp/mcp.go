@@ -2,6 +2,7 @@
 package mcp
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -9,20 +10,26 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/papercomputeco/tapes/pkg/embeddings"
-	"github.com/papercomputeco/tapes/pkg/storage"
+	"github.com/papercomputeco/tapes/pkg/spanembed"
 	"github.com/papercomputeco/tapes/pkg/utils"
-	"github.com/papercomputeco/tapes/pkg/vector"
 )
 
+// SpanSearcher performs vector-similarity search over span embeddings.
+// *spanembed.Store implements it; it is the exact same search path the
+// HTTP GET /v1/search/spans handler uses. Defined here (rather than
+// imported from package api) so the MCP server reuses the span search
+// without creating an import cycle with package api.
+type SpanSearcher interface {
+	Search(ctx context.Context, orgID string, embedding []float32, topK int) ([]spanembed.Hit, error)
+}
+
 type Config struct {
-	// Driver loads full node ancestry from search results
-	Driver storage.Driver
+	// SpanSearcher runs semantic search over the span-embedding
+	// projection (main llm spans, delta-only content) — the same search
+	// the HTTP /v1/search/spans surface uses.
+	SpanSearcher SpanSearcher
 
-	// VectorDriver for semantic search
-	VectorDriver vector.Driver
-
-	// Embedder for converting query text to vectors for semantic search with
-	// configured VectorDriver
+	// Embedder converts the query text to a vector for SpanSearcher.
 	Embedder embeddings.Embedder
 
 	// Noop for empty MCP server
@@ -60,11 +67,8 @@ func NewServer(c Config) (*Server, error) {
 		return s, nil
 	}
 
-	if c.Driver == nil {
-		return nil, errors.New("storage driver is required")
-	}
-	if c.VectorDriver == nil {
-		return nil, errors.New("vector driver is required")
+	if c.SpanSearcher == nil {
+		return nil, errors.New("span searcher is required")
 	}
 	if c.Embedder == nil {
 		return nil, errors.New("embedder is required")

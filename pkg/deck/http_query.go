@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"slices"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -20,14 +20,16 @@ import (
 const (
 	httpQueryTimeout = 30 * time.Second
 	// httpQueryOverviewLimit keeps the API-backed deck lightweight: fetch one
-	// recent page of rich session summaries, then render and drill into detail
-	// on demand. This avoids the old "page through the whole corpus" behavior.
+	// recent page of session rows, then render and drill into detail on
+	// demand. This avoids the old "page through the whole corpus" behavior.
 	httpQueryOverviewLimit = 25
 )
 
 // HTTPQuery is a Querier implementation that talks to a remote (or
-// in-process) tapes API server over HTTP. It mirrors the Querier surface of
-// the local query path so callers can swap implementations without changes.
+// in-process) tapes API server over HTTP. It reads the product session/trace
+// surface: /v1/sessions for the overview, /v1/traces?session_id= for a
+// session's turn summaries, and /v1/traces/{trace_id} for a single turn's
+// conversation.
 type HTTPQuery struct {
 	apiTarget string
 	pricing   PricingTable
@@ -39,12 +41,13 @@ type HTTPQuery struct {
 var (
 	_ Querier       = (*HTTPQuery)(nil)
 	_ OverviewPager = (*HTTPQuery)(nil)
+	_ TurnQuerier   = (*HTTPQuery)(nil)
 )
 
 // NewHTTPQuery constructs an HTTPQuery pointed at apiTarget (e.g.
-// "http://127.0.0.1:8081"). The pricing table is retained for client-side
-// recalculation if needed; in practice the API server already returns
-// fully-populated SessionSummary objects.
+// "http://127.0.0.1:8081"). The pricing table is used for per-call cost
+// estimates in the turn drill-in; session and turn rollups arrive already
+// costed from the API.
 func NewHTTPQuery(apiTarget string, pricing PricingTable) *HTTPQuery {
 	return &HTTPQuery{
 		apiTarget: normalizeAPITarget(apiTarget),
@@ -64,44 +67,91 @@ func normalizeAPITarget(apiTarget string) string {
 	return strings.TrimRight(target, "/")
 }
 
-// httpSummaryResponse mirrors api.SessionSummaryListResponse for JSON
-// deserialization. We do not import the api package to avoid pkg/deck
-// depending on a server-side package.
-type httpSummaryResponse struct {
-	Items      []SessionSummary `json:"items"`
-	NextCursor string           `json:"next_cursor,omitempty"`
+// httpSessionItem mirrors api.SessionItem for JSON deserialization. We do
+// not import the api package to avoid pkg/deck depending on a server-side
+// package.
+type httpSessionItem struct {
+	ID                string     `json:"id"`
+	HarnessID         string     `json:"harness_id"`
+	Name              string     `json:"name,omitempty"`
+	Cwd               string     `json:"cwd,omitempty"`
+	StartedAt         time.Time  `json:"started_at"`
+	LastSeenAt        time.Time  `json:"last_seen_at"`
+	EndedAt           *time.Time `json:"ended_at,omitempty"`
+	TurnCount         int        `json:"turn_count"`
+	TotalInputTokens  int64      `json:"total_input_tokens"`
+	TotalOutputTokens int64      `json:"total_output_tokens"`
+	TotalCostUsd      float64    `json:"total_cost_usd"`
+	DerivedStatus     string     `json:"derived_status"`
+	Model             string     `json:"model,omitempty"`
+	Preview           string     `json:"preview,omitempty"`
 }
 
-// httpSessionResponse mirrors api.SessionResponse.
-type httpSessionResponse struct {
-	Hash  string     `json:"hash"`
-	Depth int        `json:"depth"`
-	Turns []httpTurn `json:"turns"`
+// httpSessionListResponse mirrors api.SessionListResponse.
+type httpSessionListResponse struct {
+	Items      []httpSessionItem `json:"items"`
+	NextCursor string            `json:"next_cursor,omitempty"`
 }
 
-// httpTurn mirrors api.Turn.
-type httpTurn struct {
-	Hash       string             `json:"hash"`
-	ParentHash *string            `json:"parent_hash,omitempty"`
-	Role       string             `json:"role"`
-	Content    []llm.ContentBlock `json:"content"`
-	Model      string             `json:"model,omitempty"`
-	Provider   string             `json:"provider,omitempty"`
-	AgentName  string             `json:"agent_name,omitempty"`
-	StopReason string             `json:"stop_reason,omitempty"`
-	Usage      *llm.Usage         `json:"usage,omitempty"`
-	CreatedAt  time.Time          `json:"created_at,omitzero"`
+// httpSessionDetailResponse mirrors api.SessionDetailResponse.
+type httpSessionDetailResponse struct {
+	Session httpSessionItem `json:"session"`
 }
 
-// Overview fetches a single recent page from /v1/stems, then runs
-// the existing deck-side grouping, filtering, and rollup logic on that bounded
-// result set.
+// httpTraceItem mirrors api.TraceItem (one turn header).
+type httpTraceItem struct {
+	TraceID             string     `json:"trace_id"`
+	SessionID           string     `json:"session_id"`
+	UserPrompt          string     `json:"user_prompt,omitempty"`
+	ResponsePreview     string     `json:"response_preview,omitempty"`
+	Status              string     `json:"status"`
+	StartedAt           time.Time  `json:"started_at"`
+	EndedAt             *time.Time `json:"ended_at,omitempty"`
+	DurationNS          int64      `json:"duration_ns"`
+	TotalInputTokens    int64      `json:"total_input_tokens"`
+	TotalOutputTokens   int64      `json:"total_output_tokens"`
+	MainInputTokens     int64      `json:"main_input_tokens"`
+	MainOutputTokens    int64      `json:"main_output_tokens"`
+	CacheReadTokens     int64      `json:"cache_read_tokens"`
+	CacheCreationTokens int64      `json:"cache_creation_tokens"`
+	TotalCostUSD        float64    `json:"total_cost_usd"`
+	SpanCount           int        `json:"span_count"`
+}
+
+// httpTraceListResponse mirrors api.TraceListResponse.
+type httpTraceListResponse struct {
+	Items []httpTraceItem `json:"items"`
+}
+
+// httpSpanItem mirrors api.SpanItem. Input and Output are key→raw-JSON maps:
+// llm/event spans carry a content-block array under "content"; tool spans
+// carry "arguments" (object) and "content" (string) / "is_error" (bool).
+type httpSpanItem struct {
+	SpanID     string                     `json:"span_id"`
+	Kind       string                     `json:"kind"`
+	Name       string                     `json:"name"`
+	StartedAt  time.Time                  `json:"started_at"`
+	DurationNS int64                      `json:"duration_ns"`
+	Seq        int64                      `json:"seq"`
+	Input      map[string]json.RawMessage `json:"input"`
+	Output     map[string]json.RawMessage `json:"output"`
+	Metadata   map[string]any             `json:"metadata"`
+	Metrics    json.RawMessage            `json:"metrics"`
+}
+
+// httpTraceDetailResponse mirrors api.TraceDetail.
+type httpTraceDetailResponse struct {
+	Trace httpTraceItem  `json:"trace"`
+	Spans []httpSpanItem `json:"spans"`
+}
+
+// Overview fetches a single recent page from /v1/sessions and applies the
+// deck-side filtering and rollup logic to that bounded result set.
 //
-// Filters that the API understands natively (since/from, to/until, project,
-// model) are pushed down to the request as query params so the server can
-// narrow the SQL work before building rich summaries. Filters that depend on
-// derived state (status, sort order) stay client-side and are applied to the
-// smaller page returned below.
+// Time bounds (since/from, to/until) are pushed down as query params so the
+// server narrows the page before returning it. Model, status, and project
+// filters are evaluated client-side against the page: the sessions list
+// endpoint does not filter on them.
 func (q *HTTPQuery) Overview(ctx context.Context, filters Filters) (*Overview, error) {
 	page, err := q.OverviewPage(ctx, filters, "", httpQueryOverviewLimit)
 	if err != nil {
@@ -110,28 +160,31 @@ func (q *HTTPQuery) Overview(ctx context.Context, filters Filters) (*Overview, e
 	return page.Overview, nil
 }
 
-// OverviewPage fetches one bounded page from /v1/stems and returns
-// the API cursor needed to request the next page. The first page replaces the
-// detail cache; subsequent pages merge into it so group/detail lookups keep
+// OverviewPage fetches one bounded page from /v1/sessions and returns the
+// API cursor needed to request the next page. The first page replaces the
+// summary cache; subsequent pages merge into it so detail lookups keep
 // working for every loaded row.
 func (q *HTTPQuery) OverviewPage(ctx context.Context, filters Filters, cursor string, limit int) (*OverviewPage, error) {
 	if limit <= 0 {
 		limit = httpQueryOverviewLimit
 	}
 
-	page, err := q.fetchSummaryPage(ctx, cursor, filters, limit)
+	page, err := q.fetchSessionPage(ctx, cursor, filters, limit)
 	if err != nil {
 		return nil, err
 	}
 
-	candidates := candidatesFromSummaries(page.Items)
+	summaries := make([]SessionSummary, len(page.Items))
+	for i, item := range page.Items {
+		summaries[i] = summaryFromSessionItem(item)
+	}
 	if cursor == "" {
-		q.cache.storeSessionCandidates(candidates)
+		q.cache.storeSummaries(summaries)
 	} else {
-		q.cache.appendSessionCandidates(candidates)
+		q.cache.appendSummaries(summaries)
 	}
 
-	overview := buildOverviewFromCandidates(candidates, filters)
+	overview := buildOverviewFromSummaries(summaries, filters)
 	return &OverviewPage{
 		Overview:   overview,
 		NextCursor: page.NextCursor,
@@ -139,91 +192,148 @@ func (q *HTTPQuery) OverviewPage(ctx context.Context, filters Filters, cursor st
 	}, nil
 }
 
-// SessionDetail fetches the chain for a single stem via /v1/stems/:hash
-// and renders the per-turn message data using the cached SessionSummary for
-// the same ID. Group IDs (synthetic IDs from groupSessionCandidates) are
-// resolved against the cached candidates.
+// SessionDetail fetches the turn summaries for one session via
+// /v1/traces?session_id= and renders them as the session transcript. The
+// SessionSummary comes from the overview cache when warm, falling back to
+// GET /v1/sessions/{id} on a cold cache.
 func (q *HTTPQuery) SessionDetail(ctx context.Context, sessionID string) (*SessionDetail, error) {
-	if isGroupID(sessionID) {
-		return q.groupSessionDetail(ctx, sessionID)
-	}
-
-	chain, err := q.fetchSessionChain(ctx, sessionID)
+	turns, err := q.fetchTraceSummaries(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
 
-	summary := q.summaryForID(sessionID, chain)
-	messages, toolFreq := buildHTTPSessionMessages(chain, q.pricing)
-	grouped := buildGroupedMessages(messages)
+	summary, err := q.summaryForID(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	turnSummaries := make([]TurnSummary, len(turns))
+	for i, t := range turns {
+		turnSummaries[i] = turnSummaryFromTraceItem(t)
+	}
+
+	messages := messagesFromTurns(turnSummaries, summary.Model)
 	return &SessionDetail{
 		Summary:         summary,
+		Turns:           turnSummaries,
 		Messages:        messages,
-		GroupedMessages: grouped,
-		ToolFrequency:   toolFreq,
+		GroupedMessages: buildGroupedMessages(messages),
 	}, nil
 }
 
-// groupSessionDetail merges the chains of every leaf belonging to a synthetic
-// group ID. Falls back to a fresh Overview load if the cache is empty/stale.
-func (q *HTTPQuery) groupSessionDetail(ctx context.Context, sessionID string) (*SessionDetail, error) {
-	cached := q.cache.cachedSessionCandidates()
-	if cached == nil {
-		// Force a refresh so groupSessionCandidates has data to work with.
-		if _, err := q.Overview(ctx, Filters{}); err != nil {
-			return nil, err
+// TurnConversation fetches one turn's spans via /v1/traces/{trace_id} and
+// reconstructs the conversation: the main (conversation-spine) llm calls'
+// input/output blocks in seq order. Offshoot and injected spans are counted
+// rather than interleaved; tool spans feed the tool-frequency rollup.
+func (q *HTTPQuery) TurnConversation(ctx context.Context, traceID string) (*TurnConversation, error) {
+	detail, err := q.fetchTraceDetail(ctx, traceID)
+	if err != nil {
+		return nil, err
+	}
+
+	conv := &TurnConversation{
+		Turn:          turnSummaryFromTraceItem(detail.Trace),
+		ToolFrequency: map[string]int{},
+	}
+
+	var lastTime time.Time
+	for _, sp := range detail.Spans {
+		callKind, _ := sp.Metadata["call_kind"].(string)
+		switch sp.Kind {
+		case "llm":
+			switch {
+			case callKind == "main" || callKind == "":
+				conv.Messages = append(conv.Messages, q.messagesFromLLMSpan(detail.Trace.TraceID, sp, &lastTime)...)
+			case strings.HasPrefix(callKind, "injected:"):
+				conv.InjectedContexts++
+			default:
+				conv.OffshootCalls++
+			}
+		case "tool":
+			if sp.Name != "" {
+				conv.ToolFrequency[sp.Name]++
+			}
+		case "event":
+			if strings.HasPrefix(callKind, "injected:") {
+				conv.InjectedContexts++
+			}
 		}
-		cached = q.cache.cachedSessionCandidates()
-		if cached == nil {
-			return nil, fmt.Errorf("group %s not found: empty session set", sessionID)
-		}
 	}
 
-	groups := groupSessionCandidates(cached)
-	target := findGroupByID(groups, sessionID)
-	if target == nil {
-		return nil, fmt.Errorf("get session group: %s", sessionID)
-	}
-
-	// Fetch each member's chain and merge in chronological order.
-	allTurns := make([]httpTurn, 0)
-	for _, member := range target.members {
-		chain, err := q.fetchSessionChain(ctx, member.summary.ID)
-		if err != nil {
-			return nil, fmt.Errorf("fetching member %s: %w", member.summary.ID, err)
-		}
-		allTurns = append(allTurns, chain...)
-	}
-	// Stable sort by created_at then hash so the same input always renders identically.
-	sortTurnsByTime(allTurns)
-
-	messages, toolFreq := buildHTTPSessionMessages(allTurns, q.pricing)
-	grouped := buildGroupedMessages(messages)
-
-	subSessions := make([]SessionSummary, 0, len(target.members))
-	for _, member := range target.members {
-		subSessions = append(subSessions, member.summary)
-	}
-
-	return &SessionDetail{
-		Summary:         target.summary,
-		Messages:        messages,
-		GroupedMessages: grouped,
-		ToolFrequency:   toolFreq,
-		SubSessions:     subSessions,
-	}, nil
+	conv.GroupedMessages = buildGroupedMessages(conv.Messages)
+	return conv, nil
 }
 
-func buildOverviewFromCandidates(candidates []sessionCandidate, filters Filters) *Overview {
-	candidates = preFilterCandidatesByTime(candidates, filters)
-	groups := groupSessionCandidates(candidates)
+// messagesFromLLMSpan renders one conversation-spine llm call as up to two
+// transcript rows: the delta user content that prompted the call, then the
+// assistant output. Cost is estimated client-side from the span's usage and
+// model via the pricing table.
+func (q *HTTPQuery) messagesFromLLMSpan(traceID string, sp httpSpanItem, lastTime *time.Time) []SessionMessage {
+	model, _ := sp.Metadata["model"].(string)
+	model = sessions.NormalizeModel(model)
 
+	var messages []SessionMessage
+	if inBlocks := decodeContentBlocks(sp.Input["content"]); len(inBlocks) > 0 {
+		if text := strings.TrimSpace(sessions.ExtractText(inBlocks)); text != "" {
+			delta := time.Duration(0)
+			if !lastTime.IsZero() {
+				delta = sp.StartedAt.Sub(*lastTime)
+			}
+			*lastTime = sp.StartedAt
+			messages = append(messages, SessionMessage{
+				TraceID:   traceID,
+				Hash:      sp.SpanID + ":input",
+				Role:      "user",
+				Model:     model,
+				Timestamp: sp.StartedAt,
+				Delta:     delta,
+				Text:      text,
+			})
+		}
+	}
+
+	tokens := tokensFromMetrics(sp.Metrics)
+	var inputCost, outputCost, totalCost float64
+	if model != "" {
+		if price, ok := sessions.PricingForModel(q.pricing, model); ok {
+			inputCost, outputCost, totalCost = sessions.CostForTokensWithCache(price, tokens.Input, tokens.Output, tokens.CacheCreation, tokens.CacheRead)
+		}
+	}
+
+	outBlocks := decodeContentBlocks(sp.Output["content"])
+	endTime := sp.StartedAt.Add(time.Duration(sp.DurationNS))
+	delta := time.Duration(0)
+	if !lastTime.IsZero() {
+		delta = endTime.Sub(*lastTime)
+	}
+	*lastTime = endTime
+	messages = append(messages, SessionMessage{
+		TraceID:      traceID,
+		Hash:         sp.SpanID + ":output",
+		Role:         "assistant",
+		Model:        model,
+		Timestamp:    endTime,
+		Delta:        delta,
+		InputTokens:  tokens.Input,
+		OutputTokens: tokens.Output,
+		TotalTokens:  tokens.Total,
+		InputCost:    inputCost,
+		OutputCost:   outputCost,
+		TotalCost:    totalCost,
+		ToolCalls:    sessions.ExtractToolCalls(outBlocks),
+		Text:         sessions.ExtractText(outBlocks),
+	})
+	return messages
+}
+
+// buildOverviewFromSummaries applies the client-side filters and computes
+// the dashboard rollups over one loaded page of session rows.
+func buildOverviewFromSummaries(summaries []SessionSummary, filters Filters) *Overview {
 	overview := &Overview{
-		Sessions:    make([]SessionSummary, 0, len(groups)),
+		Sessions:    make([]SessionSummary, 0, len(summaries)),
 		CostByModel: map[string]ModelCost{},
 	}
-	for _, group := range groups {
-		summary := group.summary
+	for _, summary := range summaries {
 		if !matchesFilters(summary, filters) {
 			continue
 		}
@@ -234,7 +344,7 @@ func buildOverviewFromCandidates(candidates []sessionCandidate, filters Filters)
 		overview.OutputTokens += summary.OutputTokens
 		overview.TotalTokens += summary.InputTokens + summary.OutputTokens
 		overview.TotalDuration += summary.Duration
-		overview.TotalToolCalls += summary.ToolCalls
+		overview.TotalTurns += summary.MessageCount
 
 		switch summary.Status {
 		case StatusCompleted:
@@ -245,17 +355,13 @@ func buildOverviewFromCandidates(candidates []sessionCandidate, filters Filters)
 			overview.Abandoned++
 		}
 
-		for model, cost := range group.modelCosts {
-			aggregate := overview.CostByModel[model]
-			aggregate.Model = model
-			aggregate.InputTokens += cost.InputTokens
-			aggregate.OutputTokens += cost.OutputTokens
-			aggregate.InputCost += cost.InputCost
-			aggregate.OutputCost += cost.OutputCost
-			aggregate.TotalCost += cost.TotalCost
-			aggregate.SessionCount += cost.SessionCount
-			overview.CostByModel[model] = aggregate
-		}
+		aggregate := overview.CostByModel[summary.Model]
+		aggregate.Model = summary.Model
+		aggregate.InputTokens += summary.InputTokens
+		aggregate.OutputTokens += summary.OutputTokens
+		aggregate.TotalCost += summary.TotalCost
+		aggregate.SessionCount++
+		overview.CostByModel[summary.Model] = aggregate
 	}
 
 	if total := len(overview.Sessions); total > 0 {
@@ -266,8 +372,8 @@ func buildOverviewFromCandidates(candidates []sessionCandidate, filters Filters)
 	return overview
 }
 
-func (q *HTTPQuery) fetchSummaryPage(ctx context.Context, cursor string, filters Filters, limit int) (*httpSummaryResponse, error) {
-	u, err := url.Parse(q.apiTarget + "/v1/stems")
+func (q *HTTPQuery) fetchSessionPage(ctx context.Context, cursor string, filters Filters, limit int) (*httpSessionListResponse, error) {
+	u, err := url.Parse(q.apiTarget + "/v1/sessions")
 	if err != nil {
 		return nil, fmt.Errorf("invalid api target: %w", err)
 	}
@@ -282,210 +388,251 @@ func (q *HTTPQuery) fetchSummaryPage(ctx context.Context, cursor string, filters
 	if filters.To != nil {
 		qparams.Set("until", filters.To.UTC().Format(time.RFC3339))
 	}
-	if filters.Project != "" {
-		qparams.Set("project", filters.Project)
-	}
-	if filters.Model != "" {
-		qparams.Set("model", filters.Model)
-	}
 	u.RawQuery = qparams.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-	resp, err := q.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetching session summaries: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("api returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var page httpSummaryResponse
-	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
-		return nil, fmt.Errorf("decoding summary response: %w", err)
+	var page httpSessionListResponse
+	if err := q.getJSON(ctx, u.String(), &page); err != nil {
+		return nil, fmt.Errorf("fetching sessions: %w", err)
 	}
 	return &page, nil
 }
 
-func (q *HTTPQuery) fetchSessionChain(ctx context.Context, hash string) ([]httpTurn, error) {
-	u := q.apiTarget + "/v1/stems/" + url.PathEscape(hash)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+func (q *HTTPQuery) fetchSessionItem(ctx context.Context, sessionID string) (*httpSessionItem, error) {
+	var resp httpSessionDetailResponse
+	if err := q.getJSON(ctx, q.apiTarget+"/v1/sessions/"+url.PathEscape(sessionID), &resp); err != nil {
+		return nil, fmt.Errorf("fetching session %s: %w", sessionID, err)
+	}
+	return &resp.Session, nil
+}
+
+func (q *HTTPQuery) fetchTraceSummaries(ctx context.Context, sessionID string) ([]httpTraceItem, error) {
+	u, err := url.Parse(q.apiTarget + "/v1/traces")
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
+		return nil, fmt.Errorf("invalid api target: %w", err)
+	}
+	qparams := u.Query()
+	qparams.Set("session_id", sessionID)
+	u.RawQuery = qparams.Encode()
+
+	var resp httpTraceListResponse
+	if err := q.getJSON(ctx, u.String(), &resp); err != nil {
+		return nil, fmt.Errorf("fetching traces for session %s: %w", sessionID, err)
+	}
+	return resp.Items, nil
+}
+
+func (q *HTTPQuery) fetchTraceDetail(ctx context.Context, traceID string) (*httpTraceDetailResponse, error) {
+	var resp httpTraceDetailResponse
+	if err := q.getJSON(ctx, q.apiTarget+"/v1/traces/"+url.PathEscape(traceID), &resp); err != nil {
+		return nil, fmt.Errorf("fetching trace %s: %w", traceID, err)
+	}
+	return &resp, nil
+}
+
+// getJSON performs one GET and decodes the 200 response into out.
+func (q *HTTPQuery) getJSON(ctx context.Context, target string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
 	}
 	resp, err := q.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetching session chain: %w", err)
+		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("session %s not found", hash)
+		return errors.New("not found")
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("api returned status %d: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("api returned status %d: %s", resp.StatusCode, string(body))
 	}
-
-	var sess httpSessionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&sess); err != nil {
-		return nil, fmt.Errorf("decoding session response: %w", err)
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return fmt.Errorf("decoding response: %w", err)
 	}
-	return sess.Turns, nil
+	return nil
 }
 
-// summaryForID returns the cached summary for sessionID if available.
-// Falls back to a synthesised minimal summary built from the chain so the
-// detail view can still render even on a cold cache.
-func (q *HTTPQuery) summaryForID(sessionID string, chain []httpTurn) SessionSummary {
-	if c := q.cache.cachedSessionCandidate(sessionID); c != nil {
-		return c.summary
+// summaryForID returns the cached summary for sessionID if available,
+// falling back to GET /v1/sessions/{id} on a cold cache (e.g. when the deck
+// was launched straight into a session with --session).
+func (q *HTTPQuery) summaryForID(ctx context.Context, sessionID string) (SessionSummary, error) {
+	if cached := q.cache.cachedSummary(sessionID); cached != nil {
+		return *cached, nil
 	}
-	if len(chain) == 0 {
-		return SessionSummary{ID: sessionID}
+	item, err := q.fetchSessionItem(ctx, sessionID)
+	if err != nil {
+		return SessionSummary{}, err
 	}
-	// Minimal fallback so the detail view has at least the basic info.
-	leaf := chain[len(chain)-1]
+	return summaryFromSessionItem(*item), nil
+}
+
+// summaryFromSessionItem adapts one /v1/sessions row onto the shared
+// SessionSummary shape the TUI renders. The sessions table is the product
+// grain: rollups (tokens, cost, turn count, status, model) are folded at
+// derive time, so no client-side aggregation happens here.
+func summaryFromSessionItem(item httpSessionItem) SessionSummary {
+	end := item.LastSeenAt
+	if item.EndedAt != nil {
+		end = *item.EndedAt
+	}
+	duration := max(end.Sub(item.StartedAt), 0)
 	return SessionSummary{
-		ID:           sessionID,
-		Label:        truncateID(sessionID, 12),
-		Model:        leaf.Model,
-		AgentName:    leaf.AgentName,
-		StartTime:    chain[0].CreatedAt,
-		EndTime:      leaf.CreatedAt,
-		Duration:     leaf.CreatedAt.Sub(chain[0].CreatedAt),
-		MessageCount: len(chain),
+		ID:           item.ID,
+		Label:        sessionLabel(item),
+		Model:        item.Model,
+		Project:      projectFromCwd(item.Cwd),
+		AgentName:    item.HarnessID,
+		Status:       item.DerivedStatus,
+		StartTime:    item.StartedAt,
+		EndTime:      end,
+		Duration:     duration,
+		InputTokens:  item.TotalInputTokens,
+		OutputTokens: item.TotalOutputTokens,
+		TotalCost:    item.TotalCostUsd,
+		MessageCount: item.TurnCount,
+		SessionCount: 1,
 	}
 }
 
-// candidatesFromSummaries adapts the API's SessionSummary list into the
-// existing sessionCandidate shape used by client-side grouping. The nodes
-// field is left nil; HTTPQuery's group detail path uses Hash to refetch
-// chains lazily rather than carrying them through the cache.
-func candidatesFromSummaries(items []SessionSummary) []sessionCandidate {
-	out := make([]sessionCandidate, len(items))
-	for i, s := range items {
-		out[i] = sessionCandidate{
-			summary: s,
-			modelCosts: map[string]ModelCost{
-				s.Model: {
-					Model:        s.Model,
-					InputTokens:  s.InputTokens,
-					OutputTokens: s.OutputTokens,
-					InputCost:    s.InputCost,
-					OutputCost:   s.OutputCost,
-					TotalCost:    s.TotalCost,
-					SessionCount: 1,
-				},
-			},
-			status: s.Status,
+// sessionLabel picks the row label: the session's name when set, else the
+// first line of the first-prompt preview, else a short form of the id.
+func sessionLabel(item httpSessionItem) string {
+	if name := strings.TrimSpace(item.Name); name != "" {
+		return name
+	}
+	if preview := firstLine(item.Preview); preview != "" {
+		return truncateID(preview, 48)
+	}
+	return truncateID(item.ID, 12)
+}
+
+func firstLine(text string) string {
+	for line := range strings.SplitSeq(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
 		}
 	}
-	return out
+	return ""
 }
 
-// buildHTTPSessionMessages renders the per-turn SessionMessage list for the
-// detail view. Per-turn cost is computed using pkg/sessions pricing helpers.
-func buildHTTPSessionMessages(turns []httpTurn, pricing PricingTable) ([]SessionMessage, map[string]int) {
-	messages := make([]SessionMessage, 0, len(turns))
-	toolFrequency := map[string]int{}
+// projectFromCwd derives a short project name from the session's working
+// directory. The sessions table has no project column; the basename of cwd
+// is the closest product-grain equivalent of the old stem project field.
+func projectFromCwd(cwd string) string {
+	cwd = strings.TrimRight(strings.TrimSpace(cwd), "/")
+	if cwd == "" || cwd == "/" {
+		return ""
+	}
+	return path.Base(cwd)
+}
 
+// turnSummaryFromTraceItem adapts one /v1/traces row to the deck shape.
+func turnSummaryFromTraceItem(item httpTraceItem) TurnSummary {
+	return TurnSummary{
+		TraceID:             item.TraceID,
+		UserPrompt:          item.UserPrompt,
+		ResponsePreview:     item.ResponsePreview,
+		Status:              item.Status,
+		StartedAt:           item.StartedAt,
+		EndedAt:             item.EndedAt,
+		Duration:            time.Duration(item.DurationNS),
+		InputTokens:         item.TotalInputTokens,
+		OutputTokens:        item.TotalOutputTokens,
+		MainInputTokens:     item.MainInputTokens,
+		MainOutputTokens:    item.MainOutputTokens,
+		CacheReadTokens:     item.CacheReadTokens,
+		CacheCreationTokens: item.CacheCreationTokens,
+		TotalCost:           item.TotalCostUSD,
+		SpanCount:           item.SpanCount,
+	}
+}
+
+// messagesFromTurns renders the session transcript at turn grain: each turn
+// contributes a user row (the prompt) and an assistant row (the response
+// preview, carrying the turn's folded tokens/cost and its duration as the
+// row delta). Transcript consumers — the TUI conversation table and the
+// skill generator — read this shape without knowing about spans.
+func messagesFromTurns(turns []TurnSummary, model string) []SessionMessage {
+	messages := make([]SessionMessage, 0, len(turns)*2)
 	var lastTime time.Time
-	var lastModel string
-	for i, t := range turns {
-		tokens := tokensForTurn(t)
-
-		model := sessions.NormalizeModel(t.Model)
-		if model == "" {
-			model = lastModel
+	for _, turn := range turns {
+		userDelta := time.Duration(0)
+		if !lastTime.IsZero() {
+			userDelta = turn.StartedAt.Sub(lastTime)
 		}
-		if model != "" {
-			lastModel = model
-		}
-
-		var inputCost, outputCost, totalCost float64
-		if model != "" {
-			if price, ok := sessions.PricingForModel(pricing, model); ok {
-				inputCost, outputCost, totalCost = sessions.CostForTokensWithCache(price, tokens.Input, tokens.Output, tokens.CacheCreation, tokens.CacheRead)
-			}
-		}
-
-		toolCalls := sessions.ExtractToolCalls(t.Content)
-		for _, tool := range toolCalls {
-			toolFrequency[tool]++
-		}
-
-		text := sessions.ExtractText(t.Content)
-		delta := time.Duration(0)
-		if i > 0 {
-			delta = t.CreatedAt.Sub(lastTime)
-		}
-		lastTime = t.CreatedAt
-
 		messages = append(messages, SessionMessage{
-			Hash:         t.Hash,
-			Role:         t.Role,
-			Model:        model,
-			Timestamp:    t.CreatedAt,
-			Delta:        delta,
-			InputTokens:  tokens.Input,
-			OutputTokens: tokens.Output,
-			TotalTokens:  tokens.Total,
-			InputCost:    inputCost,
-			OutputCost:   outputCost,
-			TotalCost:    totalCost,
-			ToolCalls:    toolCalls,
-			Text:         text,
+			TraceID:   turn.TraceID,
+			Hash:      turn.TraceID + ":prompt",
+			Role:      "user",
+			Timestamp: turn.StartedAt,
+			Delta:     userDelta,
+			Text:      turn.UserPrompt,
 		})
-	}
 
-	return messages, toolFrequency
+		end := turn.StartedAt.Add(turn.Duration)
+		if turn.EndedAt != nil {
+			end = *turn.EndedAt
+		}
+		messages = append(messages, SessionMessage{
+			TraceID:      turn.TraceID,
+			Hash:         turn.TraceID + ":response",
+			Role:         "assistant",
+			Model:        model,
+			Timestamp:    end,
+			Delta:        turn.Duration,
+			InputTokens:  turn.InputTokens,
+			OutputTokens: turn.OutputTokens,
+			TotalTokens:  turn.InputTokens + turn.OutputTokens,
+			TotalCost:    turn.TotalCost,
+			Text:         turn.ResponsePreview,
+		})
+		lastTime = end
+	}
+	return messages
 }
 
-// tokensForTurn extracts token usage from a Turn's optional Usage struct.
-func tokensForTurn(t httpTurn) sessions.NodeTokens {
+// decodeContentBlocks unmarshals a stored content-block array (missing /
+// null / malformed → nil).
+func decodeContentBlocks(raw json.RawMessage) []llm.ContentBlock {
+	if len(raw) == 0 {
+		return nil
+	}
+	var blocks []llm.ContentBlock
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return nil
+	}
+	return blocks
+}
+
+// tokensFromMetrics extracts token usage from a span's metrics object
+// (llm.Usage JSON; {} for usage-less spans).
+func tokensFromMetrics(raw json.RawMessage) sessions.NodeTokens {
 	var nt sessions.NodeTokens
-	if t.Usage == nil {
+	if len(raw) == 0 {
 		return nt
 	}
-	nt.Input = int64(t.Usage.PromptTokens)
-	nt.Output = int64(t.Usage.CompletionTokens)
-	nt.CacheCreation = int64(t.Usage.CacheCreationInputTokens)
-	nt.CacheRead = int64(t.Usage.CacheReadInputTokens)
+	var usage llm.Usage
+	if err := json.Unmarshal(raw, &usage); err != nil {
+		return nt
+	}
+	nt.Input = int64(usage.PromptTokens)
+	nt.Output = int64(usage.CompletionTokens)
+	nt.CacheCreation = int64(usage.CacheCreationInputTokens)
+	nt.CacheRead = int64(usage.CacheReadInputTokens)
 	nt.Total = nt.Input + nt.Output
-	if t.Usage.TotalTokens > 0 {
-		nt.Total = int64(t.Usage.TotalTokens)
+	if usage.TotalTokens > 0 {
+		nt.Total = int64(usage.TotalTokens)
 	}
 	return nt
 }
 
-// sortTurnsByTime sorts turns in place by CreatedAt, then by hash for stable
-// ordering when timestamps are equal.
-func sortTurnsByTime(turns []httpTurn) {
-	slices.SortStableFunc(turns, func(a, b httpTurn) int {
-		if !a.CreatedAt.Equal(b.CreatedAt) {
-			if a.CreatedAt.Before(b.CreatedAt) {
-				return -1
-			}
-			return 1
-		}
-		return strings.Compare(a.Hash, b.Hash)
-	})
-}
-
-// ErrEmptyChain is returned when SessionDetail receives an empty chain back
-// from the API. Exported so callers can branch on it if needed.
-var ErrEmptyChain = errors.New("empty session chain")
-
 // effectiveSinceCutoff returns the timestamp below which sessions should
 // be excluded, derived from the deck's relative Filters.Since (a duration
 // from now) and absolute Filters.From bounds. When both are set the later
-// of the two wins, matching the existing client-side behaviour in
-// preFilterCandidatesByTime so the server-side and client-side passes
-// agree on the boundary.
+// of the two wins, matching the client-side behaviour in matchesFilters so
+// the server-side and client-side passes agree on the boundary.
 //
 // Returns the zero time when no cutoff applies; callers should treat that
 // as "do not send a since query param".

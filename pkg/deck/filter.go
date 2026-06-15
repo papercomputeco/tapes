@@ -8,39 +8,11 @@ import (
 	"github.com/papercomputeco/tapes/pkg/sessions"
 )
 
-// preFilterCandidatesByTime reduces the candidate set using time-based filters
-// before the O(N log N) grouping step. This is the hot path when switching
-// between 24h and 30d periods — avoiding a full sort of all candidates.
-func preFilterCandidatesByTime(candidates []sessionCandidate, filters Filters) []sessionCandidate {
-	var cutoff time.Time
-	hasCutoff := false
-
-	if filters.Since > 0 {
-		cutoff = time.Now().Add(-filters.Since)
-		hasCutoff = true
-	}
-	if filters.From != nil && (!hasCutoff || filters.From.After(cutoff)) {
-		cutoff = *filters.From
-		hasCutoff = true
-	}
-
-	if !hasCutoff && filters.To == nil {
-		return candidates
-	}
-
-	filtered := make([]sessionCandidate, 0, len(candidates))
-	for _, c := range candidates {
-		if hasCutoff && c.summary.EndTime.Before(cutoff) {
-			continue
-		}
-		if filters.To != nil && c.summary.StartTime.After(*filters.To) {
-			continue
-		}
-		filtered = append(filtered, c)
-	}
-	return filtered
-}
-
+// matchesFilters evaluates the deck's client-side filter set against one
+// session row. Time bounds are also pushed down to /v1/sessions; rechecking
+// them here keeps a cached page honest after the window changes. Model,
+// status, and project only exist client-side: the sessions list endpoint
+// does not filter on them.
 func matchesFilters(summary SessionSummary, filters Filters) bool {
 	if filters.Model != "" {
 		if sessions.NormalizeModel(summary.Model) != sessions.NormalizeModel(filters.Model) {

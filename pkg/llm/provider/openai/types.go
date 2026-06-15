@@ -1,5 +1,7 @@
 package openai
 
+import "encoding/json"
+
 // openaiRequest represents OpenAI's request format.
 type openaiRequest struct {
 	Model       string          `json:"model"`
@@ -14,6 +16,8 @@ type openaiRequest struct {
 	FrequencyPenalty *float64       `json:"frequency_penalty,omitempty"`
 	PresencePenalty  *float64       `json:"presence_penalty,omitempty"`
 	ResponseFormat   map[string]any `json:"response_format,omitempty"`
+	// Tools stay raw JSON: passed through to llm.ChatRequest.Tools verbatim.
+	Tools []json.RawMessage `json:"tools,omitempty"`
 }
 
 // openaiMessage represents a message in OpenAI's format.

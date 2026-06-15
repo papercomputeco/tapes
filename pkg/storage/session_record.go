@@ -26,9 +26,45 @@ type SessionRecord struct {
 	// abandoned / unknown), denormalized at ingest. 'unknown' until the first
 	// turn lands or, for pre-feature rows, until the status backfill runs.
 	DerivedStatus string
-	Preview       string // first user turn text, truncated; empty when unavailable
+	// Model is the dominant conversation-spine model, folded at derive
+	// time (sessions.derived_model). Empty until the session derives.
+	Model string
+	// ModelUsage is the per-model spend breakdown folded at derive time
+	// across every thread (sessions.model_usage), cost-weighted so the
+	// share reflects spend rather than call count. Nil until the session
+	// derives; ordered dominant-model-first (by cost).
+	ModelUsage []ModelUsage
+	Preview    string // first user turn text, truncated; empty when unavailable
 	// AuthSubject is the gateway-stamped JWT subject (the WorkOS user id)
 	// captured at ingest. Empty for rows captured before the edge began
 	// stamping the x-paper-auth-subject header.
+	AuthSubject string
+}
+
+// ModelUsage is one model's contribution to a session: how many llm
+// calls ran on it and what they spent. Cost is priced at derive time,
+// so the per-model share is spend-weighted (a fan-out of cheap subagent
+// calls never out-votes the expensive main-spine model).
+type ModelUsage struct {
+	Model        string  `json:"model"`
+	Calls        int64   `json:"calls"`
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	CostUSD      float64 `json:"cost_usd"`
+}
+
+// SessionListOpts parameterizes the sessions-list read: keyset cursor
+// (last_seen_at DESC, id DESC), an optional activity window, and an
+// optional attribution filter. The since/until window filters on
+// last_seen_at — the sort/cursor column — so "sessions active in the
+// period" pages consistently. AuthSubject "" lists every user's
+// sessions; non-empty is an exact match on the gateway-stamped JWT
+// subject.
+type SessionListOpts struct {
+	Limit       int
+	CursorTs    *time.Time
+	CursorID    *string
+	Since       *time.Time
+	Until       *time.Time
 	AuthSubject string
 }

@@ -122,12 +122,16 @@ UPDATE sessions
 
 -- name: ListSessionRecords :many
 -- Paginated list of sessions for an org ordered newest-first (last_seen_at DESC, id DESC).
--- Pass NULL cursor values to start from the beginning. Pass a NULL
+-- Pass NULL cursor values to start from the beginning. The optional
+-- since/until window filters on last_seen_at — the sort/cursor column —
+-- so "sessions active in the period" pages consistently. Pass a NULL
 -- auth_subject to list every user's sessions; a non-NULL value is an
 -- exact match against the gateway-stamped JWT subject captured at
 -- ingest (sessions_auth_subject_idx).
 SELECT * FROM sessions
 WHERE org_id = sqlc.arg(org_id)
+  AND (sqlc.narg(since_filter)::timestamptz IS NULL OR last_seen_at >= sqlc.narg(since_filter)::timestamptz)
+  AND (sqlc.narg(until_filter)::timestamptz IS NULL OR last_seen_at < sqlc.narg(until_filter)::timestamptz)
   AND (
     sqlc.narg(auth_subject)::text IS NULL
     OR auth_subject = sqlc.narg(auth_subject)::text
@@ -160,3 +164,17 @@ ORDER BY created_at ASC;
 UPDATE nodes
    SET session_id = $1
  WHERE org_id = $2 AND hash = $3;
+
+-- name: UpdateSessionDerivedTitle :exec
+-- Fold the title-gen shadow call's output onto the session. Written at
+-- capture time when the title call lands, and again on re-derive —
+-- idempotent either way.
+UPDATE sessions SET derived_title = sqlc.arg(derived_title) WHERE id = sqlc.arg(id);
+
+-- name: UpdateSessionModelUsage :exec
+-- Fold the per-model spend breakdown onto the session (#28). Unlike the
+-- token/cost rollups (a pure SQL fold over span_turns), this is priced
+-- per model in Go at derive time — the price table lives there, not in
+-- SQL — so the deriver writes it directly as a JSONB array. Re-derive
+-- overwrites it idempotently.
+UPDATE sessions SET model_usage = sqlc.arg(model_usage) WHERE id = sqlc.arg(id);

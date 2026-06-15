@@ -15,7 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	apisearch "github.com/papercomputeco/tapes/api/search"
+	"github.com/papercomputeco/tapes/api"
 	"github.com/papercomputeco/tapes/pkg/cliui"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/logger"
@@ -28,6 +28,8 @@ type searchCommander struct {
 	query       string
 	topK        int
 	quiet       bool
+	spans       bool
+	orgID       string
 	apiTarget   string
 	debug       bool
 	resultCount int
@@ -41,15 +43,15 @@ var searchFlags = config.FlagSet{
 
 const searchLongDesc string = `Search session data via the Tapes API.
 
-Search over stored sessions, returning the most relevant sessions based on the
-query text. Requires a running Tapes API server with search configured
-(vector store and embedder).
+Searches the span projection: hits are individual main-conversation llm
+spans with their trace and turn context ("find the turn where X
+happened"). Requires a running Tapes API server with the span embeddings
+written (tapes serve derive-worker --embed-spans, or tapes dev
+embed-spans).
 
-For each result, the full session branch is displayed, including all ancestors
-(from root to matched node) and all descendants (from matched node to leaves).
-
-Use --quiet to output only leaf hashes, one per line. This is useful for piping
-into other commands like tapes skill generate.
+Use --quiet to output only session IDs, one per line, deduplicated in
+score order. This is useful for piping into other commands like
+tapes skill generate.
 
 Example:
   tapes search "how to configure logging"
@@ -102,7 +104,10 @@ func NewSearchCmd() *cobra.Command {
 	}
 
 	cmd.Flags().IntVarP(&cmder.topK, "top", "k", 5, "Number of results to return")
-	cmd.Flags().BoolVarP(&cmder.quiet, "quiet", "q", false, "Output only leaf hashes, one per line (for piping)")
+	cmd.Flags().BoolVarP(&cmder.quiet, "quiet", "q", false, "Output only session IDs, one per line (for piping)")
+	cmd.Flags().BoolVar(&cmder.spans, "spans", false, "Deprecated: span search is the default; this flag is a no-op")
+	_ = cmd.Flags().MarkDeprecated("spans", "span search is the default mode now")
+	cmd.Flags().StringVar(&cmder.orgID, "org", "", "Tenant org UUID sent as X-Tapes-Org-Id (default: the nil org)")
 	config.AddStringFlag(cmd, cmder.flags, config.FlagAPITarget, &cmder.apiTarget)
 
 	return cmd
@@ -111,7 +116,15 @@ func NewSearchCmd() *cobra.Command {
 func (c *searchCommander) run() error {
 	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
 
-	output, err := SearchAPI(c.apiTarget, c.query, c.topK)
+	// Span search is the only mode; the deprecated --spans flag is
+	// accepted as a no-op for muscle memory.
+	return c.runSpans()
+}
+
+// runSpans executes a span search and renders per-span hits with
+// their trace/turn context.
+func (c *searchCommander) runSpans() error {
+	output, err := SearchSpansAPI(c.apiTarget, c.query, c.orgID, c.topK)
 	if err != nil {
 		return err
 	}
@@ -125,80 +138,77 @@ func (c *searchCommander) run() error {
 	}
 
 	if c.quiet {
+		// Session IDs, deduplicated in score order — the shape
+		// tapes skill generate takes as positional arguments.
+		seen := map[string]bool{}
 		for _, result := range output.Results {
-			fmt.Println(LeafHash(result))
+			if result.SessionID == "" || seen[result.SessionID] {
+				continue
+			}
+			seen[result.SessionID] = true
+			fmt.Println(result.SessionID)
 		}
 		return nil
 	}
 
 	fmt.Printf("\n%s %s\n\n",
-		cliui.HeaderStyle.Render("Search Results for:"),
+		cliui.HeaderStyle.Render("Span Search Results for:"),
 		cliui.HashStyle.Render(fmt.Sprintf("%q", output.Query)),
 	)
-
 	for i, result := range output.Results {
-		c.printResult(i+1, result)
+		c.printSpanResult(i+1, result)
 	}
-
 	return nil
 }
 
-func (c *searchCommander) printResult(rank int, result apisearch.Result) {
+func (c *searchCommander) printSpanResult(rank int, result api.SpanSearchResult) {
 	fmt.Printf("  %s  %s  %s\n",
 		cliui.RankStyle.Render(fmt.Sprintf("#%d", rank)),
 		cliui.ScoreStyle.Render(fmt.Sprintf("score: %.4f", result.Score)),
-		cliui.HashStyle.Render(result.Hash),
+		cliui.HashStyle.Render(result.TraceID+" / "+result.SpanID),
 	)
 
-	if result.Turns == 0 {
-		fmt.Printf("  %s\n\n", cliui.DimStyle.Render("(no session found)"))
-		return
+	prompt := strings.ReplaceAll(result.UserPrompt, "\n", " ")
+	if prompt == "" {
+		prompt = "(synthetic turn)"
+	}
+	if len(prompt) > 80 {
+		prompt = prompt[:77] + "..."
+	}
+	fmt.Printf("  %s %s\n", cliui.RoleStyle.Render("turn:"), cliui.PreviewStyle.Render(prompt))
+
+	snippet := strings.ReplaceAll(result.Snippet, "\n", " ")
+	if len(snippet) > 100 {
+		snippet = snippet[:97] + "..."
+	}
+	if snippet != "" {
+		fmt.Printf("  %s %s\n", cliui.BranchStyle.Render(" ├─"), cliui.BranchStyle.Render(snippet))
 	}
 
-	preview := result.Preview
-	if len(preview) > 80 {
-		preview = preview[:77] + "..."
+	meta := result.StartedAt.Format(time.RFC3339)
+	if result.SessionID != "" {
+		meta += "  session " + result.SessionID
 	}
-	preview = strings.ReplaceAll(preview, "\n", " ")
-
-	fmt.Printf("  %s %s\n", cliui.RoleStyle.Render(result.Role+":"), cliui.PreviewStyle.Render(preview))
-	fmt.Printf("  %s\n", cliui.DimStyle.Render(fmt.Sprintf("%d turns", result.Turns)))
-
-	if len(result.Branch) > 0 {
-		for _, turn := range result.Branch {
-			text := turn.Text
-			if text == "" {
-				text = "(no text content)"
-			}
-			if len(text) > 60 {
-				text = text[:57] + "..."
-			}
-			text = strings.ReplaceAll(text, "\n", " ")
-
-			if turn.Matched {
-				fmt.Printf("  %s %s %s %s\n",
-					cliui.MatchedStyle.Render(">>>"),
-					cliui.RoleStyle.Render("["+turn.Role+"]"),
-					cliui.PreviewStyle.Render(text),
-					cliui.DimStyle.Render(turn.Hash[:12]),
-				)
-			} else {
-				fmt.Printf("  %s %s %s %s\n",
-					cliui.BranchStyle.Render(" ├─"),
-					cliui.RoleStyle.Render("["+turn.Role+"]"),
-					cliui.BranchStyle.Render(text),
-					cliui.DimStyle.Render(turn.Hash[:12]),
-				)
-			}
-		}
-	}
-
-	fmt.Println()
+	fmt.Printf("  %s\n\n", cliui.DimStyle.Render(meta))
 }
 
-// SearchAPI calls the tapes search API and returns the parsed output.
-// Exported so other commands (e.g. skill generate --search) can reuse it.
-func SearchAPI(apiTarget, query string, topK int) (*apisearch.Output, error) {
+// SearchSpansAPI calls the tapes span search API and returns the
+// parsed output. orgID may be empty (the nil tenant).
+func SearchSpansAPI(apiTarget, query, orgID string, topK int) (*api.SpanSearchOutput, error) {
+	body, err := getSearch(apiTarget, "/v1/search/spans", query, orgID, topK)
+	if err != nil {
+		return nil, err
+	}
+	var output api.SpanSearchOutput
+	if err := json.Unmarshal(body, &output); err != nil {
+		return nil, fmt.Errorf("failed to parse span search response: %w", err)
+	}
+	return &output, nil
+}
+
+// getSearch issues one search GET against the tapes API and returns
+// the raw response body.
+func getSearch(apiTarget, path, query, orgID string, topK int) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -206,7 +216,7 @@ func SearchAPI(apiTarget, query string, topK int) (*apisearch.Output, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid API target URL: %w", err)
 	}
-	searchURL.Path = "/v1/search"
+	searchURL.Path = path
 	q := searchURL.Query()
 	q.Set("query", query)
 	q.Set("top_k", strconv.Itoa(topK))
@@ -215,6 +225,9 @@ func SearchAPI(apiTarget, query string, topK int) (*apisearch.Output, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating search request: %w", err)
+	}
+	if orgID != "" {
+		req.Header.Set("X-Tapes-Org-Id", orgID)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
@@ -231,20 +244,5 @@ func SearchAPI(apiTarget, query string, topK int) (*apisearch.Output, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("search request failed (HTTP %d): %s", resp.StatusCode, string(body))
 	}
-
-	var output apisearch.Output
-	if err := json.Unmarshal(body, &output); err != nil {
-		return nil, fmt.Errorf("failed to parse search response: %w", err)
-	}
-
-	return &output, nil
-}
-
-// LeafHash returns the leaf (last) hash from a search result's branch.
-// Falls back to the matched node hash if the branch is empty.
-func LeafHash(result apisearch.Result) string {
-	if len(result.Branch) > 0 {
-		return result.Branch[len(result.Branch)-1].Hash
-	}
-	return result.Hash
+	return body, nil
 }
