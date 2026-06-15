@@ -12,7 +12,6 @@ import (
 	searchcmder "github.com/papercomputeco/tapes/cmd/tapes/search"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/credentials"
-	"github.com/papercomputeco/tapes/pkg/dotdir"
 	"github.com/papercomputeco/tapes/pkg/skill"
 )
 
@@ -51,7 +50,6 @@ more tapes sessions using an LLM.
 Session resolution (in order):
   1. Positional session ID arguments (/v1/sessions UUIDs)
   2. --search query (span search for matching sessions)
-  3. Current checkout state (from tapes checkout)
 
 The transcript is built from the session's trace/span projection:
 turn-grain prompt/response pairs from the conversation spine, with
@@ -214,7 +212,7 @@ func (c *generateCommander) run(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// resolveSessionIDs determines session IDs from args, --search, or checkout.
+// resolveSessionIDs determines session IDs from args or --search.
 func (c *generateCommander) resolveSessionIDs(cmd *cobra.Command, args []string) ([]string, error) {
 	// 1. Positional args take priority
 	if len(args) > 0 {
@@ -226,17 +224,7 @@ func (c *generateCommander) resolveSessionIDs(cmd *cobra.Command, args []string)
 		return c.searchForSessions(cmd)
 	}
 
-	// 3. Fall back to current checkout
-	mgr := dotdir.NewManager()
-	state, err := mgr.LoadCheckoutState("")
-	if err != nil {
-		return nil, fmt.Errorf("loading checkout state: %w", err)
-	}
-	if state == nil {
-		return nil, errors.New("no session IDs provided, no --search query, and no checkout state;\nprovide a session ID, use --search, or run 'tapes checkout <id>' first")
-	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Using current checkout: %s\n", state.Hash)
-	return []string{state.Hash}, nil
+	return nil, errors.New("no session IDs provided and no --search query;\nprovide a session ID or use --search")
 }
 
 // searchForSessions resolves --search via the span search API: each

@@ -1,5 +1,5 @@
-// Package statuscmder provides the status command for displaying the current
-// checkout state of the local .tapes directory.
+// Package statuscmder provides the status command for displaying any locally
+// recorded tapes state in the local .tapes directory.
 package statuscmder
 
 import (
@@ -13,18 +13,15 @@ import (
 	"github.com/papercomputeco/tapes/pkg/utils"
 )
 
-const statusLongDesc string = `Show the current tapes checkout state.
+const statusLongDesc string = `Show local tapes state.
 
-Reads the local .tapes/ directory (or ~/.tapes/) to display the checked-out
-conversation point, including the hash and message history.
-
-If no checkout state exists, indicates that the next chat session will start
-a new conversation.
+Reads the local .tapes/ directory (or ~/.tapes/) and reports any locally
+recorded state, including a hash and message history when present.
 
 Examples:
   tapes status`
 
-const statusShortDesc string = "Show current checkout state"
+const statusShortDesc string = "Show local tapes state"
 
 func NewStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -49,7 +46,7 @@ func runStatus() error {
 	}
 
 	if state == nil {
-		fmt.Printf("  %s No checkout state. Next chat will start a new conversation.\n", cliui.DimStyle.Render("●"))
+		fmt.Printf("  %s No local state recorded.\n", cliui.DimStyle.Render("●"))
 		return nil
 	}
 
