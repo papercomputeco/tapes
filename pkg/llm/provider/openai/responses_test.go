@@ -19,6 +19,7 @@ var _ = Describe("Responses API request parsing", func() {
 			"model": "gpt-5.5",
 			"instructions": "You are Codex.",
 			"stream": true,
+			"tools": [{"type": "function", "name": "shell"}],
 			"input": [
 				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "list files"}]},
 				{"type": "reasoning", "summary": [{"type": "summary_text", "text": "plan"}], "encrypted_content": "blob"},
@@ -34,6 +35,7 @@ var _ = Describe("Responses API request parsing", func() {
 		Expect(req.System).To(Equal("You are Codex."))
 		Expect(req.Stream).NotTo(BeNil())
 		Expect(*req.Stream).To(BeTrue())
+		Expect(req.Tools).To(HaveLen(1))
 		Expect(req.Extra).To(HaveKeyWithValue("endpoint", "responses"))
 
 		Expect(req.Messages).To(HaveLen(4))

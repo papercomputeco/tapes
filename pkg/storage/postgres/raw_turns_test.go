@@ -128,6 +128,19 @@ var _ = Describe("RawTurnStore", func() {
 		Expect(page2).To(HaveLen(1))
 		Expect(page2[0].RequestID).To(Equal("req-c"))
 	})
+
+	It("lists raw turn header sizes for JSONB payloads", func() {
+		rec := rawRecord("req-headers")
+		_, err := driver.PutRawTurn(ctx, rec)
+		Expect(err).NotTo(HaveOccurred())
+
+		headers, err := driver.ListRawTurnHeaders(ctx, "", rec.HarnessID, rec.HarnessSessionID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(headers).To(HaveLen(1))
+		Expect(headers[0].RequestID).To(Equal("req-headers"))
+		Expect(headers[0].RequestBytes).To(BeNumerically(">", 0))
+		Expect(headers[0].ResponseBytes).To(BeNumerically(">", 0))
+	})
 })
 
 var _ = Describe("node request params round-trip", func() {

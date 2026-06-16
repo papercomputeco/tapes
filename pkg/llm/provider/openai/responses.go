@@ -18,15 +18,16 @@ import (
 // maps onto llm.ChatRequest. `input` is either a bare string or an array of
 // items; items are kept raw and decoded per type.
 type responsesRequest struct {
-	Model           string          `json:"model"`
-	Input           json.RawMessage `json:"input"`
-	Instructions    string          `json:"instructions,omitempty"`
-	MaxOutputTokens *int            `json:"max_output_tokens,omitempty"`
-	Temperature     *float64        `json:"temperature,omitempty"`
-	TopP            *float64        `json:"top_p,omitempty"`
-	Stream          *bool           `json:"stream,omitempty"`
-	Reasoning       map[string]any  `json:"reasoning,omitempty"`
-	PreviousID      string          `json:"previous_response_id,omitempty"`
+	Model           string            `json:"model"`
+	Input           json.RawMessage   `json:"input"`
+	Instructions    string            `json:"instructions,omitempty"`
+	MaxOutputTokens *int              `json:"max_output_tokens,omitempty"`
+	Temperature     *float64          `json:"temperature,omitempty"`
+	TopP            *float64          `json:"top_p,omitempty"`
+	Stream          *bool             `json:"stream,omitempty"`
+	Tools           []json.RawMessage `json:"tools,omitempty"`
+	Reasoning       map[string]any    `json:"reasoning,omitempty"`
+	PreviousID      string            `json:"previous_response_id,omitempty"`
 }
 
 // responsesItem is the union of the Responses input/output item shapes tapes
@@ -117,6 +118,7 @@ func parseResponsesRequest(payload []byte) (*llm.ChatRequest, error) {
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
 		Stream:      req.Stream,
+		Tools:       req.Tools,
 		RawRequest:  payload,
 	}
 

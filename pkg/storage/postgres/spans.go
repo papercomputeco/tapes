@@ -535,8 +535,8 @@ func (d *Driver) ListRawTurnHeaders(ctx context.Context, orgID, harnessID, harne
 			RequestID:     r.RequestID,
 			ReceivedAt:    r.ReceivedAt.Time,
 			Meta:          r.Meta,
-			RequestBytes:  int64(r.RequestBytes),
-			ResponseBytes: int64(r.ResponseBytes),
+			RequestBytes:  r.RequestBytes,
+			ResponseBytes: r.ResponseBytes,
 		})
 	}
 	return out, nil
