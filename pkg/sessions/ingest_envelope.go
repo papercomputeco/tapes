@@ -8,6 +8,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// HarnessIDUnknown is the sentinel harness_id for turns captured without
+// a known harness identity (e.g. a bare proxied call). Such turns are
+// attributed a synthetic harness_session_id derived from the turn's
+// Merkle root — see ResolveHarnessSessionID.
+const HarnessIDUnknown = "unknown"
+
 // IngestEnvelope is the session-tracking envelope attached to a turn
 // payload at the ingest HTTP boundary. It carries identity fields
 // (org_id, auth_subject) plus the harness identifiers ingest uses to
@@ -56,7 +62,7 @@ type IngestEnvelope struct {
 // normalization.
 func (e *IngestEnvelope) HarnessIDOrUnknown() string {
 	if e == nil || e.HarnessID == "" {
-		return "unknown"
+		return HarnessIDUnknown
 	}
 	return e.HarnessID
 }
@@ -114,8 +120,72 @@ func (e *IngestEnvelope) NeedsSyntheticHarnessSessionID() bool {
 	if e == nil {
 		return true
 	}
-	if e.HarnessIDOrUnknown() == "unknown" {
+	if e.HarnessIDOrUnknown() == HarnessIDUnknown {
 		return true
 	}
 	return e.HarnessSessionID == ""
+}
+
+// SyntheticHarnessSessionIDPrefixLen is the number of leading hex
+// characters of a captured turn's Merkle root hash used to derive a
+// synthetic harness_session_id when the inbound envelope doesn't carry
+// one.
+//
+// 16 hex chars = 64 bits of entropy. Each captured turn's root hash is
+// a SHA-256 of canonicalized JSON, so the 64-bit prefix is effectively
+// uniformly random. The birthday bound for a 50% collision at 64 bits
+// is ~2^32 ≈ 4 billion synthetic sessions per org; any plausible org
+// will be many orders of magnitude under that, so collisions are not a
+// real concern. We deliberately keep the prefix short so the synthetic
+// id stays human-grep-able in logs.
+const SyntheticHarnessSessionIDPrefixLen = 16
+
+// SyntheticHarnessSessionID derives a synthetic harness_session_id from
+// a captured turn's Merkle root hash — the first
+// SyntheticHarnessSessionIDPrefixLen hex characters. Because every turn
+// in a conversation re-sends the full history, the root (first message)
+// hash is stable across the conversation, so all of a conversation's
+// turns map to the same synthetic id. Returns "" when rootHash is empty.
+func SyntheticHarnessSessionID(rootHash string) string {
+	if rootHash == "" {
+		return ""
+	}
+	if len(rootHash) > SyntheticHarnessSessionIDPrefixLen {
+		return rootHash[:SyntheticHarnessSessionIDPrefixLen]
+	}
+	return rootHash
+}
+
+// ResolveHarnessSessionID returns the envelope to attribute and the
+// harness_session_id to key the session on, given the captured turn's
+// Merkle root hash. When the envelope already carries a usable id it is
+// returned unchanged. Otherwise a synthetic id is derived from rootHash
+// and a non-nil envelope is returned: any identity fields the caller did
+// supply (e.g. org_id) are preserved, HarnessID defaults to "unknown",
+// and only the harness_session_id slot is synthesized. Errors when a
+// synthetic id is required but rootHash is empty.
+//
+// This is the single source of truth shared by the ingest/derive node
+// path (pkg/storage/postgres) and the proxy capture path
+// (proxy/worker), so synthetic attribution is identical regardless of
+// which path wrote the raw turn.
+func ResolveHarnessSessionID(envelope *IngestEnvelope, rootHash string) (*IngestEnvelope, string, error) {
+	if envelope != nil && !envelope.NeedsSyntheticHarnessSessionID() {
+		return envelope, envelope.HarnessSessionID, nil
+	}
+
+	prefix := SyntheticHarnessSessionID(rootHash)
+	if prefix == "" {
+		return nil, "", errors.New("cannot derive synthetic harness_session_id: missing root node hash")
+	}
+
+	out := &IngestEnvelope{}
+	if envelope != nil {
+		*out = *envelope
+	}
+	if out.HarnessID == "" {
+		out.HarnessID = HarnessIDUnknown
+	}
+	out.HarnessSessionID = prefix
+	return out, prefix, nil
 }
