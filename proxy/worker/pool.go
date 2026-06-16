@@ -12,6 +12,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -41,6 +42,13 @@ type Job struct {
 	ThreadID string
 	Req      *llm.ChatRequest
 	Resp     *llm.ChatResponse
+
+	// RawRequest is the verbatim provider request body the proxy
+	// received, persisted unparsed into the immutable raw-turn layer so
+	// the deriver re-parses it (and fields unknown to this build
+	// survive). Empty for callers that don't capture into raw_turns
+	// (e.g. the in-memory test driver); the raw write is skipped then.
+	RawRequest json.RawMessage
 
 	// Session is the optional session-tracking envelope attached to
 	// the turn at the ingest HTTP boundary. When non-nil and the
@@ -171,6 +179,13 @@ func (p *Pool) worker(id uint) {
 func (p *Pool) processJob(job Job) {
 	ctx := context.Background()
 
+	// Span-model-native capture: append the turn to the immutable
+	// raw-turn layer when the driver hosts it, so the deriver projects
+	// it into sessions/traces/spans. This is the read surface the deck
+	// and API serve from. (The node-DAG write below is retired in the
+	// node-layer retirement; the raw write is what survives.)
+	p.persistRawTurn(ctx, job)
+
 	head, newNodes, err := p.storeConversationTurn(ctx, job)
 	if err != nil {
 		p.logger.Error("async DAG storage failed",
@@ -235,6 +250,94 @@ func (p *Pool) deriveRootHash(ctx context.Context, head string) (string, error) 
 	}
 
 	return root.Hash, nil
+}
+
+// rawTurnMeta is the minimal capture-side meta block the proxy stamps
+// onto a raw turn. The deriver reads thread_id for sub-thread
+// attribution; ts_request is omitted because single-process local
+// capture inserts the row at ~capture time, so the deriver's
+// received_at fallback is accurate.
+type rawTurnMeta struct {
+	ThreadID string `json:"thread_id,omitempty"`
+}
+
+// persistRawTurn appends one captured turn to the immutable raw-turn
+// layer when the driver hosts it (Postgres). This is the load-bearing
+// repoint that makes local proxy capture span-model-native: the row is
+// marked derive-dirty by PutRawTurn, so the derive worker projects it
+// into the sessions/traces/spans surface the deck and API read.
+//
+// A bare proxied call carries no session envelope, so the turn is
+// attributed a synthetic harness_session_id from its Merkle root hash
+// (the same scheme the node ingest path uses) — stable across a
+// conversation's turns, so they group into one derivable session.
+//
+// Failures are logged, never propagated: a raw-layer outage must not
+// take down capture, and the node-DAG write surfaces storage errors
+// independently.
+func (p *Pool) persistRawTurn(ctx context.Context, job Job) {
+	rawStore, ok := p.config.Driver.(storage.RawTurnStore)
+	if !ok || len(job.RawRequest) == 0 {
+		return
+	}
+
+	chain := buildTurnChain(job, p.config.Project)
+	if len(chain) == 0 {
+		return
+	}
+	root := chain[0]
+	head := chain[len(chain)-1]
+
+	envelope, harnessSessionID, err := sessions.ResolveHarnessSessionID(job.Session, root.Hash)
+	if err != nil {
+		p.logger.Error("raw turn skipped: resolve harness_session_id",
+			"provider", job.Provider, "error", err)
+		return
+	}
+
+	response, err := json.Marshal(job.Resp)
+	if err != nil {
+		p.logger.Error("raw turn skipped: marshal response",
+			"provider", job.Provider, "error", err)
+		return
+	}
+
+	meta, err := json.Marshal(rawTurnMeta{ThreadID: job.ThreadID})
+	if err != nil {
+		p.logger.Error("raw turn skipped: marshal meta",
+			"provider", job.Provider, "error", err)
+		return
+	}
+
+	sessionJSON, err := json.Marshal(envelope)
+	if err != nil {
+		p.logger.Error("raw turn skipped: marshal session envelope",
+			"provider", job.Provider, "error", err)
+		return
+	}
+
+	if _, err := rawStore.PutRawTurn(ctx, storage.RawTurnRecord{
+		OrgID:            envelope.OrgID,
+		Source:           storage.RawTurnSourceWire,
+		Provider:         job.Provider,
+		AgentName:        job.AgentName,
+		HarnessID:        envelope.HarnessIDOrUnknown(),
+		HarnessSessionID: harnessSessionID,
+		// The leaf (response) node hash is content-addressed and unique
+		// per turn, so it both dedupes an identical re-send and ties the
+		// raw row back to the turn's Merkle identity.
+		RequestID:       head.Hash,
+		RawRequest:      job.RawRequest,
+		Response:        response,
+		Meta:            meta,
+		SessionEnvelope: sessionJSON,
+	}); err != nil {
+		p.logger.Error("raw turn persist failed",
+			"provider", job.Provider,
+			"harness_session_id", harnessSessionID,
+			"error", err,
+		)
+	}
 }
 
 // storeConversationTurn stores a request-response pair in the merkle dag.
