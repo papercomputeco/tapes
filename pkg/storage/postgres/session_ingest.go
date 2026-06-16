@@ -21,19 +21,6 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage/postgres/gensqlc"
 )
 
-// syntheticHarnessSessionIDPrefixLen is the number of leading hex
-// characters of the root node's Merkle hash used to derive a synthetic
-// harness_session_id when the inbound envelope doesn't carry one.
-//
-// 16 hex chars = 64 bits of entropy. Each captured turn's root hash is
-// a SHA-256 of canonicalized JSON, so the 64-bit prefix is effectively
-// uniformly random. The birthday bound for a 50% collision at 64 bits
-// is ~2^32 ≈ 4 billion synthetic sessions per org; any plausible org
-// will be many orders of magnitude under that, so collisions are not
-// a real concern. We deliberately keep the prefix short so the synthetic
-// id stays human-grep-able in logs.
-const syntheticHarnessSessionIDPrefixLen = 16
-
 // nilOrgID is the sentinel UUID used for non-session-aware writers
 // (legacy Driver.Put) so the (org_id, hash) composite PK on nodes can
 // remain NOT NULL. Deployments that enforce per-org isolation can
@@ -368,34 +355,16 @@ func validateChainOrdering(nodes []*merkle.Node) error {
 // inbound envelope is nil or signals it lacks a usable
 // harness_session_id, a synthetic id is derived from the root node's
 // Merkle hash prefix.
+//
+// The synthetic-id logic lives in pkg/sessions so the proxy capture
+// path (proxy/worker) attributes envelope-less turns identically; this
+// is a thin adapter from the node-path's *merkle.Node root.
 func resolveHarnessSessionID(envelope *sessions.IngestEnvelope, root *merkle.Node) (*sessions.IngestEnvelope, string, error) {
-	if envelope != nil && !envelope.NeedsSyntheticHarnessSessionID() {
-		return envelope, envelope.HarnessSessionID, nil
+	var rootHash string
+	if root != nil {
+		rootHash = root.Hash
 	}
-
-	if root == nil || root.Hash == "" {
-		return nil, "", errors.New("cannot derive synthetic harness_session_id: missing root node hash")
-	}
-	prefix := root.Hash
-	if len(prefix) > syntheticHarnessSessionIDPrefixLen {
-		prefix = prefix[:syntheticHarnessSessionIDPrefixLen]
-	}
-
-	// Build a non-nil envelope so downstream code can treat envelope
-	// fields uniformly. If the caller passed nothing at all, we
-	// degrade to the "unknown" harness with empty identity fields;
-	// otherwise we preserve whatever identity fields the caller did
-	// supply (e.g. org_id) and only synthesize the harness_session_id
-	// slot.
-	out := &sessions.IngestEnvelope{}
-	if envelope != nil {
-		*out = *envelope
-	}
-	if out.HarnessID == "" {
-		out.HarnessID = "unknown"
-	}
-	out.HarnessSessionID = prefix
-	return out, prefix, nil
+	return sessions.ResolveHarnessSessionID(envelope, rootHash)
 }
 
 // resolveParentSessionID maps an envelope's optional
