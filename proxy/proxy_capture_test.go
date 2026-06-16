@@ -11,16 +11,15 @@ import (
 	. "github.com/onsi/gomega"
 
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
-	"github.com/papercomputeco/tapes/pkg/storage"
-	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
 // newAnthropicTestProxy creates a Proxy pointed at the given upstream URL,
-// using an in-memory storage driver and the anthropic provider so
-// handleStreamingProxy routes through pkg/capture.
-func newAnthropicTestProxy(upstreamURL string) (*Proxy, storage.Driver) {
+// using a capture-recording driver and the anthropic provider so
+// handleStreamingProxy routes through pkg/capture. Capture is asserted off
+// the recorded RawTurnRecords (the node DAG is retired).
+func newAnthropicTestProxy(upstreamURL string) (*Proxy, *captureDriver) {
 	logger := tapeslogger.NewNoop()
-	driver := inmemory.NewDriver()
+	driver := newCaptureDriver()
 
 	p, err := New(
 		Config{
@@ -38,7 +37,7 @@ func newAnthropicTestProxy(upstreamURL string) (*Proxy, storage.Driver) {
 var _ = Describe("Anthropic streaming proxy (capture-backed)", func() {
 	var (
 		p        *Proxy
-		driver   storage.Driver
+		driver   *captureDriver
 		upstream *httptest.Server
 	)
 
@@ -91,20 +90,16 @@ var _ = Describe("Anthropic streaming proxy (capture-backed)", func() {
 		Expect(bodyStr).To(ContainSubstring(`"text":"Hello"`))
 		Expect(bodyStr).To(ContainSubstring(`"text":" world"`))
 
-		// Drain worker pool to ensure capture.Reduce enqueued a canonical
-		// assistant node.
+		// Drain worker pool to ensure capture.Reduce reduced a canonical
+		// assistant response and the raw turn landed.
 		p.Close()
 		p = nil
 
-		ctx := GinkgoT().Context()
-		nodes, err := driver.List(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(nodes).To(HaveLen(2)) // user + assistant
-
-		leaves, err := driver.Leaves(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(leaves).To(HaveLen(1))
-		Expect(leaves[0].Bucket.Role).To(Equal("assistant"))
-		Expect(leaves[0].Bucket.ExtractText()).To(Equal("Hello world"))
+		raws := driver.RawTurns()
+		Expect(raws).To(HaveLen(1))
+		Expect(raws[0].Provider).To(Equal("anthropic"))
+		reduced := decodeReducedResponse(raws[0].Response)
+		Expect(reduced.Message.Role).To(Equal("assistant"))
+		Expect(reduced.Message.GetText()).To(Equal("Hello world"))
 	})
 })

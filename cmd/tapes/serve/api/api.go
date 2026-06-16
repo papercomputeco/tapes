@@ -16,7 +16,6 @@ import (
 	"github.com/papercomputeco/tapes/pkg/spanembed"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 	"github.com/papercomputeco/tapes/pkg/telemetry"
-	"github.com/papercomputeco/tapes/pkg/vector/pgvector"
 )
 
 type apiCommander struct {
@@ -176,15 +175,6 @@ func (c *apiCommander) run() error {
 			return fmt.Errorf("could not create new embedder: %w", err)
 		}
 		defer apiConfig.Embedder.Close()
-
-		apiConfig.VectorDriver, err = pgvector.NewDriver(context.Background(), &pgvector.Config{
-			ConnString: c.vectorStoreTarget,
-			Dimensions: c.embeddingDimensions,
-		}, c.logger)
-		if err != nil {
-			return fmt.Errorf("could not create new vector driver: %w", err)
-		}
-		defer apiConfig.VectorDriver.Close()
 
 		// Span search reads the span-embedding projection written by
 		// the derive worker / embed-spans backfill. The store performs

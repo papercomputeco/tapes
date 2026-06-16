@@ -74,7 +74,7 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 		return res.SessionID
 	}
 
-	It("returns the matching record with preview for an exact org-scoped natural key", func() {
+	It("returns the matching record for an exact org-scoped natural key", func() {
 		orgID := newTestOrgID()
 		sessionID := seedSession(orgID, "claude", "harness-exact", "preview text for exact match")
 
@@ -85,14 +85,18 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 		Expect(rec.ID).To(Equal(sessionID))
 		Expect(rec.HarnessID).To(Equal("claude"))
 		Expect(rec.HarnessSessionID).To(Equal("harness-exact"))
-		Expect(rec.TurnCount).To(Equal(1))
-		Expect(rec.TotalInputTokens).To(Equal(int64(12)))
-		Expect(rec.TotalOutputTokens).To(Equal(int64(8)))
-		Expect(rec.Preview).To(Equal("preview text for exact match"))
+		// Token/turn/cost counters are no longer folded by IngestTurn — they
+		// are owned by the derive-time span fold (FoldSessionRollupsFromSpans).
+		// Preview is likewise a derived-surface value (span_turns.user_prompt,
+		// covered by the derive specs). Neither is populated by a bare ingest
+		// that does not run the deriver, so they stay at their zero values.
+		Expect(rec.TurnCount).To(Equal(0))
+		Expect(rec.TotalInputTokens).To(Equal(int64(0)))
+		Expect(rec.TotalOutputTokens).To(Equal(int64(0)))
+		Expect(rec.Preview).To(BeEmpty())
 
-		// Parity with the list path: the single filtered row must
-		// carry the same field population as a ListSessionRecords row,
-		// including Preview attached via getSessionPreviews.
+		// Parity with the list path: the single filtered row carries the
+		// same field population as a ListSessionRecords row.
 		listed, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{Limit: 10})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(listed).To(HaveLen(1))
@@ -126,7 +130,6 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 		Expect(rec).NotTo(BeNil())
 		Expect(rec.ID).To(Equal(idA))
 		Expect(rec.ID).NotTo(Equal(idB), "org B's session UUID must never surface for org A")
-		Expect(rec.Preview).To(Equal("org A turn"))
 	})
 
 	It("filters the paged list by auth_subject within an org", func() {

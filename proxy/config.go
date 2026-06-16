@@ -1,9 +1,5 @@
 package proxy
 
-import (
-	"github.com/papercomputeco/tapes/pkg/publisher"
-)
-
 // Config is the proxy server configuration.
 type Config struct {
 	// ListenAddr is the address to listen on (e.g., ":8080")
@@ -22,11 +18,7 @@ type Config struct {
 	// ProviderUpstreams optionally overrides upstream URLs per provider.
 	ProviderUpstreams map[string]string
 
-	// Publisher is an optional event publisher for new DAG nodes.
-	// If nil, publishing is disabled.
-	Publisher publisher.Publisher
-
-	// Project is the git repository or project name to tag on stored nodes.
+	// Project is the git repository or project name to tag on captured turns.
 	Project string
 }
 

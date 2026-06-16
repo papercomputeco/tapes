@@ -76,6 +76,11 @@ type SpanSource struct {
 	Anchor string
 }
 
+// maxReportedMissing caps the per-report sample lists (parse failures,
+// unattached actions) so a wholly broken pass doesn't produce a
+// megabyte of strings.
+const maxReportedMissing = 20
+
 // RederiveReport summarizes one derive pass.
 type RederiveReport struct {
 	RawTurns      int            `json:"raw_turns"`

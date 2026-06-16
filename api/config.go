@@ -7,7 +7,6 @@ import (
 	"github.com/papercomputeco/tapes/pkg/embeddings"
 	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/spanembed"
-	"github.com/papercomputeco/tapes/pkg/vector"
 )
 
 // SpanSearcher performs vector-similarity search over span
@@ -20,9 +19,6 @@ type SpanSearcher interface {
 type Config struct {
 	// ListenAddr is the address to listen on (e.g., ":8081")
 	ListenAddr string
-
-	// VectorDriver for semantic search (optional, enables MCP server)
-	VectorDriver vector.Driver
 
 	// Embedder for converting query text to vectors (optional, enables MCP server)
 	Embedder embeddings.Embedder

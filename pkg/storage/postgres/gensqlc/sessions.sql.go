@@ -185,119 +185,6 @@ func (q *Queries) InsertSessionPlaceholder(ctx context.Context, arg InsertSessio
 	return id, err
 }
 
-const listNodesBySession = `-- name: ListNodesBySession :many
-SELECT hash, bucket, type, role, content, model, provider, agent_name, stop_reason, prompt_tokens, completion_tokens, total_tokens, cache_creation_input_tokens, cache_read_input_tokens, total_duration_ns, prompt_duration_ns, project, created_at, parent_hash, session_id, org_id, request_system, request_max_tokens, request_temperature, request_stream, request_tool_count, node_kind, parent_tool_use_id, thread_id FROM nodes
-WHERE session_id = $1
-ORDER BY created_at ASC
-`
-
-// All nodes attributed to a session, ordered by capture time (chronological).
-func (q *Queries) ListNodesBySession(ctx context.Context, sessionID pgtype.UUID) ([]Node, error) {
-	rows, err := q.db.Query(ctx, listNodesBySession, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Node
-	for rows.Next() {
-		var i Node
-		if err := rows.Scan(
-			&i.Hash,
-			&i.Bucket,
-			&i.Type,
-			&i.Role,
-			&i.Content,
-			&i.Model,
-			&i.Provider,
-			&i.AgentName,
-			&i.StopReason,
-			&i.PromptTokens,
-			&i.CompletionTokens,
-			&i.TotalTokens,
-			&i.CacheCreationInputTokens,
-			&i.CacheReadInputTokens,
-			&i.TotalDurationNs,
-			&i.PromptDurationNs,
-			&i.Project,
-			&i.CreatedAt,
-			&i.ParentHash,
-			&i.SessionID,
-			&i.OrgID,
-			&i.RequestSystem,
-			&i.RequestMaxTokens,
-			&i.RequestTemperature,
-			&i.RequestStream,
-			&i.RequestToolCount,
-			&i.NodeKind,
-			&i.ParentToolUseID,
-			&i.ThreadID,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const setNodeSessionID = `-- name: SetNodeSessionID :exec
-UPDATE nodes
-   SET session_id = $1
- WHERE org_id = $2 AND hash = $3
-`
-
-type SetNodeSessionIDParams struct {
-	SessionID pgtype.UUID
-	OrgID     pgtype.UUID
-	Hash      string
-}
-
-// Stamp session_id onto an already-inserted nodes row. The existing
-// InsertNode query is left intact (additive ALTER added the column
-// with no NOT NULL constraint), so ingest can either use this safety
-// hatch or extend InsertNode in a follow-up. Scoped to (org_id, hash)
-// to match the composite PK introduced in this migration: a write that
-// only matched on hash would clobber rows for unrelated orgs.
-func (q *Queries) SetNodeSessionID(ctx context.Context, arg SetNodeSessionIDParams) error {
-	_, err := q.db.Exec(ctx, setNodeSessionID, arg.SessionID, arg.OrgID, arg.Hash)
-	return err
-}
-
-const updateSessionCounters = `-- name: UpdateSessionCounters :exec
-UPDATE sessions
-   SET last_seen_at        = $1,
-       turn_count          = turn_count + $2,
-       total_input_tokens  = total_input_tokens  + $3,
-       total_output_tokens = total_output_tokens + $4,
-       total_cost_usd      = total_cost_usd      + $5
- WHERE id = $6
-`
-
-type UpdateSessionCountersParams struct {
-	Now               pgtype.Timestamptz
-	TurnCountDelta    int32
-	InputTokensDelta  int64
-	OutputTokensDelta int64
-	CostUsdDelta      pgtype.Numeric
-	ID                pgtype.UUID
-}
-
-// Roll the per-turn counters into the sessions row. Called by ingest
-// after the nodes insert, inside the same Tx.
-func (q *Queries) UpdateSessionCounters(ctx context.Context, arg UpdateSessionCountersParams) error {
-	_, err := q.db.Exec(ctx, updateSessionCounters,
-		arg.Now,
-		arg.TurnCountDelta,
-		arg.InputTokensDelta,
-		arg.OutputTokensDelta,
-		arg.CostUsdDelta,
-		arg.ID,
-	)
-	return err
-}
-
 const updateSessionDerivedTitle = `-- name: UpdateSessionDerivedTitle :exec
 UPDATE sessions SET derived_title = $1 WHERE id = $2
 `
@@ -357,7 +244,7 @@ type UpdateSessionStatusParams struct {
 // new values in Go from the prior row state plus this turn's new nodes, so
 // this query just writes them. derived_status mirrors
 // pkg/sessions.DetermineStatus over those signals and the session's latest
-// leaf. Called by ingest in the same Tx as UpdateSessionCounters.
+// leaf. Called by ingest within the session-ingest Tx.
 func (q *Queries) UpdateSessionStatus(ctx context.Context, arg UpdateSessionStatusParams) error {
 	_, err := q.db.Exec(ctx, updateSessionStatus,
 		arg.HasGitActivity,

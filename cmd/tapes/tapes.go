@@ -20,8 +20,6 @@ import (
 	skillcmder "github.com/papercomputeco/tapes/cmd/tapes/skill"
 	startcmder "github.com/papercomputeco/tapes/cmd/tapes/start"
 	statuscmder "github.com/papercomputeco/tapes/cmd/tapes/status"
-	synccmder "github.com/papercomputeco/tapes/cmd/tapes/sync"
-	validatecmder "github.com/papercomputeco/tapes/cmd/tapes/validate"
 	versioncmder "github.com/papercomputeco/tapes/cmd/tapes/version"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/logger"
@@ -93,7 +91,6 @@ func NewTapesCmd() *cobra.Command {
 	_ = cmd.PersistentFlags().MarkHidden("disable-update-check")
 
 	// Add subcommands
-	cmd.AddCommand(synccmder.NewSyncCmd())
 	cmd.AddCommand(checkoutcmder.NewCheckoutCmd())
 	cmd.AddCommand(configcmder.NewConfigCmd())
 	cmd.AddCommand(deckcmder.NewDeckCmd())
@@ -108,7 +105,6 @@ func NewTapesCmd() *cobra.Command {
 	cmd.AddCommand(skillcmder.NewSkillCmd())
 	cmd.AddCommand(startcmder.NewStartCmd())
 	cmd.AddCommand(statuscmder.NewStatusCmd())
-	cmd.AddCommand(validatecmder.NewValidateCmd())
 	cmd.AddCommand(versioncmder.NewVersionCmd())
 
 	return cmd

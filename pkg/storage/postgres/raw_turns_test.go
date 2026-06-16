@@ -7,8 +7,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/papercomputeco/tapes/pkg/llm"
-	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 )
@@ -140,67 +138,5 @@ var _ = Describe("RawTurnStore", func() {
 		Expect(headers[0].RequestID).To(Equal("req-headers"))
 		Expect(headers[0].RequestBytes).To(BeNumerically(">", 0))
 		Expect(headers[0].ResponseBytes).To(BeNumerically(">", 0))
-	})
-})
-
-var _ = Describe("node request params round-trip", func() {
-	var (
-		driver *postgres.Driver
-		ctx    context.Context
-	)
-
-	BeforeEach(func() {
-		ctx = context.Background()
-		dsn, err := testPostgresDSN()
-		Expect(err).ToNot(HaveOccurred())
-
-		d, err := postgres.NewDriver(ctx, dsn)
-		Expect(err).NotTo(HaveOccurred())
-		driver = d
-
-		_, err = driver.DB().Exec(ctx, "TRUNCATE TABLE nodes")
-		Expect(err).NotTo(HaveOccurred())
-	})
-
-	AfterEach(func() {
-		if driver != nil {
-			driver.Close()
-		}
-	})
-
-	It("persists and reads back the promoted request params", func() {
-		maxTokens := 64
-		stream := false
-		toolCount := 0
-		node := merkle.NewNode(postgresTestBucket("judge this"), nil, merkle.NodeOptions{
-			Request: &llm.RequestParams{
-				System:    "You are a security monitor.",
-				MaxTokens: &maxTokens,
-				Stream:    &stream,
-				ToolCount: &toolCount,
-			},
-		})
-
-		_, err := driver.Put(ctx, node)
-		Expect(err).NotTo(HaveOccurred())
-
-		got, err := driver.Get(ctx, node.Hash)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(got.Request).NotTo(BeNil())
-		Expect(got.Request.System).To(Equal("You are a security monitor."))
-		Expect(got.Request.MaxTokens).To(HaveValue(Equal(64)))
-		Expect(got.Request.Stream).To(HaveValue(BeFalse()))
-		Expect(got.Request.ToolCount).To(HaveValue(Equal(0)))
-		Expect(got.Request.Temperature).To(BeNil())
-	})
-
-	It("reads legacy rows (no params) back as nil", func() {
-		node := merkle.NewNode(postgresTestBucket("legacy"), nil)
-		_, err := driver.Put(ctx, node)
-		Expect(err).NotTo(HaveOccurred())
-
-		got, err := driver.Get(ctx, node.Hash)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(got.Request).To(BeNil())
 	})
 })
