@@ -37,6 +37,7 @@ const (
 // ContentBlock.Type values and message roles).
 const (
 	roleUser           = "user"
+	roleTool           = "tool"
 	blockText          = "text"
 	blockToolUse       = "tool_use"
 	blockServerToolUse = "server_tool_use"
@@ -410,7 +411,7 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 			}
 			continue
 		}
-		if node.Bucket.Role != roleUser {
+		if node.Bucket.Role != roleUser && node.Bucket.Role != roleTool {
 			continue
 		}
 		for _, b := range node.Bucket.Content {
@@ -448,15 +449,11 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 			})
 			continue
 		}
-		name := b.ToolName
-		if name == "" {
-			name = "tool"
-		}
 		ts := &Span{
 			SpanID:       b.ToolUseID,
 			ParentSpanID: parent.SpanID,
 			Kind:         SpanKindTool,
-			Name:         name,
+			Name:         displayToolName(b.ToolName, b.ToolInput),
 			Status:       "ok",
 			StartedAt:    src.CapturedAt,
 			ThreadID:     src.ThreadID,
@@ -471,6 +468,51 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 			Kind: LinkEmits,
 		})
 	}
+}
+
+// displayToolName returns the user-facing tool name for a span. Some
+// Responses-first harnesses, notably Codex, expose a generic function wrapper
+// such as exec/exec_command while the input shape carries the actual action.
+// Keep the raw tool_use block in Span.Input, but use the semantic label for
+// the span row so Console groups it with Claude's Bash tool.
+func displayToolName(name string, input map[string]any) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "exec", "exec_command", "shell", "shell_command":
+		if hasShellCommandInput(input) {
+			return "Bash"
+		}
+	}
+	if name == "" {
+		return "tool"
+	}
+	return name
+}
+
+func hasShellCommandInput(input map[string]any) bool {
+	if input == nil {
+		return false
+	}
+	for _, key := range []string{"command", "cmd"} {
+		v, ok := input[key]
+		if !ok {
+			continue
+		}
+		switch t := v.(type) {
+		case string:
+			if strings.TrimSpace(t) != "" {
+				return true
+			}
+		case []string:
+			if len(t) > 0 {
+				return true
+			}
+		case []any:
+			if len(t) > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // fillToolResult stores a tool_result block on its tool span and

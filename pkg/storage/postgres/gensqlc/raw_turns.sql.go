@@ -78,8 +78,8 @@ func (q *Queries) InsertRawTurn(ctx context.Context, arg InsertRawTurnParams) (i
 const listRawTurnHeadersBySession = `-- name: ListRawTurnHeadersBySession :many
 SELECT id, org_id, source, provider, agent_name, request_id,
        received_at, meta,
-       length(raw_request) AS request_bytes,
-       length(response) AS response_bytes
+       length(raw_request::text)::bigint AS request_bytes,
+       length(response::text)::bigint AS response_bytes
 FROM raw_turns
 WHERE org_id = $1 AND harness_id = $2 AND harness_session_id = $3
 ORDER BY id ASC
@@ -100,8 +100,8 @@ type ListRawTurnHeadersBySessionRow struct {
 	RequestID     string
 	ReceivedAt    pgtype.Timestamptz
 	Meta          []byte
-	RequestBytes  float64
-	ResponseBytes float64
+	RequestBytes  int64
+	ResponseBytes int64
 }
 
 // Operator wire log: identity + sizes, no payloads. The raw layer is

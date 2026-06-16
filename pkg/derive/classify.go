@@ -139,6 +139,8 @@ func ClassifyCall(req *llm.ChatRequest, resp *llm.ChatResponse) string {
 	{
 		lt := strings.ToLower(lastText(req))
 		if strings.Contains(lt, "summary of the conversation so far") ||
+			strings.Contains(lt, "context checkpoint compaction") ||
+			strings.Contains(lt, "create a handoff summary for another llm") ||
 			isCompactionSummary(responseText(resp)) {
 			return KindCompaction
 		}

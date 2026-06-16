@@ -2,6 +2,7 @@ package derive_test
 
 import (
 	"encoding/json"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -108,6 +109,27 @@ var _ = Describe("ClassifyCall", func() {
 			},
 		}
 		Expect(derive.ClassifyCall(req, assistantText("<analysis>…</analysis><summary>…</summary>"))).To(Equal(derive.KindCompaction))
+	})
+
+	It("classifies Codex checkpoint compaction", func() {
+		req := &llm.ChatRequest{
+			Stream: boolp(true),
+			Messages: []llm.Message{
+				textMsg("developer", "You are Codex."),
+				textMsg("user", "real conversation history"),
+				textMsg("user", `You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.
+
+Include:
+- Current progress and key decisions made
+- Important context, constraints, or user preferences
+- What remains to be done (clear next steps)
+- Any critical data, examples, or references needed to continue
+
+Be concise, structured, and focused on helping the next LLM seamlessly continue the work.
+`),
+			},
+		}
+		Expect(derive.ClassifyCall(req, assistantText("**Current Progress**\n- ..."))).To(Equal(derive.KindCompaction))
 	})
 
 	It("classifies the conversation spine", func() {
@@ -270,5 +292,92 @@ var _ = Describe("BuildDerivedSet", func() {
 			Expect(a.Nodes[i].Node.Hash).To(Equal(b.Nodes[i].Node.Hash))
 			Expect(a.Nodes[i].Node.Kind).To(Equal(b.Nodes[i].Node.Kind))
 		}
+	})
+
+	It("projects Codex Responses tool calls as the conversation spine", func() {
+		turn1 := storage.RawTurnRecord{
+			ID:               1,
+			Provider:         "openai",
+			HarnessID:        "codex",
+			HarnessSessionID: "sess-codex",
+			RequestID:        "resp_req_1",
+			ReceivedAt:       time.Unix(1781218506, 0),
+			RawRequest: json.RawMessage(`{
+				"model":"gpt-5.5",
+				"instructions":"You are Codex.",
+				"stream":true,
+				"tools":[{"type":"function","name":"exec_command"}],
+				"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"list files"}]}]
+			}`),
+			Response: json.RawMessage(`{
+				"model":"gpt-5.5",
+				"message":{"role":"assistant","content":[
+					{"type":"thinking","thinking":"inspect"},
+					{"type":"tool_use","tool_use_id":"call_1","tool_name":"exec_command","tool_input":{"cmd":"ls"}}
+				]},
+				"stop_reason":"tool_use",
+				"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}
+			}`),
+			Meta: json.RawMessage(`{}`),
+		}
+		turn2 := storage.RawTurnRecord{
+			ID:               2,
+			Provider:         "openai",
+			HarnessID:        "codex",
+			HarnessSessionID: "sess-codex",
+			RequestID:        "resp_req_2",
+			ReceivedAt:       time.Unix(1781218507, 0),
+			RawRequest: json.RawMessage(`{
+				"model":"gpt-5.5",
+				"instructions":"You are Codex.",
+				"stream":true,
+				"tools":[{"type":"function","name":"exec_command"}],
+				"input":[
+					{"type":"message","role":"user","content":[{"type":"input_text","text":"list files"}]},
+					{"type":"function_call","call_id":"call_1","name":"exec_command","arguments":"{\"cmd\":\"ls\"}"},
+					{"type":"function_call_output","call_id":"call_1","output":"README.md"}
+				]
+			}`),
+			Response: json.RawMessage(`{
+				"model":"gpt-5.5",
+				"message":{"role":"assistant","content":[{"type":"text","text":"README.md"}]},
+				"stop_reason":"stop",
+				"usage":{"prompt_tokens":20,"completion_tokens":2,"total_tokens":22}
+			}`),
+			Meta: json.RawMessage(`{}`),
+		}
+
+		set, err := derive.BuildDerivedSet([]storage.RawTurnRecord{turn1, turn2}, "p")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(set.Report.CallKinds).To(HaveKeyWithValue(derive.KindMain, 2))
+		Expect(set.Report.CallKinds).NotTo(HaveKey(derive.KindUnknown))
+
+		spans := derive.EmitSpans(set)
+		Expect(spans.Report.Traces).To(Equal(1))
+		Expect(spans.Report.Synthetic).To(Equal(0))
+		Expect(spans.Report.SpanKinds).To(HaveKeyWithValue(derive.SpanKindAgent, 1))
+		Expect(spans.Report.SpanKinds).To(HaveKeyWithValue(derive.SpanKindLLM, 2))
+		Expect(spans.Report.SpanKinds).To(HaveKeyWithValue(derive.SpanKindTool, 1))
+		Expect(spans.Report.CallKinds).To(HaveKeyWithValue(derive.KindMain, 2))
+		Expect(spans.Report.LinkKinds).To(HaveKeyWithValue(derive.LinkFeeds, 1))
+
+		trace := spans.Turns[0]
+		Expect(trace.UserPrompt).To(Equal("list files"))
+		Expect(trace.ResponsePreview).To(Equal("README.md"))
+		Expect(trace.MainInputTokens).To(Equal(int64(30)))
+		Expect(trace.MainOutputTokens).To(Equal(int64(7)))
+
+		var tool *derive.Span
+		for _, span := range trace.Spans {
+			if span.Kind == derive.SpanKindTool {
+				tool = span
+				break
+			}
+		}
+		Expect(tool).NotTo(BeNil())
+		Expect(tool.SpanID).To(Equal("call_1"))
+		Expect(tool.Name).To(Equal("Bash"))
+		Expect(tool.Output).To(HaveLen(1))
+		Expect(tool.Output[0].ToolOutput).To(Equal("README.md"))
 	})
 })
