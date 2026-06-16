@@ -5,9 +5,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -19,6 +19,7 @@ import (
 	"github.com/papercomputeco/tapes/ingest"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/credentials"
+	deriveworker "github.com/papercomputeco/tapes/pkg/derive/worker"
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
@@ -288,8 +289,30 @@ func (c *ServeCommander) run() error {
 		"ingest_addr", c.ingestListen,
 	)
 
+	// Signal-aware context: a SIGINT/SIGTERM cancels it, which stops the
+	// in-process derive worker's run loop (the HTTP servers are torn down
+	// via their deferred Close()).
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// Local single-process convenience: run the derive worker in-process
+	// so a captured turn projects into the sessions/traces/spans surface
+	// the deck and API read — no separate `tapes serve derive-worker`
+	// dance for local use. The short debounce keeps the local
+	// capture→deck loop snappy; production runs the worker as its own
+	// process (`tapes serve derive-worker`) with the full-size default
+	// debounce and its own memory budget.
+	deriveCfg := deriveworker.Config{
+		Project:  c.project,
+		Debounce: 2 * time.Second,
+	}
+	deriveW := deriveworker.NewWorker(deriveCfg, driver, c.logger)
+	c.logger.Info("starting derive worker (in-process)",
+		"debounce", deriveCfg.Debounce,
+	)
+
 	// Channel to capture errors from goroutines
-	errChan := make(chan error, 3)
+	errChan := make(chan error, 4)
 
 	// Start proxy in goroutine
 	go func() {
@@ -311,15 +334,18 @@ func (c *ServeCommander) run() error {
 		}
 	}()
 
-	// Wait for interrupt signal or error
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		if err := deriveW.Run(ctx); err != nil {
+			errChan <- fmt.Errorf("derive worker error: %w", err)
+		}
+	}()
 
+	// Wait for interrupt signal or a fatal error from any service.
 	select {
 	case err := <-errChan:
 		return err
-	case sig := <-sigChan:
-		c.logger.Info("received signal, shutting down", "signal", sig.String())
+	case <-ctx.Done():
+		c.logger.Info("received signal, shutting down")
 		return nil
 	}
 }
