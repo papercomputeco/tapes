@@ -32,26 +32,28 @@ import (
 
 const tapesLongDesc string = `Tapes is automatic telemetry for your agents.
 
+Tapes captures LLM calls into an immutable raw-turn log and derives them into a
+browsable model of sessions -> traces -> spans.
+
 Run services using:
   tapes start          Start proxy + API (auto ports)
   tapes start <agent>  Start proxy + API and launch an agent
-  tapes serve api      Run the API server
-  tapes serve proxy    Run the proxy server
-  tapes serve          Run both servers together
+  tapes serve          Run the full local stack: proxy, API, and derive worker
+  tapes serve api      Run just the API server
+  tapes serve proxy    Run just the proxy server
+  tapes serve derive-worker  Project captured raw turns into sessions/traces/spans
 
-Experimental: Inspect conversation state:
-  tapes checkout <hash>    Checkout a conversation point
-  tapes checkout           Clear checkout state, start fresh
-  tapes status             Show current checkout state
+Initialize:
   tapes init                         Initialize a local .tapes directory
   tapes init --preset <preset|url>   Initialize with a provider preset or remote config
 
-Search sessions:
-  tapes search         Search sessions using semantic similarity
+Browse and search:
+  tapes deck           ROI dashboard over sessions, traces, and spans
+  tapes search         Search main-conversation spans by semantic similarity
+  tapes seed --demo    Seed demo sessions to explore the deck
 
-Deck sessions:
-  tapes deck           ROI dashboard for sessions
-  tapes seed           Seed demo sessions
+Export a conversation:
+  tapes checkout <session-id>   Render a session (or a single trace) as Markdown or JSONL
 
 Configuration:
   tapes config set <key> <value>    Set a configuration value

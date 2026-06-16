@@ -82,7 +82,10 @@ For local embeddings, pull the default `embeddinggemma` model:
 ollama pull embeddinggemma
 ```
 
-Then start Tapes:
+Then start Tapes. `tapes serve` runs the whole local pipeline together — the
+proxy (capture), the API, and the derive worker (which projects captured turns
+into sessions/traces/spans) — so anything you capture becomes browsable
+automatically, no extra steps:
 
 ```bash
 tapes serve
@@ -100,6 +103,19 @@ tapes serve
 You can also provide the key with `OPENAI_API_KEY` instead of `tapes auth openai`.
 When OpenAI is selected without a key, Tapes fails at startup with an authentication
 configuration error from the OpenAI embedder.
+
+Capture a session by launching an agent through Tapes (it points the agent at the
+local proxy for you), or send any LLM client at the proxy address:
+
+```bash
+tapes start claude
+```
+
+Just exploring? Seed the bundled demo sessions and skip straight to the deck:
+
+```bash
+tapes seed --demo
+```
 
 Search across captured spans (individual main-conversation LLM spans, with
 their trace and turn context):
