@@ -26,7 +26,6 @@ var _ = storagetest.RunDeriveQueueSpecs("postgres", func() storage.Driver {
 	for _, stmt := range []string{
 		"TRUNCATE TABLE derive_queue",
 		"TRUNCATE TABLE raw_turns RESTART IDENTITY",
-		"TRUNCATE TABLE nodes",
 	} {
 		_, err = d.DB().Exec(ctx, stmt)
 		Expect(err).NotTo(HaveOccurred())
@@ -61,7 +60,6 @@ var _ = Describe("Derive worker storage (postgres)", func() {
 		for _, stmt := range []string{
 			"TRUNCATE TABLE derive_queue",
 			"TRUNCATE TABLE raw_turns RESTART IDENTITY",
-			"TRUNCATE TABLE nodes",
 			"TRUNCATE TABLE sessions CASCADE",
 		} {
 			_, err = driver.DB().Exec(ctx, stmt)
