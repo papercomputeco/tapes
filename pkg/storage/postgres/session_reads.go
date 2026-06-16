@@ -181,7 +181,7 @@ func (d *Driver) getSessionPreviews(ctx context.Context, sessions []storage.Sess
 
 	rows, err := d.conn.Query(ctx, `
 SELECT DISTINCT ON (session_id) session_id::text, user_prompt
-FROM span_turns
+FROM span_turns_20260615
 WHERE session_id = ANY($1::uuid[])
 ORDER BY session_id, started_at ASC
 `, ids)
