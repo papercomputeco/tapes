@@ -106,7 +106,7 @@ var _ = Describe("Derive worker storage (postgres)", func() {
 	spanTurnCountForSession := func(rowID string) int {
 		var n int
 		err := driver.DB().QueryRow(ctx,
-			"SELECT COUNT(*) FROM span_turns WHERE session_id = $1", rowID).Scan(&n)
+			"SELECT COUNT(*) FROM span_turns_20260615 WHERE session_id = $1", rowID).Scan(&n)
 		Expect(err).NotTo(HaveOccurred())
 		return n
 	}
@@ -217,7 +217,7 @@ var _ = Describe("Derive worker storage (postgres)", func() {
 				{"stale-trace-session-b", sessionBRowID},
 			} {
 				_, err := driver.DB().Exec(ctx, `
-					INSERT INTO span_turns (org_id, trace_id, session_id, started_at)
+					INSERT INTO span_turns_20260615 (org_id, trace_id, session_id, started_at)
 					VALUES ('00000000-0000-0000-0000-000000000000', $1, $2, NOW())`,
 					row.traceID, row.sid)
 				Expect(err).NotTo(HaveOccurred())
@@ -228,9 +228,9 @@ var _ = Describe("Derive worker storage (postgres)", func() {
 
 			var staleA, staleB int
 			Expect(driver.DB().QueryRow(ctx,
-				"SELECT COUNT(*) FROM span_turns WHERE trace_id = 'stale-trace-session-a'").Scan(&staleA)).To(Succeed())
+				"SELECT COUNT(*) FROM span_turns_20260615 WHERE trace_id = 'stale-trace-session-a'").Scan(&staleA)).To(Succeed())
 			Expect(driver.DB().QueryRow(ctx,
-				"SELECT COUNT(*) FROM span_turns WHERE trace_id = 'stale-trace-session-b'").Scan(&staleB)).To(Succeed())
+				"SELECT COUNT(*) FROM span_turns_20260615 WHERE trace_id = 'stale-trace-session-b'").Scan(&staleB)).To(Succeed())
 			Expect(staleA).To(BeZero(), "session A's stale span row is pruned by the re-derive")
 			Expect(staleB).To(Equal(1), "sibling sessions' rows are out of scope")
 		})
