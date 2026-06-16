@@ -8,26 +8,8 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
-	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
-	"github.com/papercomputeco/tapes/pkg/storage/storagetest"
 )
-
-var _ = storagetest.RunListSessionsSpecs("inmemory", func() storage.Driver {
-	return inmemory.NewDriver()
-})
-
-var _ = storagetest.RunAncestryChainBasicSpecs("inmemory", func() storage.Driver {
-	return inmemory.NewDriver()
-})
-
-var _ = storagetest.RunAncestryChainDanglingSpecs("inmemory", func() storage.Driver {
-	return inmemory.NewDriver()
-})
-
-var _ = storagetest.RunAncestryChainsSpecs("inmemory", func() storage.Driver {
-	return inmemory.NewDriver()
-})
 
 // Cycle guard tests. Content-addressing makes a real cycle structurally
 // impossible to create via merkle.NewNode — A's hash depends on B's hash

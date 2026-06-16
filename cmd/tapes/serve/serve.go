@@ -26,7 +26,6 @@ import (
 	"github.com/papercomputeco/tapes/pkg/spanembed"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 	"github.com/papercomputeco/tapes/pkg/telemetry"
-	"github.com/papercomputeco/tapes/pkg/vector/pgvector"
 	"github.com/papercomputeco/tapes/proxy"
 )
 
@@ -205,19 +204,9 @@ func (c *ServeCommander) run() error {
 		Project:      c.project,
 	}
 
-	// The vector store and embedder serve the API's search read path
-	// only. Capture-time embedding is retired: the derive worker
-	// family is the single writer of embeddings (tapes serve
-	// derive-worker --embed-spans).
-	vectorDriver, err := pgvector.NewDriver(context.TODO(), &pgvector.Config{
-		ConnString: c.vectorStoreTarget,
-		Dimensions: c.embeddingDimensions,
-	}, c.logger)
-	if err != nil {
-		return fmt.Errorf("could not create new vector driver: %w", err)
-	}
-	defer vectorDriver.Close()
-
+	// The embedder serves the API's search read path only. Capture-time
+	// embedding is retired: the derive worker family is the single
+	// writer of embeddings (tapes serve derive-worker --embed-spans).
 	embedder, err := embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
 		ProviderType: c.embeddingProvider,
 		TargetURL:    c.embeddingTarget,
@@ -260,7 +249,6 @@ func (c *ServeCommander) run() error {
 	// Create API server
 	apiConfig := api.Config{
 		ListenAddr:   c.apiListen,
-		VectorDriver: vectorDriver,
 		Embedder:     embedder,
 		SpanSearcher: spanSearcher,
 		EnableWebUI:  c.apiWebUI,

@@ -15,8 +15,6 @@ import (
 	"github.com/papercomputeco/tapes/ingest"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
-	"github.com/papercomputeco/tapes/pkg/storage"
-	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
 // ollamaRequest is a minimal Ollama-format request for test fixtures.
@@ -58,9 +56,9 @@ func reducedResponse(model, text string, usage *llm.Usage) llm.ChatResponse {
 	}
 }
 
-func newTestServer() (*ingest.Server, storage.Driver, string) {
+func newTestServer() (*ingest.Server, *captureDriver, string) {
 	logger := tapeslogger.NewNoop()
-	driver := inmemory.NewDriver()
+	driver := newCaptureDriver()
 
 	s, err := ingest.New(
 		ingest.Config{
@@ -86,7 +84,7 @@ func newTestServer() (*ingest.Server, storage.Driver, string) {
 var _ = Describe("Ingest Server", func() {
 	var (
 		server  *ingest.Server
-		driver  storage.Driver
+		driver  *captureDriver
 		baseURL string
 		client  *http.Client
 	)
@@ -180,7 +178,7 @@ var _ = Describe("Ingest Server", func() {
 	})
 
 	Describe("POST /v1/ingest", func() {
-		It("accepts a valid ollama turn and stores it in the DAG", func() {
+		It("accepts a valid ollama turn and captures it into the raw layer", func() {
 			payload := ingest.TurnPayload{
 				Provider:  "ollama",
 				AgentName: "test-agent",
@@ -203,11 +201,13 @@ var _ = Describe("Ingest Server", func() {
 			respBody, _ := io.ReadAll(resp.Body)
 			Expect(string(respBody)).To(ContainSubstring("accepted"))
 
-			// Give the worker pool time to process
-			Eventually(func() int {
-				nodes, _ := driver.List(context.Background())
-				return len(nodes)
-			}).WithTimeout(2 * time.Second).WithPolling(50 * time.Millisecond).Should(BeNumerically(">=", 0))
+			// The raw-turn row lands synchronously on the accepted path; the
+			// deriver projects sessions/traces/spans from it. The node DAG is
+			// retired, so there is no node store to assert against.
+			Eventually(driver.CountRaw).
+				WithTimeout(2 * time.Second).WithPolling(25 * time.Millisecond).
+				Should(Equal(1))
+			Expect(driver.RawTurns()[0].Provider).To(Equal("ollama"))
 		})
 
 		It("accepts a valid openai turn", func() {
@@ -274,57 +274,6 @@ var _ = Describe("Ingest Server", func() {
 			defer resp.Body.Close()
 
 			Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
-		})
-	})
-
-	Describe("GET /v1/ingest/nodes", func() {
-		It("returns only nodes matching the agent query", func() {
-			// Land two turns under different agents.
-			for _, agent := range []string{"canary-1", "other-2"} {
-				payload := ingest.TurnPayload{
-					Provider:  "ollama",
-					AgentName: agent,
-					RawRequest: mustJSON(ollamaRequest{
-						Model: "llama3", Messages: []ollamaMessage{{Role: "user", Content: "hi"}},
-					}),
-					Response: reducedResponse("llama3", "yo", nil),
-				}
-				body, _ := json.Marshal(payload)
-				r, err := client.Post(baseURL+"/v1/ingest", "application/json", bytes.NewReader(body))
-				Expect(err).NotTo(HaveOccurred())
-				r.Body.Close()
-			}
-
-			// Poll until both nodes have landed.
-			Eventually(func() int {
-				nodes, _ := driver.List(context.Background())
-				return len(nodes)
-			}).WithTimeout(2 * time.Second).WithPolling(25 * time.Millisecond).
-				Should(BeNumerically(">=", 2))
-
-			resp, err := client.Get(baseURL + "/v1/ingest/nodes?agent=canary-1")
-			Expect(err).NotTo(HaveOccurred())
-			defer resp.Body.Close()
-			Expect(resp.StatusCode).To(Equal(http.StatusOK))
-
-			var out ingest.NodeListResponse
-			Expect(json.NewDecoder(resp.Body).Decode(&out)).To(Succeed())
-			Expect(out.Count).To(BeNumerically(">=", 1))
-			for _, n := range out.Nodes {
-				Expect(n.AgentName).To(Equal("canary-1"))
-			}
-		})
-
-		It("returns an empty list for an agent with no nodes", func() {
-			resp, err := client.Get(baseURL + "/v1/ingest/nodes?agent=nonexistent-agent")
-			Expect(err).NotTo(HaveOccurred())
-			defer resp.Body.Close()
-			Expect(resp.StatusCode).To(Equal(http.StatusOK))
-
-			var out ingest.NodeListResponse
-			Expect(json.NewDecoder(resp.Body).Decode(&out)).To(Succeed())
-			Expect(out.Count).To(Equal(0))
-			Expect(out.Nodes).To(BeEmpty())
 		})
 	})
 

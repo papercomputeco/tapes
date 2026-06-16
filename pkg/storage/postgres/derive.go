@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/papercomputeco/tapes/pkg/derive"
-	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres/gensqlc"
 )
@@ -269,76 +268,12 @@ func (d *Driver) writeDerivedSet(ctx context.Context, orgKey string, set *derive
 		coveredSessions = append(coveredSessions, id)
 	}
 
-	keepHashes := make([]string, 0, len(set.Nodes))
-	for _, dn := range set.Nodes {
-		n := dn.Node
-		bucketJSON, err := json.Marshal(n.Bucket)
-		if err != nil {
-			return fmt.Errorf("marshal bucket %s: %w", n.Hash, err)
-		}
-		contentJSON, err := json.Marshal(n.Bucket.Content)
-		if err != nil {
-			return fmt.Errorf("marshal content %s: %w", n.Hash, err)
-		}
-		createdAt := n.CreatedAt
-		if createdAt.IsZero() {
-			createdAt = time.Now().UTC()
-		}
-		reqSystem, reqMaxTokens, reqTemperature, reqStream, reqToolCount := requestParamColumns(n.Request)
-
-		sessionID := pgtype.UUID{}
-		if id, ok := sessionIDs[dn.Session]; ok {
-			sessionID = id
-		}
-
-		if _, err := qtx.UpsertDerivedNode(ctx, gensqlc.UpsertDerivedNodeParams{
-			OrgID:                    orgID,
-			Hash:                     n.Hash,
-			Bucket:                   bucketJSON,
-			Type:                     nullStringValue(n.Bucket.Type),
-			Role:                     nullStringValue(n.Bucket.Role),
-			Content:                  contentJSON,
-			Model:                    nullStringValue(n.Bucket.Model),
-			Provider:                 nullStringValue(n.Bucket.Provider),
-			AgentName:                nullStringValue(n.Bucket.AgentName),
-			StopReason:               nullStringValue(n.StopReason),
-			PromptTokens:             nullInt32FromUsage(n.Usage, func(u *llm.Usage) int { return u.PromptTokens }),
-			CompletionTokens:         nullInt32FromUsage(n.Usage, func(u *llm.Usage) int { return u.CompletionTokens }),
-			TotalTokens:              nullInt32FromUsage(n.Usage, func(u *llm.Usage) int { return u.TotalTokens }),
-			CacheCreationInputTokens: nullInt32FromUsage(n.Usage, func(u *llm.Usage) int { return u.CacheCreationInputTokens }),
-			CacheReadInputTokens:     nullInt32FromUsage(n.Usage, func(u *llm.Usage) int { return u.CacheReadInputTokens }),
-			TotalDurationNs:          nullInt64FromUsage(n.Usage, func(u *llm.Usage) int64 { return u.TotalDurationNs }),
-			PromptDurationNs:         nullInt64FromUsage(n.Usage, func(u *llm.Usage) int64 { return u.PromptDurationNs }),
-			Project:                  nullStringValue(n.Project),
-			CreatedAt:                pgtype.Timestamptz{Time: createdAt, Valid: true},
-			ParentHash:               nullStringPtr(n.ParentHash),
-			RequestSystem:            reqSystem,
-			RequestMaxTokens:         reqMaxTokens,
-			RequestTemperature:       reqTemperature,
-			RequestStream:            reqStream,
-			RequestToolCount:         reqToolCount,
-			NodeKind:                 nullStringValue(n.Kind),
-			ParentToolUseID:          nullStringValue(n.ParentToolUseID),
-			ThreadID:                 nullStringValue(n.ThreadID),
-			SessionID:                sessionID,
-		}); err != nil {
-			return fmt.Errorf("upsert node %s: %w", n.Hash, err)
-		}
-		set.Report.Upserted++
-		keepHashes = append(keepHashes, n.Hash)
-	}
-
-	if len(coveredSessions) > 0 && len(keepHashes) > 0 {
-		pruned, err := qtx.PruneDerivedNodes(ctx, gensqlc.PruneDerivedNodesParams{
-			OrgID:      orgID,
-			SessionIds: coveredSessions,
-			KeepHashes: keepHashes,
-		})
-		if err != nil {
-			return fmt.Errorf("prune stale derived nodes: %w", err)
-		}
-		set.Report.Pruned = int(pruned)
-	}
+	// Node persistence is retired: the deriver still builds the merkle
+	// DAG in memory (dedup, reconciliation, and the src.New[] delta
+	// signal span emit depends on), but no longer writes or prunes the
+	// `nodes` table. Spans are emitted from the in-memory nodes below and
+	// are the sole derived read surface; session attribution was resolved
+	// into sessionIDs/coveredSessions above for the span writer.
 
 	// The span projection rides the same transaction: traces, spans,
 	// and links are as derived as the nodes are, and a derive pass

@@ -11,6 +11,9 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
+// DriverFactory builds a fresh storage.Driver for each spec run.
+type DriverFactory func() storage.Driver
+
 // RunDeriveQueueSpecs registers a Describe block exercising the
 // storage.DeriveQueue capability (the derive worker's dirty-session
 // queue) plus the PutRawTurn → dirty-mark coupling. The driver

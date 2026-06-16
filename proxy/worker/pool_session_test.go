@@ -10,92 +10,104 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
-	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
-// sessionAwareDriver is an in-memory storage.Driver that ALSO satisfies
-// storage.SessionIngester so the worker pool's dispatcher branch can
-// be exercised without spinning up Postgres. It records the IngestTurn
-// calls it received and falls back to the embedded in-memory driver
-// for everything else (the legacy Put path stays valid for tests that
-// don't supply a session envelope, e.g. for retry / dedup assertions).
-type sessionAwareDriver struct {
+// captureDriver is an in-memory storage.Driver that ALSO satisfies
+// storage.RawTurnStore and storage.SessionIngester, so the worker pool's
+// capture path — append to the raw-turn layer + upsert the sessions row
+// — can be exercised without Postgres. It records the calls it received.
+// Node persistence is retired, so the worker never calls Driver.Put; the
+// embedded in-memory driver is only here to satisfy the Driver interface.
+type captureDriver struct {
 	*inmemory.Driver
 
-	mu        sync.Mutex
-	calls     []storage.IngestTurnRequest
-	failNext  error
-	sessionID string
+	mu          sync.Mutex
+	ingestCalls []storage.IngestTurnRequest
+	rawTurns    []storage.RawTurnRecord
+	failIngest  error
+	sessionID   string
 }
 
-func newSessionAwareDriver() *sessionAwareDriver {
-	return &sessionAwareDriver{
+func newCaptureDriver() *captureDriver {
+	return &captureDriver{
 		Driver:    inmemory.NewDriver(),
 		sessionID: "00000000-0000-0000-0000-000000000001",
 	}
 }
 
-func (d *sessionAwareDriver) IngestTurn(ctx context.Context, req storage.IngestTurnRequest) (storage.IngestTurnResult, error) {
+func (d *captureDriver) PutRawTurn(_ context.Context, rec storage.RawTurnRecord) (bool, error) {
 	d.mu.Lock()
-	d.calls = append(d.calls, req)
-	failure := d.failNext
-	d.failNext = nil
+	defer d.mu.Unlock()
+	d.rawTurns = append(d.rawTurns, rec)
+	return true, nil
+}
+
+func (d *captureDriver) ListRawTurns(_ context.Context, _ int64, _ int32) ([]storage.RawTurnRecord, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := make([]storage.RawTurnRecord, len(d.rawTurns))
+	copy(out, d.rawTurns)
+	return out, nil
+}
+
+func (d *captureDriver) CountRawTurns(_ context.Context) (int64, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return int64(len(d.rawTurns)), nil
+}
+
+func (d *captureDriver) IngestTurn(_ context.Context, req storage.IngestTurnRequest) (storage.IngestTurnResult, error) {
+	d.mu.Lock()
+	d.ingestCalls = append(d.ingestCalls, req)
+	failure := d.failIngest
+	d.failIngest = nil
 	d.mu.Unlock()
 
 	if failure != nil {
 		return storage.IngestTurnResult{}, failure
 	}
-
-	var newNodes []*merkle.Node
-	for _, n := range req.Nodes {
-		if n == nil {
-			continue
-		}
-		isNew, err := d.Put(ctx, n)
-		if err != nil {
-			return storage.IngestTurnResult{}, err
-		}
-		if isNew {
-			newNodes = append(newNodes, n)
-		}
-	}
-
-	return storage.IngestTurnResult{
-		SessionID:       d.sessionID,
-		NewNodes:        newNodes,
-		CountersUpdated: len(newNodes) > 0,
-	}, nil
+	return storage.IngestTurnResult{SessionID: d.sessionID}, nil
 }
 
-func (d *sessionAwareDriver) Calls() []storage.IngestTurnRequest {
+func (d *captureDriver) IngestCalls() []storage.IngestTurnRequest {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	out := make([]storage.IngestTurnRequest, len(d.calls))
-	copy(out, d.calls)
+	out := make([]storage.IngestTurnRequest, len(d.ingestCalls))
+	copy(out, d.ingestCalls)
 	return out
 }
 
-func newSessionTestPool(driver storage.Driver) *Pool {
-	logger := tapeslogger.NewNoop()
+func (d *captureDriver) RawTurns() []storage.RawTurnRecord {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := make([]storage.RawTurnRecord, len(d.rawTurns))
+	copy(out, d.rawTurns)
+	return out
+}
+
+func newCaptureTestPool(driver storage.Driver) *Pool {
 	wp, err := NewPool(&Config{
 		Driver: driver,
-		Logger: logger,
+		Logger: tapeslogger.NewNoop(),
 	})
 	Expect(err).NotTo(HaveOccurred())
 	return wp
 }
 
-func sampleJobWithEnvelope(envelope *sessions.IngestEnvelope) Job {
+// sampleCaptureJob is a single user->assistant turn. RawRequest is the
+// verbatim provider request the proxy would have forwarded; supply nil
+// to model a caller that does not capture into the raw layer.
+func sampleCaptureJob(envelope *sessions.IngestEnvelope, rawRequest []byte) Job {
 	return Job{
-		Provider:  "test-provider",
-		AgentName: "test-agent",
+		Provider:   "ollama",
+		AgentName:  "test-agent",
+		RawRequest: rawRequest,
 		Req: &llm.ChatRequest{
 			Model: "test-model",
 			Messages: []llm.Message{
-				{Role: "system", Content: []llm.ContentBlock{{Type: "text", Text: "you are helpful"}}},
 				{Role: "user", Content: []llm.ContentBlock{{Type: "text", Text: "ping"}}},
 			},
 		},
@@ -112,11 +124,13 @@ func sampleJobWithEnvelope(envelope *sessions.IngestEnvelope) Job {
 	}
 }
 
-var _ = Describe("Worker pool session-ingester dispatch", func() {
-	Context("when the driver implements SessionIngester and the job carries a session envelope", func() {
-		It("routes the turn through IngestTurn with the full chain and token deltas", func() {
-			driver := newSessionAwareDriver()
-			wp := newSessionTestPool(driver)
+var rawBody = []byte(`{"model":"test-model","messages":[{"role":"user","content":"ping"}]}`)
+
+var _ = Describe("Worker pool capture", func() {
+	Context("when the driver hosts the raw-turn and sessions surfaces", func() {
+		It("appends a raw turn and upserts the session for a captured turn", func() {
+			driver := newCaptureDriver()
+			wp := newCaptureTestPool(driver)
 
 			envelope := &sessions.IngestEnvelope{
 				OrgID:            "550e8400-e29b-41d4-a716-446655440000",
@@ -124,81 +138,86 @@ var _ = Describe("Worker pool session-ingester dispatch", func() {
 				HarnessID:        "claude",
 				HarnessSessionID: "harness-abc",
 			}
-			wp.Enqueue(sampleJobWithEnvelope(envelope))
+			wp.Enqueue(sampleCaptureJob(envelope, rawBody))
 			wp.Close()
 
-			calls := driver.Calls()
+			raws := driver.RawTurns()
+			Expect(raws).To(HaveLen(1))
+			Expect(raws[0].Provider).To(Equal("ollama"))
+			Expect(raws[0].Source).To(Equal(storage.RawTurnSourceWire))
+			Expect(raws[0].HarnessSessionID).To(Equal("harness-abc"))
+			Expect([]byte(raws[0].RawRequest)).To(Equal(rawBody))
+
+			calls := driver.IngestCalls()
 			Expect(calls).To(HaveLen(1))
-
-			call := calls[0]
-			Expect(call.Session).NotTo(BeNil())
-			Expect(call.Session.HarnessSessionID).To(Equal("harness-abc"))
-			Expect(call.Session.HarnessIDOrUnknown()).To(Equal("claude"))
-
-			// 2 message nodes + 1 response node.
-			Expect(call.Nodes).To(HaveLen(3))
-			Expect(call.Nodes[0].Bucket.Role).To(Equal("system"))
-			Expect(call.Nodes[1].Bucket.Role).To(Equal("user"))
-			Expect(call.Nodes[2].Bucket.Role).To(Equal("assistant"))
-
-			Expect(call.InputTokens).To(Equal(int64(11)))
-			Expect(call.OutputTokens).To(Equal(int64(7)))
-			Expect(call.CostUSD).To(Equal(0.0))
+			Expect(calls[0].Session).NotTo(BeNil())
+			Expect(calls[0].Session.HarnessSessionID).To(Equal("harness-abc"))
+			// 1 user message node + 1 response node.
+			Expect(calls[0].Nodes).To(HaveLen(2))
+			Expect(calls[0].Nodes[0].Bucket.Role).To(Equal("user"))
+			Expect(calls[0].Nodes[1].Bucket.Role).To(Equal("assistant"))
 		})
 
-		It("falls back to per-node Put when the envelope is absent", func() {
-			driver := newSessionAwareDriver()
-			wp := newSessionTestPool(driver)
+		It("synthesizes a harness_session_id when the envelope is absent", func() {
+			driver := newCaptureDriver()
+			wp := newCaptureTestPool(driver)
 
-			wp.Enqueue(sampleJobWithEnvelope(nil))
+			// No envelope: the proxy attaches one in practice, but a
+			// caller that omits it still captures into the raw layer under
+			// a synthetic, Merkle-root-derived identity.
+			wp.Enqueue(sampleCaptureJob(nil, rawBody))
 			wp.Close()
 
-			Expect(driver.Calls()).To(BeEmpty(), "IngestTurn must not be called when Session is nil")
+			raws := driver.RawTurns()
+			Expect(raws).To(HaveLen(1))
+			Expect(raws[0].HarnessID).To(Equal(sessions.HarnessIDUnknown))
+			Expect(raws[0].HarnessSessionID).NotTo(BeEmpty())
 
-			// Legacy Put path should have stored every node.
-			nodes, err := driver.List(context.Background())
-			Expect(err).NotTo(HaveOccurred())
-			Expect(nodes).To(HaveLen(3))
+			// No envelope -> no sessions row is upserted.
+			Expect(driver.IngestCalls()).To(BeEmpty())
 		})
 
-		It("returns an error from processJob without crashing the pool when IngestTurn fails", func() {
-			driver := newSessionAwareDriver()
-			driver.failNext = errors.New("simulated ingest failure")
-			wp := newSessionTestPool(driver)
+		It("skips the raw write when the turn carries no verbatim request", func() {
+			driver := newCaptureDriver()
+			wp := newCaptureTestPool(driver)
 
-			envelope := &sessions.IngestEnvelope{
-				OrgID:            "550e8400-e29b-41d4-a716-446655440000",
-				HarnessID:        "claude",
-				HarnessSessionID: "harness-zzz",
-			}
-			wp.Enqueue(sampleJobWithEnvelope(envelope))
+			envelope := &sessions.IngestEnvelope{HarnessID: "claude", HarnessSessionID: "harness-abc"}
+			wp.Enqueue(sampleCaptureJob(envelope, nil))
 			wp.Close()
 
-			calls := driver.Calls()
-			Expect(calls).To(HaveLen(1))
-			// IngestTurn errored, so nothing was Put through the fallback either.
-			nodes, err := driver.List(context.Background())
-			Expect(err).NotTo(HaveOccurred())
-			Expect(nodes).To(BeEmpty())
+			Expect(driver.RawTurns()).To(BeEmpty())
+			// The session is still upserted from the in-memory chain.
+			Expect(driver.IngestCalls()).To(HaveLen(1))
+		})
+
+		It("does not crash the pool when the session ingest fails", func() {
+			driver := newCaptureDriver()
+			driver.failIngest = errors.New("simulated ingest failure")
+			wp := newCaptureTestPool(driver)
+
+			envelope := &sessions.IngestEnvelope{HarnessID: "claude", HarnessSessionID: "harness-zzz"}
+			wp.Enqueue(sampleCaptureJob(envelope, rawBody))
+			wp.Close()
+
+			// The raw write landed before the failing session ingest, and
+			// the failure is logged, not propagated.
+			Expect(driver.RawTurns()).To(HaveLen(1))
+			Expect(driver.IngestCalls()).To(HaveLen(1))
 		})
 	})
 
-	Context("when the driver does NOT implement SessionIngester", func() {
-		It("uses the legacy Put loop even when a session envelope is supplied", func() {
+	Context("when the driver hosts neither surface", func() {
+		It("is a no-op: nothing is persisted and no nodes are written", func() {
 			driver := inmemory.NewDriver()
-			wp := newSessionTestPool(driver)
+			wp := newCaptureTestPool(driver)
 
-			envelope := &sessions.IngestEnvelope{
-				OrgID:            "550e8400-e29b-41d4-a716-446655440000",
-				HarnessID:        "claude",
-				HarnessSessionID: "harness-abc",
-			}
-			wp.Enqueue(sampleJobWithEnvelope(envelope))
+			envelope := &sessions.IngestEnvelope{HarnessID: "claude", HarnessSessionID: "harness-abc"}
+			wp.Enqueue(sampleCaptureJob(envelope, rawBody))
 			wp.Close()
 
 			nodes, err := driver.List(context.Background())
 			Expect(err).NotTo(HaveOccurred())
-			Expect(nodes).To(HaveLen(3))
+			Expect(nodes).To(BeEmpty())
 		})
 	})
 })

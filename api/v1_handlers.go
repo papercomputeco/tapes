@@ -8,7 +8,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
-	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
@@ -76,69 +75,31 @@ func (s *Server) handleStats(c *fiber.Ctx) error {
 	opts.Limit = 0
 	opts.Cursor = ""
 
-	// Span-layer path: trace-grain rollups, the accounting the deriver
-	// writes. The legacy per-node filters force the node-layer fallback
-	// because trace rollups don't carry those columns.
-	legacyFilters := opts.Project != "" || opts.Agent != "" || opts.Model != "" || opts.Provider != ""
-	if reader, ok := s.driver.(storage.SpanStatsReader); ok && !legacyFilters {
-		stats, err := reader.AggregateSpanStats(c.Context(), orgIDFromCtx(c), opts.Since, opts.Until)
-		if err != nil {
-			s.logger.Error("aggregate span stats", "error", err)
-			return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to compute stats"})
-		}
-		return c.JSON(StatsResponse{
-			SessionCount:    stats.SessionCount,
-			TurnCount:       stats.TurnCount,
-			RootCount:       stats.RootCount,
-			CompletedCount:  stats.CompletedCount,
-			TotalCost:       stats.TotalCostUSD,
-			InputTokens:     stats.InputTokens,
-			OutputTokens:    stats.OutputTokens,
-			TotalDurationNs: stats.TotalDurationNS,
-			ToolCalls:       stats.ToolCalls,
-		})
-	}
-
-	stats, err := s.driver.CountSessions(c.Context(), opts)
-	if err != nil {
-		s.logger.Error("count sessions", "error", err)
+	// Span-layer trace-grain rollups are the only accounting now: the
+	// deriver is the single writer of session/trace totals, and the
+	// legacy per-node aggregate (with its per-node project/agent/model
+	// filters and StemCount) is retired with the node layer.
+	reader, ok := s.driver.(storage.SpanStatsReader)
+	if !ok {
+		s.logger.Error("stats unavailable: driver is not a SpanStatsReader")
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to compute stats"})
 	}
-
-	pricing := s.config.Pricing
-	if pricing == nil {
-		pricing = sessions.DefaultPricing()
+	stats, err := reader.AggregateSpanStats(c.Context(), orgIDFromCtx(c), opts.Since, opts.Until)
+	if err != nil {
+		s.logger.Error("aggregate span stats", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to compute stats"})
 	}
-
 	return c.JSON(StatsResponse{
 		SessionCount:    stats.SessionCount,
-		StemCount:       stats.StemCount,
 		TurnCount:       stats.TurnCount,
 		RootCount:       stats.RootCount,
 		CompletedCount:  stats.CompletedCount,
-		TotalCost:       totalCostFromPerModel(stats.PerModel, pricing),
+		TotalCost:       stats.TotalCostUSD,
 		InputTokens:     stats.InputTokens,
 		OutputTokens:    stats.OutputTokens,
-		TotalDurationNs: stats.TotalDurationNs,
+		TotalDurationNs: stats.TotalDurationNS,
 		ToolCalls:       stats.ToolCalls,
 	})
-}
-
-// totalCostFromPerModel folds the driver's per-model token rollup into a
-// single USD total via the pricing table. Models the table doesn't price
-// (e.g. unrecognized provider strings) contribute zero — same fall-through
-// as pkg/sessions.BuildSummary.
-func totalCostFromPerModel(perModel map[string]storage.ModelTokenStats, pricing sessions.PricingTable) float64 {
-	var total float64
-	for model, t := range perModel {
-		price, ok := sessions.PricingForModel(pricing, model)
-		if !ok {
-			continue
-		}
-		_, _, cost := sessions.CostForTokensWithCache(price, t.InputTokens, t.OutputTokens, t.CacheCreationTokens, t.CacheReadTokens)
-		total += cost
-	}
-	return total
 }
 
 // parseListOpts reads ListOpts fields from query params. Filter fields are

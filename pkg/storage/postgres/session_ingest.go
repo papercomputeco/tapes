@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -14,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
@@ -33,31 +31,23 @@ var nilOrgID = pgtype.UUID{Bytes: [16]byte{}, Valid: true}
 // change to IngestTurn would otherwise silently downgrade the worker
 // dispatch path to the legacy per-node Put loop — the runtime type
 // assertion in proxy/worker would just fall through without flagging.
-var (
-	_ storage.SessionIngester   = (*Driver)(nil)
-	_ storage.SessionBackfiller = (*Driver)(nil)
-)
+var _ storage.SessionIngester = (*Driver)(nil)
 
 // IngestTurn implements storage.SessionIngester for the Postgres
 // driver. The session-tracking flow runs in a single transaction:
-// resolve / UPSERT a sessions row, resolve the optional fork-parent FK
-// (placeholder-inserting the parent when its own first turn hasn't
-// landed yet), insert every node in the supplied chain, stamp
-// session_id onto each newly-inserted node, and roll up the per-turn
-// counters.
+// resolve / UPSERT a sessions row (keyed by the envelope's natural key
+// or a synthetic harness_session_id from the turn's Merkle root),
+// resolve the optional fork-parent FK (placeholder-inserting the parent
+// when its own first turn hasn't landed yet), and fold derived_status
+// from the in-memory turn chain. It no longer persists nodes — the
+// merkle layer is in-memory only — and token/turn/cost counters are
+// owned by the derive-time span fold.
 func (d *Driver) IngestTurn(ctx context.Context, req storage.IngestTurnRequest) (storage.IngestTurnResult, error) {
 	if d == nil || d.conn == nil {
 		return storage.IngestTurnResult{}, errors.New("postgres driver not open")
 	}
 	if len(req.Nodes) == 0 {
 		return storage.IngestTurnResult{}, errors.New("ingest turn: no nodes supplied")
-	}
-	if err := validateChainOrdering(req.Nodes); err != nil {
-		// Synthetic id derivation (req.Nodes[0].Hash) trusts the caller's
-		// root-to-leaf ordering — a scrambled chain would derive the
-		// wrong "root" and silently land turns on the wrong session.
-		// Reject at the boundary; do not attempt to repair.
-		return storage.IngestTurnResult{}, fmt.Errorf("ingest turn: %w", err)
 	}
 
 	tx, err := d.conn.Begin(ctx)
@@ -121,87 +111,42 @@ func (d *Driver) IngestTurn(ctx context.Context, req storage.IngestTurnRequest) 
 		}
 	}
 
-	var newNodes []*merkle.Node
-	for _, node := range req.Nodes {
-		if node == nil {
+	// Node persistence is retired: nodes are no longer written here. The
+	// session's token/turn/cost counters are owned by the derive-time span
+	// fold (FoldSessionRollupsFromSpans) — the ingest path's per-call
+	// counters double-counted re-sent history anyway — so this path no
+	// longer touches them.
+	//
+	// derived_status is still folded here from the in-memory turn chain,
+	// because status is not a span-fold output (has_git_activity is a
+	// content heuristic the spans don't carry). The full conversation is
+	// re-sent every turn, so absolute tool counts over req.Nodes (SET, not
+	// accumulated) converge to the conversation total without the per-row
+	// dedup the node writes used to provide; has_git_activity stays sticky
+	// by OR-ing the pre-turn session value.
+	hasGitActivity := sessionRow.HasGitActivity
+	toolResultCount := 0
+	toolErrorCount := 0
+	for _, n := range req.Nodes {
+		if n == nil {
 			continue
 		}
-		params, err := insertNodeParamsFromMerkle(orgID, node)
-		if err != nil {
-			return storage.IngestTurnResult{}, fmt.Errorf("marshal node %s: %w", node.Hash, err)
+		if !hasGitActivity && sessions.BlocksHaveGitActivity(n.Bucket.Content) {
+			hasGitActivity = true
 		}
-		rows, err := qtx.InsertNode(ctx, params)
-		if err != nil {
-			return storage.IngestTurnResult{}, fmt.Errorf("insert node %s: %w", node.Hash, err)
-		}
-		if rows == 0 {
-			// Duplicate (org_id, hash): the row already exists from a
-			// retry for the same org. Its session_id was set on the
-			// original write; do not re-stamp here because the existing
-			// row already FKs to the correct session.
-			continue
-		}
-		if err := qtx.SetNodeSessionID(ctx, gensqlc.SetNodeSessionIDParams{
-			SessionID: sessionRow.ID,
-			OrgID:     orgID,
-			Hash:      node.Hash,
-		}); err != nil {
-			return storage.IngestTurnResult{}, fmt.Errorf("stamp session_id on node %s: %w", node.Hash, err)
-		}
-		newNodes = append(newNodes, node)
+		toolResultCount += sessions.CountToolResults(n.Bucket.Content)
+		toolErrorCount += sessions.CountToolResultErrors(n.Bucket.Content)
 	}
-
-	countersUpdated := false
-	if len(newNodes) > 0 {
-		costNumeric, err := numericFromFloat(req.CostUSD)
-		if err != nil {
-			return storage.IngestTurnResult{}, fmt.Errorf("encode cost_usd delta: %w", err)
-		}
-		if err := qtx.UpdateSessionCounters(ctx, gensqlc.UpdateSessionCountersParams{
-			Now:               nowTS,
-			TurnCountDelta:    1,
-			InputTokensDelta:  req.InputTokens,
-			OutputTokensDelta: req.OutputTokens,
-			CostUsdDelta:      costNumeric,
-			ID:                sessionRow.ID,
-		}); err != nil {
-			return storage.IngestTurnResult{}, fmt.Errorf("update session counters: %w", err)
-		}
-		countersUpdated = true
-
-		// Recompute the session's chain-aware status. has_git_activity is
-		// sticky and the tool-result counts are cumulative across every turn
-		// and stem; sessionRow carries the pre-turn totals via UpsertSession's
-		// RETURNING. We accumulate over newNodes (the genuinely new rows this
-		// turn) rather than req.Nodes — the full chain is re-sent every turn,
-		// so counting it would multiply the totals; OR-only booleans tolerated
-		// that, counts do not. derived_status mirrors
-		// pkg/sessions.DetermineStatus over the totals and this turn's leaf
-		// (req.Nodes is validated root->leaf, so the last node is the leaf).
-		hasGitActivity := sessionRow.HasGitActivity
-		toolResultCount := int(sessionRow.ToolResultCount)
-		toolErrorCount := int(sessionRow.ToolErrorCount)
-		for _, n := range newNodes {
-			if n == nil {
-				continue
-			}
-			if !hasGitActivity && sessions.BlocksHaveGitActivity(n.Bucket.Content) {
-				hasGitActivity = true
-			}
-			toolResultCount += sessions.CountToolResults(n.Bucket.Content)
-			toolErrorCount += sessions.CountToolResultErrors(n.Bucket.Content)
-		}
-		leaf := req.Nodes[len(req.Nodes)-1]
-		status := sessions.DetermineStatus(leaf, hasGitActivity, toolResultCount, toolErrorCount)
-		if err := qtx.UpdateSessionStatus(ctx, gensqlc.UpdateSessionStatusParams{
-			HasGitActivity:  hasGitActivity,
-			ToolResultCount: int32Count(toolResultCount),
-			ToolErrorCount:  int32Count(toolErrorCount),
-			DerivedStatus:   status,
-			ID:              sessionRow.ID,
-		}); err != nil {
-			return storage.IngestTurnResult{}, fmt.Errorf("update session status: %w", err)
-		}
+	leaf := req.Nodes[len(req.Nodes)-1]
+	status := sessions.DetermineStatus(leaf, hasGitActivity, toolResultCount, toolErrorCount)
+	if err := qtx.UpdateSessionStatus(ctx, gensqlc.UpdateSessionStatusParams{
+		HasGitActivity:  hasGitActivity,
+		ToolResultCount: int32Count(toolResultCount),
+		ToolErrorCount:  int32Count(toolErrorCount),
+		DerivedStatus:   status,
+		ID:              sessionRow.ID,
+	}); err != nil {
+		return storage.IngestTurnResult{}, fmt.Errorf("update session status: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -209,145 +154,8 @@ func (d *Driver) IngestTurn(ctx context.Context, req storage.IngestTurnRequest) 
 	}
 
 	return storage.IngestTurnResult{
-		SessionID:       uuidString(sessionRow.ID),
-		NewNodes:        newNodes,
-		CountersUpdated: countersUpdated,
+		SessionID: uuidString(sessionRow.ID),
 	}, nil
-}
-
-// BackfillSession links existing legacy nodes to a session table row. It is
-// used by transcript backfills where the node DAG already exists but the
-// original ingest path predated session envelopes.
-func (d *Driver) BackfillSession(ctx context.Context, req storage.SessionBackfillRequest) (storage.SessionBackfillResult, error) {
-	if d == nil || d.conn == nil {
-		return storage.SessionBackfillResult{}, errors.New("postgres driver not open")
-	}
-	if req.Session == nil {
-		return storage.SessionBackfillResult{}, errors.New("backfill session: missing session envelope")
-	}
-	if req.Session.HarnessSessionID == "" {
-		return storage.SessionBackfillResult{}, errors.New("backfill session: missing harness_session_id")
-	}
-	if len(req.NodeHashes) == 0 {
-		return storage.SessionBackfillResult{}, nil
-	}
-
-	orgID, err := orgIDFromEnvelope(req.Session)
-	if err != nil {
-		return storage.SessionBackfillResult{}, fmt.Errorf("decode org_id: %w", err)
-	}
-	sessionUUID, err := newAppUUID()
-	if err != nil {
-		return storage.SessionBackfillResult{}, fmt.Errorf("mint session uuid: %w", err)
-	}
-
-	startedAt := req.StartedAt.UTC()
-	if startedAt.IsZero() {
-		startedAt = time.Now().UTC()
-	}
-	lastSeenAt := req.LastSeenAt.UTC()
-	if lastSeenAt.IsZero() || lastSeenAt.Before(startedAt) {
-		lastSeenAt = startedAt
-	}
-	metadata := []byte(req.Session.HarnessMetadata)
-	if len(metadata) == 0 {
-		metadata = []byte("{}")
-	}
-
-	tx, err := d.conn.Begin(ctx)
-	if err != nil {
-		return storage.SessionBackfillResult{}, fmt.Errorf("begin backfill session tx: %w", err)
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-
-	var sessionID pgtype.UUID
-	err = tx.QueryRow(ctx, `
-INSERT INTO sessions (
-    id, org_id, auth_subject, harness_id, harness_session_id,
-    name, cwd, harness_version, started_at, last_seen_at, harness_metadata,
-    total_input_tokens, total_output_tokens, turn_count
-) VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''), $9, $10, $11, $12, $13, $14)
-ON CONFLICT (org_id, harness_id, harness_session_id) DO UPDATE
-SET last_seen_at = GREATEST(sessions.last_seen_at, EXCLUDED.last_seen_at),
-    auth_subject = EXCLUDED.auth_subject,
-    harness_metadata = sessions.harness_metadata || EXCLUDED.harness_metadata,
-    name = COALESCE(EXCLUDED.name, sessions.name),
-    cwd = COALESCE(EXCLUDED.cwd, sessions.cwd),
-    harness_version = COALESCE(EXCLUDED.harness_version, sessions.harness_version),
-    total_input_tokens = GREATEST(sessions.total_input_tokens, EXCLUDED.total_input_tokens),
-    total_output_tokens = GREATEST(sessions.total_output_tokens, EXCLUDED.total_output_tokens),
-    turn_count = GREATEST(sessions.turn_count, EXCLUDED.turn_count)
-RETURNING id`,
-		sessionUUID,
-		orgID,
-		req.Session.AuthSubject,
-		req.Session.HarnessIDOrUnknown(),
-		req.Session.HarnessSessionID,
-		req.Session.Name,
-		req.Session.Cwd,
-		req.Session.HarnessVersion,
-		startedAt,
-		lastSeenAt,
-		metadata,
-		req.InputTokens,
-		req.OutputTokens,
-		req.TurnCount,
-	).Scan(&sessionID)
-	if err != nil {
-		return storage.SessionBackfillResult{}, fmt.Errorf("upsert session: %w", err)
-	}
-
-	tag, err := tx.Exec(ctx, `
-UPDATE nodes
-   SET session_id = $1
- WHERE org_id = $2
-   AND hash = ANY($3::text[])
-   AND session_id IS NULL`,
-		sessionID,
-		orgID,
-		req.NodeHashes,
-	)
-	if err != nil {
-		return storage.SessionBackfillResult{}, fmt.Errorf("stamp legacy nodes: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return storage.SessionBackfillResult{}, fmt.Errorf("commit backfill session tx: %w", err)
-	}
-	return storage.SessionBackfillResult{
-		SessionID:   uuidString(sessionID),
-		NodesLinked: int(tag.RowsAffected()),
-	}, nil
-}
-
-// validateChainOrdering enforces the root-to-leaf invariant documented
-// on storage.IngestTurnRequest: each node's ParentHash must point at
-// the previous node's Hash. Nodes[0] is the conversation root, so its
-// ParentHash must be nil or empty.
-//
-// The synthetic harness_session_id derivation depends on Nodes[0]
-// actually being the root, and the (org_id, hash) PK on nodes means a
-// scrambled chain produces real duplicate-hash conflicts on the wrong
-// session; we reject at the boundary rather than attempt a repair.
-func validateChainOrdering(nodes []*merkle.Node) error {
-	for i, node := range nodes {
-		if node == nil {
-			return fmt.Errorf("nodes[%d] is nil", i)
-		}
-		if i == 0 {
-			if node.ParentHash != nil && *node.ParentHash != "" {
-				return fmt.Errorf("nodes[0] must be the conversation root: ParentHash=%q", *node.ParentHash)
-			}
-			continue
-		}
-		prev := nodes[i-1]
-		if node.ParentHash == nil || *node.ParentHash == "" {
-			return fmt.Errorf("nodes[%d] has no ParentHash but expected %q", i, prev.Hash)
-		}
-		if *node.ParentHash != prev.Hash {
-			return fmt.Errorf("nodes[%d].ParentHash=%q does not chain to nodes[%d].Hash=%q", i, *node.ParentHash, i-1, prev.Hash)
-		}
-	}
-	return nil
 }
 
 // resolveHarnessSessionID returns the envelope to persist (always
@@ -518,61 +326,4 @@ func numericFromFloat(v float64) (pgtype.Numeric, error) {
 		return pgtype.Numeric{}, fmt.Errorf("scan numeric %q: %w", s, err)
 	}
 	return n, nil
-}
-
-// insertNodeParamsFromMerkle marshals a merkle.Node into the InsertNode
-// param struct. Mirrors the construction in (*Driver).Put so the
-// transactional ingest path projects the same columns as the legacy
-// per-node Put loop. orgID is the cloud-trusted org for the row's half
-// of the composite (org_id, hash) PK.
-func insertNodeParamsFromMerkle(orgID pgtype.UUID, n *merkle.Node) (gensqlc.InsertNodeParams, error) {
-	if n == nil {
-		return gensqlc.InsertNodeParams{}, errors.New("nil node")
-	}
-	bucketJSON, err := json.Marshal(n.Bucket)
-	if err != nil {
-		return gensqlc.InsertNodeParams{}, fmt.Errorf("marshal bucket: %w", err)
-	}
-	contentJSON, err := json.Marshal(n.Bucket.Content)
-	if err != nil {
-		return gensqlc.InsertNodeParams{}, fmt.Errorf("marshal content: %w", err)
-	}
-
-	createdAt := n.CreatedAt
-	if createdAt.IsZero() {
-		createdAt = time.Now().UTC()
-	}
-
-	reqSystem, reqMaxTokens, reqTemperature, reqStream, reqToolCount := requestParamColumns(n.Request)
-
-	return gensqlc.InsertNodeParams{
-		OrgID:                    orgID,
-		Hash:                     n.Hash,
-		Bucket:                   bucketJSON,
-		Type:                     nullStringValue(n.Bucket.Type),
-		Role:                     nullStringValue(n.Bucket.Role),
-		Content:                  contentJSON,
-		Model:                    nullStringValue(n.Bucket.Model),
-		Provider:                 nullStringValue(n.Bucket.Provider),
-		AgentName:                nullStringValue(n.Bucket.AgentName),
-		StopReason:               nullStringValue(n.StopReason),
-		PromptTokens:             nullInt32FromUsage(n.Usage, func(u *llm.Usage) int { return u.PromptTokens }),
-		CompletionTokens:         nullInt32FromUsage(n.Usage, func(u *llm.Usage) int { return u.CompletionTokens }),
-		TotalTokens:              nullInt32FromUsage(n.Usage, func(u *llm.Usage) int { return u.TotalTokens }),
-		CacheCreationInputTokens: nullInt32FromUsage(n.Usage, func(u *llm.Usage) int { return u.CacheCreationInputTokens }),
-		CacheReadInputTokens:     nullInt32FromUsage(n.Usage, func(u *llm.Usage) int { return u.CacheReadInputTokens }),
-		TotalDurationNs:          nullInt64FromUsage(n.Usage, func(u *llm.Usage) int64 { return u.TotalDurationNs }),
-		PromptDurationNs:         nullInt64FromUsage(n.Usage, func(u *llm.Usage) int64 { return u.PromptDurationNs }),
-		Project:                  nullStringValue(n.Project),
-		CreatedAt:                pgtype.Timestamptz{Time: createdAt, Valid: true},
-		ParentHash:               nullStringPtr(n.ParentHash),
-		RequestSystem:            reqSystem,
-		RequestMaxTokens:         reqMaxTokens,
-		RequestTemperature:       reqTemperature,
-		RequestStream:            reqStream,
-		RequestToolCount:         reqToolCount,
-		NodeKind:                 nullStringValue(n.Kind),
-		ParentToolUseID:          nullStringValue(n.ParentToolUseID),
-		ThreadID:                 nullStringValue(n.ThreadID),
-	}, nil
 }

@@ -102,10 +102,13 @@ var _ = Describe("Derive worker storage (postgres)", func() {
 		Expect(err).NotTo(HaveOccurred())
 	}
 
-	nodeCountForSession := func(rowID string) int {
+	// spanTurnCountForSession counts the derived trace rows for a session.
+	// Node persistence is retired — span_turns is the sole derived read
+	// surface — so per-session derive coverage is asserted here.
+	spanTurnCountForSession := func(rowID string) int {
 		var n int
 		err := driver.DB().QueryRow(ctx,
-			"SELECT COUNT(*) FROM nodes WHERE session_id = $1", rowID).Scan(&n)
+			"SELECT COUNT(*) FROM span_turns WHERE session_id = $1", rowID).Scan(&n)
 		Expect(err).NotTo(HaveOccurred())
 		return n
 	}
@@ -179,57 +182,58 @@ var _ = Describe("Derive worker storage (postgres)", func() {
 			report, err := driver.RederiveSession(ctx, "", "", harnessID, sessionA)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(report.RawTurns).To(Equal(2))
-			Expect(report.Upserted).To(BeNumerically(">", 0))
-			Expect(report.Pruned).To(BeZero())
 
-			countA := nodeCountForSession(sessionARowID)
-			Expect(countA).To(Equal(report.Upserted))
-			Expect(nodeCountForSession(sessionBRowID)).To(BeZero(),
+			// Node persistence is retired: derive writes only the span
+			// projection. Session A's wire turns project to trace rows; the
+			// sibling session B is out of scope for this session-scoped
+			// derive, so it stays empty.
+			countA := spanTurnCountForSession(sessionARowID)
+			Expect(countA).To(BeNumerically(">", 0))
+			Expect(spanTurnCountForSession(sessionBRowID)).To(BeZero(),
 				"session-scoped derive must not write sibling sessions")
 
-			// Idempotence: re-run upserts the same set and prunes 0.
-			again, err := driver.RederiveSession(ctx, "", "", harnessID, sessionA)
+			// Idempotence: re-run upserts the same set in place.
+			_, err = driver.RederiveSession(ctx, "", "", harnessID, sessionA)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(again.Upserted).To(Equal(report.Upserted))
-			Expect(again.Pruned).To(BeZero())
-			Expect(nodeCountForSession(sessionARowID)).To(Equal(countA))
+			Expect(spanTurnCountForSession(sessionARowID)).To(Equal(countA))
 
-			// Sibling derive leaves session A untouched.
-			reportB, err := driver.RederiveSession(ctx, "", "", harnessID, sessionB)
+			// Sibling derive populates B and leaves session A untouched.
+			_, err = driver.RederiveSession(ctx, "", "", harnessID, sessionB)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(reportB.Pruned).To(BeZero())
-			Expect(nodeCountForSession(sessionARowID)).To(Equal(countA))
-			Expect(nodeCountForSession(sessionBRowID)).To(Equal(reportB.Upserted))
+			Expect(spanTurnCountForSession(sessionARowID)).To(Equal(countA))
+			Expect(spanTurnCountForSession(sessionBRowID)).To(BeNumerically(">", 0))
 		})
 
-		It("prunes stale derived rows scoped to the session", func() {
+		It("prunes stale derived span rows scoped to the session", func() {
 			insertSessionRow(sessionARowID, sessionA)
 			insertSessionRow(sessionBRowID, sessionB)
 			putWireTurn("req-a-1", sessionA, "hello from session A")
 
-			// A stale row from a superseded projection, attributed to
-			// session A — and a sibling's stale row that must survive.
-			for _, row := range []struct{ hash, sid string }{
-				{"stale-hash-session-a", sessionARowID},
-				{"stale-hash-session-b", sessionBRowID},
+			// Node persistence is retired; the span projection is the sole
+			// derived surface, so the prune is exercised there. Seed a stale
+			// span_turn from a superseded projection attributed to session A
+			// (a trace the re-derive will not re-emit) and a sibling stale row
+			// under session B that must survive a session-A-scoped derive.
+			for _, row := range []struct{ traceID, sid string }{
+				{"stale-trace-session-a", sessionARowID},
+				{"stale-trace-session-b", sessionBRowID},
 			} {
 				_, err := driver.DB().Exec(ctx, `
-					INSERT INTO nodes (org_id, hash, bucket, content, session_id, created_at)
-					VALUES ('00000000-0000-0000-0000-000000000000', $1, '{}', '[]', $2, NOW())`,
-					row.hash, row.sid)
+					INSERT INTO span_turns (org_id, trace_id, session_id, started_at)
+					VALUES ('00000000-0000-0000-0000-000000000000', $1, $2, NOW())`,
+					row.traceID, row.sid)
 				Expect(err).NotTo(HaveOccurred())
 			}
 
-			report, err := driver.RederiveSession(ctx, "", "", harnessID, sessionA)
+			_, err := driver.RederiveSession(ctx, "", "", harnessID, sessionA)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(report.Pruned).To(Equal(1), "only session A's stale row prunes")
 
 			var staleA, staleB int
 			Expect(driver.DB().QueryRow(ctx,
-				"SELECT COUNT(*) FROM nodes WHERE hash = 'stale-hash-session-a'").Scan(&staleA)).To(Succeed())
+				"SELECT COUNT(*) FROM span_turns WHERE trace_id = 'stale-trace-session-a'").Scan(&staleA)).To(Succeed())
 			Expect(driver.DB().QueryRow(ctx,
-				"SELECT COUNT(*) FROM nodes WHERE hash = 'stale-hash-session-b'").Scan(&staleB)).To(Succeed())
-			Expect(staleA).To(BeZero())
+				"SELECT COUNT(*) FROM span_turns WHERE trace_id = 'stale-trace-session-b'").Scan(&staleB)).To(Succeed())
+			Expect(staleA).To(BeZero(), "session A's stale span row is pruned by the re-derive")
 			Expect(staleB).To(Equal(1), "sibling sessions' rows are out of scope")
 		})
 	})

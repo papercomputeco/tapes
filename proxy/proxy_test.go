@@ -14,7 +14,6 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
-	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 	"github.com/papercomputeco/tapes/proxy/header"
@@ -47,11 +46,31 @@ type ollamaTestResponse struct {
 // boolPtr returns a pointer to a bool value.
 func boolPtr(b bool) *bool { return &b }
 
-// newTestProxy creates a Proxy pointed at the given upstream URL,
-// using an in-memory storage driver and the ollama provider.
-func newTestProxy(upstreamURL string) (*Proxy, *inmemory.Driver) {
+// decodeReducedResponse unmarshals a captured raw turn's verbatim reduced
+// response (the marshaled worker.Job.Resp) back into a canonical
+// llm.ChatResponse so capture specs can assert on the assistant text and
+// proxy-stamped usage without re-deriving a node chain.
+func decodeReducedResponse(raw []byte) llm.ChatResponse {
+	var out llm.ChatResponse
+	Expect(json.Unmarshal(raw, &out)).To(Succeed())
+	return out
+}
+
+// reducedText returns the assistant text of a captured raw turn's reduced
+// response. GetText has a pointer receiver, so it cannot be called on the
+// temporary returned by decodeReducedResponse directly.
+func reducedText(raw []byte) string {
+	resp := decodeReducedResponse(raw)
+	return resp.Message.GetText()
+}
+
+// newTestProxy creates a Proxy pointed at the given upstream URL, using a
+// capture-recording driver (raw-turn layer + sessions ingest) and the
+// ollama provider. The persisted node DAG is retired, so capture is
+// asserted off the recorded RawTurnRecords rather than a node store.
+func newTestProxy(upstreamURL string) (*Proxy, *captureDriver) {
 	logger := tapeslogger.NewNoop()
-	driver := inmemory.NewDriver()
+	driver := newCaptureDriver()
 
 	p, err := New(
 		Config{
@@ -96,7 +115,7 @@ func makeOllamaResponseBody(model, role, content string) []byte {
 var _ = Describe("Non-Streaming Proxy", func() {
 	var (
 		p        *Proxy
-		driver   storage.Driver
+		driver   *captureDriver
 		upstream *httptest.Server
 	)
 
@@ -149,7 +168,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 			Expect(resp.Header.Get("Content-Type")).To(Equal("application/json"))
 		})
 
-		It("stores the conversation turn via the worker pool", func() {
+		It("captures the conversation turn into the raw-turn layer", func() {
 			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 				{Role: "user", Content: "What is 2+2?"},
 			}, boolPtr(false))
@@ -158,25 +177,26 @@ var _ = Describe("Non-Streaming Proxy", func() {
 			Expect(err).NotTo(HaveOccurred())
 			resp.Body.Close()
 
-			// Drain the worker pool and shut down to ensure async storage completes.
+			// Drain the worker pool and shut down to ensure async capture completes.
 			// Set p = nil so AfterEach doesn't double-close.
 			p.Close()
 			p = nil
 
-			ctx := GinkgoT().Context()
-			nodes, err := driver.List(ctx)
-			Expect(err).NotTo(HaveOccurred())
-			// 1 user message + 1 assistant response = 2 nodes
-			Expect(nodes).To(HaveLen(2))
+			// Capture lands one raw turn carrying the verbatim request and the
+			// reduced assistant response — the deriver projects the
+			// sessions/traces/spans surface from these rows.
+			raws := driver.RawTurns()
+			Expect(raws).To(HaveLen(1))
+			Expect(raws[0].Provider).To(Equal("ollama"))
+			Expect(raws[0].Source).To(Equal(storage.RawTurnSourceWire))
+			Expect([]byte(raws[0].RawRequest)).To(Equal(reqBody))
+			Expect(string(raws[0].Response)).To(ContainSubstring("2+2 equals 4."))
 
-			leaves, err := driver.Leaves(ctx)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(leaves).To(HaveLen(1))
-			Expect(leaves[0].Bucket.Role).To(Equal("assistant"))
-			Expect(leaves[0].Bucket.ExtractText()).To(Equal("2+2 equals 4."))
+			// The empty local-capture envelope drives a sessions upsert.
+			Expect(driver.IngestCalls()).To(HaveLen(1))
 		})
 
-		It("stores multi-message requests as a chain", func() {
+		It("captures multi-message requests in a single raw turn", func() {
 			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 				{Role: "system", Content: "You are helpful."},
 				{Role: "user", Content: "What is 2+2?"},
@@ -189,18 +209,14 @@ var _ = Describe("Non-Streaming Proxy", func() {
 			p.Close()
 			p = nil
 
-			ctx := GinkgoT().Context()
-			leaves, err := driver.Leaves(ctx)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(leaves).To(HaveLen(1))
-
-			ancestry, err := driver.Ancestry(ctx, leaves[0].Hash)
-			Expect(err).NotTo(HaveOccurred())
-			// system -> user -> assistant = 3 nodes
-			Expect(ancestry).To(HaveLen(3))
-			Expect(ancestry[0].Bucket.Role).To(Equal("assistant"))
-			Expect(ancestry[1].Bucket.Role).To(Equal("user"))
-			Expect(ancestry[2].Bucket.Role).To(Equal("system"))
+			// The whole turn (system + user request + assistant response) is
+			// one immutable raw row; conversation structure is reconstructed
+			// at derive time, not stored as a node chain.
+			raws := driver.RawTurns()
+			Expect(raws).To(HaveLen(1))
+			Expect([]byte(raws[0].RawRequest)).To(Equal(reqBody))
+			Expect(string(raws[0].RawRequest)).To(ContainSubstring("You are helpful."))
+			Expect(string(raws[0].Response)).To(ContainSubstring("2+2 equals 4."))
 		})
 	})
 
@@ -229,7 +245,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 			Expect(string(body)).To(ContainSubstring("model not found"))
 		})
 
-		It("does not store any nodes", func() {
+		It("does not capture anything on an upstream error", func() {
 			reqBody := makeOllamaRequestBody("nonexistent", []ollamaTestMessage{
 				{Role: "user", Content: "hello"},
 			}, boolPtr(false))
@@ -241,10 +257,8 @@ var _ = Describe("Non-Streaming Proxy", func() {
 			p.Close()
 			p = nil
 
-			ctx := GinkgoT().Context()
-			nodes, err := driver.List(ctx)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(nodes).To(BeEmpty())
+			Expect(driver.RawTurns()).To(BeEmpty())
+			Expect(driver.IngestCalls()).To(BeEmpty())
 		})
 	})
 
@@ -272,10 +286,8 @@ var _ = Describe("Non-Streaming Proxy", func() {
 			p.Close()
 			p = nil
 
-			ctx := GinkgoT().Context()
-			nodes, err := driver.List(ctx)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(nodes).To(BeEmpty())
+			Expect(driver.RawTurns()).To(BeEmpty())
+			Expect(driver.IngestCalls()).To(BeEmpty())
 		})
 	})
 
@@ -354,7 +366,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 var _ = Describe("Streaming Proxy", func() {
 	var (
 		p        *Proxy
-		driver   storage.Driver
+		driver   *captureDriver
 		upstream *httptest.Server
 	)
 
@@ -411,7 +423,7 @@ var _ = Describe("Streaming Proxy", func() {
 			Expect(bodyStr).To(ContainSubstring(`"done":true`))
 		})
 
-		It("stores the reconstructed conversation after streaming completes", func() {
+		It("captures the reconstructed conversation after streaming completes", func() {
 			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 				{Role: "user", Content: "What is 2+2?"},
 			}, boolPtr(true))
@@ -420,31 +432,25 @@ var _ = Describe("Streaming Proxy", func() {
 			Expect(err).NotTo(HaveOccurred())
 			resp.Body.Close()
 
-			// Drain the worker pool to ensure async storage completes
+			// Drain the worker pool to ensure async capture completes
 			p.Close()
 			p = nil
 
-			ctx := GinkgoT().Context()
-			nodes, err := driver.List(ctx)
-			Expect(err).NotTo(HaveOccurred())
-			// 1 user message + 1 assistant response = 2 nodes
-			Expect(nodes).To(HaveLen(2))
+			raws := driver.RawTurns()
+			Expect(raws).To(HaveLen(1))
 
-			leaves, err := driver.Leaves(ctx)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(leaves).To(HaveLen(1))
-			Expect(leaves[0].Bucket.Role).To(Equal("assistant"))
-			// The accumulated content from all streaming chunks
-			Expect(leaves[0].Bucket.ExtractText()).To(Equal("2+2 equals 4."))
+			reduced := decodeReducedResponse(raws[0].Response)
+			// The accumulated content from all streaming chunks.
+			Expect(reduced.Message.GetText()).To(Equal("2+2 equals 4."))
 
 			// The wire-reported total_duration was 1_000_000 ns (1ms) in the
 			// fixture above; the proxy must overwrite it with its own
 			// wall-clock measurement so non-Ollama providers and Ollama land
 			// on the same semantic. Anything > 0 and != the wire value proves
 			// the legacy NDJSON path's stampDuration call is taking effect.
-			Expect(leaves[0].Usage).NotTo(BeNil())
-			Expect(leaves[0].Usage.TotalDurationNs).NotTo(BeZero())
-			Expect(leaves[0].Usage.TotalDurationNs).NotTo(Equal(int64(1_000_000)),
+			Expect(reduced.Usage).NotTo(BeNil())
+			Expect(reduced.Usage.TotalDurationNs).NotTo(BeZero())
+			Expect(reduced.Usage.TotalDurationNs).NotTo(Equal(int64(1_000_000)),
 				"proxy should overwrite Ollama's wire-reported total_duration")
 		})
 	})
@@ -476,10 +482,8 @@ var _ = Describe("Streaming Proxy", func() {
 			p.Close()
 			p = nil
 
-			ctx := GinkgoT().Context()
-			nodes, err := driver.List(ctx)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(nodes).To(BeEmpty())
+			Expect(driver.RawTurns()).To(BeEmpty())
+			Expect(driver.IngestCalls()).To(BeEmpty())
 		})
 	})
 
@@ -503,7 +507,7 @@ var _ = Describe("Streaming Proxy", func() {
 			p, driver = newTestProxy(upstream.URL)
 		})
 
-		It("stores the full ancestry chain including system and user messages", func() {
+		It("captures the full request (system + user) and the streamed response", func() {
 			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 				{Role: "system", Content: "You are helpful."},
 				{Role: "user", Content: "What is 2+2?"},
@@ -516,18 +520,13 @@ var _ = Describe("Streaming Proxy", func() {
 			p.Close()
 			p = nil
 
-			ctx := GinkgoT().Context()
-			leaves, err := driver.Leaves(ctx)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(leaves).To(HaveLen(1))
-
-			ancestry, err := driver.Ancestry(ctx, leaves[0].Hash)
-			Expect(err).NotTo(HaveOccurred())
-			// system -> user -> assistant = 3 nodes
-			Expect(ancestry).To(HaveLen(3))
-			Expect(ancestry[0].Bucket.Role).To(Equal("assistant"))
-			Expect(ancestry[1].Bucket.Role).To(Equal("user"))
-			Expect(ancestry[2].Bucket.Role).To(Equal("system"))
+			raws := driver.RawTurns()
+			Expect(raws).To(HaveLen(1))
+			// The verbatim request carries the whole submitted history;
+			// conversation structure is reconstructed at derive time.
+			Expect([]byte(raws[0].RawRequest)).To(Equal(reqBody))
+			Expect(string(raws[0].RawRequest)).To(ContainSubstring("You are helpful."))
+			Expect(reducedText(raws[0].Response)).To(Equal("The answer is 4."))
 		})
 	})
 })
@@ -742,7 +741,7 @@ var _ = Describe("New", func() {
 var _ = Describe("End-to-End Multi-Turn Proxy", func() {
 	var (
 		p        *Proxy
-		driver   storage.Driver
+		driver   *captureDriver
 		upstream *httptest.Server
 		turnNum  int
 	)
@@ -771,7 +770,7 @@ var _ = Describe("End-to-End Multi-Turn Proxy", func() {
 		upstream.Close()
 	})
 
-	It("deduplicates replayed messages across turns", func() {
+	It("captures each turn as its own raw row across a multi-turn conversation", func() {
 		// Turn 1: system + user -> assistant
 		reqBody1 := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 			{Role: "system", Content: "You are helpful."},
@@ -798,39 +797,23 @@ var _ = Describe("End-to-End Multi-Turn Proxy", func() {
 		p.Close()
 		p = nil
 
-		ctx := GinkgoT().Context()
+		// Each forwarded call lands its own immutable raw turn. The
+		// node-layer's content-addressed deduplication of replayed history
+		// is retired; dedup/threading is the deriver's job over these rows.
+		// The worker pool drains asynchronously, so match each turn by its
+		// (distinct) reduced response text rather than by slice index.
+		raws := driver.RawTurns()
+		Expect(raws).To(HaveLen(2))
 
-		// Content-addressable deduplication should yield exactly 5 unique nodes
-		nodes, err := driver.List(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(nodes).To(HaveLen(5))
-
-		// The latest leaf should have full ancestry
-		leaves, err := driver.Leaves(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(leaves).To(HaveLen(1))
-
-		ancestry, err := driver.Ancestry(ctx, leaves[0].Hash)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(ancestry).To(HaveLen(5))
-
-		// Verify ordering from newest to oldest
-		Expect(ancestry[0].Bucket.Role).To(Equal("assistant"))
-		Expect(ancestry[0].Bucket.ExtractText()).To(Equal("3+3 equals 6."))
-		Expect(ancestry[1].Bucket.Role).To(Equal("user"))
-		Expect(ancestry[1].Bucket.ExtractText()).To(Equal("And what is 3+3?"))
-		Expect(ancestry[2].Bucket.Role).To(Equal("assistant"))
-		Expect(ancestry[2].Bucket.ExtractText()).To(Equal("2+2 equals 4."))
-		Expect(ancestry[3].Bucket.Role).To(Equal("user"))
-		Expect(ancestry[3].Bucket.ExtractText()).To(Equal("What is 2+2?"))
-		Expect(ancestry[4].Bucket.Role).To(Equal("system"))
+		responses := []string{reducedText(raws[0].Response), reducedText(raws[1].Response)}
+		Expect(responses).To(ConsistOf("2+2 equals 4.", "3+3 equals 6."))
 	})
 })
 
-var _ = Describe("Storage Provider Metadata", func() {
+var _ = Describe("Capture Provider Metadata", func() {
 	var (
 		p        *Proxy
-		driver   storage.Driver
+		driver   *captureDriver
 		upstream *httptest.Server
 	)
 
@@ -850,7 +833,7 @@ var _ = Describe("Storage Provider Metadata", func() {
 		upstream.Close()
 	})
 
-	It("stores the provider name in each node's bucket", func() {
+	It("records the provider on the raw turn", func() {
 		reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 			{Role: "user", Content: "hi"},
 		}, boolPtr(false))
@@ -862,17 +845,12 @@ var _ = Describe("Storage Provider Metadata", func() {
 		p.Close()
 		p = nil
 
-		ctx := GinkgoT().Context()
-		nodes, err := driver.List(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(nodes).NotTo(BeEmpty())
-
-		for _, node := range nodes {
-			Expect(node.Bucket.Provider).To(Equal("ollama"))
-		}
+		raws := driver.RawTurns()
+		Expect(raws).To(HaveLen(1))
+		Expect(raws[0].Provider).To(Equal("ollama"))
 	})
 
-	It("stores the model name in each node's bucket", func() {
+	It("records the model on the reduced response", func() {
 		reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 			{Role: "user", Content: "hi"},
 		}, boolPtr(false))
@@ -884,17 +862,12 @@ var _ = Describe("Storage Provider Metadata", func() {
 		p.Close()
 		p = nil
 
-		ctx := GinkgoT().Context()
-		nodes, err := driver.List(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(nodes).NotTo(BeEmpty())
-
-		for _, node := range nodes {
-			Expect(node.Bucket.Model).To(Equal("test-model"))
-		}
+		raws := driver.RawTurns()
+		Expect(raws).To(HaveLen(1))
+		Expect(decodeReducedResponse(raws[0].Response).Model).To(Equal("test-model"))
 	})
 
-	It("stores the agent name in each node's bucket", func() {
+	It("records the agent name on the raw turn", func() {
 		reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 			{Role: "user", Content: "hi"},
 		}, boolPtr(false))
@@ -908,17 +881,12 @@ var _ = Describe("Storage Provider Metadata", func() {
 		p.Close()
 		p = nil
 
-		ctx := GinkgoT().Context()
-		nodes, err := driver.List(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(nodes).NotTo(BeEmpty())
-
-		for _, node := range nodes {
-			Expect(node.Bucket.AgentName).To(Equal("claude"))
-		}
+		raws := driver.RawTurns()
+		Expect(raws).To(HaveLen(1))
+		Expect(raws[0].AgentName).To(Equal("claude"))
 	})
 
-	It("stores usage metadata on the response node", func() {
+	It("records usage metadata on the reduced response", func() {
 		reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 			{Role: "user", Content: "hi"},
 		}, boolPtr(false))
@@ -930,21 +898,20 @@ var _ = Describe("Storage Provider Metadata", func() {
 		p.Close()
 		p = nil
 
-		ctx := GinkgoT().Context()
-		leaves, err := driver.Leaves(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(leaves).To(HaveLen(1))
-		Expect(leaves[0].Usage).NotTo(BeNil())
-		Expect(leaves[0].Usage.PromptTokens).To(Equal(10))
-		Expect(leaves[0].Usage.CompletionTokens).To(Equal(5))
-		Expect(leaves[0].StopReason).To(Equal("stop"))
+		raws := driver.RawTurns()
+		Expect(raws).To(HaveLen(1))
+		reduced := decodeReducedResponse(raws[0].Response)
+		Expect(reduced.Usage).NotTo(BeNil())
+		Expect(reduced.Usage.PromptTokens).To(Equal(10))
+		Expect(reduced.Usage.CompletionTokens).To(Equal(5))
+		Expect(reduced.StopReason).To(Equal("stop"))
 	})
 })
 
 var _ = Describe("Anthropic tool_result capture", func() {
 	var (
 		p        *Proxy
-		driver   storage.Driver
+		driver   *captureDriver
 		upstream *httptest.Server
 	)
 
@@ -964,7 +931,7 @@ var _ = Describe("Anthropic tool_result capture", func() {
 		}))
 
 		logger := tapeslogger.NewNoop()
-		driver = inmemory.NewDriver()
+		driver = newCaptureDriver()
 		var err error
 		p, err = New(
 			Config{
@@ -985,7 +952,7 @@ var _ = Describe("Anthropic tool_result capture", func() {
 		upstream.Close()
 	})
 
-	It("persists tool_use_id, content, and is_error on the user tool_result node", func() {
+	It("captures the tool_result block verbatim in the raw request", func() {
 		reqBody := []byte(`{
 			"model": "claude-3-5-sonnet-20241022",
 			"max_tokens": 64,
@@ -1025,27 +992,17 @@ var _ = Describe("Anthropic tool_result capture", func() {
 		p.Close()
 		p = nil
 
-		ctx := GinkgoT().Context()
-		nodes, err := driver.List(ctx)
-		Expect(err).NotTo(HaveOccurred())
-
-		// Locate the user tool_result node by its content block type.
-		var toolResultNode *merkle.Node
-		for _, n := range nodes {
-			if n.Bucket.Role != "user" || len(n.Bucket.Content) == 0 {
-				continue
-			}
-			if n.Bucket.Content[0].Type == "tool_result" {
-				toolResultNode = n
-				break
-			}
-		}
-		Expect(toolResultNode).NotTo(BeNil(), "expected a user node holding a tool_result block")
-
-		block := toolResultNode.Bucket.Content[0]
-		Expect(block.ToolResultID).To(Equal("toolu_abc"))
-		Expect(block.ToolOutput).To(Equal("a.txt\nb.txt"))
-		Expect(block.IsError).To(BeFalse())
+		// The raw layer stores the request bytes verbatim — never
+		// re-marshaled through parsed structs — so tool_result fields
+		// (and anything unknown to this build) survive for the deriver.
+		raws := driver.RawTurns()
+		Expect(raws).To(HaveLen(1))
+		Expect([]byte(raws[0].RawRequest)).To(Equal(reqBody))
+		rawReq := string(raws[0].RawRequest)
+		Expect(rawReq).To(ContainSubstring(`"type": "tool_result"`))
+		Expect(rawReq).To(ContainSubstring(`"tool_use_id": "toolu_abc"`))
+		Expect(rawReq).To(ContainSubstring(`"content": "a.txt\nb.txt"`))
+		Expect(rawReq).To(ContainSubstring(`"is_error": false`))
 	})
 })
 
@@ -1054,7 +1011,7 @@ var _ = Describe("Proxy-measured total duration", func() {
 
 	var (
 		p        *Proxy
-		driver   storage.Driver
+		driver   *captureDriver
 		upstream *httptest.Server
 	)
 
@@ -1090,16 +1047,15 @@ var _ = Describe("Proxy-measured total duration", func() {
 			p.Close()
 			p = nil
 
-			ctx := GinkgoT().Context()
-			leaves, err := driver.Leaves(ctx)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(leaves).To(HaveLen(1))
-			Expect(leaves[0].Usage).NotTo(BeNil())
+			raws := driver.RawTurns()
+			Expect(raws).To(HaveLen(1))
+			reduced := decodeReducedResponse(raws[0].Response)
 
 			// Must overwrite the value Ollama wired in (1_000_000 from the
 			// test fixture). Proxy wall-clock should be >= the upstream
 			// sleep delay, which is well above the fixture value.
-			Expect(leaves[0].Usage.TotalDurationNs).To(BeNumerically(">=", upstreamDelay.Nanoseconds()),
+			Expect(reduced.Usage).NotTo(BeNil())
+			Expect(reduced.Usage.TotalDurationNs).To(BeNumerically(">=", upstreamDelay.Nanoseconds()),
 				"TotalDurationNs should reflect proxy round-trip, not the provider-reported value")
 		})
 	})
@@ -1144,7 +1100,7 @@ data: {"type":"message_stop"}
 			}))
 
 			logger := tapeslogger.NewNoop()
-			driver = inmemory.NewDriver()
+			driver = newCaptureDriver()
 			var err error
 			p, err = New(
 				Config{
@@ -1158,7 +1114,7 @@ data: {"type":"message_stop"}
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("stamps Usage.TotalDurationNs on the streamed assistant node", func() {
+		It("stamps TotalDurationNs on the captured streamed response", func() {
 			reqBody := `{"model":"claude-3-5-sonnet-20241022","max_tokens":8,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
 
 			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(reqBody)), -1)
@@ -1168,13 +1124,12 @@ data: {"type":"message_stop"}
 			p.Close()
 			p = nil
 
-			ctx := GinkgoT().Context()
-			leaves, err := driver.Leaves(ctx)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(leaves).To(HaveLen(1))
-			Expect(leaves[0].Bucket.Role).To(Equal("assistant"))
-			Expect(leaves[0].Usage).NotTo(BeNil())
-			Expect(leaves[0].Usage.TotalDurationNs).To(BeNumerically(">=", upstreamDelay.Nanoseconds()))
+			raws := driver.RawTurns()
+			Expect(raws).To(HaveLen(1))
+			reduced := decodeReducedResponse(raws[0].Response)
+			Expect(reduced.Message.Role).To(Equal("assistant"))
+			Expect(reduced.Usage).NotTo(BeNil())
+			Expect(reduced.Usage.TotalDurationNs).To(BeNumerically(">=", upstreamDelay.Nanoseconds()))
 		})
 	})
 })

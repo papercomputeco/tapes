@@ -13,7 +13,6 @@ package worker
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -22,7 +21,6 @@ import (
 	"github.com/papercomputeco/tapes/pkg/derive"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
-	"github.com/papercomputeco/tapes/pkg/publisher"
 	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
@@ -51,26 +49,23 @@ type Job struct {
 	RawRequest json.RawMessage
 
 	// Session is the optional session-tracking envelope attached to
-	// the turn at the ingest HTTP boundary. When non-nil and the
-	// driver supports session-aware ingest (Postgres), the worker
-	// pool runs the transactional path: a `sessions` row is UPSERTed,
-	// nodes are inserted with a non-NULL session_id FK, and counters
-	// are rolled up — all in one Tx. When nil OR when the driver does
-	// not implement that capability (e.g. inmemory), the legacy
-	// per-node Put loop runs and session metadata is dropped on the
-	// floor — this keeps the local CLI proxy and unit tests working
-	// without a Postgres backend.
+	// the turn. When non-nil and the driver supports session-aware
+	// ingest (Postgres), the worker UPSERTs the turn's `sessions` row
+	// and folds its derived_status so the deriver can resolve the
+	// session and attach its spans. When nil OR when the driver does
+	// not implement that capability (e.g. inmemory), no sessions row is
+	// written — this keeps unit tests working without a Postgres
+	// backend. The local proxy always attaches an envelope so its
+	// captured turns surface in the deck.
 	Session *sessions.IngestEnvelope
 }
 
 // Config is the configuration options for the worker pool.
 type Config struct {
-	// Driver is the storage backend for persisting nodes.
+	// Driver is the storage backend: the raw-turn layer plus the
+	// sessions surface (Postgres). Drivers without those capabilities
+	// (the in-memory test driver) make capture a no-op.
 	Driver storage.Driver
-
-	// Publisher is an optional event publisher for newly inserted nodes.
-	// If nil, publishing is disabled.
-	Publisher publisher.Publisher
 
 	// NumWorkers is the number of background workers in the pool.
 	NumWorkers uint
@@ -153,14 +148,6 @@ func (p *Pool) Len() int {
 func (p *Pool) Close() {
 	close(p.queue)
 	p.wg.Wait()
-
-	if p.config.Publisher == nil {
-		return
-	}
-
-	if err := p.config.Publisher.Close(); err != nil {
-		p.logger.Warn("failed to close publisher", "error", err)
-	}
 }
 
 // worker is the inner worker thread that continuously pulls jobs off the jobs queue
@@ -175,81 +162,24 @@ func (p *Pool) worker(id uint) {
 	p.logger.Debug("storage worker stopped", "worker_id", id)
 }
 
-// processJob processes a Job, storing the conversation turn.
+// processJob captures one conversation turn. It builds the turn's merkle
+// chain once (in memory — the merkle layer is no longer persisted),
+// appends the verbatim turn to the immutable raw-turn layer (the
+// deriver's input), and ensures the turn's sessions row exists so the
+// deriver can resolve it and attach the turn's spans.
 func (p *Pool) processJob(job Job) {
 	ctx := context.Background()
 
-	// Span-model-native capture: append the turn to the immutable
-	// raw-turn layer when the driver hosts it, so the deriver projects
-	// it into sessions/traces/spans. This is the read surface the deck
-	// and API serve from. (The node-DAG write below is retired in the
-	// node-layer retirement; the raw write is what survives.)
-	p.persistRawTurn(ctx, job)
-
-	head, newNodes, err := p.storeConversationTurn(ctx, job)
-	if err != nil {
-		p.logger.Error("async DAG storage failed",
+	chain := buildTurnChain(job, p.config.Project)
+	if len(chain) == 0 {
+		p.logger.Error("capture skipped: turn produced no nodes",
 			"provider", job.Provider,
-			"error", err,
 		)
 		return
 	}
 
-	p.logger.Info("conversation stored",
-		"head", head,
-		"provider", job.Provider,
-	)
-
-	// If Kafka is configured, publish newly inserted nodes
-	if p.config.Publisher != nil && len(newNodes) > 0 {
-		p.publishConversationTurn(ctx, head, newNodes)
-	}
-}
-
-func (p *Pool) publishConversationTurn(ctx context.Context, head string, newNodes []*merkle.Node) {
-	rootHash, err := p.deriveRootHash(ctx, head)
-	if err != nil {
-		p.logger.Error("failed to derive root hash for event publishing",
-			"head", head,
-			"error", err,
-		)
-		return
-	}
-
-	for _, node := range newNodes {
-		event, err := publisher.NewEvent(rootHash, node)
-		if err != nil {
-			p.logger.Error("failed to build event",
-				"hash", node.Hash,
-				"error", err,
-			)
-			continue
-		}
-
-		if err := p.config.Publisher.Publish(ctx, event); err != nil {
-			p.logger.Error("failed to publish event",
-				"hash", node.Hash,
-				"error", err,
-			)
-		}
-	}
-}
-
-func (p *Pool) deriveRootHash(ctx context.Context, head string) (string, error) {
-	ancestry, err := p.config.Driver.Ancestry(ctx, head)
-	if err != nil {
-		return "", fmt.Errorf("get ancestry: %w", err)
-	}
-	if len(ancestry) == 0 {
-		return "", errors.New("empty ancestry")
-	}
-
-	root := ancestry[len(ancestry)-1]
-	if root == nil || root.Hash == "" {
-		return "", errors.New("empty root hash")
-	}
-
-	return root.Hash, nil
+	p.persistRawTurn(ctx, job, chain)
+	p.ingestSession(ctx, job, chain)
 }
 
 // rawTurnMeta is the minimal capture-side meta block the proxy stamps
@@ -273,18 +203,13 @@ type rawTurnMeta struct {
 // conversation's turns, so they group into one derivable session.
 //
 // Failures are logged, never propagated: a raw-layer outage must not
-// take down capture, and the node-DAG write surfaces storage errors
-// independently.
-func (p *Pool) persistRawTurn(ctx context.Context, job Job) {
+// take down capture.
+func (p *Pool) persistRawTurn(ctx context.Context, job Job, chain []*merkle.Node) {
 	rawStore, ok := p.config.Driver.(storage.RawTurnStore)
 	if !ok || len(job.RawRequest) == 0 {
 		return
 	}
 
-	chain := buildTurnChain(job, p.config.Project)
-	if len(chain) == 0 {
-		return
-	}
 	root := chain[0]
 	head := chain[len(chain)-1]
 
@@ -340,34 +265,31 @@ func (p *Pool) persistRawTurn(ctx context.Context, job Job) {
 	}
 }
 
-// storeConversationTurn stores a request-response pair in the merkle dag.
-// Returns the head hash and the slice of nodes that were newly Put.
+// ingestSession ensures the turn's sessions row exists (and folds its
+// derived_status/title) via the SessionIngester, keyed by the same
+// synthetic harness_session_id persistRawTurn records — so the derive
+// worker resolves the session and attaches the turn's spans. No nodes
+// are persisted: the chain is passed only so IngestTurn can derive the
+// session identity and status from it in memory.
 //
-// When the configured driver implements storage.SessionIngester AND
-// the job carries a session-tracking envelope, the entire turn (every
-// message node plus the response node) is folded into a single
-// transactional IngestTurn call — so a sessions row is UPSERTed,
-// nodes are inserted with a non-NULL session_id FK, and counters are
-// rolled up atomically.
-//
-// Otherwise (legacy in-memory driver, or a turn without an envelope),
-// the original per-node Put loop runs unchanged.
-func (p *Pool) storeConversationTurn(ctx context.Context, job Job) (string, []*merkle.Node, error) {
-	chain := buildTurnChain(job, p.config.Project)
-	if len(chain) == 0 {
-		return "", nil, errors.New("conversation turn produced no nodes")
-	}
-	head := chain[len(chain)-1]
-
-	if ingester, ok := p.config.Driver.(storage.SessionIngester); ok && job.Session != nil {
-		return p.ingestTurnViaSessionIngester(ctx, ingester, job, chain, head)
+// Drivers without the SessionIngester capability (the in-memory test
+// driver) have no sessions surface, so this is a no-op for them.
+func (p *Pool) ingestSession(ctx context.Context, job Job, chain []*merkle.Node) {
+	ingester, ok := p.config.Driver.(storage.SessionIngester)
+	if !ok || job.Session == nil {
+		return
 	}
 
-	newNodes, err := p.putChainSequentially(ctx, chain)
-	if err != nil {
-		return "", nil, err
+	if _, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
+		Session:      job.Session,
+		Nodes:        chain,
+		DerivedTitle: derive.SessionTitle(chain[len(chain)-1].Kind, job.Resp),
+	}); err != nil {
+		p.logger.Error("session ingest failed",
+			"provider", job.Provider,
+			"error", err,
+		)
 	}
-	return head.Hash, newNodes, nil
 }
 
 // buildTurnChain materializes the ordered (root → leaf) chain of nodes
@@ -381,72 +303,4 @@ func buildTurnChain(job Job, project string) []*merkle.Node {
 		ThreadID:  job.ThreadID,
 		Project:   project,
 	}, job.Req, job.Resp)
-}
-
-// putChainSequentially is the legacy per-node Put loop used when the
-// driver cannot (or shouldn't) host sessions. Identical to the
-// pre-session-tracking behavior.
-func (p *Pool) putChainSequentially(ctx context.Context, chain []*merkle.Node) ([]*merkle.Node, error) {
-	var newNodes []*merkle.Node
-	for i, node := range chain {
-		isNew, err := p.config.Driver.Put(ctx, node)
-		if err != nil {
-			if i == len(chain)-1 {
-				return nil, fmt.Errorf("storing response node: %w", err)
-			}
-			return nil, fmt.Errorf("storing message node: %w", err)
-		}
-		p.logger.Debug("stored node in DAG",
-			"hash", node.Hash,
-			"role", node.Bucket.Role,
-			"is_new", isNew,
-		)
-		if isNew {
-			newNodes = append(newNodes, node)
-		}
-	}
-	return newNodes, nil
-}
-
-// ingestTurnViaSessionIngester routes the chain through the
-// transactional SessionIngester path so the sessions row, node
-// inserts, and counter rollup commit atomically. CostUSD is stubbed
-// at 0: this repo's worker has no pricing lookup wired in. The
-// sessions total_cost_usd column defaults to 0 so writing a 0 delta
-// is a true no-op.
-func (p *Pool) ingestTurnViaSessionIngester(
-	ctx context.Context,
-	ingester storage.SessionIngester,
-	job Job,
-	chain []*merkle.Node,
-	head *merkle.Node,
-) (string, []*merkle.Node, error) {
-	// Values mirror provider-reported usage; not re-derived. A stale or
-	// zero Usage from the upstream provider produces undercounted
-	// session totals — the data source is the provider response we
-	// already trust elsewhere in the worker.
-	var inputTokens, outputTokens int64
-	if usage := job.Resp.Usage; usage != nil {
-		inputTokens = int64(usage.PromptTokens)
-		outputTokens = int64(usage.CompletionTokens)
-	}
-
-	res, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
-		Session:      job.Session,
-		Nodes:        chain,
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
-		CostUSD:      0, // pricing lookup not wired in this repo.
-		DerivedTitle: derive.SessionTitle(chain[len(chain)-1].Kind, job.Resp),
-	})
-	if err != nil {
-		return "", nil, fmt.Errorf("session ingester: %w", err)
-	}
-
-	p.logger.Debug("ingested conversation turn via session ingester",
-		"session_id", res.SessionID,
-		"new_nodes", len(res.NewNodes),
-		"counters_updated", res.CountersUpdated,
-	)
-	return head.Hash, res.NewNodes, nil
 }

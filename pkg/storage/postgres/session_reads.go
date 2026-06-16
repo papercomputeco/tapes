@@ -13,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres/gensqlc"
 )
@@ -93,10 +92,15 @@ func (d *Driver) attachPreviews(ctx context.Context, records []storage.SessionRe
 	}
 }
 
-// getSessionPreviews fetches the first user-role node text for each session in
-// the supplied list, in a single query. Returns a map of session UUID string →
-// truncated plain text preview (harness tags still present; stripping is the
-// caller's responsibility).
+// getSessionPreviews fetches the first turn's user prompt for each
+// session in the supplied list, in a single query. span_turns.user_prompt
+// is the derive-time-cleaned prompt (injected harness context such as
+// Claude Code's <system-reminder> claudeMd blocks already stripped), so
+// it serves as the preview verbatim. Returns a map of session UUID
+// string → truncated preview. Reading from span_turns (keyed by
+// session_id) also sidesteps the legacy node path's cross-session
+// content-collapse, where a shared-content node could be attributed to
+// the wrong session.
 func (d *Driver) getSessionPreviews(ctx context.Context, sessions []storage.SessionRecord) (map[string]string, error) {
 	if len(sessions) == 0 {
 		return nil, nil
@@ -107,11 +111,10 @@ func (d *Driver) getSessionPreviews(ctx context.Context, sessions []storage.Sess
 	}
 
 	rows, err := d.conn.Query(ctx, `
-SELECT DISTINCT ON (session_id) session_id::text, bucket
-FROM nodes
+SELECT DISTINCT ON (session_id) session_id::text, user_prompt
+FROM span_turns
 WHERE session_id = ANY($1::uuid[])
-  AND role = 'user'
-ORDER BY session_id, created_at ASC
+ORDER BY session_id, started_at ASC
 `, ids)
 	if err != nil {
 		return nil, fmt.Errorf("get session previews: %w", err)
@@ -120,16 +123,11 @@ ORDER BY session_id, created_at ASC
 
 	out := make(map[string]string, len(sessions))
 	for rows.Next() {
-		var sessionID string
-		var bucketBytes []byte
-		if err := rows.Scan(&sessionID, &bucketBytes); err != nil {
+		var sessionID, userPrompt string
+		if err := rows.Scan(&sessionID, &userPrompt); err != nil {
 			continue
 		}
-		var bucket merkle.Bucket
-		if err := json.Unmarshal(bucketBytes, &bucket); err != nil {
-			continue
-		}
-		text := strings.TrimSpace(previewText(bucket))
+		text := strings.TrimSpace(userPrompt)
 		if utf8.RuneCountInString(text) > sessionPreviewMaxRunes {
 			runes := []rune(text)
 			text = string(runes[:sessionPreviewMaxRunes])
@@ -137,26 +135,6 @@ ORDER BY session_id, created_at ASC
 		out[sessionID] = text
 	}
 	return out, rows.Err()
-}
-
-// previewText renders one user node as a session preview line. Harnesses
-// prepend injected context (Claude Code's claudeMd) as <system-reminder>
-// text blocks ahead of the human prompt; sessions with no derived title
-// fall back to this preview, so those blocks would otherwise become the
-// session's display name. Mirrors pkg/derive's promptText preference;
-// injected-only nodes keep the full extraction.
-func previewText(bucket merkle.Bucket) string {
-	var texts []string
-	for _, block := range bucket.Content {
-		if block.Text == "" || strings.HasPrefix(strings.TrimSpace(block.Text), "<system-reminder>") {
-			continue
-		}
-		texts = append(texts, block.Text)
-	}
-	if len(texts) == 0 {
-		return bucket.ExtractText()
-	}
-	return strings.Join(texts, "\n")
 }
 
 // GetSessionRecord returns a single session by its UUID, or nil if not found.

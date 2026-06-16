@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"time"
 
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/sessions"
@@ -93,45 +92,4 @@ type IngestTurnResult struct {
 	// False for pure-retry calls where every node hash already
 	// existed (idempotent retries must not double-count).
 	CountersUpdated bool
-}
-
-// SessionBackfiller is an optional Driver capability for linking legacy
-// node rows to a session table row after the fact. It is deliberately
-// separate from SessionIngester: backfill does not insert nodes, it only
-// UPSERTs session identity and stamps existing nodes that still have no
-// session_id.
-type SessionBackfiller interface {
-	BackfillSession(ctx context.Context, req SessionBackfillRequest) (SessionBackfillResult, error)
-}
-
-type SessionBackfillRequest struct {
-	Session      *sessions.IngestEnvelope
-	NodeHashes   []string
-	StartedAt    time.Time
-	LastSeenAt   time.Time
-	InputTokens  int64
-	OutputTokens int64
-	TurnCount    int64
-}
-
-type SessionBackfillResult struct {
-	SessionID   string
-	NodesLinked int
-}
-
-// SessionStatusBackfiller is an optional Driver capability that recomputes
-// the denormalized derived_status (and the sticky has_git_activity flag,
-// tool_result_count, and tool_error_count) for sessions whose rows predate
-// the ingest-time status computation. It walks each session's nodes with the
-// same signal helpers ingest uses, so a backfilled store matches what live
-// ingest would have written. Idempotent and safe to run online.
-type SessionStatusBackfiller interface {
-	BackfillSessionStatus(ctx context.Context) (BackfillSessionStatusResult, error)
-}
-
-type BackfillSessionStatusResult struct {
-	// Scanned is the number of session rows visited.
-	Scanned int
-	// Updated is the number whose status row was (re)written.
-	Updated int
 }

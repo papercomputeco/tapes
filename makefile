@@ -154,11 +154,6 @@ e2e-test: ## Runs end-to-end tests with Postgres and Ollama via Dagger
 	$(call print-target)
 	dagger call test-e-2-e
 
-.PHONY: test-kafka-e2e
-test-kafka-e2e: ## Runs Kafka e2e proxy publish test
-	$(call print-target)
-	dagger call test-kafka-e-2-e
-
 .PHONY: help
 .DEFAULT_GOAL := help
 help: ## Prints this help message
