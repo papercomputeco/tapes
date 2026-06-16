@@ -28,8 +28,6 @@ var _ = Describe("RawTurnStore", func() {
 
 		_, err = driver.DB().Exec(ctx, "TRUNCATE TABLE raw_turns RESTART IDENTITY")
 		Expect(err).NotTo(HaveOccurred())
-		_, err = driver.DB().Exec(ctx, "TRUNCATE TABLE nodes")
-		Expect(err).NotTo(HaveOccurred())
 	})
 
 	AfterEach(func() {

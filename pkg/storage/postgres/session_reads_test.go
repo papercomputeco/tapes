@@ -30,8 +30,6 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 		var ok bool
 		pgDriver, ok = driver.(*postgres.Driver)
 		Expect(ok).To(BeTrue())
-		_, err = pgDriver.DB().Exec(ctx, "TRUNCATE TABLE nodes")
-		Expect(err).NotTo(HaveOccurred())
 		_, err = pgDriver.DB().Exec(ctx, "TRUNCATE TABLE sessions CASCADE")
 		Expect(err).NotTo(HaveOccurred())
 
