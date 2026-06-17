@@ -173,6 +173,61 @@ func (c *APIClient) TraceSummaries(ctx context.Context, sessionID string) ([]Tra
 	return out, nil
 }
 
+// SessionInfo is the slice of a /v1/sessions item the CLI surfaces for
+// listing sessions and resolving a short id prefix.
+type SessionInfo struct {
+	ID            string
+	StartedAt     time.Time
+	TurnCount     int
+	TotalCostUSD  float64
+	Model         string
+	DerivedStatus string
+	Preview       string
+}
+
+// wireSessionList mirrors the subset of api.SessionListResponse we read.
+type wireSessionList struct {
+	Items []struct {
+		ID            string    `json:"id"`
+		StartedAt     time.Time `json:"started_at"`
+		TurnCount     int       `json:"turn_count"`
+		TotalCostUsd  float64   `json:"total_cost_usd"`
+		Model         string    `json:"model"`
+		DerivedStatus string    `json:"derived_status"`
+		Preview       string    `json:"preview"`
+	} `json:"items"`
+}
+
+// Sessions lists captured sessions (newest first) via GET /v1/sessions.
+func (c *APIClient) Sessions(ctx context.Context) ([]SessionInfo, error) {
+	u, err := url.Parse(c.apiTarget + "/v1/sessions")
+	if err != nil {
+		return nil, fmt.Errorf("invalid api target: %w", err)
+	}
+	q := u.Query()
+	q.Set("limit", "200")
+	u.RawQuery = q.Encode()
+
+	var list wireSessionList
+	if err := c.getJSON(ctx, u.String(), &list); err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+
+	out := make([]SessionInfo, 0, len(list.Items))
+	for _, item := range list.Items {
+		out = append(out, SessionInfo{
+			ID:            item.ID,
+			StartedAt:     item.StartedAt,
+			TurnCount:     item.TurnCount,
+			TotalCostUSD:  item.TotalCostUsd,
+			Model:         item.Model,
+			DerivedStatus: item.DerivedStatus,
+			Preview:       item.Preview,
+		})
+	}
+	return out, nil
+}
+
 // Trace implements Querier via GET /v1/traces/{trace_id}.
 func (c *APIClient) Trace(ctx context.Context, traceID string) (*Trace, error) {
 	u := c.apiTarget + "/v1/traces/" + url.PathEscape(traceID)

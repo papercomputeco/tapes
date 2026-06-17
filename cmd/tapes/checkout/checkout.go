@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/papercomputeco/tapes/cmd/tapes/inprocessapi"
@@ -105,14 +106,19 @@ func (c *checkoutCommander) run(cmd *cobra.Command) error {
 		return fmt.Errorf("invalid --format %q; valid formats: %s, %s", c.format, formatMarkdown, formatJSONL)
 	}
 
-	query, closeFn, err := c.connect(cmd.Context())
+	client, closeFn, err := c.connect(cmd.Context())
 	if err != nil {
 		return err
 	}
 	defer closeFn()
 
-	rendered, err := Export(cmd.Context(), query, ExportOptions{
-		SessionID: c.sessionID,
+	sessionID, err := resolveSessionID(cmd.Context(), client, c.sessionID)
+	if err != nil {
+		return err
+	}
+
+	rendered, err := Export(cmd.Context(), client, ExportOptions{
+		SessionID: sessionID,
 		TraceID:   c.traceID,
 		Format:    c.format,
 	})
@@ -149,9 +155,9 @@ func Export(ctx context.Context, query skill.Querier, opts ExportOptions) (strin
 	}
 }
 
-// connect resolves a skill.Querier against either the remote API
+// connect resolves an APIClient against either the remote API
 // (--api-target) or an in-process API over --postgres.
-func (c *checkoutCommander) connect(ctx context.Context) (skill.Querier, func(), error) {
+func (c *checkoutCommander) connect(ctx context.Context) (*skill.APIClient, func(), error) {
 	if strings.TrimSpace(c.apiTarget) != "" {
 		return skill.NewAPIClient(c.apiTarget), func() {}, nil
 	}
@@ -163,6 +169,38 @@ func (c *checkoutCommander) connect(ctx context.Context) (skill.Querier, func(),
 		return nil, nil, startErr
 	}
 	return skill.NewAPIClient(target), stop, nil
+}
+
+// resolveSessionID returns the argument unchanged when it is already a full
+// UUID; otherwise it treats it as an id prefix and resolves it against the
+// session list, requiring a unique match. This lets users paste the short
+// id Deck shows instead of hunting for the full UUID.
+func resolveSessionID(ctx context.Context, client *skill.APIClient, raw string) (string, error) {
+	id := strings.TrimSpace(raw)
+	if _, err := uuid.Parse(id); err == nil {
+		return id, nil
+	}
+
+	sessions, err := client.Sessions(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolving session id %q: %w", id, err)
+	}
+
+	var matches []string
+	for _, s := range sessions {
+		if strings.HasPrefix(s.ID, id) {
+			matches = append(matches, s.ID)
+		}
+	}
+
+	switch len(matches) {
+	case 1:
+		return matches[0], nil
+	case 0:
+		return "", fmt.Errorf("no session matches id %q — run `tapes sessions` to list ids", id)
+	default:
+		return "", fmt.Errorf("session id prefix %q is ambiguous (%d matches) — use more characters", id, len(matches))
+	}
 }
 
 // exportTurn is one turn's structured (jsonl) export record.
