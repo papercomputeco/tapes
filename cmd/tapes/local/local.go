@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -16,8 +17,13 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/papercomputeco/tapes/pkg/cliui"
+	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/dotdir"
 )
+
+// verboseDocker controls whether the raw `docker ...` invocations and their
+// stdout are echoed. Off by default for a clean bootstrap; enabled by -d/--debug.
+var verboseDocker bool
 
 const (
 	defaultPostgresImage  = "public.ecr.aws/g4e5l3z3/papercomputeco/postgres:17.7-pgduckdb-1.1.1"
@@ -124,6 +130,9 @@ func (c *localCommander) loadConfigDir(cmd *cobra.Command) error {
 		return fmt.Errorf("could not get config-dir flag: %w", err)
 	}
 	c.configDir = configDir
+	if debug, derr := cmd.Flags().GetBool("debug"); derr == nil {
+		verboseDocker = debug
+	}
 	return nil
 }
 
@@ -200,22 +209,60 @@ func (c *localCommander) runUp() error {
 	fmt.Printf("  %s %s\n", cliui.KeyStyle.Render("Postgres:"), cliui.ValueStyle.Render(dsn))
 	fmt.Printf("  %s %s\n", cliui.KeyStyle.Render("Data dir:"), cliui.ValueStyle.Render(postgresDir))
 	fmt.Printf("  %s %s\n\n", cliui.KeyStyle.Render("Ollama:  "), cliui.ValueStyle.Render(ollamaURL))
-	fmt.Printf("%s\n", cliui.HeaderStyle.Render("Suggested config"))
-	fmt.Printf("  tapes config set storage.postgres_dsn %q\n", dsn)
-	fmt.Printf("  tapes config set vector_store.provider %q\n", "pgvector")
-	fmt.Printf("  tapes config set vector_store.target %q\n", dsn)
-	fmt.Printf("  tapes config set proxy.upstream %q\n", ollamaURL)
-	fmt.Printf("  tapes config set embedding.provider %q\n", "ollama")
-	fmt.Printf("  tapes config set embedding.target %q\n", ollamaURL)
-	fmt.Printf("  tapes config set embedding.model %q\n\n", defaultEmbeddingModel)
-	fmt.Printf("Next steps:\n")
-	fmt.Printf("  1. Run: tapes serve --postgres %q\n", dsn)
+
+	// Persist the resolved settings so tapes serve, the embed pass, and
+	// search all pick up the local Postgres + Ollama without re-specifying
+	// them. Non-fatal: on failure, fall back to printing what to set.
+	if configPath, err := c.writeLocalConfig(dsn, ollamaURL); err != nil {
+		fmt.Printf("  %s could not write config (%v); set these manually:\n", cliui.WarnStyle.Render("●"), err)
+		fmt.Printf("    tapes config set embedding.target %q\n\n", ollamaURL)
+		fmt.Printf("Next steps:\n")
+		fmt.Printf("  1. Run: tapes serve --postgres %q\n", dsn)
+	} else {
+		fmt.Printf("  %s %s %s\n\n", cliui.SuccessMark, cliui.KeyStyle.Render("Config:"), cliui.ValueStyle.Render(configPath))
+		fmt.Printf("Next steps:\n")
+		fmt.Printf("  1. Run: tapes serve\n")
+	}
 	if plan.useDocker {
 		fmt.Printf("  2. Optionally pull chat/completion models with: docker exec -it %s ollama pull qwen3-coder:30b\n\n", ollamaContainer)
 	} else {
 		fmt.Printf("  2. Optionally pull chat/completion models with: ollama pull qwen3-coder:30b\n\n")
 	}
 	return nil
+}
+
+// writeLocalConfig persists the local-dev Postgres + Ollama settings into the
+// tapes config so downstream commands (serve, dev embed-spans, search) resolve
+// them automatically. It writes to the same .tapes/ directory the local data
+// lives in. Returns the config file path on success.
+func (c *localCommander) writeLocalConfig(dsn, ollamaURL string) (string, error) {
+	tapesDir, err := resolveLocalTapesDir(c.configDir)
+	if err != nil {
+		return "", err
+	}
+
+	cfger, err := config.NewConfiger(tapesDir)
+	if err != nil {
+		return "", err
+	}
+
+	cfg, err := cfger.LoadConfig()
+	if err != nil {
+		return "", err
+	}
+
+	cfg.Storage.PostgresDSN = dsn
+	cfg.VectorStore.Target = dsn
+	cfg.Proxy.Upstream = ollamaURL
+	cfg.Embedding.Provider = "ollama"
+	cfg.Embedding.Target = ollamaURL
+	cfg.Embedding.Model = defaultEmbeddingModel
+
+	if err := cfger.SaveConfig(cfg); err != nil {
+		return "", err
+	}
+
+	return cfger.GetTarget(), nil
 }
 
 // ollamaPlan describes how `tapes local up` satisfies the Ollama dependency.
@@ -506,10 +553,17 @@ func isDockerImageNotFoundError(err error) bool {
 }
 
 func runDocker(args ...string) error {
-	fmt.Printf("  %s docker %s\n", cliui.DimStyle.Render("$"), cliui.ValueStyle.Render(strings.Join(args, " ")))
 	cmd := exec.CommandContext(context.Background(), "docker", args...)
-	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	if verboseDocker {
+		fmt.Printf("  %s docker %s\n", cliui.DimStyle.Render("$"), cliui.ValueStyle.Render(strings.Join(args, " ")))
+		cmd.Stdout = os.Stdout
+	} else {
+		// Suppress the command echo and its stdout (e.g. detached container
+		// IDs) so the bootstrap shows only the ✓ step summary. -d/--debug
+		// restores the full output.
+		cmd.Stdout = io.Discard
+	}
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("docker %s: %w", strings.Join(args, " "), err)
 	}
