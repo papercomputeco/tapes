@@ -52,7 +52,10 @@ build-local: ## Builds local artifacts with local toolchain
 .PHONY: install
 install: build-local ## Builds local artifacts and installs to configured $GOPATH
 	$(call print-target)
-	cp ./build/tapes $(shell go env GOBIN)
+	# install (not cp) writes a temp file and renames it into place: a fresh
+	# inode each time. Overwriting the binary in place invalidates the running
+	# Mach-O's code signature on macOS, which SIGKILLs the next invocation.
+	install -m 0755 ./build/tapes $(shell go env GOBIN)/tapes
 
 .PHONY: build
 build: ## Builds all cross-platform artifacts - Warning! MacOS may fail cross compiling toolchain dependency
