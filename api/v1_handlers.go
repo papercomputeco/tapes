@@ -13,33 +13,21 @@ import (
 
 // StatsResponse is the response for GET /v1/stats.
 //
-// On backends with the span projection (storage.SpanStatsReader) the
-// numbers come from the trace-grain rollups, so they agree with the
-// session detail and trace views:
+// The numbers come from the span-projection trace-grain rollups, so they
+// agree with the session detail and trace views:
 //
 //   - InputTokens / OutputTokens / TotalCost are SUMs of span_turns
 //     rollups — delta-only per-call usage, never the re-sent history
-//     that inflated the node-layer SUMs (each main call re-bills the
-//     whole conversation on the wire).
+//     (each main call re-bills the whole conversation on the wire).
 //   - TotalDurationNs is the SUM of trace durations — agent time. Idle
-//     time between turns no longer counts (the node-layer value was
-//     wall-clock MAX−MIN over the window).
-//   - TurnCount counts traces (user-visible turns), not wire nodes.
-//     RootCount counts traces opened by a genuine prompt (synthetic
-//     compaction continuations excluded). StemCount has no span
-//     equivalent and is omitted.
+//     time between turns does not count.
+//   - TurnCount counts traces (user-visible turns). RootCount counts
+//     traces opened by a genuine prompt (synthetic compaction
+//     continuations excluded).
 //   - CompletedCount counts distinct sessions whose denormalized
 //     derived_status is 'completed' (chain-aware, PCC-515).
-//
-// Backends without the span projection fall back to the legacy
-// node-layer aggregate (see CountSessions); the legacy per-node filters
-// (project / agent_name / model / provider) also force that path, since
-// trace rollups don't carry those columns.
 type StatsResponse struct {
-	SessionCount int `json:"session_count"`
-	// StemCount is a node-layer (Merkle leaf) concept with no span
-	// equivalent; it is only present on the legacy fallback path.
-	StemCount       int     `json:"stem_count,omitempty"`
+	SessionCount    int     `json:"session_count"`
 	TurnCount       int     `json:"turn_count"`
 	RootCount       int     `json:"root_count"`
 	CompletedCount  int     `json:"completed_count"`
@@ -53,13 +41,9 @@ type StatsResponse struct {
 // handleStats handles GET /v1/stats.
 //
 //	@Summary		Get aggregate session stats
-//	@Description	Returns counts plus cost / token / duration / tool-call / completed-count totals for the window. On span-projection backends the numbers are trace-grain rollup sums (delta-only usage, agent time = sum of trace durations) so they agree with the session and trace views; turn_count counts traces and stem_count is omitted. Supplying any legacy per-node filter (project / agent_name / model / provider) forces the legacy node-layer aggregate, whose sums re-bill re-sent history and whose duration is wall-clock MAX-MIN (PCC-514).
+//	@Description	Returns counts plus cost / token / duration / tool-call / completed-count totals for the window. The numbers are span-grain trace rollup sums (delta-only usage, agent time = sum of trace durations) so they agree with the session and trace views; turn_count counts traces. Filter the window with since/until.
 //	@Tags			sessions
 //	@Produce		json
-//	@Param			project		query		string	false	"Filter by project name (forces the legacy node-layer aggregate)"
-//	@Param			agent_name	query		string	false	"Filter by agent name (forces the legacy node-layer aggregate)"
-//	@Param			model		query		string	false	"Filter by model name (forces the legacy node-layer aggregate)"
-//	@Param			provider	query		string	false	"Filter by provider name (forces the legacy node-layer aggregate)"
 //	@Param			since		query		string	false	"Only include records at or after this RFC3339 timestamp"	format(date-time)
 //	@Param			until		query		string	false	"Only include records before or at this RFC3339 timestamp"	format(date-time)
 //	@Success		200			{object}	StatsResponse
@@ -75,10 +59,9 @@ func (s *Server) handleStats(c *fiber.Ctx) error {
 	opts.Limit = 0
 	opts.Cursor = ""
 
-	// Span-layer trace-grain rollups are the only accounting now: the
-	// deriver is the single writer of session/trace totals, and the
-	// legacy per-node aggregate (with its per-node project/agent/model
-	// filters and StemCount) is retired with the node layer.
+	// Span-layer trace-grain rollups are the only accounting: the deriver
+	// is the single writer of session/trace totals. The legacy per-node
+	// aggregate was retired with the node layer.
 	reader, ok := s.driver.(storage.SpanStatsReader)
 	if !ok {
 		s.logger.Error("stats unavailable: driver is not a SpanStatsReader")

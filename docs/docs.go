@@ -639,7 +639,7 @@ const docTemplate = `{
         },
         "/v1/stats": {
             "get": {
-                "description": "Returns counts plus cost / token / duration / tool-call / completed-count totals for the window. On span-projection backends the numbers are trace-grain rollup sums (delta-only usage, agent time = sum of trace durations) so they agree with the session and trace views; turn_count counts traces and stem_count is omitted. Supplying any legacy per-node filter (project / agent_name / model / provider) forces the legacy node-layer aggregate, whose sums re-bill re-sent history and whose duration is wall-clock MAX-MIN (PCC-514).",
+                "description": "Returns counts plus cost / token / duration / tool-call / completed-count totals for the window. The numbers are span-grain trace rollup sums (delta-only usage, agent time = sum of trace durations) so they agree with the session and trace views; turn_count counts traces. Filter the window with since/until.",
                 "produces": [
                     "application/json"
                 ],
@@ -648,30 +648,6 @@ const docTemplate = `{
                 ],
                 "summary": "Get aggregate session stats",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Filter by project name (forces the legacy node-layer aggregate)",
-                        "name": "project",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by agent name (forces the legacy node-layer aggregate)",
-                        "name": "agent_name",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by model name (forces the legacy node-layer aggregate)",
-                        "name": "model",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by provider name (forces the legacy node-layer aggregate)",
-                        "name": "provider",
-                        "in": "query"
-                    },
                     {
                         "type": "string",
                         "format": "date-time",
@@ -1212,10 +1188,6 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "session_count": {
-                    "type": "integer"
-                },
-                "stem_count": {
-                    "description": "StemCount is a node-layer (Merkle leaf) concept with no span\nequivalent; it is only present on the legacy fallback path.",
                     "type": "integer"
                 },
                 "tool_calls": {
