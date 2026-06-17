@@ -421,15 +421,24 @@ func (m deckModel) renderStatusPieChart(stats deckOverviewStats, width int) []st
 	lines := make([]string, 0, 7)
 	lines = append(lines, topBorder)
 
+	// Sessions that aren't yet terminal (in progress / unknown status) are
+	// the remainder — render them dim instead of folding them into the
+	// abandoned (orange) segment, which made abandoned look non-zero when it
+	// wasn't.
+	inProgress := max(stats.TotalSessions-stats.Completed-failed-abandoned, 0)
+	inProgressPct := safeDivide(float64(inProgress), float64(stats.TotalSessions)) * 100
+
 	// Horizontal bar visualization
 	barWidth := width - 2 // Account for 1 space padding on each side
 	completedWidth := int(float64(barWidth) * completedPct / 100)
 	failedWidth := int(float64(barWidth) * failedPct / 100)
-	abandonedWidth := barWidth - completedWidth - failedWidth
+	abandonedWidth := int(float64(barWidth) * abandonedPct / 100)
+	inProgressWidth := max(barWidth-completedWidth-failedWidth-abandonedWidth, 0)
 
 	bar := deckStatusOKStyle.Render(strings.Repeat("█", completedWidth)) +
 		deckStatusFailStyle.Render(strings.Repeat("█", failedWidth)) +
-		deckStatusWarnStyle.Render(strings.Repeat("█", abandonedWidth))
+		deckStatusWarnStyle.Render(strings.Repeat("█", abandonedWidth)) +
+		deckDimStyle.Render(strings.Repeat("█", inProgressWidth))
 
 	lines = append(lines, deckDimStyle.Render("│")+" "+bar+" "+deckDimStyle.Render("│"))
 	lines = append(lines, deckDimStyle.Render("│"+strings.Repeat(" ", width)+"│"))
@@ -439,6 +448,10 @@ func (m deckModel) renderStatusPieChart(stats deckOverviewStats, width int) []st
 		deckStatusOKStyle.Render("●"), completedPct, stats.Completed,
 		deckStatusFailStyle.Render("●"), failedPct, failed,
 		deckStatusWarnStyle.Render("●"), abandonedPct, abandoned)
+	if inProgress > 0 {
+		legendLine += fmt.Sprintf("  %s in progress %2.0f%% (%d)",
+			deckDimStyle.Render("●"), inProgressPct, inProgress)
+	}
 
 	lines = append(lines,
 		deckDimStyle.Render("│")+legendLine+strings.Repeat(" ", max(0, width-lipgloss.Width(legendLine)))+deckDimStyle.Render("│"),
