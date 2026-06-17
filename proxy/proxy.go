@@ -254,7 +254,7 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL 
 
 	// If this was a chat request, enqueue for async storage
 	if parsedReq != nil && httpResp.StatusCode == http.StatusOK {
-		parsedResp, err := prov.ParseResponse(respBody)
+		parsedResp, err := p.parseNonStreamingResponse(respBody, httpResp.Header.Get("Content-Type"), parsedReq, prov)
 		if err != nil {
 			p.logger.Warn("failed to parse response",
 				"error", err,
@@ -350,6 +350,8 @@ func (p *Proxy) handleHTTPRespToPipeWriter(httpResp *http.Response, pw *io.PipeW
 	defer pw.Close()
 
 	switch ct := httpResp.Header.Get("Content-Type"); {
+	case isOpenAIResponsesEndpoint(parsedReq):
+		p.handleSSEStream(httpResp, pw, parsedReq, prov, agentName, startTime)
 	case strings.HasPrefix(ct, "text/event-stream"):
 		p.handleSSEStream(httpResp, pw, parsedReq, prov, agentName, startTime)
 	default:
@@ -365,11 +367,37 @@ func (p *Proxy) handleHTTPRespToPipeWriter(httpResp *http.Response, pw *io.PipeW
 // reduction; everything else falls back to the in-proxy extraction helpers
 // until it migrates into the shared library.
 func (p *Proxy) handleSSEStream(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
+	if r := responseReducerForRequest(parsedReq, prov); r != nil {
+		p.handleSSEStreamViaCapture(r, httpResp, pw, parsedReq, prov, agentName, startTime)
+		return
+	}
 	if r, ok := p.reducers[prov.Name()]; ok {
 		p.handleSSEStreamViaCapture(r, httpResp, pw, parsedReq, prov, agentName, startTime)
 		return
 	}
 	p.handleSSEStreamLegacy(httpResp, pw, parsedReq, prov, agentName, startTime)
+}
+
+func (p *Proxy) parseNonStreamingResponse(respBody []byte, contentType string, parsedReq *llm.ChatRequest, prov provider.Provider) (*llm.ChatResponse, error) {
+	if r := responseReducerForRequest(parsedReq, prov); r != nil {
+		return r.Reduce(context.Background(), nil, bytes.NewReader(respBody), contentType)
+	}
+	return prov.ParseResponse(respBody)
+}
+
+func responseReducerForRequest(parsedReq *llm.ChatRequest, prov provider.Provider) capture.Reducer {
+	if prov == nil || prov.Name() != providerOpenAI || !isOpenAIResponsesEndpoint(parsedReq) {
+		return nil
+	}
+	return capture.NewOpenAIResponsesReducer()
+}
+
+func isOpenAIResponsesEndpoint(parsedReq *llm.ChatRequest) bool {
+	if parsedReq == nil || parsedReq.Extra == nil {
+		return false
+	}
+	endpoint, _ := parsedReq.Extra["endpoint"].(string)
+	return endpoint == "responses"
 }
 
 // handleSSEStreamViaCapture forwards chunks to the client while teeing the

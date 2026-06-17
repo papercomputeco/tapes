@@ -168,6 +168,60 @@ var _ = Describe("SSE Streaming Proxy", func() {
 		})
 	})
 
+	Context("when upstream returns an OpenAI Responses SSE stream", func() {
+		BeforeEach(func() {
+			upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Expect(r.URL.Path).To(Equal("/v1/responses"))
+				flusher, ok := w.(http.Flusher)
+				Expect(ok).To(BeTrue())
+
+				events := []string{
+					"event: response.created\n" +
+						"data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_test\",\"object\":\"response\",\"created_at\":1781218506,\"status\":\"in_progress\",\"model\":\"gpt-5.5\",\"output\":[]}}\n\n",
+					"event: response.output_item.done\n" +
+						"data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"msg_test\",\"type\":\"message\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"TAPES_CODEX_RESPONSES_OK\"}],\"role\":\"assistant\"},\"output_index\":0}\n\n",
+					"event: response.completed\n" +
+						"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"object\":\"response\",\"created_at\":1781218506,\"status\":\"completed\",\"model\":\"gpt-5.5\",\"output\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":5,\"total_tokens\":8}}}\n\n",
+				}
+
+				for _, event := range events {
+					fmt.Fprint(w, event)
+					flusher.Flush()
+				}
+			}))
+			p, driver = newOpenAITestProxy(upstream.URL)
+		})
+
+		It("tees the raw Responses stream and stores the reduced turn", func() {
+			reqBody := []byte(`{"model":"gpt-5.5","stream":true,"input":[{"role":"user","content":[{"type":"input_text","text":"smoke"}]}]}`)
+
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(reqBody))), -1)
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			bodyStr := string(body)
+			Expect(bodyStr).To(ContainSubstring("event: response.completed"))
+			Expect(bodyStr).To(ContainSubstring("TAPES_CODEX_RESPONSES_OK"))
+
+			p.Close()
+			p = nil
+
+			ctx := GinkgoT().Context()
+			nodes, err := driver.List(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nodes).To(HaveLen(2))
+
+			leaves, err := driver.Leaves(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(leaves).To(HaveLen(1))
+			Expect(leaves[0].Bucket.Role).To(Equal("assistant"))
+			Expect(leaves[0].Bucket.ExtractText()).To(Equal("TAPES_CODEX_RESPONSES_OK"))
+		})
+	})
+
 	Context("when upstream returns an Anthropic-style SSE response with event types", func() {
 		BeforeEach(func() {
 			upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
