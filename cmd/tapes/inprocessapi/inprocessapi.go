@@ -22,9 +22,8 @@ import (
 // at shutdown to release the listener and close the storage driver.
 //
 // pricing is passed through to the API server, which uses it to fold
-// cost totals on the legacy node-layer /v1/stats fallback. nil is
-// acceptable; the server falls back to sessions.DefaultPricing in
-// that case.
+// per-session cost totals on /v1/sessions/summary. nil is acceptable;
+// the server falls back to sessions.DefaultPricing in that case.
 func Start(ctx context.Context, postgresDSN string, pricing sessions.PricingTable) (string, func(), error) {
 	logger := tapeslogger.NewNoop()
 
