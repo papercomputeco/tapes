@@ -121,8 +121,6 @@ type SpanStats struct {
 }
 
 // SpanStatsReader is the capability interface for span-layer stats.
-// Backends without the span projection fall back to the node-layer
-// CountSessions aggregate.
 type SpanStatsReader interface {
 	AggregateSpanStats(ctx context.Context, orgID string, since, until *time.Time) (SpanStats, error)
 }

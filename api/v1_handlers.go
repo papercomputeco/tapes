@@ -60,8 +60,7 @@ func (s *Server) handleStats(c *fiber.Ctx) error {
 	opts.Cursor = ""
 
 	// Span-layer trace-grain rollups are the only accounting: the deriver
-	// is the single writer of session/trace totals. The legacy per-node
-	// aggregate was retired with the node layer.
+	// is the single writer of session/trace totals.
 	reader, ok := s.driver.(storage.SpanStatsReader)
 	if !ok {
 		s.logger.Error("stats unavailable: driver is not a SpanStatsReader")

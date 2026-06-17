@@ -10,7 +10,6 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
-	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
@@ -387,88 +386,6 @@ func (s *Driver) ListSessions(_ context.Context, opts storage.ListOpts) (*storag
 		}.Encode()
 	}
 	return page, nil
-}
-
-// CountSessions returns aggregate counts for the slice of data matching opts.
-// Pagination fields on opts are ignored.
-//
-// All numeric aggregates apply per-node, matching the SQL aggregate the
-// Postgres driver runs for /v1/stats. completed_count uses leaf-only
-// classification (assistant leaf with a terminal stop_reason) — the
-// chain-context overrides in pkg/sessions.DetermineStatus are deliberately
-// NOT applied here, so both drivers return identical numbers for the same
-// store contents.
-//
-// TotalDurationNs is wall-clock span (MAX − MIN of CreatedAt) over the
-// matching set, NOT a sum of per-call Usage.TotalDurationNs. Per-call
-// duration is now persisted on nodes (PCC-514); switching this aggregate
-// to SUM is a separate decision since it changes the visible semantic.
-func (s *Driver) CountSessions(_ context.Context, opts storage.ListOpts) (storage.SessionStats, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	hasChildren := s.computeHasChildren()
-
-	var (
-		stats              storage.SessionStats
-		minCreated         time.Time
-		maxCreated         time.Time
-		haveCreatedAtRange bool
-	)
-	for _, node := range s.nodes {
-		if !matchesFilter(node, opts) {
-			continue
-		}
-		stats.TurnCount++
-
-		if !haveCreatedAtRange {
-			minCreated = node.CreatedAt
-			maxCreated = node.CreatedAt
-			haveCreatedAtRange = true
-		} else {
-			if node.CreatedAt.Before(minCreated) {
-				minCreated = node.CreatedAt
-			}
-			if node.CreatedAt.After(maxCreated) {
-				maxCreated = node.CreatedAt
-			}
-		}
-
-		// The in-memory driver does not track first-class sessions (no
-		// session_id / sessions table), so SessionCount and CompletedCount
-		// stay 0 — matching a Postgres store that has nodes but no session
-		// rows. StemCount is the leaf-based metric that is always available.
-		isLeaf := !hasChildren[node.Hash]
-		if isLeaf {
-			stats.StemCount++
-		}
-		if node.ParentHash == nil || *node.ParentHash == "" {
-			stats.RootCount++
-		}
-
-		t := sessions.TokensForNode(node)
-		stats.InputTokens += t.Input
-		stats.OutputTokens += t.Output
-		stats.CacheCreationTokens += t.CacheCreation
-		stats.CacheReadTokens += t.CacheRead
-		stats.ToolCalls += sessions.CountToolCalls(node.Bucket.Content)
-
-		if model := node.Bucket.Model; model != "" {
-			if stats.PerModel == nil {
-				stats.PerModel = map[string]storage.ModelTokenStats{}
-			}
-			perModel := stats.PerModel[model]
-			perModel.InputTokens += t.Input
-			perModel.OutputTokens += t.Output
-			perModel.CacheCreationTokens += t.CacheCreation
-			perModel.CacheReadTokens += t.CacheRead
-			stats.PerModel[model] = perModel
-		}
-	}
-	if haveCreatedAtRange {
-		stats.TotalDurationNs = maxCreated.Sub(minCreated).Nanoseconds()
-	}
-	return stats, nil
 }
 
 // computeHasChildren builds a set of node hashes that are referenced as a
