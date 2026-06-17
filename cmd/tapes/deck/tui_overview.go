@@ -395,22 +395,21 @@ func (m deckModel) renderStatusPieChart(stats deckOverviewStats, width int) []st
 		width = minWidth
 	}
 
-	// Calculate percentages
-	completedPct := float64(stats.Completed) / float64(stats.TotalSessions) * 100
+	// Calculate percentages (safeDivide guards the empty-window 0/0 case).
+	completedPct := safeDivide(float64(stats.Completed), float64(stats.TotalSessions)) * 100
 	failed := countByStatusInStats(stats, deck.StatusFailed)
 	abandoned := countByStatusInStats(stats, deck.StatusAbandoned)
-	failedPct := float64(failed) / float64(stats.TotalSessions) * 100
-	abandonedPct := float64(abandoned) / float64(stats.TotalSessions) * 100
+	failedPct := safeDivide(float64(failed), float64(stats.TotalSessions)) * 100
+	abandonedPct := safeDivide(float64(abandoned), float64(stats.TotalSessions)) * 100
 
-	// Mock efficiency data
+	// Efficiency from the window's real totals.
+	totalTokens := stats.InputTokens + stats.OutputTokens
 	efficiency := struct {
 		perSession float64
-		perMinute  float64
 		tokPerMin  int
 	}{
-		perSession: 0.038,
-		perMinute:  0.001,
-		tokPerMin:  34,
+		perSession: safeDivide(stats.TotalCost, float64(stats.TotalSessions)),
+		tokPerMin:  int(safeDivide(float64(totalTokens), stats.TotalDuration.Minutes())),
 	}
 
 	// Create box
