@@ -51,6 +51,7 @@ type ServeCommander struct {
 	embeddingModel      string
 	embeddingDimensions uint
 	embeddingAPIKey     string
+	embedSpans          bool
 
 	logger *slog.Logger
 }
@@ -181,6 +182,7 @@ func NewServeCmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingModel, &cmder.embeddingModel)
 	config.AddUintFlag(cmd, cmder.flags, config.FlagEmbeddingDims, &cmder.embeddingDimensions)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagPostgres, &cmder.postgresDSN)
+	cmd.Flags().BoolVar(&cmder.embedSpans, "embed-spans", false, "Embed main llm spans after each derive so semantic search (tapes search) works")
 
 	cmd.AddCommand(apicmder.NewAPICmd())
 	cmd.AddCommand(deriveworkercmder.NewDeriveWorkerCmd())
@@ -296,6 +298,27 @@ func (c *ServeCommander) run() error {
 	deriveCfg := deriveworker.Config{
 		Project:  c.project,
 		Debounce: 2 * time.Second,
+	}
+	// With --embed-spans the in-process worker also embeds main llm spans
+	// after each derive, so `tapes search` works without a separate
+	// `tapes serve derive-worker --embed-spans` process. Reuses the embedder
+	// and span store already built for the API's search read path.
+	if c.embedSpans {
+		if err := spanSearcher.EnsureSchema(ctx); err != nil {
+			return fmt.Errorf("span embedding schema: %w", err)
+		}
+		pass, perr := spanembed.NewPass(spanSearcher, spanSearcher, embedder, spanembed.PassConfig{
+			Model:      c.embeddingModel,
+			Dimensions: c.embeddingDimensions,
+		}, c.logger)
+		if perr != nil {
+			return fmt.Errorf("creating span embed pass: %w", perr)
+		}
+		deriveCfg.SpanEmbed = deriveworker.SpanEmbedFunc(func(ctx context.Context) error {
+			_, rerr := pass.Run(ctx)
+			return rerr
+		})
+		c.logger.Info("span embedding enabled (in-process)", "model", c.embeddingModel)
 	}
 	deriveW := deriveworker.NewWorker(deriveCfg, driver, c.logger)
 	c.logger.Info("starting derive worker (in-process)",
