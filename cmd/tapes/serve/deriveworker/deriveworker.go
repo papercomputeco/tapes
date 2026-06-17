@@ -70,8 +70,9 @@ var deriveWorkerFlags = config.FlagSet{
 
 const deriveWorkerLongDesc string = `Run the derive worker.
 
-The derive worker turns the immutable raw-turn layer into the derived node
-layer continuously: ingest marks a session dirty whenever a raw turn (wire or
+The derive worker turns the immutable raw-turn layer into the derived
+sessions/traces/spans projection continuously: ingest marks a session dirty
+whenever a raw turn (wire or
 transcript) lands for it, and the worker polls that queue, waits for the burst
 to settle (debounce), then re-derives ONE session at a time under a per-session
 Postgres advisory lock — so concurrent workers never double-derive. Run extra
@@ -83,7 +84,7 @@ lost dirty mark without stampeding the queue on restart. Pass a negative
 window to sweep all of history — the full re-derive escape hatch after a
 deriver fix.
 
-Derivation is idempotent (re-running an unchanged session prunes 0 nodes), so
+Derivation is idempotent (re-running an unchanged session prunes 0 spans), so
 everything here is safely at-least-once. The admin endpoints
 POST /v1/admin/derive/run and /verify remain available as escape hatches.
 

@@ -24,8 +24,10 @@ Data flows in one direction: a transparent proxy intercepts LLM API calls and
 appends them to an immutable `raw_turns` log; a pure, idempotent **deriver**
 projects that log into the read model of **sessions → traces → spans** (re-derive
 reproduces the projection and prunes anything no longer present). Derived IDs are
-deterministic. The merkle/content-addressed node layer is retained **internally**
-for provenance and dedup — it is not a user-facing browsing surface.
+deterministic. The persisted merkle `nodes` table has been **dropped**; the
+content-addressed merkle layer now lives only **in memory** (`merkle.ProjectContent`),
+used at derive time for content identity and dedup. It is not persisted and not a
+user-facing browsing surface.
 
 The system is made up of:
 

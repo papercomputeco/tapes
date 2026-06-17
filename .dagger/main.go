@@ -31,8 +31,9 @@ func New(
 	}
 }
 
-// goContainer returns a Debian Bookworm-based Go container with gcc,
-// libsqlite3-dev, CGO enabled, and the project source mounted.
+// goContainer returns a Debian Bookworm-based Go container with CGO
+// disabled (the build is pure Go; jsonv2 is enabled) and the project
+// source mounted.
 //
 // It is the shared foundation for tests, builds, and linting.
 func (t *Tapes) goContainer() *dagger.Container {
