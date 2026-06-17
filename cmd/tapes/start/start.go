@@ -81,6 +81,7 @@ type startConfig struct {
 	DefaultUpstream     string
 	OllamaUpstream      string
 	OpenCodeProvider    string
+	CodexUpstream       string
 	Project             string
 	APIWebUI            bool
 }
@@ -239,6 +240,9 @@ func (c *startCommander) runAgent(ctx context.Context, agent string, passthrough
 		agentArgs = append(agentArgs, "--model", pref.Provider+"/"+pref.Model)
 		fmt.Fprintf(os.Stderr, "Note: tapes will capture telemetry for %s/%s. Switching models inside opencode will not be captured by tapes.\n", pref.Provider, pref.Model)
 	}
+	if agent == agentCodex {
+		agentArgs = append(agentArgs, codexProxyArgs(agentBaseURL)...)
+	}
 
 	agentArgs = append(agentArgs, passthroughArgs...)
 
@@ -321,6 +325,17 @@ func (c *startCommander) runAgent(ctx context.Context, agent string, passthrough
 	}
 
 	return nil
+}
+
+func codexProxyArgs(agentBaseURL string) []string {
+	return []string{
+		"-c", `model_provider="tapes"`,
+		"-c", `model_providers.tapes.name="Tapes Codex Proxy"`,
+		"-c", fmt.Sprintf("model_providers.tapes.base_url=%q", agentBaseURL),
+		"-c", `model_providers.tapes.wire_api="responses"`,
+		"-c", "model_providers.tapes.requires_openai_auth=true",
+		"-c", "model_providers.tapes.supports_websockets=false",
+	}
 }
 
 func (c *startCommander) runForeground(ctx context.Context) error {
@@ -427,6 +442,7 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 	}
 
 	openCodeRoute := resolveOpenCodeAgentRoute(startCfg)
+	codexRoute := resolveCodexAgentRoute(startCfg)
 
 	proxyConfig := proxy.Config{
 		ListenAddr:   proxyListener.Addr().String(),
@@ -436,7 +452,7 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 		AgentRoutes: map[string]proxy.AgentRoute{
 			agentClaude:   {ProviderType: "anthropic", UpstreamURL: "https://api.anthropic.com"},
 			agentOpenCode: openCodeRoute,
-			agentCodex:    {ProviderType: "openai", UpstreamURL: "https://api.openai.com/v1"},
+			agentCodex:    codexRoute,
 		},
 		ProviderUpstreams: map[string]string{
 			"anthropic": "https://api.anthropic.com",
@@ -743,6 +759,10 @@ func (c *startCommander) loadConfig() (*startConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("loading embedding credentials: %w", err)
 	}
+	codexUpstream, err := c.resolveCodexUpstream()
+	if err != nil {
+		return nil, err
+	}
 
 	return &startConfig{
 		PostgresDSN:         v.GetString("storage.postgres_dsn"),
@@ -756,29 +776,46 @@ func (c *startCommander) loadConfig() (*startConfig, error) {
 		DefaultUpstream:     upstream,
 		OllamaUpstream:      resolveOllamaUpstream(provider, upstream),
 		OpenCodeProvider:    v.GetString("opencode.provider"),
+		CodexUpstream:       codexUpstream,
 		Project:             v.GetString("proxy.project"),
 		APIWebUI:            v.GetBool("api.web_ui"),
 	}, nil
 }
 
+func (c *startCommander) resolveCodexUpstream() (string, error) {
+	mgr, err := credentials.NewManager(c.configDir)
+	if err != nil {
+		return "", fmt.Errorf("loading tapes credentials: %w", err)
+	}
+	apiKey, err := mgr.GetKey("openai")
+	if err != nil {
+		return "", fmt.Errorf("loading openai credentials: %w", err)
+	}
+	if apiKey != "" {
+		return "https://api.openai.com/v1", nil
+	}
+	return "https://chatgpt.com/backend-api/codex", nil
+}
+
 // configureCodexAuth temporarily writes the stored OpenAI API key into codex's
 // ~/.codex/auth.json so that codex uses it instead of its OAuth token when
-// routing through the tapes proxy. The returned cleanup function restores the
+// routing through the tapes proxy. When no key is stored, Codex's existing
+// OAuth login is left intact. The returned cleanup function restores the
 // original auth.json contents.
 func (c *startCommander) configureCodexAuth() (func() error, error) {
 	noop := func() error { return nil }
 
 	mgr, err := credentials.NewManager(c.configDir)
 	if err != nil {
-		return noop, errors.New("run 'tapes auth openai' with a service account key (sk-svcacct-...) before starting codex")
+		return noop, fmt.Errorf("loading tapes credentials: %w", err)
 	}
 
 	apiKey, err := mgr.GetKey("openai")
 	if err != nil {
-		return noop, errors.New("run 'tapes auth openai' with a service account key (sk-svcacct-...) before starting codex")
+		return noop, fmt.Errorf("loading openai credentials: %w", err)
 	}
 	if apiKey == "" {
-		return noop, errors.New("no OpenAI API key found — run 'tapes auth openai' with a service account key first")
+		return noop, nil
 	}
 
 	original, authPath := credentials.ReadCodexAuthFile()
@@ -1180,6 +1217,14 @@ func resolveOpenCodeAgentRoute(cfg *startConfig) proxy.AgentRoute {
 	}
 
 	return proxy.AgentRoute{ProviderType: provider, UpstreamURL: upstream}
+}
+
+func resolveCodexAgentRoute(cfg *startConfig) proxy.AgentRoute {
+	upstream := strings.TrimSpace(cfg.CodexUpstream)
+	if upstream == "" {
+		upstream = "https://chatgpt.com/backend-api/codex"
+	}
+	return proxy.AgentRoute{ProviderType: "openai", UpstreamURL: upstream}
 }
 
 func resolveOllamaUpstream(provider, upstream string) string {

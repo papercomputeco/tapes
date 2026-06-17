@@ -3,6 +3,7 @@ package startcmder
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -186,6 +187,74 @@ var _ = Describe("injectCredentials", func() {
 	})
 })
 
+var _ = Describe("configureCodexAuth", func() {
+	var (
+		configDir string
+		homeDir   string
+		authPath  string
+		oldHome   string
+	)
+
+	BeforeEach(func() {
+		var err error
+		configDir, err = os.MkdirTemp("", "tapes-codex-auth-config-*")
+		Expect(err).NotTo(HaveOccurred())
+		homeDir, err = os.MkdirTemp("", "tapes-codex-auth-home-*")
+		Expect(err).NotTo(HaveOccurred())
+
+		oldHome = os.Getenv("HOME")
+		Expect(os.Setenv("HOME", homeDir)).To(Succeed())
+
+		authPath = filepath.Join(homeDir, ".codex", "auth.json")
+		Expect(os.MkdirAll(filepath.Dir(authPath), 0o755)).To(Succeed())
+	})
+
+	AfterEach(func() {
+		Expect(os.Setenv("HOME", oldHome)).To(Succeed())
+		Expect(os.RemoveAll(configDir)).To(Succeed())
+		Expect(os.RemoveAll(homeDir)).To(Succeed())
+	})
+
+	It("leaves Codex OAuth credentials untouched when no OpenAI API key is stored", func() {
+		original := []byte(`{"tokens":{"access_token":"chatgpt-token"},"last_refresh":123}`)
+		Expect(os.WriteFile(authPath, original, 0o600)).To(Succeed())
+
+		cmder := &startCommander{configDir: configDir}
+		cleanup, err := cmder.configureCodexAuth()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cleanup()).To(Succeed())
+
+		data, err := os.ReadFile(authPath)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(data).To(MatchJSON(original))
+	})
+
+	It("patches Codex auth with a stored API key and restores the original file", func() {
+		original := []byte(`{"tokens":{"access_token":"chatgpt-token"},"last_refresh":123}`)
+		Expect(os.WriteFile(authPath, original, 0o600)).To(Succeed())
+
+		mgr, err := credentials.NewManager(configDir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mgr.SetKey("openai", "sk-svcacct-test")).To(Succeed())
+
+		cmder := &startCommander{configDir: configDir}
+		cleanup, err := cmder.configureCodexAuth()
+		Expect(err).NotTo(HaveOccurred())
+
+		data, err := os.ReadFile(authPath)
+		Expect(err).NotTo(HaveOccurred())
+		var patched map[string]json.RawMessage
+		Expect(json.Unmarshal(data, &patched)).To(Succeed())
+		Expect(patched).To(HaveKey("OPENAI_API_KEY"))
+		Expect(patched).NotTo(HaveKey("tokens"))
+
+		Expect(cleanup()).To(Succeed())
+		restored, err := os.ReadFile(authPath)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(restored).To(MatchJSON(original))
+	})
+})
+
 var _ = Describe("loadConfig project resolution", func() {
 	var tmpDir string
 
@@ -259,6 +328,60 @@ var _ = Describe("parseStartArgs", func() {
 			[]string{"  Claude  ", "--dangerously-skip-permissions"}, 1,
 			"claude", []string{"--dangerously-skip-permissions"}),
 	)
+})
+
+var _ = Describe("codexProxyArgs", func() {
+	It("points a Codex Responses provider at the agent proxy", func() {
+		args := codexProxyArgs("http://127.0.0.1:34015/agents/codex")
+		Expect(args).To(Equal([]string{
+			"-c", `model_provider="tapes"`,
+			"-c", `model_providers.tapes.name="Tapes Codex Proxy"`,
+			"-c", `model_providers.tapes.base_url="http://127.0.0.1:34015/agents/codex"`,
+			"-c", `model_providers.tapes.wire_api="responses"`,
+			"-c", "model_providers.tapes.requires_openai_auth=true",
+			"-c", "model_providers.tapes.supports_websockets=false",
+		}))
+	})
+})
+
+var _ = Describe("resolveCodexUpstream", func() {
+	var tmpDir string
+
+	BeforeEach(func() {
+		var err error
+		tmpDir, err = os.MkdirTemp("", "tapes-codex-upstream-*")
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	AfterEach(func() {
+		Expect(os.RemoveAll(tmpDir)).To(Succeed())
+	})
+
+	It("uses the ChatGPT Codex backend when no OpenAI API key is stored", func() {
+		cmder := &startCommander{configDir: tmpDir}
+		upstream, err := cmder.resolveCodexUpstream()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(upstream).To(Equal("https://chatgpt.com/backend-api/codex"))
+	})
+
+	It("uses the OpenAI API when a Tapes OpenAI API key is stored", func() {
+		mgr, err := credentials.NewManager(tmpDir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mgr.SetKey("openai", "sk-svcacct-test")).To(Succeed())
+
+		cmder := &startCommander{configDir: tmpDir}
+		upstream, err := cmder.resolveCodexUpstream()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(upstream).To(Equal("https://api.openai.com/v1"))
+	})
+})
+
+var _ = Describe("resolveCodexAgentRoute", func() {
+	It("returns an OpenAI route to the configured Codex upstream", func() {
+		route := resolveCodexAgentRoute(&startConfig{CodexUpstream: "https://example.test/codex"})
+		Expect(route.ProviderType).To(Equal("openai"))
+		Expect(route.UpstreamURL).To(Equal("https://example.test/codex"))
+	})
 })
 
 var _ = Describe("waitForDaemon", func() {
