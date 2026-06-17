@@ -54,6 +54,9 @@ Examples:
 	agentClaude   = "claude"
 	agentOpenCode = "opencode"
 	agentCodex    = "codex"
+
+	codexAuthModeAPIKey = "api-key"
+	codexAuthModeOAuth  = "oauth"
 )
 
 type startCommander struct {
@@ -65,6 +68,8 @@ type startCommander struct {
 	model         string
 	project       string
 	postgresDSN   string
+	codexAuthMode string
+	codexAPIKey   string
 	daemonTimeout time.Duration   // timeout for waitForDaemon; 0 means 30s default
 	daemonDone    <-chan struct{} // closed when daemon child process exits; nil if not tracking
 }
@@ -122,6 +127,10 @@ func NewStartCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("could not get daemon flag: %w", err)
 			}
+			cmder.codexAuthMode, err = cmd.Flags().GetString("codex-auth-mode")
+			if err != nil {
+				return fmt.Errorf("could not get codex-auth-mode flag: %w", err)
+			}
 
 			agent, passthroughArgs := parseStartArgs(args, cmd.ArgsLenAtDash())
 
@@ -143,6 +152,8 @@ func NewStartCmd() *cobra.Command {
 	cmd.Flags().Bool("logs", false, "Stream logs from the running tapes start daemon")
 	cmd.Flags().Bool("daemon", false, "Run start daemon (internal)")
 	_ = cmd.Flags().MarkHidden("daemon")
+	cmd.Flags().String("codex-auth-mode", "", "Codex auth mode for daemon routing (internal)")
+	_ = cmd.Flags().MarkHidden("codex-auth-mode")
 	cmd.Flags().StringVar(&cmder.provider, "provider", "", "LLM provider for opencode (anthropic, openai, ollama)")
 	cmd.Flags().StringVar(&cmder.model, "model", "", "Model for opencode (e.g. claude-sonnet-4-5)")
 	cmd.Flags().StringVar(&cmder.project, "project", "", "Project name to tag sessions (default: auto-detect from git)")
@@ -216,6 +227,15 @@ func (c *startCommander) runAgent(ctx context.Context, agent string, passthrough
 		return fmt.Errorf("unsupported agent: %s", agent)
 	}
 
+	if agent == agentCodex {
+		apiKey, mode, err := c.resolveCodexAuth()
+		if err != nil {
+			return err
+		}
+		c.codexAPIKey = apiKey
+		c.codexAuthMode = mode
+	}
+
 	manager, err := start.NewManager(c.configDir)
 	if err != nil {
 		return err
@@ -263,7 +283,7 @@ func (c *startCommander) runAgent(ctx context.Context, agent string, passthrough
 			"OPENAI_BASE_URL="+agentBaseURL,
 			"OPENAI_API_BASE="+agentBaseURL,
 		)
-		codexCleanup, err := c.configureCodexAuth()
+		codexCleanup, err := c.configureCodexAuth(c.codexAPIKey)
 		if err != nil {
 			return err
 		}
@@ -613,6 +633,9 @@ func (c *startCommander) spawnDaemon(ctx context.Context, manager *start.Manager
 	if c.postgresDSN != "" {
 		args = append(args, "--postgres", c.postgresDSN)
 	}
+	if c.codexAuthMode != "" {
+		args = append(args, "--codex-auth-mode", c.codexAuthMode)
+	}
 
 	cmd := exec.CommandContext(ctx, execPath, args...)
 	cmd.Stdout = logFile
@@ -783,18 +806,40 @@ func (c *startCommander) loadConfig() (*startConfig, error) {
 }
 
 func (c *startCommander) resolveCodexUpstream() (string, error) {
+	if c.codexAuthMode != "" {
+		return codexUpstreamForAuthMode(c.codexAuthMode)
+	}
+	_, mode, err := c.resolveCodexAuth()
+	if err != nil {
+		return "", err
+	}
+	return codexUpstreamForAuthMode(mode)
+}
+
+func (c *startCommander) resolveCodexAuth() (string, string, error) {
 	mgr, err := credentials.NewManager(c.configDir)
 	if err != nil {
-		return "", fmt.Errorf("loading tapes credentials: %w", err)
+		return "", "", fmt.Errorf("loading tapes credentials: %w", err)
 	}
 	apiKey, err := mgr.GetKey("openai")
 	if err != nil {
-		return "", fmt.Errorf("loading openai credentials: %w", err)
+		return "", "", fmt.Errorf("loading openai credentials: %w", err)
 	}
 	if apiKey != "" {
-		return "https://api.openai.com/v1", nil
+		return apiKey, codexAuthModeAPIKey, nil
 	}
-	return "https://chatgpt.com/backend-api/codex", nil
+	return "", codexAuthModeOAuth, nil
+}
+
+func codexUpstreamForAuthMode(mode string) (string, error) {
+	switch mode {
+	case codexAuthModeAPIKey:
+		return "https://api.openai.com/v1", nil
+	case codexAuthModeOAuth:
+		return "https://chatgpt.com/backend-api/codex", nil
+	default:
+		return "", fmt.Errorf("unsupported codex auth mode %q", mode)
+	}
 }
 
 // configureCodexAuth temporarily writes the stored OpenAI API key into codex's
@@ -802,18 +847,9 @@ func (c *startCommander) resolveCodexUpstream() (string, error) {
 // routing through the tapes proxy. When no key is stored, Codex's existing
 // OAuth login is left intact. The returned cleanup function restores the
 // original auth.json contents.
-func (c *startCommander) configureCodexAuth() (func() error, error) {
+func (c *startCommander) configureCodexAuth(apiKey string) (func() error, error) {
 	noop := func() error { return nil }
 
-	mgr, err := credentials.NewManager(c.configDir)
-	if err != nil {
-		return noop, fmt.Errorf("loading tapes credentials: %w", err)
-	}
-
-	apiKey, err := mgr.GetKey("openai")
-	if err != nil {
-		return noop, fmt.Errorf("loading openai credentials: %w", err)
-	}
 	if apiKey == "" {
 		return noop, nil
 	}

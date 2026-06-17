@@ -220,7 +220,7 @@ var _ = Describe("configureCodexAuth", func() {
 		Expect(os.WriteFile(authPath, original, 0o600)).To(Succeed())
 
 		cmder := &startCommander{configDir: configDir}
-		cleanup, err := cmder.configureCodexAuth()
+		cleanup, err := cmder.configureCodexAuth("")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cleanup()).To(Succeed())
 
@@ -238,7 +238,12 @@ var _ = Describe("configureCodexAuth", func() {
 		Expect(mgr.SetKey("openai", "sk-svcacct-test")).To(Succeed())
 
 		cmder := &startCommander{configDir: configDir}
-		cleanup, err := cmder.configureCodexAuth()
+		apiKey, mode, err := cmder.resolveCodexAuth()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(apiKey).To(Equal("sk-svcacct-test"))
+		Expect(mode).To(Equal(codexAuthModeAPIKey))
+
+		cleanup, err := cmder.configureCodexAuth(apiKey)
 		Expect(err).NotTo(HaveOccurred())
 
 		data, err := os.ReadFile(authPath)
@@ -373,6 +378,17 @@ var _ = Describe("resolveCodexUpstream", func() {
 		upstream, err := cmder.resolveCodexUpstream()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(upstream).To(Equal("https://api.openai.com/v1"))
+	})
+
+	It("uses the already-resolved daemon auth mode without rereading credentials", func() {
+		mgr, err := credentials.NewManager(tmpDir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mgr.SetKey("openai", "sk-svcacct-test")).To(Succeed())
+
+		cmder := &startCommander{configDir: tmpDir, codexAuthMode: codexAuthModeOAuth}
+		upstream, err := cmder.resolveCodexUpstream()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(upstream).To(Equal("https://chatgpt.com/backend-api/codex"))
 	})
 })
 
