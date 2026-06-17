@@ -76,19 +76,17 @@ Postgres — plus Ollama for embeddings — is the bundled Docker bootstrap (req
 tapes local up
 ```
 
-For local embeddings, pull the default `embeddinggemma` model:
-
-```bash
-ollama pull embeddinggemma
-```
+`tapes local up` pulls the default `embeddinggemma` model and writes the
+Postgres + Ollama connection settings into your `.tapes` config, so the
+commands below need no connection flags.
 
 Then start Tapes. `tapes serve` runs the whole local pipeline together — the
 proxy (capture), the API, and the derive worker (which projects captured turns
 into sessions/traces/spans) — so anything you capture becomes browsable
-automatically, no extra steps:
+automatically. Add `--embed-spans` so spans are embedded for `tapes search`:
 
 ```bash
-tapes serve
+tapes serve --embed-spans
 ```
 
 Prefer OpenAI embeddings? Store an API key and switch the embedding provider
@@ -117,21 +115,29 @@ Just exploring? Seed the bundled demo sessions and skip straight to the deck:
 tapes seed --demo
 ```
 
-Search across captured spans (individual main-conversation LLM spans, with
-their trace and turn context):
+List captured sessions and their ids:
 
 ```bash
-tapes search "What's the weather like in New York?"
-```
-
-Export a captured conversation as a transcript (Markdown by default, or JSONL):
-
-```bash
-tapes checkout <session-id> --format md -o session.md
+tapes sessions
 ```
 
 Browse sessions and drill into a single session in the deck TUI:
 
 ```bash
 tapes deck
+```
+
+Export a captured conversation as a transcript (Markdown by default, or JSONL).
+Pass a full session id or just its short prefix:
+
+```bash
+tapes checkout <session-id> --format md -o session.md
+```
+
+Search across captured spans (individual main-conversation LLM spans, with
+their trace and turn context). This needs the embed pass — run `tapes serve`
+with `--embed-spans` (above), or `tapes dev embed-spans` once:
+
+```bash
+tapes search "explain the retry logic"
 ```
