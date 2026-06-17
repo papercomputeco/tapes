@@ -572,11 +572,17 @@ func (s *Server) writeProcessTurnError(c *fiber.Ctx, err error) error {
 		reason = "downstream"
 	}
 
-	s.logger.Warn("ingest rejected",
-		"reason", reason,
-		"status", status,
-		"error", err,
-	)
+	// An unprocessable turn is still captured in the raw layer (persisted
+	// before parsing), so a parser/deriver fix re-derives it later — it's
+	// recoverable, not operator-actionable, and common when replaying a
+	// demo corpus. Log it at debug to keep the happy path quiet; metrics
+	// still count it. Envelope/downstream failures are genuine — keep warn.
+	logArgs := []any{"reason", reason, "status", status, "error", err}
+	if reason == "unprocessable" {
+		s.logger.Debug("ingest rejected", logArgs...)
+	} else {
+		s.logger.Warn("ingest rejected", logArgs...)
+	}
 	return c.Status(status).JSON(llm.ErrorResponse{Error: err.Error()})
 }
 

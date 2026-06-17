@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -182,7 +183,7 @@ func NewServeCmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingModel, &cmder.embeddingModel)
 	config.AddUintFlag(cmd, cmder.flags, config.FlagEmbeddingDims, &cmder.embeddingDimensions)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagPostgres, &cmder.postgresDSN)
-	cmd.Flags().BoolVar(&cmder.embedSpans, "embed-spans", false, "Embed main llm spans after each derive so semantic search (tapes search) works")
+	cmd.Flags().BoolVar(&cmder.embedSpans, "embed-spans", true, "Embed main llm spans after each derive so semantic search (tapes search) works; on by default, disable with --embed-spans=false")
 
 	cmd.AddCommand(apicmder.NewAPICmd())
 	cmd.AddCommand(deriveworkercmder.NewDeriveWorkerCmd())
@@ -299,26 +300,44 @@ func (c *ServeCommander) run() error {
 		Project:  c.project,
 		Debounce: 2 * time.Second,
 	}
-	// With --embed-spans the in-process worker also embeds main llm spans
-	// after each derive, so `tapes search` works without a separate
-	// `tapes serve derive-worker --embed-spans` process. Reuses the embedder
-	// and span store already built for the API's search read path.
+	// By default the in-process worker also embeds main llm spans after each
+	// derive, so `tapes search` works out of the box (disable with
+	// --embed-spans=false). It reuses the embedder and span store already
+	// built for the API's search read path. Embedding degrades gracefully:
+	// setup or backend failures disable search but never stall derivation or
+	// fail serve, and a down backend is surfaced once (not per derive).
 	if c.embedSpans {
+		var pass *spanembed.Pass
 		if err := spanSearcher.EnsureSchema(ctx); err != nil {
-			return fmt.Errorf("span embedding schema: %w", err)
-		}
-		pass, perr := spanembed.NewPass(spanSearcher, spanSearcher, embedder, spanembed.PassConfig{
+			c.logger.Warn("span embedding disabled: could not prepare the embedding schema — tapes search will be unavailable", "error", err)
+		} else if p, perr := spanembed.NewPass(spanSearcher, spanSearcher, embedder, spanembed.PassConfig{
 			Model:      c.embeddingModel,
 			Dimensions: c.embeddingDimensions,
-		}, c.logger)
-		if perr != nil {
-			return fmt.Errorf("creating span embed pass: %w", perr)
+		}, c.logger); perr != nil {
+			c.logger.Warn("span embedding disabled: could not create the embed pass — tapes search will be unavailable", "error", perr)
+		} else {
+			pass = p
 		}
-		deriveCfg.SpanEmbed = deriveworker.SpanEmbedFunc(func(ctx context.Context) error {
-			_, rerr := pass.Run(ctx)
-			return rerr
-		})
-		c.logger.Info("span embedding enabled (in-process)", "model", c.embeddingModel)
+
+		if pass != nil {
+			var embedFailed atomic.Bool
+			deriveCfg.SpanEmbed = deriveworker.SpanEmbedFunc(func(ctx context.Context) error {
+				if _, rerr := pass.Run(ctx); rerr != nil {
+					// Absorb so the derive worker stays healthy; surface the
+					// outage once until it recovers instead of per derive.
+					if embedFailed.CompareAndSwap(false, true) {
+						c.logger.Warn("span embedding unavailable — tapes search results will be stale until the embedding backend is reachable",
+							"embedding_target", c.embeddingTarget, "error", rerr)
+					}
+					return nil
+				}
+				if embedFailed.CompareAndSwap(true, false) {
+					c.logger.Info("span embedding recovered")
+				}
+				return nil
+			})
+			c.logger.Info("span embedding enabled (in-process)", "model", c.embeddingModel)
+		}
 	}
 	deriveW := deriveworker.NewWorker(deriveCfg, driver, c.logger)
 	c.logger.Info("starting derive worker (in-process)",

@@ -5,6 +5,7 @@ package checkoutcmder
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -34,6 +35,7 @@ type checkoutCommander struct {
 const (
 	formatMarkdown = "md"
 	formatJSONL    = "jsonl"
+	formatSpans    = "spans"
 )
 
 var checkoutFlags = config.FlagSet{
@@ -49,6 +51,8 @@ renders it as a transcript. The whole session is exported by default; pass
 Formats:
   md     human-readable Markdown transcript ([user]/[assistant]/[tools] lines)
   jsonl  one JSON object per turn (prompt, response, token counts)
+  spans  one JSON object per span (the derived span tree: kind, nesting,
+         call-kind taxonomy) — the span-level view behind the transcript
 
 The session must already be captured; checkout owns no state and only reads
 the existing /v1/traces surface. Connect to a running API with --api-target,
@@ -93,7 +97,7 @@ func NewCheckoutCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&cmder.traceID, "trace", "", "Export only this trace (turn) instead of the whole session")
-	cmd.Flags().StringVar(&cmder.format, "format", formatMarkdown, "Output format: md|jsonl")
+	cmd.Flags().StringVar(&cmder.format, "format", formatMarkdown, "Output format: md|jsonl|spans (spans = one JSON object per span)")
 	cmd.Flags().StringVarP(&cmder.output, "output", "o", "", "Write to this path instead of stdout")
 	cmd.Flags().StringVar(&cmder.postgres, "postgres", "", "PostgreSQL connection string for a local in-process API")
 	config.AddStringFlag(cmd, cmder.flags, config.FlagAPITarget, &cmder.apiTarget)
@@ -102,8 +106,8 @@ func NewCheckoutCmd() *cobra.Command {
 }
 
 func (c *checkoutCommander) run(cmd *cobra.Command) error {
-	if c.format != formatMarkdown && c.format != formatJSONL {
-		return fmt.Errorf("invalid --format %q; valid formats: %s, %s", c.format, formatMarkdown, formatJSONL)
+	if c.format != formatMarkdown && c.format != formatJSONL && c.format != formatSpans {
+		return fmt.Errorf("invalid --format %q; valid formats: %s, %s, %s", c.format, formatMarkdown, formatJSONL, formatSpans)
 	}
 
 	client, closeFn, err := c.connect(cmd.Context())
@@ -152,11 +156,61 @@ func Export(ctx context.Context, query skill.Querier, opts ExportOptions) (strin
 			return "", err
 		}
 		return b.String(), nil
+	case formatSpans:
+		return exportSpans(ctx, query, opts.SessionID, transcriptOpts)
 	case formatMarkdown, "":
 		return skill.BuildSessionTranscript(ctx, query, opts.SessionID, transcriptOpts...)
 	default:
-		return "", fmt.Errorf("invalid format %q; valid formats: %s, %s", opts.Format, formatMarkdown, formatJSONL)
+		return "", fmt.Errorf("invalid format %q; valid formats: %s, %s, %s", opts.Format, formatMarkdown, formatJSONL, formatSpans)
 	}
+}
+
+// exportSpan is one span's structured (jsonl) export record — the span
+// tree the deriver built for the session, flattened in trace + seq order.
+type exportSpan struct {
+	TraceID      string `json:"trace_id"`
+	SpanID       string `json:"span_id"`
+	ParentSpanID string `json:"parent_span_id,omitempty"`
+	Kind         string `json:"kind"` // llm | tool | agent | event
+	Name         string `json:"name,omitempty"`
+	Seq          int64  `json:"seq"`
+	CallKind     string `json:"call_kind,omitempty"` // main | offshoot:… | injected:…
+	ThreadID     string `json:"thread_id,omitempty"`
+}
+
+// exportSpans emits one JSON object per span across the session's turns, so
+// the span structure (kinds, nesting via parent_span_id, call-kind taxonomy)
+// is visible from the CLI rather than only in Deck.
+func exportSpans(ctx context.Context, query skill.Querier, sessionID string, opts []skill.TranscriptOption) (string, error) {
+	turns, err := skill.SessionTurns(ctx, query, sessionID, opts...)
+	if err != nil {
+		return "", err
+	}
+
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	for _, turn := range turns {
+		trace, err := query.Trace(ctx, turn.TraceID)
+		if err != nil {
+			return "", fmt.Errorf("load spans for trace %s: %w", turn.TraceID, err)
+		}
+		for _, s := range trace.Spans {
+			rec := exportSpan{
+				TraceID:      turn.TraceID,
+				SpanID:       s.SpanID,
+				ParentSpanID: s.ParentSpanID,
+				Kind:         s.Kind,
+				Name:         s.Name,
+				Seq:          s.Seq,
+				CallKind:     s.CallKind,
+				ThreadID:     s.ThreadID,
+			}
+			if err := enc.Encode(rec); err != nil {
+				return "", fmt.Errorf("encoding span %s: %w", s.SpanID, err)
+			}
+		}
+	}
+	return b.String(), nil
 }
 
 // connect resolves an APIClient against either the remote API
