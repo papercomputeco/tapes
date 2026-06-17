@@ -10,12 +10,20 @@ import (
 
 // transcriptConfig is the resolved option set for BuildSessionTranscript.
 type transcriptConfig struct {
-	timeFilter *GenerateOptions
-	traceID    string // when non-empty, render only this turn
+	timeFilter     *GenerateOptions
+	traceID        string // when non-empty, render only this turn
+	omitSpanDetail bool   // when true, drop the [tools] span-detail lines
 }
 
 // TranscriptOption configures BuildSessionTranscript.
 type TranscriptOption func(*transcriptConfig)
+
+// WithoutSpanDetail renders only the [user]/[assistant] conversation, dropping
+// the [tools] span-detail lines — the lean transcript behind checkout's
+// --spans=false.
+func WithoutSpanDetail() TranscriptOption {
+	return func(c *transcriptConfig) { c.omitSpanDetail = true }
+}
 
 // WithTimeFilter applies the --since/--until turn window. A nil opts is a
 // no-op, mirroring skill generation's filtering.
@@ -47,9 +55,14 @@ func BuildSessionTranscript(ctx context.Context, query Querier, sessionID string
 		return "", err
 	}
 
+	cfg := &transcriptConfig{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
 	var b strings.Builder
 	for _, turn := range turns {
-		writeTurn(ctx, &b, query, turn)
+		writeTurn(ctx, &b, query, turn, !cfg.omitSpanDetail)
 	}
 	return b.String(), nil
 }
@@ -95,7 +108,7 @@ func SessionTurns(ctx context.Context, query Querier, sessionID string, opts ...
 // single resolved turn, used when exporting one turn at a time.
 func TurnTranscript(ctx context.Context, query Querier, turn TraceSummary) string {
 	var b strings.Builder
-	writeTurn(ctx, &b, query, turn)
+	writeTurn(ctx, &b, query, turn, true)
 	return b.String()
 }
 
@@ -103,7 +116,7 @@ func TurnTranscript(ctx context.Context, query Querier, turn TraceSummary) strin
 // turn's span detail is unavailable (or carries no spine text) the
 // derive-time response preview stands in, so the transcript always has
 // both halves of the exchange.
-func writeTurn(ctx context.Context, b *strings.Builder, query Querier, turn TraceSummary) {
+func writeTurn(ctx context.Context, b *strings.Builder, query Querier, turn TraceSummary, includeSpanDetail bool) {
 	if turn.UserPrompt != "" {
 		fmt.Fprintf(b, "[user] %s\n", turn.UserPrompt)
 	}
@@ -116,7 +129,7 @@ func writeTurn(ctx context.Context, b *strings.Builder, query Querier, turn Trac
 		return
 	}
 
-	if !writeSpineResponses(b, trace.Spans) && turn.ResponsePreview != "" {
+	if !writeSpineResponses(b, trace.Spans, includeSpanDetail) && turn.ResponsePreview != "" {
 		fmt.Fprintf(b, "[assistant] %s\n", turn.ResponsePreview)
 	}
 }
@@ -148,13 +161,15 @@ func filterTurns(turns []TraceSummary, opts *GenerateOptions) []TraceSummary {
 // text and a [tools] summary line for the tool calls in between.
 // Offshoot and injected call kinds, and subagent threads, are skipped.
 // Reports whether any assistant text was written.
-func writeSpineResponses(b *strings.Builder, spans []Span) bool {
+func writeSpineResponses(b *strings.Builder, spans []Span, includeSpanDetail bool) bool {
 	wrote := false
 	pendingTools := map[string]int{}
 	var pendingOrder []string
 
 	flushTools := func() {
-		if len(pendingOrder) == 0 {
+		if !includeSpanDetail || len(pendingOrder) == 0 {
+			pendingTools = map[string]int{}
+			pendingOrder = nil
 			return
 		}
 		parts := make([]string, 0, len(pendingOrder))

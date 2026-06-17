@@ -160,7 +160,7 @@ var _ = Describe("SessionJSONL", func() {
 
 	It("supports the trace filter transcript option", func() {
 		var b strings.Builder
-		err := export.SessionJSONL(ctx, querier, "session-1", &b, skill.WithTraceFilter("t1"))
+		err := export.SessionJSONL(ctx, querier, "session-1", &b, export.WithTranscriptOptions(skill.WithTraceFilter("t1")))
 		Expect(err).NotTo(HaveOccurred())
 
 		lines := nonEmptyLines(b.String())
