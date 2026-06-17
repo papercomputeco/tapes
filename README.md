@@ -83,10 +83,11 @@ commands below need no connection flags.
 Then start Tapes. `tapes serve` runs the whole local pipeline together — the
 proxy (capture), the API, and the derive worker (which projects captured turns
 into sessions/traces/spans) — so anything you capture becomes browsable
-automatically. Add `--embed-spans` so spans are embedded for `tapes search`:
+automatically. It also embeds spans for `tapes search` by default (disable with
+`--embed-spans=false`):
 
 ```bash
-tapes serve --embed-spans
+tapes serve
 ```
 
 Prefer OpenAI embeddings? Store an API key and switch the embedding provider
@@ -102,14 +103,8 @@ You can also provide the key with `OPENAI_API_KEY` instead of `tapes auth openai
 When OpenAI is selected without a key, Tapes fails at startup with an authentication
 configuration error from the OpenAI embedder.
 
-Capture a session by launching an agent through Tapes (it points the agent at the
-local proxy for you), or send any LLM client at the proxy address:
-
-```bash
-tapes start claude
-```
-
-Just exploring? Seed the bundled demo sessions and skip straight to the deck:
+Start with demo data so every command below has something to show — this path
+works end to end before you wire up a real agent:
 
 ```bash
 tapes seed --demo
@@ -127,17 +122,30 @@ Browse sessions and drill into a single session in the deck TUI:
 tapes deck
 ```
 
-Export a captured conversation as a transcript (Markdown by default, or JSONL).
-Pass a full session id or just its short prefix:
+Export a captured conversation as a transcript (Markdown by default, or JSONL),
+or inspect the derived span tree with `--format spans`. Pass a full session id
+or just its short prefix:
 
 ```bash
 tapes checkout <session-id> --format md -o session.md
+tapes checkout <session-id> --format spans
 ```
 
 Search across captured spans (individual main-conversation LLM spans, with
-their trace and turn context). This needs the embed pass — run `tapes serve`
-with `--embed-spans` (above), or `tapes dev embed-spans` once:
+their trace and turn context). `tapes serve` embeds spans by default, so this
+works out of the box:
 
 ```bash
 tapes search "explain the retry logic"
 ```
+
+**Ready for the real thing?** Clear the demo data and point your own agent at
+the proxy:
+
+```bash
+tapes local down && tapes local up   # recreate the DB, clearing the demo
+tapes start claude                   # or send any client at http://localhost:8080
+```
+
+`tapes start` launches the agent wired to the proxy and tags the session. See
+the [agent guides](https://tapes.dev/guides) for Claude Code, OpenCode, and more.
