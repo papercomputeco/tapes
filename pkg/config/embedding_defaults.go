@@ -6,8 +6,6 @@ const (
 	defaultOpenAIEmbeddingTarget     = "https://api.openai.com"
 	defaultOpenAIEmbeddingModel      = "text-embedding-3-large"
 	defaultOpenAIEmbeddingDimensions = 1024
-
-	legacyOllamaEmbeddingModel = "nomic-embed-text"
 )
 
 // ResolveEmbeddingConfigOptions describes which values came from explicit
@@ -28,7 +26,7 @@ func ResolveEmbeddingConfigWithOptions(provider, target, model string, dimension
 	switch strings.ToLower(provider) {
 	case "openai":
 		inheritedLocalTarget := target == "" || target == defaultEmbeddingTarget || target == defaultUpstream
-		inheritedLocalModel := model == "" || model == defaultEmbeddingModel || model == legacyOllamaEmbeddingModel
+		inheritedLocalModel := model == "" || model == defaultEmbeddingModel
 		inheritedLocalDimensions := dimensions == 0 || (!opts.DimensionsSet && dimensions == defaultEmbeddingDimensions && (inheritedLocalTarget || inheritedLocalModel))
 
 		if inheritedLocalTarget {
@@ -52,7 +50,7 @@ func ResolveEmbeddingConfigWithOptions(provider, target, model string, dimension
 		if target == "" {
 			target = defaultEmbeddingTarget
 		}
-		if model == "" || model == legacyOllamaEmbeddingModel {
+		if model == "" {
 			model = defaultEmbeddingModel
 		}
 		if dimensions == 0 {
