@@ -23,18 +23,18 @@ import (
 type checkoutCommander struct {
 	flags config.FlagSet
 
-	sessionID string
-	traceID   string
-	format    string
-	output    string
-	apiTarget string
-	postgres  string
+	sessionID    string
+	traceID      string
+	format       string
+	includeSpans bool
+	output       string
+	apiTarget    string
+	postgres     string
 }
 
 const (
 	formatMarkdown = "md"
 	formatJSONL    = "jsonl"
-	formatSpans    = "spans"
 )
 
 var checkoutFlags = config.FlagSet{
@@ -43,15 +43,18 @@ var checkoutFlags = config.FlagSet{
 
 const checkoutLongDesc string = `Export a captured conversation from a tapes session.
 
-Reads a session's derived turn/span projection from the trace surface and
-renders it as a transcript. The whole session is exported by default; pass
---trace to export a single turn.
+Reads a session's derived projection from the trace surface and renders it the
+way the API and console model it — a session is traces (turns) composed of
+spans. The whole session is exported by default; pass --trace for a single turn.
 
 Formats:
-  md     human-readable Markdown transcript ([user]/[assistant]/[tools] lines)
-  jsonl  one JSON object per turn (prompt, response, token counts)
-  spans  one JSON object per span (the derived span tree: kind, nesting,
-         call-kind taxonomy) — the span-level view behind the transcript
+  md     human-readable Markdown transcript
+  jsonl  one JSON object per turn (trace): prompt, response, token counts
+
+Span detail is included by default for both formats: md adds [tools] lines and
+jsonl nests each turn's span tree under "spans" (kind, parent_span_id, seq,
+call-kind taxonomy). Pass --spans=false for just the [user]/[assistant]
+conversation.
 
 The session must already be captured; checkout owns no state and only reads
 the existing /v1/traces surface. Connect to a running API with --api-target,
@@ -96,7 +99,8 @@ func NewCheckoutCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&cmder.traceID, "trace", "", "Export only this trace (turn) instead of the whole session")
-	cmd.Flags().StringVar(&cmder.format, "format", formatMarkdown, "Output format: md|jsonl|spans (spans = one JSON object per span)")
+	cmd.Flags().StringVar(&cmder.format, "format", formatMarkdown, "Output format: md|jsonl")
+	cmd.Flags().BoolVar(&cmder.includeSpans, "spans", true, "Include the derived span tree (on by default; --spans=false for just the conversation)")
 	cmd.Flags().StringVarP(&cmder.output, "output", "o", "", "Write to this path instead of stdout")
 	cmd.Flags().StringVar(&cmder.postgres, "postgres", "", "PostgreSQL connection string for a local in-process API")
 	config.AddStringFlag(cmd, cmder.flags, config.FlagAPITarget, &cmder.apiTarget)
@@ -105,8 +109,8 @@ func NewCheckoutCmd() *cobra.Command {
 }
 
 func (c *checkoutCommander) run(cmd *cobra.Command) error {
-	if c.format != formatMarkdown && c.format != formatJSONL && c.format != formatSpans {
-		return fmt.Errorf("invalid --format %q; valid formats: %s, %s, %s", c.format, formatMarkdown, formatJSONL, formatSpans)
+	if c.format != formatMarkdown && c.format != formatJSONL {
+		return fmt.Errorf("invalid --format %q; valid formats: %s, %s", c.format, formatMarkdown, formatJSONL)
 	}
 
 	client, closeFn, err := c.connect(cmd.Context())
@@ -121,9 +125,10 @@ func (c *checkoutCommander) run(cmd *cobra.Command) error {
 	}
 
 	rendered, err := Export(cmd.Context(), client, ExportOptions{
-		SessionID: sessionID,
-		TraceID:   c.traceID,
-		Format:    c.format,
+		SessionID:    sessionID,
+		TraceID:      c.traceID,
+		Format:       c.format,
+		IncludeSpans: c.includeSpans,
 	})
 	if err != nil {
 		return err
@@ -134,14 +139,17 @@ func (c *checkoutCommander) run(cmd *cobra.Command) error {
 
 // ExportOptions configures a conversation export.
 type ExportOptions struct {
-	SessionID string
-	TraceID   string // when non-empty, export only this turn
-	Format    string // formatMarkdown ("md") or formatJSONL ("jsonl")
+	SessionID    string
+	TraceID      string // when non-empty, export only this turn
+	Format       string // formatMarkdown ("md") or formatJSONL ("jsonl")
+	IncludeSpans bool   // include the derived span tree (on by default)
 }
 
 // Export renders a captured session (or single turn) from the trace
 // surface in the requested format. It is the testable seam behind the
-// checkout command: callers supply any skill.Querier.
+// checkout command: callers supply any skill.Querier. The export mirrors
+// the API/console model — a session is traces (turns) composed of spans —
+// and IncludeSpans toggles the span detail for either format.
 func Export(ctx context.Context, query skill.Querier, opts ExportOptions) (string, error) {
 	var transcriptOpts []skill.TranscriptOption
 	if opts.TraceID != "" {
@@ -150,20 +158,20 @@ func Export(ctx context.Context, query skill.Querier, opts ExportOptions) (strin
 
 	switch opts.Format {
 	case formatJSONL:
-		return exportJSONL(ctx, query, opts.SessionID, transcriptOpts)
-	case formatSpans:
-		return exportSpans(ctx, query, opts.SessionID, transcriptOpts)
+		return exportJSONL(ctx, query, opts.SessionID, transcriptOpts, opts.IncludeSpans)
 	case formatMarkdown, "":
+		if !opts.IncludeSpans {
+			transcriptOpts = append(transcriptOpts, skill.WithoutSpanDetail())
+		}
 		return skill.BuildSessionTranscript(ctx, query, opts.SessionID, transcriptOpts...)
 	default:
-		return "", fmt.Errorf("invalid format %q; valid formats: %s, %s, %s", opts.Format, formatMarkdown, formatJSONL, formatSpans)
+		return "", fmt.Errorf("invalid format %q; valid formats: %s, %s", opts.Format, formatMarkdown, formatJSONL)
 	}
 }
 
-// exportSpan is one span's structured (jsonl) export record — the span
-// tree the deriver built for the session, flattened in trace + seq order.
+// exportSpan is one span in a turn's derived span tree, emitted nested under
+// the turn record in the jsonl export.
 type exportSpan struct {
-	TraceID      string `json:"trace_id"`
 	SpanID       string `json:"span_id"`
 	ParentSpanID string `json:"parent_span_id,omitempty"`
 	Kind         string `json:"kind"` // llm | tool | agent | event
@@ -173,39 +181,28 @@ type exportSpan struct {
 	ThreadID     string `json:"thread_id,omitempty"`
 }
 
-// exportSpans emits one JSON object per span across the session's turns, so
-// the span structure (kinds, nesting via parent_span_id, call-kind taxonomy)
-// is visible from the CLI rather than only in Deck.
-func exportSpans(ctx context.Context, query skill.Querier, sessionID string, opts []skill.TranscriptOption) (string, error) {
-	turns, err := skill.SessionTurns(ctx, query, sessionID, opts...)
+// turnSpans fetches one turn's derived spans as nested export records.
+func turnSpans(ctx context.Context, query skill.Querier, traceID string) ([]exportSpan, error) {
+	trace, err := query.Trace(ctx, traceID)
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("load spans for trace %s: %w", traceID, err)
 	}
-
-	var b strings.Builder
-	enc := json.NewEncoder(&b)
-	for _, turn := range turns {
-		trace, err := query.Trace(ctx, turn.TraceID)
-		if err != nil {
-			return "", fmt.Errorf("load spans for trace %s: %w", turn.TraceID, err)
-		}
-		for _, s := range trace.Spans {
-			rec := exportSpan{
-				TraceID:      turn.TraceID,
-				SpanID:       s.SpanID,
-				ParentSpanID: s.ParentSpanID,
-				Kind:         s.Kind,
-				Name:         s.Name,
-				Seq:          s.Seq,
-				CallKind:     s.CallKind,
-				ThreadID:     s.ThreadID,
-			}
-			if err := enc.Encode(rec); err != nil {
-				return "", fmt.Errorf("encoding span %s: %w", s.SpanID, err)
-			}
-		}
+	if trace == nil {
+		return nil, nil
 	}
-	return b.String(), nil
+	spans := make([]exportSpan, 0, len(trace.Spans))
+	for _, s := range trace.Spans {
+		spans = append(spans, exportSpan{
+			SpanID:       s.SpanID,
+			ParentSpanID: s.ParentSpanID,
+			Kind:         s.Kind,
+			Name:         s.Name,
+			Seq:          s.Seq,
+			CallKind:     s.CallKind,
+			ThreadID:     s.ThreadID,
+		})
+	}
+	return spans, nil
 }
 
 // connect resolves an APIClient against either the remote API
@@ -256,23 +253,27 @@ func resolveSessionID(ctx context.Context, client *skill.APIClient, raw string) 
 	}
 }
 
-// exportTurn is one turn's structured (jsonl) export record.
+// exportTurn is one turn (trace) in the structured (jsonl) export. With
+// span detail it carries its derived span tree under Spans, mirroring the
+// API's session → traces → spans shape.
 type exportTurn struct {
-	TraceID           string `json:"trace_id"`
-	SessionID         string `json:"session_id"`
-	UserPrompt        string `json:"user_prompt,omitempty"`
-	Response          string `json:"response,omitempty"`
-	StartedAt         string `json:"started_at,omitempty"`
-	TotalInputTokens  int64  `json:"total_input_tokens"`
-	TotalOutputTokens int64  `json:"total_output_tokens"`
-	MainInputTokens   int64  `json:"main_input_tokens"`
-	MainOutputTokens  int64  `json:"main_output_tokens"`
+	TraceID           string       `json:"trace_id"`
+	SessionID         string       `json:"session_id"`
+	UserPrompt        string       `json:"user_prompt,omitempty"`
+	Response          string       `json:"response,omitempty"`
+	StartedAt         string       `json:"started_at,omitempty"`
+	TotalInputTokens  int64        `json:"total_input_tokens"`
+	TotalOutputTokens int64        `json:"total_output_tokens"`
+	MainInputTokens   int64        `json:"main_input_tokens"`
+	MainOutputTokens  int64        `json:"main_output_tokens"`
+	Spans             []exportSpan `json:"spans,omitempty"`
 }
 
-// exportJSONL emits one JSON object per turn. The response is the
+// exportJSONL emits one JSON object per turn (trace). The response is the
 // rendered spine transcript for the turn (assistant + tool lines, prompt
-// excluded since it has its own field).
-func exportJSONL(ctx context.Context, query skill.Querier, sessionID string, opts []skill.TranscriptOption) (string, error) {
+// excluded since it has its own field). When includeSpans is set, each turn
+// also carries its derived span tree under "spans".
+func exportJSONL(ctx context.Context, query skill.Querier, sessionID string, opts []skill.TranscriptOption, includeSpans bool) (string, error) {
 	turns, err := skill.SessionTurns(ctx, query, sessionID, opts...)
 	if err != nil {
 		return "", err
@@ -293,6 +294,13 @@ func exportJSONL(ctx context.Context, query skill.Querier, sessionID string, opt
 		}
 		if !turn.StartedAt.IsZero() {
 			rec.StartedAt = turn.StartedAt.Format("2006-01-02T15:04:05Z07:00")
+		}
+		if includeSpans {
+			spans, err := turnSpans(ctx, query, turn.TraceID)
+			if err != nil {
+				return "", err
+			}
+			rec.Spans = spans
 		}
 		if err := enc.Encode(rec); err != nil {
 			return "", fmt.Errorf("encoding turn %s: %w", turn.TraceID, err)

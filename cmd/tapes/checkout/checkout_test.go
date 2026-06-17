@@ -116,7 +116,7 @@ var _ = Describe("Export", func() {
 	Context("markdown format", func() {
 		It("renders the whole session as a [user]/[assistant]/[tools] transcript", func() {
 			out, err := checkoutcmder.Export(ctx, querier, checkoutcmder.ExportOptions{
-				SessionID: "session-1", Format: "md",
+				SessionID: "session-1", Format: "md", IncludeSpans: true,
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(out).To(ContainSubstring("[user] Fix the infinite loop"))
@@ -127,6 +127,16 @@ var _ = Describe("Export", func() {
 			Expect(out).To(ContainSubstring("[assistant] Glad it helped."))
 			// Synthetic turn excluded.
 			Expect(out).NotTo(ContainSubstring("compacted context"))
+		})
+
+		It("drops the [tools] span detail with IncludeSpans=false", func() {
+			out, err := checkoutcmder.Export(ctx, querier, checkoutcmder.ExportOptions{
+				SessionID: "session-1", Format: "md", IncludeSpans: false,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(ContainSubstring("[user] Fix the infinite loop"))
+			Expect(out).To(ContainSubstring("[assistant] Let me check the dependency array."))
+			Expect(out).NotTo(ContainSubstring("[tools]"))
 		})
 
 		It("defaults to markdown when format is empty", func() {
@@ -191,6 +201,35 @@ var _ = Describe("Export", func() {
 			var rec map[string]any
 			Expect(json.Unmarshal([]byte(lines[0]), &rec)).To(Succeed())
 			Expect(rec["trace_id"]).To(Equal("t1"))
+		})
+
+		It("nests the span tree under each turn with IncludeSpans=true", func() {
+			out, err := checkoutcmder.Export(ctx, querier, checkoutcmder.ExportOptions{
+				SessionID: "session-1", Format: "jsonl", IncludeSpans: true,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			lines := nonEmptyLines(out)
+			Expect(lines).NotTo(BeEmpty())
+
+			var first map[string]any
+			Expect(json.Unmarshal([]byte(lines[0]), &first)).To(Succeed())
+			spans, ok := first["spans"].([]any)
+			Expect(ok).To(BeTrue())
+			Expect(spans).NotTo(BeEmpty())
+			span0, ok := spans[0].(map[string]any)
+			Expect(ok).To(BeTrue())
+			Expect(span0).To(HaveKey("span_id"))
+			Expect(span0).To(HaveKey("kind"))
+		})
+
+		It("omits the spans field with IncludeSpans=false", func() {
+			out, err := checkoutcmder.Export(ctx, querier, checkoutcmder.ExportOptions{
+				SessionID: "session-1", Format: "jsonl", IncludeSpans: false,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			var first map[string]any
+			Expect(json.Unmarshal([]byte(nonEmptyLines(out)[0]), &first)).To(Succeed())
+			Expect(first).NotTo(HaveKey("spans"))
 		})
 	})
 
