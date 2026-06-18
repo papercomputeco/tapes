@@ -43,6 +43,13 @@ type Candidate struct {
 	// row; both empty when the span has never been embedded.
 	ExistingHash  string
 	ExistingModel string
+
+	// ExistingFailHash and ExistingFailModel describe a recorded
+	// deterministic embed failure; both empty when the span has no
+	// failure marker. A span whose current content and model match a
+	// recorded failure is skipped instead of re-attempted.
+	ExistingFailHash  string
+	ExistingFailModel string
 }
 
 // Key orders candidates for keyset pagination.
@@ -57,15 +64,33 @@ func (c *Candidate) Key() Key {
 	return Key{OrgID: c.OrgID, TraceID: c.TraceID, SpanID: c.SpanID}
 }
 
-// Record is one embedding write.
-type Record struct {
+// ChunkRecord is one span's embedding write. A span that fit the model's
+// context window has a single embedding; an oversized span was split into
+// pieces and carries one embedding per piece, stored under chunk_idx 0..N-1 in
+// slice order.
+type ChunkRecord struct {
 	OrgID       string
 	TraceID     string
 	SpanID      string
 	SessionID   string
 	Model       string
 	ContentHash string
-	Embedding   []float32
+	Embeddings  [][]float32
+}
+
+// FailureRecord captures a deterministic embed failure so the pass can stop
+// retrying the span while keeping the loss observable: why it failed, how big
+// the input was, and (via the store) how many times it has failed.
+type FailureRecord struct {
+	OrgID       string
+	TraceID     string
+	SpanID      string
+	SessionID   string
+	Model       string
+	ContentHash string
+	Reason      string
+	ErrorDetail string
+	TokenCount  int
 }
 
 // Hit is one similarity-search result with its trace/turn context.
@@ -93,12 +118,35 @@ type Report struct {
 	// Empty counts spans skipped because their delta content renders
 	// to no text at all (e.g. a pure tool-call response).
 	Empty int `json:"empty"`
-	// Failed counts spans whose embed or write errored; the pass
-	// continues past them and the next run retries.
+	// Poisoned counts spans skipped because they already failed
+	// deterministically under this content and model; they are not
+	// re-attempted until their content or model changes.
+	Poisoned int `json:"poisoned"`
+	// Chunked counts spans whose text exceeded the model's context
+	// window and was split into multiple embedded pieces.
+	Chunked int `json:"chunked"`
+	// ChunkRows counts total embedding rows written this pass (one per
+	// piece), so chunked spans contribute more than one.
+	ChunkRows int `json:"chunk_rows"`
+	// Oversized counts spans the model rejected as too large (whether the
+	// split then succeeded or exhausted the depth cap).
+	Oversized int `json:"oversized"`
+	// Failed counts spans whose embed or write failed this pass — both
+	// transient faults (retried next pass) and deterministic ones (also
+	// recorded and skipped thereafter).
 	Failed int `json:"failed"`
 	// Pruned counts orphaned embedding rows removed (their span was
 	// pruned or reclassified by a re-derive).
 	Pruned int64 `json:"pruned"`
+
+	// OversizeTokens holds the reported/estimated token count of each
+	// oversized span this pass — the per-observation source for the embed
+	// worker's oversize-tokens histogram. Excluded from JSON to keep the
+	// logged summary scalar.
+	OversizeTokens []int `json:"-"`
+	// FailuresByReason counts deterministic failures recorded this pass,
+	// keyed by reason (e.g. "oversize", "api_400"). Excluded from JSON.
+	FailuresByReason map[string]int `json:"-"`
 }
 
 // action is the decision for one candidate.
@@ -108,12 +156,17 @@ const (
 	actionEmbed action = iota
 	actionUpToDate
 	actionEmpty
+	actionPoisoned
 )
 
 // decide computes the candidate's embed text and content hash and
 // returns whether it needs embedding under the configured model. The
 // content hash covers only the rendered text; the model is compared
 // separately so switching embedding models re-embeds everything.
+//
+// A span that already failed deterministically under this exact content
+// and model is poisoned: re-attempting it would just fail again and burn
+// an API call, so it is skipped until its content or model changes.
 func decide(c *Candidate, model string) (text, hash string, act action) {
 	text = RenderSpanText(c.Input, c.Output)
 	if text == "" {
@@ -122,6 +175,9 @@ func decide(c *Candidate, model string) (text, hash string, act action) {
 	hash = ContentHash(text)
 	if c.ExistingHash == hash && c.ExistingModel == model {
 		return text, hash, actionUpToDate
+	}
+	if c.ExistingFailHash == hash && c.ExistingFailModel == model {
+		return text, hash, actionPoisoned
 	}
 	return text, hash, actionEmbed
 }

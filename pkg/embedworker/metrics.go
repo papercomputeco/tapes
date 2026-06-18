@@ -29,19 +29,39 @@ type Metrics struct {
 	PassDuration prometheus.Histogram
 
 	// Per-span outcomes accumulated across passes. Together they close the
-	// identity scanned = embedded + upToDate + empty + failed, so a
-	// dashboard can both account for every candidate and SEE the
+	// identity scanned = embedded + upToDate + empty + poisoned + failed,
+	// so a dashboard can both account for every candidate and SEE the
 	// re-stream cost: the embed pass lists and renders every main llm
 	// span each pass, so a high upToDate (or scanned) with embedded≈0 is
 	// the wasteful-rescan signature, invisible if only embedded/failed
 	// were exposed. Failed is a per-span embed/write error retried next
 	// pass; UpToDate skipped because content+model already match; Empty
-	// skipped because the delta rendered to no embeddable text.
+	// skipped because the delta rendered to no embeddable text; Poisoned
+	// skipped because the span already failed deterministically under this
+	// content and model.
 	SpansScanned  prometheus.Counter
 	SpansEmbedded prometheus.Counter
 	SpansUpToDate prometheus.Counter
 	SpansEmpty    prometheus.Counter
+	SpansPoisoned prometheus.Counter
 	SpansFailed   prometheus.Counter
+
+	// SpansChunked counts spans whose text exceeded the model context
+	// window and was embedded as several pieces; ChunkRows counts the
+	// pieces written (so chunked spans contribute more than one row).
+	SpansChunked prometheus.Counter
+	ChunkRows    prometheus.Counter
+
+	// Oversize counts spans the model rejected as too large; OversizeTokens
+	// is the distribution of their reported/estimated token sizes — the
+	// answer to "how big are the inputs we're chunking?".
+	Oversize       prometheus.Counter
+	OversizeTokens prometheus.Histogram
+
+	// SpanFailures counts deterministic per-span failures by reason (e.g.
+	// oversize, api_400) — the recorded, non-retried failures, a subset of
+	// SpansFailed broken out for alerting on a specific cause.
+	SpanFailures *prometheus.CounterVec
 
 	// OrphansPruned counts embedding rows removed because their span no
 	// longer exists as a main llm span.
@@ -91,10 +111,38 @@ func NewMetrics() *Metrics {
 			Name: "tapes_embed_worker_spans_empty_total",
 			Help: "Spans skipped because their delta content rendered to no embeddable text.",
 		}),
+		SpansPoisoned: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "tapes_embed_worker_spans_poisoned_total",
+			Help: "Spans skipped because they already failed deterministically under this content and model; not retried until content/model changes.",
+		}),
 		SpansFailed: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "tapes_embed_worker_spans_failed_total",
-			Help: "Per-span embed/write failures; the span stays un-embedded and is retried on the next pass.",
+			Help: "Per-span embed/write failures this pass (transient retried next pass; deterministic also recorded and skipped thereafter).",
 		}),
+		SpansChunked: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "tapes_embed_worker_spans_chunked_total",
+			Help: "Spans whose text exceeded the model context window and was embedded as multiple pieces.",
+		}),
+		ChunkRows: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "tapes_embed_worker_chunk_rows_total",
+			Help: "Embedding rows written (one per piece); chunked spans contribute more than one.",
+		}),
+		Oversize: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "tapes_embed_worker_oversize_total",
+			Help: "Spans the model rejected as exceeding its context window (whether the split then succeeded or exhausted the depth cap).",
+		}),
+		OversizeTokens: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "tapes_embed_worker_oversize_tokens",
+			Help:    "Reported or estimated token count of oversized spans.",
+			Buckets: []float64{8192, 10000, 12000, 16000, 24000, 32000, 48000, 64000, 96000, 131072},
+		}),
+		SpanFailures: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "tapes_embed_worker_span_failures_total",
+				Help: "Deterministic per-span embed failures recorded this pass, by reason.",
+			},
+			[]string{"reason"},
+		),
 		OrphansPruned: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "tapes_embed_worker_orphans_pruned_total",
 			Help: "Orphaned embedding rows removed (their span was pruned or reclassified by a re-derive).",
@@ -110,7 +158,8 @@ func NewMetrics() *Metrics {
 	}
 	reg.MustRegister(
 		m.Passes, m.PassDuration,
-		m.SpansScanned, m.SpansEmbedded, m.SpansUpToDate, m.SpansEmpty, m.SpansFailed,
+		m.SpansScanned, m.SpansEmbedded, m.SpansUpToDate, m.SpansEmpty, m.SpansPoisoned, m.SpansFailed,
+		m.SpansChunked, m.ChunkRows, m.Oversize, m.OversizeTokens, m.SpanFailures,
 		m.OrphansPruned, m.ConsecutiveFailures, m.LastSuccessTimestamp,
 	)
 	return m

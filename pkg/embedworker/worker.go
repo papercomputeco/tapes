@@ -208,8 +208,18 @@ func (w *Worker) passSucceeded(report *spanembed.Report, dur time.Duration) {
 		w.metrics.SpansEmbedded.Add(float64(report.Embedded))
 		w.metrics.SpansUpToDate.Add(float64(report.UpToDate))
 		w.metrics.SpansEmpty.Add(float64(report.Empty))
+		w.metrics.SpansPoisoned.Add(float64(report.Poisoned))
 		w.metrics.SpansFailed.Add(float64(report.Failed))
+		w.metrics.SpansChunked.Add(float64(report.Chunked))
+		w.metrics.ChunkRows.Add(float64(report.ChunkRows))
+		w.metrics.Oversize.Add(float64(report.Oversized))
 		w.metrics.OrphansPruned.Add(float64(report.Pruned))
+		for _, tokens := range report.OversizeTokens {
+			w.metrics.OversizeTokens.Observe(float64(tokens))
+		}
+		for reason, n := range report.FailuresByReason {
+			w.metrics.SpanFailures.WithLabelValues(reason).Add(float64(n))
+		}
 	}
 	if w.consecutiveFailures > 0 {
 		w.logger.Info("embed worker recovered",

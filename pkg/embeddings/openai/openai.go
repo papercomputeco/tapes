@@ -128,13 +128,15 @@ func (e *Embedder) Embed(ctx context.Context, text string) ([]float32, error) {
 
 	resp, err := e.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: sending request: %w", vector.ErrEmbedding, err)
+		// No response was received (connection refused, timeout, DNS); a
+		// transport failure is transient, so surface it as retryable.
+		return nil, &embeddings.APIError{Message: err.Error(), Transient: true}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
-		return nil, fmt.Errorf("%w: openai returned status %d: %s", vector.ErrEmbedding, resp.StatusCode, string(body))
+		return nil, newAPIError(resp.StatusCode, body)
 	}
 
 	var embedResp embedResponse
@@ -152,6 +154,33 @@ func (e *Embedder) Embed(ctx context.Context, text string) ([]float32, error) {
 // Close releases resources held by the embedder.
 func (e *Embedder) Close() error {
 	return nil
+}
+
+// newAPIError builds a structured *embeddings.APIError from a non-200
+// response. It parses OpenAI's error envelope ({"error":{message,type,code}})
+// for the machine code and message, falling back to the raw body when the
+// envelope is absent, and extracts the reported token count for oversize
+// rejections so the caller can size its chunks.
+func newAPIError(status int, body []byte) *embeddings.APIError {
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+			Code    string `json:"code"`
+		} `json:"error"`
+	}
+	message := strings.TrimSpace(string(body))
+	code := ""
+	if err := json.Unmarshal(body, &envelope); err == nil && envelope.Error.Message != "" {
+		message = envelope.Error.Message
+		code = envelope.Error.Code
+	}
+	return &embeddings.APIError{
+		Status:          status,
+		Code:            code,
+		Message:         message,
+		RequestedTokens: embeddings.ParseRequestedTokens(message),
+	}
 }
 
 func normalizeBaseURL(raw string) (string, error) {
