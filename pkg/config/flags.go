@@ -78,6 +78,7 @@ const (
 	FlagEmbedWorkerMetricsListen = "embed-worker-metrics-listen"
 	FlagEmbedWorkerWaitForDB     = "embed-worker-wait-for-db"
 	FlagEmbedWorkerBatchSize     = "embed-worker-batch-size"
+	FlagEmbedWorkerMaxTextBytes  = "embed-worker-max-text-bytes"
 	FlagEmbedWorkerOrg           = "embed-worker-org"
 )
 

@@ -11,6 +11,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/papercomputeco/tapes/pkg/embeddings"
 )
 
 func TestOpenAI(t *testing.T) {
@@ -86,6 +88,48 @@ var _ = Describe("Embedder", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring(strings.Repeat("x", maxErrorBodyBytes)))
 		Expect(err.Error()).NotTo(ContainSubstring(strings.Repeat("x", maxErrorBodyBytes+1)))
+	})
+
+	It("returns a classifiable oversize error for a 400 context-length rejection", func(ctx SpecContext) {
+		embedder := &Embedder{
+			baseURL: "https://api.openai.test/v1",
+			model:   "text-embedding-3-large",
+			apiKey:  "sk-test",
+			httpClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusBadRequest,
+					Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"This model's maximum context length is 8192 tokens, however you requested 9523 tokens (9523 in your prompt; 0 for the completion). Please reduce the length.","type":"invalid_request_error","code":"context_length_exceeded"}}`)),
+					Header:     make(http.Header),
+				}, nil
+			})},
+		}
+
+		_, err := embedder.Embed(ctx, "a very long input")
+		Expect(err).To(HaveOccurred())
+
+		apiErr, ok := embeddings.AsAPIError(err)
+		Expect(ok).To(BeTrue())
+		Expect(apiErr.Status).To(Equal(http.StatusBadRequest))
+		Expect(apiErr.IsOversize()).To(BeTrue())
+		Expect(apiErr.Retryable()).To(BeFalse())
+		Expect(apiErr.RequestedTokens).To(Equal(9523))
+	})
+
+	It("classifies a transport failure as retryable", func(ctx SpecContext) {
+		embedder := &Embedder{
+			baseURL: "https://api.openai.test/v1",
+			model:   "text-embedding-3-large",
+			apiKey:  "sk-test",
+			httpClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return nil, io.ErrUnexpectedEOF
+			})},
+		}
+
+		_, err := embedder.Embed(ctx, "hello")
+		Expect(err).To(HaveOccurred())
+		apiErr, ok := embeddings.AsAPIError(err)
+		Expect(ok).To(BeTrue())
+		Expect(apiErr.Retryable()).To(BeTrue())
 	})
 })
 

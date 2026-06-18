@@ -34,6 +34,7 @@ type embedWorkerCommander struct {
 	metricsListen string
 	waitForDB     bool
 	batchSize     int
+	maxTextBytes  int
 	orgID         string
 
 	embeddingProvider   string
@@ -52,6 +53,7 @@ var embedWorkerFlags = config.FlagSet{
 	config.FlagEmbedWorkerMetricsListen: {Name: "metrics-listen", ViperKey: "embed_worker.metrics_listen", Description: "Address to serve /metrics, /healthz (liveness), /readyz (readiness), and /ping on (empty disables)"},
 	config.FlagEmbedWorkerWaitForDB:     {Name: "wait-for-db", ViperKey: "embed_worker.wait_for_db", Description: "Retry an unreachable Postgres at startup with backoff instead of exiting (for orchestrated environments; default: fail fast)"},
 	config.FlagEmbedWorkerBatchSize:     {Name: "batch-size", ViperKey: "embed_worker.batch_size", Description: "Candidate page size; bounds peak memory per pass (0 uses the built-in default)"},
+	config.FlagEmbedWorkerMaxTextBytes:  {Name: "max-text-bytes", ViperKey: "embed_worker.max_text_bytes", Description: "Cap on a span's rendered text; larger spans are recorded as too_large instead of chunked, bounding per-span memory and embed cost (0 uses the built-in default, negative disables)"},
 	config.FlagEmbedWorkerOrg:           {Name: "org", ViperKey: "embed_worker.org", Description: "Only embed spans belonging to this org UUID (default: all orgs)"},
 	config.FlagEmbeddingProv:            {Name: "embedding-provider", ViperKey: "embedding.provider", Description: "Embedding provider type (e.g., ollama, openai)"},
 	config.FlagEmbeddingTgt:             {Name: "embedding-target", ViperKey: "embedding.target", Description: "Embedding provider URL"},
@@ -93,7 +95,10 @@ orchestrators. SIGTERM/SIGINT drains the in-flight pass (bounded at 30s)
 before exiting; a second signal kills immediately.
 
 --batch-size bounds how many candidate spans are held in memory at once;
-lower it to cap the worker's peak memory, raise it to cut round trips.`
+lower it to cap the worker's peak memory, raise it to cut round trips.
+--max-text-bytes caps a single span's rendered text: a larger span is recorded
+as a too_large failure instead of being chunked, bounding the per-span memory,
+embed cost, and chunk count that batch size alone cannot.`
 
 const embedWorkerShortDesc string = "Run the Tapes embed worker"
 
@@ -120,6 +125,7 @@ func NewEmbedWorkerCmd() *cobra.Command {
 				config.FlagEmbedWorkerMetricsListen,
 				config.FlagEmbedWorkerWaitForDB,
 				config.FlagEmbedWorkerBatchSize,
+				config.FlagEmbedWorkerMaxTextBytes,
 				config.FlagEmbedWorkerOrg,
 				config.FlagEmbeddingProv,
 				config.FlagEmbeddingTgt,
@@ -132,6 +138,7 @@ func NewEmbedWorkerCmd() *cobra.Command {
 			cmder.metricsListen = v.GetString("embed_worker.metrics_listen")
 			cmder.waitForDB = v.GetBool("embed_worker.wait_for_db")
 			cmder.batchSize = v.GetInt("embed_worker.batch_size")
+			cmder.maxTextBytes = v.GetInt("embed_worker.max_text_bytes")
 			cmder.orgID = v.GetString("embed_worker.org")
 
 			embedding := config.ResolveEmbeddingConfigWithOptions(
@@ -175,6 +182,7 @@ func NewEmbedWorkerCmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingModel, &cmder.embeddingModel)
 	config.AddUintFlag(cmd, cmder.flags, config.FlagEmbeddingDims, &cmder.embeddingDimensions)
 	config.AddIntFlag(cmd, cmder.flags, config.FlagEmbedWorkerBatchSize, &cmder.batchSize)
+	config.AddIntFlag(cmd, cmder.flags, config.FlagEmbedWorkerMaxTextBytes, &cmder.maxTextBytes)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbedWorkerOrg, &cmder.orgID)
 
 	return cmd
@@ -311,9 +319,10 @@ func (c *embedWorkerCommander) buildPass(ctx context.Context, driver *postgres.D
 	}
 
 	pass, err := spanembed.NewPass(store, store, embedder, spanembed.PassConfig{
-		Model:      c.embeddingModel,
-		Dimensions: c.embeddingDimensions,
-		BatchSize:  c.batchSize,
+		Model:        c.embeddingModel,
+		Dimensions:   c.embeddingDimensions,
+		BatchSize:    c.batchSize,
+		MaxTextBytes: c.maxTextBytes,
 	}, c.logger)
 	if err != nil {
 		_ = embedder.Close()
@@ -326,6 +335,7 @@ func (c *embedWorkerCommander) buildPass(ctx context.Context, driver *postgres.D
 		"embedding_model", c.embeddingModel,
 		"embedding_dimensions", c.embeddingDimensions,
 		"batch_size", c.batchSize,
+		"max_text_bytes", c.maxTextBytes,
 	)
 	return pass, func() { _ = embedder.Close() }, nil
 }

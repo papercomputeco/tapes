@@ -79,6 +79,8 @@ var _ = Describe("Store", func() {
 	AfterEach(func() {
 		_, err := pool.Exec(ctx, "DROP TABLE IF EXISTS "+pgx.Identifier{tableName}.Sanitize())
 		Expect(err).NotTo(HaveOccurred())
+		_, err = pool.Exec(ctx, "DROP TABLE IF EXISTS "+pgx.Identifier{tableName + "_failures"}.Sanitize())
+		Expect(err).NotTo(HaveOccurred())
 		_, err = pool.Exec(ctx, "DELETE FROM spans_20260615 WHERE org_id = $1", org)
 		Expect(err).NotTo(HaveOccurred())
 		_, err = pool.Exec(ctx, "DELETE FROM span_turns_20260615 WHERE org_id = $1", org)
@@ -111,6 +113,15 @@ var _ = Describe("Store", func() {
 		return store
 	}
 
+	countRows := func(table, spanID string) int {
+		var n int
+		Expect(pool.QueryRow(ctx,
+			fmt.Sprintf(`SELECT count(*) FROM %s WHERE span_id = $1`, pgx.Identifier{table}.Sanitize()),
+			spanID,
+		).Scan(&n)).To(Succeed())
+		return n
+	}
+
 	Describe("EnsureSchema", func() {
 		It("refuses to reuse a table whose dimensions differ from the configuration", func() {
 			Expect(newStore(3).EnsureSchema(ctx)).To(Succeed())
@@ -141,18 +152,18 @@ var _ = Describe("Store", func() {
 			Expect(candidates[0].SpanID).To(Equal("llm_main"))
 			Expect(candidates[0].ExistingHash).To(BeEmpty())
 
-			rec := spanembed.Record{
+			rec := spanembed.ChunkRecord{
 				OrgID:       org,
 				TraceID:     traceA,
 				SpanID:      "llm_main",
 				Model:       "test-model",
 				ContentHash: spanembed.ContentHash("x"),
-				Embedding:   []float32{1, 0, 0},
+				Embeddings:  [][]float32{{1, 0, 0}},
 			}
-			Expect(store.Upsert(ctx, rec)).To(Succeed())
+			Expect(store.UpsertSpanChunks(ctx, rec)).To(Succeed())
 			// Idempotent by identity: a second write replaces in place.
-			rec.Embedding = []float32{0, 1, 0}
-			Expect(store.Upsert(ctx, rec)).To(Succeed())
+			rec.Embeddings = [][]float32{{0, 1, 0}}
+			Expect(store.UpsertSpanChunks(ctx, rec)).To(Succeed())
 
 			candidates, err = store.ListCandidates(ctx, spanembed.Key{}, 100)
 			Expect(err).NotTo(HaveOccurred())
@@ -172,6 +183,122 @@ var _ = Describe("Store", func() {
 			// Pruning: drop the span, the embedding follows.
 			_, err = pool.Exec(ctx, "DELETE FROM spans_20260615 WHERE org_id = $1 AND span_id = 'llm_main'", org)
 			Expect(err).NotTo(HaveOccurred())
+			pruned, err := store.PruneOrphans(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pruned).To(Equal(int64(1)))
+		})
+	})
+
+	Describe("chunked layout migration", func() {
+		It("adds chunk_idx and a chunked primary key to a pre-chunking table in place", func() {
+			// Recreate the original one-row-per-span schema by hand, with a row in it.
+			_, err := pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector`)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = pool.Exec(ctx, fmt.Sprintf(`
+				CREATE TABLE %s (
+					org_id UUID NOT NULL, trace_id TEXT NOT NULL, span_id TEXT NOT NULL,
+					session_id UUID, model TEXT NOT NULL, content_hash TEXT NOT NULL,
+					embedded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+					embedding vector(3) NOT NULL,
+					PRIMARY KEY (org_id, trace_id, span_id)
+				)`, pgx.Identifier{tableName}.Sanitize()))
+			Expect(err).NotTo(HaveOccurred())
+			_, err = pool.Exec(ctx, fmt.Sprintf(`
+				INSERT INTO %s (org_id, trace_id, span_id, model, content_hash, embedding)
+				VALUES ($1, $2, 'llm_main', 'test-model', 'h', '[1,0,0]')`, pgx.Identifier{tableName}.Sanitize()),
+				org, traceA)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(newStore(3).EnsureSchema(ctx)).To(Succeed())
+
+			// The pre-existing row becomes chunk 0.
+			var chunkIdx int
+			Expect(pool.QueryRow(ctx,
+				fmt.Sprintf(`SELECT chunk_idx FROM %s WHERE span_id = 'llm_main'`, pgx.Identifier{tableName}.Sanitize()),
+			).Scan(&chunkIdx)).To(Succeed())
+			Expect(chunkIdx).To(BeZero())
+
+			// The new primary key admits a second chunk for the same span.
+			Expect(newStore(3).UpsertSpanChunks(ctx, spanembed.ChunkRecord{
+				OrgID: org, TraceID: traceA, SpanID: "llm_main", Model: "test-model",
+				ContentHash: spanembed.ContentHash("x"),
+				Embeddings:  [][]float32{{1, 0, 0}, {0, 1, 0}},
+			})).To(Succeed())
+			Expect(countRows(tableName, "llm_main")).To(Equal(2))
+		})
+	})
+
+	Describe("chunked writes and failure records", func() {
+		BeforeEach(func() {
+			Expect(newStore(3).EnsureSchema(ctx)).To(Succeed())
+		})
+
+		It("stores one row per chunk and prunes rows left by a shorter re-chunk", func() {
+			store := newStore(3)
+			rec := spanembed.ChunkRecord{
+				OrgID: org, TraceID: traceA, SpanID: "llm_main", Model: "m", ContentHash: "h",
+				Embeddings: [][]float32{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}},
+			}
+			Expect(store.UpsertSpanChunks(ctx, rec)).To(Succeed())
+			Expect(countRows(tableName, "llm_main")).To(Equal(3))
+
+			rec.Embeddings = [][]float32{{1, 0, 0}, {0, 1, 0}}
+			Expect(store.UpsertSpanChunks(ctx, rec)).To(Succeed())
+			Expect(countRows(tableName, "llm_main")).To(Equal(2))
+		})
+
+		It("records a failure with accruing attempts and clears it on a later success", func() {
+			store := newStore(3)
+			fail := spanembed.FailureRecord{
+				OrgID: org, TraceID: traceA, SpanID: "llm_big", Model: "m",
+				ContentHash: "h", Reason: "oversize", TokenCount: 9523,
+			}
+			Expect(store.RecordFailure(ctx, fail)).To(Succeed())
+			Expect(store.RecordFailure(ctx, fail)).To(Succeed())
+
+			var attempts, tokens int
+			Expect(pool.QueryRow(ctx,
+				fmt.Sprintf(`SELECT attempts, token_count FROM %s WHERE span_id = 'llm_big'`, pgx.Identifier{tableName + "_failures"}.Sanitize()),
+			).Scan(&attempts, &tokens)).To(Succeed())
+			Expect(attempts).To(Equal(2))
+			Expect(tokens).To(Equal(9523))
+
+			Expect(store.UpsertSpanChunks(ctx, spanembed.ChunkRecord{
+				OrgID: org, TraceID: traceA, SpanID: "llm_big", Model: "m",
+				ContentHash: "h2", Embeddings: [][]float32{{1, 0, 0}},
+			})).To(Succeed())
+			Expect(countRows(tableName+"_failures", "llm_big")).To(BeZero())
+		})
+
+		It("returns one hit per span scored by the span's best-matching chunk", func() {
+			insertSpan("llm_a", "llm", "main", `[{"type":"text","text":"alpha content"}]`, "")
+			insertSpan("llm_b", "llm", "main", `[{"type":"text","text":"beta content"}]`, "")
+			store := newStore(3)
+
+			// Span A carries three chunks; one of them is the exact query vector.
+			Expect(store.UpsertSpanChunks(ctx, spanembed.ChunkRecord{
+				OrgID: org, TraceID: traceA, SpanID: "llm_a", Model: "m", ContentHash: "ha",
+				Embeddings: [][]float32{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}},
+			})).To(Succeed())
+			Expect(store.UpsertSpanChunks(ctx, spanembed.ChunkRecord{
+				OrgID: org, TraceID: traceA, SpanID: "llm_b", Model: "m", ContentHash: "hb",
+				Embeddings: [][]float32{{0.9, 0.1, 0}},
+			})).To(Succeed())
+
+			hits, err := store.Search(ctx, org, []float32{0, 1, 0}, 5)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(hits).To(HaveLen(2)) // span A appears once despite three chunks
+			Expect([]string{hits[0].SpanID, hits[1].SpanID}).To(ConsistOf("llm_a", "llm_b"))
+			Expect(hits[0].SpanID).To(Equal("llm_a")) // best score first
+			Expect(hits[0].Score).To(BeNumerically("~", 1.0, 1e-4))
+		})
+
+		It("prunes orphaned failure rows when the span no longer exists", func() {
+			store := newStore(3)
+			Expect(store.RecordFailure(ctx, spanembed.FailureRecord{
+				OrgID: org, TraceID: traceA, SpanID: "llm_absent", Model: "m",
+				ContentHash: "h", Reason: "oversize",
+			})).To(Succeed())
 			pruned, err := store.PruneOrphans(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(pruned).To(Equal(int64(1)))
