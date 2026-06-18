@@ -63,19 +63,6 @@ type Store interface {
 	RederiveSession(ctx context.Context, project, orgID, harnessID, harnessSessionID string) (*derive.RederiveReport, error)
 }
 
-// SpanEmbedRunner runs one bounded span-embedding pass (see
-// pkg/spanembed). The worker treats it as opaque: failures are logged
-// and retried on the next trigger, never fed into the poll backoff.
-type SpanEmbedRunner interface {
-	Run(ctx context.Context) error
-}
-
-// SpanEmbedFunc adapts a function to SpanEmbedRunner.
-type SpanEmbedFunc func(ctx context.Context) error
-
-// Run implements SpanEmbedRunner.
-func (f SpanEmbedFunc) Run(ctx context.Context) error { return f(ctx) }
-
 // Config tunes the worker loop. Zero fields take the package defaults.
 type Config struct {
 	// Project mirrors the ingest worker's configured project tag; it
@@ -129,14 +116,6 @@ type Config struct {
 	// before the store is even reachable — e.g. while --wait-for-db
 	// retries. NewWorker builds a fresh one when nil.
 	Metrics *Metrics
-
-	// SpanEmbed optionally embeds spans after derives (nil disables —
-	// the default). The pass runs once at startup (catching the
-	// backlog from before embedding was enabled) and after every poll
-	// cycle that derived at least one session. It is idempotent and
-	// keyed by span identity, so an extra run — or a concurrent run by
-	// another replica — only costs redundant reads.
-	SpanEmbed SpanEmbedRunner
 }
 
 func (c Config) withDefaults() Config {
@@ -245,10 +224,6 @@ func (w *Worker) Run(ctx context.Context) error {
 	}()
 
 	w.runSweep(ctx)
-	// The startup embed pass picks up the backlog: spans derived
-	// before embedding was enabled (or while this worker was down)
-	// would otherwise wait for their session's next derive.
-	w.runEmbed(ctx, workCtx)
 
 	// Polling uses a timer, not a ticker, so the interval can stretch
 	// into a backoff while the store is unreachable instead of hot-
@@ -264,7 +239,7 @@ func (w *Worker) Run(ctx context.Context) error {
 			w.logger.Info("derive worker stopping")
 			return nil
 		case <-poll.C:
-			derived, err := w.runPoll(ctx, workCtx)
+			_, err := w.runPoll(ctx, workCtx)
 			switch {
 			case ctx.Err() != nil:
 				// Shutting down; the next select arm exits.
@@ -273,9 +248,6 @@ func (w *Worker) Run(ctx context.Context) error {
 				poll.Reset(w.pollFailed(err))
 			default:
 				w.pollRecovered()
-				if derived > 0 {
-					w.runEmbed(ctx, workCtx)
-				}
 				poll.Reset(w.cfg.PollInterval)
 			}
 		case <-sweep.C:
@@ -500,20 +472,4 @@ func (w *Worker) runSweep(ctx context.Context) {
 	w.metrics.Sweeps.WithLabelValues(resultOK).Inc()
 	w.metrics.SweepEnqueued.Add(float64(enqueued))
 	w.logger.Info("derive sweep", "enqueued", enqueued)
-}
-
-// runEmbed runs the optional span-embedding pass. Failures are logged
-// and absorbed: an unreachable embedding backend must never stall
-// derivation, and the pass's idempotence means the next trigger
-// simply retries the spans that stayed un-embedded.
-//
-// ctx is the run (shutdown) context — once shutdown begins, no new
-// embed work starts; workCtx carries the actual store/backend calls.
-func (w *Worker) runEmbed(ctx, workCtx context.Context) {
-	if w.cfg.SpanEmbed == nil || ctx.Err() != nil {
-		return
-	}
-	if err := w.cfg.SpanEmbed.Run(workCtx); err != nil && workCtx.Err() == nil {
-		w.logger.Warn("span embed pass", "error", err.Error())
-	}
 }

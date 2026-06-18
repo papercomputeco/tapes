@@ -14,6 +14,7 @@ import (
 	"github.com/papercomputeco/tapes/api"
 	apicmder "github.com/papercomputeco/tapes/cmd/tapes/serve/api"
 	deriveworkercmder "github.com/papercomputeco/tapes/cmd/tapes/serve/deriveworker"
+	embedworkercmder "github.com/papercomputeco/tapes/cmd/tapes/serve/embedworker"
 	ingestcmder "github.com/papercomputeco/tapes/cmd/tapes/serve/ingest"
 	proxycmder "github.com/papercomputeco/tapes/cmd/tapes/serve/proxy"
 	"github.com/papercomputeco/tapes/ingest"
@@ -79,6 +80,7 @@ Use subcommands to run individual services or all services together:
   tapes serve proxy      Run just the proxy server
   tapes serve ingest     Run just the ingest server (sidecar mode)
   tapes serve derive-worker  Run the derive worker (raw → derived layer)
+  tapes serve embed-worker   Run the embed worker (derived spans → search vectors)
 
 Optionally configure vector storage and embeddings of text content for "tapes search"
 agentic functionality.`
@@ -182,6 +184,7 @@ func NewServeCmd() *cobra.Command {
 
 	cmd.AddCommand(apicmder.NewAPICmd())
 	cmd.AddCommand(deriveworkercmder.NewDeriveWorkerCmd())
+	cmd.AddCommand(embedworkercmder.NewEmbedWorkerCmd())
 	cmd.AddCommand(ingestcmder.NewIngestCmd())
 	cmd.AddCommand(proxycmder.NewProxyCmd())
 

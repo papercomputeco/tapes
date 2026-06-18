@@ -72,7 +72,13 @@ const (
 	FlagDeriveWorkerMaxDeriveLag  = "derive-worker-max-derive-lag"
 	FlagDeriveWorkerMetricsListen = "derive-worker-metrics-listen"
 	FlagDeriveWorkerWaitForDB     = "derive-worker-wait-for-db"
-	FlagDeriveWorkerEmbedSpans    = "derive-worker-embed-spans"
+
+	// Embed worker (`tapes serve embed-worker`) tunables.
+	FlagEmbedWorkerInterval      = "embed-worker-interval"
+	FlagEmbedWorkerMetricsListen = "embed-worker-metrics-listen"
+	FlagEmbedWorkerWaitForDB     = "embed-worker-wait-for-db"
+	FlagEmbedWorkerBatchSize     = "embed-worker-batch-size"
+	FlagEmbedWorkerOrg           = "embed-worker-org"
 )
 
 // AddStringFlag registers a string flag on cmd from the given FlagSet.
@@ -119,6 +125,21 @@ func AddUintFlag(cmd *cobra.Command, fs FlagSet, registryKey string, target *uin
 		cmd.Flags().UintVarP(target, def.Name, def.Shorthand, defaultVal, def.Description)
 	} else {
 		cmd.Flags().UintVar(target, def.Name, defaultVal, def.Description)
+	}
+}
+
+// AddIntFlag registers an int flag on cmd from the given FlagSet.
+func AddIntFlag(cmd *cobra.Command, fs FlagSet, registryKey string, target *int) {
+	def, ok := fs[registryKey]
+	if !ok {
+		return
+	}
+
+	defaultVal := defaultInt(def.ViperKey)
+	if def.Shorthand != "" {
+		cmd.Flags().IntVarP(target, def.Name, def.Shorthand, defaultVal, def.Description)
+	} else {
+		cmd.Flags().IntVar(target, def.Name, defaultVal, def.Description)
 	}
 }
 
@@ -195,6 +216,11 @@ func defaultString(viperKey string) string {
 // defaultUint returns the default uint value for a viper key from NewDefaultConfig.
 func defaultUint(viperKey string) uint {
 	return getDefaultViper().GetUint(viperKey)
+}
+
+// defaultInt returns the default int value for a viper key from NewDefaultConfig.
+func defaultInt(viperKey string) int {
+	return getDefaultViper().GetInt(viperKey)
 }
 
 // defaultBool returns the default bool value for a viper key from NewDefaultConfig.

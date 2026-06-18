@@ -27,7 +27,7 @@ const (
 
 // ErrNotInitialized is returned by reads when the embedding table does
 // not exist yet — i.e. no embed pass has ever run against this store.
-var ErrNotInitialized = errors.New("span embeddings not initialized: run the embed pass (tapes dev embed-spans or tapes serve derive-worker --embed-spans)")
+var ErrNotInitialized = errors.New("span embeddings not initialized: run the embed pass (tapes serve embed-worker or tapes dev embed-spans)")
 
 // StoreConfig configures a span-embedding store.
 type StoreConfig struct {
