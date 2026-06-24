@@ -25,6 +25,7 @@ type skillStore interface {
 	SetSkillVersion(ctx context.Context, orgID, slug, semver string, updatedAt time.Time) error
 	ListSkillVersions(ctx context.Context, orgID, slug string) ([]storage.SkillVersionRecord, error)
 	IncrementSkillDownloads(ctx context.Context, orgID, slug string) error
+	DeleteSkill(ctx context.Context, orgID, slug string) (bool, error)
 }
 
 // authSubjectHeader carries the WorkOS user id (JWT sub) — the same
@@ -308,6 +309,109 @@ func (s *Server) handleUpdateSkill(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to save skill"})
 	}
 	return c.JSON(skillFromRecord(*saved))
+}
+
+// handleDeleteSkill removes a skill and its version history. Owner-gated: only
+// the recorded author may delete (unattributed skills are deletable by anyone,
+// matching the edit affordance).
+func (s *Server) handleDeleteSkill(c *fiber.Ctx) error {
+	store, ok := s.skillStoreOr501(c)
+	if !ok {
+		return nil
+	}
+	orgID := orgIDFromCtx(c)
+	existing, err := store.GetSkill(c.Context(), orgID, c.Params("slug"))
+	if err != nil {
+		s.logger.Error("get skill for delete", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to fetch skill"})
+	}
+	if existing == nil {
+		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "skill not found"})
+	}
+
+	// Only the creator may delete. An empty author_subject means unattributed
+	// (legacy/demo) — deletable by anyone, mirroring the edit gate.
+	subject := authSubjectFromCtx(c)
+	if existing.AuthorSubject != "" && subject != existing.AuthorSubject {
+		return c.Status(fiber.StatusForbidden).JSON(llm.ErrorResponse{Error: "only the creator can delete this skill"})
+	}
+
+	if _, err := store.DeleteSkill(c.Context(), orgID, existing.Slug); err != nil {
+		s.logger.Error("delete skill", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to delete skill"})
+	}
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// createSkillRequest is the POST /v1/skills body for an authored-from-scratch
+// skill — only a name is required; the rest default to an empty private draft.
+type createSkillRequest struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Type        string   `json:"type"`
+	Tags        []string `json:"tags"`
+	Content     string   `json:"content"`
+}
+
+// handleCreateSkill writes a new blank/authored skill (empty provenance),
+// attributed to the caller. Generate is the AI path; this is the
+// create-from-scratch path. The slug is minted org-unique from the name.
+func (s *Server) handleCreateSkill(c *fiber.Ctx) error {
+	store, ok := s.skillStoreOr501(c)
+	if !ok {
+		return nil
+	}
+
+	var req createSkillRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "invalid request body"})
+	}
+
+	displayName := strings.TrimSpace(req.Name)
+	if displayName == "" {
+		displayName = "New skill"
+	}
+	skillType := strings.TrimSpace(req.Type)
+	if skillType == "" {
+		skillType = "workflow"
+	}
+	if !skill.ValidSkillType(skillType) {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: fmt.Sprintf("invalid type %q", skillType)})
+	}
+
+	base := slugifySkillName(displayName)
+	if base == "" {
+		base = "new-skill"
+	}
+	orgID := orgIDFromCtx(c)
+	slug, err := s.uniqueSkillSlug(c, store, orgID, base)
+	if err != nil {
+		s.logger.Error("unique skill slug", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to create skill"})
+	}
+
+	now := time.Now().UTC()
+	rec := storage.SkillRecord{
+		Slug:                    slug,
+		Name:                    displayName,
+		Description:             req.Description,
+		Type:                    skillType,
+		Version:                 "0.1.0",
+		Visibility:              "private",
+		Tags:                    req.Tags,
+		Content:                 req.Content,
+		IsAIGenerated:           false,
+		GeneratedFromSessionIDs: nil,
+		AuthorSubject:           authSubjectFromCtx(c),
+		CreatedAt:               now,
+		UpdatedAt:               now,
+	}
+	saved, err := store.UpsertSkill(c.Context(), orgID, rec)
+	if err != nil {
+		s.logger.Error("create skill", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to create skill"})
+	}
+	return c.Status(fiber.StatusCreated).JSON(skillFromRecord(*saved))
 }
 
 // publishSkillRequest is the POST /v1/skills/:slug/versions body.

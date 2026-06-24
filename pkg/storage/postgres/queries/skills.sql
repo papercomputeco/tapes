@@ -54,6 +54,18 @@ RETURNING *;
 SELECT * FROM skills
 WHERE org_id = sqlc.arg(org_id) AND slug = sqlc.arg(slug);
 
+-- name: DeleteSkill :execrows
+-- Remove a skill by its org-scoped slug. Returns the affected row count so the
+-- handler can distinguish a real delete from a missing slug.
+DELETE FROM skills
+WHERE org_id = sqlc.arg(org_id) AND slug = sqlc.arg(slug);
+
+-- name: DeleteSkillVersions :exec
+-- Remove a skill's published history. skill_versions has no FK cascade to
+-- skills, so deleting a skill must drop its versions explicitly.
+DELETE FROM skill_versions
+WHERE org_id = sqlc.arg(org_id) AND skill_slug = sqlc.arg(skill_slug);
+
 -- name: IncrementSkillDownloads :exec
 -- Bump the real download counter when a skill's SKILL.md is downloaded.
 UPDATE skills SET download_count = download_count + 1

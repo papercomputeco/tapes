@@ -58,6 +58,16 @@ func (d *skillsStubDriver) GetSkill(_ context.Context, orgID, slug string) (*sto
 	return nil, nil
 }
 
+func (d *skillsStubDriver) DeleteSkill(_ context.Context, orgID, slug string) (bool, error) {
+	d.lastOrg = orgID
+	if _, ok := d.skills[slug]; !ok {
+		return false, nil
+	}
+	delete(d.skills, slug)
+	delete(d.versions, slug)
+	return true, nil
+}
+
 func (d *skillsStubDriver) ListSkills(_ context.Context, orgID string, _ int) ([]storage.SkillRecord, error) {
 	d.lastOrg = orgID
 	out := make([]storage.SkillRecord, 0, len(d.skills))
@@ -236,6 +246,43 @@ var _ = Describe("Skills handlers", func() {
 		Expect(status).To(Equal(fiber.StatusCreated))
 		Expect(second).To(HaveKeyWithValue("slug", "s-copy-2"))
 		Expect(stub.skills).To(HaveKey("s-copy"), "the first duplicate survives the second")
+	})
+
+	It("creates a blank skill from scratch attributed to the caller", func() {
+		stub := newSkillsStub()
+		server := newSkillsServer(stub)
+		body, status := doJSON(server, http.MethodPost, "/v1/skills",
+			`{"name":"My New Skill","description":"d"}`, "", "user-new")
+		Expect(status).To(Equal(fiber.StatusCreated))
+		Expect(body).To(HaveKeyWithValue("slug", "my-new-skill"))
+		Expect(body).To(HaveKeyWithValue("authorId", "user-new"))
+		Expect(body).To(HaveKeyWithValue("isAiGenerated", false))
+		Expect(body).To(HaveKeyWithValue("originatingSessionIds", BeEmpty()))
+	})
+
+	It("deletes a skill for its creator", func() {
+		stub := newSkillsStub()
+		seedStubSkill(stub, "s") // author_subject = user-seed
+		server := newSkillsServer(stub)
+		_, status := doJSON(server, http.MethodDelete, "/v1/skills/s", "", "", "user-seed")
+		Expect(status).To(Equal(fiber.StatusNoContent))
+		Expect(stub.skills).NotTo(HaveKey("s"))
+	})
+
+	It("forbids deleting a skill owned by another user", func() {
+		stub := newSkillsStub()
+		seedStubSkill(stub, "s") // author_subject = user-seed
+		server := newSkillsServer(stub)
+		_, status := doJSON(server, http.MethodDelete, "/v1/skills/s", "", "", "user-other")
+		Expect(status).To(Equal(fiber.StatusForbidden))
+		Expect(stub.skills).To(HaveKey("s"), "the skill survives a forbidden delete")
+	})
+
+	It("404s when deleting a missing skill", func() {
+		stub := newSkillsStub()
+		server := newSkillsServer(stub)
+		_, status := doJSON(server, http.MethodDelete, "/v1/skills/missing", "", "", "user-x")
+		Expect(status).To(Equal(fiber.StatusNotFound))
 	})
 
 	It("renders a drop-in SKILL.md", func() {

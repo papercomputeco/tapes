@@ -71,6 +71,30 @@ func (d *Driver) GetSkill(ctx context.Context, orgID, slug string) (*storage.Ski
 	return &out, nil
 }
 
+// DeleteSkill removes a skill and its published history. Returns whether a
+// skill row was actually deleted (false when the slug was already absent).
+func (d *Driver) DeleteSkill(ctx context.Context, orgID, slug string) (bool, error) {
+	oid, err := orgIDFromString(orgID)
+	if err != nil {
+		return false, fmt.Errorf("delete skill: %w", err)
+	}
+	// Drop history first; skill_versions has no FK cascade to skills.
+	if err := d.q.DeleteSkillVersions(ctx, gensqlc.DeleteSkillVersionsParams{
+		OrgID:     oid,
+		SkillSlug: slug,
+	}); err != nil {
+		return false, fmt.Errorf("delete skill versions: %w", err)
+	}
+	n, err := d.q.DeleteSkill(ctx, gensqlc.DeleteSkillParams{
+		OrgID: oid,
+		Slug:  slug,
+	})
+	if err != nil {
+		return false, fmt.Errorf("delete skill: %w", err)
+	}
+	return n > 0, nil
+}
+
 // skillRecordFromRow converts a sqlc-generated Skill row to the storage-level
 // SkillRecord type.
 func skillRecordFromRow(row gensqlc.Skill) storage.SkillRecord {

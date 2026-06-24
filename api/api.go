@@ -93,12 +93,14 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	// render a drop-in SKILL.md. Literal/sub-path routes are registered before
 	// the bare /:slug param routes so they aren't captured as a slug.
 	app.Get("/v1/skills", s.handleListSkills)
+	app.Post("/v1/skills", s.handleCreateSkill)
 	app.Post("/v1/skills/generate", s.handleGenerateSkill)
 	app.Get("/v1/skills/:slug/skill.md", s.handleSkillMarkdown)
 	app.Get("/v1/skills/:slug/versions", s.handleListSkillVersions)
 	app.Post("/v1/skills/:slug/versions", s.handlePublishSkill)
 	app.Post("/v1/skills/:slug/duplicate", s.handleDuplicateSkill)
 	app.Put("/v1/skills/:slug", s.handleUpdateSkill)
+	app.Delete("/v1/skills/:slug", s.handleDeleteSkill)
 	app.Get("/v1/skills/:slug", s.handleGetSkill)
 
 	app.Post("/v1/admin/seed/demo", s.handleSeedDemo)

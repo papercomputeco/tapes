@@ -71,6 +71,43 @@ func (q *Queries) CreateSkillVersion(ctx context.Context, arg CreateSkillVersion
 	return i, err
 }
 
+const deleteSkill = `-- name: DeleteSkill :execrows
+DELETE FROM skills
+WHERE org_id = $1 AND slug = $2
+`
+
+type DeleteSkillParams struct {
+	OrgID pgtype.UUID
+	Slug  string
+}
+
+// Remove a skill by its org-scoped slug. Returns the affected row count so the
+// handler can distinguish a real delete from a missing slug.
+func (q *Queries) DeleteSkill(ctx context.Context, arg DeleteSkillParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteSkill, arg.OrgID, arg.Slug)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteSkillVersions = `-- name: DeleteSkillVersions :exec
+DELETE FROM skill_versions
+WHERE org_id = $1 AND skill_slug = $2
+`
+
+type DeleteSkillVersionsParams struct {
+	OrgID     pgtype.UUID
+	SkillSlug string
+}
+
+// Remove a skill's published history. skill_versions has no FK cascade to
+// skills, so deleting a skill must drop its versions explicitly.
+func (q *Queries) DeleteSkillVersions(ctx context.Context, arg DeleteSkillVersionsParams) error {
+	_, err := q.db.Exec(ctx, deleteSkillVersions, arg.OrgID, arg.SkillSlug)
+	return err
+}
+
 const getSkillBySlug = `-- name: GetSkillBySlug :one
 SELECT org_id, slug, name, description, type, version, visibility, tags, content, is_ai_generated, generated_from_session_ids, parent_slug, created_at, updated_at, author_subject, download_count FROM skills
 WHERE org_id = $1 AND slug = $2
