@@ -39,4 +39,14 @@ type Config struct {
 	// so API-only servers do not expose a human-facing development UI unless
 	// explicitly requested.
 	EnableWebUI bool
+
+	// SkillLLM* configure the LLM used by POST /v1/skills/generate. They are
+	// populated from the search/embedding credential so skill extraction
+	// reuses the same shared key the platform already mounts for search —
+	// no separate provider key. An empty Provider/APIKey falls back to the
+	// generator's env/credentials resolution at call time.
+	SkillLLMProvider string
+	SkillLLMModel    string
+	SkillLLMAPIKey   string
+	SkillLLMBaseURL  string
 }

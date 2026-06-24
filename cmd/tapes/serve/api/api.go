@@ -143,6 +143,14 @@ func (c *apiCommander) run() error {
 	apiConfig := api.Config{
 		ListenAddr:  c.listen,
 		EnableWebUI: c.webUI,
+		// Skill generation reuses the search/embedding credential — the same
+		// shared key resolved above for the embedder. Model is left empty so
+		// the generator picks a chat-capable default for the provider (the
+		// embedding model is not a chat model). Empty values fall back to the
+		// generator's env/credentials resolution.
+		SkillLLMProvider: c.embeddingProvider,
+		SkillLLMAPIKey:   c.embeddingAPIKey,
+		SkillLLMBaseURL:  c.embeddingTarget,
 	}
 
 	if c.vectorStoreTarget != "" {

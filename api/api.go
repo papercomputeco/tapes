@@ -89,6 +89,12 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	app.Get("/v1/sessions/:id", s.handleGetSession)
 	app.Get("/v1/search/spans", s.handleSearchSpansEndpoint)
 
+	// Skills: generate from sessions (LLM extraction, persisted) and read
+	// back by slug. The literal /generate route is registered before the
+	// /:slug param route so it isn't captured as a slug.
+	app.Post("/v1/skills/generate", s.handleGenerateSkill)
+	app.Get("/v1/skills/:slug", s.handleGetSkill)
+
 	app.Post("/v1/admin/seed/demo", s.handleSeedDemo)
 	app.Post("/v1/admin/backfill/usage", s.handleBackfillUsage)
 	app.Post("/v1/admin/backfill/session-status", s.handleBackfillSessionStatus)
