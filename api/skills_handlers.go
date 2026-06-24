@@ -2,11 +2,15 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/skill"
@@ -15,17 +19,58 @@ import (
 
 // skillStore is the capability interface the skills API needs from the
 // storage layer. The Postgres driver implements it; the handlers return 501
-// for drivers (e.g. the in-memory node store) that don't.
+// for drivers (e.g. the in-memory node store) that don't. Skills are keyed on
+// an opaque id (the route key, mirroring sessions); slug is a cosmetic label.
 type skillStore interface {
 	UpsertSkill(ctx context.Context, orgID string, rec storage.SkillRecord) (*storage.SkillRecord, error)
-	GetSkill(ctx context.Context, orgID, slug string) (*storage.SkillRecord, error)
-	ListSkills(ctx context.Context, orgID string, limit int) ([]storage.SkillRecord, error)
-	NextSkillVersionNumber(ctx context.Context, orgID, slug string) (int, error)
+	GetSkill(ctx context.Context, orgID, id string) (*storage.SkillRecord, error)
+	ListSkills(ctx context.Context, orgID string, opts storage.SkillListOpts) ([]storage.SkillRecord, error)
+	CountSkills(ctx context.Context, orgID, query, author string) (storage.SkillCounts, error)
+	NextSkillVersionNumber(ctx context.Context, orgID, skillID string) (int, error)
 	CreateSkillVersion(ctx context.Context, orgID string, rec storage.SkillVersionRecord) (*storage.SkillVersionRecord, error)
-	SetSkillVersion(ctx context.Context, orgID, slug, semver string, updatedAt time.Time) error
-	ListSkillVersions(ctx context.Context, orgID, slug string) ([]storage.SkillVersionRecord, error)
-	IncrementSkillDownloads(ctx context.Context, orgID, slug string) error
-	DeleteSkill(ctx context.Context, orgID, slug string) (bool, error)
+	SetSkillVersion(ctx context.Context, orgID, skillID, semver string, updatedAt time.Time) error
+	ListSkillVersions(ctx context.Context, orgID, skillID string) ([]storage.SkillVersionRecord, error)
+	IncrementSkillDownloads(ctx context.Context, orgID, id string) error
+	DeleteSkill(ctx context.Context, orgID, id string) (bool, error)
+}
+
+const (
+	defaultSkillsLimit = 24
+	maxSkillsLimit     = 100
+)
+
+// skillsCursor is the opaque keyset cursor for the skills list, keyed on the
+// (updated_at, id) of the last row on the previous page — the same shape and
+// base64(JSON) encoding sessions use.
+type skillsCursor struct {
+	UpdatedAt time.Time `json:"ts"`
+	ID        string    `json:"id"`
+}
+
+func encodeSkillsCursor(c skillsCursor) string {
+	b, err := json.Marshal(c)
+	if err != nil {
+		panic(fmt.Sprintf("encoding skills cursor: %v", err))
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func decodeSkillsCursor(token string) (skillsCursor, error) {
+	if token == "" {
+		return skillsCursor{}, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return skillsCursor{}, fmt.Errorf("invalid cursor: %w", err)
+	}
+	var c skillsCursor
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return skillsCursor{}, fmt.Errorf("invalid cursor: %w", err)
+	}
+	if c.ID == "" {
+		return skillsCursor{}, errors.New("invalid cursor: missing id")
+	}
+	return c, nil
 }
 
 // authSubjectHeader carries the WorkOS user id (JWT sub) — the same
@@ -65,12 +110,14 @@ type generateSkillRequest struct {
 	} `json:"hint"`
 }
 
-// skillResponse is the unified Skill shape the console expects (camelCase).
-// content always lives on the skill row (versions are history only);
-// parentSlug is null unless the skill is a duplicate/fork.
+// skillResponse is the unified Skill shape the console expects (camelCase). id
+// is the opaque identity / route key; slug is a cosmetic display label. content
+// always lives on the skill row (versions are history only); parentId is null
+// unless the skill is a duplicate/fork.
 type skillResponse struct {
+	ID                    string   `json:"id"`
 	Slug                  string   `json:"slug"`
-	ParentSlug            *string  `json:"parentSlug"`
+	ParentID              *string  `json:"parentId"`
 	Name                  string   `json:"name"`
 	Description           string   `json:"description"`
 	Type                  string   `json:"type"`
@@ -89,13 +136,30 @@ type skillResponse struct {
 // skillVersionResponse is one immutable published snapshot.
 type skillVersionResponse struct {
 	ID            string `json:"id"`
-	SkillSlug     string `json:"skillSlug"`
+	SkillID       string `json:"skillId"`
 	VersionNumber int    `json:"versionNumber"`
 	Semver        string `json:"semver"`
 	PublishedAt   string `json:"publishedAt"`
 	Changelog     string `json:"changelog"`
 	Content       string `json:"content"`
 	AuthorID      string `json:"authorId"`
+}
+
+// skillsListResponse is the paginated list envelope: one keyset page plus the
+// opaque next_cursor (mirroring /v1/sessions) and the per-tab counts for the
+// active search.
+type skillsListResponse struct {
+	Items      []skillResponse `json:"items"`
+	NextCursor string          `json:"next_cursor,omitempty"`
+	Counts     skillCountsResp `json:"counts"`
+}
+
+// skillCountsResp are the tab counts for the current search: all matching,
+// authored by the caller (mine), and everyone else's (team = all - mine).
+type skillCountsResp struct {
+	All  int64 `json:"all"`
+	Mine int64 `json:"mine"`
+	Team int64 `json:"team"`
 }
 
 // handleGenerateSkill runs the pkg/skill LLM generator over the requested
@@ -173,17 +237,11 @@ func (s *Server) handleGenerateSkill(c *fiber.Ctx) error {
 		slug = fallbackSkillName(req.SessionIDs[0])
 		displayName = slug
 	}
-	// Skills are keyed on (org_id, slug), so two generations whose names slugify
-	// the same would collide — UpsertSkill would silently overwrite the earlier
-	// skill. Mint a fresh org-unique slug instead so each generation lands on its
-	// own row (and the client navigates to the new one).
-	uniqueSlug, err := s.uniqueSkillSlug(c, store, orgIDFromCtx(c), slug)
-	if err != nil {
-		s.logger.Error("unique skill slug", "error", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to persist skill"})
-	}
-	slug = uniqueSlug
+	// Skills are keyed on an opaque id, so slug no longer has to be unique — two
+	// generations whose names slugify the same coexist as distinct ids. Mint the
+	// id here so the client can navigate to the new skill.
 	rec := storage.SkillRecord{
+		ID:                      uuid.NewString(),
 		Slug:                    slug,
 		Name:                    displayName,
 		Description:             sk.Description,
@@ -208,14 +266,14 @@ func (s *Server) handleGenerateSkill(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(skillFromRecord(*saved))
 }
 
-// handleGetSkill returns a persisted skill by its org-scoped slug.
+// handleGetSkill returns a persisted skill by its org-scoped id.
 func (s *Server) handleGetSkill(c *fiber.Ctx) error {
 	store, ok := s.skillStoreOr501(c)
 	if !ok {
 		return nil
 	}
 
-	rec, err := store.GetSkill(c.Context(), orgIDFromCtx(c), c.Params("slug"))
+	rec, err := store.GetSkill(c.Context(), orgIDFromCtx(c), c.Params("id"))
 	if err != nil {
 		s.logger.Error("get skill", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to fetch skill"})
@@ -226,23 +284,78 @@ func (s *Server) handleGetSkill(c *fiber.Ctx) error {
 	return c.JSON(skillFromRecord(*rec))
 }
 
-// handleListSkills returns all skills for the org (newest-edited first). The
-// console filters/sorts client-side, so a single capped page is returned.
+// handleListSkills returns one keyset page of skills for the org (newest-edited
+// first) plus the per-tab counts for the active search. Query params mirror
+// /v1/sessions: limit, cursor (opaque), q (name/description/tag search), scope
+// (all|mine|team). The cursor and counts make search/filter correct across the
+// whole set rather than just the loaded page.
 func (s *Server) handleListSkills(c *fiber.Ctx) error {
 	store, ok := s.skillStoreOr501(c)
 	if !ok {
 		return nil
 	}
-	recs, err := store.ListSkills(c.Context(), orgIDFromCtx(c), 0)
+	orgID := orgIDFromCtx(c)
+	subject := authSubjectFromCtx(c)
+
+	limit := defaultSkillsLimit
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		if parsed, err := fmt.Sscanf(raw, "%d", &limit); err != nil || parsed != 1 || limit < 1 {
+			limit = defaultSkillsLimit
+		}
+		if limit > maxSkillsLimit {
+			limit = maxSkillsLimit
+		}
+	}
+
+	query := strings.TrimSpace(c.Query("q"))
+	opts := storage.SkillListOpts{Query: query, Limit: limit + 1} // +1 to detect has_more
+	switch c.Query("scope") {
+	case "mine":
+		opts.Author = subject
+	case "team":
+		opts.NotAuthor = subject
+	}
+	if raw := c.Query("cursor"); raw != "" {
+		cur, err := decodeSkillsCursor(raw)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
+		}
+		opts.CursorTs = &cur.UpdatedAt
+		opts.CursorID = cur.ID
+	}
+
+	recs, err := store.ListSkills(c.Context(), orgID, opts)
 	if err != nil {
 		s.logger.Error("list skills", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list skills"})
 	}
+
+	var nextCursor string
+	if len(recs) > limit {
+		recs = recs[:limit]
+		last := recs[len(recs)-1]
+		nextCursor = encodeSkillsCursor(skillsCursor{UpdatedAt: last.UpdatedAt, ID: last.ID})
+	}
+
+	counts, err := store.CountSkills(c.Context(), orgID, query, subject)
+	if err != nil {
+		s.logger.Error("count skills", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list skills"})
+	}
+
 	items := make([]skillResponse, len(recs))
 	for i, r := range recs {
 		items[i] = skillFromRecord(r)
 	}
-	return c.JSON(fiber.Map{"items": items})
+	return c.JSON(skillsListResponse{
+		Items:      items,
+		NextCursor: nextCursor,
+		Counts: skillCountsResp{
+			All:  counts.Total,
+			Mine: counts.Mine,
+			Team: counts.Total - counts.Mine,
+		},
+	})
 }
 
 // updateSkillRequest is the PUT /v1/skills/:slug body — all fields optional;
@@ -265,7 +378,7 @@ func (s *Server) handleUpdateSkill(c *fiber.Ctx) error {
 		return nil
 	}
 	orgID := orgIDFromCtx(c)
-	existing, err := store.GetSkill(c.Context(), orgID, c.Params("slug"))
+	existing, err := store.GetSkill(c.Context(), orgID, c.Params("id"))
 	if err != nil {
 		s.logger.Error("get skill for update", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to fetch skill"})
@@ -282,6 +395,11 @@ func (s *Server) handleUpdateSkill(c *fiber.Ctx) error {
 	rec := *existing
 	if req.Name != nil {
 		rec.Name = *req.Name
+		// slug is cosmetic now (the id is identity), so keep it in sync with the
+		// name on rename — the SKILL.md filename then tracks the current name.
+		if derived := slugifySkillName(rec.Name); derived != "" {
+			rec.Slug = derived
+		}
 	}
 	if req.Description != nil {
 		rec.Description = *req.Description
@@ -320,7 +438,7 @@ func (s *Server) handleDeleteSkill(c *fiber.Ctx) error {
 		return nil
 	}
 	orgID := orgIDFromCtx(c)
-	existing, err := store.GetSkill(c.Context(), orgID, c.Params("slug"))
+	existing, err := store.GetSkill(c.Context(), orgID, c.Params("id"))
 	if err != nil {
 		s.logger.Error("get skill for delete", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to fetch skill"})
@@ -336,7 +454,7 @@ func (s *Server) handleDeleteSkill(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusForbidden).JSON(llm.ErrorResponse{Error: "only the creator can delete this skill"})
 	}
 
-	if _, err := store.DeleteSkill(c.Context(), orgID, existing.Slug); err != nil {
+	if _, err := store.DeleteSkill(c.Context(), orgID, existing.ID); err != nil {
 		s.logger.Error("delete skill", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to delete skill"})
 	}
@@ -355,7 +473,8 @@ type createSkillRequest struct {
 
 // handleCreateSkill writes a new blank/authored skill (empty provenance),
 // attributed to the caller. Generate is the AI path; this is the
-// create-from-scratch path. The slug is minted org-unique from the name.
+// create-from-scratch path. The id is minted here; slug is a cosmetic label
+// derived from the name (no longer unique).
 func (s *Server) handleCreateSkill(c *fiber.Ctx) error {
 	store, ok := s.skillStoreOr501(c)
 	if !ok {
@@ -379,19 +498,15 @@ func (s *Server) handleCreateSkill(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: fmt.Sprintf("invalid type %q", skillType)})
 	}
 
-	base := slugifySkillName(displayName)
-	if base == "" {
-		base = "new-skill"
+	slug := slugifySkillName(displayName)
+	if slug == "" {
+		slug = "new-skill"
 	}
 	orgID := orgIDFromCtx(c)
-	slug, err := s.uniqueSkillSlug(c, store, orgID, base)
-	if err != nil {
-		s.logger.Error("unique skill slug", "error", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to create skill"})
-	}
 
 	now := time.Now().UTC()
 	rec := storage.SkillRecord{
+		ID:                      uuid.NewString(),
 		Slug:                    slug,
 		Name:                    displayName,
 		Description:             req.Description,
@@ -428,8 +543,7 @@ func (s *Server) handlePublishSkill(c *fiber.Ctx) error {
 		return nil
 	}
 	orgID := orgIDFromCtx(c)
-	slug := c.Params("slug")
-	existing, err := store.GetSkill(c.Context(), orgID, slug)
+	existing, err := store.GetSkill(c.Context(), orgID, c.Params("id"))
 	if err != nil {
 		s.logger.Error("get skill for publish", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to fetch skill"})
@@ -437,6 +551,7 @@ func (s *Server) handlePublishSkill(c *fiber.Ctx) error {
 	if existing == nil {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "skill not found"})
 	}
+	skillID := existing.ID
 
 	var req publishSkillRequest
 	_ = c.BodyParser(&req)
@@ -445,7 +560,7 @@ func (s *Server) handlePublishSkill(c *fiber.Ctx) error {
 		content = existing.Content
 	}
 
-	n, err := store.NextSkillVersionNumber(c.Context(), orgID, slug)
+	n, err := store.NextSkillVersionNumber(c.Context(), orgID, skillID)
 	if err != nil {
 		s.logger.Error("next skill version", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to version skill"})
@@ -454,7 +569,7 @@ func (s *Server) handlePublishSkill(c *fiber.Ctx) error {
 	now := time.Now().UTC()
 
 	ver, err := store.CreateSkillVersion(c.Context(), orgID, storage.SkillVersionRecord{
-		SkillSlug:     slug,
+		SkillID:       skillID,
 		VersionNumber: n,
 		Semver:        semver,
 		Changelog:     req.Changelog,
@@ -477,7 +592,7 @@ func (s *Server) handlePublishSkill(c *fiber.Ctx) error {
 		if _, err := store.UpsertSkill(c.Context(), orgID, rec); err != nil {
 			s.logger.Error("persist published content", "error", err)
 		}
-	} else if err := store.SetSkillVersion(c.Context(), orgID, slug, semver, now); err != nil {
+	} else if err := store.SetSkillVersion(c.Context(), orgID, skillID, semver, now); err != nil {
 		s.logger.Error("bump skill version", "error", err)
 	}
 
@@ -490,7 +605,7 @@ func (s *Server) handleListSkillVersions(c *fiber.Ctx) error {
 	if !ok {
 		return nil
 	}
-	vers, err := store.ListSkillVersions(c.Context(), orgIDFromCtx(c), c.Params("slug"))
+	vers, err := store.ListSkillVersions(c.Context(), orgIDFromCtx(c), c.Params("id"))
 	if err != nil {
 		s.logger.Error("list skill versions", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list versions"})
@@ -502,15 +617,16 @@ func (s *Server) handleListSkillVersions(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"versions": items, "totalCount": len(items)})
 }
 
-// handleDuplicateSkill copies a skill under a fresh slug, attributed to the
-// duplicating user.
+// handleDuplicateSkill copies a skill under a fresh id, attributed to the
+// duplicating user. Because slug is no longer an identity it can be shared with
+// the parent freely — no "-copy" suffix is needed to stay distinct.
 func (s *Server) handleDuplicateSkill(c *fiber.Ctx) error {
 	store, ok := s.skillStoreOr501(c)
 	if !ok {
 		return nil
 	}
 	orgID := orgIDFromCtx(c)
-	existing, err := store.GetSkill(c.Context(), orgID, c.Params("slug"))
+	existing, err := store.GetSkill(c.Context(), orgID, c.Params("id"))
 	if err != nil {
 		s.logger.Error("get skill for duplicate", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to fetch skill"})
@@ -519,19 +635,14 @@ func (s *Server) handleDuplicateSkill(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "skill not found"})
 	}
 
-	newSlug, err := s.uniqueDupSlug(c, store, orgID, existing.Slug)
-	if err != nil {
-		s.logger.Error("duplicate slug", "error", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to duplicate skill"})
-	}
-
 	now := time.Now().UTC()
 	rec := *existing
-	rec.Slug = newSlug
+	rec.ID = uuid.NewString()
 	rec.Name = existing.Name + " (copy)"
+	rec.Slug = existing.Slug // slug is cosmetic; sharing the parent's reads fine
 	rec.Visibility = "private"
 	rec.Version = "0.1.0"
-	rec.ParentSlug = existing.Slug
+	rec.ParentID = existing.ID
 	rec.AuthorSubject = authSubjectFromCtx(c)
 	rec.CreatedAt = now
 	rec.UpdatedAt = now
@@ -544,30 +655,6 @@ func (s *Server) handleDuplicateSkill(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(skillFromRecord(*saved))
 }
 
-// uniqueDupSlug finds an unused "<slug>-copy[-N]" slug for a duplicate.
-func (s *Server) uniqueDupSlug(c *fiber.Ctx, store skillStore, orgID, slug string) (string, error) {
-	return s.uniqueSkillSlug(c, store, orgID, slug+"-copy")
-}
-
-// uniqueSkillSlug returns base if it is free in the org, otherwise base-2,
-// base-3, … until an unused org-scoped slug is found. Skills are keyed on
-// (org_id, slug), so callers that UpsertSkill a new row must reserve a free
-// slug first or risk overwriting an existing skill.
-func (s *Server) uniqueSkillSlug(c *fiber.Ctx, store skillStore, orgID, base string) (string, error) {
-	candidate := base
-	for i := 2; i < 1000; i++ {
-		existing, err := store.GetSkill(c.Context(), orgID, candidate)
-		if err != nil {
-			return "", err
-		}
-		if existing == nil {
-			return candidate, nil
-		}
-		candidate = fmt.Sprintf("%s-%d", base, i)
-	}
-	return "", fmt.Errorf("could not find a free slug for %q", base)
-}
-
 // handleSkillMarkdown renders a drop-in SKILL.md (frontmatter + body) for the
 // "Use this skill" download, via the same renderer the CLI uses.
 func (s *Server) handleSkillMarkdown(c *fiber.Ctx) error {
@@ -575,7 +662,7 @@ func (s *Server) handleSkillMarkdown(c *fiber.Ctx) error {
 	if !ok {
 		return nil
 	}
-	rec, err := store.GetSkill(c.Context(), orgIDFromCtx(c), c.Params("slug"))
+	rec, err := store.GetSkill(c.Context(), orgIDFromCtx(c), c.Params("id"))
 	if err != nil {
 		s.logger.Error("get skill for markdown", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to fetch skill"})
@@ -586,7 +673,7 @@ func (s *Server) handleSkillMarkdown(c *fiber.Ctx) error {
 
 	// Count the download as a real usage signal (best-effort — never fail the
 	// download over a counter write).
-	if err := store.IncrementSkillDownloads(c.Context(), orgIDFromCtx(c), rec.Slug); err != nil {
+	if err := store.IncrementSkillDownloads(c.Context(), orgIDFromCtx(c), rec.ID); err != nil {
 		s.logger.Warn("increment skill downloads", "error", err)
 	}
 
@@ -631,13 +718,14 @@ func skillFromRecord(rec storage.SkillRecord) skillResponse {
 		sessions = []string{}
 	}
 	var parent *string
-	if rec.ParentSlug != "" {
-		p := rec.ParentSlug
+	if rec.ParentID != "" {
+		p := rec.ParentID
 		parent = &p
 	}
 	return skillResponse{
+		ID:                    rec.ID,
 		Slug:                  rec.Slug,
-		ParentSlug:            parent,
+		ParentID:              parent,
 		Name:                  rec.Name,
 		Description:           rec.Description,
 		Type:                  rec.Type,
@@ -656,8 +744,8 @@ func skillFromRecord(rec storage.SkillRecord) skillResponse {
 
 func skillVersionFromRecord(rec storage.SkillVersionRecord) skillVersionResponse {
 	return skillVersionResponse{
-		ID:            fmt.Sprintf("%s-v%d", rec.SkillSlug, rec.VersionNumber),
-		SkillSlug:     rec.SkillSlug,
+		ID:            fmt.Sprintf("%s-v%d", rec.SkillID, rec.VersionNumber),
+		SkillID:       rec.SkillID,
 		VersionNumber: rec.VersionNumber,
 		Semver:        rec.Semver,
 		PublishedAt:   rec.PublishedAt.UTC().Format(time.RFC3339),

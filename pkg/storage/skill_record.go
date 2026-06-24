@@ -3,11 +3,15 @@ package storage
 import "time"
 
 // SkillRecord is the flat skills-table row surfaced by the /v1/skills API. It
-// mirrors the console's SkillDraft shape so a generated skill round-trips
-// through persistence without a separate projection. Fields absent in the DB
-// (parent_slug NULL) are represented as empty strings so API callers never
-// unwrap optional pgtype wrappers.
+// mirrors the console's Skill shape so a generated skill round-trips through
+// persistence without a separate projection. Fields absent in the DB (parent_id
+// NULL) are represented as empty strings so API callers never unwrap optional
+// pgtype wrappers.
 type SkillRecord struct {
+	// ID is the opaque, immutable identity (the route/URL key), mirroring
+	// sessions. Slug is a cosmetic, non-unique display label and SKILL.md
+	// filename derived from the name.
+	ID                      string
 	Slug                    string
 	Name                    string
 	Description             string
@@ -18,7 +22,7 @@ type SkillRecord struct {
 	Content                 string // markdown body
 	IsAIGenerated           bool
 	GeneratedFromSessionIDs []string
-	ParentSlug              string // empty when not a fork
+	ParentID                string // empty when not a fork
 	// AuthorSubject is the WorkOS user id (JWT sub) of the creator, stamped
 	// from the gateway-trusted x-paper-auth-subject header the same way
 	// sessions.auth_subject is captured. Empty when no header was present.
@@ -34,11 +38,30 @@ type SkillRecord struct {
 // The skill's working/current content lives on SkillRecord.Content; versions
 // are history only.
 type SkillVersionRecord struct {
-	SkillSlug     string
+	SkillID       string
 	VersionNumber int
 	Semver        string
 	Changelog     string
 	Content       string
 	AuthorSubject string
 	PublishedAt   time.Time
+}
+
+// SkillListOpts controls a single keyset page of skills (newest-edited first).
+// A nil CursorTs means "first page". Query, Author and NotAuthor are all
+// optional filters; an empty string disables each.
+type SkillListOpts struct {
+	Query     string     // name/description/tag search (empty = no filter)
+	Author    string     // only skills authored by this subject ("mine")
+	NotAuthor string     // exclude this subject ("team")
+	CursorTs  *time.Time // keyset: updated_at of the last row on the prior page
+	CursorID  string     // keyset tiebreak: id of that last row
+	Limit     int        // page size; zero falls back to DefaultListLimit
+}
+
+// SkillCounts are the per-tab totals for a search: every matching skill, and
+// how many the caller authored. "team" is derived as Total - Mine.
+type SkillCounts struct {
+	Total int64
+	Mine  int64
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -41,9 +42,12 @@ var _ = Describe("Driver skills persistence", func() {
 		}
 	})
 
+	// newRec mints a fresh opaque id per call — skills are keyed on id now, and
+	// slug is a non-unique cosmetic label.
 	newRec := func() storage.SkillRecord {
 		now := time.Now().UTC().Truncate(time.Microsecond)
 		return storage.SkillRecord{
+			ID:                      uuid.NewString(),
 			Slug:                    "debug-react-hooks",
 			Name:                    "Debug React Hooks",
 			Description:             "Diagnoses hook issues",
@@ -62,11 +66,13 @@ var _ = Describe("Driver skills persistence", func() {
 
 	It("round-trips an upserted skill", func() {
 		org := newTestOrgID()
-		saved, err := pgDriver.UpsertSkill(ctx, org, newRec())
+		rec := newRec()
+		saved, err := pgDriver.UpsertSkill(ctx, org, rec)
 		Expect(err).NotTo(HaveOccurred())
+		Expect(saved.ID).To(Equal(rec.ID))
 		Expect(saved.Slug).To(Equal("debug-react-hooks"))
 
-		got, err := pgDriver.GetSkill(ctx, org, "debug-react-hooks")
+		got, err := pgDriver.GetSkill(ctx, org, rec.ID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got).NotTo(BeNil())
 		Expect(got.Name).To(Equal("Debug React Hooks"))
@@ -81,7 +87,7 @@ var _ = Describe("Driver skills persistence", func() {
 		_, err := pgDriver.UpsertSkill(ctx, org, first)
 		Expect(err).NotTo(HaveOccurred())
 
-		second := newRec()
+		second := first // same id -> update
 		second.Description = "Updated description"
 		second.UpdatedAt = first.UpdatedAt.Add(time.Hour)
 		saved, err := pgDriver.UpsertSkill(ctx, org, second)
@@ -93,25 +99,27 @@ var _ = Describe("Driver skills persistence", func() {
 	It("scopes reads to the org", func() {
 		orgA := newTestOrgID()
 		orgB := newTestOrgID()
-		_, err := pgDriver.UpsertSkill(ctx, orgA, newRec())
+		rec := newRec()
+		_, err := pgDriver.UpsertSkill(ctx, orgA, rec)
 		Expect(err).NotTo(HaveOccurred())
 
-		got, err := pgDriver.GetSkill(ctx, orgB, "debug-react-hooks")
+		got, err := pgDriver.GetSkill(ctx, orgB, rec.ID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got).To(BeNil(), "org B must not see org A's skill")
 	})
 
-	It("returns nil for a missing slug", func() {
-		got, err := pgDriver.GetSkill(ctx, newTestOrgID(), "nope")
+	It("returns nil for a missing id", func() {
+		got, err := pgDriver.GetSkill(ctx, newTestOrgID(), uuid.NewString())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got).To(BeNil())
 	})
 
 	It("round-trips the author subject", func() {
 		org := newTestOrgID()
-		_, err := pgDriver.UpsertSkill(ctx, org, newRec())
+		rec := newRec()
+		_, err := pgDriver.UpsertSkill(ctx, org, rec)
 		Expect(err).NotTo(HaveOccurred())
-		got, err := pgDriver.GetSkill(ctx, org, "debug-react-hooks")
+		got, err := pgDriver.GetSkill(ctx, org, rec.ID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got.AuthorSubject).To(Equal("user-123"))
 	})
@@ -125,40 +133,69 @@ var _ = Describe("Driver skills persistence", func() {
 		_, err = pgDriver.UpsertSkill(ctx, org, second)
 		Expect(err).NotTo(HaveOccurred())
 
-		list, err := pgDriver.ListSkills(ctx, org, 0)
+		list, err := pgDriver.ListSkills(ctx, org, storage.SkillListOpts{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(list).To(HaveLen(2))
-		Expect(pgDriver.ListSkills(ctx, newTestOrgID(), 0)).To(BeEmpty(), "scoped to the org")
+		Expect(pgDriver.ListSkills(ctx, newTestOrgID(), storage.SkillListOpts{})).To(BeEmpty(), "scoped to the org")
+	})
+
+	It("filters the list by search query and author scope", func() {
+		org := newTestOrgID()
+		mine := newRec()
+		mine.Name = "Profile API latency"
+		mine.AuthorSubject = "user-me"
+		_, err := pgDriver.UpsertSkill(ctx, org, mine)
+		Expect(err).NotTo(HaveOccurred())
+		theirs := newRec()
+		theirs.Name = "Write release notes"
+		theirs.AuthorSubject = "user-other"
+		_, err = pgDriver.UpsertSkill(ctx, org, theirs)
+		Expect(err).NotTo(HaveOccurred())
+
+		byQuery, err := pgDriver.ListSkills(ctx, org, storage.SkillListOpts{Query: "latency"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(byQuery).To(HaveLen(1))
+		Expect(byQuery[0].Name).To(Equal("Profile API latency"))
+
+		mineOnly, err := pgDriver.ListSkills(ctx, org, storage.SkillListOpts{Author: "user-me"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mineOnly).To(HaveLen(1))
+
+		counts, err := pgDriver.CountSkills(ctx, org, "", "user-me")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(counts.Total).To(Equal(int64(2)))
+		Expect(counts.Mine).To(Equal(int64(1)))
 	})
 
 	It("appends and lists immutable versions with a monotonic number", func() {
 		org := newTestOrgID()
-		_, err := pgDriver.UpsertSkill(ctx, org, newRec())
+		rec := newRec()
+		_, err := pgDriver.UpsertSkill(ctx, org, rec)
 		Expect(err).NotTo(HaveOccurred())
 
-		n, err := pgDriver.NextSkillVersionNumber(ctx, org, "debug-react-hooks")
+		n, err := pgDriver.NextSkillVersionNumber(ctx, org, rec.ID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(n).To(Equal(1))
 
 		now := time.Now().UTC().Truncate(time.Microsecond)
 		v1, err := pgDriver.CreateSkillVersion(ctx, org, storage.SkillVersionRecord{
-			SkillSlug: "debug-react-hooks", VersionNumber: 1, Semver: "0.1.0",
+			SkillID: rec.ID, VersionNumber: 1, Semver: "0.1.0",
 			Changelog: "first", Content: "# v1", AuthorSubject: "user-123", PublishedAt: now,
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(v1.VersionNumber).To(Equal(1))
 
-		n, err = pgDriver.NextSkillVersionNumber(ctx, org, "debug-react-hooks")
+		n, err = pgDriver.NextSkillVersionNumber(ctx, org, rec.ID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(n).To(Equal(2))
 
 		_, err = pgDriver.CreateSkillVersion(ctx, org, storage.SkillVersionRecord{
-			SkillSlug: "debug-react-hooks", VersionNumber: 2, Semver: "0.1.1",
+			SkillID: rec.ID, VersionNumber: 2, Semver: "0.1.1",
 			Changelog: "second", Content: "# v2", PublishedAt: now,
 		})
 		Expect(err).NotTo(HaveOccurred())
 
-		vers, err := pgDriver.ListSkillVersions(ctx, org, "debug-react-hooks")
+		vers, err := pgDriver.ListSkillVersions(ctx, org, rec.ID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(vers).To(HaveLen(2))
 		Expect(vers[0].VersionNumber).To(Equal(2), "newest first")

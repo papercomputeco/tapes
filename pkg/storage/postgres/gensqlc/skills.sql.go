@@ -11,10 +11,45 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countSkills = `-- name: CountSkills :one
+SELECT
+    COUNT(*)::bigint AS total,
+    COUNT(*) FILTER (WHERE author_subject = $1)::bigint AS mine
+FROM skills
+WHERE org_id = $2
+  AND (
+    $3::text IS NULL
+    OR name ILIKE '%' || $3::text || '%'
+    OR description ILIKE '%' || $3::text || '%'
+    OR EXISTS (SELECT 1 FROM unnest(tags) tag WHERE tag ILIKE '%' || $3::text || '%')
+  )
+`
+
+type CountSkillsParams struct {
+	Author string
+	OrgID  pgtype.UUID
+	Query  pgtype.Text
+}
+
+type CountSkillsRow struct {
+	Total int64
+	Mine  int64
+}
+
+// Tab counts for the current search: total matching, and how many are authored
+// by the caller. "team" is derived client-side as total - mine. Counts ignore
+// scope and cursor so every tab shows its full size for the active query.
+func (q *Queries) CountSkills(ctx context.Context, arg CountSkillsParams) (CountSkillsRow, error) {
+	row := q.db.QueryRow(ctx, countSkills, arg.Author, arg.OrgID, arg.Query)
+	var i CountSkillsRow
+	err := row.Scan(&i.Total, &i.Mine)
+	return i, err
+}
+
 const createSkillVersion = `-- name: CreateSkillVersion :one
 INSERT INTO skill_versions (
     org_id,
-    skill_slug,
+    skill_id,
     version_number,
     semver,
     changelog,
@@ -31,12 +66,12 @@ INSERT INTO skill_versions (
     $7,
     $8
 )
-RETURNING org_id, skill_slug, version_number, semver, changelog, content, author_subject, published_at
+RETURNING org_id, version_number, semver, changelog, content, author_subject, published_at, skill_id
 `
 
 type CreateSkillVersionParams struct {
 	OrgID         pgtype.UUID
-	SkillSlug     string
+	SkillID       pgtype.UUID
 	VersionNumber int32
 	Semver        string
 	Changelog     string
@@ -49,7 +84,7 @@ type CreateSkillVersionParams struct {
 func (q *Queries) CreateSkillVersion(ctx context.Context, arg CreateSkillVersionParams) (SkillVersion, error) {
 	row := q.db.QueryRow(ctx, createSkillVersion,
 		arg.OrgID,
-		arg.SkillSlug,
+		arg.SkillID,
 		arg.VersionNumber,
 		arg.Semver,
 		arg.Changelog,
@@ -60,31 +95,31 @@ func (q *Queries) CreateSkillVersion(ctx context.Context, arg CreateSkillVersion
 	var i SkillVersion
 	err := row.Scan(
 		&i.OrgID,
-		&i.SkillSlug,
 		&i.VersionNumber,
 		&i.Semver,
 		&i.Changelog,
 		&i.Content,
 		&i.AuthorSubject,
 		&i.PublishedAt,
+		&i.SkillID,
 	)
 	return i, err
 }
 
 const deleteSkill = `-- name: DeleteSkill :execrows
 DELETE FROM skills
-WHERE org_id = $1 AND slug = $2
+WHERE org_id = $1 AND id = $2
 `
 
 type DeleteSkillParams struct {
 	OrgID pgtype.UUID
-	Slug  string
+	ID    pgtype.UUID
 }
 
-// Remove a skill by its org-scoped slug. Returns the affected row count so the
-// handler can distinguish a real delete from a missing slug.
+// Remove a skill by its org-scoped id. Returns the affected row count so the
+// handler can distinguish a real delete from a missing id.
 func (q *Queries) DeleteSkill(ctx context.Context, arg DeleteSkillParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteSkill, arg.OrgID, arg.Slug)
+	result, err := q.db.Exec(ctx, deleteSkill, arg.OrgID, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -93,34 +128,34 @@ func (q *Queries) DeleteSkill(ctx context.Context, arg DeleteSkillParams) (int64
 
 const deleteSkillVersions = `-- name: DeleteSkillVersions :exec
 DELETE FROM skill_versions
-WHERE org_id = $1 AND skill_slug = $2
+WHERE org_id = $1 AND skill_id = $2
 `
 
 type DeleteSkillVersionsParams struct {
-	OrgID     pgtype.UUID
-	SkillSlug string
+	OrgID   pgtype.UUID
+	SkillID pgtype.UUID
 }
 
 // Remove a skill's published history. skill_versions has no FK cascade to
 // skills, so deleting a skill must drop its versions explicitly.
 func (q *Queries) DeleteSkillVersions(ctx context.Context, arg DeleteSkillVersionsParams) error {
-	_, err := q.db.Exec(ctx, deleteSkillVersions, arg.OrgID, arg.SkillSlug)
+	_, err := q.db.Exec(ctx, deleteSkillVersions, arg.OrgID, arg.SkillID)
 	return err
 }
 
-const getSkillBySlug = `-- name: GetSkillBySlug :one
-SELECT org_id, slug, name, description, type, version, visibility, tags, content, is_ai_generated, generated_from_session_ids, parent_slug, created_at, updated_at, author_subject, download_count FROM skills
-WHERE org_id = $1 AND slug = $2
+const getSkillByID = `-- name: GetSkillByID :one
+SELECT org_id, slug, name, description, type, version, visibility, tags, content, is_ai_generated, generated_from_session_ids, created_at, updated_at, author_subject, download_count, id, parent_id FROM skills
+WHERE org_id = $1 AND id = $2
 `
 
-type GetSkillBySlugParams struct {
+type GetSkillByIDParams struct {
 	OrgID pgtype.UUID
-	Slug  string
+	ID    pgtype.UUID
 }
 
-// Org-scoped point read used by GET /v1/skills/:slug.
-func (q *Queries) GetSkillBySlug(ctx context.Context, arg GetSkillBySlugParams) (Skill, error) {
-	row := q.db.QueryRow(ctx, getSkillBySlug, arg.OrgID, arg.Slug)
+// Org-scoped point read used by GET /v1/skills/:id and the write handlers.
+func (q *Queries) GetSkillByID(ctx context.Context, arg GetSkillByIDParams) (Skill, error) {
+	row := q.db.QueryRow(ctx, getSkillByID, arg.OrgID, arg.ID)
 	var i Skill
 	err := row.Scan(
 		&i.OrgID,
@@ -134,44 +169,45 @@ func (q *Queries) GetSkillBySlug(ctx context.Context, arg GetSkillBySlugParams) 
 		&i.Content,
 		&i.IsAiGenerated,
 		&i.GeneratedFromSessionIds,
-		&i.ParentSlug,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AuthorSubject,
 		&i.DownloadCount,
+		&i.ID,
+		&i.ParentID,
 	)
 	return i, err
 }
 
 const incrementSkillDownloads = `-- name: IncrementSkillDownloads :exec
 UPDATE skills SET download_count = download_count + 1
-WHERE org_id = $1 AND slug = $2
+WHERE org_id = $1 AND id = $2
 `
 
 type IncrementSkillDownloadsParams struct {
 	OrgID pgtype.UUID
-	Slug  string
+	ID    pgtype.UUID
 }
 
 // Bump the real download counter when a skill's SKILL.md is downloaded.
 func (q *Queries) IncrementSkillDownloads(ctx context.Context, arg IncrementSkillDownloadsParams) error {
-	_, err := q.db.Exec(ctx, incrementSkillDownloads, arg.OrgID, arg.Slug)
+	_, err := q.db.Exec(ctx, incrementSkillDownloads, arg.OrgID, arg.ID)
 	return err
 }
 
 const listSkillVersions = `-- name: ListSkillVersions :many
-SELECT org_id, skill_slug, version_number, semver, changelog, content, author_subject, published_at FROM skill_versions
-WHERE org_id = $1 AND skill_slug = $2
+SELECT org_id, version_number, semver, changelog, content, author_subject, published_at, skill_id FROM skill_versions
+WHERE org_id = $1 AND skill_id = $2
 ORDER BY version_number DESC
 `
 
 type ListSkillVersionsParams struct {
-	OrgID     pgtype.UUID
-	SkillSlug string
+	OrgID   pgtype.UUID
+	SkillID pgtype.UUID
 }
 
 func (q *Queries) ListSkillVersions(ctx context.Context, arg ListSkillVersionsParams) ([]SkillVersion, error) {
-	rows, err := q.db.Query(ctx, listSkillVersions, arg.OrgID, arg.SkillSlug)
+	rows, err := q.db.Query(ctx, listSkillVersions, arg.OrgID, arg.SkillID)
 	if err != nil {
 		return nil, err
 	}
@@ -181,13 +217,13 @@ func (q *Queries) ListSkillVersions(ctx context.Context, arg ListSkillVersionsPa
 		var i SkillVersion
 		if err := rows.Scan(
 			&i.OrgID,
-			&i.SkillSlug,
 			&i.VersionNumber,
 			&i.Semver,
 			&i.Changelog,
 			&i.Content,
 			&i.AuthorSubject,
 			&i.PublishedAt,
+			&i.SkillID,
 		); err != nil {
 			return nil, err
 		}
@@ -199,22 +235,50 @@ func (q *Queries) ListSkillVersions(ctx context.Context, arg ListSkillVersionsPa
 	return items, nil
 }
 
-const listSkills = `-- name: ListSkills :many
-SELECT org_id, slug, name, description, type, version, visibility, tags, content, is_ai_generated, generated_from_session_ids, parent_slug, created_at, updated_at, author_subject, download_count FROM skills
+const listSkillsPage = `-- name: ListSkillsPage :many
+SELECT org_id, slug, name, description, type, version, visibility, tags, content, is_ai_generated, generated_from_session_ids, created_at, updated_at, author_subject, download_count, id, parent_id FROM skills
 WHERE org_id = $1
-ORDER BY updated_at DESC, slug DESC
-LIMIT $2
+  AND (
+    $2::text IS NULL
+    OR name ILIKE '%' || $2::text || '%'
+    OR description ILIKE '%' || $2::text || '%'
+    OR EXISTS (SELECT 1 FROM unnest(tags) tag WHERE tag ILIKE '%' || $2::text || '%')
+  )
+  AND ($3::text IS NULL OR author_subject = $3::text)
+  AND ($4::text IS NULL OR author_subject <> $4::text)
+  AND (
+    $5::timestamptz IS NULL
+    OR updated_at < $5::timestamptz
+    OR (updated_at = $5::timestamptz AND id < $6::uuid)
+  )
+ORDER BY updated_at DESC, id DESC
+LIMIT $7
 `
 
-type ListSkillsParams struct {
-	OrgID pgtype.UUID
-	Lim   int32
+type ListSkillsPageParams struct {
+	OrgID     pgtype.UUID
+	Query     pgtype.Text
+	Author    pgtype.Text
+	NotAuthor pgtype.Text
+	CursorTs  pgtype.Timestamptz
+	CursorID  pgtype.UUID
+	Lim       int32
 }
 
-// All skills for an org, newest-edited first. The console filters/sorts
-// client-side over this list, so a single capped page is sufficient.
-func (q *Queries) ListSkills(ctx context.Context, arg ListSkillsParams) ([]Skill, error) {
-	rows, err := q.db.Query(ctx, listSkills, arg.OrgID, arg.Lim)
+// One keyset page of skills for an org, newest-edited first, with optional
+// full-text search (name/description/tags) and author scope. The cursor is the
+// (updated_at, id) of the last row on the previous page; the tiebreak on id
+// keeps pagination stable when updated_at ties. Fetch lim+1 to detect has_more.
+func (q *Queries) ListSkillsPage(ctx context.Context, arg ListSkillsPageParams) ([]Skill, error) {
+	rows, err := q.db.Query(ctx, listSkillsPage,
+		arg.OrgID,
+		arg.Query,
+		arg.Author,
+		arg.NotAuthor,
+		arg.CursorTs,
+		arg.CursorID,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -234,11 +298,12 @@ func (q *Queries) ListSkills(ctx context.Context, arg ListSkillsParams) ([]Skill
 			&i.Content,
 			&i.IsAiGenerated,
 			&i.GeneratedFromSessionIds,
-			&i.ParentSlug,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.AuthorSubject,
 			&i.DownloadCount,
+			&i.ID,
+			&i.ParentID,
 		); err != nil {
 			return nil, err
 		}
@@ -253,17 +318,17 @@ func (q *Queries) ListSkills(ctx context.Context, arg ListSkillsParams) ([]Skill
 const maxSkillVersionNumber = `-- name: MaxSkillVersionNumber :one
 SELECT COALESCE(MAX(version_number), 0)::int AS max_version
 FROM skill_versions
-WHERE org_id = $1 AND skill_slug = $2
+WHERE org_id = $1 AND skill_id = $2
 `
 
 type MaxSkillVersionNumberParams struct {
-	OrgID     pgtype.UUID
-	SkillSlug string
+	OrgID   pgtype.UUID
+	SkillID pgtype.UUID
 }
 
 // Highest version_number for a skill (0 when none published yet).
 func (q *Queries) MaxSkillVersionNumber(ctx context.Context, arg MaxSkillVersionNumberParams) (int32, error) {
-	row := q.db.QueryRow(ctx, maxSkillVersionNumber, arg.OrgID, arg.SkillSlug)
+	row := q.db.QueryRow(ctx, maxSkillVersionNumber, arg.OrgID, arg.SkillID)
 	var max_version int32
 	err := row.Scan(&max_version)
 	return max_version, err
@@ -272,14 +337,14 @@ func (q *Queries) MaxSkillVersionNumber(ctx context.Context, arg MaxSkillVersion
 const setSkillVersion = `-- name: SetSkillVersion :exec
 UPDATE skills
    SET version = $1, updated_at = $2
- WHERE org_id = $3 AND slug = $4
+ WHERE org_id = $3 AND id = $4
 `
 
 type SetSkillVersionParams struct {
 	Version   string
 	UpdatedAt pgtype.Timestamptz
 	OrgID     pgtype.UUID
-	Slug      string
+	ID        pgtype.UUID
 }
 
 // Bump the skill's current published semver (and updated_at) at publish time.
@@ -288,7 +353,7 @@ func (q *Queries) SetSkillVersion(ctx context.Context, arg SetSkillVersionParams
 		arg.Version,
 		arg.UpdatedAt,
 		arg.OrgID,
-		arg.Slug,
+		arg.ID,
 	)
 	return err
 }
@@ -296,6 +361,7 @@ func (q *Queries) SetSkillVersion(ctx context.Context, arg SetSkillVersionParams
 const upsertSkill = `-- name: UpsertSkill :one
 INSERT INTO skills (
     org_id,
+    id,
     slug,
     name,
     description,
@@ -306,7 +372,7 @@ INSERT INTO skills (
     content,
     is_ai_generated,
     generated_from_session_ids,
-    parent_slug,
+    parent_id,
     author_subject,
     created_at,
     updated_at
@@ -325,10 +391,12 @@ INSERT INTO skills (
     $12,
     $13,
     $14,
-    $15
+    $15,
+    $16
 )
-ON CONFLICT (org_id, slug) DO UPDATE
-SET name                       = EXCLUDED.name,
+ON CONFLICT (org_id, id) DO UPDATE
+SET slug                       = EXCLUDED.slug,
+    name                       = EXCLUDED.name,
     description                = EXCLUDED.description,
     type                       = EXCLUDED.type,
     version                    = EXCLUDED.version,
@@ -337,13 +405,14 @@ SET name                       = EXCLUDED.name,
     content                    = EXCLUDED.content,
     is_ai_generated            = EXCLUDED.is_ai_generated,
     generated_from_session_ids = EXCLUDED.generated_from_session_ids,
-    parent_slug                = EXCLUDED.parent_slug,
+    parent_id                  = EXCLUDED.parent_id,
     updated_at                 = EXCLUDED.updated_at
-RETURNING org_id, slug, name, description, type, version, visibility, tags, content, is_ai_generated, generated_from_session_ids, parent_slug, created_at, updated_at, author_subject, download_count
+RETURNING org_id, slug, name, description, type, version, visibility, tags, content, is_ai_generated, generated_from_session_ids, created_at, updated_at, author_subject, download_count, id, parent_id
 `
 
 type UpsertSkillParams struct {
 	OrgID                   pgtype.UUID
+	ID                      pgtype.UUID
 	Slug                    string
 	Name                    string
 	Description             string
@@ -354,18 +423,21 @@ type UpsertSkillParams struct {
 	Content                 string
 	IsAiGenerated           bool
 	GeneratedFromSessionIds []string
-	ParentSlug              pgtype.Text
+	ParentID                pgtype.UUID
 	AuthorSubject           string
 	CreatedAt               pgtype.Timestamptz
 	UpdatedAt               pgtype.Timestamptz
 }
 
-// Insert-or-replace a skill keyed by (org_id, slug). Generate creates it and
-// PUT saves edits through the same path; created_at and author_subject are
+// Insert-or-replace a skill keyed by (org_id, id). Create/generate/duplicate
+// mint a fresh id (a plain insert); PUT and publish pass the existing id (an
+// update). slug is a cosmetic, non-unique display label, so it is overwritten
+// on update like any other mutable field. created_at and author_subject are
 // preserved on conflict (original creation time and creator stay authoritative).
 func (q *Queries) UpsertSkill(ctx context.Context, arg UpsertSkillParams) (Skill, error) {
 	row := q.db.QueryRow(ctx, upsertSkill,
 		arg.OrgID,
+		arg.ID,
 		arg.Slug,
 		arg.Name,
 		arg.Description,
@@ -376,7 +448,7 @@ func (q *Queries) UpsertSkill(ctx context.Context, arg UpsertSkillParams) (Skill
 		arg.Content,
 		arg.IsAiGenerated,
 		arg.GeneratedFromSessionIds,
-		arg.ParentSlug,
+		arg.ParentID,
 		arg.AuthorSubject,
 		arg.CreatedAt,
 		arg.UpdatedAt,
@@ -394,11 +466,12 @@ func (q *Queries) UpsertSkill(ctx context.Context, arg UpsertSkillParams) (Skill
 		&i.Content,
 		&i.IsAiGenerated,
 		&i.GeneratedFromSessionIds,
-		&i.ParentSlug,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AuthorSubject,
 		&i.DownloadCount,
+		&i.ID,
+		&i.ParentID,
 	)
 	return i, err
 }

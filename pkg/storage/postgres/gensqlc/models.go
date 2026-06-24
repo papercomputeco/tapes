@@ -111,22 +111,23 @@ type Skill struct {
 	Content                 string
 	IsAiGenerated           bool
 	GeneratedFromSessionIds []string
-	ParentSlug              pgtype.Text
 	CreatedAt               pgtype.Timestamptz
 	UpdatedAt               pgtype.Timestamptz
 	AuthorSubject           string
 	DownloadCount           int64
+	ID                      pgtype.UUID
+	ParentID                pgtype.UUID
 }
 
 type SkillVersion struct {
 	OrgID         pgtype.UUID
-	SkillSlug     string
 	VersionNumber int32
 	Semver        string
 	Changelog     string
 	Content       string
 	AuthorSubject string
 	PublishedAt   pgtype.Timestamptz
+	SkillID       pgtype.UUID
 }
 
 // Derived span-link projection schema version 2026-06-15.

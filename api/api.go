@@ -90,18 +90,19 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	app.Get("/v1/search/spans", s.handleSearchSpansEndpoint)
 
 	// Skills: generate from sessions, persist, edit, version, duplicate, and
-	// render a drop-in SKILL.md. Literal/sub-path routes are registered before
-	// the bare /:slug param routes so they aren't captured as a slug.
+	// render a drop-in SKILL.md. Skills are keyed on an opaque id (the route
+	// key, mirroring sessions); slug is a cosmetic label. Literal/sub-path routes
+	// are registered before the bare /:id param routes so they aren't captured.
 	app.Get("/v1/skills", s.handleListSkills)
 	app.Post("/v1/skills", s.handleCreateSkill)
 	app.Post("/v1/skills/generate", s.handleGenerateSkill)
-	app.Get("/v1/skills/:slug/skill.md", s.handleSkillMarkdown)
-	app.Get("/v1/skills/:slug/versions", s.handleListSkillVersions)
-	app.Post("/v1/skills/:slug/versions", s.handlePublishSkill)
-	app.Post("/v1/skills/:slug/duplicate", s.handleDuplicateSkill)
-	app.Put("/v1/skills/:slug", s.handleUpdateSkill)
-	app.Delete("/v1/skills/:slug", s.handleDeleteSkill)
-	app.Get("/v1/skills/:slug", s.handleGetSkill)
+	app.Get("/v1/skills/:id/skill.md", s.handleSkillMarkdown)
+	app.Get("/v1/skills/:id/versions", s.handleListSkillVersions)
+	app.Post("/v1/skills/:id/versions", s.handlePublishSkill)
+	app.Post("/v1/skills/:id/duplicate", s.handleDuplicateSkill)
+	app.Put("/v1/skills/:id", s.handleUpdateSkill)
+	app.Delete("/v1/skills/:id", s.handleDeleteSkill)
+	app.Get("/v1/skills/:id", s.handleGetSkill)
 
 	app.Post("/v1/admin/seed/demo", s.handleSeedDemo)
 	app.Post("/v1/admin/backfill/usage", s.handleBackfillUsage)
