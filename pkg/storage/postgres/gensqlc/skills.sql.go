@@ -11,8 +11,68 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createSkillVersion = `-- name: CreateSkillVersion :one
+INSERT INTO skill_versions (
+    org_id,
+    skill_slug,
+    version_number,
+    semver,
+    changelog,
+    content,
+    author_subject,
+    published_at
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8
+)
+RETURNING org_id, skill_slug, version_number, semver, changelog, content, author_subject, published_at
+`
+
+type CreateSkillVersionParams struct {
+	OrgID         pgtype.UUID
+	SkillSlug     string
+	VersionNumber int32
+	Semver        string
+	Changelog     string
+	Content       string
+	AuthorSubject string
+	PublishedAt   pgtype.Timestamptz
+}
+
+// Append an immutable published snapshot of a skill's content.
+func (q *Queries) CreateSkillVersion(ctx context.Context, arg CreateSkillVersionParams) (SkillVersion, error) {
+	row := q.db.QueryRow(ctx, createSkillVersion,
+		arg.OrgID,
+		arg.SkillSlug,
+		arg.VersionNumber,
+		arg.Semver,
+		arg.Changelog,
+		arg.Content,
+		arg.AuthorSubject,
+		arg.PublishedAt,
+	)
+	var i SkillVersion
+	err := row.Scan(
+		&i.OrgID,
+		&i.SkillSlug,
+		&i.VersionNumber,
+		&i.Semver,
+		&i.Changelog,
+		&i.Content,
+		&i.AuthorSubject,
+		&i.PublishedAt,
+	)
+	return i, err
+}
+
 const getSkillBySlug = `-- name: GetSkillBySlug :one
-SELECT org_id, slug, name, description, type, version, visibility, tags, content, is_ai_generated, generated_from_session_ids, parent_slug, created_at, updated_at FROM skills
+SELECT org_id, slug, name, description, type, version, visibility, tags, content, is_ai_generated, generated_from_session_ids, parent_slug, created_at, updated_at, author_subject, download_count FROM skills
 WHERE org_id = $1 AND slug = $2
 `
 
@@ -40,8 +100,160 @@ func (q *Queries) GetSkillBySlug(ctx context.Context, arg GetSkillBySlugParams) 
 		&i.ParentSlug,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AuthorSubject,
+		&i.DownloadCount,
 	)
 	return i, err
+}
+
+const incrementSkillDownloads = `-- name: IncrementSkillDownloads :exec
+UPDATE skills SET download_count = download_count + 1
+WHERE org_id = $1 AND slug = $2
+`
+
+type IncrementSkillDownloadsParams struct {
+	OrgID pgtype.UUID
+	Slug  string
+}
+
+// Bump the real download counter when a skill's SKILL.md is downloaded.
+func (q *Queries) IncrementSkillDownloads(ctx context.Context, arg IncrementSkillDownloadsParams) error {
+	_, err := q.db.Exec(ctx, incrementSkillDownloads, arg.OrgID, arg.Slug)
+	return err
+}
+
+const listSkillVersions = `-- name: ListSkillVersions :many
+SELECT org_id, skill_slug, version_number, semver, changelog, content, author_subject, published_at FROM skill_versions
+WHERE org_id = $1 AND skill_slug = $2
+ORDER BY version_number DESC
+`
+
+type ListSkillVersionsParams struct {
+	OrgID     pgtype.UUID
+	SkillSlug string
+}
+
+func (q *Queries) ListSkillVersions(ctx context.Context, arg ListSkillVersionsParams) ([]SkillVersion, error) {
+	rows, err := q.db.Query(ctx, listSkillVersions, arg.OrgID, arg.SkillSlug)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SkillVersion
+	for rows.Next() {
+		var i SkillVersion
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.SkillSlug,
+			&i.VersionNumber,
+			&i.Semver,
+			&i.Changelog,
+			&i.Content,
+			&i.AuthorSubject,
+			&i.PublishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSkills = `-- name: ListSkills :many
+SELECT org_id, slug, name, description, type, version, visibility, tags, content, is_ai_generated, generated_from_session_ids, parent_slug, created_at, updated_at, author_subject, download_count FROM skills
+WHERE org_id = $1
+ORDER BY updated_at DESC, slug DESC
+LIMIT $2
+`
+
+type ListSkillsParams struct {
+	OrgID pgtype.UUID
+	Lim   int32
+}
+
+// All skills for an org, newest-edited first. The console filters/sorts
+// client-side over this list, so a single capped page is sufficient.
+func (q *Queries) ListSkills(ctx context.Context, arg ListSkillsParams) ([]Skill, error) {
+	rows, err := q.db.Query(ctx, listSkills, arg.OrgID, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Skill
+	for rows.Next() {
+		var i Skill
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.Slug,
+			&i.Name,
+			&i.Description,
+			&i.Type,
+			&i.Version,
+			&i.Visibility,
+			&i.Tags,
+			&i.Content,
+			&i.IsAiGenerated,
+			&i.GeneratedFromSessionIds,
+			&i.ParentSlug,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AuthorSubject,
+			&i.DownloadCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const maxSkillVersionNumber = `-- name: MaxSkillVersionNumber :one
+SELECT COALESCE(MAX(version_number), 0)::int AS max_version
+FROM skill_versions
+WHERE org_id = $1 AND skill_slug = $2
+`
+
+type MaxSkillVersionNumberParams struct {
+	OrgID     pgtype.UUID
+	SkillSlug string
+}
+
+// Highest version_number for a skill (0 when none published yet).
+func (q *Queries) MaxSkillVersionNumber(ctx context.Context, arg MaxSkillVersionNumberParams) (int32, error) {
+	row := q.db.QueryRow(ctx, maxSkillVersionNumber, arg.OrgID, arg.SkillSlug)
+	var max_version int32
+	err := row.Scan(&max_version)
+	return max_version, err
+}
+
+const setSkillVersion = `-- name: SetSkillVersion :exec
+UPDATE skills
+   SET version = $1, updated_at = $2
+ WHERE org_id = $3 AND slug = $4
+`
+
+type SetSkillVersionParams struct {
+	Version   string
+	UpdatedAt pgtype.Timestamptz
+	OrgID     pgtype.UUID
+	Slug      string
+}
+
+// Bump the skill's current published semver (and updated_at) at publish time.
+func (q *Queries) SetSkillVersion(ctx context.Context, arg SetSkillVersionParams) error {
+	_, err := q.db.Exec(ctx, setSkillVersion,
+		arg.Version,
+		arg.UpdatedAt,
+		arg.OrgID,
+		arg.Slug,
+	)
+	return err
 }
 
 const upsertSkill = `-- name: UpsertSkill :one
@@ -58,6 +270,7 @@ INSERT INTO skills (
     is_ai_generated,
     generated_from_session_ids,
     parent_slug,
+    author_subject,
     created_at,
     updated_at
 ) VALUES (
@@ -74,7 +287,8 @@ INSERT INTO skills (
     $11,
     $12,
     $13,
-    $14
+    $14,
+    $15
 )
 ON CONFLICT (org_id, slug) DO UPDATE
 SET name                       = EXCLUDED.name,
@@ -88,7 +302,7 @@ SET name                       = EXCLUDED.name,
     generated_from_session_ids = EXCLUDED.generated_from_session_ids,
     parent_slug                = EXCLUDED.parent_slug,
     updated_at                 = EXCLUDED.updated_at
-RETURNING org_id, slug, name, description, type, version, visibility, tags, content, is_ai_generated, generated_from_session_ids, parent_slug, created_at, updated_at
+RETURNING org_id, slug, name, description, type, version, visibility, tags, content, is_ai_generated, generated_from_session_ids, parent_slug, created_at, updated_at, author_subject, download_count
 `
 
 type UpsertSkillParams struct {
@@ -104,13 +318,14 @@ type UpsertSkillParams struct {
 	IsAiGenerated           bool
 	GeneratedFromSessionIds []string
 	ParentSlug              pgtype.Text
+	AuthorSubject           string
 	CreatedAt               pgtype.Timestamptz
 	UpdatedAt               pgtype.Timestamptz
 }
 
-// Insert-or-replace a skill keyed by (org_id, slug). Generate calls this with
-// the freshly extracted skill; re-generating the same slug overwrites the
-// mutable fields and bumps updated_at. created_at is preserved on conflict.
+// Insert-or-replace a skill keyed by (org_id, slug). Generate creates it and
+// PUT saves edits through the same path; created_at and author_subject are
+// preserved on conflict (original creation time and creator stay authoritative).
 func (q *Queries) UpsertSkill(ctx context.Context, arg UpsertSkillParams) (Skill, error) {
 	row := q.db.QueryRow(ctx, upsertSkill,
 		arg.OrgID,
@@ -125,6 +340,7 @@ func (q *Queries) UpsertSkill(ctx context.Context, arg UpsertSkillParams) (Skill
 		arg.IsAiGenerated,
 		arg.GeneratedFromSessionIds,
 		arg.ParentSlug,
+		arg.AuthorSubject,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -144,6 +360,8 @@ func (q *Queries) UpsertSkill(ctx context.Context, arg UpsertSkillParams) (Skill
 		&i.ParentSlug,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AuthorSubject,
+		&i.DownloadCount,
 	)
 	return i, err
 }

@@ -19,6 +19,26 @@ type SkillRecord struct {
 	IsAIGenerated           bool
 	GeneratedFromSessionIDs []string
 	ParentSlug              string // empty when not a fork
-	CreatedAt               time.Time
-	UpdatedAt               time.Time
+	// AuthorSubject is the WorkOS user id (JWT sub) of the creator, stamped
+	// from the gateway-trusted x-paper-auth-subject header the same way
+	// sessions.auth_subject is captured. Empty when no header was present.
+	AuthorSubject string
+	// DownloadCount is a real usage signal — how many times the SKILL.md has
+	// been downloaded.
+	DownloadCount int64
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+// SkillVersionRecord is one immutable published snapshot of a skill's content.
+// The skill's working/current content lives on SkillRecord.Content; versions
+// are history only.
+type SkillVersionRecord struct {
+	SkillSlug     string
+	VersionNumber int
+	Semver        string
+	Changelog     string
+	Content       string
+	AuthorSubject string
+	PublishedAt   time.Time
 }

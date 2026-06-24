@@ -114,6 +114,19 @@ type Skill struct {
 	ParentSlug              pgtype.Text
 	CreatedAt               pgtype.Timestamptz
 	UpdatedAt               pgtype.Timestamptz
+	AuthorSubject           string
+	DownloadCount           int64
+}
+
+type SkillVersion struct {
+	OrgID         pgtype.UUID
+	SkillSlug     string
+	VersionNumber int32
+	Semver        string
+	Changelog     string
+	Content       string
+	AuthorSubject string
+	PublishedAt   pgtype.Timestamptz
 }
 
 // Derived span-link projection schema version 2026-06-15.

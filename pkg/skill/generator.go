@@ -98,8 +98,12 @@ func (g *Generator) Generate(ctx context.Context, sessionIDs []string, name, ski
 			continue
 		}
 
-		// Override with caller-supplied values
-		skill.Name = name
+		// Use the caller-supplied name when given; otherwise keep the LLM's
+		// suggested name (the slug/identifier is derived from it downstream).
+		if strings.TrimSpace(name) != "" {
+			skill.Name = name
+		}
+		skill.Name = strings.TrimSpace(skill.Name)
 		skill.Type = skillType
 		skill.Sessions = sessionIDs
 		skill.Version = "0.1.0"
@@ -112,9 +116,17 @@ func (g *Generator) Generate(ctx context.Context, sessionIDs []string, name, ski
 }
 
 func buildSkillPrompt(transcript, name, skillType string) string {
+	// When the caller supplies a name we pin it; otherwise we ask the model to
+	// suggest a short human-readable title (the slug is derived from it).
+	nameInstruction := fmt.Sprintf("The skill should be named %q and categorized as %q.", name, skillType)
+	nameField := ""
+	if strings.TrimSpace(name) == "" {
+		nameInstruction = fmt.Sprintf("Categorize the skill as %q and suggest a concise, descriptive name for it.", skillType)
+		nameField = "  \"name\": \"a short human-readable skill title, e.g. Diagnose Flaky Tests\",\n"
+	}
 	return fmt.Sprintf(`Analyze the following LLM coding session transcript(s) and extract a reusable skill.
 
-The skill should be named %q and categorized as %q.
+%s
 
 Transcript format: [user] lines are the human's prompts, [assistant]
 lines are the agent's responses, and [tools] lines summarize the tools
@@ -123,7 +135,7 @@ the agent invoked between responses.
 Return ONLY valid JSON with these fields:
 
 {
-  "description": "A clear description with trigger phrases for when Claude should use this skill. Start with an action verb.",
+%s  "description": "A clear description with trigger phrases for when an agent should use this skill. Start with an action verb.",
   "tags": ["array", "of", "relevant", "tags"],
   "content": "Markdown body with step-by-step instructions in imperative form. Use ## headers and numbered steps."
 }
@@ -137,7 +149,7 @@ Guidelines for extraction:
 - Include any important caveats or edge cases observed
 
 Transcript(s):
-%s`, name, skillType, transcript)
+%s`, nameInstruction, nameField, transcript)
 }
 
 func parseSkillResponse(response string) (*Skill, error) {

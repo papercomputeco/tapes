@@ -31,6 +31,8 @@ var _ = Describe("Driver skills persistence", func() {
 		Expect(ok).To(BeTrue())
 		_, err = pgDriver.DB().Exec(ctx, "TRUNCATE TABLE skills")
 		Expect(err).NotTo(HaveOccurred())
+		_, err = pgDriver.DB().Exec(ctx, "TRUNCATE TABLE skill_versions")
+		Expect(err).NotTo(HaveOccurred())
 	})
 
 	AfterEach(func() {
@@ -52,6 +54,7 @@ var _ = Describe("Driver skills persistence", func() {
 			Content:                 "# body",
 			IsAIGenerated:           true,
 			GeneratedFromSessionIDs: []string{"sess-1", "sess-2"},
+			AuthorSubject:           "user-123",
 			CreatedAt:               now,
 			UpdatedAt:               now,
 		}
@@ -102,5 +105,62 @@ var _ = Describe("Driver skills persistence", func() {
 		got, err := pgDriver.GetSkill(ctx, newTestOrgID(), "nope")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got).To(BeNil())
+	})
+
+	It("round-trips the author subject", func() {
+		org := newTestOrgID()
+		_, err := pgDriver.UpsertSkill(ctx, org, newRec())
+		Expect(err).NotTo(HaveOccurred())
+		got, err := pgDriver.GetSkill(ctx, org, "debug-react-hooks")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.AuthorSubject).To(Equal("user-123"))
+	})
+
+	It("lists skills for the org", func() {
+		org := newTestOrgID()
+		_, err := pgDriver.UpsertSkill(ctx, org, newRec())
+		Expect(err).NotTo(HaveOccurred())
+		second := newRec()
+		second.Slug = "another-skill"
+		_, err = pgDriver.UpsertSkill(ctx, org, second)
+		Expect(err).NotTo(HaveOccurred())
+
+		list, err := pgDriver.ListSkills(ctx, org, 0)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(list).To(HaveLen(2))
+		Expect(pgDriver.ListSkills(ctx, newTestOrgID(), 0)).To(BeEmpty(), "scoped to the org")
+	})
+
+	It("appends and lists immutable versions with a monotonic number", func() {
+		org := newTestOrgID()
+		_, err := pgDriver.UpsertSkill(ctx, org, newRec())
+		Expect(err).NotTo(HaveOccurred())
+
+		n, err := pgDriver.NextSkillVersionNumber(ctx, org, "debug-react-hooks")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(n).To(Equal(1))
+
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		v1, err := pgDriver.CreateSkillVersion(ctx, org, storage.SkillVersionRecord{
+			SkillSlug: "debug-react-hooks", VersionNumber: 1, Semver: "0.1.0",
+			Changelog: "first", Content: "# v1", AuthorSubject: "user-123", PublishedAt: now,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(v1.VersionNumber).To(Equal(1))
+
+		n, err = pgDriver.NextSkillVersionNumber(ctx, org, "debug-react-hooks")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(n).To(Equal(2))
+
+		_, err = pgDriver.CreateSkillVersion(ctx, org, storage.SkillVersionRecord{
+			SkillSlug: "debug-react-hooks", VersionNumber: 2, Semver: "0.1.1",
+			Changelog: "second", Content: "# v2", PublishedAt: now,
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		vers, err := pgDriver.ListSkillVersions(ctx, org, "debug-react-hooks")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vers).To(HaveLen(2))
+		Expect(vers[0].VersionNumber).To(Equal(2), "newest first")
 	})
 })
