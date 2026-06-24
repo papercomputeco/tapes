@@ -85,6 +85,20 @@ func (d *skillsStubDriver) ListSkills(_ context.Context, orgID string, opts stor
 	return out, nil
 }
 
+func (d *skillsStubDriver) ListSkillsBySession(_ context.Context, orgID, sessionID string) ([]storage.SkillRecord, error) {
+	d.lastOrg = orgID
+	out := make([]storage.SkillRecord, 0)
+	for _, r := range d.skills {
+		for _, sid := range r.GeneratedFromSessionIDs {
+			if sid == sessionID {
+				out = append(out, r)
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
 func (d *skillsStubDriver) CountSkills(_ context.Context, orgID, _, author string) (storage.SkillCounts, error) {
 	d.lastOrg = orgID
 	counts := storage.SkillCounts{Total: int64(len(d.skills))}
@@ -206,6 +220,23 @@ var _ = Describe("Skills handlers", func() {
 		Expect(status).To(Equal(fiber.StatusOK))
 		items, _ := body["items"].([]any)
 		Expect(items).To(HaveLen(1))
+	})
+
+	It("lists the skills generated from a session", func() {
+		stub := newSkillsStub()
+		seedStubSkill(stub, "from-sess") // GeneratedFromSessionIDs: ["sess-1"]
+		seedStubSkill(stub, "unrelated")
+		unrelated := stub.skills["unrelated"]
+		unrelated.GeneratedFromSessionIDs = []string{"sess-other"}
+		stub.skills["unrelated"] = unrelated
+		server := newSkillsServer(stub)
+
+		body, status := doJSON(server, http.MethodGet, "/v1/sessions/sess-1/skills", "", "", "")
+		Expect(status).To(Equal(fiber.StatusOK))
+		items, _ := body["items"].([]any)
+		Expect(items).To(HaveLen(1))
+		first, _ := items[0].(map[string]any)
+		Expect(first).To(HaveKeyWithValue("id", "from-sess"))
 	})
 
 	It("rejects generate with no sessionIds before touching storage", func() {

@@ -25,6 +25,7 @@ type skillStore interface {
 	UpsertSkill(ctx context.Context, orgID string, rec storage.SkillRecord) (*storage.SkillRecord, error)
 	GetSkill(ctx context.Context, orgID, id string) (*storage.SkillRecord, error)
 	ListSkills(ctx context.Context, orgID string, opts storage.SkillListOpts) ([]storage.SkillRecord, error)
+	ListSkillsBySession(ctx context.Context, orgID, sessionID string) ([]storage.SkillRecord, error)
 	CountSkills(ctx context.Context, orgID, query, author string) (storage.SkillCounts, error)
 	NextSkillVersionNumber(ctx context.Context, orgID, skillID string) (int, error)
 	CreateSkillVersion(ctx context.Context, orgID string, rec storage.SkillVersionRecord) (*storage.SkillVersionRecord, error)
@@ -39,11 +40,14 @@ const (
 	maxSkillsLimit     = 100
 )
 
-// skillsCursor is the opaque keyset cursor for the skills list, keyed on the
-// (updated_at, id) of the last row on the previous page — the same shape and
-// base64(JSON) encoding sessions use.
+// skillsCursor is the opaque keyset cursor for the skills list. It carries the
+// last row's id plus both possible sort keys (updated_at and download_count);
+// the active sort decides which one the next page filters on. Same base64(JSON)
+// encoding sessions use. The console resets the cursor when the sort changes, so
+// a cursor is only ever decoded under the sort that produced it.
 type skillsCursor struct {
 	UpdatedAt time.Time `json:"ts"`
+	Downloads int64     `json:"dc"`
 	ID        string    `json:"id"`
 }
 
@@ -309,6 +313,9 @@ func (s *Server) handleListSkills(c *fiber.Ctx) error {
 
 	query := strings.TrimSpace(c.Query("q"))
 	opts := storage.SkillListOpts{Query: query, Limit: limit + 1} // +1 to detect has_more
+	if c.Query("sort") == storage.SkillSortDownloads {
+		opts.Sort = storage.SkillSortDownloads
+	}
 	switch c.Query("scope") {
 	case "mine":
 		opts.Author = subject
@@ -320,8 +327,14 @@ func (s *Server) handleListSkills(c *fiber.Ctx) error {
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
 		}
-		opts.CursorTs = &cur.UpdatedAt
 		opts.CursorID = cur.ID
+		if opts.Sort == storage.SkillSortDownloads {
+			dc := cur.Downloads
+			opts.CursorDownloads = &dc
+		} else {
+			ts := cur.UpdatedAt
+			opts.CursorTs = &ts
+		}
 	}
 
 	recs, err := store.ListSkills(c.Context(), orgID, opts)
@@ -334,7 +347,11 @@ func (s *Server) handleListSkills(c *fiber.Ctx) error {
 	if len(recs) > limit {
 		recs = recs[:limit]
 		last := recs[len(recs)-1]
-		nextCursor = encodeSkillsCursor(skillsCursor{UpdatedAt: last.UpdatedAt, ID: last.ID})
+		nextCursor = encodeSkillsCursor(skillsCursor{
+			UpdatedAt: last.UpdatedAt,
+			Downloads: last.DownloadCount,
+			ID:        last.ID,
+		})
 	}
 
 	counts, err := store.CountSkills(c.Context(), orgID, query, subject)
@@ -356,6 +373,26 @@ func (s *Server) handleListSkills(c *fiber.Ctx) error {
 			Team: counts.Total - counts.Mine,
 		},
 	})
+}
+
+// handleListSessionSkills returns the skills generated from a given session
+// (reverse lookup over provenance). Small result set, so it's unpaginated —
+// the "Skills from this session" panel renders them directly.
+func (s *Server) handleListSessionSkills(c *fiber.Ctx) error {
+	store, ok := s.skillStoreOr501(c)
+	if !ok {
+		return nil
+	}
+	recs, err := store.ListSkillsBySession(c.Context(), orgIDFromCtx(c), c.Params("id"))
+	if err != nil {
+		s.logger.Error("list session skills", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list skills"})
+	}
+	items := make([]skillResponse, len(recs))
+	for i, r := range recs {
+		items[i] = skillFromRecord(r)
+	}
+	return c.JSON(fiber.Map{"items": items})
 }
 
 // updateSkillRequest is the PUT /v1/skills/:slug body — all fields optional;

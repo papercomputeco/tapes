@@ -157,8 +157,8 @@ func skillRecordFromRow(row gensqlc.Skill) storage.SkillRecord {
 	}
 }
 
-// ListSkills returns one keyset page of skills for an org, newest-edited first,
-// honoring the optional search/scope filters and cursor in opts.
+// ListSkills returns one keyset page of skills for an org, honoring the optional
+// search/scope filters, the requested sort, and the cursor in opts.
 func (d *Driver) ListSkills(ctx context.Context, orgID string, opts storage.SkillListOpts) ([]storage.SkillRecord, error) {
 	oid, err := orgIDFromString(orgID)
 	if err != nil {
@@ -169,27 +169,67 @@ func (d *Driver) ListSkills(ctx context.Context, orgID string, opts storage.Skil
 		limit = storage.DefaultListLimit
 	}
 
-	var cursorTs pgtype.Timestamptz
 	var cursorID pgtype.UUID
-	if opts.CursorTs != nil {
-		cursorTs = pgtype.Timestamptz{Time: *opts.CursorTs, Valid: true}
+	if opts.CursorID != "" {
 		cursorID, err = skillUUID(opts.CursorID)
 		if err != nil {
 			return nil, fmt.Errorf("list skills: %w", err)
 		}
 	}
 
-	rows, err := d.q.ListSkillsPage(ctx, gensqlc.ListSkillsPageParams{
-		OrgID:     oid,
-		Query:     pgText(opts.Query),
-		Author:    pgText(opts.Author),
-		NotAuthor: pgText(opts.NotAuthor),
-		CursorTs:  cursorTs,
-		CursorID:  cursorID,
-		Lim:       int32(limit), //nolint:gosec // bounded above by the API handler
-	})
+	var rows []gensqlc.Skill
+	if opts.Sort == storage.SkillSortDownloads {
+		var cursorDownloads pgtype.Int8
+		if opts.CursorDownloads != nil {
+			cursorDownloads = pgtype.Int8{Int64: *opts.CursorDownloads, Valid: true}
+		}
+		rows, err = d.q.ListSkillsPageByDownloads(ctx, gensqlc.ListSkillsPageByDownloadsParams{
+			OrgID:           oid,
+			Query:           pgText(opts.Query),
+			Author:          pgText(opts.Author),
+			NotAuthor:       pgText(opts.NotAuthor),
+			CursorDownloads: cursorDownloads,
+			CursorID:        cursorID,
+			Lim:             int32(limit), //nolint:gosec // bounded above by the API handler
+		})
+	} else {
+		var cursorTs pgtype.Timestamptz
+		if opts.CursorTs != nil {
+			cursorTs = pgtype.Timestamptz{Time: *opts.CursorTs, Valid: true}
+		}
+		rows, err = d.q.ListSkillsPage(ctx, gensqlc.ListSkillsPageParams{
+			OrgID:     oid,
+			Query:     pgText(opts.Query),
+			Author:    pgText(opts.Author),
+			NotAuthor: pgText(opts.NotAuthor),
+			CursorTs:  cursorTs,
+			CursorID:  cursorID,
+			Lim:       int32(limit), //nolint:gosec // bounded above by the API handler
+		})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("list skills: %w", err)
+	}
+	out := make([]storage.SkillRecord, len(rows))
+	for i, row := range rows {
+		out[i] = skillRecordFromRow(row)
+	}
+	return out, nil
+}
+
+// ListSkillsBySession returns the skills generated from a given session (reverse
+// lookup over the provenance array), newest-edited first.
+func (d *Driver) ListSkillsBySession(ctx context.Context, orgID, sessionID string) ([]storage.SkillRecord, error) {
+	oid, err := orgIDFromString(orgID)
+	if err != nil {
+		return nil, fmt.Errorf("list session skills: %w", err)
+	}
+	rows, err := d.q.ListSessionSkills(ctx, gensqlc.ListSessionSkillsParams{
+		OrgID:     oid,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list session skills: %w", err)
 	}
 	out := make([]storage.SkillRecord, len(rows))
 	for i, row := range rows {

@@ -99,6 +99,35 @@ WHERE org_id = sqlc.arg(org_id)
 ORDER BY updated_at DESC, id DESC
 LIMIT sqlc.arg(lim);
 
+-- name: ListSkillsPageByDownloads :many
+-- Same as ListSkillsPage but ordered by most-downloaded. The keyset is
+-- (download_count, id); the cursor carries the last row's download_count and id.
+SELECT * FROM skills
+WHERE org_id = sqlc.arg(org_id)
+  AND (
+    sqlc.narg(query)::text IS NULL
+    OR name ILIKE '%' || sqlc.narg(query)::text || '%'
+    OR description ILIKE '%' || sqlc.narg(query)::text || '%'
+    OR EXISTS (SELECT 1 FROM unnest(tags) tag WHERE tag ILIKE '%' || sqlc.narg(query)::text || '%')
+  )
+  AND (sqlc.narg(author)::text IS NULL OR author_subject = sqlc.narg(author)::text)
+  AND (sqlc.narg(not_author)::text IS NULL OR author_subject <> sqlc.narg(not_author)::text)
+  AND (
+    sqlc.narg(cursor_downloads)::bigint IS NULL
+    OR download_count < sqlc.narg(cursor_downloads)::bigint
+    OR (download_count = sqlc.narg(cursor_downloads)::bigint AND id < sqlc.narg(cursor_id)::uuid)
+  )
+ORDER BY download_count DESC, id DESC
+LIMIT sqlc.arg(lim);
+
+-- name: ListSessionSkills :many
+-- Skills generated from a given session (reverse lookup over the provenance
+-- array), newest-edited first. Small result set, so no pagination.
+SELECT * FROM skills
+WHERE org_id = sqlc.arg(org_id)
+  AND sqlc.arg(session_id)::text = ANY(generated_from_session_ids)
+ORDER BY updated_at DESC, id DESC;
+
 -- name: CountSkills :one
 -- Tab counts for the current search: total matching, and how many are authored
 -- by the caller. "team" is derived client-side as total - mine. Counts ignore

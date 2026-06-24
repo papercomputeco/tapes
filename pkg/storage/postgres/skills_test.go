@@ -167,6 +167,42 @@ var _ = Describe("Driver skills persistence", func() {
 		Expect(counts.Mine).To(Equal(int64(1)))
 	})
 
+	It("orders the list by most-downloaded when asked", func() {
+		org := newTestOrgID()
+		low := newRec()
+		low.Name = "Low"
+		low.DownloadCount = 1
+		_, err := pgDriver.UpsertSkill(ctx, org, low)
+		Expect(err).NotTo(HaveOccurred())
+		high := newRec()
+		high.Name = "High"
+		high.DownloadCount = 9
+		_, err = pgDriver.UpsertSkill(ctx, org, high)
+		Expect(err).NotTo(HaveOccurred())
+
+		list, err := pgDriver.ListSkills(ctx, org, storage.SkillListOpts{Sort: storage.SkillSortDownloads})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(list).To(HaveLen(2))
+		Expect(list[0].Name).To(Equal("High"), "most-downloaded first")
+	})
+
+	It("lists skills generated from a session", func() {
+		org := newTestOrgID()
+		match := newRec()
+		match.GeneratedFromSessionIDs = []string{"sess-a", "sess-b"}
+		_, err := pgDriver.UpsertSkill(ctx, org, match)
+		Expect(err).NotTo(HaveOccurred())
+		other := newRec()
+		other.GeneratedFromSessionIDs = []string{"sess-c"}
+		_, err = pgDriver.UpsertSkill(ctx, org, other)
+		Expect(err).NotTo(HaveOccurred())
+
+		got, err := pgDriver.ListSkillsBySession(ctx, org, "sess-b")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(HaveLen(1))
+		Expect(got[0].ID).To(Equal(match.ID))
+	})
+
 	It("appends and lists immutable versions with a monotonic number", func() {
 		org := newTestOrgID()
 		rec := newRec()

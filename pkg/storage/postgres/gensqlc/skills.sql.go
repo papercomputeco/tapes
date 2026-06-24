@@ -195,6 +195,58 @@ func (q *Queries) IncrementSkillDownloads(ctx context.Context, arg IncrementSkil
 	return err
 }
 
+const listSessionSkills = `-- name: ListSessionSkills :many
+SELECT org_id, slug, name, description, type, version, visibility, tags, content, is_ai_generated, generated_from_session_ids, created_at, updated_at, author_subject, download_count, id, parent_id FROM skills
+WHERE org_id = $1
+  AND $2::text = ANY(generated_from_session_ids)
+ORDER BY updated_at DESC, id DESC
+`
+
+type ListSessionSkillsParams struct {
+	OrgID     pgtype.UUID
+	SessionID string
+}
+
+// Skills generated from a given session (reverse lookup over the provenance
+// array), newest-edited first. Small result set, so no pagination.
+func (q *Queries) ListSessionSkills(ctx context.Context, arg ListSessionSkillsParams) ([]Skill, error) {
+	rows, err := q.db.Query(ctx, listSessionSkills, arg.OrgID, arg.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Skill
+	for rows.Next() {
+		var i Skill
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.Slug,
+			&i.Name,
+			&i.Description,
+			&i.Type,
+			&i.Version,
+			&i.Visibility,
+			&i.Tags,
+			&i.Content,
+			&i.IsAiGenerated,
+			&i.GeneratedFromSessionIds,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AuthorSubject,
+			&i.DownloadCount,
+			&i.ID,
+			&i.ParentID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSkillVersions = `-- name: ListSkillVersions :many
 SELECT org_id, version_number, semver, changelog, content, author_subject, published_at, skill_id FROM skill_versions
 WHERE org_id = $1 AND skill_id = $2
@@ -276,6 +328,84 @@ func (q *Queries) ListSkillsPage(ctx context.Context, arg ListSkillsPageParams) 
 		arg.Author,
 		arg.NotAuthor,
 		arg.CursorTs,
+		arg.CursorID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Skill
+	for rows.Next() {
+		var i Skill
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.Slug,
+			&i.Name,
+			&i.Description,
+			&i.Type,
+			&i.Version,
+			&i.Visibility,
+			&i.Tags,
+			&i.Content,
+			&i.IsAiGenerated,
+			&i.GeneratedFromSessionIds,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AuthorSubject,
+			&i.DownloadCount,
+			&i.ID,
+			&i.ParentID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSkillsPageByDownloads = `-- name: ListSkillsPageByDownloads :many
+SELECT org_id, slug, name, description, type, version, visibility, tags, content, is_ai_generated, generated_from_session_ids, created_at, updated_at, author_subject, download_count, id, parent_id FROM skills
+WHERE org_id = $1
+  AND (
+    $2::text IS NULL
+    OR name ILIKE '%' || $2::text || '%'
+    OR description ILIKE '%' || $2::text || '%'
+    OR EXISTS (SELECT 1 FROM unnest(tags) tag WHERE tag ILIKE '%' || $2::text || '%')
+  )
+  AND ($3::text IS NULL OR author_subject = $3::text)
+  AND ($4::text IS NULL OR author_subject <> $4::text)
+  AND (
+    $5::bigint IS NULL
+    OR download_count < $5::bigint
+    OR (download_count = $5::bigint AND id < $6::uuid)
+  )
+ORDER BY download_count DESC, id DESC
+LIMIT $7
+`
+
+type ListSkillsPageByDownloadsParams struct {
+	OrgID           pgtype.UUID
+	Query           pgtype.Text
+	Author          pgtype.Text
+	NotAuthor       pgtype.Text
+	CursorDownloads pgtype.Int8
+	CursorID        pgtype.UUID
+	Lim             int32
+}
+
+// Same as ListSkillsPage but ordered by most-downloaded. The keyset is
+// (download_count, id); the cursor carries the last row's download_count and id.
+func (q *Queries) ListSkillsPageByDownloads(ctx context.Context, arg ListSkillsPageByDownloadsParams) ([]Skill, error) {
+	rows, err := q.db.Query(ctx, listSkillsPageByDownloads,
+		arg.OrgID,
+		arg.Query,
+		arg.Author,
+		arg.NotAuthor,
+		arg.CursorDownloads,
 		arg.CursorID,
 		arg.Lim,
 	)

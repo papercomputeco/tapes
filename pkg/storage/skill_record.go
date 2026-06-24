@@ -47,17 +47,25 @@ type SkillVersionRecord struct {
 	PublishedAt   time.Time
 }
 
-// SkillListOpts controls a single keyset page of skills (newest-edited first).
-// A nil CursorTs means "first page". Query, Author and NotAuthor are all
-// optional filters; an empty string disables each.
+// SkillListOpts controls a single keyset page of skills. Query, Author and
+// NotAuthor are all optional filters; an empty string disables each.
 type SkillListOpts struct {
-	Query     string     // name/description/tag search (empty = no filter)
-	Author    string     // only skills authored by this subject ("mine")
-	NotAuthor string     // exclude this subject ("team")
-	CursorTs  *time.Time // keyset: updated_at of the last row on the prior page
-	CursorID  string     // keyset tiebreak: id of that last row
-	Limit     int        // page size; zero falls back to DefaultListLimit
+	Query     string // name/description/tag search (empty = no filter)
+	Author    string // only skills authored by this subject ("mine")
+	NotAuthor string // exclude this subject ("team")
+	// Sort selects the ordering and which cursor column applies:
+	// "downloads" orders by download_count DESC (keyset on CursorDownloads);
+	// anything else orders by updated_at DESC (keyset on CursorTs). Both
+	// tiebreak on id DESC.
+	Sort            string
+	CursorTs        *time.Time // recent keyset: updated_at of the prior page's last row
+	CursorDownloads *int64     // downloads keyset: download_count of that row
+	CursorID        string     // keyset tiebreak: id of that last row
+	Limit           int        // page size; zero falls back to DefaultListLimit
 }
+
+// SkillSortDownloads is the SkillListOpts.Sort value for most-downloaded order.
+const SkillSortDownloads = "downloads"
 
 // SkillCounts are the per-tab totals for a search: every matching skill, and
 // how many the caller authored. "team" is derived as Total - Mine.
