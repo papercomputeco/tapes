@@ -219,6 +219,25 @@ var _ = Describe("Skills handlers", func() {
 		Expect(body).To(HaveKeyWithValue("parentSlug", "s"))
 	})
 
+	It("mints a distinct slug per duplicate instead of overwriting", func() {
+		// Exercises the shared uniqueSkillSlug increment path the generate
+		// handler also relies on: a second duplicate must not collide with the
+		// first (which would silently overwrite it, since skills are keyed on
+		// (org_id, slug)).
+		stub := newSkillsStub()
+		seedStubSkill(stub, "s")
+		server := newSkillsServer(stub)
+
+		first, status := doJSON(server, http.MethodPost, "/v1/skills/s/duplicate", "", "", "user-dup")
+		Expect(status).To(Equal(fiber.StatusCreated))
+		Expect(first).To(HaveKeyWithValue("slug", "s-copy"))
+
+		second, status := doJSON(server, http.MethodPost, "/v1/skills/s/duplicate", "", "", "user-dup")
+		Expect(status).To(Equal(fiber.StatusCreated))
+		Expect(second).To(HaveKeyWithValue("slug", "s-copy-2"))
+		Expect(stub.skills).To(HaveKey("s-copy"), "the first duplicate survives the second")
+	})
+
 	It("renders a drop-in SKILL.md", func() {
 		stub := newSkillsStub()
 		seedStubSkill(stub, "s")

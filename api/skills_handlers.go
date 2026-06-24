@@ -172,6 +172,16 @@ func (s *Server) handleGenerateSkill(c *fiber.Ctx) error {
 		slug = fallbackSkillName(req.SessionIDs[0])
 		displayName = slug
 	}
+	// Skills are keyed on (org_id, slug), so two generations whose names slugify
+	// the same would collide — UpsertSkill would silently overwrite the earlier
+	// skill. Mint a fresh org-unique slug instead so each generation lands on its
+	// own row (and the client navigates to the new one).
+	uniqueSlug, err := s.uniqueSkillSlug(c, store, orgIDFromCtx(c), slug)
+	if err != nil {
+		s.logger.Error("unique skill slug", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to persist skill"})
+	}
+	slug = uniqueSlug
 	rec := storage.SkillRecord{
 		Slug:                    slug,
 		Name:                    displayName,
@@ -432,9 +442,16 @@ func (s *Server) handleDuplicateSkill(c *fiber.Ctx) error {
 
 // uniqueDupSlug finds an unused "<slug>-copy[-N]" slug for a duplicate.
 func (s *Server) uniqueDupSlug(c *fiber.Ctx, store skillStore, orgID, slug string) (string, error) {
-	base := slug + "-copy"
+	return s.uniqueSkillSlug(c, store, orgID, slug+"-copy")
+}
+
+// uniqueSkillSlug returns base if it is free in the org, otherwise base-2,
+// base-3, … until an unused org-scoped slug is found. Skills are keyed on
+// (org_id, slug), so callers that UpsertSkill a new row must reserve a free
+// slug first or risk overwriting an existing skill.
+func (s *Server) uniqueSkillSlug(c *fiber.Ctx, store skillStore, orgID, base string) (string, error) {
 	candidate := base
-	for i := 2; i < 100; i++ {
+	for i := 2; i < 1000; i++ {
 		existing, err := store.GetSkill(c.Context(), orgID, candidate)
 		if err != nil {
 			return "", err
@@ -444,7 +461,7 @@ func (s *Server) uniqueDupSlug(c *fiber.Ctx, store skillStore, orgID, slug strin
 		}
 		candidate = fmt.Sprintf("%s-%d", base, i)
 	}
-	return "", fmt.Errorf("could not find a free duplicate slug for %q", slug)
+	return "", fmt.Errorf("could not find a free slug for %q", base)
 }
 
 // handleSkillMarkdown renders a drop-in SKILL.md (frontmatter + body) for the
