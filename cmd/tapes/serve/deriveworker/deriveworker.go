@@ -162,6 +162,15 @@ func NewDeriveWorkerCmd() *cobra.Command {
 func (c *deriveWorkerCommander) run(ctx context.Context) error {
 	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
 
+	// Bound the transient allocation overshoot of a large session derive
+	// to the container budget (PCC-767): the live set fits, but the
+	// per-turn re-parse churn lets the heap roughly double before GC runs,
+	// so deriving a large session can spike past the memory limit and get
+	// the worker OOM-killed. A cgroup-derived soft limit GC-paces the peak
+	// back toward the live set. No-op when GOMEMLIMIT is set or no cgroup
+	// limit exists.
+	worker.ApplySoftMemoryLimit(c.logger)
+
 	if c.postgresDSN == "" {
 		return errors.New("derive worker requires a postgres DSN (--postgres or storage.postgres_dsn)")
 	}
