@@ -223,13 +223,34 @@ func (s *Server) handleGenerateSkill(c *fiber.Ctx) error {
 	}
 	llmCaller, err := skill.NewLLMCaller(llmCfg)
 	if err != nil {
+		// Skill generation borrows the tenant's search/embedding key; a
+		// missing key means search is disabled for this tenant, not a
+		// server fault. Surface that as an actionable 422 rather than a 500.
+		if errors.Is(err, skill.ErrNoAPIKey) {
+			return c.Status(fiber.StatusUnprocessableEntity).JSON(llm.ErrorResponse{
+				Error: "skill generation requires the search/embedding feature to be enabled for this tenant",
+			})
+		}
 		s.logger.Error("configure llm for skill generation", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "llm provider not configured"})
 	}
 
-	query := skill.NewAPIClient(s.selfAPITarget())
+	// Read transcripts through an in-process, org-scoped querier rather than
+	// a loopback HTTP self-call: the self-call sent no X-Tapes-Org-Id, so in
+	// staging/prod the trace reads hit the nil-org sentinel and generated an
+	// empty skill for the real tenant.
+	query, ok := s.skillTraceQuerier(orgIDFromCtx(c))
+	if !ok {
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "skills generation not supported by this backend"})
+	}
 	sk, err := skill.NewGenerator(query, llmCaller).Generate(c.Context(), req.SessionIDs, name, skillType, nil)
 	if err != nil {
+		// A source session the tenant can't see (wrong org or absent) is a 404,
+		// not a server fault — the org-scoped querier refuses it before any LLM
+		// call, so an unknown/cross-tenant session id never reads as a 500.
+		if errors.Is(err, errSkillSessionNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "one or more source sessions were not found"})
+		}
 		s.logger.Error("generate skill", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: fmt.Sprintf("failed to generate skill: %v", err)})
 	}
@@ -730,17 +751,6 @@ func (s *Server) handleSkillMarkdown(c *fiber.Ctx) error {
 	c.Set("Content-Type", "text/markdown; charset=utf-8")
 	c.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", rec.Slug+".md"))
 	return c.SendString(skill.RenderSkillMD(sk))
-}
-
-// selfAPITarget builds the loopback base URL the generator's trace client
-// dials. ListenAddr is typically ":8081"; prefix a loopback host so the
-// address is dialable.
-func (s *Server) selfAPITarget() string {
-	addr := s.config.ListenAddr
-	if strings.HasPrefix(addr, ":") {
-		addr = "127.0.0.1" + addr
-	}
-	return "http://" + addr
 }
 
 // skillFromRecord maps the storage row to the camelCase Skill wire shape,

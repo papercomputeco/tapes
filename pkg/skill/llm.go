@@ -24,7 +24,20 @@ const (
 	providerOllama    = "ollama"
 
 	llmCallTimeout = 30 * time.Second
+
+	// llmCallRetries is the number of additional attempts on a transient
+	// provider failure (HTTP 429/502/503/504 or a transport error). One
+	// retry is enough to ride out a brief rate-limit or upstream blip
+	// without risking the handler's overall time budget.
+	llmCallRetries = 1
+	llmRetryBackoff = 500 * time.Millisecond
 )
+
+// ErrNoAPIKey is returned by NewLLMCaller when no key resolves for the
+// provider. Skill generation reuses the platform's search/embedding
+// credential, so this means the tenant has search/embedding disabled —
+// the handler maps it to a clear 4xx rather than an opaque 500.
+var ErrNoAPIKey = errors.New("no API key for skill-generation provider")
 
 // LLMCallFunc is the signature for an LLM inference call.
 type LLMCallFunc func(ctx context.Context, prompt string) (string, error)
@@ -59,7 +72,7 @@ func NewLLMCaller(cfg LLMCallerConfig) (LLMCallFunc, error) {
 	// Require an API key for non-ollama providers
 	if apiKey == "" && provider != providerOllama {
 		envVar := envVarForProvider(provider)
-		return nil, fmt.Errorf("no API key found for provider %q — set %s, use --api-key, or run 'tapes auth'", provider, envVar)
+		return nil, fmt.Errorf("%w: provider %q — set %s, use --api-key, or run 'tapes auth'", ErrNoAPIKey, provider, envVar)
 	}
 
 	switch provider {
@@ -312,8 +325,11 @@ func newOllamaCaller(model, baseURL string) LLMCallFunc {
 	}
 }
 
-// postJSON issues one JSON POST with the shared timeout and returns
-// the response body, treating any non-200 status as an error.
+// postJSON issues a JSON POST and returns the response body, retrying a
+// transient provider failure (429/502/503/504 or a transport blip) up to
+// llmCallRetries times. One timeout spans every attempt, so retries never
+// extend the handler's time budget past llmCallTimeout; a deadline or
+// cancellation stops retrying immediately.
 func postJSON(ctx context.Context, url string, reqBody any, headers map[string]string) ([]byte, error) {
 	data, err := json.Marshal(reqBody)
 	if err != nil {
@@ -323,9 +339,43 @@ func postJSON(ctx context.Context, url string, reqBody any, headers map[string]s
 	ctx, cancel := context.WithTimeout(ctx, llmCallTimeout)
 	defer cancel()
 
+	var lastErr error
+	for attempt := 0; attempt <= llmCallRetries; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(llmRetryBackoff):
+			}
+		}
+
+		body, status, err := doPostJSON(ctx, url, data, headers)
+		if err != nil {
+			lastErr = err
+			// A blown deadline or cancellation has no budget left to
+			// retry; a live-context transport blip does.
+			if ctx.Err() != nil {
+				return nil, err
+			}
+			continue
+		}
+		if status == http.StatusOK {
+			return body, nil
+		}
+		lastErr = fmt.Errorf("API error (status %d): %s", status, string(body))
+		if !isRetryableStatus(status) {
+			return nil, lastErr
+		}
+	}
+	return nil, lastErr
+}
+
+// doPostJSON performs a single POST attempt, returning the body and HTTP
+// status separately so the caller can classify retryable statuses.
+func doPostJSON(ctx context.Context, url string, data []byte, headers map[string]string) ([]byte, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+		return nil, 0, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range headers {
@@ -334,17 +384,24 @@ func postJSON(ctx context.Context, url string, reqBody any, headers map[string]s
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
+		return nil, resp.StatusCode, fmt.Errorf("read response: %w", err)
 	}
+	return body, resp.StatusCode, nil
+}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+// isRetryableStatus reports whether an HTTP status is a transient
+// provider condition worth one more attempt.
+func isRetryableStatus(status int) bool {
+	switch status {
+	case http.StatusTooManyRequests, http.StatusBadGateway,
+		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
 	}
-	return body, nil
+	return false
 }

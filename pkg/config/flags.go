@@ -48,6 +48,7 @@ const (
 	FlagEmbeddingTgt        = "embedding-target"
 	FlagEmbeddingModel      = "embedding-model"
 	FlagEmbeddingDims       = "embedding-dimensions"
+	FlagSkillModel          = "skill-model"
 	FlagAPITarget           = "api-target"
 	FlagProxyTarget         = "proxy-target"
 	FlagKafkaBrokers        = "kafka-brokers"
