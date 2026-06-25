@@ -8,11 +8,16 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres/gensqlc"
 )
+
+// pgUniqueViolation is the Postgres SQLSTATE for a unique-constraint breach
+// (23505), used to turn a duplicate skill-version insert into a typed conflict.
+const pgUniqueViolation = "23505"
 
 // skillUUID parses a skill/parent id string into a pgtype.UUID. An empty string
 // yields an invalid (NULL) value so optional ids (parent_id) round-trip cleanly.
@@ -117,19 +122,32 @@ func (d *Driver) DeleteSkill(ctx context.Context, orgID, id string) (bool, error
 	if err != nil || !sid.Valid {
 		return false, nil //nolint:nilerr // invalid id == nothing to delete
 	}
-	// Drop history first; skill_versions has no FK cascade to skills.
-	if err := d.q.DeleteSkillVersions(ctx, gensqlc.DeleteSkillVersionsParams{
+
+	// Drop history and the skill row in one transaction: skill_versions has no
+	// FK cascade to skills, so two separate statements could destroy version
+	// history and then fail to remove the skill, leaving a silent partial state.
+	tx, err := d.conn.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return false, fmt.Errorf("begin delete skill tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	qtx := d.q.WithTx(tx)
+
+	if err := qtx.DeleteSkillVersions(ctx, gensqlc.DeleteSkillVersionsParams{
 		OrgID:   oid,
 		SkillID: sid,
 	}); err != nil {
 		return false, fmt.Errorf("delete skill versions: %w", err)
 	}
-	n, err := d.q.DeleteSkill(ctx, gensqlc.DeleteSkillParams{
+	n, err := qtx.DeleteSkill(ctx, gensqlc.DeleteSkillParams{
 		OrgID: oid,
 		ID:    sid,
 	})
 	if err != nil {
 		return false, fmt.Errorf("delete skill: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit delete skill tx: %w", err)
 	}
 	return n > 0, nil
 }
@@ -298,6 +316,12 @@ func (d *Driver) CreateSkillVersion(ctx context.Context, orgID string, rec stora
 		PublishedAt:   pgtype.Timestamptz{Time: rec.PublishedAt, Valid: true},
 	})
 	if err != nil {
+		// A concurrent publish already claimed this version number; surface a
+		// typed conflict so the handler can recompute and retry instead of 500.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+			return nil, storage.ErrSkillVersionConflict
+		}
 		return nil, fmt.Errorf("create skill version: %w", err)
 	}
 	out := skillVersionFromRow(row)

@@ -169,14 +169,9 @@ type skillCountsResp struct {
 // handleGenerateSkill runs the pkg/skill LLM generator over the requested
 // sessions, persists the result, and returns it as a SkillDraft.
 //
-// The generator reads session transcripts through the trace API. We point it
-// at this same server (a loopback self-call) rather than reimplementing the
-// trace reads. NOTE: that self-call does not carry the X-Tapes-Org-Id header,
-// so it reads under the nil-org bucket. This is correct for the current dev
-// loop — the console's tapesFetch sends no org header either, so the inbound
-// generate request and the internal trace reads share the nil-org tenant.
-// Multi-tenant production needs org propagation (a direct driver-backed
-// Querier); that is deliberately deferred for the walking skeleton.
+// The generator reads session transcripts through an in-process, org-scoped
+// querier (skillTraceQuerier) bound to the inbound org, so generation only
+// ever sees sessions in the caller's tenant and needs no loopback HTTP hop.
 func (s *Server) handleGenerateSkill(c *fiber.Ctx) error {
 	store, ok := s.skillStoreOr501(c)
 	if !ok {
@@ -593,6 +588,10 @@ type publishSkillRequest struct {
 	Changelog string `json:"changelog"`
 }
 
+// maxPublishAttempts bounds the retry loop that resolves a concurrent
+// version-number collision when two publishes of the same skill race.
+const maxPublishAttempts = 4
+
 // handlePublishSkill snapshots the skill's content into an immutable version
 // and bumps the skill's current semver (first publish 0.1.0, then patch).
 func (s *Server) handlePublishSkill(c *fiber.Ctx) error {
@@ -618,24 +617,38 @@ func (s *Server) handlePublishSkill(c *fiber.Ctx) error {
 		content = existing.Content
 	}
 
-	n, err := store.NextSkillVersionNumber(c.Context(), orgID, skillID)
-	if err != nil {
-		s.logger.Error("next skill version", "error", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to version skill"})
-	}
-	semver := fmt.Sprintf("0.1.%d", n-1) // n=1 -> 0.1.0, n=2 -> 0.1.1, …
 	now := time.Now().UTC()
 
-	ver, err := store.CreateSkillVersion(c.Context(), orgID, storage.SkillVersionRecord{
-		SkillID:       skillID,
-		VersionNumber: n,
-		Semver:        semver,
-		Changelog:     req.Changelog,
-		Content:       content,
-		AuthorSubject: authSubjectFromCtx(c),
-		PublishedAt:   now,
-	})
-	if err != nil {
+	// Assigning the next version number (a MAX read) and inserting it are two
+	// round-trips, so two concurrent publishes of the same skill can pick the
+	// same number — the second insert then hits the (skill_id, version_number)
+	// unique constraint. Retry on that conflict: the next MAX read sees the
+	// committed competitor, so a bounded loop converges instead of 500-ing.
+	var ver *storage.SkillVersionRecord
+	var semver string
+	for attempt := 0; attempt < maxPublishAttempts; attempt++ {
+		n, err := store.NextSkillVersionNumber(c.Context(), orgID, skillID)
+		if err != nil {
+			s.logger.Error("next skill version", "error", err)
+			return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to version skill"})
+		}
+		semver = fmt.Sprintf("0.1.%d", n-1) // n=1 -> 0.1.0, n=2 -> 0.1.1, …
+
+		ver, err = store.CreateSkillVersion(c.Context(), orgID, storage.SkillVersionRecord{
+			SkillID:       skillID,
+			VersionNumber: n,
+			Semver:        semver,
+			Changelog:     req.Changelog,
+			Content:       content,
+			AuthorSubject: authSubjectFromCtx(c),
+			PublishedAt:   now,
+		})
+		if err == nil {
+			break
+		}
+		if errors.Is(err, storage.ErrSkillVersionConflict) && attempt < maxPublishAttempts-1 {
+			continue // a concurrent publish took this number; recompute and retry
+		}
 		s.logger.Error("create skill version", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to publish skill"})
 	}

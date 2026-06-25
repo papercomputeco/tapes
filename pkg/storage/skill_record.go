@@ -1,6 +1,14 @@
 package storage
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// ErrSkillVersionConflict is returned by CreateSkillVersion when the
+// (skill_id, version_number) pair already exists — i.e. a concurrent publish
+// claimed the same number. Callers translate it into a retry rather than a 500.
+var ErrSkillVersionConflict = errors.New("skill version number already exists")
 
 // SkillRecord is the flat skills-table row surfaced by the /v1/skills API. It
 // mirrors the console's Skill shape so a generated skill round-trips through
