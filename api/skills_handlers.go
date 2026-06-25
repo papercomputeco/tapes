@@ -654,7 +654,9 @@ func (s *Server) handlePublishSkill(c *fiber.Ctx) error {
 	}
 
 	// Bump the skill's current semver; persist the published content as the new
-	// head if it changed since the last save.
+	// head if it changed since the last save. The version row is already
+	// committed, so a failure here leaves the skill's displayed version/content
+	// stale — surface it as a 500 rather than returning 201 with stale data.
 	if content != existing.Content {
 		rec := *existing
 		rec.Content = content
@@ -662,9 +664,11 @@ func (s *Server) handlePublishSkill(c *fiber.Ctx) error {
 		rec.UpdatedAt = now
 		if _, err := store.UpsertSkill(c.Context(), orgID, rec); err != nil {
 			s.logger.Error("persist published content", "error", err)
+			return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "version published but updating the skill head failed"})
 		}
 	} else if err := store.SetSkillVersion(c.Context(), orgID, skillID, semver, now); err != nil {
 		s.logger.Error("bump skill version", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "version published but bumping the skill version failed"})
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(skillVersionFromRecord(*ver))

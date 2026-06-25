@@ -68,7 +68,10 @@ func (g *Generator) Generate(ctx context.Context, sessionIDs []string, name, ski
 		if i > 0 {
 			totalLen += 5 // len("\n---\n")
 		}
-		if totalLen > maxChars {
+		// Keep at least the first session: dropping to transcripts[:0] would
+		// feed the LLM an empty prompt. A single oversized transcript is sent
+		// whole (well within the model's context window).
+		if i > 0 && totalLen > maxChars {
 			transcripts = transcripts[:i]
 			fmt.Fprintf(os.Stderr, "warning: transcript truncated to %d of %d session(s) to fit within %d char limit\n",
 				len(transcripts), len(sessionIDs), maxChars)

@@ -116,10 +116,11 @@ func resolveAPIKeyFromCreds(mgr *credentials.Manager, provider string) string {
 		return ""
 	}
 	key, err := mgr.GetKey(provider)
-	if err != nil || key != "" {
+	if err == nil && key != "" {
 		return key
 	}
-	// If provider-specific key not found, try others
+	// Provider-specific key errored or was absent — fall through to the
+	// cross-provider fallbacks rather than returning empty early.
 	if provider == providerOpenAI || provider == "" {
 		if key, err = mgr.GetKey(providerAnthropic); err == nil && key != "" {
 			return key
