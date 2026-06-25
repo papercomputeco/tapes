@@ -54,7 +54,7 @@ func (d *Driver) UpsertSkill(ctx context.Context, orgID string, rec storage.Skil
 		return nil, fmt.Errorf("upsert skill: %w", err)
 	}
 	if !id.Valid {
-		return nil, fmt.Errorf("upsert skill: id is required")
+		return nil, errors.New("upsert skill: id is required")
 	}
 	parentID, err := skillUUID(rec.ParentID)
 	if err != nil {
@@ -120,7 +120,7 @@ func (d *Driver) DeleteSkill(ctx context.Context, orgID, id string) (bool, error
 	}
 	sid, err := skillUUID(id)
 	if err != nil || !sid.Valid {
-		return false, nil //nolint:nilerr // invalid id == nothing to delete
+		return false, nil // invalid id == nothing to delete
 	}
 
 	// Drop history and the skill row in one transaction: skill_versions has no

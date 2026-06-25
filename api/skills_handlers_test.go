@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -89,11 +90,8 @@ func (d *skillsStubDriver) ListSkillsBySession(_ context.Context, orgID, session
 	d.lastOrg = orgID
 	out := make([]storage.SkillRecord, 0)
 	for _, r := range d.skills {
-		for _, sid := range r.GeneratedFromSessionIDs {
-			if sid == sessionID {
-				out = append(out, r)
-				break
-			}
+		if slices.Contains(r.GeneratedFromSessionIDs, sessionID) {
+			out = append(out, r)
 		}
 	}
 	return out, nil

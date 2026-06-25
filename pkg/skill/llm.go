@@ -29,7 +29,7 @@ const (
 	// provider failure (HTTP 429/502/503/504 or a transport error). One
 	// retry is enough to ride out a brief rate-limit or upstream blip
 	// without risking the handler's overall time budget.
-	llmCallRetries = 1
+	llmCallRetries  = 1
 	llmRetryBackoff = 500 * time.Millisecond
 )
 

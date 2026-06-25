@@ -626,7 +626,7 @@ func (s *Server) handlePublishSkill(c *fiber.Ctx) error {
 	// committed competitor, so a bounded loop converges instead of 500-ing.
 	var ver *storage.SkillVersionRecord
 	var semver string
-	for attempt := 0; attempt < maxPublishAttempts; attempt++ {
+	for attempt := range maxPublishAttempts {
 		n, err := store.NextSkillVersionNumber(c.Context(), orgID, skillID)
 		if err != nil {
 			s.logger.Error("next skill version", "error", err)
