@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"strings"
 	"time"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
@@ -96,6 +97,41 @@ func NewNode(bucket Bucket, parent *Node, opts ...NodeOptions) *Node {
 
 	n.Hash = n.computeHash()
 	return n
+}
+
+// CloneRetained breaks every alias between this node's retained fields and
+// the zero-copy raw request/response buffers it was parsed from, so those
+// buffers can be freed once their turn is processed. It reallocates every
+// retained string and byte field in place.
+//
+// Cloning is all-or-nothing: a single surviving alias pins the whole
+// backing array, so EVERY retained string/byte field must be copied here.
+// Usage (a *Usage of integer counters parsed straight from the response
+// with a standalone decoder) is measured not to pin its buffer, so it is
+// left as-is — unlike RequestParams, whose scalars come from the provider
+// request decoder and CAN sit in the buffer's arena (see
+// RequestParams.Clone).
+//
+// req replaces the node's Request. A parser shares one *RequestParams
+// across every node of a single call, so the caller clones it once per
+// call (RequestParams.Clone) and passes the result here, rather than
+// re-cloning the (potentially large) system prompt for every node.
+//
+// The copied bytes are identical to the originals, so node.Hash is
+// unchanged — clone-on-retain is a pure memory optimization.
+func (n *Node) CloneRetained(req *llm.RequestParams) {
+	n.Hash = strings.Clone(n.Hash)
+	if n.ParentHash != nil {
+		p := strings.Clone(*n.ParentHash)
+		n.ParentHash = &p
+	}
+	n.Bucket = n.Bucket.Clone()
+	n.StopReason = strings.Clone(n.StopReason)
+	n.Project = strings.Clone(n.Project)
+	n.Kind = strings.Clone(n.Kind)
+	n.ThreadID = strings.Clone(n.ThreadID)
+	n.ParentToolUseID = strings.Clone(n.ParentToolUseID)
+	n.Request = req
 }
 
 // ComputeHash calculates the content-addressed hash for a node

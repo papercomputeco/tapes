@@ -30,6 +30,29 @@ type Bucket struct {
 	AgentName string `json:"agent_name,omitempty"`
 }
 
+// Clone returns a deep copy of the bucket with every string field and
+// content block reallocated, so the copy shares no backing array with the
+// zero-copy raw request buffer the bucket was parsed from. The bytes are
+// identical to the original, so a node hashed from a cloned bucket
+// produces the same Hash — cloning is a pure memory optimization, never a
+// content change. See llm.ContentBlock.Clone for why the alias matters.
+func (b *Bucket) Clone() Bucket {
+	c := *b
+	c.Type = strings.Clone(b.Type)
+	c.Role = strings.Clone(b.Role)
+	c.Model = strings.Clone(b.Model)
+	c.Provider = strings.Clone(b.Provider)
+	c.AgentName = strings.Clone(b.AgentName)
+	if b.Content != nil {
+		content := make([]llm.ContentBlock, len(b.Content))
+		for i := range b.Content {
+			content[i] = b.Content[i].Clone()
+		}
+		c.Content = content
+	}
+	return c
+}
+
 // ExtractText returns the concatenated text content from the bucket's content blocks.
 // This is useful for generating embeddings for semantic search.
 // It extracts text from text blocks, tool outputs, and tool use requests,

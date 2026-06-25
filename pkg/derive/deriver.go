@@ -254,9 +254,27 @@ func (dv *Deriver) AddTurn(rec *storage.RawTurnRecord) {
 	}
 	turn.source = source
 
+	// A retained node keeps only the unique content first seen here, but
+	// the strings it keeps are zero-copy sub-slices of this turn's raw
+	// request/response buffer — so without intervention each retained node
+	// pins its turn's whole multi-MB re-sent-history buffer, and the live
+	// set grows to ~the re-sent history (O(N^2) on the wire) even though
+	// unique content is tiny. CloneRetained reallocates those strings so
+	// each raw buffer frees after its turn, bounding the live floor to
+	// ~unique content. Cloning copies identical bytes, so node hashes and
+	// the whole derived projection are unchanged.
+	//
+	// The chain shares one *RequestParams across all its nodes (one
+	// Params() per call); clone its System once per call, keyed by pointer
+	// identity, rather than re-cloning the system prompt for every node.
+	var srcParams, clonedParams *llm.RequestParams
 	for _, node := range chain {
 		retained, dup := dv.byHash[node.Hash]
 		if !dup {
+			if rp := node.Request; rp != srcParams {
+				srcParams, clonedParams = rp, rp.Clone()
+			}
+			node.CloneRetained(clonedParams)
 			node.CreatedAt = capturedAt
 			retained = &DerivedNode{Node: node, Session: key, CapturedAt: capturedAt}
 			dv.byHash[node.Hash] = retained
