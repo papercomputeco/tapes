@@ -99,6 +99,37 @@ type Session struct {
 	ModelUsage        []byte
 }
 
+type Skill struct {
+	OrgID                   pgtype.UUID
+	Slug                    string
+	Name                    string
+	Description             string
+	Type                    string
+	Version                 string
+	Visibility              string
+	Tags                    []string
+	Content                 string
+	IsAiGenerated           bool
+	GeneratedFromSessionIds []string
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	AuthorSubject           string
+	DownloadCount           int64
+	ID                      pgtype.UUID
+	ParentID                pgtype.UUID
+}
+
+type SkillVersion struct {
+	OrgID         pgtype.UUID
+	VersionNumber int32
+	Semver        string
+	Changelog     string
+	Content       string
+	AuthorSubject string
+	PublishedAt   pgtype.Timestamptz
+	SkillID       pgtype.UUID
+}
+
 // Derived span-link projection schema version 2026-06-15.
 type SpanLinks20260615 struct {
 	OrgID       pgtype.UUID

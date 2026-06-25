@@ -20,6 +20,7 @@ sql:
       - "pkg/storage/postgres/queries/list_sessions.sql"
       - "pkg/storage/postgres/queries/raw_turns.sql"
       - "pkg/storage/postgres/queries/sessions.sql"
+      - "pkg/storage/postgres/queries/skills.sql"
       - "pkg/storage/postgres/queries/spans.sql"
     gen:
       go:
