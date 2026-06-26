@@ -97,6 +97,8 @@ type Session struct {
 	DerivedTitle      pgtype.Text
 	DerivedModel      string
 	ModelUsage        []byte
+	TotalTokens       pgtype.Int8
+	DurationNs        pgtype.Int8
 }
 
 // Derived span-link projection schema version 2026-06-15.
