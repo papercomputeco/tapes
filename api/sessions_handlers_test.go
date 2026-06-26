@@ -34,7 +34,7 @@ type sessionsStubDriver struct {
 	lastListOrg     string
 	lastAuthSubject string
 	lastLimit       int
-	lastCursorTs    *time.Time
+	lastCursorVal   *string
 	lastCursorID    *string
 
 	// GetSessionRecordByHarness stubbing.
@@ -78,7 +78,7 @@ func (d *sessionsStubDriver) ListSessionRecords(_ context.Context, orgID string,
 	d.lastListOrg = orgID
 	d.lastAuthSubject = opts.AuthSubject
 	d.lastLimit = opts.Limit
-	d.lastCursorTs = opts.CursorTs
+	d.lastCursorVal = opts.CursorVal
 	d.lastCursorID = opts.CursorID
 	return d.listRecords, d.listErr
 }
@@ -288,6 +288,7 @@ var _ = Describe("harness natural-key filter on GET /v1/sessions", func() {
 		older := record
 		older.ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 		older.LastSeenAt = record.LastSeenAt.Add(-time.Minute)
+		older.SortVal = "2026-06-01 12:09:00+00" // canonical ::text of older.LastSeenAt
 		oldest := record
 		oldest.ID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
 		oldest.LastSeenAt = record.LastSeenAt.Add(-2 * time.Minute)
@@ -300,16 +301,16 @@ var _ = Describe("harness natural-key filter on GET /v1/sessions", func() {
 		}
 		server := newSessionsServer(drv)
 
-		cursorTs := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
-		cursor := encodeSessionsCursor(sessionsCursor{LastSeenAt: cursorTs, ID: record.ID})
+		cursorVal := "2026-06-02 00:00:00+00"
+		cursor := encodeSessionsCursor(sessionsCursor{Val: cursorVal, ID: record.ID})
 
 		body, _, status := getSessionList(server, "/v1/sessions?limit=2&cursor="+cursor, "")
 		Expect(status).To(Equal(fiber.StatusOK))
 		Expect(drv.harnessCalls).To(BeZero(), "the harness lookup must never run on the unfiltered path")
 		Expect(drv.listCalls).To(Equal(1))
 		Expect(drv.lastLimit).To(Equal(3), "the handler fetches limit+1 to detect the next page")
-		Expect(drv.lastCursorTs).NotTo(BeNil())
-		Expect(drv.lastCursorTs.Equal(cursorTs)).To(BeTrue())
+		Expect(drv.lastCursorVal).NotTo(BeNil())
+		Expect(*drv.lastCursorVal).To(Equal(cursorVal))
 		Expect(drv.lastCursorID).NotTo(BeNil())
 		Expect(*drv.lastCursorID).To(Equal(record.ID))
 
@@ -320,7 +321,7 @@ var _ = Describe("harness natural-key filter on GET /v1/sessions", func() {
 		next, err := decodeSessionsCursor(body.NextCursor)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(next.ID).To(Equal(older.ID))
-		Expect(next.LastSeenAt.Equal(older.LastSeenAt)).To(BeTrue())
+		Expect(next.Val).To(Equal(older.SortVal))
 	})
 
 	It("ignores limit on the harness filter path", func() {
@@ -344,7 +345,7 @@ var _ = Describe("harness natural-key filter on GET /v1/sessions", func() {
 
 		// A well-formed cursor: the rejection is about combining pagination
 		// with a point lookup, not about cursor decoding.
-		cursor := encodeSessionsCursor(sessionsCursor{LastSeenAt: record.LastSeenAt, ID: record.ID})
+		cursor := encodeSessionsCursor(sessionsCursor{Val: "2026-06-01 12:10:00+00", ID: record.ID})
 
 		_, errBody, status := getSessionList(server, "/v1/sessions?harness_id=claude&harness_session_id=sess-xyz&cursor="+cursor, "")
 		Expect(status).To(Equal(fiber.StatusBadRequest))
