@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -36,6 +37,8 @@ type sessionsStubDriver struct {
 	lastLimit       int
 	lastCursorVal   *string
 	lastCursorID    *string
+	lastSort        storage.SessionSortField
+	lastDir         storage.SortDirection
 
 	// GetSessionRecordByHarness stubbing.
 	harnessRecord        *storage.SessionRecord
@@ -80,6 +83,8 @@ func (d *sessionsStubDriver) ListSessionRecords(_ context.Context, orgID string,
 	d.lastLimit = opts.Limit
 	d.lastCursorVal = opts.CursorVal
 	d.lastCursorID = opts.CursorID
+	d.lastSort = opts.Sort
+	d.lastDir = opts.Dir
 	return d.listRecords, d.listErr
 }
 
@@ -339,6 +344,22 @@ var _ = Describe("harness natural-key filter on GET /v1/sessions", func() {
 		Expect(drv.listCalls).To(BeZero())
 	})
 
+	It("ignores sort params on the harness filter path", func() {
+		// The point lookup returns before sort parsing, so an otherwise-invalid
+		// sort key — which would 400 on the paged-list path — is ignored rather
+		// than validated when the filter is active. This locks the early-return
+		// ordering against a future reorder.
+		drv := &sessionsStubDriver{Driver: inmemory.NewDriver(), harnessRecord: &record}
+		server := newSessionsServer(drv)
+
+		body, _, status := getSessionList(server, "/v1/sessions?harness_id=claude&harness_session_id=sess-xyz&sort=bogus", "")
+		Expect(status).To(Equal(fiber.StatusOK), "the harness branch must return before sort parsing")
+		Expect(body.Items).To(HaveLen(1))
+		Expect(body.Items[0].ID).To(Equal(record.ID))
+		Expect(drv.harnessCalls).To(Equal(1))
+		Expect(drv.listCalls).To(BeZero())
+	})
+
 	It("returns 400 when cursor is combined with the harness filter", func() {
 		drv := &sessionsStubDriver{Driver: inmemory.NewDriver(), harnessRecord: &record}
 		server := newSessionsServer(drv)
@@ -454,5 +475,130 @@ var _ = Describe("DELETE /v1/sessions/:id", func() {
 		server := newServer(base)
 		_, status := doJSON(server, http.MethodDelete, "/v1/sessions/"+validID, "", org, "")
 		Expect(status).To(Equal(fiber.StatusNotImplemented))
+	})
+})
+
+var _ = Describe("sort and direction params on GET /v1/sessions", func() {
+	var record storage.SessionRecord
+
+	newSessionsServer := func(driver storage.Driver) *Server {
+		server, err := NewServer(Config{ListenAddr: ":0"}, driver, tapeslogger.NewNoop())
+		Expect(err).NotTo(HaveOccurred())
+		return server
+	}
+
+	BeforeEach(func() {
+		started := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+		ended := started.Add(10 * time.Minute)
+		record = storage.SessionRecord{
+			ID:               "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+			HarnessID:        "claude",
+			HarnessSessionID: "sess-xyz",
+			StartedAt:        started,
+			LastSeenAt:       ended,
+			DerivedStatus:    "completed",
+		}
+	})
+
+	It("threads sort and direction through to storage opts", func() {
+		cheap := record
+		cheap.TotalCostUsd = 0.10
+		cheap.SortVal = "0.10"
+		pricey := record
+		pricey.ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+		pricey.TotalCostUsd = 0.90
+		pricey.SortVal = "0.90"
+
+		drv := &sessionsStubDriver{
+			Driver:      inmemory.NewDriver(),
+			listRecords: []storage.SessionRecord{cheap, pricey},
+		}
+		server := newSessionsServer(drv)
+
+		body, _, status := getSessionList(server, "/v1/sessions?sort=total_cost_usd&direction=asc", "")
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(drv.lastSort).To(Equal(storage.SortTotalCost))
+		Expect(drv.lastDir).To(Equal(storage.SortAsc))
+		Expect(body.Items).To(HaveLen(2))
+	})
+
+	It("rejects an unknown sort key with 400", func() {
+		drv := &sessionsStubDriver{Driver: inmemory.NewDriver()}
+		server := newSessionsServer(drv)
+
+		_, errBody, status := getSessionList(server, "/v1/sessions?sort=bogus", "")
+		Expect(status).To(Equal(fiber.StatusBadRequest))
+		Expect(errBody.Error).To(ContainSubstring("invalid sort"))
+		Expect(drv.listCalls).To(BeZero(), "validation must precede any storage call")
+	})
+
+	It("rejects an invalid direction with 400", func() {
+		drv := &sessionsStubDriver{Driver: inmemory.NewDriver()}
+		server := newSessionsServer(drv)
+
+		_, errBody, status := getSessionList(server, "/v1/sessions?direction=sideways", "")
+		Expect(status).To(Equal(fiber.StatusBadRequest))
+		Expect(errBody.Error).To(ContainSubstring("invalid direction"))
+		Expect(drv.listCalls).To(BeZero(), "validation must precede any storage call")
+	})
+
+	It("rejects a cursor whose sort disagrees with the request with 400", func() {
+		// Mint a raw cursor encoding sort=total_cost_usd so we can replay it
+		// under a different sort to trigger the mismatch rejection.
+		cursorJSON := `{"sort":"total_cost_usd","dir":"desc","val":"42.50","id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}`
+		mismatchCursor := base64.RawURLEncoding.EncodeToString([]byte(cursorJSON))
+
+		drv := &sessionsStubDriver{Driver: inmemory.NewDriver()}
+		server := newSessionsServer(drv)
+
+		_, errBody, status := getSessionList(server, "/v1/sessions?sort=turn_count&cursor="+mismatchCursor, "")
+		Expect(status).To(Equal(fiber.StatusBadRequest))
+		Expect(errBody.Error).To(ContainSubstring("cursor"))
+		Expect(drv.listCalls).To(BeZero(), "mismatch must be rejected before any storage call")
+	})
+
+	It("decodes a legacy {ts,id} cursor as last_active desc and returns 200", func() {
+		// Pre-sort-awareness cursors carried {ts, id}; the handler must accept
+		// them as a last_active/desc boundary so in-flight pagination tokens
+		// from the old console page remain valid after the upgrade.
+		legacyJSON := `{"ts":"2026-06-26T00:00:00Z","id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}`
+		legacyCursor := base64.RawURLEncoding.EncodeToString([]byte(legacyJSON))
+
+		drv := &sessionsStubDriver{Driver: inmemory.NewDriver()}
+		server := newSessionsServer(drv)
+
+		_, _, status := getSessionList(server, "/v1/sessions?cursor="+legacyCursor, "")
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(drv.listCalls).To(Equal(1))
+		// The legacy cursor must be treated as last_active/desc (the old default)
+		Expect(drv.lastSort).To(Equal(storage.SortLastActive))
+		Expect(drv.lastDir).To(Equal(storage.SortDesc))
+	})
+
+	It("the next_cursor encodes sort and direction for keyset continuity", func() {
+		// Seed 2 records against limit=1 so there is a next page.
+		first := record
+		first.SortVal = "0.90"
+		second := record
+		second.ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+		second.SortVal = "0.10"
+
+		drv := &sessionsStubDriver{
+			Driver:      inmemory.NewDriver(),
+			listRecords: []storage.SessionRecord{first, second},
+		}
+		server := newSessionsServer(drv)
+
+		body, _, status := getSessionList(server, "/v1/sessions?sort=total_cost_usd&direction=desc&limit=1", "")
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(body.NextCursor).NotTo(BeEmpty())
+
+		// Decode the next cursor and verify sort context is embedded.
+		next, err := decodeSessionsCursor(body.NextCursor)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(next.Sort).To(Equal(string(storage.SortTotalCost)))
+		Expect(next.Dir).To(Equal(string(storage.SortDesc)))
+		Expect(next.ID).To(Equal(first.ID))
+		Expect(next.Val).To(Equal(first.SortVal))
 	})
 })

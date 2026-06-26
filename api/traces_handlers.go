@@ -145,11 +145,11 @@ type SessionTracesResponse struct {
 //	@Produce		json
 //	@Param			id		path		string	true	"Session id (UUID)"
 //	@Param			payload	query		string	false	"Span payload mode: full (default) or preview (strings truncated; fetch the span endpoint for full payloads)"
-//	@Success		200	{object}	SessionTracesResponse
-//	@Failure		400	{object}	llm.ErrorResponse	"Missing or malformed id"
-//	@Failure		404	{object}	llm.ErrorResponse	"Session not found"
-//	@Failure		500	{object}	llm.ErrorResponse	"Failed to load session"
-//	@Failure		501	{object}	llm.ErrorResponse	"Span traces not supported by this backend"
+//	@Success		200		{object}	SessionTracesResponse
+//	@Failure		400		{object}	llm.ErrorResponse	"Missing or malformed id"
+//	@Failure		404		{object}	llm.ErrorResponse	"Session not found"
+//	@Failure		500		{object}	llm.ErrorResponse	"Failed to load session"
+//	@Failure		501		{object}	llm.ErrorResponse	"Span traces not supported by this backend"
 //	@Router			/v1/sessions/{id}/traces [get]
 func (s *Server) handleGetSessionTraces(c *fiber.Ctx) error {
 	sessions, ok := s.driver.(sessionsReader)
