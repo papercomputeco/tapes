@@ -134,12 +134,18 @@ func modelUsageFromStorage(in []storage.ModelUsage) []ModelUsage {
 	return out
 }
 
-// sessionsCursor is the decoded pagination cursor for the sessions list.
-// Val is the canonical ::text form of the active sort column returned by
-// the storage driver; ID is the tiebreak row id.
+// sessionsCursor is the decoded pagination cursor. It carries the sort context
+// so the keyset boundary is unambiguous and a replay under a different sort is
+// detectable. Legacy cursors (pre-sort) carried only {ts,id}; decode maps them
+// to the last_active/desc default.
 type sessionsCursor struct {
-	Val string `json:"val"`
-	ID  string `json:"id"`
+	Sort string `json:"sort,omitempty"`
+	Dir  string `json:"dir,omitempty"`
+	Val  string `json:"val,omitempty"`
+	ID   string `json:"id"`
+
+	// LegacyTs is only read from old cursors that predate sort-awareness.
+	LegacyTs *time.Time `json:"ts,omitempty"`
 }
 
 func encodeSessionsCursor(c sessionsCursor) string {
@@ -166,19 +172,29 @@ func decodeSessionsCursor(token string) (sessionsCursor, error) {
 	if c.ID == "" {
 		return sessionsCursor{}, errors.New("invalid cursor: missing id")
 	}
+	// Legacy {ts,id}: no sort context, value lived in `ts`.
+	if c.Sort == "" {
+		c.Sort = string(storage.SortLastActive)
+		c.Dir = string(storage.SortDesc)
+		if c.Val == "" && c.LegacyTs != nil {
+			c.Val = c.LegacyTs.UTC().Format(time.RFC3339Nano)
+		}
+	}
 	return c, nil
 }
 
 // handleListSessions handles GET /v1/sessions.
 //
 //	@Summary		List sessions
-//	@Description	Returns one row per harness session from the sessions table, newest first (last_seen_at desc), cursor-paginated.
+//	@Description	Returns one row per harness session from the sessions table, cursor-paginated. Default order is last_active (last_seen_at) desc; override with the sort and direction query params.
 //	@Tags			sessions
 //	@Produce		json
 //	@Param			limit				query		int		false	"Maximum number of sessions to return (default 50, max 200)"	minimum(1)
 //	@Param			cursor				query		string	false	"Opaque pagination cursor returned by a previous response"
+//	@Param			sort				query		string	false	"Sort column: last_active|started_at|turn_count|total_cost_usd|total_tokens|duration_ns|derived_status|auth_subject (default last_active)"
+//	@Param			direction			query		string	false	"Sort direction: asc|desc (default desc)"
 //	@Param			since				query		string	false	"Only include sessions active (last_seen_at) at or after this RFC3339 timestamp"	format(date-time)
-//	@Param			until				query		string	false	"Only include sessions active (last_seen_at) before this RFC3339 timestamp"		format(date-time)
+//	@Param			until				query		string	false	"Only include sessions active (last_seen_at) before this RFC3339 timestamp"			format(date-time)
 //	@Param			harness_id			query		string	false	"Filter to the single session with this harness id (exact match; requires harness_session_id, incompatible with cursor; limit is ignored when the filter is active)"
 //	@Param			harness_session_id	query		string	false	"Filter to the single session with this harness session id (exact match; requires harness_id, incompatible with cursor; limit is ignored when the filter is active)"
 //	@Param			auth_subject		query		string	false	"Filter the paged list to sessions captured for this gateway-stamped JWT subject (exact match; ignored on the harness filter path)"
@@ -216,11 +232,26 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 		limit = parsed
 	}
 
-	opts := storage.SessionListOpts{}
+	sortField, ok := storage.ParseSessionSortField(c.Query("sort"))
+	if !ok {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "invalid sort field"})
+	}
+	dir, ok := storage.ParseSortDirection(c.Query("direction"))
+	if !ok {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "invalid direction"})
+	}
+	opts := storage.SessionListOpts{Sort: sortField, Dir: dir}
+
 	if raw := c.Query("cursor"); raw != "" {
 		cur, err := decodeSessionsCursor(raw)
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
+		}
+		// A cursor is only valid within the sort it was minted under; the UI
+		// resets the cursor on any sort change, so a mismatch is a malformed
+		// request, not a normal transition.
+		if cur.Sort != string(sortField) || cur.Dir != string(dir) {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "cursor does not match sort/direction"})
 		}
 		opts.CursorVal = &cur.Val
 		opts.CursorID = &cur.ID
@@ -258,8 +289,10 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 		sessions = sessions[:limit]
 		last := sessions[len(sessions)-1]
 		nextCursor = encodeSessionsCursor(sessionsCursor{
-			Val: last.SortVal,
-			ID:  last.ID,
+			Sort: string(sortField),
+			Dir:  string(dir),
+			Val:  last.SortVal,
+			ID:   last.ID,
 		})
 	}
 
