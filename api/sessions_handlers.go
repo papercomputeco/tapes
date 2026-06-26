@@ -134,11 +134,12 @@ func modelUsageFromStorage(in []storage.ModelUsage) []ModelUsage {
 	return out
 }
 
-// sessionsCursor is the decoded pagination cursor for the sessions list,
-// keyed on (last_seen_at DESC, id DESC).
+// sessionsCursor is the decoded pagination cursor for the sessions list.
+// Val is the canonical ::text form of the active sort column returned by
+// the storage driver; ID is the tiebreak row id.
 type sessionsCursor struct {
-	LastSeenAt time.Time `json:"ts"`
-	ID         string    `json:"id"`
+	Val string `json:"val"`
+	ID  string `json:"id"`
 }
 
 func encodeSessionsCursor(c sessionsCursor) string {
@@ -221,7 +222,7 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
 		}
-		opts.CursorTs = &cur.LastSeenAt
+		opts.CursorVal = &cur.Val
 		opts.CursorID = &cur.ID
 	}
 	if raw := c.Query("since"); raw != "" {
@@ -257,8 +258,8 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 		sessions = sessions[:limit]
 		last := sessions[len(sessions)-1]
 		nextCursor = encodeSessionsCursor(sessionsCursor{
-			LastSeenAt: last.LastSeenAt,
-			ID:         last.ID,
+			Val: last.SortVal,
+			ID:  last.ID,
 		})
 	}
 

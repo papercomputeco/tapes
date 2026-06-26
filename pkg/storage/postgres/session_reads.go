@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -18,11 +19,11 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage/postgres/gensqlc"
 )
 
-// ListSessionRecords returns a page of sessions for an org ordered by
-// last_seen_at DESC, optionally windowed by activity (last_seen_at)
-// and narrowed to one gateway-stamped JWT subject (exact match on the
-// indexed column; empty lists every user's sessions). Pass zero-value
-// opts to start from the beginning, unwindowed and unfiltered.
+// ListSessionRecords returns a page of sessions for an org ordered by the
+// requested sort column (default last_seen_at DESC), optionally windowed by
+// activity (last_seen_at) and narrowed to one gateway-stamped JWT subject
+// (exact match on the indexed column; empty lists every user's sessions).
+// Pass zero-value opts to start from the beginning, unwindowed and unfiltered.
 func (d *Driver) ListSessionRecords(
 	ctx context.Context,
 	orgID string,
@@ -36,43 +37,86 @@ func (d *Driver) ListSessionRecords(
 	if limit <= 0 {
 		limit = storage.DefaultListLimit
 	}
-
-	var tsPg pgtype.Timestamptz
-	var idPg pgtype.UUID
-	if opts.CursorTs != nil && opts.CursorID != nil && *opts.CursorID != "" {
-		tsPg = pgtype.Timestamptz{Time: *opts.CursorTs, Valid: true}
-		parsed, err := uuid.Parse(*opts.CursorID)
-		if err != nil {
-			return nil, fmt.Errorf("list session records: invalid cursor id: %w", err)
-		}
-		idPg = pgtype.UUID{Bytes: parsed, Valid: true}
+	sort := opts.Sort
+	if sort == "" {
+		sort = storage.SortLastActive
+	}
+	dir := opts.Dir
+	if dir == "" {
+		dir = storage.SortDesc
+	}
+	col, ok := storage.SessionSortColumn(sort) // exported accessor over the allowlist map
+	if !ok {
+		return nil, fmt.Errorf("list session records: invalid sort field %q", sort)
 	}
 
-	var subjectPg pgtype.Text
+	order := "DESC"
+	cmp := "<"
+	if dir == storage.SortAsc {
+		order = "ASC"
+		cmp = ">"
+	}
+
+	// Explicit column list = the 24 columns the previous generated query
+	// selected, plus the sort column rendered to canonical text so the cursor
+	// round-trips exactly. col.Col and order/cmp come from the allowlist only.
+	const baseCols = `id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, ` +
+		`harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, ` +
+		`total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, ` +
+		`has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage`
+
+	args := []any{oid} // $1
+	where := []string{"org_id = $1"}
+	add := func(v any) string { args = append(args, v); return "$" + strconv.Itoa(len(args)) }
+
+	if opts.Since != nil {
+		where = append(where, "last_seen_at >= "+add(*opts.Since)+"::timestamptz")
+	}
+	if opts.Until != nil {
+		where = append(where, "last_seen_at < "+add(*opts.Until)+"::timestamptz")
+	}
 	if opts.AuthSubject != "" {
-		subjectPg = pgtype.Text{String: opts.AuthSubject, Valid: true}
+		where = append(where, "auth_subject = "+add(opts.AuthSubject)+"::text")
 	}
+	if opts.CursorVal != nil && opts.CursorID != nil {
+		valP := add(*opts.CursorVal) + "::" + col.CastType
+		idP := add(*opts.CursorID) + "::uuid"
+		where = append(where, fmt.Sprintf("(%s %s %s OR (%s = %s AND id %s %s))",
+			col.Col, cmp, valP, col.Col, valP, cmp, idP))
+	}
+	limP := add(int32(limit)) //nolint:gosec // bounded by the API handler
 
-	rows, err := d.q.ListSessionRecords(ctx, gensqlc.ListSessionRecordsParams{
-		OrgID:       oid,
-		AuthSubject: subjectPg,
-		CursorTs:    tsPg,
-		CursorID:    idPg,
-		SinceFilter: nullTimePtr(opts.Since),
-		UntilFilter: nullTimePtr(opts.Until),
-		Lim:         int32(limit), //nolint:gosec // bounded above by the API handler (maxSessionsLimit)
-	})
+	q := fmt.Sprintf( //nolint:gosec // col/order are allowlist-controlled; all caller values are bound $N params
+		"SELECT %s, %s::text AS sort_val FROM sessions WHERE %s ORDER BY %s %s, id %s LIMIT %s",
+		baseCols, col.Col, strings.Join(where, " AND "), col.Col, order, order, limP)
+
+	rows, err := d.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list session records: %w", err)
 	}
+	defer rows.Close()
 
-	out := make([]storage.SessionRecord, len(rows))
-	for i, row := range rows {
-		out[i] = sessionRecordFromRow(row)
+	var out []storage.SessionRecord
+	for rows.Next() {
+		var g gensqlc.Session
+		var sortVal string
+		if err := rows.Scan(
+			&g.ID, &g.OrgID, &g.AuthSubject, &g.HarnessID, &g.HarnessSessionID, &g.Name, &g.Cwd,
+			&g.HarnessVersion, &g.ParentSessionID, &g.StartedAt, &g.LastSeenAt, &g.EndedAt, &g.HarnessMetadata,
+			&g.TotalInputTokens, &g.TotalOutputTokens, &g.TotalCostUsd, &g.TurnCount, &g.DerivedStatus,
+			&g.HasGitActivity, &g.ToolResultCount, &g.ToolErrorCount, &g.DerivedTitle, &g.DerivedModel, &g.ModelUsage,
+			&sortVal,
+		); err != nil {
+			return nil, fmt.Errorf("list session records: scan: %w", err)
+		}
+		rec := sessionRecordFromRow(g)
+		rec.SortVal = sortVal
+		out = append(out, rec)
 	}
-
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list session records: %w", err)
+	}
 	d.attachPreviews(ctx, out)
-
 	return out, nil
 }
 

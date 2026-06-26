@@ -11,6 +11,15 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 )
 
+// idsOf extracts just the IDs from a slice of SessionRecord.
+func idsOf(recs []storage.SessionRecord) []string {
+	ids := make([]string, len(recs))
+	for i, r := range recs {
+		ids[i] = r.ID
+	}
+	return ids
+}
+
 var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 	var (
 		driver   storage.Driver
@@ -183,5 +192,111 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 			Expect(err).NotTo(HaveOccurred(), v.desc)
 			Expect(rec).To(BeNil(), "%s must not match the stored natural key", v.desc)
 		}
+	})
+})
+
+var _ = Describe("Driver.ListSessionRecords (dynamic sort)", func() {
+	var (
+		driver   storage.Driver
+		pgDriver *postgres.Driver
+		ingester storage.SessionIngester
+		ctx      context.Context
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		dsn, err := testPostgresDSN()
+		Expect(err).NotTo(HaveOccurred())
+
+		driver, err = postgres.NewDriver(ctx, dsn)
+		Expect(err).NotTo(HaveOccurred())
+
+		var ok bool
+		pgDriver, ok = driver.(*postgres.Driver)
+		Expect(ok).To(BeTrue())
+		_, err = pgDriver.DB().Exec(ctx, "TRUNCATE TABLE nodes")
+		Expect(err).NotTo(HaveOccurred())
+		_, err = pgDriver.DB().Exec(ctx, "TRUNCATE TABLE sessions CASCADE")
+		Expect(err).NotTo(HaveOccurred())
+
+		ingester, ok = driver.(storage.SessionIngester)
+		Expect(ok).To(BeTrue(), "postgres driver must satisfy SessionIngester")
+	})
+
+	AfterEach(func() {
+		if driver != nil {
+			driver.Close()
+		}
+	})
+
+	// seedWithCost ingests a minimal turn for the given org and harness
+	// identity with the specified cost, returning the session UUID.
+	seedWithCost := func(orgID, harnessSessionID string, cost float64) string {
+		res, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
+			Session: &sessions.IngestEnvelope{
+				OrgID:            orgID,
+				AuthSubject:      "subject-sort",
+				HarnessID:        "claude",
+				HarnessSessionID: harnessSessionID,
+			},
+			Nodes:        sessionFixture("turn for " + harnessSessionID),
+			InputTokens:  10,
+			OutputTokens: 5,
+			CostUSD:      cost,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.SessionID).NotTo(BeEmpty())
+		return res.SessionID
+	}
+
+	It("sorts by total_cost_usd ascending with a stable id tiebreak", func() {
+		orgID := newTestOrgID()
+		// seed three sessions: costs 0.10, 0.30, 0.30 (tie)
+		_ = seedWithCost(orgID, "sess-cheap", 0.10)
+		_ = seedWithCost(orgID, "sess-tie-a", 0.30)
+		_ = seedWithCost(orgID, "sess-tie-b", 0.30)
+
+		page1, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{
+			Sort: storage.SortTotalCost, Dir: storage.SortAsc, Limit: 2,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(page1).To(HaveLen(2))
+		// cheapest session must come first
+		Expect(page1[0].TotalCostUsd).To(BeNumerically("==", 0.10))
+		// SortVal must be populated
+		Expect(page1[0].SortVal).NotTo(BeEmpty())
+		Expect(page1[1].SortVal).NotTo(BeEmpty())
+
+		// keyset cursor: page2 must not repeat any page1 row
+		last := page1[len(page1)-1]
+		page2, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{
+			Sort:      storage.SortTotalCost,
+			Dir:       storage.SortAsc,
+			Limit:     2,
+			CursorVal: &last.SortVal,
+			CursorID:  &last.ID,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(page2).To(HaveLen(1), "one tied row must appear on page2")
+		// the tie is split deterministically by id; no page1 row reappears
+		for _, id := range idsOf(page1) {
+			Expect(idsOf(page2)).NotTo(ContainElement(id),
+				"page2 must not repeat any row from page1")
+		}
+	})
+
+	It("returns sessions in descending last_active order by default", func() {
+		orgID := newTestOrgID()
+		// ingest two sessions; DB assigns last_seen_at via the upsert
+		_ = seedWithCost(orgID, "sess-first", 0.05)
+		_ = seedWithCost(orgID, "sess-second", 0.05)
+
+		all, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{Limit: 10})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(all).To(HaveLen(2))
+		// default sort is last_seen_at DESC; more-recently upserted row is first
+		Expect(all[0].LastSeenAt).To(BeTemporally(">=", all[1].LastSeenAt))
+		// SortVal is populated even for the default sort
+		Expect(all[0].SortVal).NotTo(BeEmpty())
 	})
 })
