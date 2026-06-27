@@ -329,7 +329,7 @@ var _ = Describe("Driver.ListSessionRecords (dynamic sort)", func() {
 	collectAllPages := func(orgID string, sort storage.SessionSortField, dir storage.SortDirection) []string {
 		var ids []string
 		var cursorVal, cursorID *string
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			page, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{
 				Sort: sort, Dir: dir, Limit: 2,
 				CursorVal: cursorVal, CursorID: cursorID,

@@ -86,7 +86,10 @@ func (d *Driver) ListSessionRecords(
 	}
 	limP := add(int32(limit)) //nolint:gosec // bounded by the API handler
 
-	q := fmt.Sprintf( //nolint:gosec // col/order are allowlist-controlled; all caller values are bound $N params
+	// Not an injection surface: col/order/cmp come only from the allowlist
+	// (sessionSortColumn) and the validated direction; every caller value is a
+	// bound $N param. gosec does not flag this Sprintf, so no nolint is needed.
+	q := fmt.Sprintf(
 		"SELECT %s, %s::text AS sort_val FROM sessions WHERE %s ORDER BY %s %s, id %s LIMIT %s",
 		baseCols, col.Col, strings.Join(where, " AND "), col.Col, order, order, limP)
 
