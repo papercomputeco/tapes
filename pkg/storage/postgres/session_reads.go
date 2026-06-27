@@ -99,7 +99,14 @@ func (d *Driver) ListSessionRecords(
 	var out []storage.SessionRecord
 	for rows.Next() {
 		var g gensqlc.Session
-		var sortVal string
+		// pgtype.Text (not a bare string) so a NULL sort_val degrades to an
+		// empty SortVal instead of failing the whole scan. Every column in the
+		// allowlist is NOT NULL today (see the invariant on sessionSortColumn),
+		// so this never actually fires — it is a guard against a future nullable
+		// sortable column silently 500ing the entire list mid-page. Note this
+		// alone does not make nullable sort columns *work*: the keyset cursor
+		// still can't encode a NULL boundary, so adding one needs more than this.
+		var sortVal pgtype.Text
 		if err := rows.Scan(
 			&g.ID, &g.OrgID, &g.AuthSubject, &g.HarnessID, &g.HarnessSessionID, &g.Name, &g.Cwd,
 			&g.HarnessVersion, &g.ParentSessionID, &g.StartedAt, &g.LastSeenAt, &g.EndedAt, &g.HarnessMetadata,
@@ -110,7 +117,7 @@ func (d *Driver) ListSessionRecords(
 			return nil, fmt.Errorf("list session records: scan: %w", err)
 		}
 		rec := sessionRecordFromRow(g)
-		rec.SortVal = sortVal
+		rec.SortVal = sortVal.String
 		out = append(out, rec)
 	}
 	if err := rows.Err(); err != nil {

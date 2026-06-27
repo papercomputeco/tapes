@@ -101,6 +101,17 @@ const (
 // Postgres type the cursor value is cast back to. Membership here is the
 // allowlist — any field not in this map is rejected before it reaches SQL,
 // so the column name is never attacker-controlled.
+//
+// INVARIANT: every column listed here MUST be NOT NULL. The keyset cursor
+// encodes the boundary row's value as a non-null ::text and casts it back with
+// CastType; a NULL value cannot round-trip through that cursor, and the keyset
+// predicate (col < val) evaluates to NULL for NULL rows, silently dropping them
+// after page 1. Adding a nullable sortable column therefore needs NULLS-ordering
+// discipline plus a cursor sentinel first — it is not a one-line map entry. (We
+// deliberately do NOT add `NULLS LAST` to the ORDER BY: the indexes are
+// (org_id, col DESC, id DESC) = NULLS FIRST, so NULLS LAST would forfeit the
+// index for ordering and force a sort. NULL ordering is a non-issue while this
+// invariant holds.)
 var sessionSortColumn = map[SessionSortField]struct{ Col, CastType string }{
 	SortLastActive:    {"last_seen_at", "timestamptz"},
 	SortStartedAt:     {"started_at", "timestamptz"},
