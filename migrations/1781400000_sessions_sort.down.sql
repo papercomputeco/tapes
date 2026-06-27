@@ -1,0 +1,10 @@
+DROP INDEX IF EXISTS sessions_org_subject_id_idx;
+DROP INDEX IF EXISTS sessions_org_status_id_idx;
+DROP INDEX IF EXISTS sessions_org_duration_id_idx;
+DROP INDEX IF EXISTS sessions_org_tokens_id_idx;
+DROP INDEX IF EXISTS sessions_org_cost_id_idx;
+DROP INDEX IF EXISTS sessions_org_turns_id_idx;
+DROP INDEX IF EXISTS sessions_org_started_id_idx;
+DROP INDEX IF EXISTS sessions_org_lastseen_id_idx;
+ALTER TABLE sessions DROP COLUMN IF EXISTS duration_ns;
+ALTER TABLE sessions DROP COLUMN IF EXISTS total_tokens;

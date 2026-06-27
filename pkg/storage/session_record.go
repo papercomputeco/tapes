@@ -39,6 +39,10 @@ type SessionRecord struct {
 	// captured at ingest. Empty for rows captured before the edge began
 	// stamping the x-paper-auth-subject header.
 	AuthSubject string
+	// SortVal is the canonical ::text form of this row's active sort column,
+	// populated by ListSessionRecords so the API can mint an exact next cursor.
+	// Empty on records returned by point lookups.
+	SortVal string
 }
 
 // ModelUsage is one model's contribution to a session: how many llm
@@ -54,17 +58,99 @@ type ModelUsage struct {
 }
 
 // SessionListOpts parameterizes the sessions-list read: keyset cursor
-// (last_seen_at DESC, id DESC), an optional activity window, and an
-// optional attribution filter. The since/until window filters on
-// last_seen_at — the sort/cursor column — so "sessions active in the
-// period" pages consistently. AuthSubject "" lists every user's
-// sessions; non-empty is an exact match on the gateway-stamped JWT
-// subject.
+// ordered by any sortable column (default last_seen_at DESC, id DESC),
+// an optional activity window, and an optional attribution filter.
+// The since/until window filters on last_seen_at. AuthSubject "" lists
+// every user's sessions; non-empty is an exact match on the
+// gateway-stamped JWT subject.
 type SessionListOpts struct {
 	Limit       int
-	CursorTs    *time.Time
-	CursorID    *string
+	Sort        SessionSortField // zero value == SortLastActive
+	Dir         SortDirection    // zero value == SortDesc
+	CursorVal   *string          // boundary row's sort column, canonical ::text form
+	CursorID    *string          // boundary row's id (UUID), the keyset tiebreak
 	Since       *time.Time
 	Until       *time.Time
 	AuthSubject string
+}
+
+// SessionSortField is the validated column a sessions-list page is ordered by.
+// The zero value sorts by last activity (the historical default).
+type SessionSortField string
+
+const (
+	SortLastActive    SessionSortField = "last_active"
+	SortStartedAt     SessionSortField = "started_at"
+	SortTurnCount     SessionSortField = "turn_count"
+	SortTotalCost     SessionSortField = "total_cost_usd"
+	SortTotalTokens   SessionSortField = "total_tokens"
+	SortDurationNs    SessionSortField = "duration_ns"
+	SortDerivedStatus SessionSortField = "derived_status"
+	SortAuthSubject   SessionSortField = "auth_subject"
+)
+
+// SortDirection is the validated order direction.
+type SortDirection string
+
+const (
+	SortAsc  SortDirection = "asc"
+	SortDesc SortDirection = "desc"
+)
+
+// sessionSortColumn maps each sort field to its physical column and the
+// Postgres type the cursor value is cast back to. Membership here is the
+// allowlist — any field not in this map is rejected before it reaches SQL,
+// so the column name is never attacker-controlled.
+//
+// INVARIANT: every column listed here MUST be NOT NULL. The keyset cursor
+// encodes the boundary row's value as a non-null ::text and casts it back with
+// CastType; a NULL value cannot round-trip through that cursor, and the keyset
+// predicate (col < val) evaluates to NULL for NULL rows, silently dropping them
+// after page 1. Adding a nullable sortable column therefore needs NULLS-ordering
+// discipline plus a cursor sentinel first — it is not a one-line map entry. (We
+// deliberately do NOT add `NULLS LAST` to the ORDER BY: the indexes are
+// (org_id, col DESC, id DESC) = NULLS FIRST, so NULLS LAST would forfeit the
+// index for ordering and force a sort. NULL ordering is a non-issue while this
+// invariant holds.)
+var sessionSortColumn = map[SessionSortField]struct{ Col, CastType string }{
+	SortLastActive:    {"last_seen_at", "timestamptz"},
+	SortStartedAt:     {"started_at", "timestamptz"},
+	SortTurnCount:     {"turn_count", "bigint"},
+	SortTotalCost:     {"total_cost_usd", "numeric"},
+	SortTotalTokens:   {"total_tokens", "bigint"},
+	SortDurationNs:    {"duration_ns", "bigint"},
+	SortDerivedStatus: {"derived_status", "text"},
+	SortAuthSubject:   {"auth_subject", "text"},
+}
+
+// ParseSessionSortField validates a raw sort key. Empty string is the default
+// (last_active). ok is false for any unrecognized value.
+func ParseSessionSortField(raw string) (SessionSortField, bool) {
+	if raw == "" {
+		return SortLastActive, true
+	}
+	f := SessionSortField(raw)
+	if _, ok := sessionSortColumn[f]; ok {
+		return f, true
+	}
+	return "", false
+}
+
+// ParseSortDirection validates a raw direction. Empty string defaults to desc.
+func ParseSortDirection(raw string) (SortDirection, bool) {
+	switch raw {
+	case "", string(SortDesc):
+		return SortDesc, true
+	case string(SortAsc):
+		return SortAsc, true
+	default:
+		return "", false
+	}
+}
+
+// SessionSortColumn resolves a validated sort field to its physical column and
+// cursor cast type. ok is false for unknown fields (the injection guard).
+func SessionSortColumn(f SessionSortField) (struct{ Col, CastType string }, bool) {
+	c, ok := sessionSortColumn[f]
+	return c, ok
 }
