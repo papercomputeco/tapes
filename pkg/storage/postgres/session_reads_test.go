@@ -299,4 +299,95 @@ var _ = Describe("Driver.ListSessionRecords (dynamic sort)", func() {
 		// SortVal is populated even for the default sort
 		Expect(all[0].SortVal).NotTo(BeEmpty())
 	})
+
+	// seedVaried ingests one turn with explicitly varied counters and subject so
+	// several sort columns end up with distinct values (cost, tokens, subject,
+	// last_seen_at); columns that tie (turn_count, derived_status, duration_ns)
+	// fall through to the id tiebreak. Returns the session UUID.
+	seedVaried := func(orgID, harnessSessionID, authSubject string, inTok, outTok int64, cost float64) string {
+		res, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
+			Session: &sessions.IngestEnvelope{
+				OrgID:            orgID,
+				AuthSubject:      authSubject,
+				HarnessID:        "claude",
+				HarnessSessionID: harnessSessionID,
+			},
+			Nodes:        sessionFixture("turn for " + harnessSessionID),
+			InputTokens:  inTok,
+			OutputTokens: outTok,
+			CostUSD:      cost,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.SessionID).NotTo(BeEmpty())
+		return res.SessionID
+	}
+
+	// collectAllPages walks the keyset-paginated list for one sort/direction
+	// with a tiny page size, returning every id seen across pages in order. The
+	// loop bound is a runaway guard: if the cursor ever stops advancing, the
+	// walk would otherwise spin forever.
+	collectAllPages := func(orgID string, sort storage.SessionSortField, dir storage.SortDirection) []string {
+		var ids []string
+		var cursorVal, cursorID *string
+		for i := 0; i < 100; i++ {
+			page, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{
+				Sort: sort, Dir: dir, Limit: 2,
+				CursorVal: cursorVal, CursorID: cursorID,
+			})
+			Expect(err).NotTo(HaveOccurred(), "sort=%s dir=%s page=%d", sort, dir, i)
+			if len(page) == 0 {
+				return ids
+			}
+			ids = append(ids, idsOf(page)...)
+			last := page[len(page)-1]
+			v, id := last.SortVal, last.ID
+			cursorVal, cursorID = &v, &id
+		}
+		Fail("pagination did not terminate for sort=" + string(sort) + " dir=" + string(dir))
+		return ids
+	}
+
+	// The keyset contract — every row exactly once, no duplicates, no drops —
+	// must hold for every sortable column in both directions, not just the
+	// total_cost_usd path the cases above cover. This walks the full set through
+	// a 2-row page window for all 8 fields × {asc,desc} and asserts the set
+	// returned equals the seeded set. Catches a broken cursor predicate, a wrong
+	// cast type, or a sort_val that doesn't round-trip for any one field.
+	It("paginates every sortable column in both directions with no dupes or drops", func() {
+		orgID := newTestOrgID()
+		want := map[string]bool{
+			seedVaried(orgID, "s1", "subj-a", 10, 5, 0.10):  true,
+			seedVaried(orgID, "s2", "subj-b", 40, 1, 0.30):  true,
+			seedVaried(orgID, "s3", "subj-c", 20, 20, 0.05): true,
+			seedVaried(orgID, "s4", "subj-d", 5, 50, 0.30):  true,
+			seedVaried(orgID, "s5", "subj-e", 99, 0, 0.20):  true,
+		}
+		Expect(want).To(HaveLen(5), "seeded sessions must be distinct rows")
+
+		fields := []storage.SessionSortField{
+			storage.SortLastActive, storage.SortStartedAt, storage.SortTurnCount,
+			storage.SortTotalCost, storage.SortTotalTokens, storage.SortDurationNs,
+			storage.SortDerivedStatus, storage.SortAuthSubject,
+		}
+		dirs := []storage.SortDirection{storage.SortAsc, storage.SortDesc}
+
+		for _, f := range fields {
+			for _, d := range dirs {
+				ids := collectAllPages(orgID, f, d)
+
+				seen := map[string]int{}
+				for _, id := range ids {
+					seen[id]++
+				}
+				for id, n := range seen {
+					Expect(n).To(Equal(1), "sort=%s dir=%s row %s appeared %d times", f, d, id, n)
+				}
+				Expect(ids).To(HaveLen(len(want)),
+					"sort=%s dir=%s must return every seeded row exactly once", f, d)
+				for id := range seen {
+					Expect(want).To(HaveKey(id), "sort=%s dir=%s returned unexpected id %s", f, d, id)
+				}
+			}
+		}
+	})
 })
