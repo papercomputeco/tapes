@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"time"
@@ -43,6 +44,33 @@ type sessionsStubDriver struct {
 	lastOrgID            string
 	lastHarnessID        string
 	lastHarnessSessionID string
+
+	// DeleteSession stubbing. deletable holds the ids that exist; a hit
+	// removes the id and reports true, a miss reports false — mirroring the
+	// real driver's (deleted bool) contract.
+	deletable     map[string]bool
+	deleteErr     error
+	deleteCalls   int
+	lastDeleteOrg string
+	lastDeleteID  string
+}
+
+// errStubDelete is the canned failure the stub returns to exercise the
+// handler's 500 path.
+var errStubDelete = errors.New("stub delete failure")
+
+func (d *sessionsStubDriver) DeleteSession(_ context.Context, orgID, id string) (bool, error) {
+	d.deleteCalls++
+	d.lastDeleteOrg = orgID
+	d.lastDeleteID = id
+	if d.deleteErr != nil {
+		return false, d.deleteErr
+	}
+	if !d.deletable[id] {
+		return false, nil
+	}
+	delete(d.deletable, id)
+	return true, nil
 }
 
 func (d *sessionsStubDriver) ListSessionRecords(_ context.Context, orgID string, opts storage.SessionListOpts) ([]storage.SessionRecord, error) {
@@ -360,6 +388,70 @@ var _ = Describe("harness natural-key filter on GET /v1/sessions", func() {
 		Expect(status).To(Equal(fiber.StatusNotImplemented))
 
 		_, _, status = getSessionList(server, "/v1/sessions", "")
+		Expect(status).To(Equal(fiber.StatusNotImplemented))
+	})
+})
+
+var _ = Describe("DELETE /v1/sessions/:id", func() {
+	const (
+		validID = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+		org     = "11111111-1111-1111-1111-111111111111"
+	)
+
+	newServer := func(driver storage.Driver) *Server {
+		server, err := NewServer(Config{ListenAddr: ":0"}, driver, tapeslogger.NewNoop())
+		Expect(err).NotTo(HaveOccurred())
+		return server
+	}
+
+	It("deletes an existing session and returns 204, scoped to the org", func() {
+		drv := &sessionsStubDriver{Driver: inmemory.NewDriver(), deletable: map[string]bool{validID: true}}
+		server := newServer(drv)
+
+		_, status := doJSON(server, http.MethodDelete, "/v1/sessions/"+validID, "", org, "")
+		Expect(status).To(Equal(fiber.StatusNoContent))
+		Expect(drv.deleteCalls).To(Equal(1))
+		Expect(drv.lastDeleteOrg).To(Equal(org), "the delete must be scoped to the requested tenant")
+		Expect(drv.lastDeleteID).To(Equal(validID))
+		Expect(drv.deletable).NotTo(HaveKey(validID))
+	})
+
+	It("returns 404 when the session id is absent", func() {
+		drv := &sessionsStubDriver{Driver: inmemory.NewDriver(), deletable: map[string]bool{}}
+		server := newServer(drv)
+
+		_, status := doJSON(server, http.MethodDelete, "/v1/sessions/"+validID, "", org, "")
+		Expect(status).To(Equal(fiber.StatusNotFound))
+		Expect(drv.deleteCalls).To(Equal(1), "a well-formed id reaches storage; the miss surfaces as 404")
+	})
+
+	It("returns 400 for a malformed (non-UUID) id without touching storage", func() {
+		drv := &sessionsStubDriver{Driver: inmemory.NewDriver(), deletable: map[string]bool{}}
+		server := newServer(drv)
+
+		body, status := doJSON(server, http.MethodDelete, "/v1/sessions/not-a-uuid", "", org, "")
+		Expect(status).To(Equal(fiber.StatusBadRequest))
+		Expect(body["error"]).To(ContainSubstring("UUID"))
+		Expect(drv.deleteCalls).To(BeZero(), "the parse failure must short-circuit before the driver call")
+	})
+
+	It("returns 500 when the driver fails to delete", func() {
+		drv := &sessionsStubDriver{Driver: inmemory.NewDriver(), deleteErr: errStubDelete}
+		server := newServer(drv)
+
+		_, status := doJSON(server, http.MethodDelete, "/v1/sessions/"+validID, "", org, "")
+		Expect(status).To(Equal(fiber.StatusInternalServerError))
+	})
+
+	It("returns 501 when the backend does not support session writes", func() {
+		// The bare in-memory driver implements the read surface but not
+		// sessionsWriter, so the handler must report 501.
+		base := inmemory.NewDriver()
+		_, hasWriter := storage.Driver(base).(sessionsWriter)
+		Expect(hasWriter).To(BeFalse(), "precondition: the bare inmemory driver must not implement sessionsWriter")
+
+		server := newServer(base)
+		_, status := doJSON(server, http.MethodDelete, "/v1/sessions/"+validID, "", org, "")
 		Expect(status).To(Equal(fiber.StatusNotImplemented))
 	})
 })

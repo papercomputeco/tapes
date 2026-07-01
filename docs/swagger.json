@@ -367,6 +367,51 @@
                         }
                     }
                 }
+            },
+            "delete": {
+                "description": "Permanently deletes a session and its subtree: subagent child sessions, derived nodes, and spans cascade with it. Org-scoped — any caller in the org may delete any of its sessions. The immutable raw_turns capture log is left intact.",
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Delete a session",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session id (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Session deleted"
+                    },
+                    "400": {
+                        "description": "Missing or malformed id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Session not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to delete session",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Sessions not supported by this backend",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
             }
         },
         "/v1/sessions/{id}/raw_turns": {

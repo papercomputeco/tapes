@@ -183,6 +183,31 @@ func (d *Driver) GetSessionRecord(ctx context.Context, orgID, id string) (*stora
 	return &s, nil
 }
 
+// DeleteSession removes a session by its org-scoped id and returns whether a
+// row was actually deleted (false when the id was absent). The session_id
+// ON DELETE CASCADE foreign keys tear down the rest of the subtree in the same
+// statement: subagent child sessions (parent_session_id), the session's derived
+// nodes, and its spans/span_turns/span_links. A malformed id is treated as a
+// no-op delete, matching DeleteSkill.
+func (d *Driver) DeleteSession(ctx context.Context, orgID, id string) (bool, error) {
+	oid, err := orgIDFromString(orgID)
+	if err != nil {
+		return false, fmt.Errorf("delete session: %w", err)
+	}
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		return false, nil //nolint:nilerr // invalid id == nothing to delete
+	}
+	n, err := d.q.DeleteSession(ctx, gensqlc.DeleteSessionParams{
+		OrgID: oid,
+		ID:    pgtype.UUID{Bytes: parsed, Valid: true},
+	})
+	if err != nil {
+		return false, fmt.Errorf("delete session: %w", err)
+	}
+	return n > 0, nil
+}
+
 // GetSessionRecordByHarness returns the single session matching the
 // org-scoped natural key (org_id, harness_id, harness_session_id), or nil
 // if no row matches. The lookup is an exact-match point read on the

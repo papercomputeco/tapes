@@ -148,6 +148,15 @@ LIMIT sqlc.arg(lim);
 SELECT * FROM sessions
 WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id);
 
+-- name: DeleteSession :execrows
+-- Remove a session by its org-scoped id. Returns the affected row count so the
+-- handler can distinguish a real delete from a missing id. Dependent rows
+-- (subagent child sessions, derived nodes, spans/span_turns/span_links) are
+-- removed by the session_id ON DELETE CASCADE foreign keys, so this single
+-- statement tears down the whole subtree.
+DELETE FROM sessions
+WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id);
+
 -- name: ListNodesBySession :many
 -- All nodes attributed to a session, ordered by capture time (chronological).
 SELECT * FROM nodes
