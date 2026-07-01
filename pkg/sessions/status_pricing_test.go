@@ -96,15 +96,24 @@ var _ = Describe("NormalizeModel", func() {
 		// date from the -YYYYMMDD stripper.
 		Expect(sessions.NormalizeModel("claude-sonnet-4-5-20250929[1m]")).To(Equal("claude-sonnet-4.5"))
 	})
-	It("resolves claude-fable-5 pricing in bare and 1M-context form", func() {
-		// claude-fable-5 has no minor version, so the dotted-key round-trip
-		// loop below skips it — pin its lookup explicitly.
+	It("resolves minor-less Anthropic pricing in bare and 1M-context form", func() {
+		// These keys have no minor version, so the dotted-key round-trip loop
+		// below skips them — pin their lookups explicitly.
+		type pin struct {
+			api           string
+			input, output float64
+		}
 		pricing := sessions.DefaultPricing()
-		for _, api := range []string{"claude-fable-5", "claude-fable-5[1m]"} {
-			price, ok := sessions.PricingForModel(pricing, api)
-			Expect(ok).To(BeTrue(), "PricingForModel(%q)", api)
-			Expect(price.Input).To(BeNumerically("==", 10.00), "input $/MTok for %q", api)
-			Expect(price.Output).To(BeNumerically("==", 50.00), "output $/MTok for %q", api)
+		for _, p := range []pin{
+			{"claude-fable-5", 10.00, 50.00},
+			{"claude-fable-5[1m]", 10.00, 50.00},
+			{"claude-sonnet-5", 3.00, 15.00},
+			{"claude-sonnet-5[1m]", 3.00, 15.00},
+		} {
+			price, ok := sessions.PricingForModel(pricing, p.api)
+			Expect(ok).To(BeTrue(), "PricingForModel(%q)", p.api)
+			Expect(price.Input).To(BeNumerically("==", p.input), "input $/MTok for %q", p.api)
+			Expect(price.Output).To(BeNumerically("==", p.output), "output $/MTok for %q", p.api)
 		}
 	})
 	It("every Anthropic pricing key is reachable from its canonical API form", func() {
