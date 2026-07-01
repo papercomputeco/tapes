@@ -48,10 +48,10 @@ var proxyFlags = config.FlagSet{
 	config.FlagPostgres:              {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
 	config.FlagProject:               {Name: "project", ViperKey: "proxy.project", Description: "Project name to tag sessions (default: auto-detect from git)"},
 	config.FlagVectorStoreTgt:        {Name: "vector-store-target", ViperKey: "vector_store.target", Description: "pgvector connection string (defaults to storage.postgres_dsn when unset)"},
-	config.FlagEmbeddingProv:         {Name: "embedding-provider", ViperKey: "embedding.provider", Description: "Deprecated here; embeddings are written by the derive worker (--embed-spans)"},
-	config.FlagEmbeddingTgt:          {Name: "embedding-target", ViperKey: "embedding.target", Description: "Deprecated here; embeddings are written by the derive worker (--embed-spans)"},
-	config.FlagEmbeddingModel:        {Name: "embedding-model", ViperKey: "embedding.model", Description: "Deprecated here; embeddings are written by the derive worker (--embed-spans)"},
-	config.FlagEmbeddingDims:         {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Deprecated here; embeddings are written by the derive worker (--embed-spans)"},
+	config.FlagEmbeddingProv:         {Name: "embedding-provider", ViperKey: "embedding.provider", Description: "Deprecated here; embeddings are written by the embed worker (tapes serve embed-worker)"},
+	config.FlagEmbeddingTgt:          {Name: "embedding-target", ViperKey: "embedding.target", Description: "Deprecated here; embeddings are written by the embed worker (tapes serve embed-worker)"},
+	config.FlagEmbeddingModel:        {Name: "embedding-model", ViperKey: "embedding.model", Description: "Deprecated here; embeddings are written by the embed worker (tapes serve embed-worker)"},
+	config.FlagEmbeddingDims:         {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Deprecated here; embeddings are written by the embed worker (tapes serve embed-worker)"},
 }
 
 const proxyLongDesc string = `Run the proxy server.
@@ -61,9 +61,9 @@ configured upstream URL, recording request/response conversation turns.
 
 Supported provider types: anthropic, openai, ollama
 
-Embeddings are no longer written at capture time: the derive worker family is
-the single writer (tapes serve derive-worker --embed-spans). The embedding
-flags remain accepted for deployment compatibility but have no effect here.`
+Embeddings are no longer written at capture time: the embed worker family is
+the single writer (tapes serve embed-worker). The embedding flags remain
+accepted for deployment compatibility but have no effect here.`
 
 const proxyShortDesc string = "Run the Tapes proxy server"
 
@@ -171,13 +171,13 @@ func (c *proxyCommander) run() error {
 		Project:      c.project,
 	}
 
-	// Capture-time embedding is retired: the derive worker family is
-	// the single writer of embeddings (tapes serve derive-worker
-	// --embed-spans). The embedding flags remain accepted so existing
-	// deployments keep booting, but they no longer have any effect here.
+	// Capture-time embedding is retired: the embed worker family is the
+	// single writer of embeddings (tapes serve embed-worker). The
+	// embedding flags remain accepted so existing deployments keep
+	// booting, but they no longer have any effect here.
 	if c.embeddingTarget != "" || c.embeddingModel != "" {
-		c.logger.Info("capture-time embedding is retired; embeddings are written by the derive worker",
-			"see", "tapes serve derive-worker --embed-spans",
+		c.logger.Info("capture-time embedding is retired; embeddings are written by the embed worker",
+			"see", "tapes serve embed-worker",
 		)
 	}
 

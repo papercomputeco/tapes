@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os/signal"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -23,6 +22,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/credentials"
 	deriveworker "github.com/papercomputeco/tapes/pkg/derive/worker"
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
+	"github.com/papercomputeco/tapes/pkg/embedworker"
 	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/spanembed"
@@ -183,7 +183,7 @@ func NewServeCmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingModel, &cmder.embeddingModel)
 	config.AddUintFlag(cmd, cmder.flags, config.FlagEmbeddingDims, &cmder.embeddingDimensions)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagPostgres, &cmder.postgresDSN)
-	cmd.Flags().BoolVar(&cmder.embedSpans, "embed-spans", true, "Embed main llm spans after each derive so semantic search (tapes search) works; on by default, disable with --embed-spans=false")
+	cmd.Flags().BoolVar(&cmder.embedSpans, "embed-spans", true, "Embed main llm spans in the background so semantic search (tapes search) works; on by default, disable with --embed-spans=false")
 
 	cmd.AddCommand(apicmder.NewAPICmd())
 	cmd.AddCommand(deriveworkercmder.NewDeriveWorkerCmd())
@@ -210,9 +210,9 @@ func (c *ServeCommander) run() error {
 		Project:      c.project,
 	}
 
-	// The embedder serves the API's search read path only. Capture-time
-	// embedding is retired: the derive worker family is the single
-	// writer of embeddings (tapes serve derive-worker --embed-spans).
+	// The embedder serves the API's search read path and the in-process
+	// embed worker below. Capture-time embedding is retired: the embed
+	// worker family is the single writer of embeddings.
 	embedder, err := embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
 		ProviderType: c.embeddingProvider,
 		TargetURL:    c.embeddingTarget,
@@ -300,42 +300,30 @@ func (c *ServeCommander) run() error {
 		Project:  c.project,
 		Debounce: 2 * time.Second,
 	}
-	// By default the in-process worker also embeds main llm spans after each
-	// derive, so `tapes search` works out of the box (disable with
-	// --embed-spans=false). It reuses the embedder and span store already
-	// built for the API's search read path. Embedding degrades gracefully:
-	// setup or backend failures disable search but never stall derivation or
-	// fail serve, and a down backend is surfaced once (not per derive).
+	// By default serve also embeds main llm spans, so `tapes search` works
+	// out of the box (disable with --embed-spans=false). Embedding is never a
+	// step of the derive loop — it runs as its own embed-worker loop (see
+	// pkg/embedworker) so a slow or down embedding backend cannot stall
+	// derivation. Locally that loop runs in-process on a short interval to
+	// keep the capture→search loop snappy; production runs it as its own
+	// process (`tapes serve embed-worker`) with the full-size default
+	// interval. It reuses the embedder and span store already built for the
+	// API's search read path. Embedding degrades gracefully: setup or backend
+	// failures disable search but never fail serve, and a failing pass backs
+	// off between retries instead of hammering a dead backend.
+	var embedW *embedworker.Worker
 	if c.embedSpans {
-		var pass *spanembed.Pass
 		if err := spanSearcher.EnsureSchema(ctx); err != nil {
 			c.logger.Warn("span embedding disabled: could not prepare the embedding schema — tapes search will be unavailable", "error", err)
-		} else if p, perr := spanembed.NewPass(spanSearcher, spanSearcher, embedder, spanembed.PassConfig{
+		} else if pass, perr := spanembed.NewPass(spanSearcher, spanSearcher, embedder, spanembed.PassConfig{
 			Model:      c.embeddingModel,
 			Dimensions: c.embeddingDimensions,
 		}, c.logger); perr != nil {
 			c.logger.Warn("span embedding disabled: could not create the embed pass — tapes search will be unavailable", "error", perr)
 		} else {
-			pass = p
-		}
-
-		if pass != nil {
-			var embedFailed atomic.Bool
-			deriveCfg.SpanEmbed = deriveworker.SpanEmbedFunc(func(ctx context.Context) error {
-				if _, rerr := pass.Run(ctx); rerr != nil {
-					// Absorb so the derive worker stays healthy; surface the
-					// outage once until it recovers instead of per derive.
-					if embedFailed.CompareAndSwap(false, true) {
-						c.logger.Warn("span embedding unavailable — tapes search results will be stale until the embedding backend is reachable",
-							"embedding_target", c.embeddingTarget, "error", rerr)
-					}
-					return nil
-				}
-				if embedFailed.CompareAndSwap(true, false) {
-					c.logger.Info("span embedding recovered")
-				}
-				return nil
-			})
+			embedW = embedworker.NewWorker(embedworker.Config{
+				Interval: 10 * time.Second,
+			}, pass, c.logger)
 			c.logger.Info("span embedding enabled (in-process)", "model", c.embeddingModel)
 		}
 	}
@@ -345,7 +333,7 @@ func (c *ServeCommander) run() error {
 	)
 
 	// Channel to capture errors from goroutines
-	errChan := make(chan error, 4)
+	errChan := make(chan error, 5)
 
 	// Start proxy in goroutine
 	go func() {
@@ -372,6 +360,14 @@ func (c *ServeCommander) run() error {
 			errChan <- fmt.Errorf("derive worker error: %w", err)
 		}
 	}()
+
+	if embedW != nil {
+		go func() {
+			if err := embedW.Run(ctx); err != nil {
+				errChan <- fmt.Errorf("embed worker error: %w", err)
+			}
+		}()
+	}
 
 	// Wait for interrupt signal or a fatal error from any service.
 	select {

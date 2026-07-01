@@ -44,10 +44,10 @@ var ingestFlags = config.FlagSet{
 	config.FlagPostgres:               {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
 	config.FlagProject:                {Name: "project", ViperKey: "proxy.project", Description: "Project name to tag sessions (default: auto-detect from git)"},
 	config.FlagVectorStoreTgt:         {Name: "vector-store-target", ViperKey: "vector_store.target", Description: "pgvector connection string (defaults to storage.postgres_dsn when unset)"},
-	config.FlagEmbeddingProv:          {Name: "embedding-provider", ViperKey: "embedding.provider", Description: "Deprecated here; embeddings are written by the derive worker (--embed-spans)"},
-	config.FlagEmbeddingTgt:           {Name: "embedding-target", ViperKey: "embedding.target", Description: "Deprecated here; embeddings are written by the derive worker (--embed-spans)"},
-	config.FlagEmbeddingModel:         {Name: "embedding-model", ViperKey: "embedding.model", Description: "Deprecated here; embeddings are written by the derive worker (--embed-spans)"},
-	config.FlagEmbeddingDims:          {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Deprecated here; embeddings are written by the derive worker (--embed-spans)"},
+	config.FlagEmbeddingProv:          {Name: "embedding-provider", ViperKey: "embedding.provider", Description: "Deprecated here; embeddings are written by the embed worker (tapes serve embed-worker)"},
+	config.FlagEmbeddingTgt:           {Name: "embedding-target", ViperKey: "embedding.target", Description: "Deprecated here; embeddings are written by the embed worker (tapes serve embed-worker)"},
+	config.FlagEmbeddingModel:         {Name: "embedding-model", ViperKey: "embedding.model", Description: "Deprecated here; embeddings are written by the embed worker (tapes serve embed-worker)"},
+	config.FlagEmbeddingDims:          {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Deprecated here; embeddings are written by the embed worker (tapes serve embed-worker)"},
 }
 
 const ingestLongDesc string = `Run the ingest server (sidecar mode).
@@ -61,9 +61,9 @@ Endpoints:
   POST /v1/ingest        Accept a single conversation turn
   POST /v1/ingest/batch  Accept multiple conversation turns
 
-Embeddings are no longer written at ingest time: the derive worker family is
-the single writer (tapes serve derive-worker --embed-spans). The embedding
-flags remain accepted for deployment compatibility but have no effect here.`
+Embeddings are no longer written at ingest time: the embed worker family is
+the single writer (tapes serve embed-worker). The embedding flags remain
+accepted for deployment compatibility but have no effect here.`
 
 const ingestShortDesc string = "Run the Tapes ingest server (sidecar mode)"
 
@@ -164,14 +164,14 @@ func (c *ingestCommander) run() error {
 		Project:    c.project,
 	}
 
-	// Ingest-time embedding is retired: the derive worker family is the
-	// single writer of embeddings (tapes serve derive-worker
-	// --embed-spans, or the tapes dev embed-spans backfill). The
-	// embedding flags remain accepted so existing deployments keep
-	// booting, but they no longer have any effect here.
+	// Ingest-time embedding is retired: the embed worker family is the
+	// single writer of embeddings (tapes serve embed-worker, or the
+	// tapes dev embed-spans backfill). The embedding flags remain
+	// accepted so existing deployments keep booting, but they no longer
+	// have any effect here.
 	if c.embeddingTarget != "" || c.embeddingModel != "" {
-		c.logger.Info("ingest-time embedding is retired; embeddings are written by the derive worker",
-			"see", "tapes serve derive-worker --embed-spans",
+		c.logger.Info("ingest-time embedding is retired; embeddings are written by the embed worker",
+			"see", "tapes serve embed-worker",
 		)
 	}
 
