@@ -84,11 +84,13 @@ Examples:
 		},
 	}
 
-	cmd.Flags().IntVar(&cmder.postgresPort, "postgres-port", cmder.postgresPort, "Host port to bind Postgres to")
-	cmd.Flags().IntVar(&cmder.ollamaPort, "ollama-port", cmder.ollamaPort, "Host port to bind Ollama to")
-	cmd.Flags().StringVar(&cmder.postgresImage, "postgres-image", cmder.postgresImage, "Docker image to use for Postgres")
-	cmd.Flags().StringVar(&cmder.ollamaImage, "ollama-image", cmder.ollamaImage, "Docker image to use for Ollama")
-	cmd.Flags().BoolVar(&cmder.dockerOllama, "docker-ollama", cmder.dockerOllama, "Run Ollama in Docker even if a native install is present")
+	// Persistent so the flags work on the subcommands (`tapes local up
+	// --postgres-port 5433`), not just the bare `tapes local`.
+	cmd.PersistentFlags().IntVar(&cmder.postgresPort, "postgres-port", cmder.postgresPort, "Host port to bind Postgres to")
+	cmd.PersistentFlags().IntVar(&cmder.ollamaPort, "ollama-port", cmder.ollamaPort, "Host port to bind Ollama to")
+	cmd.PersistentFlags().StringVar(&cmder.postgresImage, "postgres-image", cmder.postgresImage, "Docker image to use for Postgres")
+	cmd.PersistentFlags().StringVar(&cmder.ollamaImage, "ollama-image", cmder.ollamaImage, "Docker image to use for Ollama")
+	cmd.PersistentFlags().BoolVar(&cmder.dockerOllama, "docker-ollama", cmder.dockerOllama, "Run Ollama in Docker even if a native install is present")
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "up",
