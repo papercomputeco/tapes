@@ -298,9 +298,6 @@ func spanItemFromRecord(sp storage.SpanRecord, childIDs []string, mode PayloadMo
 	if sp.RawTurnID != 0 {
 		item.Metadata["raw_turn_id"] = sp.RawTurnID
 	}
-	if sp.NodeHash != "" {
-		item.Metadata["node_hash"] = sp.NodeHash
-	}
 
 	switch sp.Kind {
 	case "tool":

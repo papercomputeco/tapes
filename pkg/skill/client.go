@@ -228,6 +228,23 @@ func (c *APIClient) Sessions(ctx context.Context) ([]SessionInfo, error) {
 	return out, nil
 }
 
+// CaptureStats is the slice of /v1/stats the CLI surfaces for a quick
+// health readout.
+type CaptureStats struct {
+	SessionCount int     `json:"session_count"`
+	TurnCount    int     `json:"turn_count"`
+	TotalCost    float64 `json:"total_cost"`
+}
+
+// Stats fetches aggregate capture stats via GET /v1/stats.
+func (c *APIClient) Stats(ctx context.Context) (*CaptureStats, error) {
+	var stats CaptureStats
+	if err := c.getJSON(ctx, c.apiTarget+"/v1/stats", &stats); err != nil {
+		return nil, fmt.Errorf("get stats: %w", err)
+	}
+	return &stats, nil
+}
+
 // Trace implements Querier via GET /v1/traces/{trace_id}.
 func (c *APIClient) Trace(ctx context.Context, traceID string) (*Trace, error) {
 	u := c.apiTarget + "/v1/traces/" + url.PathEscape(traceID)

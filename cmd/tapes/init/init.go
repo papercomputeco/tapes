@@ -24,8 +24,8 @@ const (
 const initLongDesc string = `Initialize a new .tapes/ directory in the current working directory.
 
 Creates a local .tapes/ directory that takes precedence over the default
-~/.tapes/ directory for checkout state, storage, configuration,
-and other tapes operations.
+~/.tapes/ directory for configuration, credentials, and other tapes
+operations.
 
 A config.toml file is created with default configuration values.
 Use --preset to initialize with a provider preset or a remote config URL.

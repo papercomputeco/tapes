@@ -110,7 +110,7 @@ var _ = Describe("Init command execution", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		// Write a file into the existing .tapes dir
-		testFile := filepath.Join(tapesDir, "checkout.json")
+		testFile := filepath.Join(tapesDir, "existing.json")
 		err = os.WriteFile(testFile, []byte(`{"hash":"abc"}`), 0o644)
 		Expect(err).NotTo(HaveOccurred())
 
