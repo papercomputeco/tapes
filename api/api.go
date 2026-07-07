@@ -88,6 +88,10 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	app.Get("/v1/traces/:trace_id", s.handleGetTrace)
 	app.Get("/v1/sessions/:id", s.handleGetSession)
 	app.Get("/v1/sessions/:id/skills", s.handleListSessionSkills)
+	// Session recap (PCC-241): POST generates (or returns the stored recap
+	// when the session hasn't accrued turns since), GET reads it back.
+	app.Post("/v1/sessions/:id/recap", s.handleGenerateSessionRecap)
+	app.Get("/v1/sessions/:id/recap", s.handleGetSessionRecap)
 	app.Get("/v1/search/spans", s.handleSearchSpansEndpoint)
 
 	// Skills: generate from sessions, persist, edit, version, duplicate, and

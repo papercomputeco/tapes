@@ -99,6 +99,16 @@ type Session struct {
 	ModelUsage        []byte
 }
 
+type SessionRecap struct {
+	OrgID       pgtype.UUID
+	SessionID   pgtype.UUID
+	Narrative   string
+	Observation string
+	TurnCount   int32
+	Model       string
+	GeneratedAt pgtype.Timestamptz
+}
+
 type Skill struct {
 	OrgID                   pgtype.UUID
 	Slug                    string
