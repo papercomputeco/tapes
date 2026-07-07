@@ -39,15 +39,31 @@ type Recap struct {
 	Observation string `json:"observation"`
 }
 
+// Generator extracts session recaps via an LLM, mirroring skill.Generator:
+// the querier reads the span-model transcript surface and llmCall runs the
+// inference.
+type Generator struct {
+	query   skill.Querier
+	llmCall skill.LLMCallFunc
+}
+
+// NewGenerator creates a new recap Generator.
+func NewGenerator(query skill.Querier, llmCall skill.LLMCallFunc) *Generator {
+	return &Generator{
+		query:   query,
+		llmCall: llmCall,
+	}
+}
+
 // Generate builds the session's transcript and runs one LLM pass to extract
 // its recap. live selects the narrative's tense: present ("is working on…")
 // for a session still running, past for a settled one.
-func Generate(ctx context.Context, q skill.Querier, llmCall skill.LLMCallFunc, sessionID string, live bool) (*Recap, error) {
+func (g *Generator) Generate(ctx context.Context, sessionID string, live bool) (*Recap, error) {
 	if strings.TrimSpace(sessionID) == "" {
 		return nil, errors.New("session ID is required")
 	}
 
-	transcript, err := skill.BuildSessionTranscript(ctx, q, sessionID)
+	transcript, err := skill.BuildSessionTranscript(ctx, g.query, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +78,7 @@ func Generate(ctx context.Context, q skill.Querier, llmCall skill.LLMCallFunc, s
 			prompt += "\n\nReturn ONLY valid JSON, no markdown."
 		}
 
-		response, err := llmCall(ctx, prompt)
+		response, err := g.llmCall(ctx, prompt)
 		if err != nil {
 			return nil, fmt.Errorf("llm call: %w", err)
 		}
@@ -86,6 +102,11 @@ func elideMiddle(s string, maxChars int) string {
 		return s
 	}
 	const marker = "\n[... transcript elided ...]\n"
+	if maxChars <= len(marker) {
+		// Too small to fit even the marker — hard-truncate rather than
+		// underflow the tail slice below.
+		return s[:maxChars]
+	}
 	head := (maxChars - len(marker)) * 2 / 3
 	tail := maxChars - len(marker) - head
 	return s[:head] + marker + s[len(s)-tail:]

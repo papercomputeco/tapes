@@ -70,7 +70,7 @@ var _ = Describe("Generate", func() {
 		mockLLM := func(_ context.Context, _ string) (string, error) {
 			return validRecapJSON, nil
 		}
-		r, err := recap.Generate(context.Background(), sessionQuerier(), mockLLM, "sess-1", false)
+		r, err := recap.NewGenerator(sessionQuerier(), mockLLM).Generate(context.Background(), "sess-1", false)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(r.Narrative).To(ContainSubstring("flaky login test"))
 		Expect(r.Observation).To(ContainSubstring("unpinned clocks"))
@@ -82,7 +82,7 @@ var _ = Describe("Generate", func() {
 			captured = prompt
 			return validRecapJSON, nil
 		}
-		_, err := recap.Generate(context.Background(), sessionQuerier(), captureLLM, "sess-1", false)
+		_, err := recap.NewGenerator(sessionQuerier(), captureLLM).Generate(context.Background(), "sess-1", false)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(captured).To(ContainSubstring("Fix the flaky login test"))
 		Expect(captured).To(ContainSubstring("session has ENDED"))
@@ -98,7 +98,7 @@ var _ = Describe("Generate", func() {
 			captured = prompt
 			return validRecapJSON, nil
 		}
-		_, err := recap.Generate(context.Background(), sessionQuerier(), captureLLM, "sess-1", true)
+		_, err := recap.NewGenerator(sessionQuerier(), captureLLM).Generate(context.Background(), "sess-1", true)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(captured).To(ContainSubstring("STILL RUNNING"))
 		Expect(captured).To(ContainSubstring("present tense"))
@@ -108,7 +108,7 @@ var _ = Describe("Generate", func() {
 		mockLLM := func(_ context.Context, _ string) (string, error) {
 			return `{"narrative": "Did the thing.", "observation": ""}`, nil
 		}
-		r, err := recap.Generate(context.Background(), sessionQuerier(), mockLLM, "sess-1", false)
+		r, err := recap.NewGenerator(sessionQuerier(), mockLLM).Generate(context.Background(), "sess-1", false)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(r.Observation).To(BeEmpty())
 	})
@@ -124,7 +124,7 @@ var _ = Describe("Generate", func() {
 			Expect(prompt).To(ContainSubstring("Return ONLY valid JSON, no markdown."))
 			return validRecapJSON, nil
 		}
-		r, err := recap.Generate(context.Background(), sessionQuerier(), flakyLLM, "sess-1", false)
+		r, err := recap.NewGenerator(sessionQuerier(), flakyLLM).Generate(context.Background(), "sess-1", false)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(calls).To(Equal(2))
 		Expect(r.Narrative).NotTo(BeEmpty())
@@ -134,7 +134,7 @@ var _ = Describe("Generate", func() {
 		mockLLM := func(_ context.Context, _ string) (string, error) {
 			return `{"narrative": "", "observation": "x"}`, nil
 		}
-		_, err := recap.Generate(context.Background(), sessionQuerier(), mockLLM, "sess-1", false)
+		_, err := recap.NewGenerator(sessionQuerier(), mockLLM).Generate(context.Background(), "sess-1", false)
 		Expect(err).To(MatchError(ContainSubstring("narrative is empty")))
 	})
 
@@ -144,7 +144,7 @@ var _ = Describe("Generate", func() {
 			called = true
 			return validRecapJSON, nil
 		}
-		_, err := recap.Generate(context.Background(), sessionQuerier(), mockLLM, "sess-unknown", false)
+		_, err := recap.NewGenerator(sessionQuerier(), mockLLM).Generate(context.Background(), "sess-unknown", false)
 		Expect(err).To(HaveOccurred())
 		Expect(called).To(BeFalse())
 	})
@@ -153,9 +153,15 @@ var _ = Describe("Generate", func() {
 		mockLLM := func(_ context.Context, _ string) (string, error) {
 			return "```json\n" + validRecapJSON + "\n```", nil
 		}
-		r, err := recap.Generate(context.Background(), sessionQuerier(), mockLLM, "sess-1", false)
+		r, err := recap.NewGenerator(sessionQuerier(), mockLLM).Generate(context.Background(), "sess-1", false)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(r.Narrative).To(ContainSubstring("flaky login test"))
+	})
+
+	It("hard-truncates instead of panicking when the cap is smaller than the elision marker", func() {
+		long := strings.Repeat("y", 100)
+		Expect(recap.ElideMiddle(long, 10)).To(Equal(long[:10]))
+		Expect(recap.ElideMiddle(long, 1)).To(Equal("y"))
 	})
 
 	It("elides the middle of an oversized transcript, keeping head and tail", func() {
@@ -169,7 +175,7 @@ var _ = Describe("Generate", func() {
 			captured = prompt
 			return validRecapJSON, nil
 		}
-		_, err := recap.Generate(context.Background(), q, captureLLM, "sess-1", false)
+		_, err := recap.NewGenerator(q, captureLLM).Generate(context.Background(), "sess-1", false)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(captured).To(ContainSubstring("GOAL-MARKER"))
 		Expect(captured).To(ContainSubstring("OUTCOME-MARKER"))

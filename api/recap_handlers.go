@@ -21,6 +21,11 @@ import (
 // without an LLM call, and only a session that has accrued turns since (the
 // console's "Update recap" prompt) regenerates.
 
+// defaultSkillLLMProvider is the provider the shared skill/recap LLM path
+// falls back to when the deployment doesn't configure one — the platform's
+// search/embedding provider default.
+const defaultSkillLLMProvider = "openai"
+
 // recapStore is the capability interface the recap API needs from the storage
 // driver. Backends that don't implement it (e.g. inmemory) get a 501, same as
 // skills.
@@ -122,7 +127,7 @@ func (s *Server) handleGenerateSessionRecap(c *fiber.Ctx) error {
 		BaseURL:  s.config.SkillLLMBaseURL,
 	}
 	if strings.TrimSpace(llmCfg.Provider) == "" {
-		llmCfg.Provider = "openai"
+		llmCfg.Provider = defaultSkillLLMProvider
 	}
 	llmCaller, err := skill.NewLLMCaller(llmCfg)
 	if err != nil {
@@ -143,7 +148,7 @@ func (s *Server) handleGenerateSessionRecap(c *fiber.Ctx) error {
 	}
 
 	live := sessionIsLive(sess, time.Now().UTC())
-	r, err := recap.Generate(c.Context(), query, llmCaller, sess.ID, live)
+	r, err := recap.NewGenerator(query, llmCaller).Generate(c.Context(), sess.ID, live)
 	if err != nil {
 		s.logger.Error("generate session recap", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to generate recap"})

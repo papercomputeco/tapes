@@ -24,14 +24,16 @@ type recapStubDriver struct {
 	storage.Driver
 
 	sessions map[string]storage.SessionRecord
-	recaps   map[string]storage.SessionRecapRecord // keyed by session id
-	lastOrg  string
+	// Keyed by (org, session) — mirroring the composite PK — so specs catch a
+	// handler that stops threading the caller's org into recap reads/writes.
+	recaps  map[[2]string]storage.SessionRecapRecord
+	lastOrg string
 }
 
 func newRecapStub() *recapStubDriver {
 	return &recapStubDriver{
 		sessions: map[string]storage.SessionRecord{},
-		recaps:   map[string]storage.SessionRecapRecord{},
+		recaps:   map[[2]string]storage.SessionRecapRecord{},
 	}
 }
 
@@ -39,14 +41,14 @@ func newRecapStub() *recapStubDriver {
 
 func (d *recapStubDriver) UpsertSessionRecap(_ context.Context, orgID string, rec storage.SessionRecapRecord) (*storage.SessionRecapRecord, error) {
 	d.lastOrg = orgID
-	d.recaps[rec.SessionID] = rec
+	d.recaps[[2]string{orgID, rec.SessionID}] = rec
 	out := rec
 	return &out, nil
 }
 
 func (d *recapStubDriver) GetSessionRecap(_ context.Context, orgID, sessionID string) (*storage.SessionRecapRecord, error) {
 	d.lastOrg = orgID
-	if r, ok := d.recaps[sessionID]; ok {
+	if r, ok := d.recaps[[2]string{orgID, sessionID}]; ok {
 		out := r
 		return &out, nil
 	}
@@ -136,7 +138,7 @@ const recapLLMJSON = `{"narrative": "The user set out to fix a flaky login test;
 func newRecapServer(stub *recapStubDriver, llmURL string) *Server {
 	cfg := Config{ListenAddr: ":0"}
 	if llmURL != "" {
-		cfg.SkillLLMProvider = "openai"
+		cfg.SkillLLMProvider = defaultSkillLLMProvider
 		cfg.SkillLLMModel = "gpt-test"
 		cfg.SkillLLMAPIKey = "test-key"
 		cfg.SkillLLMBaseURL = llmURL
@@ -161,7 +163,7 @@ var _ = Describe("Session recap handlers", func() {
 
 	It("returns the stored recap on GET in snake_case", func() {
 		stub := newRecapStub()
-		stub.recaps["sess-1"] = storage.SessionRecapRecord{
+		stub.recaps[[2]string{org, "sess-1"}] = storage.SessionRecapRecord{
 			SessionID:   "sess-1",
 			Narrative:   "Fixed the flaky login test.",
 			Observation: "Unpinned clocks cause flakes.",
@@ -187,10 +189,25 @@ var _ = Describe("Session recap handlers", func() {
 		Expect(body["error"]).To(ContainSubstring("session not found"))
 	})
 
+	It("never serves another org's recap", func() {
+		stub := newRecapStub()
+		stub.recaps[[2]string{org, "sess-1"}] = storage.SessionRecapRecord{
+			SessionID: "sess-1",
+			Narrative: "Org A's recap.",
+			TurnCount: 3,
+		}
+		server := newRecapServer(stub, "")
+		otherOrg := "33333333-3333-3333-3333-333333333333"
+		body, status := doJSON(server, http.MethodGet, "/v1/sessions/sess-1/recap", "", otherOrg, "")
+		Expect(status).To(Equal(fiber.StatusNotFound))
+		Expect(body["error"]).To(ContainSubstring("no recap"))
+		Expect(stub.lastOrg).To(Equal(otherOrg), "the read must be scoped to the caller's org, not the recap owner's")
+	})
+
 	It("returns the stored recap without an LLM call when the turn count is unchanged", func() {
 		stub := newRecapStub()
 		seedRecapSession(stub, "sess-1", 3)
-		stub.recaps["sess-1"] = storage.SessionRecapRecord{
+		stub.recaps[[2]string{org, "sess-1"}] = storage.SessionRecapRecord{
 			SessionID: "sess-1",
 			Narrative: "Cached narrative.",
 			TurnCount: 3,
@@ -219,7 +236,7 @@ var _ = Describe("Session recap handlers", func() {
 		Expect(body).To(HaveKeyWithValue("observation", "Flaky tests here tend to be unpinned clocks."))
 		Expect(body).To(HaveKeyWithValue("turn_count", BeNumerically("==", 3)))
 		Expect(body).To(HaveKeyWithValue("model", "gpt-test"))
-		Expect(stub.recaps["sess-1"].TurnCount).To(Equal(3))
+		Expect(stub.recaps[[2]string{org, "sess-1"}].TurnCount).To(Equal(3))
 	})
 
 	It("regenerates when the session has accrued turns past the stored recap", func() {
@@ -229,7 +246,7 @@ var _ = Describe("Session recap handlers", func() {
 
 		stub := newRecapStub()
 		seedRecapSession(stub, "sess-1", 5)
-		stub.recaps["sess-1"] = storage.SessionRecapRecord{
+		stub.recaps[[2]string{org, "sess-1"}] = storage.SessionRecapRecord{
 			SessionID: "sess-1",
 			Narrative: "Stale narrative.",
 			TurnCount: 3,
@@ -241,7 +258,7 @@ var _ = Describe("Session recap handlers", func() {
 		Expect(calls).To(Equal(1))
 		Expect(body["narrative"]).NotTo(Equal("Stale narrative."))
 		Expect(body).To(HaveKeyWithValue("turn_count", BeNumerically("==", 5)))
-		Expect(stub.recaps["sess-1"].TurnCount).To(Equal(5))
+		Expect(stub.recaps[[2]string{org, "sess-1"}].TurnCount).To(Equal(5))
 	})
 
 	It("422s generate when no LLM key resolves for the tenant", func() {
