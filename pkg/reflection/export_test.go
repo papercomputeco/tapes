@@ -1,4 +1,4 @@
-package recap
+package reflection
 
 // ElideMiddle exposes the transcript elision helper to the external test
 // package (same idiom as pkg/storage/postgres/export_test.go) — its

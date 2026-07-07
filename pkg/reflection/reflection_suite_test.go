@@ -1,4 +1,4 @@
-package recap_test
+package reflection_test
 
 import (
 	"testing"
@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func TestRecap(t *testing.T) {
+func TestReflection(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Recap Suite")
+	RunSpecs(t, "Reflection Suite")
 }

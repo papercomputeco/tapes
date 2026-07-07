@@ -99,7 +99,7 @@ type Session struct {
 	ModelUsage        []byte
 }
 
-type SessionRecap struct {
+type SessionReflection struct {
 	OrgID       pgtype.UUID
 	SessionID   pgtype.UUID
 	Narrative   string
