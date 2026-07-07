@@ -169,21 +169,29 @@ var _ = Describe("Driver skills persistence", func() {
 
 	It("orders the list by most-downloaded when asked", func() {
 		org := newTestOrgID()
+		// UpsertSkill deliberately never writes download_count (it's a real
+		// usage signal, moved only by IncrementSkillDownloads), so downloads
+		// must be bumped through that path. Setting rec.DownloadCount here
+		// was silently dropped, leaving both rows at 0 — the downloads sort
+		// then fell through to the random-UUID id tiebreak and this spec
+		// passed on a coin flip.
 		low := newRec()
 		low.Name = "Low"
-		low.DownloadCount = 1
 		_, err := pgDriver.UpsertSkill(ctx, org, low)
 		Expect(err).NotTo(HaveOccurred())
+		Expect(pgDriver.IncrementSkillDownloads(ctx, org, low.ID)).To(Succeed())
 		high := newRec()
 		high.Name = "High"
-		high.DownloadCount = 9
 		_, err = pgDriver.UpsertSkill(ctx, org, high)
 		Expect(err).NotTo(HaveOccurred())
+		Expect(pgDriver.IncrementSkillDownloads(ctx, org, high.ID)).To(Succeed())
+		Expect(pgDriver.IncrementSkillDownloads(ctx, org, high.ID)).To(Succeed())
 
 		list, err := pgDriver.ListSkills(ctx, org, storage.SkillListOpts{Sort: storage.SkillSortDownloads})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(list).To(HaveLen(2))
 		Expect(list[0].Name).To(Equal("High"), "most-downloaded first")
+		Expect(list[0].DownloadCount).To(Equal(int64(2)))
 	})
 
 	It("lists skills generated from a session", func() {
