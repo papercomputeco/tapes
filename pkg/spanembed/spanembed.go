@@ -229,7 +229,11 @@ func appendBlocks(sb *strings.Builder, raw json.RawMessage) {
 			continue
 		}
 		// A block that is nothing but harness noise contributes nothing.
-		text := strings.TrimSpace(merkle.StripHarnessTags(b.Text))
+		// normalizeWhitespace mirrors what ProjectContent does after
+		// StripHarnessTags: collapse CRLF, trailing line-space, and
+		// consecutive blank lines so the same prose always hashes the
+		// same way regardless of whitespace drift around stripped tags.
+		text := merkle.NormalizeForEmbed(b.Text)
 		if text == "" {
 			continue
 		}
