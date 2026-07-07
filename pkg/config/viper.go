@@ -97,4 +97,7 @@ func setViperDefaults(v *viper.Viper) {
 
 	// Telemetry
 	v.SetDefault("telemetry.disabled", d.Telemetry.Disabled)
+
+	// Update check
+	v.SetDefault("update.disabled", d.Update.Disabled)
 }

@@ -13,6 +13,7 @@ type Config struct {
 	Embedding   EmbeddingConfig   `toml:"embedding"     mapstructure:"embedding"`
 	OpenCode    OpenCodeConfig    `toml:"opencode"      mapstructure:"opencode"`
 	Telemetry   TelemetryConfig   `toml:"telemetry"     mapstructure:"telemetry"`
+	Update      UpdateConfig      `toml:"update"        mapstructure:"update"`
 }
 
 // StorageConfig holds shared storage settings used by both proxy and API.
@@ -71,6 +72,11 @@ type TelemetryConfig struct {
 	Disabled bool `toml:"disabled,omitempty" mapstructure:"disabled"`
 }
 
+// UpdateConfig holds update-check settings.
+type UpdateConfig struct {
+	Disabled bool `toml:"disabled,omitempty" mapstructure:"disabled"`
+}
+
 // configKeySet is the authoritative set of all supported user-facing config keys.
 // Keys use dotted notation matching the TOML section structure.
 var configKeySet = map[string]bool{
@@ -95,4 +101,6 @@ var configKeySet = map[string]bool{
 	"storage.postgres_dsn": true,
 
 	"telemetry.disabled": true,
+
+	"update.disabled": true,
 }

@@ -24,38 +24,6 @@ type DerivedProjectionSchema struct {
 	CreatedAt         pgtype.Timestamptz
 }
 
-type Node struct {
-	Hash                     string
-	Bucket                   []byte
-	Type                     pgtype.Text
-	Role                     pgtype.Text
-	Content                  []byte
-	Model                    pgtype.Text
-	Provider                 pgtype.Text
-	AgentName                pgtype.Text
-	StopReason               pgtype.Text
-	PromptTokens             pgtype.Int4
-	CompletionTokens         pgtype.Int4
-	TotalTokens              pgtype.Int4
-	CacheCreationInputTokens pgtype.Int4
-	CacheReadInputTokens     pgtype.Int4
-	TotalDurationNs          pgtype.Int8
-	PromptDurationNs         pgtype.Int8
-	Project                  pgtype.Text
-	CreatedAt                pgtype.Timestamptz
-	ParentHash               pgtype.Text
-	SessionID                pgtype.UUID
-	OrgID                    pgtype.UUID
-	RequestSystem            pgtype.Text
-	RequestMaxTokens         pgtype.Int4
-	RequestTemperature       pgtype.Float8
-	RequestStream            pgtype.Bool
-	RequestToolCount         pgtype.Int4
-	NodeKind                 pgtype.Text
-	ParentToolUseID          pgtype.Text
-	ThreadID                 pgtype.Text
-}
-
 type RawTurn struct {
 	ID               int64
 	OrgID            pgtype.UUID

@@ -78,8 +78,8 @@ func (q *Queries) InsertRawTurn(ctx context.Context, arg InsertRawTurnParams) (i
 const listRawTurnHeadersBySession = `-- name: ListRawTurnHeadersBySession :many
 SELECT id, org_id, source, provider, agent_name, request_id,
        received_at, meta,
-       length(raw_request::text)::bigint AS request_bytes,
-       length(response::text)::bigint AS response_bytes
+       COALESCE(length(raw_request::text), 0)::bigint AS request_bytes,
+       COALESCE(length(response::text), 0)::bigint AS response_bytes
 FROM raw_turns
 WHERE org_id = $1 AND harness_id = $2 AND harness_session_id = $3
 ORDER BY id ASC
