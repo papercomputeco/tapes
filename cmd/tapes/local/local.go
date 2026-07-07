@@ -47,6 +47,7 @@ type localCommander struct {
 	postgresImage string
 	ollamaImage   string
 	dockerOllama  bool
+	wipe          bool
 }
 
 func NewLocalCmd() *cobra.Command {
@@ -102,7 +103,7 @@ Examples:
 			return cmder.runUp()
 		},
 	})
-	cmd.AddCommand(&cobra.Command{
+	downCmd := &cobra.Command{
 		Use:   "down",
 		Short: "Stop and remove local containers",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -111,7 +112,9 @@ Examples:
 			}
 			return cmder.runDown()
 		},
-	})
+	}
+	downCmd.Flags().BoolVar(&cmder.wipe, "wipe", false, "Also delete the local Postgres data directory (removes all captured sessions)")
+	cmd.AddCommand(downCmd)
 	cmd.AddCommand(&cobra.Command{
 		Use:   "status",
 		Short: "Show local container status",
@@ -326,6 +329,19 @@ func (c *localCommander) runDown() error {
 		}
 	}
 	fmt.Printf("  %s %s\n", cliui.SuccessMark, cliui.StepStyle.Render("Removed local tapes containers"))
+
+	if c.wipe {
+		tapesDir, err := resolveLocalTapesDir(c.configDir)
+		if err != nil {
+			return err
+		}
+		postgresDir := filepath.Join(tapesDir, postgresDirName)
+		if err := os.RemoveAll(postgresDir); err != nil {
+			return fmt.Errorf("removing postgres data directory %q: %w", postgresDir, err)
+		}
+		fmt.Printf("  %s %s %s\n", cliui.SuccessMark, cliui.StepStyle.Render("Removed postgres data directory"), cliui.DimStyle.Render(postgresDir))
+	}
+
 	return nil
 }
 

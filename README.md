@@ -122,13 +122,13 @@ Browse sessions and drill into a single session in the deck TUI:
 tapes deck
 ```
 
-Export a captured conversation as a transcript (Markdown by default, or JSONL),
-or inspect the derived span tree with `--format spans`. Pass a full session id
-or just its short prefix:
+Export a captured conversation as a transcript (Markdown by default, or JSONL).
+The derived span tree is included by default; pass `--spans=false` for just the
+conversation. Pass a full session id or just its short prefix:
 
 ```bash
 tapes checkout <session-id> --format md -o session.md
-tapes checkout <session-id> --format spans
+tapes checkout <session-id> --format jsonl
 ```
 
 Search across captured spans (individual main-conversation LLM spans, with
@@ -143,8 +143,8 @@ tapes search "explain the retry logic"
 the proxy:
 
 ```bash
-tapes local down && tapes local up   # recreate the DB, clearing the demo
-tapes start claude                   # or send any client at http://localhost:8080
+tapes local down --wipe && tapes local up   # recreate the DB, clearing the demo
+tapes start claude                          # or send any client at http://localhost:8080
 ```
 
 `tapes start` launches the agent wired to the proxy and tags the session. See
