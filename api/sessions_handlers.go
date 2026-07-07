@@ -146,16 +146,12 @@ func modelUsageFromStorage(in []storage.ModelUsage) []ModelUsage {
 
 // sessionsCursor is the decoded pagination cursor. It carries the sort context
 // so the keyset boundary is unambiguous and a replay under a different sort is
-// detectable. Legacy cursors (pre-sort) carried only {ts,id}; decode maps them
-// to the last_active/desc default.
+// detectable.
 type sessionsCursor struct {
 	Sort string `json:"sort,omitempty"`
 	Dir  string `json:"dir,omitempty"`
 	Val  string `json:"val,omitempty"`
 	ID   string `json:"id"`
-
-	// LegacyTs is only read from old cursors that predate sort-awareness.
-	LegacyTs *time.Time `json:"ts,omitempty"`
 }
 
 func encodeSessionsCursor(c sessionsCursor) string {
@@ -179,16 +175,15 @@ func decodeSessionsCursor(token string) (sessionsCursor, error) {
 	if err := json.Unmarshal(raw, &c); err != nil {
 		return sessionsCursor{}, fmt.Errorf("invalid cursor: %w", err)
 	}
-	if c.ID == "" {
-		return sessionsCursor{}, errors.New("invalid cursor: missing id")
-	}
-	// Legacy {ts,id}: no sort context, value lived in `ts`.
-	if c.Sort == "" {
-		c.Sort = string(storage.SortLastActive)
-		c.Dir = string(storage.SortDesc)
-		if c.Val == "" && c.LegacyTs != nil {
-			c.Val = c.LegacyTs.UTC().Format(time.RFC3339Nano)
-		}
+	// Every cursor we mint carries its full sort context plus a keyset boundary
+	// {id,val}. The console resets the cursor on any sort change, so a token
+	// missing the sort context is malformed or hand-crafted, not a legacy
+	// client — reject it here rather than defaulting it into a boundary the
+	// caller never asked for. (Val may legitimately be empty for a text sort
+	// column whose boundary row holds an empty string; the numeric-column guard
+	// in handleListSessions handles the case where an empty Val would 500.)
+	if c.ID == "" || c.Sort == "" || c.Dir == "" {
+		return sessionsCursor{}, errors.New("invalid cursor: missing sort context")
 	}
 	return c, nil
 }
@@ -262,6 +257,14 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 		// request, not a normal transition.
 		if cur.Sort != string(sortField) || cur.Dir != string(dir) {
 			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "cursor does not match sort/direction"})
+		}
+		// An empty boundary value only round-trips through the keyset for a text
+		// column (''::text is valid); for numeric/timestamptz columns it would
+		// cast as ''::bigint and 500 mid-scan. Reject it as the malformed client
+		// input it is rather than letting it reach storage. (col resolves here
+		// because sortField already passed ParseSessionSortField above.)
+		if col, _ := storage.SessionSortColumn(sortField); col.CastType != "text" && cur.Val == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "invalid cursor: empty boundary value"})
 		}
 		opts.CursorVal = &cur.Val
 		opts.CursorID = &cur.ID

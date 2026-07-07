@@ -307,7 +307,14 @@ var _ = Describe("harness natural-key filter on GET /v1/sessions", func() {
 		server := newSessionsServer(drv)
 
 		cursorVal := "2026-06-02 00:00:00+00"
-		cursor := encodeSessionsCursor(sessionsCursor{Val: cursorVal, ID: record.ID})
+		// The request omits sort, so it defaults to last_active/desc; the cursor
+		// must carry that same context now that bare {val,id} cursors are gone.
+		cursor := encodeSessionsCursor(sessionsCursor{
+			Sort: string(storage.SortLastActive),
+			Dir:  string(storage.SortDesc),
+			Val:  cursorVal,
+			ID:   record.ID,
+		})
 
 		body, _, status := getSessionList(server, "/v1/sessions?limit=2&cursor="+cursor, "")
 		Expect(status).To(Equal(fiber.StatusOK))
@@ -557,22 +564,37 @@ var _ = Describe("sort and direction params on GET /v1/sessions", func() {
 		Expect(drv.listCalls).To(BeZero(), "mismatch must be rejected before any storage call")
 	})
 
-	It("decodes a legacy {ts,id} cursor as last_active desc and returns 200", func() {
-		// Pre-sort-awareness cursors carried {ts, id}; the handler must accept
-		// them as a last_active/desc boundary so in-flight pagination tokens
-		// from the old console page remain valid after the upgrade.
+	It("rejects a pre-sort {ts,id} cursor (no sort context) as 400", func() {
+		// Legacy cursors are no longer supported: the console ships alongside
+		// this change and always mints sort-aware cursors, so a token that
+		// carries no sort context is malformed and must be rejected before any
+		// storage call rather than defaulted into a last_active boundary.
 		legacyJSON := `{"ts":"2026-06-26T00:00:00Z","id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}`
 		legacyCursor := base64.RawURLEncoding.EncodeToString([]byte(legacyJSON))
 
 		drv := &sessionsStubDriver{Driver: inmemory.NewDriver()}
 		server := newSessionsServer(drv)
 
-		_, _, status := getSessionList(server, "/v1/sessions?cursor="+legacyCursor, "")
-		Expect(status).To(Equal(fiber.StatusOK))
-		Expect(drv.listCalls).To(Equal(1))
-		// The legacy cursor must be treated as last_active/desc (the old default)
-		Expect(drv.lastSort).To(Equal(storage.SortLastActive))
-		Expect(drv.lastDir).To(Equal(storage.SortDesc))
+		_, errBody, status := getSessionList(server, "/v1/sessions?cursor="+legacyCursor, "")
+		Expect(status).To(Equal(fiber.StatusBadRequest))
+		Expect(errBody.Error).To(ContainSubstring("cursor"))
+		Expect(drv.listCalls).To(BeZero(), "malformed cursor must be rejected before any storage call")
+	})
+
+	It("rejects an empty boundary value on a numeric sort as 400", func() {
+		// An empty val would cast as ''::bigint in the keyset predicate and 500
+		// mid-scan; for a numeric/timestamptz sort column the handler must
+		// surface it as a client error instead of forwarding it to storage.
+		emptyValJSON := `{"sort":"total_cost_usd","dir":"desc","val":"","id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}`
+		emptyValCursor := base64.RawURLEncoding.EncodeToString([]byte(emptyValJSON))
+
+		drv := &sessionsStubDriver{Driver: inmemory.NewDriver()}
+		server := newSessionsServer(drv)
+
+		_, errBody, status := getSessionList(server, "/v1/sessions?sort=total_cost_usd&cursor="+emptyValCursor, "")
+		Expect(status).To(Equal(fiber.StatusBadRequest))
+		Expect(errBody.Error).To(ContainSubstring("cursor"))
+		Expect(drv.listCalls).To(BeZero(), "empty numeric boundary must be rejected before any storage call")
 	})
 
 	It("the next_cursor encodes sort and direction for keyset continuity", func() {
