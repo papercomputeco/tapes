@@ -71,6 +71,13 @@ type SpanSet struct {
 	// main-spine model (#28).
 	ModelUsage map[SessionKey][]ModelUsage
 
+	// Outcomes is the per-session fold of artifacts the session produced
+	// (pull requests / repos / issues), detected from tool spans'
+	// input/output at derive time and deduped by URL. Each outcome
+	// carries trace/span provenance and the detecting span's start time,
+	// so a re-derive reproduces the fold byte-for-byte.
+	Outcomes map[SessionKey][]sessions.Outcome
+
 	Report SpanReport
 }
 
@@ -680,6 +687,9 @@ func (em *spanEmitter) finish() {
 	// trace's llm spans below — subagent models included — then sorted
 	// into ModelUsage at the end.
 	modelFold := map[SessionKey]map[string]*ModelUsage{}
+	// Per-session outcome fold: artifacts detected from tool spans,
+	// accumulated in capture order and deduped by URL at the end.
+	outcomeFold := map[SessionKey][]sessions.Outcome{}
 	for _, turn := range em.set.Turns {
 		root := turn.Spans[0]
 		// phases append out of time order within a trace; StartedAt is
@@ -700,6 +710,16 @@ func (em *spanEmitter) finish() {
 		for _, s := range turn.Spans {
 			if end := s.StartedAt.Add(time.Duration(s.DurationNS)); end.After(turn.EndedAt) {
 				turn.EndedAt = end
+			}
+			if s.Kind == SpanKindTool {
+				for _, outcome := range detectSpanOutcomes(s) {
+					outcome.TraceID = turn.TraceID
+					outcome.SpanID = s.SpanID
+					// The detecting span's start time, never the wall
+					// clock — re-derive must reproduce the fold.
+					outcome.DetectedAt = s.StartedAt
+					outcomeFold[turn.Session] = append(outcomeFold[turn.Session], outcome)
+				}
 			}
 			if s.Kind == SpanKindLLM && s.Usage != nil {
 				turn.TotalInputTokens += int64(s.Usage.PromptTokens)
@@ -741,6 +761,35 @@ func (em *spanEmitter) finish() {
 		turn.ResponsePreview = responsePreview(turn)
 	}
 	em.foldModelUsage(modelFold)
+	em.foldOutcomes(outcomeFold)
+}
+
+// detectSpanOutcomes runs the outcome matchers over one tool span: the
+// tool_use block carries the name/input, the tool_result block (when it
+// arrived) carries the output the artifact URL is parsed from.
+func detectSpanOutcomes(s *Span) []sessions.Outcome {
+	if len(s.Input) == 0 {
+		return nil
+	}
+	use := s.Input[0]
+	var output string
+	if len(s.Output) > 0 {
+		output = s.Output[0].ToolOutput
+	}
+	return sessions.DetectToolOutcomes(use.ToolName, use.ToolInput, output)
+}
+
+// foldOutcomes flattens the per-session outcome accumulator into the
+// SpanSet, deduped by URL in capture order so a re-run create command
+// never double-counts an artifact.
+func (em *spanEmitter) foldOutcomes(fold map[SessionKey][]sessions.Outcome) {
+	if len(fold) == 0 {
+		return
+	}
+	em.set.Outcomes = map[SessionKey][]sessions.Outcome{}
+	for key, outcomes := range fold {
+		em.set.Outcomes[key] = sessions.DedupeOutcomes(outcomes)
+	}
 }
 
 // foldModelUsage flattens the per-session model accumulator into the

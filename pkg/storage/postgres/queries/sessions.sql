@@ -178,3 +178,11 @@ UPDATE sessions SET derived_title = sqlc.arg(derived_title) WHERE id = sqlc.arg(
 -- SQL — so the deriver writes it directly as a JSONB array. Re-derive
 -- overwrites it idempotently.
 UPDATE sessions SET model_usage = sqlc.arg(model_usage) WHERE id = sqlc.arg(id);
+
+-- name: UpdateSessionOutcomes :exec
+-- Fold the detected outcomes (artifacts the session produced) onto the
+-- session (PCC-840). Matched from tool spans in Go at derive time — the
+-- matcher registry lives there, not in SQL — so the deriver writes it
+-- directly as a JSONB array, deduped by URL. Re-derive overwrites it
+-- idempotently.
+UPDATE sessions SET outcomes = sqlc.arg(outcomes) WHERE id = sqlc.arg(id);

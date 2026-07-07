@@ -57,7 +57,14 @@ type SessionItem struct {
 	// count, so the UI can show "dominant model + per-model %" without a
 	// cheap-subagent fan-out skewing it. Populated on the session detail;
 	// nil until the session first derives.
-	ModelUsage      []ModelUsage   `json:"model_usage,omitempty"`
+	ModelUsage []ModelUsage `json:"model_usage,omitempty"`
+	// Outcomes is the fold of artifacts the session produced (pull
+	// requests / repos / issues), detected from tool spans at derive
+	// time and deduped by URL. Each carries trace/span provenance back
+	// to the detecting tool call. Nil until the session derives or when
+	// it produced nothing — "no outcome" is a signal the UI renders
+	// explicitly (PCC-837/PCC-840).
+	Outcomes        []Outcome      `json:"outcomes,omitempty"`
 	HarnessMetadata map[string]any `json:"harness_metadata,omitempty"`
 	Preview         string         `json:"preview,omitempty"`
 	// AuthSubject is the gateway-stamped JWT subject (WorkOS user id)
@@ -75,6 +82,21 @@ type ModelUsage struct {
 	InputTokens  int64   `json:"input_tokens"`
 	OutputTokens int64   `json:"output_tokens"`
 	CostUsd      float64 `json:"cost_usd"`
+}
+
+// Outcome is one artifact a session produced, in the API: kind is an
+// open set (pull_request / repo / issue / linear_issue today), url is
+// the artifact's identity, and trace_id/span_id point back at the
+// detecting tool span so consumers can deep-link the exact turn.
+type Outcome struct {
+	Kind       string    `json:"kind"`
+	URL        string    `json:"url"`
+	Title      string    `json:"title,omitempty"`
+	Repo       string    `json:"repo,omitempty"`
+	TraceID    string    `json:"trace_id,omitempty"`
+	SpanID     string    `json:"span_id,omitempty"`
+	DetectedBy string    `json:"detected_by,omitempty"`
+	DetectedAt time.Time `json:"detected_at,omitzero"`
 }
 
 // SessionListResponse is the response envelope for GET /v1/sessions.
@@ -109,10 +131,33 @@ func sessionItemFromStorage(s storage.SessionRecord) SessionItem {
 		DerivedStatus:     s.DerivedStatus,
 		Model:             s.Model,
 		ModelUsage:        modelUsageFromStorage(s.ModelUsage),
+		Outcomes:          outcomesFromStorage(s.Outcomes),
 		HarnessMetadata:   s.HarnessMetadata,
 		Preview:           s.Preview,
 		AuthSubject:       s.AuthSubject,
 	}
+}
+
+// outcomesFromStorage maps the storage-layer outcome fold to the API
+// shape. Nil in stays nil out (omitted from the response).
+func outcomesFromStorage(in []storage.Outcome) []Outcome {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]Outcome, len(in))
+	for i, o := range in {
+		out[i] = Outcome{
+			Kind:       o.Kind,
+			URL:        o.URL,
+			Title:      o.Title,
+			Repo:       o.Repo,
+			TraceID:    o.TraceID,
+			SpanID:     o.SpanID,
+			DetectedBy: o.DetectedBy,
+			DetectedAt: o.DetectedAt,
+		}
+	}
+	return out
 }
 
 // modelUsageFromStorage maps the storage-layer per-model breakdown to

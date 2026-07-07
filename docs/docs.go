@@ -733,6 +733,35 @@ const docTemplate = `{
                 }
             }
         },
+        "api.Outcome": {
+            "type": "object",
+            "properties": {
+                "detected_at": {
+                    "type": "string"
+                },
+                "detected_by": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "repo": {
+                    "type": "string"
+                },
+                "span_id": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "trace_id": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
         "api.RawTurnHeaderItem": {
             "type": "object",
             "properties": {
@@ -835,6 +864,13 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "outcomes": {
+                    "description": "Outcomes is the fold of artifacts the session produced (pull\nrequests / repos / issues), detected from tool spans at derive\ntime and deduped by URL. Each carries trace/span provenance back\nto the detecting tool call. Nil until the session derives or when\nit produced nothing — \"no outcome\" is a signal the UI renders\nexplicitly (PCC-837/PCC-840).",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.Outcome"
+                    }
                 },
                 "parent_session_id": {
                     "type": "string"

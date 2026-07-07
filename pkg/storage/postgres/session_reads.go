@@ -267,6 +267,12 @@ func sessionRecordFromRow(row gensqlc.Session) storage.SessionRecord {
 			s.ModelUsage = mu
 		}
 	}
+	if len(row.Outcomes) > 0 {
+		var outcomes []storage.Outcome
+		if err := json.Unmarshal(row.Outcomes, &outcomes); err == nil {
+			s.Outcomes = outcomes
+		}
+	}
 	if row.TotalCostUsd.Valid {
 		if f, err := row.TotalCostUsd.Float64Value(); err == nil && f.Valid {
 			s.TotalCostUsd = f.Float64

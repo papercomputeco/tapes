@@ -97,6 +97,7 @@ type Session struct {
 	DerivedTitle      pgtype.Text
 	DerivedModel      string
 	ModelUsage        []byte
+	Outcomes          []byte
 }
 
 type Skill struct {

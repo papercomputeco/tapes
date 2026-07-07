@@ -217,6 +217,26 @@ func writeSpanSet(
 			return fmt.Errorf("update session model usage: %w", err)
 		}
 	}
+
+	// Detected outcomes (PCC-840): matched from tool spans in Go at
+	// derive time — the matcher registry lives there, not in SQL — so
+	// the fold writes directly as a JSONB array, mirroring ModelUsage.
+	for key, outcomes := range spans.Outcomes {
+		sid, ok := sessionIDs[key]
+		if !ok || !sid.Valid {
+			continue
+		}
+		payload, err := json.Marshal(outcomes)
+		if err != nil {
+			return fmt.Errorf("marshal outcomes: %w", err)
+		}
+		if err := qtx.UpdateSessionOutcomes(ctx, gensqlc.UpdateSessionOutcomesParams{
+			ID:       sid,
+			Outcomes: payload,
+		}); err != nil {
+			return fmt.Errorf("update session outcomes: %w", err)
+		}
+	}
 	return nil
 }
 

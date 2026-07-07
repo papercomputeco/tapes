@@ -13,6 +13,25 @@ definitions:
       output_tokens:
         type: integer
     type: object
+  api.Outcome:
+    properties:
+      detected_at:
+        type: string
+      detected_by:
+        type: string
+      kind:
+        type: string
+      repo:
+        type: string
+      span_id:
+        type: string
+      title:
+        type: string
+      trace_id:
+        type: string
+      url:
+        type: string
+    type: object
   api.RawTurnHeaderItem:
     properties:
       agent_name:
@@ -93,6 +112,17 @@ definitions:
         type: array
       name:
         type: string
+      outcomes:
+        description: |-
+          Outcomes is the fold of artifacts the session produced (pull
+          requests / repos / issues), detected from tool spans at derive
+          time and deduped by URL. Each carries trace/span provenance back
+          to the detecting tool call. Nil until the session derives or when
+          it produced nothing — "no outcome" is a signal the UI renders
+          explicitly (PCC-837/PCC-840).
+        items:
+          $ref: '#/definitions/api.Outcome'
+        type: array
       parent_session_id:
         type: string
       preview:
