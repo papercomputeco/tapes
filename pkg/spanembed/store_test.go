@@ -72,6 +72,15 @@ var _ = Describe("Store", func() {
 		pool, err = pgxpool.New(ctx, dsn)
 		Expect(err).NotTo(HaveOccurred())
 
+		// EnsureSchema fail-fasts when pgvector is absent (production leaves
+		// installation to database provisioning), so the suite provisions its
+		// own test database. Without this the specs only pass when Ginkgo's
+		// randomized order happens to run the chunked-layout spec (which
+		// installs the extension inline) first — a fresh database otherwise
+		// fails with "vector extension is not installed".
+		_, err = pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector`)
+		Expect(err).NotTo(HaveOccurred())
+
 		org = uuid.NewString()
 		traceA = "trc_" + uuid.NewString()
 	})
