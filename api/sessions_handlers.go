@@ -263,7 +263,7 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 		// cast as ''::bigint and 500 mid-scan. Reject it as the malformed client
 		// input it is rather than letting it reach storage. (col resolves here
 		// because sortField already passed ParseSessionSortField above.)
-		if col, _ := storage.SessionSortColumn(sortField); col.CastType != "text" && cur.Val == "" {
+		if col, _ := storage.SessionSortColumn(sortField); col.Cast() != "text" && cur.Val == "" {
 			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "invalid cursor: empty boundary value"})
 		}
 		opts.CursorVal = &cur.Val

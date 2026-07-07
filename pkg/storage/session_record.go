@@ -97,6 +97,26 @@ const (
 	SortDesc SortDirection = "desc"
 )
 
+// SortColumn is an opaque, SQL-safe sort target: a physical column name and the
+// Postgres type the keyset cursor value is cast back to. Its fields are
+// unexported and there is no exported constructor, so the only SortColumns that
+// exist are the entries in sessionSortColumn below. A SortColumn interpolated
+// into an ORDER BY clause or a ::cast therefore cannot carry an
+// attacker-controlled identifier by construction — the type system enforces the
+// allowlist that a bare string could only enforce by convention.
+type SortColumn struct {
+	col  string
+	cast string
+}
+
+// Col is the physical column name, safe to interpolate into SQL because it can
+// only have originated from the allowlist.
+func (c SortColumn) Col() string { return c.col }
+
+// Cast is the Postgres type the keyset cursor value is cast back to (bigint,
+// numeric, timestamptz, text) — likewise allowlist-sourced and SQL-safe.
+func (c SortColumn) Cast() string { return c.cast }
+
 // sessionSortColumn maps each sort field to its physical column and the
 // Postgres type the cursor value is cast back to. Membership here is the
 // allowlist — any field not in this map is rejected before it reaches SQL,
@@ -104,23 +124,25 @@ const (
 //
 // INVARIANT: every column listed here MUST be NOT NULL. The keyset cursor
 // encodes the boundary row's value as a non-null ::text and casts it back with
-// CastType; a NULL value cannot round-trip through that cursor, and the keyset
-// predicate (col < val) evaluates to NULL for NULL rows, silently dropping them
-// after page 1. Adding a nullable sortable column therefore needs NULLS-ordering
-// discipline plus a cursor sentinel first — it is not a one-line map entry. (We
-// deliberately do NOT add `NULLS LAST` to the ORDER BY: the indexes are
+// the column's cast type; a NULL value cannot round-trip through that cursor,
+// and the keyset predicate (col < val) evaluates to NULL for NULL rows, silently
+// dropping them after page 1. Adding a nullable sortable column therefore needs
+// NULLS-ordering discipline plus a cursor sentinel first — it is not a one-line
+// map entry.
+//
+// We deliberately do NOT add `NULLS LAST` to the ORDER BY: the indexes are
 // (org_id, col DESC, id DESC) = NULLS FIRST, so NULLS LAST would forfeit the
 // index for ordering and force a sort. NULL ordering is a non-issue while this
-// invariant holds.)
-var sessionSortColumn = map[SessionSortField]struct{ Col, CastType string }{
-	SortLastActive:    {"last_seen_at", "timestamptz"},
-	SortStartedAt:     {"started_at", "timestamptz"},
-	SortTurnCount:     {"turn_count", "bigint"},
-	SortTotalCost:     {"total_cost_usd", "numeric"},
-	SortTotalTokens:   {"total_tokens", "bigint"},
-	SortDurationNs:    {"duration_ns", "bigint"},
-	SortDerivedStatus: {"derived_status", "text"},
-	SortAuthSubject:   {"auth_subject", "text"},
+// invariant holds.
+var sessionSortColumn = map[SessionSortField]SortColumn{
+	SortLastActive:    {col: "last_seen_at", cast: "timestamptz"},
+	SortStartedAt:     {col: "started_at", cast: "timestamptz"},
+	SortTurnCount:     {col: "turn_count", cast: "bigint"},
+	SortTotalCost:     {col: "total_cost_usd", cast: "numeric"},
+	SortTotalTokens:   {col: "total_tokens", cast: "bigint"},
+	SortDurationNs:    {col: "duration_ns", cast: "bigint"},
+	SortDerivedStatus: {col: "derived_status", cast: "text"},
+	SortAuthSubject:   {col: "auth_subject", cast: "text"},
 }
 
 // ParseSessionSortField validates a raw sort key. Empty string is the default
@@ -148,9 +170,11 @@ func ParseSortDirection(raw string) (SortDirection, bool) {
 	}
 }
 
-// SessionSortColumn resolves a validated sort field to its physical column and
-// cursor cast type. ok is false for unknown fields (the injection guard).
-func SessionSortColumn(f SessionSortField) (struct{ Col, CastType string }, bool) {
+// SessionSortColumn resolves a validated sort field to its opaque SortColumn
+// (physical column + cursor cast type). ok is false for unknown fields — the
+// injection guard: an unrecognized field never yields a SortColumn, so it can
+// never reach SQL.
+func SessionSortColumn(f SessionSortField) (SortColumn, bool) {
 	c, ok := sessionSortColumn[f]
 	return c, ok
 }

@@ -59,7 +59,15 @@ func (d *Driver) ListSessionRecords(
 
 	// Explicit column list = the 24 columns the previous generated query
 	// selected, plus the sort column rendered to canonical text so the cursor
-	// round-trips exactly. col.Col and order/cmp come from the allowlist only.
+	// round-trips exactly. col.Col()/col.Cast() and order/cmp come from the
+	// allowlist only.
+	//
+	// MAINTENANCE: this list and the rows.Scan below are a matched pair and must
+	// stay in lockstep with gensqlc.Session (pkg/storage/postgres/gensqlc). A
+	// column added to the sessions table + regenerated struct must be appended
+	// here AND scanned in the same position, or the scan mispairs. This is the
+	// one read path that spells the columns out instead of `SELECT *`, because
+	// it also needs `col::text AS sort_val` appended for the cursor.
 	const baseCols = `id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, ` +
 		`harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, ` +
 		`total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, ` +
@@ -79,19 +87,21 @@ func (d *Driver) ListSessionRecords(
 		where = append(where, "auth_subject = "+add(opts.AuthSubject)+"::text")
 	}
 	if opts.CursorVal != nil && opts.CursorID != nil {
-		valP := add(*opts.CursorVal) + "::" + col.CastType
+		valP := add(*opts.CursorVal) + "::" + col.Cast()
 		idP := add(*opts.CursorID) + "::uuid"
 		where = append(where, fmt.Sprintf("(%s %s %s OR (%s = %s AND id %s %s))",
-			col.Col, cmp, valP, col.Col, valP, cmp, idP))
+			col.Col(), cmp, valP, col.Col(), valP, cmp, idP))
 	}
 	limP := add(int32(limit)) //nolint:gosec // bounded by the API handler
 
-	// Not an injection surface: col/order/cmp come only from the allowlist
-	// (sessionSortColumn) and the validated direction; every caller value is a
-	// bound $N param. gosec does not flag this Sprintf, so no nolint is needed.
+	// Not an injection surface: col.Col()/col.Cast() are an opaque SortColumn
+	// that can only come from the allowlist (SessionSortColumn), order/cmp come
+	// from the validated direction, and every caller value is a bound $N param.
+	// No raw string reaches an identifier position — the type system, not just
+	// convention, guarantees it. gosec does not flag this Sprintf.
 	q := fmt.Sprintf(
 		"SELECT %s, %s::text AS sort_val FROM sessions WHERE %s ORDER BY %s %s, id %s LIMIT %s",
-		baseCols, col.Col, strings.Join(where, " AND "), col.Col, order, order, limP)
+		baseCols, col.Col(), strings.Join(where, " AND "), col.Col(), order, order, limP)
 
 	rows, err := d.conn.Query(ctx, q, args...)
 	if err != nil {
