@@ -506,6 +506,42 @@ func (d *Driver) AggregateSpanStats(ctx context.Context, orgID string, since, un
 	return stats, nil
 }
 
+// AggregateSkillUsage groups Skill tool spans by invoked skill name
+// over a time window — the aggregate behind /v1/stats/skills.
+// Implements storage.SkillUsageReader.
+func (d *Driver) AggregateSkillUsage(ctx context.Context, orgID string, since, until *time.Time) ([]storage.SkillUsage, error) {
+	if d == nil || d.conn == nil {
+		return nil, errors.New("postgres driver not open")
+	}
+	org, err := orgIDFromString(orgKeyForLookup(orgID))
+	if err != nil {
+		return nil, fmt.Errorf("decode org_id: %w", err)
+	}
+	rows, err := d.q.AggregateSkillUsage(ctx, gensqlc.AggregateSkillUsageParams{
+		OrgID:       org,
+		SinceFilter: nullTimePtr(since),
+		UntilFilter: nullTimePtr(until),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("aggregate skill usage: %w", err)
+	}
+	usage := make([]storage.SkillUsage, 0, len(rows))
+	for _, row := range rows {
+		u := storage.SkillUsage{
+			Skill:                 row.Skill,
+			Invocations:           int(row.Invocations),
+			ErrorCount:            int(row.ErrorCount),
+			SessionCount:          int(row.SessionCount),
+			CompletedSessionCount: int(row.CompletedSessionCount),
+		}
+		if row.LastUsedAt.Valid {
+			u.LastUsedAt = row.LastUsedAt.Time
+		}
+		usage = append(usage, u)
+	}
+	return usage, nil
+}
+
 // ListRawTurnHeaders returns the wire log for one session: capture
 // identity and payload sizes, no blobs. Implements
 // storage.SpanModelReader.

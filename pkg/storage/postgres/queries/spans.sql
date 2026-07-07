@@ -267,3 +267,33 @@ SELECT
        AND (sqlc.narg(until_filter)::timestamptz IS NULL OR sp.started_at < sqlc.narg(until_filter)::timestamptz)
     )::bigint                                               AS tool_calls
 FROM matched;
+
+-- name: AggregateSkillUsage :many
+-- /v1/stats/skills: skill invocations grouped by skill name over a
+-- time window (PCC-852). A Claude Code skill invocation is a tool span
+-- named 'Skill' whose input block carries the skill name at
+-- tool_input.skill; the deriver keys spans on tool_use_id, so counts
+-- are per unique invocation and re-sent history never inflates them.
+-- Sessions with derived_status = 'completed' feed the per-skill
+-- completed split so usage can be read against session outcomes.
+SELECT
+    (sp.input->0->'tool_input'->>'skill')::text             AS skill,
+    COUNT(*)::bigint                                        AS invocations,
+    COUNT(*) FILTER (WHERE sp.status = 'error')::bigint     AS error_count,
+    COUNT(DISTINCT sp.session_id)::bigint                   AS session_count,
+    COUNT(DISTINCT sp.session_id) FILTER (
+        WHERE EXISTS (
+            SELECT 1 FROM sessions s
+            WHERE s.id = sp.session_id AND s.derived_status = 'completed'
+        )
+    )::bigint                                               AS completed_session_count,
+    MAX(sp.started_at)::timestamptz                         AS last_used_at
+FROM spans_20260615 sp
+WHERE sp.org_id = sqlc.arg(org_id)
+  AND sp.kind = 'tool'
+  AND sp.name = 'Skill'
+  AND sp.input->0->'tool_input'->>'skill' IS NOT NULL
+  AND (sqlc.narg(since_filter)::timestamptz IS NULL OR sp.started_at >= sqlc.narg(since_filter)::timestamptz)
+  AND (sqlc.narg(until_filter)::timestamptz IS NULL OR sp.started_at < sqlc.narg(until_filter)::timestamptz)
+GROUP BY 1
+ORDER BY invocations DESC, skill ASC;

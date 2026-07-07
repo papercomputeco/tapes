@@ -279,3 +279,105 @@ func decodeStats(server *Server, path string) StatsResponse {
 	Expect(json.Unmarshal(raw, &body)).To(Succeed())
 	return body
 }
+
+// stubSkillUsageDriver decorates a storage.Driver with the
+// storage.SkillUsageReader capability so handler tests can exercise
+// the span-only /v1/stats/skills path without a span-projection store.
+type stubSkillUsageDriver struct {
+	storage.Driver
+	usage []storage.SkillUsage
+	since *time.Time
+	until *time.Time
+}
+
+func (d *stubSkillUsageDriver) AggregateSkillUsage(_ context.Context, _ string, since, until *time.Time) ([]storage.SkillUsage, error) {
+	d.since = since
+	d.until = until
+	return d.usage, nil
+}
+
+var _ = Describe("GET /v1/stats/skills", func() {
+	var logger = tapeslogger.NewNoop()
+
+	get := func(server *Server, path string) *http.Response {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
+		Expect(err).NotTo(HaveOccurred())
+		resp, err := server.app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		return resp
+	}
+
+	It("returns 501 when the backend lacks the skill-usage capability", func() {
+		server, err := NewServer(Config{ListenAddr: ":0"}, inmemory.NewDriver(), logger)
+		Expect(err).NotTo(HaveOccurred())
+
+		resp := get(server, "/v1/stats/skills")
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(fiber.StatusNotImplemented))
+	})
+
+	Context("with a skill-usage-capable backend", func() {
+		var (
+			driver *stubSkillUsageDriver
+			server *Server
+		)
+
+		BeforeEach(func() {
+			driver = &stubSkillUsageDriver{Driver: inmemory.NewDriver()}
+			var err error
+			server, err = NewServer(Config{ListenAddr: ":0"}, driver, logger)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		decode := func(path string) SkillUsageResponse {
+			resp := get(server, path)
+			defer resp.Body.Close()
+			Expect(resp.StatusCode).To(Equal(fiber.StatusOK))
+			var body SkillUsageResponse
+			raw, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(json.Unmarshal(raw, &body)).To(Succeed())
+			return body
+		}
+
+		It("returns per-skill rollups and folds total_invocations", func() {
+			lastUsed := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+			driver.usage = []storage.SkillUsage{
+				{Skill: "grove-refresh", Invocations: 12, ErrorCount: 1, SessionCount: 8, CompletedSessionCount: 6, LastUsedAt: lastUsed},
+				{Skill: "dagger-check", Invocations: 3, SessionCount: 3, CompletedSessionCount: 2, LastUsedAt: lastUsed},
+			}
+
+			body := decode("/v1/stats/skills")
+			Expect(body.TotalInvocations).To(Equal(15))
+			Expect(body.Skills).To(HaveLen(2))
+			Expect(body.Skills[0].Skill).To(Equal("grove-refresh"))
+			Expect(body.Skills[0].Invocations).To(Equal(12))
+			Expect(body.Skills[0].ErrorCount).To(Equal(1))
+			Expect(body.Skills[0].SessionCount).To(Equal(8))
+			Expect(body.Skills[0].CompletedSessionCount).To(Equal(6))
+			Expect(body.Skills[0].LastUsedAt).To(Equal(lastUsed))
+			Expect(body.Skills[1].Skill).To(Equal("dagger-check"))
+		})
+
+		It("returns an empty list, not null, when no skills were invoked", func() {
+			body := decode("/v1/stats/skills")
+			Expect(body.Skills).NotTo(BeNil())
+			Expect(body.Skills).To(BeEmpty())
+			Expect(body.TotalInvocations).To(BeZero())
+		})
+
+		It("passes the since/until window through to the reader", func() {
+			decode("/v1/stats/skills?since=2026-07-01T00:00:00Z&until=2026-07-07T00:00:00Z")
+			Expect(driver.since).NotTo(BeNil())
+			Expect(driver.since.Format(time.RFC3339)).To(Equal("2026-07-01T00:00:00Z"))
+			Expect(driver.until).NotTo(BeNil())
+			Expect(driver.until.Format(time.RFC3339)).To(Equal("2026-07-07T00:00:00Z"))
+		})
+
+		It("rejects a malformed since timestamp", func() {
+			resp := get(server, "/v1/stats/skills?since=yesterday")
+			defer resp.Body.Close()
+			Expect(resp.StatusCode).To(Equal(fiber.StatusBadRequest))
+		})
+	})
+})

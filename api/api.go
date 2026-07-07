@@ -80,6 +80,7 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	// span projection beneath them. Static paths are registered before
 	// parameterised ones.
 	app.Get("/v1/stats", s.handleStats)
+	app.Get("/v1/stats/skills", s.handleSkillUsageStats)
 	app.Get("/v1/sessions", s.handleListSessions)
 	app.Get("/v1/sessions/:id/traces", s.handleGetSessionTraces)
 	app.Get("/v1/sessions/:id/raw_turns", s.handleListSessionRawTurns)

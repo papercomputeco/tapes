@@ -11,6 +11,79 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const aggregateSkillUsage = `-- name: AggregateSkillUsage :many
+SELECT
+    (sp.input->0->'tool_input'->>'skill')::text             AS skill,
+    COUNT(*)::bigint                                        AS invocations,
+    COUNT(*) FILTER (WHERE sp.status = 'error')::bigint     AS error_count,
+    COUNT(DISTINCT sp.session_id)::bigint                   AS session_count,
+    COUNT(DISTINCT sp.session_id) FILTER (
+        WHERE EXISTS (
+            SELECT 1 FROM sessions s
+            WHERE s.id = sp.session_id AND s.derived_status = 'completed'
+        )
+    )::bigint                                               AS completed_session_count,
+    MAX(sp.started_at)::timestamptz                         AS last_used_at
+FROM spans_20260615 sp
+WHERE sp.org_id = $1
+  AND sp.kind = 'tool'
+  AND sp.name = 'Skill'
+  AND sp.input->0->'tool_input'->>'skill' IS NOT NULL
+  AND ($2::timestamptz IS NULL OR sp.started_at >= $2::timestamptz)
+  AND ($3::timestamptz IS NULL OR sp.started_at < $3::timestamptz)
+GROUP BY 1
+ORDER BY invocations DESC, skill ASC
+`
+
+type AggregateSkillUsageParams struct {
+	OrgID       pgtype.UUID
+	SinceFilter pgtype.Timestamptz
+	UntilFilter pgtype.Timestamptz
+}
+
+type AggregateSkillUsageRow struct {
+	Skill                 string
+	Invocations           int64
+	ErrorCount            int64
+	SessionCount          int64
+	CompletedSessionCount int64
+	LastUsedAt            pgtype.Timestamptz
+}
+
+// /v1/stats/skills: skill invocations grouped by skill name over a
+// time window (PCC-852). A Claude Code skill invocation is a tool span
+// named 'Skill' whose input block carries the skill name at
+// tool_input.skill; the deriver keys spans on tool_use_id, so counts
+// are per unique invocation and re-sent history never inflates them.
+// Sessions with derived_status = 'completed' feed the per-skill
+// completed split so usage can be read against session outcomes.
+func (q *Queries) AggregateSkillUsage(ctx context.Context, arg AggregateSkillUsageParams) ([]AggregateSkillUsageRow, error) {
+	rows, err := q.db.Query(ctx, aggregateSkillUsage, arg.OrgID, arg.SinceFilter, arg.UntilFilter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AggregateSkillUsageRow
+	for rows.Next() {
+		var i AggregateSkillUsageRow
+		if err := rows.Scan(
+			&i.Skill,
+			&i.Invocations,
+			&i.ErrorCount,
+			&i.SessionCount,
+			&i.CompletedSessionCount,
+			&i.LastUsedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const aggregateSpanStats = `-- name: AggregateSpanStats :one
 WITH matched AS (
     SELECT t.org_id, t.trace_id, t.session_id, t.synthetic, t.duration_ns,

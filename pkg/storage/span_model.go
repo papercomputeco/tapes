@@ -126,3 +126,24 @@ type SpanStats struct {
 type SpanStatsReader interface {
 	AggregateSpanStats(ctx context.Context, orgID string, since, until *time.Time) (SpanStats, error)
 }
+
+// SkillUsage is one skill's invocation rollup behind /v1/stats/skills:
+// tool spans named 'Skill' grouped by the invoked skill name over a
+// time window. Skill is the name string the harness invoked
+// (tool_input.skill) — it is not guaranteed to match a skills-table
+// record; callers join on slug and tolerate unmatched names.
+type SkillUsage struct {
+	Skill                 string
+	Invocations           int
+	ErrorCount            int
+	SessionCount          int
+	CompletedSessionCount int
+	LastUsedAt            time.Time
+}
+
+// SkillUsageReader is the capability interface for skill-invocation
+// stats. Only span-projection backends can serve it: skill invocations
+// are tool spans, so there is no node-layer fallback.
+type SkillUsageReader interface {
+	AggregateSkillUsage(ctx context.Context, orgID string, since, until *time.Time) ([]SkillUsage, error)
+}

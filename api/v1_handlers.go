@@ -124,6 +124,70 @@ func (s *Server) handleStats(c *fiber.Ctx) error {
 	})
 }
 
+// SkillUsageItem is one skill's invocation rollup in the
+// /v1/stats/skills response. Skill is the name string the harness
+// invoked (tool_input.skill) — it is not guaranteed to match a skills
+// record; consumers join on slug and tolerate unmatched names.
+type SkillUsageItem struct {
+	Skill                 string    `json:"skill"`
+	Invocations           int       `json:"invocations"`
+	ErrorCount            int       `json:"error_count"`
+	SessionCount          int       `json:"session_count"`
+	CompletedSessionCount int       `json:"completed_session_count"`
+	LastUsedAt            time.Time `json:"last_used_at"`
+}
+
+// SkillUsageResponse is the response for GET /v1/stats/skills.
+type SkillUsageResponse struct {
+	Skills           []SkillUsageItem `json:"skills"`
+	TotalInvocations int              `json:"total_invocations"`
+}
+
+// handleSkillUsageStats handles GET /v1/stats/skills.
+//
+//	@Summary		Get skill invocation stats
+//	@Description	Returns skill invocations grouped by skill name for the window, ordered by invocation count. An invocation is a Skill tool call captured in the span projection; counts are per unique tool_use, so re-sent conversation history never inflates them. Each row carries the sessions the skill appeared in and how many of those sessions completed, so usage reads against session outcomes. Skill names are the strings harnesses invoked and may not match a skills-library record.
+//	@Tags			sessions
+//	@Produce		json
+//	@Param			since	query		string	false	"Only include invocations at or after this RFC3339 timestamp"	format(date-time)
+//	@Param			until	query		string	false	"Only include invocations before this RFC3339 timestamp"		format(date-time)
+//	@Success		200		{object}	SkillUsageResponse
+//	@Failure		400		{object}	llm.ErrorResponse	"Invalid query parameters"
+//	@Failure		500		{object}	llm.ErrorResponse	"Failed to compute skill usage"
+//	@Failure		501		{object}	llm.ErrorResponse	"Skill usage stats not supported by this backend"
+//	@Router			/v1/stats/skills [get]
+func (s *Server) handleSkillUsageStats(c *fiber.Ctx) error {
+	reader, ok := s.driver.(storage.SkillUsageReader)
+	if !ok {
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "skill usage stats not supported by this backend"})
+	}
+
+	opts, err := parseListOpts(c)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
+	}
+
+	usage, err := reader.AggregateSkillUsage(c.Context(), orgIDFromCtx(c), opts.Since, opts.Until)
+	if err != nil {
+		s.logger.Error("aggregate skill usage", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to compute skill usage"})
+	}
+
+	resp := SkillUsageResponse{Skills: make([]SkillUsageItem, 0, len(usage))}
+	for _, u := range usage {
+		resp.Skills = append(resp.Skills, SkillUsageItem{
+			Skill:                 u.Skill,
+			Invocations:           u.Invocations,
+			ErrorCount:            u.ErrorCount,
+			SessionCount:          u.SessionCount,
+			CompletedSessionCount: u.CompletedSessionCount,
+			LastUsedAt:            u.LastUsedAt,
+		})
+		resp.TotalInvocations += u.Invocations
+	}
+	return c.JSON(resp)
+}
+
 // totalCostFromPerModel folds the driver's per-model token rollup into a
 // single USD total via the pricing table. Models the table doesn't price
 // (e.g. unrecognized provider strings) contribute zero — same fall-through

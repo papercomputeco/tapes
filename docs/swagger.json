@@ -553,6 +553,60 @@
                 }
             }
         },
+        "/v1/stats/skills": {
+            "get": {
+                "description": "Returns skill invocations grouped by skill name for the window, ordered by invocation count. An invocation is a Skill tool call captured in the span projection; counts are per unique tool_use, so re-sent conversation history never inflates them. Each row carries the sessions the skill appeared in and how many of those sessions completed, so usage reads against session outcomes. Skill names are the strings harnesses invoked and may not match a skills-library record.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Get skill invocation stats",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Only include invocations at or after this RFC3339 timestamp",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Only include invocations before this RFC3339 timestamp",
+                        "name": "until",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.SkillUsageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid query parameters",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to compute skill usage",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Skill usage stats not supported by this backend",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/traces": {
             "get": {
                 "description": "Returns turn headers for a session — no span payloads. Fetch GET /v1/traces/{trace_id} per turn for spans and links.",
@@ -898,6 +952,43 @@
                     "items": {
                         "$ref": "#/definitions/api.TraceDetail"
                     }
+                }
+            }
+        },
+        "api.SkillUsageItem": {
+            "type": "object",
+            "properties": {
+                "completed_session_count": {
+                    "type": "integer"
+                },
+                "error_count": {
+                    "type": "integer"
+                },
+                "invocations": {
+                    "type": "integer"
+                },
+                "last_used_at": {
+                    "type": "string"
+                },
+                "session_count": {
+                    "type": "integer"
+                },
+                "skill": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.SkillUsageResponse": {
+            "type": "object",
+            "properties": {
+                "skills": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.SkillUsageItem"
+                    }
+                },
+                "total_invocations": {
+                    "type": "integer"
                 }
             }
         },

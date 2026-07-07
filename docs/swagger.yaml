@@ -138,6 +138,30 @@ definitions:
           $ref: '#/definitions/api.TraceDetail'
         type: array
     type: object
+  api.SkillUsageItem:
+    properties:
+      completed_session_count:
+        type: integer
+      error_count:
+        type: integer
+      invocations:
+        type: integer
+      last_used_at:
+        type: string
+      session_count:
+        type: integer
+      skill:
+        type: string
+    type: object
+  api.SkillUsageResponse:
+    properties:
+      skills:
+        items:
+          $ref: '#/definitions/api.SkillUsageItem'
+        type: array
+      total_invocations:
+        type: integer
+    type: object
   api.SpanItem:
     properties:
       children_ids:
@@ -815,6 +839,48 @@ paths:
           schema:
             $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
       summary: Get aggregate session stats
+      tags:
+      - sessions
+  /v1/stats/skills:
+    get:
+      description: Returns skill invocations grouped by skill name for the window,
+        ordered by invocation count. An invocation is a Skill tool call captured in
+        the span projection; counts are per unique tool_use, so re-sent conversation
+        history never inflates them. Each row carries the sessions the skill appeared
+        in and how many of those sessions completed, so usage reads against session
+        outcomes. Skill names are the strings harnesses invoked and may not match
+        a skills-library record.
+      parameters:
+      - description: Only include invocations at or after this RFC3339 timestamp
+        format: date-time
+        in: query
+        name: since
+        type: string
+      - description: Only include invocations before this RFC3339 timestamp
+        format: date-time
+        in: query
+        name: until
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SkillUsageResponse'
+        "400":
+          description: Invalid query parameters
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Failed to compute skill usage
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Skill usage stats not supported by this backend
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Get skill invocation stats
       tags:
       - sessions
   /v1/traces:
