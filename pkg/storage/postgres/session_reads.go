@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -73,37 +72,43 @@ func (d *Driver) ListSessionRecords(
 		`total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, ` +
 		`has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage`
 
-	args := []any{oid} // $1
-	where := []string{"org_id = $1"}
-	add := func(v any) string { args = append(args, v); return "$" + strconv.Itoa(len(args)) }
+	// Values bind as pgx named args (@name). The dynamic ORDER BY forces a
+	// hand-built query, but every caller value is still a named, bound parameter
+	// — never interpolated — and pgx rewrites each @name to a positional $N.
+	named := pgx.NamedArgs{"org_id": oid, "lim": int32(limit)} //nolint:gosec // limit bounded by the API handler
+	where := []string{"org_id = @org_id"}
 
 	if opts.Since != nil {
-		where = append(where, "last_seen_at >= "+add(*opts.Since)+"::timestamptz")
+		named["since"] = *opts.Since
+		where = append(where, "last_seen_at >= @since::timestamptz")
 	}
 	if opts.Until != nil {
-		where = append(where, "last_seen_at < "+add(*opts.Until)+"::timestamptz")
+		named["until"] = *opts.Until
+		where = append(where, "last_seen_at < @until::timestamptz")
 	}
 	if opts.AuthSubject != "" {
-		where = append(where, "auth_subject = "+add(opts.AuthSubject)+"::text")
+		named["auth_subject"] = opts.AuthSubject
+		where = append(where, "auth_subject = @auth_subject::text")
 	}
 	if opts.CursorVal != nil && opts.CursorID != nil {
-		valP := add(*opts.CursorVal) + "::" + col.Cast()
-		idP := add(*opts.CursorID) + "::uuid"
-		where = append(where, fmt.Sprintf("(%s %s %s OR (%s = %s AND id %s %s))",
-			col.Col(), cmp, valP, col.Col(), valP, cmp, idP))
+		named["cursor_val"] = *opts.CursorVal
+		named["cursor_id"] = *opts.CursorID
+		// @cursor_val appears twice; pgx binds the one value to both.
+		valP := "@cursor_val::" + col.Cast()
+		where = append(where, fmt.Sprintf("(%s %s %s OR (%s = %s AND id %s @cursor_id::uuid))",
+			col.Col(), cmp, valP, col.Col(), valP, cmp))
 	}
-	limP := add(int32(limit)) //nolint:gosec // bounded by the API handler
 
 	// Not an injection surface: col.Col()/col.Cast() are an opaque SortColumn
 	// that can only come from the allowlist (SessionSortColumn), order/cmp come
-	// from the validated direction, and every caller value is a bound $N param.
-	// No raw string reaches an identifier position — the type system, not just
-	// convention, guarantees it. gosec does not flag this Sprintf.
+	// from the validated direction, and every caller value is a bound @name
+	// param. No raw string reaches an identifier position — the type system, not
+	// just convention, guarantees it. gosec does not flag this Sprintf.
 	q := fmt.Sprintf(
-		"SELECT %s, %s::text AS sort_val FROM sessions WHERE %s ORDER BY %s %s, id %s LIMIT %s",
-		baseCols, col.Col(), strings.Join(where, " AND "), col.Col(), order, order, limP)
+		"SELECT %s, %s::text AS sort_val FROM sessions WHERE %s ORDER BY %s %s, id %s LIMIT @lim",
+		baseCols, col.Col(), strings.Join(where, " AND "), col.Col(), order, order)
 
-	rows, err := d.conn.Query(ctx, q, args...)
+	rows, err := d.conn.Query(ctx, q, named)
 	if err != nil {
 		return nil, fmt.Errorf("list session records: %w", err)
 	}
