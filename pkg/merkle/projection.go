@@ -163,6 +163,15 @@ func StripHarnessTags(text string) string {
 	return text
 }
 
+// NormalizeForEmbed strips harness-tag spans and folds away whitespace
+// drift, producing the canonical prose used for span embedding. It
+// composes StripHarnessTags with the same whitespace normalization
+// ProjectContent applies to chain-hash text, so embed render and chain
+// hash treat harness noise and whitespace identically.
+func NormalizeForEmbed(text string) string {
+	return normalizeWhitespace(StripHarnessTags(text))
+}
+
 // stripTaggedSpan removes every <tag>…</tag> span from text. An
 // unterminated open tag is treated as swallowing the rest of the
 // string, matching the behavior of sessions.StripTaggedSection.
