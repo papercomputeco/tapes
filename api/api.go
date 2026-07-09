@@ -81,6 +81,10 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	// parameterised ones.
 	app.Get("/v1/stats", s.handleStats)
 	app.Get("/v1/sessions", s.handleListSessions)
+	// /v1/sessions/export has no :id segment, so it must be registered
+	// before the bare /v1/sessions/:id route below — otherwise Fiber would
+	// match it as :id="export" and never reach this handler.
+	app.Get("/v1/sessions/export", s.handleExportSessions)
 	app.Get("/v1/sessions/:id/traces", s.handleGetSessionTraces)
 	app.Get("/v1/sessions/:id/raw_turns", s.handleListSessionRawTurns)
 	app.Get("/v1/sessions/:id/export", s.handleExportSession)
