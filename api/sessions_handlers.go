@@ -486,6 +486,9 @@ func (s *Server) handleExportSessions(c *fiber.Ctx) error {
 		}
 		until = &t
 	}
+	if until != nil && !until.After(since) {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "until must be after since"})
+	}
 
 	orgID := orgIDFromCtx(c)
 	ctx := c.Context()
@@ -513,6 +516,8 @@ func (s *Server) handleExportSessions(c *fiber.Ctx) error {
 	// here (this is the raw fasthttp callback, not a fiber.Ctx), so orgID,
 	// since, until, reader, and query are captured directly.
 	ctx.SetBodyStreamWriter(func(w *bufio.Writer) {
+		streamCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
 		defer w.Flush()
 
 		opts := storage.SessionListOpts{
@@ -521,13 +526,13 @@ func (s *Server) handleExportSessions(c *fiber.Ctx) error {
 			Limit: exportSessionsPageLimit,
 		}
 		for {
-			sessions, err := reader.ListSessionRecords(context.Background(), orgID, opts)
+			sessions, err := reader.ListSessionRecords(streamCtx, orgID, opts)
 			if err != nil {
 				s.logger.Error("list sessions for export", "error", err)
 				return
 			}
 			for _, sess := range sessions {
-				if err := export.SessionJSONL(context.Background(), query, sess.ID, w); err != nil {
+				if err := export.SessionJSONL(streamCtx, query, sess.ID, w); err != nil {
 					s.logger.Error("export session", "id", sess.ID, "error", err)
 					return
 				}

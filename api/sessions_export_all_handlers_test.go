@@ -34,11 +34,13 @@ type pagingExportStubDriver struct {
 
 	listCalls  int
 	listLimits []int
+	listCtxs   []context.Context
 }
 
-func (d *pagingExportStubDriver) ListSessionRecords(_ context.Context, orgID string, opts storage.SessionListOpts) ([]storage.SessionRecord, error) {
+func (d *pagingExportStubDriver) ListSessionRecords(ctx context.Context, orgID string, opts storage.SessionListOpts) ([]storage.SessionRecord, error) {
 	d.listCalls++
 	d.listLimits = append(d.listLimits, opts.Limit)
+	d.listCtxs = append(d.listCtxs, ctx)
 
 	var matched []storage.SessionRecord
 	for _, s := range d.all {
@@ -206,6 +208,21 @@ var _ = Describe("GET /v1/sessions/export", func() {
 		Expect(resp.StatusCode).To(Equal(fiber.StatusBadRequest))
 	})
 
+	DescribeTable("rejects an empty or reversed time window",
+		func(since, until time.Time) {
+			drv := newPagingDriver(org, 1, now)
+			server := newExportServer(drv)
+
+			path := "/v1/sessions/export?since=" + since.Format(time.RFC3339) + "&until=" + until.Format(time.RFC3339)
+			resp, _ := getRaw(server, path, org)
+			Expect(resp.StatusCode).To(Equal(fiber.StatusBadRequest))
+			Expect(resp.Header.Get("Content-Type")).To(ContainSubstring("application/json"))
+			Expect(resp.Header.Get("Content-Disposition")).To(BeEmpty())
+		},
+		Entry("when until equals since", now.Add(-5*time.Minute), now.Add(-5*time.Minute)),
+		Entry("when until is before since", now.Add(-2*time.Minute), now.Add(-5*time.Minute)),
+	)
+
 	// T-9: org isolation.
 	It("only includes sessions belonging to the requesting org", func() {
 		drv := newPagingDriver(org, 5, now)
@@ -242,6 +259,18 @@ var _ = Describe("GET /v1/sessions/export", func() {
 		resp, _ := getRaw(server, "/v1/sessions/export", org)
 		Expect(resp.StatusCode).To(Equal(fiber.StatusOK))
 		Expect(resp.TransferEncoding).To(ContainElement("chunked"))
+	})
+
+	It("cancels the stream context after the response completes", func() {
+		drv := newPagingDriver(org, 5, now)
+		server := newExportServer(drv)
+
+		resp, _ := getRaw(server, "/v1/sessions/export", org)
+		Expect(resp.StatusCode).To(Equal(fiber.StatusOK))
+		Expect(drv.listCtxs).NotTo(BeEmpty())
+		for _, ctx := range drv.listCtxs {
+			Expect(ctx.Err()).To(MatchError(context.Canceled))
+		}
 	})
 
 	// T-11: route-shadowing — /v1/sessions/export must not be captured by
