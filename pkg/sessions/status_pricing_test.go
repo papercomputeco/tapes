@@ -84,6 +84,8 @@ var _ = Describe("NormalizeModel", func() {
 	It("strips OpenAI-style date suffix", func() {
 		Expect(sessions.NormalizeModel("gpt-4o-2024-08-06")).To(Equal("gpt-4o"))
 		// Codex default model id as seen on the Responses wire.
+		Expect(sessions.NormalizeModel("gpt-5.6-sol-2026-07-09")).To(Equal("gpt-5.6-sol"))
+		Expect(sessions.NormalizeModel("gpt-5-6-sol-2026-07-09")).To(Equal("gpt-5.6-sol"))
 		Expect(sessions.NormalizeModel("gpt-5.5-2026-04-23")).To(Equal("gpt-5.5"))
 		Expect(sessions.NormalizeModel("gpt-5-5-2026-04-23")).To(Equal("gpt-5.5"))
 	})
@@ -127,6 +129,25 @@ var _ = Describe("NormalizeModel", func() {
 			api := strings.ReplaceAll(key, ".", "-")
 			Expect(sessions.NormalizeModel(api)).To(Equal(key), "bare API form %q", api)
 			Expect(sessions.NormalizeModel(api+"-20260101")).To(Equal(key), "dated API form %q", api+"-20260101")
+		}
+	})
+	It("resolves GPT-5.6 tier pricing and cache multipliers", func() {
+		pricing := sessions.DefaultPricing()
+		for _, p := range []struct {
+			api                             string
+			input, output, read, cacheWrite float64
+		}{
+			{"gpt-5.6-sol", 5.00, 30.00, 0.50, 6.25},
+			{"gpt-5.6-terra", 2.50, 15.00, 0.25, 3.125},
+			{"gpt-5.6-luna", 1.00, 6.00, 0.10, 1.25},
+			{"gpt-5-6-sol-2026-07-09", 5.00, 30.00, 0.50, 6.25},
+		} {
+			price, ok := sessions.PricingForModel(pricing, p.api)
+			Expect(ok).To(BeTrue(), "PricingForModel(%q)", p.api)
+			Expect(price.Input).To(BeNumerically("==", p.input), "input $/MTok for %q", p.api)
+			Expect(price.Output).To(BeNumerically("==", p.output), "output $/MTok for %q", p.api)
+			Expect(price.CacheRead).To(BeNumerically("==", p.read), "cache-read $/MTok for %q", p.api)
+			Expect(price.CacheWrite).To(BeNumerically("==", p.cacheWrite), "cache-write $/MTok for %q", p.api)
 		}
 	})
 	It("returns empty for empty input", func() {

@@ -10,14 +10,15 @@ import (
 
 // DefaultPricing returns hardcoded pricing per million tokens for supported models.
 //
-// Last verified: 2026-07-01
+// Last verified: 2026-07-09
 // Sources:
 //   - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
 //   - OpenAI:    https://platform.openai.com/docs/pricing
 //   - DeepSeek:  https://api-docs.deepseek.com/quick_start/pricing
 //
 // Anthropic cache multipliers: CacheWrite = 1.25x input, CacheRead = 0.10x input.
-// OpenAI cache: CacheWrite = 1x input (no surcharge), CacheRead = 0.50x input (except o3-mini).
+// OpenAI cache: CacheWrite = 1x input and CacheRead = 0.50x input for older models;
+// GPT-5.6+ uses CacheWrite = 1.25x input and CacheRead = 0.10x input.
 //
 // To override at runtime, pass a JSON file path to LoadPricing.
 func DefaultPricing() PricingTable {
@@ -51,6 +52,9 @@ func DefaultPricing() PricingTable {
 		"o3":                {Input: 2.00, Output: 8.00, CacheRead: 0.50, CacheWrite: 2.00},
 		"o3-mini":           {Input: 1.10, Output: 4.40, CacheRead: 0.55, CacheWrite: 1.10},
 		"o4-mini":           {Input: 1.10, Output: 4.40, CacheRead: 0.275, CacheWrite: 1.10},
+		"gpt-5.6-sol":       {Input: 5.00, Output: 30.00, CacheRead: 0.50, CacheWrite: 6.25},
+		"gpt-5.6-terra":     {Input: 2.50, Output: 15.00, CacheRead: 0.25, CacheWrite: 3.125},
+		"gpt-5.6-luna":      {Input: 1.00, Output: 6.00, CacheRead: 0.10, CacheWrite: 1.25},
 		"gpt-5.5":           {Input: 5.00, Output: 30.00, CacheRead: 0.50, CacheWrite: 5.00},
 		"gpt-5.4":           {Input: 2.50, Output: 15.00, CacheRead: 0.25, CacheWrite: 2.50},
 		"gpt-5.3-codex":     {Input: 1.75, Output: 14.00, CacheRead: 0.175, CacheWrite: 1.75},
@@ -150,6 +154,7 @@ func NormalizeModel(model string) string {
 	// Strip OpenAI-style date suffix: -YYYY-MM-DD
 	normalized = stripOpenAIDateSuffix(normalized)
 
+	normalized = strings.ReplaceAll(normalized, "-5-6", "-5.6")
 	normalized = strings.ReplaceAll(normalized, "-5-5", "-5.5")
 	normalized = strings.ReplaceAll(normalized, "-5-4", "-5.4")
 	normalized = strings.ReplaceAll(normalized, "-5-3", "-5.3")
