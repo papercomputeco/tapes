@@ -210,7 +210,7 @@ var _ = Describe("GET /v1/sessions/:id/export", func() {
 
 func nonEmptyLinesAPI(s string) []string {
 	var out []string
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		if strings.TrimSpace(line) != "" {
 			out = append(out, line)
 		}

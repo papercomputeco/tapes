@@ -94,7 +94,7 @@ func newPagingDriver(org string, n int, latest time.Time) *pagingExportStubDrive
 	}
 	d.sessionsByOrg[org] = map[string]storage.SessionRecord{}
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		id := fmt.Sprintf("session-%04d", i)
 		seenAt := latest.Add(-time.Duration(i) * time.Minute)
 		rec := storage.SessionRecord{
@@ -276,6 +276,21 @@ var _ = Describe("GET /v1/sessions/export", func() {
 		disposition := resp.Header.Get("Content-Disposition")
 		Expect(disposition).To(ContainSubstring("attachment"))
 		Expect(disposition).To(ContainSubstring("sessions-last-30-days-"))
+		Expect(disposition).To(ContainSubstring(".jsonl"))
+	})
+
+	It("names the file after the window when since/until narrow it (not last-30-days)", func() {
+		drv := newPagingDriver(org, 1, now)
+		server := newExportServer(drv)
+
+		since := now.Add(-10 * 24 * time.Hour)
+		until := now.Add(-1 * 24 * time.Hour)
+		path := "/v1/sessions/export?since=" + since.Format(time.RFC3339) + "&until=" + until.Format(time.RFC3339)
+		resp, _ := getRaw(server, path, org)
+		Expect(resp.StatusCode).To(Equal(fiber.StatusOK))
+		disposition := resp.Header.Get("Content-Disposition")
+		Expect(disposition).NotTo(ContainSubstring("last-30-days"))
+		Expect(disposition).To(ContainSubstring("sessions-" + since.UTC().Format("2006-01-02") + "-to-" + until.UTC().Format("2006-01-02")))
 		Expect(disposition).To(ContainSubstring(".jsonl"))
 	})
 

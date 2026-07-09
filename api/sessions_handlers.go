@@ -2,6 +2,7 @@ package api
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -406,15 +407,23 @@ func (s *Server) handleExportSession(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
 	}
 
-	filename := fmt.Sprintf("session-%s-%s.jsonl", id, time.Now().UTC().Format("2006-01-02"))
-	c.Set("Content-Type", "application/x-ndjson")
-	c.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
-
-	if err := export.SessionJSONL(c.Context(), query, id, c.Response().BodyWriter()); err != nil {
+	// Render into a buffer first so the NDJSON/attachment headers are only
+	// committed once the export succeeds. A single session is bounded, so
+	// buffering is cheap — and it means a mid-render failure returns a clean
+	// JSON error (application/json) instead of a 500 body wearing a
+	// Content-Disposition: attachment header from a download that never
+	// happened. (The streaming bulk endpoint can't do this; a single session
+	// can.)
+	var buf bytes.Buffer
+	if err := export.SessionJSONL(c.Context(), query, id, &buf); err != nil {
 		s.logger.Error("export session", "id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to render session export"})
 	}
-	return nil
+
+	filename := fmt.Sprintf("session-%s-%s.jsonl", id, time.Now().UTC().Format("2006-01-02"))
+	c.Set("Content-Type", "application/x-ndjson")
+	c.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	return c.Send(buf.Bytes())
 }
 
 // exportSessionsPageLimit is the internal page size handleExportSessions
@@ -481,7 +490,19 @@ func (s *Server) handleExportSessions(c *fiber.Ctx) error {
 	orgID := orgIDFromCtx(c)
 	ctx := c.Context()
 
-	filename := fmt.Sprintf("sessions-last-30-days-%s.jsonl", time.Now().UTC().Format("2006-01-02"))
+	// Name the file after the window that actually produced it. The default
+	// (no since/until) is the trailing 30 days; an explicit since/until gets a
+	// dated range so the filename never claims "last-30-days" for a narrower
+	// window. `since` here is the effective (clamped) lower bound.
+	now := time.Now().UTC()
+	filename := fmt.Sprintf("sessions-last-30-days-%s.jsonl", now.Format("2006-01-02"))
+	if c.Query("since") != "" || c.Query("until") != "" {
+		end := "now"
+		if until != nil {
+			end = until.UTC().Format("2006-01-02")
+		}
+		filename = fmt.Sprintf("sessions-%s-to-%s.jsonl", since.UTC().Format("2006-01-02"), end)
+	}
 	c.Set("Content-Type", "application/x-ndjson")
 	c.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
 

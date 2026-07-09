@@ -197,7 +197,7 @@ var _ = Describe("SessionJSONL", func() {
 
 func nonEmptyLines(s string) []string {
 	var out []string
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		if strings.TrimSpace(line) != "" {
 			out = append(out, line)
 		}
