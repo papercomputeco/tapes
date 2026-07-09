@@ -1,8 +1,12 @@
 package api
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"sort"
 	"time"
 
@@ -274,4 +278,57 @@ var _ = Describe("GET /v1/sessions/export", func() {
 		Expect(disposition).To(ContainSubstring("sessions-last-30-days-"))
 		Expect(disposition).To(ContainSubstring(".jsonl"))
 	})
+
+	// Open risk from design.md: the bundle handler is the first
+	// SetBodyStreamWriter use in tapes, and compress.New() (api/api.go)
+	// sits in front of it — unvalidated whether gzip middleware interacts
+	// correctly with a streamed body. Assert the response is actually
+	// gzip-encoded when the client asks for it, AND that decoding it
+	// reproduces the exact NDJSON the uncompressed path returns.
+	It("gzip-encodes the streamed response for Accept-Encoding: gzip and decodes to the expected NDJSON", func() {
+		drv := newPagingDriver(org, 5, now)
+		server := newExportServer(drv)
+
+		resp, gzipped := getGzip(server, "/v1/sessions/export", org)
+		Expect(resp.StatusCode).To(Equal(fiber.StatusOK))
+		Expect(resp.Header.Get("Content-Encoding")).To(Equal("gzip"))
+
+		decoded := decodeGzip(gzipped)
+		lines := nonEmptyLinesAPI(decoded)
+		Expect(lines).To(HaveLen(5))
+		Expect(decoded).To(ContainSubstring(`"session_id":"session-0000"`))
+
+		// Cross-check against the uncompressed path so the assertion is
+		// pinned to "identical NDJSON", not just "5 lines of something".
+		_, plain := getRaw(server, "/v1/sessions/export", org)
+		Expect(decoded).To(Equal(string(plain)))
+	})
 })
+
+// getGzip issues a GET with Accept-Encoding: gzip and returns the raw
+// (still-compressed) response body alongside the response, so callers can
+// assert on Content-Encoding before decoding.
+func getGzip(server *Server, path, org string) (*http.Response, []byte) {
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
+	Expect(err).NotTo(HaveOccurred())
+	if org != "" {
+		req.Header.Set(orgIDHeader, org)
+	}
+	req.Header.Set("Accept-Encoding", "gzip")
+	resp, err := server.app.Test(req, -1)
+	Expect(err).NotTo(HaveOccurred())
+	body, err := io.ReadAll(resp.Body)
+	Expect(err).NotTo(HaveOccurred())
+	defer resp.Body.Close()
+	return resp, body
+}
+
+// decodeGzip gunzips a response body captured via getGzip.
+func decodeGzip(gzipped []byte) string {
+	r, err := gzip.NewReader(bytes.NewReader(gzipped))
+	Expect(err).NotTo(HaveOccurred())
+	defer r.Close()
+	decoded, err := io.ReadAll(r)
+	Expect(err).NotTo(HaveOccurred())
+	return string(decoded)
+}
