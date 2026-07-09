@@ -12,6 +12,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 
+	"github.com/papercomputeco/tapes/pkg/export"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
@@ -352,4 +353,65 @@ func (s *Server) handleGetSession(c *fiber.Ctx) error {
 	return c.JSON(SessionDetailResponse{
 		Session: sessionItemFromStorage(*sess),
 	})
+}
+
+// handleExportSession handles GET /v1/sessions/:id/export. It streams the
+// same JSONL grain `tapes checkout --format jsonl` renders, over HTTP, for
+// the console's per-session download.
+//
+//	@Summary		Export a session as JSONL
+//	@Description	Streams one JSON object per turn (NDJSON) as a downloadable attachment: the same conversation-export grain as `tapes checkout --format jsonl`.
+//	@Tags			sessions
+//	@Produce		application/x-ndjson
+//	@Param			id	path	string	true	"Session id (UUID)"
+//	@Success		200	{string}	string	"NDJSON body, one JSON object per turn"
+//	@Failure		400	{object}	llm.ErrorResponse	"Missing or malformed id"
+//	@Failure		404	{object}	llm.ErrorResponse	"Session not found"
+//	@Failure		500	{object}	llm.ErrorResponse	"Failed to load or render the session"
+//	@Failure		501	{object}	llm.ErrorResponse	"Sessions not supported by this backend"
+//	@Router			/v1/sessions/{id}/export [get]
+func (s *Server) handleExportSession(c *fiber.Ctx) error {
+	reader, ok := s.driver.(sessionsReader)
+	if !ok {
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
+	}
+
+	id := c.Params("id")
+	if id == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id parameter required"})
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id must be a valid UUID"})
+	}
+
+	orgID := orgIDFromCtx(c)
+	// Resolve existence under the org BEFORE anything is streamed, so a
+	// cross-org request gets a clean 404 with no headers or partial body
+	// committed — the same tenancy gate handleGetSession applies.
+	sess, err := reader.GetSessionRecord(c.Context(), orgID, id)
+	if err != nil {
+		s.logger.Error("get session for export", "id", id, "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session"})
+	}
+	if sess == nil {
+		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
+	}
+
+	// The querier needs both sessionsReader and spanModelReader; a driver
+	// can implement the former without the latter, so this is a second,
+	// independent 501 gate checked before any header is set.
+	query, ok := s.skillTraceQuerier(orgID)
+	if !ok {
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
+	}
+
+	filename := fmt.Sprintf("session-%s-%s.jsonl", id, time.Now().UTC().Format("2006-01-02"))
+	c.Set("Content-Type", "application/x-ndjson")
+	c.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+
+	if err := export.SessionJSONL(c.Context(), query, id, c.Response().BodyWriter()); err != nil {
+		s.logger.Error("export session", "id", id, "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to render session export"})
+	}
+	return nil
 }
