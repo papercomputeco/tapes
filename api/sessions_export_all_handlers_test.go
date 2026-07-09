@@ -155,6 +155,45 @@ var _ = Describe("GET /v1/sessions/export", func() {
 		Expect(lines).To(HaveLen(3))
 	})
 
+	// T-12 (R-20): since is clamped to a 30-day floor. A session older than
+	// 30 days must never be returned, even when the caller explicitly
+	// requests a since far in the past — the 30-day window is the maximum
+	// span for v1, not just the default.
+	It("clamps since to 30 days ago and excludes sessions older than that, even when since requests more history", func() {
+		realNow := time.Now().UTC()
+		drv := newPagingDriver(org, 0, realNow)
+		// One session inside the 30-day floor (10 days old) and one older
+		// than the floor (40 days old) — both would be included by a
+		// naive unclamped since=1970-01-01, but only the in-window one
+		// should survive the clamp.
+		recentID := "recent-session"
+		recentRec := storage.SessionRecord{ID: recentID, HarnessID: "claude", StartedAt: realNow.Add(-10 * 24 * time.Hour), LastSeenAt: realNow.Add(-10 * 24 * time.Hour)}
+		drv.all = append(drv.all, recentRec)
+		drv.orgOf[recentID] = org
+		drv.sessionsByOrg[org][recentID] = recentRec
+		drv.summaries[recentID] = []storage.TraceSummaryRecord{
+			{SpanTurnRecord: storage.SpanTurnRecord{TraceID: "recent-t1", UserPrompt: "hi", ResponsePreview: "hello", StartedAt: recentRec.StartedAt}},
+		}
+
+		oldID := "old-session"
+		oldRec := storage.SessionRecord{ID: oldID, HarnessID: "claude", StartedAt: realNow.Add(-40 * 24 * time.Hour), LastSeenAt: realNow.Add(-40 * 24 * time.Hour)}
+		drv.all = append(drv.all, oldRec)
+		drv.orgOf[oldID] = org
+		drv.sessionsByOrg[org][oldID] = oldRec
+		drv.summaries[oldID] = []storage.TraceSummaryRecord{
+			{SpanTurnRecord: storage.SpanTurnRecord{TraceID: "old-t1", UserPrompt: "ancient", ResponsePreview: "history", StartedAt: oldRec.StartedAt}},
+		}
+
+		server := newExportServer(drv)
+		resp, body := getRaw(server, "/v1/sessions/export?since=1970-01-01T00:00:00Z", org)
+		Expect(resp.StatusCode).To(Equal(fiber.StatusOK))
+
+		lines := nonEmptyLinesAPI(string(body))
+		Expect(lines).To(HaveLen(1))
+		Expect(string(body)).To(ContainSubstring("recent-t1"))
+		Expect(string(body)).NotTo(ContainSubstring("old-t1"))
+	})
+
 	It("returns 400 when since is not a valid RFC3339 timestamp", func() {
 		drv := newPagingDriver(org, 1, now)
 		server := newExportServer(drv)

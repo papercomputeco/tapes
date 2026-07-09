@@ -451,13 +451,23 @@ func (s *Server) handleExportSessions(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
 	}
 
-	since := time.Now().UTC().AddDate(0, 0, -30)
+	// The 30-day window is the maximum span for v1 (R-20), not just the
+	// default: floor is enforced unconditionally, even when the caller
+	// supplies an explicit since older than 30 days, so the endpoint can
+	// never be used to stream an org's entire history
+	// (?since=1970-01-01T00:00:00Z). In-window since/until overrides
+	// (R-9) still work as before — only the lower bound is clamped.
+	floor := time.Now().UTC().AddDate(0, 0, -30)
+	since := floor
 	if raw := c.Query("since"); raw != "" {
 		t, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "since must be an RFC3339 timestamp"})
 		}
 		since = t
+	}
+	if since.Before(floor) {
+		since = floor
 	}
 	var until *time.Time
 	if raw := c.Query("until"); raw != "" {
