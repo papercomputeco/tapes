@@ -334,7 +334,7 @@ const docTemplate = `{
         },
         "/v1/sessions/export": {
             "get": {
-                "description": "Streams every session's turns (NDJSON) in the given window, newest-first, as a downloadable attachment. Defaults to the trailing 30 days. Not bounded by the /v1/sessions list cap — pages internally.",
+                "description": "Streams one JSON line per session in the given window, newest-first, as a downloadable attachment. Each line is the session object with its traces, each trace carrying its full spans — the same shape as GET /v1/sessions/{id}/traces with payload=full. Defaults to the trailing 30 days. Not bounded by the /v1/sessions list cap — pages internally.",
                 "produces": [
                     "application/x-ndjson"
                 ],
@@ -360,7 +360,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "NDJSON body, one JSON object per turn across every session in the window",
+                        "description": "JSONL body, one JSON object per session with nested traces and spans",
                         "schema": {
                             "type": "string"
                         }
@@ -486,7 +486,7 @@ const docTemplate = `{
         },
         "/v1/sessions/{id}/export": {
             "get": {
-                "description": "Streams one JSON object per turn (NDJSON) as a downloadable attachment: the same conversation-export grain as ` + "`" + `tapes checkout --format jsonl` + "`" + `.",
+                "description": "Returns the session as a single JSON line (downloadable attachment): the session object with its traces, each trace carrying its full spans — the same shape as GET /v1/sessions/{id}/traces with payload=full.",
                 "produces": [
                     "application/x-ndjson"
                 ],
@@ -505,7 +505,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "NDJSON body, one JSON object per turn",
+                        "description": "JSONL body, one session object with nested traces and spans",
                         "schema": {
                             "type": "string"
                         }
