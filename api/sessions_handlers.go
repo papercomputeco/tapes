@@ -594,7 +594,7 @@ func (s *Server) handleExportSessions(c *fiber.Ctx) error {
 				return
 			}
 			last := sessions[len(sessions)-1]
-			opts.CursorTs = &last.LastSeenAt
+			opts.CursorVal = &last.SortVal
 			opts.CursorID = &last.ID
 		}
 	})
