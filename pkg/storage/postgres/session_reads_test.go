@@ -211,8 +211,6 @@ var _ = Describe("Driver.ListSessionRecords (dynamic sort)", func() {
 		var ok bool
 		pgDriver, ok = driver.(*postgres.Driver)
 		Expect(ok).To(BeTrue())
-		_, err = pgDriver.DB().Exec(ctx, "TRUNCATE TABLE nodes")
-		Expect(err).NotTo(HaveOccurred())
 		_, err = pgDriver.DB().Exec(ctx, "TRUNCATE TABLE sessions CASCADE")
 		Expect(err).NotTo(HaveOccurred())
 
@@ -227,7 +225,10 @@ var _ = Describe("Driver.ListSessionRecords (dynamic sort)", func() {
 	})
 
 	// seedWithCost ingests a minimal turn for the given org and harness
-	// identity with the specified cost, returning the session UUID.
+	// identity, then stamps the requested cost onto the session row.
+	// Ingest no longer folds counters (the derive-time span fold owns
+	// them), and this suite exercises the sort/pagination SQL — not the
+	// fold — so writing the rollup directly keeps the test focused.
 	seedWithCost := func(orgID, harnessSessionID string, cost float64) string {
 		res, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
 			Session: &sessions.IngestEnvelope{
@@ -240,6 +241,10 @@ var _ = Describe("Driver.ListSessionRecords (dynamic sort)", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.SessionID).NotTo(BeEmpty())
+
+		_, err = pgDriver.DB().Exec(ctx,
+			"UPDATE sessions SET total_cost_usd = $1 WHERE id = $2::uuid", cost, res.SessionID)
+		Expect(err).NotTo(HaveOccurred())
 		return res.SessionID
 	}
 

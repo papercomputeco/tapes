@@ -30,8 +30,6 @@ var _ = Describe("Driver.DeleteSession", func() {
 		var ok bool
 		pgDriver, ok = driver.(*postgres.Driver)
 		Expect(ok).To(BeTrue())
-		_, err = pgDriver.DB().Exec(ctx, "TRUNCATE TABLE nodes")
-		Expect(err).NotTo(HaveOccurred())
 		_, err = pgDriver.DB().Exec(ctx, "TRUNCATE TABLE sessions CASCADE")
 		Expect(err).NotTo(HaveOccurred())
 
@@ -47,7 +45,11 @@ var _ = Describe("Driver.DeleteSession", func() {
 
 	// seed ingests a 2-node turn under the given identity and returns the
 	// tapes-minted session UUID. A non-nil parentHarnessSessionID forks the
-	// new session off that parent (shared harness_id).
+	// new session off that parent (shared harness_id). Ingest itself
+	// persists nothing turn-shaped, so a derived span_turn row is planted
+	// directly to give the session a dependent projection row the delete
+	// must cascade through (span_turns/spans/span_links cascade on
+	// session_id since 1781230000_span_model).
 	seed := func(orgID, harnessSessionID, text string, parentHarnessSessionID *string) string {
 		res, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
 			Session: &sessions.IngestEnvelope{
@@ -61,13 +63,19 @@ var _ = Describe("Driver.DeleteSession", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.SessionID).NotTo(BeEmpty())
+
+		_, err = pgDriver.DB().Exec(ctx, `
+			INSERT INTO span_turns_20260615 (org_id, trace_id, session_id, started_at)
+			VALUES ($1::uuid, $2, $3::uuid, NOW())`,
+			orgID, "trace-"+harnessSessionID, res.SessionID)
+		Expect(err).NotTo(HaveOccurred())
 		return res.SessionID
 	}
 
-	nodeCount := func(sessionID string) int {
+	spanTurnCount := func(sessionID string) int {
 		var n int
 		err := pgDriver.DB().QueryRow(ctx,
-			"SELECT count(*) FROM nodes WHERE session_id = $1::uuid", sessionID).Scan(&n)
+			"SELECT count(*) FROM span_turns_20260615 WHERE session_id = $1::uuid", sessionID).Scan(&n)
 		Expect(err).NotTo(HaveOccurred())
 		return n
 	}
@@ -75,7 +83,7 @@ var _ = Describe("Driver.DeleteSession", func() {
 	It("deletes the session and reports it was removed", func() {
 		orgID := newTestOrgID()
 		id := seed(orgID, "sess-solo", "solo turn", nil)
-		Expect(nodeCount(id)).To(BeNumerically(">", 0), "precondition: the session owns nodes")
+		Expect(spanTurnCount(id)).To(BeNumerically(">", 0), "precondition: the session owns derived span turns")
 
 		deleted, err := pgDriver.DeleteSession(ctx, orgID, id)
 		Expect(err).NotTo(HaveOccurred())
@@ -84,10 +92,10 @@ var _ = Describe("Driver.DeleteSession", func() {
 		rec, err := pgDriver.GetSessionRecord(ctx, orgID, id)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rec).To(BeNil(), "the session row is gone")
-		Expect(nodeCount(id)).To(BeZero(), "the session's nodes cascade with it")
+		Expect(spanTurnCount(id)).To(BeZero(), "the session's span turns cascade with it")
 	})
 
-	It("cascades to subagent child sessions and their nodes", func() {
+	It("cascades to subagent child sessions and their span turns", func() {
 		orgID := newTestOrgID()
 		parentID := seed(orgID, "sess-parent", "parent turn", nil)
 		parentHarness := "sess-parent"
@@ -107,8 +115,8 @@ var _ = Describe("Driver.DeleteSession", func() {
 		gone, err := pgDriver.GetSessionRecord(ctx, orgID, childID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(gone).To(BeNil(), "deleting the parent cascades to the child session")
-		Expect(nodeCount(parentID)).To(BeZero())
-		Expect(nodeCount(childID)).To(BeZero())
+		Expect(spanTurnCount(parentID)).To(BeZero())
+		Expect(spanTurnCount(childID)).To(BeZero())
 	})
 
 	It("leaves unrelated sessions in the same org untouched", func() {
@@ -123,7 +131,7 @@ var _ = Describe("Driver.DeleteSession", func() {
 		survivor, err := pgDriver.GetSessionRecord(ctx, orgID, survivorID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(survivor).NotTo(BeNil(), "a sibling session must not be swept up by the delete")
-		Expect(nodeCount(survivorID)).To(BeNumerically(">", 0))
+		Expect(spanTurnCount(survivorID)).To(BeNumerically(">", 0))
 	})
 
 	It("reports false for an absent id and never crosses orgs", func() {
