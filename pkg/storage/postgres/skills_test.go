@@ -184,7 +184,7 @@ var _ = Describe("Driver skills persistence", func() {
 		// download-sorted query falls back to its id tiebreak, which is a
 		// random UUID — making this assertion a coin flip.
 		Expect(pgDriver.IncrementSkillDownloads(ctx, org, low.ID)).To(Succeed())
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			Expect(pgDriver.IncrementSkillDownloads(ctx, org, high.ID)).To(Succeed())
 		}
 
