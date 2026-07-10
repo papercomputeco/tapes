@@ -28,6 +28,13 @@ type sessionsReader interface {
 	GetSessionRecordByHarness(ctx context.Context, orgID string, harnessID string, harnessSessionID string) (*storage.SessionRecord, error)
 }
 
+// sessionsWriter is the capability interface for mutating sessions (DELETE
+// /v1/sessions/:id). The Postgres driver implements it; the handler returns
+// 501 for drivers that don't.
+type sessionsWriter interface {
+	DeleteSession(ctx context.Context, orgID, id string) (bool, error)
+}
+
 const (
 	defaultSessionsLimit = 50
 	maxSessionsLimit     = 200
@@ -556,4 +563,44 @@ func (s *Server) handleExportSessions(c *fiber.Ctx) error {
 	})
 
 	return nil
+}
+
+// handleDeleteSession handles DELETE /v1/sessions/:id.
+//
+//	@Summary		Delete a session
+//	@Description	Permanently deletes a session and its subtree: subagent child sessions, derived nodes, and spans cascade with it. Org-scoped — any caller in the org may delete any of its sessions. The immutable raw_turns capture log is left intact.
+//	@Tags			sessions
+//	@Param			id	path	string	true	"Session id (UUID)"
+//	@Success		204	"Session deleted"
+//	@Failure		400	{object}	llm.ErrorResponse	"Missing or malformed id"
+//	@Failure		404	{object}	llm.ErrorResponse	"Session not found"
+//	@Failure		500	{object}	llm.ErrorResponse	"Failed to delete session"
+//	@Failure		501	{object}	llm.ErrorResponse	"Sessions not supported by this backend"
+//	@Router			/v1/sessions/{id} [delete]
+func (s *Server) handleDeleteSession(c *fiber.Ctx) error {
+	writer, ok := s.driver.(sessionsWriter)
+	if !ok {
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
+	}
+
+	id := c.Params("id")
+	if id == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id parameter required"})
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		// A session id is a UUID; a malformed one is a client error, not a
+		// storage miss — mirrors handleGetSession's 400.
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id must be a valid UUID"})
+	}
+
+	orgID := orgIDFromCtx(c)
+	deleted, err := writer.DeleteSession(c.Context(), orgID, id)
+	if err != nil {
+		s.logger.Error("delete session", "id", id, "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to delete session"})
+	}
+	if !deleted {
+		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
+	}
+	return c.SendStatus(fiber.StatusNoContent)
 }

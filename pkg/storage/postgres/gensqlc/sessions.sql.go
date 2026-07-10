@@ -11,6 +11,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteSession = `-- name: DeleteSession :execrows
+DELETE FROM sessions
+WHERE org_id = $1 AND id = $2
+`
+
+type DeleteSessionParams struct {
+	OrgID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+// Remove a session by its org-scoped id. Returns the affected row count so the
+// handler can distinguish a real delete from a missing id. Dependent rows
+// (subagent child sessions, derived nodes, spans/span_turns/span_links) are
+// removed by the session_id ON DELETE CASCADE foreign keys, so this single
+// statement tears down the whole subtree.
+func (q *Queries) DeleteSession(ctx context.Context, arg DeleteSessionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteSession, arg.OrgID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getSessionByNaturalKey = `-- name: GetSessionByNaturalKey :one
 SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage FROM sessions
 WHERE org_id = $1
