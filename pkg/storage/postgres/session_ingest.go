@@ -295,12 +295,6 @@ func uuidString(id pgtype.UUID) string {
 	return u.String()
 }
 
-// numericFromFloat encodes a float64 dollars amount into pgtype.Numeric
-// at 4-decimal scale to match the NUMERIC(12,4) column. A 0.0 input
-// becomes Int=0, Exp=0 so the UPDATE writes a true no-op delta. The
-// worker currently stubs CostUSD at 0 (no pricing table is wired in
-// this repo); this function exists so the path is ready when a
-// pricing lookup is added.
 // int32Count clamps a non-negative running count into int32 for the session
 // counter columns. Tool-result counts are realistically tiny; the clamp only
 // guards against a pathological overflow and keeps gosec G115 satisfied.
@@ -314,6 +308,10 @@ func int32Count(n int) int32 {
 	return int32(n)
 }
 
+// numericFromFloat encodes a float64 dollars amount into pgtype.Numeric
+// at 4-decimal scale to match the NUMERIC(12,4) column. A 0.0 input
+// becomes Int=0, Exp=0 so the write is a true no-op delta. Used by the
+// span writer to encode the derive-time cost fold.
 func numericFromFloat(v float64) (pgtype.Numeric, error) {
 	if v == 0 {
 		return pgtype.Numeric{Int: big.NewInt(0), Exp: 0, Valid: true}, nil

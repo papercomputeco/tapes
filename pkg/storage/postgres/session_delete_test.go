@@ -57,9 +57,7 @@ var _ = Describe("Driver.DeleteSession", func() {
 				HarnessSessionID:       harnessSessionID,
 				ParentHarnessSessionID: parentHarnessSessionID,
 			},
-			Nodes:        sessionFixture(text),
-			InputTokens:  12,
-			OutputTokens: 8,
+			Nodes: sessionFixture(text),
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.SessionID).NotTo(BeEmpty())

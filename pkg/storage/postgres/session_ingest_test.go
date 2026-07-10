@@ -101,11 +101,8 @@ var _ = Describe("Driver.IngestTurn", func() {
 		}
 
 		res, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
-			Session:      envelope,
-			Nodes:        sessionFixture("happy path"),
-			InputTokens:  12,
-			OutputTokens: 8,
-			CostUSD:      0,
+			Session: envelope,
+			Nodes:   sessionFixture("happy path"),
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.SessionID).NotTo(BeEmpty())
@@ -217,10 +214,8 @@ var _ = Describe("Driver.IngestTurn", func() {
 		nodes := sessionFixture("retry me")
 
 		req := storage.IngestTurnRequest{
-			Session:      envelope,
-			Nodes:        nodes,
-			InputTokens:  10,
-			OutputTokens: 4,
+			Session: envelope,
+			Nodes:   nodes,
 		}
 		res1, err := ingester.IngestTurn(ctx, req)
 		Expect(err).NotTo(HaveOccurred())
@@ -246,10 +241,8 @@ var _ = Describe("Driver.IngestTurn", func() {
 			HarnessSessionID: parentKey,
 		}
 		_, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
-			Session:      parentEnv,
-			Nodes:        sessionFixture("parent turn"),
-			InputTokens:  3,
-			OutputTokens: 2,
+			Session: parentEnv,
+			Nodes:   sessionFixture("parent turn"),
 		})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -261,10 +254,8 @@ var _ = Describe("Driver.IngestTurn", func() {
 			ParentHarnessSessionID: &parentKey,
 		}
 		childRes, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
-			Session:      childEnv,
-			Nodes:        sessionFixture("child turn"),
-			InputTokens:  4,
-			OutputTokens: 3,
+			Session: childEnv,
+			Nodes:   sessionFixture("child turn"),
 		})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -292,10 +283,8 @@ var _ = Describe("Driver.IngestTurn", func() {
 		}
 
 		childRes, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
-			Session:      childEnv,
-			Nodes:        sessionFixture("orphan child"),
-			InputTokens:  1,
-			OutputTokens: 1,
+			Session: childEnv,
+			Nodes:   sessionFixture("orphan child"),
 		})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -316,10 +305,8 @@ var _ = Describe("Driver.IngestTurn", func() {
 	It("derives a synthetic harness_session_id from the root hash when the envelope is nil", func() {
 		nodes := sessionFixture("synthetic")
 		res, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
-			Session:      nil,
-			Nodes:        nodes,
-			InputTokens:  2,
-			OutputTokens: 1,
+			Session: nil,
+			Nodes:   nodes,
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.SessionID).NotTo(BeEmpty())
@@ -355,10 +342,8 @@ var _ = Describe("Driver.IngestTurn", func() {
 			ParentHarnessSessionID: &parentKey,
 		}
 		_, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
-			Session:      childEnv,
-			Nodes:        sessionFixture("child first"),
-			InputTokens:  1,
-			OutputTokens: 1,
+			Session: childEnv,
+			Nodes:   sessionFixture("child first"),
 		})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -398,10 +383,8 @@ var _ = Describe("Driver.IngestTurn", func() {
 			HarnessVersion:   "1.2.3",
 		}
 		parentRes, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
-			Session:      parentEnv,
-			Nodes:        sessionFixture("parent backfills"),
-			InputTokens:  7,
-			OutputTokens: 5,
+			Session: parentEnv,
+			Nodes:   sessionFixture("parent backfills"),
 		})
 		Expect(err).NotTo(HaveOccurred())
 

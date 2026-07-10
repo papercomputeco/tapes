@@ -63,9 +63,7 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 				HarnessID:        harnessID,
 				HarnessSessionID: harnessSessionID,
 			},
-			Nodes:        sessionFixture(text),
-			InputTokens:  12,
-			OutputTokens: 8,
+			Nodes: sessionFixture(text),
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.SessionID).NotTo(BeEmpty())
@@ -141,9 +139,7 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 					HarnessID:        "claude",
 					HarnessSessionID: harnessSession,
 				},
-				Nodes:        sessionFixture(text),
-				InputTokens:  12,
-				OutputTokens: 8,
+				Nodes: sessionFixture(text),
 			})
 			Expect(err).NotTo(HaveOccurred())
 			return res.SessionID
@@ -240,10 +236,7 @@ var _ = Describe("Driver.ListSessionRecords (dynamic sort)", func() {
 				HarnessID:        "claude",
 				HarnessSessionID: harnessSessionID,
 			},
-			Nodes:        sessionFixture("turn for " + harnessSessionID),
-			InputTokens:  10,
-			OutputTokens: 5,
-			CostUSD:      cost,
+			Nodes: sessionFixture("turn for " + harnessSessionID),
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.SessionID).NotTo(BeEmpty())
@@ -313,10 +306,7 @@ var _ = Describe("Driver.ListSessionRecords (dynamic sort)", func() {
 				HarnessID:        "claude",
 				HarnessSessionID: harnessSessionID,
 			},
-			Nodes:        sessionFixture("turn for " + harnessSessionID),
-			InputTokens:  inTok,
-			OutputTokens: outTok,
-			CostUSD:      cost,
+			Nodes: sessionFixture("turn for " + harnessSessionID),
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.SessionID).NotTo(BeEmpty())
