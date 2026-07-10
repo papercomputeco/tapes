@@ -5,7 +5,6 @@ package checkoutcmder
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/papercomputeco/tapes/cmd/tapes/inprocessapi"
 	"github.com/papercomputeco/tapes/pkg/config"
+	"github.com/papercomputeco/tapes/pkg/export"
 	"github.com/papercomputeco/tapes/pkg/skill"
 )
 
@@ -141,7 +141,11 @@ func Export(ctx context.Context, query skill.Querier, opts ExportOptions) (strin
 
 	switch opts.Format {
 	case formatJSONL:
-		return exportJSONL(ctx, query, opts.SessionID, transcriptOpts)
+		var b strings.Builder
+		if err := export.SessionJSONL(ctx, query, opts.SessionID, &b, transcriptOpts...); err != nil {
+			return "", err
+		}
+		return b.String(), nil
 	case formatMarkdown, "":
 		return skill.BuildSessionTranscript(ctx, query, opts.SessionID, transcriptOpts...)
 	default:
@@ -163,68 +167,6 @@ func (c *checkoutCommander) connect(ctx context.Context) (skill.Querier, func(),
 		return nil, nil, startErr
 	}
 	return skill.NewAPIClient(target), stop, nil
-}
-
-// exportTurn is one turn's structured (jsonl) export record.
-type exportTurn struct {
-	TraceID           string `json:"trace_id"`
-	SessionID         string `json:"session_id"`
-	UserPrompt        string `json:"user_prompt,omitempty"`
-	Response          string `json:"response,omitempty"`
-	StartedAt         string `json:"started_at,omitempty"`
-	TotalInputTokens  int64  `json:"total_input_tokens"`
-	TotalOutputTokens int64  `json:"total_output_tokens"`
-	MainInputTokens   int64  `json:"main_input_tokens"`
-	MainOutputTokens  int64  `json:"main_output_tokens"`
-}
-
-// exportJSONL emits one JSON object per turn. The response is the
-// rendered spine transcript for the turn (assistant + tool lines, prompt
-// excluded since it has its own field).
-func exportJSONL(ctx context.Context, query skill.Querier, sessionID string, opts []skill.TranscriptOption) (string, error) {
-	turns, err := skill.SessionTurns(ctx, query, sessionID, opts...)
-	if err != nil {
-		return "", err
-	}
-
-	var b strings.Builder
-	enc := json.NewEncoder(&b)
-	for _, turn := range turns {
-		rec := exportTurn{
-			TraceID:           turn.TraceID,
-			SessionID:         sessionID,
-			UserPrompt:        turn.UserPrompt,
-			Response:          turnResponse(ctx, query, turn),
-			TotalInputTokens:  turn.TotalInputTokens,
-			TotalOutputTokens: turn.TotalOutputTokens,
-			MainInputTokens:   turn.MainInputTokens,
-			MainOutputTokens:  turn.MainOutputTokens,
-		}
-		if !turn.StartedAt.IsZero() {
-			rec.StartedAt = turn.StartedAt.Format("2006-01-02T15:04:05Z07:00")
-		}
-		if err := enc.Encode(rec); err != nil {
-			return "", fmt.Errorf("encoding turn %s: %w", turn.TraceID, err)
-		}
-	}
-	return b.String(), nil
-}
-
-// turnResponse renders just the assistant/tool half of a turn by
-// stripping the leading [user] line from the shared turn transcript.
-func turnResponse(ctx context.Context, query skill.Querier, turn skill.TraceSummary) string {
-	transcript := skill.TurnTranscript(ctx, query, turn)
-	var lines []string
-	for line := range strings.SplitSeq(transcript, "\n") {
-		if strings.HasPrefix(line, "[user] ") {
-			continue
-		}
-		if line == "" {
-			continue
-		}
-		lines = append(lines, line)
-	}
-	return strings.Join(lines, "\n")
 }
 
 // write sends the rendered export to stdout or the -o path.

@@ -1,6 +1,8 @@
 package api
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -12,6 +14,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 
+	"github.com/papercomputeco/tapes/pkg/export"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
@@ -359,6 +362,207 @@ func (s *Server) handleGetSession(c *fiber.Ctx) error {
 	return c.JSON(SessionDetailResponse{
 		Session: sessionItemFromStorage(*sess),
 	})
+}
+
+// handleExportSession handles GET /v1/sessions/:id/export. It streams the
+// same JSONL grain `tapes checkout --format jsonl` renders, over HTTP, for
+// the console's per-session download.
+//
+//	@Summary		Export a session as JSONL
+//	@Description	Streams one JSON object per turn (NDJSON) as a downloadable attachment: the same conversation-export grain as `tapes checkout --format jsonl`.
+//	@Tags			sessions
+//	@Produce		application/x-ndjson
+//	@Param			id	path	string	true	"Session id (UUID)"
+//	@Success		200	{string}	string	"NDJSON body, one JSON object per turn"
+//	@Failure		400	{object}	llm.ErrorResponse	"Missing or malformed id"
+//	@Failure		404	{object}	llm.ErrorResponse	"Session not found"
+//	@Failure		500	{object}	llm.ErrorResponse	"Failed to load or render the session"
+//	@Failure		501	{object}	llm.ErrorResponse	"Sessions not supported by this backend"
+//	@Router			/v1/sessions/{id}/export [get]
+func (s *Server) handleExportSession(c *fiber.Ctx) error {
+	reader, ok := s.driver.(sessionsReader)
+	if !ok {
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
+	}
+
+	id := c.Params("id")
+	if id == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id parameter required"})
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id must be a valid UUID"})
+	}
+
+	orgID := orgIDFromCtx(c)
+	// Resolve existence under the org BEFORE anything is streamed, so a
+	// cross-org request gets a clean 404 with no headers or partial body
+	// committed — the same tenancy gate handleGetSession applies.
+	sess, err := reader.GetSessionRecord(c.Context(), orgID, id)
+	if err != nil {
+		s.logger.Error("get session for export", "id", id, "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session"})
+	}
+	if sess == nil {
+		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
+	}
+
+	// The querier needs both sessionsReader and spanModelReader; a driver
+	// can implement the former without the latter, so this is a second,
+	// independent 501 gate checked before any header is set.
+	query, ok := s.skillTraceQuerier(orgID)
+	if !ok {
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
+	}
+
+	// Render into a buffer first so the NDJSON/attachment headers are only
+	// committed once the export succeeds. A single session is bounded, so
+	// buffering is cheap — and it means a mid-render failure returns a clean
+	// JSON error (application/json) instead of a 500 body wearing a
+	// Content-Disposition: attachment header from a download that never
+	// happened. (The streaming bulk endpoint can't do this; a single session
+	// can.)
+	var buf bytes.Buffer
+	if err := export.SessionJSONL(c.Context(), query, id, &buf); err != nil {
+		s.logger.Error("export session", "id", id, "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to render session export"})
+	}
+
+	filename := fmt.Sprintf("session-%s-%s.jsonl", id, time.Now().UTC().Format("2006-01-02"))
+	c.Set("Content-Type", "application/x-ndjson")
+	c.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	return c.Send(buf.Bytes())
+}
+
+// exportSessionsPageLimit is the internal page size handleExportSessions
+// uses when walking ListSessionRecords. It intentionally matches
+// maxSessionsLimit (the UI list cap): the point of this endpoint is to
+// keep paging past that cap rather than being bounded by it, one page at a
+// time, so memory stays flat regardless of how many sessions fall in the
+// window.
+const exportSessionsPageLimit = maxSessionsLimit
+
+// handleExportSessions handles GET /v1/sessions/export?since=&until=. It
+// streams every session's JSONL turns in the requested window (default:
+// trailing 30 days) as a single NDJSON attachment, paging internally past
+// the 200-row UI cap via the same keyset cursor handleListSessions uses.
+//
+//	@Summary		Export sessions in a time window as JSONL
+//	@Description	Streams every session's turns (NDJSON) in the given window, newest-first, as a downloadable attachment. Defaults to the trailing 30 days. Not bounded by the /v1/sessions list cap — pages internally.
+//	@Tags			sessions
+//	@Produce		application/x-ndjson
+//	@Param			since	query	string	false	"Only include sessions active (last_seen_at) at or after this RFC3339 timestamp (default: now - 30 days)"	format(date-time)
+//	@Param			until	query	string	false	"Only include sessions active (last_seen_at) before this RFC3339 timestamp"								format(date-time)
+//	@Success		200		{string}	string	"NDJSON body, one JSON object per turn across every session in the window"
+//	@Failure		400		{object}	llm.ErrorResponse	"Malformed since/until"
+//	@Failure		500		{object}	llm.ErrorResponse	"Failed to list or render sessions"
+//	@Failure		501		{object}	llm.ErrorResponse	"Sessions not supported by this backend"
+//	@Router			/v1/sessions/export [get]
+func (s *Server) handleExportSessions(c *fiber.Ctx) error {
+	reader, ok := s.driver.(sessionsReader)
+	if !ok {
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
+	}
+	query, ok := s.skillTraceQuerier(orgIDFromCtx(c))
+	if !ok {
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
+	}
+
+	// The 30-day window is the maximum span for v1 (R-20), not just the
+	// default: floor is enforced unconditionally, even when the caller
+	// supplies an explicit since older than 30 days, so the endpoint can
+	// never be used to stream an org's entire history
+	// (?since=1970-01-01T00:00:00Z). In-window since/until overrides
+	// (R-9) still work as before — only the lower bound is clamped.
+	floor := time.Now().UTC().AddDate(0, 0, -30)
+	since := floor
+	if raw := c.Query("since"); raw != "" {
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "since must be an RFC3339 timestamp"})
+		}
+		since = t
+	}
+	if since.Before(floor) {
+		since = floor
+	}
+	var until *time.Time
+	if raw := c.Query("until"); raw != "" {
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "until must be an RFC3339 timestamp"})
+		}
+		until = &t
+	}
+	if until != nil && !until.After(since) {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "until must be after since"})
+	}
+
+	orgID := orgIDFromCtx(c)
+	ctx := c.Context()
+
+	// Name the file after the window that actually produced it. The default
+	// (no since/until) is the trailing 30 days; an explicit since/until gets a
+	// dated range so the filename never claims "last-30-days" for a narrower
+	// window. `since` here is the effective (clamped) lower bound.
+	now := time.Now().UTC()
+	filename := fmt.Sprintf("sessions-last-30-days-%s.jsonl", now.Format("2006-01-02"))
+	if c.Query("since") != "" || c.Query("until") != "" {
+		end := "now"
+		if until != nil {
+			end = until.UTC().Format("2006-01-02")
+		}
+		filename = fmt.Sprintf("sessions-%s-to-%s.jsonl", since.UTC().Format("2006-01-02"), end)
+	}
+	c.Set("Content-Type", "application/x-ndjson")
+	c.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+
+	// SetBodyStreamWriter's callback has no error return: a failure
+	// mid-stream can only be logged and the loop stopped, since the HTTP
+	// status is already committed by the time bytes are flowing (documented
+	// as an accepted v1 tradeoff in the design). ctx.Bind() is unavailable
+	// here (this is the raw fasthttp callback, not a fiber.Ctx), so orgID,
+	// since, until, reader, and query are captured directly.
+	ctx.SetBodyStreamWriter(func(w *bufio.Writer) {
+		streamCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		defer w.Flush()
+
+		opts := storage.SessionListOpts{
+			Since: &since,
+			Until: until,
+			Limit: exportSessionsPageLimit,
+		}
+		for {
+			sessions, err := reader.ListSessionRecords(streamCtx, orgID, opts)
+			if err != nil {
+				s.logger.Error("list sessions for export", "error", err)
+				return
+			}
+			for _, sess := range sessions {
+				if err := export.SessionJSONL(streamCtx, query, sess.ID, w); err != nil {
+					s.logger.Error("export session", "id", sess.ID, "error", err)
+					return
+				}
+				// Flush after each session so bytes reach the client
+				// incrementally instead of only at the end of the whole
+				// window — the point of streaming.
+				if err := w.Flush(); err != nil {
+					// Client went away or the connection failed; nothing
+					// left to do but stop producing.
+					return
+				}
+			}
+
+			if len(sessions) < exportSessionsPageLimit {
+				return
+			}
+			last := sessions[len(sessions)-1]
+			opts.CursorTs = &last.LastSeenAt
+			opts.CursorID = &last.ID
+		}
+	})
+
+	return nil
 }
 
 // handleDeleteSession handles DELETE /v1/sessions/:id.

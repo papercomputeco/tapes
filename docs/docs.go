@@ -320,6 +320,60 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/sessions/export": {
+            "get": {
+                "description": "Streams every session's turns (NDJSON) in the given window, newest-first, as a downloadable attachment. Defaults to the trailing 30 days. Not bounded by the /v1/sessions list cap — pages internally.",
+                "produces": [
+                    "application/x-ndjson"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Export sessions in a time window as JSONL",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Only include sessions active (last_seen_at) at or after this RFC3339 timestamp (default: now - 30 days)",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Only include sessions active (last_seen_at) before this RFC3339 timestamp",
+                        "name": "until",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "NDJSON body, one JSON object per turn across every session in the window",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed since/until",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to list or render sessions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Sessions not supported by this backend",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/sessions/{id}": {
             "get": {
                 "description": "Returns a single session record. The conversation content lives on the span model: GET /v1/sessions/{id}/traces.",
@@ -405,6 +459,59 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Failed to delete session",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Sessions not supported by this backend",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sessions/{id}/export": {
+            "get": {
+                "description": "Streams one JSON object per turn (NDJSON) as a downloadable attachment: the same conversation-export grain as ` + "`" + `tapes checkout --format jsonl` + "`" + `.",
+                "produces": [
+                    "application/x-ndjson"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Export a session as JSONL",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session id (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "NDJSON body, one JSON object per turn",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing or malformed id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Session not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to load or render the session",
                         "schema": {
                             "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
                         }
