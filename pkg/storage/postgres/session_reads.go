@@ -277,6 +277,39 @@ func (d *Driver) DeleteSession(ctx context.Context, orgID, id string) (bool, err
 	return n > 0, nil
 }
 
+// UpdateSessionName sets (or clears, when name is nil) the user-facing
+// `name` column for a single session, scoped to the caller's org. The
+// org_id predicate lives in the SQL (UpdateSessionName query), never just
+// checked beforehand, so a cross-org id can never be updated. Returns the
+// number of rows affected: 0 means no row matched (unknown id, or an id
+// that exists but belongs to a different org), which the caller (the
+// sessions handler) maps to a 404 rather than treating as success.
+func (d *Driver) UpdateSessionName(ctx context.Context, orgID, id string, name *string) (int64, error) {
+	oid, err := orgIDFromString(orgID)
+	if err != nil {
+		return 0, fmt.Errorf("update session name: %w", err)
+	}
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		return 0, fmt.Errorf("update session name: invalid id %q: %w", id, err)
+	}
+
+	var namePg pgtype.Text
+	if name != nil {
+		namePg = pgtype.Text{String: *name, Valid: true}
+	}
+
+	rows, err := d.q.UpdateSessionName(ctx, gensqlc.UpdateSessionNameParams{
+		Name:  namePg,
+		ID:    pgtype.UUID{Bytes: parsed, Valid: true},
+		OrgID: oid,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("update session name: %w", err)
+	}
+	return rows, nil
+}
+
 // GetSessionRecordByHarness returns the single session matching the
 // org-scoped natural key (org_id, harness_id, harness_session_id), or nil
 // if no row matches. The lookup is an exact-match point read on the
