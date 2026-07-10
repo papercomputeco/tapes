@@ -141,6 +141,8 @@ var _ = Describe("NormalizeModel", func() {
 			{"gpt-5.6-terra", 2.50, 15.00, 0.25, 3.125},
 			{"gpt-5.6-luna", 1.00, 6.00, 0.10, 1.25},
 			{"gpt-5-6-sol-2026-07-09", 5.00, 30.00, 0.50, 6.25},
+			{"gpt-5-6-terra-2026-07-09", 2.50, 15.00, 0.25, 3.125},
+			{"gpt-5-6-luna-2026-07-09", 1.00, 6.00, 0.10, 1.25},
 		} {
 			price, ok := sessions.PricingForModel(pricing, p.api)
 			Expect(ok).To(BeTrue(), "PricingForModel(%q)", p.api)
