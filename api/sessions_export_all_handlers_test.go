@@ -63,16 +63,24 @@ func (d *pagingExportStubDriver) ListSessionRecords(ctx context.Context, orgID s
 		return matched[i].ID > matched[j].ID
 	})
 
-	if opts.CursorTs != nil && opts.CursorID != nil {
+	if opts.CursorVal != nil && opts.CursorID != nil {
+		cursorTs, err := time.Parse(time.RFC3339Nano, *opts.CursorVal)
+		if err != nil {
+			return nil, fmt.Errorf("parse cursor value: %w", err)
+		}
 		start := len(matched)
 		for i, s := range matched {
-			if s.LastSeenAt.Before(*opts.CursorTs) ||
-				(s.LastSeenAt.Equal(*opts.CursorTs) && s.ID < *opts.CursorID) {
+			if s.LastSeenAt.Before(cursorTs) ||
+				(s.LastSeenAt.Equal(cursorTs) && s.ID < *opts.CursorID) {
 				start = i
 				break
 			}
 		}
 		matched = matched[start:]
+	}
+
+	for i := range matched {
+		matched[i].SortVal = matched[i].LastSeenAt.UTC().Format(time.RFC3339Nano)
 	}
 
 	limit := opts.Limit

@@ -18,11 +18,11 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage/postgres/gensqlc"
 )
 
-// ListSessionRecords returns a page of sessions for an org ordered by
-// last_seen_at DESC, optionally windowed by activity (last_seen_at)
-// and narrowed to one gateway-stamped JWT subject (exact match on the
-// indexed column; empty lists every user's sessions). Pass zero-value
-// opts to start from the beginning, unwindowed and unfiltered.
+// ListSessionRecords returns a page of sessions for an org ordered by the
+// requested sort column (default last_seen_at DESC), optionally windowed by
+// activity (last_seen_at) and narrowed to one gateway-stamped JWT subject
+// (exact match on the indexed column; empty lists every user's sessions).
+// Pass zero-value opts to start from the beginning, unwindowed and unfiltered.
 func (d *Driver) ListSessionRecords(
 	ctx context.Context,
 	orgID string,
@@ -36,43 +36,112 @@ func (d *Driver) ListSessionRecords(
 	if limit <= 0 {
 		limit = storage.DefaultListLimit
 	}
-
-	var tsPg pgtype.Timestamptz
-	var idPg pgtype.UUID
-	if opts.CursorTs != nil && opts.CursorID != nil && *opts.CursorID != "" {
-		tsPg = pgtype.Timestamptz{Time: *opts.CursorTs, Valid: true}
-		parsed, err := uuid.Parse(*opts.CursorID)
-		if err != nil {
-			return nil, fmt.Errorf("list session records: invalid cursor id: %w", err)
-		}
-		idPg = pgtype.UUID{Bytes: parsed, Valid: true}
+	sort := opts.Sort
+	if sort == "" {
+		sort = storage.SortLastActive
+	}
+	dir := opts.Dir
+	if dir == "" {
+		dir = storage.SortDesc
+	}
+	col, ok := storage.SessionSortColumn(sort) // exported accessor over the allowlist map
+	if !ok {
+		return nil, fmt.Errorf("list session records: invalid sort field %q", sort)
 	}
 
-	var subjectPg pgtype.Text
+	order := "DESC"
+	cmp := "<"
+	if dir == storage.SortAsc {
+		order = "ASC"
+		cmp = ">"
+	}
+
+	// Explicit column list = the 24 columns the previous generated query
+	// selected, plus the sort column rendered to canonical text so the cursor
+	// round-trips exactly. col.Col()/col.Cast() and order/cmp come from the
+	// allowlist only.
+	//
+	// MAINTENANCE: this list and the rows.Scan below are a matched pair and must
+	// stay in lockstep with gensqlc.Session (pkg/storage/postgres/gensqlc). A
+	// column added to the sessions table + regenerated struct must be appended
+	// here AND scanned in the same position, or the scan mispairs. This is the
+	// one read path that spells the columns out instead of `SELECT *`, because
+	// it also needs `col::text AS sort_val` appended for the cursor.
+	const baseCols = `id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, ` +
+		`harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, ` +
+		`total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, ` +
+		`has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage`
+
+	// Values bind as pgx named args (@name). The dynamic ORDER BY forces a
+	// hand-built query, but every caller value is still a named, bound parameter
+	// — never interpolated — and pgx rewrites each @name to a positional $N.
+	named := pgx.NamedArgs{"org_id": oid, "lim": int32(limit)} //nolint:gosec // limit bounded by the API handler
+	where := []string{"org_id = @org_id"}
+
+	if opts.Since != nil {
+		named["since"] = *opts.Since
+		where = append(where, "last_seen_at >= @since::timestamptz")
+	}
+	if opts.Until != nil {
+		named["until"] = *opts.Until
+		where = append(where, "last_seen_at < @until::timestamptz")
+	}
 	if opts.AuthSubject != "" {
-		subjectPg = pgtype.Text{String: opts.AuthSubject, Valid: true}
+		named["auth_subject"] = opts.AuthSubject
+		where = append(where, "auth_subject = @auth_subject::text")
+	}
+	if opts.CursorVal != nil && opts.CursorID != nil {
+		named["cursor_val"] = *opts.CursorVal
+		named["cursor_id"] = *opts.CursorID
+		// @cursor_val appears twice; pgx binds the one value to both.
+		valP := "@cursor_val::" + col.Cast()
+		where = append(where, fmt.Sprintf("(%s %s %s OR (%s = %s AND id %s @cursor_id::uuid))",
+			col.Col(), cmp, valP, col.Col(), valP, cmp))
 	}
 
-	rows, err := d.q.ListSessionRecords(ctx, gensqlc.ListSessionRecordsParams{
-		OrgID:       oid,
-		AuthSubject: subjectPg,
-		CursorTs:    tsPg,
-		CursorID:    idPg,
-		SinceFilter: nullTimePtr(opts.Since),
-		UntilFilter: nullTimePtr(opts.Until),
-		Lim:         int32(limit), //nolint:gosec // bounded above by the API handler (maxSessionsLimit)
-	})
+	// Not an injection surface: col.Col()/col.Cast() are an opaque SortColumn
+	// that can only come from the allowlist (SessionSortColumn), order/cmp come
+	// from the validated direction, and every caller value is a bound @name
+	// param. No raw string reaches an identifier position — the type system, not
+	// just convention, guarantees it. gosec does not flag this Sprintf.
+	q := fmt.Sprintf(
+		"SELECT %s, %s::text AS sort_val FROM sessions WHERE %s ORDER BY %s %s, id %s LIMIT @lim",
+		baseCols, col.Col(), strings.Join(where, " AND "), col.Col(), order, order)
+
+	rows, err := d.conn.Query(ctx, q, named)
 	if err != nil {
 		return nil, fmt.Errorf("list session records: %w", err)
 	}
+	defer rows.Close()
 
-	out := make([]storage.SessionRecord, len(rows))
-	for i, row := range rows {
-		out[i] = sessionRecordFromRow(row)
+	var out []storage.SessionRecord
+	for rows.Next() {
+		var g gensqlc.Session
+		// pgtype.Text (not a bare string) so a NULL sort_val degrades to an
+		// empty SortVal instead of failing the whole scan. Every column in the
+		// allowlist is NOT NULL today (see the invariant on sessionSortColumn),
+		// so this never actually fires — it is a guard against a future nullable
+		// sortable column silently 500ing the entire list mid-page. Note this
+		// alone does not make nullable sort columns *work*: the keyset cursor
+		// still can't encode a NULL boundary, so adding one needs more than this.
+		var sortVal pgtype.Text
+		if err := rows.Scan(
+			&g.ID, &g.OrgID, &g.AuthSubject, &g.HarnessID, &g.HarnessSessionID, &g.Name, &g.Cwd,
+			&g.HarnessVersion, &g.ParentSessionID, &g.StartedAt, &g.LastSeenAt, &g.EndedAt, &g.HarnessMetadata,
+			&g.TotalInputTokens, &g.TotalOutputTokens, &g.TotalCostUsd, &g.TurnCount, &g.DerivedStatus,
+			&g.HasGitActivity, &g.ToolResultCount, &g.ToolErrorCount, &g.DerivedTitle, &g.DerivedModel, &g.ModelUsage,
+			&sortVal,
+		); err != nil {
+			return nil, fmt.Errorf("list session records: scan: %w", err)
+		}
+		rec := sessionRecordFromRow(g)
+		rec.SortVal = sortVal.String
+		out = append(out, rec)
 	}
-
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list session records: %w", err)
+	}
 	d.attachPreviews(ctx, out)
-
 	return out, nil
 }
 

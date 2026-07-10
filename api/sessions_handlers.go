@@ -144,11 +144,14 @@ func modelUsageFromStorage(in []storage.ModelUsage) []ModelUsage {
 	return out
 }
 
-// sessionsCursor is the decoded pagination cursor for the sessions list,
-// keyed on (last_seen_at DESC, id DESC).
+// sessionsCursor is the decoded pagination cursor. It carries the sort context
+// so the keyset boundary is unambiguous and a replay under a different sort is
+// detectable.
 type sessionsCursor struct {
-	LastSeenAt time.Time `json:"ts"`
-	ID         string    `json:"id"`
+	Sort string `json:"sort,omitempty"`
+	Dir  string `json:"dir,omitempty"`
+	Val  string `json:"val,omitempty"`
+	ID   string `json:"id"`
 }
 
 func encodeSessionsCursor(c sessionsCursor) string {
@@ -172,8 +175,15 @@ func decodeSessionsCursor(token string) (sessionsCursor, error) {
 	if err := json.Unmarshal(raw, &c); err != nil {
 		return sessionsCursor{}, fmt.Errorf("invalid cursor: %w", err)
 	}
-	if c.ID == "" {
-		return sessionsCursor{}, errors.New("invalid cursor: missing id")
+	// Every cursor we mint carries its full sort context plus a keyset boundary
+	// {id,val}. The console resets the cursor on any sort change, so a token
+	// missing the sort context is malformed or hand-crafted, not a legacy
+	// client — reject it here rather than defaulting it into a boundary the
+	// caller never asked for. (Val may legitimately be empty for a text sort
+	// column whose boundary row holds an empty string; the numeric-column guard
+	// in handleListSessions handles the case where an empty Val would 500.)
+	if c.ID == "" || c.Sort == "" || c.Dir == "" {
+		return sessionsCursor{}, errors.New("invalid cursor: missing sort context")
 	}
 	return c, nil
 }
@@ -181,13 +191,15 @@ func decodeSessionsCursor(token string) (sessionsCursor, error) {
 // handleListSessions handles GET /v1/sessions.
 //
 //	@Summary		List sessions
-//	@Description	Returns one row per harness session from the sessions table, newest first (last_seen_at desc), cursor-paginated.
+//	@Description	Returns one row per harness session from the sessions table, cursor-paginated. Default order is last_active (last_seen_at) desc; override with the sort and direction query params.
 //	@Tags			sessions
 //	@Produce		json
 //	@Param			limit				query		int		false	"Maximum number of sessions to return (default 50, max 200)"	minimum(1)
 //	@Param			cursor				query		string	false	"Opaque pagination cursor returned by a previous response"
+//	@Param			sort				query		string	false	"Sort column: last_active|started_at|turn_count|total_cost_usd|total_tokens|duration_ns|derived_status|auth_subject (default last_active)"
+//	@Param			direction			query		string	false	"Sort direction: asc|desc (default desc)"
 //	@Param			since				query		string	false	"Only include sessions active (last_seen_at) at or after this RFC3339 timestamp"	format(date-time)
-//	@Param			until				query		string	false	"Only include sessions active (last_seen_at) before this RFC3339 timestamp"		format(date-time)
+//	@Param			until				query		string	false	"Only include sessions active (last_seen_at) before this RFC3339 timestamp"			format(date-time)
 //	@Param			harness_id			query		string	false	"Filter to the single session with this harness id (exact match; requires harness_session_id, incompatible with cursor; limit is ignored when the filter is active)"
 //	@Param			harness_session_id	query		string	false	"Filter to the single session with this harness session id (exact match; requires harness_id, incompatible with cursor; limit is ignored when the filter is active)"
 //	@Param			auth_subject		query		string	false	"Filter the paged list to sessions captured for this gateway-stamped JWT subject (exact match; ignored on the harness filter path)"
@@ -225,13 +237,36 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 		limit = parsed
 	}
 
-	opts := storage.SessionListOpts{}
+	sortField, ok := storage.ParseSessionSortField(c.Query("sort"))
+	if !ok {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "invalid sort field"})
+	}
+	dir, ok := storage.ParseSortDirection(c.Query("direction"))
+	if !ok {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "invalid direction"})
+	}
+	opts := storage.SessionListOpts{Sort: sortField, Dir: dir}
+
 	if raw := c.Query("cursor"); raw != "" {
 		cur, err := decodeSessionsCursor(raw)
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
 		}
-		opts.CursorTs = &cur.LastSeenAt
+		// A cursor is only valid within the sort it was minted under; the UI
+		// resets the cursor on any sort change, so a mismatch is a malformed
+		// request, not a normal transition.
+		if cur.Sort != string(sortField) || cur.Dir != string(dir) {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "cursor does not match sort/direction"})
+		}
+		// An empty boundary value only round-trips through the keyset for a text
+		// column (''::text is valid); for numeric/timestamptz columns it would
+		// cast as ''::bigint and 500 mid-scan. Reject it as the malformed client
+		// input it is rather than letting it reach storage. (col resolves here
+		// because sortField already passed ParseSessionSortField above.)
+		if col, _ := storage.SessionSortColumn(sortField); col.Cast() != "text" && cur.Val == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "invalid cursor: empty boundary value"})
+		}
+		opts.CursorVal = &cur.Val
 		opts.CursorID = &cur.ID
 	}
 	if raw := c.Query("since"); raw != "" {
@@ -267,8 +302,10 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 		sessions = sessions[:limit]
 		last := sessions[len(sessions)-1]
 		nextCursor = encodeSessionsCursor(sessionsCursor{
-			LastSeenAt: last.LastSeenAt,
-			ID:         last.ID,
+			Sort: string(sortField),
+			Dir:  string(dir),
+			Val:  last.SortVal,
+			ID:   last.ID,
 		})
 	}
 
@@ -557,7 +594,7 @@ func (s *Server) handleExportSessions(c *fiber.Ctx) error {
 				return
 			}
 			last := sessions[len(sessions)-1]
-			opts.CursorTs = &last.LastSeenAt
+			opts.CursorVal = &last.SortVal
 			opts.CursorID = &last.ID
 		}
 	})

@@ -24,25 +24,34 @@ type PricingTable map[string]Pricing
 // renders it (deck.SessionSummary aliases it), folding it from the
 // /v1/sessions rows.
 type SessionSummary struct {
-	ID               string        `json:"id"`
-	HarnessID        string        `json:"harness_id,omitempty"`
-	HarnessSessionID string        `json:"harness_session_id,omitempty"`
-	Label            string        `json:"label"`
-	Model            string        `json:"model"`
-	Project          string        `json:"project"`
-	AgentName        string        `json:"agent_name,omitempty"`
-	Status           string        `json:"status"`
-	StartTime        time.Time     `json:"start_time"`
-	EndTime          time.Time     `json:"end_time"`
-	Duration         time.Duration `json:"duration_ns"`
-	InputTokens      int64         `json:"input_tokens"`
-	OutputTokens     int64         `json:"output_tokens"`
-	InputCost        float64       `json:"input_cost"`
-	OutputCost       float64       `json:"output_cost"`
-	TotalCost        float64       `json:"total_cost"`
-	ToolCalls        int           `json:"tool_calls"`
-	MessageCount     int           `json:"message_count"`
-	SessionCount     int           `json:"session_count,omitempty"`
+	ID               string    `json:"id"`
+	HarnessID        string    `json:"harness_id,omitempty"`
+	HarnessSessionID string    `json:"harness_session_id,omitempty"`
+	Label            string    `json:"label"`
+	Model            string    `json:"model"`
+	Project          string    `json:"project"`
+	AgentName        string    `json:"agent_name,omitempty"`
+	Status           string    `json:"status"`
+	StartTime        time.Time `json:"start_time"`
+	EndTime          time.Time `json:"end_time"`
+	// Duration is wall-clock session length. The client fold
+	// (summaryFromSessionItem) prefers ended_at when present, else last_seen_at,
+	// minus started_at. The server-side sort column sessions.duration_ns (a
+	// STORED generated column, see migrations/*_sessions_sort.up.sql) is
+	// unconditionally last_seen_at - started_at. The two agree only because
+	// sessions.ended_at is never written today; when it starts getting
+	// populated, reconcile the generated column (or move duration into
+	// derivation) so the sort key matches this displayed value — altering a
+	// STORED generated column is a full-table rewrite.
+	Duration     time.Duration `json:"duration_ns"`
+	InputTokens  int64         `json:"input_tokens"`
+	OutputTokens int64         `json:"output_tokens"`
+	InputCost    float64       `json:"input_cost"`
+	OutputCost   float64       `json:"output_cost"`
+	TotalCost    float64       `json:"total_cost"`
+	ToolCalls    int           `json:"tool_calls"`
+	MessageCount int           `json:"message_count"`
+	SessionCount int           `json:"session_count,omitempty"`
 
 	// Truncated is true when this summary was built from a partial chain
 	// because an ancestor's parent_hash could not be resolved in the

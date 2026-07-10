@@ -35,7 +35,7 @@ func (q *Queries) DeleteSession(ctx context.Context, arg DeleteSessionParams) (i
 }
 
 const getSessionByNaturalKey = `-- name: GetSessionByNaturalKey :one
-SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage FROM sessions
+SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns FROM sessions
 WHERE org_id = $1
   AND harness_id = $2
   AND harness_session_id = $3
@@ -79,12 +79,14 @@ func (q *Queries) GetSessionByNaturalKey(ctx context.Context, arg GetSessionByNa
 		&i.DerivedTitle,
 		&i.DerivedModel,
 		&i.ModelUsage,
+		&i.TotalTokens,
+		&i.DurationNs,
 	)
 	return i, err
 }
 
 const getSessionRecord = `-- name: GetSessionRecord :one
-SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage FROM sessions
+SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns FROM sessions
 WHERE org_id = $1 AND id = $2
 `
 
@@ -121,6 +123,8 @@ func (q *Queries) GetSessionRecord(ctx context.Context, arg GetSessionRecordPara
 		&i.DerivedTitle,
 		&i.DerivedModel,
 		&i.ModelUsage,
+		&i.TotalTokens,
+		&i.DurationNs,
 	)
 	return i, err
 }
@@ -227,94 +231,6 @@ func (q *Queries) ListNodesBySession(ctx context.Context, sessionID pgtype.UUID)
 			&i.NodeKind,
 			&i.ParentToolUseID,
 			&i.ThreadID,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listSessionRecords = `-- name: ListSessionRecords :many
-SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage FROM sessions
-WHERE org_id = $1
-  AND ($2::timestamptz IS NULL OR last_seen_at >= $2::timestamptz)
-  AND ($3::timestamptz IS NULL OR last_seen_at < $3::timestamptz)
-  AND (
-    $4::text IS NULL
-    OR auth_subject = $4::text
-  )
-  AND (
-    $5::timestamptz IS NULL
-    OR last_seen_at < $5::timestamptz
-    OR (last_seen_at = $5::timestamptz AND id < $6::uuid)
-  )
-ORDER BY last_seen_at DESC, id DESC
-LIMIT $7
-`
-
-type ListSessionRecordsParams struct {
-	OrgID       pgtype.UUID
-	SinceFilter pgtype.Timestamptz
-	UntilFilter pgtype.Timestamptz
-	AuthSubject pgtype.Text
-	CursorTs    pgtype.Timestamptz
-	CursorID    pgtype.UUID
-	Lim         int32
-}
-
-// Paginated list of sessions for an org ordered newest-first (last_seen_at DESC, id DESC).
-// Pass NULL cursor values to start from the beginning. The optional
-// since/until window filters on last_seen_at — the sort/cursor column —
-// so "sessions active in the period" pages consistently. Pass a NULL
-// auth_subject to list every user's sessions; a non-NULL value is an
-// exact match against the gateway-stamped JWT subject captured at
-// ingest (sessions_auth_subject_idx).
-func (q *Queries) ListSessionRecords(ctx context.Context, arg ListSessionRecordsParams) ([]Session, error) {
-	rows, err := q.db.Query(ctx, listSessionRecords,
-		arg.OrgID,
-		arg.SinceFilter,
-		arg.UntilFilter,
-		arg.AuthSubject,
-		arg.CursorTs,
-		arg.CursorID,
-		arg.Lim,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Session
-	for rows.Next() {
-		var i Session
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.AuthSubject,
-			&i.HarnessID,
-			&i.HarnessSessionID,
-			&i.Name,
-			&i.Cwd,
-			&i.HarnessVersion,
-			&i.ParentSessionID,
-			&i.StartedAt,
-			&i.LastSeenAt,
-			&i.EndedAt,
-			&i.HarnessMetadata,
-			&i.TotalInputTokens,
-			&i.TotalOutputTokens,
-			&i.TotalCostUsd,
-			&i.TurnCount,
-			&i.DerivedStatus,
-			&i.HasGitActivity,
-			&i.ToolResultCount,
-			&i.ToolErrorCount,
-			&i.DerivedTitle,
-			&i.DerivedModel,
-			&i.ModelUsage,
 		); err != nil {
 			return nil, err
 		}
@@ -489,7 +405,7 @@ SET last_seen_at     = $10,
     cwd              = COALESCE($7, sessions.cwd),
     harness_version  = COALESCE($8, sessions.harness_version),
     parent_session_id = COALESCE($9, sessions.parent_session_id)
-RETURNING id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage
+RETURNING id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns
 `
 
 type UpsertSessionParams struct {
@@ -562,6 +478,8 @@ func (q *Queries) UpsertSession(ctx context.Context, arg UpsertSessionParams) (S
 		&i.DerivedTitle,
 		&i.DerivedModel,
 		&i.ModelUsage,
+		&i.TotalTokens,
+		&i.DurationNs,
 	)
 	return i, err
 }
