@@ -8,13 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 
-	"github.com/papercomputeco/tapes/pkg/export"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
@@ -401,16 +401,33 @@ func (s *Server) handleGetSession(c *fiber.Ctx) error {
 	})
 }
 
-// handleExportSession handles GET /v1/sessions/:id/export. It streams the
-// same JSONL grain `tapes checkout --format jsonl` renders, over HTTP, for
-// the console's per-session download.
+// exportSessionLine renders one session's export record: the same
+// nested session → traces → spans projection GET /v1/sessions/{id}/traces
+// serves (full payloads), encoded as a single JSON line. Both export
+// endpoints emit this grain, so a bulk export is exactly a concatenation
+// of per-session exports.
+func exportSessionLine(ctx context.Context, reader spanModelReader, sess storage.SessionRecord, w io.Writer) error {
+	turns, spans, links, err := reader.ListSessionSpanModel(ctx, sess.ID)
+	if err != nil {
+		return fmt.Errorf("list span model for session %s: %w", sess.ID, err)
+	}
+	resp := BuildSessionTraces(sessionItemFromStorage(sess), turns, spans, links, PayloadFull)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		return fmt.Errorf("encoding session %s: %w", sess.ID, err)
+	}
+	return nil
+}
+
+// handleExportSession handles GET /v1/sessions/:id/export. It renders the
+// session's full trace/span projection as one JSONL line, for the
+// console's per-session download.
 //
 //	@Summary		Export a session as JSONL
-//	@Description	Streams one JSON object per turn (NDJSON) as a downloadable attachment: the same conversation-export grain as `tapes checkout --format jsonl`.
+//	@Description	Returns the session as a single JSON line (downloadable attachment): the session object with its traces, each trace carrying its full spans — the same shape as GET /v1/sessions/{id}/traces with payload=full.
 //	@Tags			sessions
 //	@Produce		application/x-ndjson
 //	@Param			id	path	string	true	"Session id (UUID)"
-//	@Success		200	{string}	string	"NDJSON body, one JSON object per turn"
+//	@Success		200	{string}	string	"JSONL body, one session object with nested traces and spans"
 //	@Failure		400	{object}	llm.ErrorResponse	"Missing or malformed id"
 //	@Failure		404	{object}	llm.ErrorResponse	"Session not found"
 //	@Failure		500	{object}	llm.ErrorResponse	"Failed to load or render the session"
@@ -420,6 +437,13 @@ func (s *Server) handleExportSession(c *fiber.Ctx) error {
 	reader, ok := s.driver.(sessionsReader)
 	if !ok {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
+	}
+	// The export needs both sessionsReader and spanModelReader; a driver
+	// can implement the former without the latter, so this is a second,
+	// independent 501 gate checked before any header is set.
+	spanReader, ok := s.driver.(spanModelReader)
+	if !ok {
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "span traces not supported by this backend"})
 	}
 
 	id := c.Params("id")
@@ -443,14 +467,6 @@ func (s *Server) handleExportSession(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
 	}
 
-	// The querier needs both sessionsReader and spanModelReader; a driver
-	// can implement the former without the latter, so this is a second,
-	// independent 501 gate checked before any header is set.
-	query, ok := s.skillTraceQuerier(orgID)
-	if !ok {
-		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
-	}
-
 	// Render into a buffer first so the NDJSON/attachment headers are only
 	// committed once the export succeeds. A single session is bounded, so
 	// buffering is cheap — and it means a mid-render failure returns a clean
@@ -459,7 +475,7 @@ func (s *Server) handleExportSession(c *fiber.Ctx) error {
 	// happened. (The streaming bulk endpoint can't do this; a single session
 	// can.)
 	var buf bytes.Buffer
-	if err := export.SessionJSONL(c.Context(), query, id, &buf); err != nil {
+	if err := exportSessionLine(c.Context(), spanReader, *sess, &buf); err != nil {
 		s.logger.Error("export session", "id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to render session export"})
 	}
@@ -479,17 +495,18 @@ func (s *Server) handleExportSession(c *fiber.Ctx) error {
 const exportSessionsPageLimit = maxSessionsLimit
 
 // handleExportSessions handles GET /v1/sessions/export?since=&until=. It
-// streams every session's JSONL turns in the requested window (default:
-// trailing 30 days) as a single NDJSON attachment, paging internally past
-// the 200-row UI cap via the same keyset cursor handleListSessions uses.
+// streams every session in the requested window (default: trailing 30
+// days) as one nested JSON line each — session → traces → spans — paging
+// internally past the 200-row UI cap via the same keyset cursor
+// handleListSessions uses.
 //
 //	@Summary		Export sessions in a time window as JSONL
-//	@Description	Streams every session's turns (NDJSON) in the given window, newest-first, as a downloadable attachment. Defaults to the trailing 30 days. Not bounded by the /v1/sessions list cap — pages internally.
+//	@Description	Streams one JSON line per session in the given window, newest-first, as a downloadable attachment. Each line is the session object with its traces, each trace carrying its full spans — the same shape as GET /v1/sessions/{id}/traces with payload=full. Defaults to the trailing 30 days. Not bounded by the /v1/sessions list cap — pages internally.
 //	@Tags			sessions
 //	@Produce		application/x-ndjson
 //	@Param			since	query	string	false	"Only include sessions active (last_seen_at) at or after this RFC3339 timestamp (default: now - 30 days)"	format(date-time)
 //	@Param			until	query	string	false	"Only include sessions active (last_seen_at) before this RFC3339 timestamp"								format(date-time)
-//	@Success		200		{string}	string	"NDJSON body, one JSON object per turn across every session in the window"
+//	@Success		200		{string}	string	"JSONL body, one JSON object per session with nested traces and spans"
 //	@Failure		400		{object}	llm.ErrorResponse	"Malformed since/until"
 //	@Failure		500		{object}	llm.ErrorResponse	"Failed to list or render sessions"
 //	@Failure		501		{object}	llm.ErrorResponse	"Sessions not supported by this backend"
@@ -499,9 +516,9 @@ func (s *Server) handleExportSessions(c *fiber.Ctx) error {
 	if !ok {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
 	}
-	query, ok := s.skillTraceQuerier(orgIDFromCtx(c))
+	spanReader, ok := s.driver.(spanModelReader)
 	if !ok {
-		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "span traces not supported by this backend"})
 	}
 
 	// The 30-day window is the maximum span for v1 (R-20), not just the
@@ -558,7 +575,7 @@ func (s *Server) handleExportSessions(c *fiber.Ctx) error {
 	// status is already committed by the time bytes are flowing (documented
 	// as an accepted v1 tradeoff in the design). ctx.Bind() is unavailable
 	// here (this is the raw fasthttp callback, not a fiber.Ctx), so orgID,
-	// since, until, reader, and query are captured directly.
+	// since, until, reader, and spanReader are captured directly.
 	ctx.SetBodyStreamWriter(func(w *bufio.Writer) {
 		streamCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
@@ -576,7 +593,7 @@ func (s *Server) handleExportSessions(c *fiber.Ctx) error {
 				return
 			}
 			for _, sess := range sessions {
-				if err := export.SessionJSONL(streamCtx, query, sess.ID, w); err != nil {
+				if err := exportSessionLine(streamCtx, spanReader, sess, w); err != nil {
 					s.logger.Error("export session", "id", sess.ID, "error", err)
 					return
 				}
