@@ -23,9 +23,9 @@ type DeleteSessionParams struct {
 
 // Remove a session by its org-scoped id. Returns the affected row count so the
 // handler can distinguish a real delete from a missing id. Dependent rows
-// (subagent child sessions, derived nodes, spans/span_turns/span_links) are
-// removed by the session_id ON DELETE CASCADE foreign keys, so this single
-// statement tears down the whole subtree.
+// (subagent child sessions, spans/span_turns/span_links) are removed by the
+// session_id ON DELETE CASCADE foreign keys, so this single statement tears
+// down the whole subtree.
 func (q *Queries) DeleteSession(ctx context.Context, arg DeleteSessionParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteSession, arg.OrgID, arg.ID)
 	if err != nil {
@@ -323,8 +323,8 @@ type UpsertSessionParams struct {
 // before the parent's, InsertSessionPlaceholder wrote the parent row
 // carrying the *child's* auth_subject; the parent's real upsert here
 // is authoritative and must reclaim attribution. Counters are NOT
-// touched here — UpdateSessionCounters handles that after the nodes
-// insert in the same Tx.
+// touched here — the derive-time span fold (FoldSessionRollupsFromSpans)
+// owns the token/turn/cost rollups.
 func (q *Queries) UpsertSession(ctx context.Context, arg UpsertSessionParams) (Session, error) {
 	row := q.db.QueryRow(ctx, upsertSession,
 		arg.ID,

@@ -13,8 +13,8 @@
 -- before the parent's, InsertSessionPlaceholder wrote the parent row
 -- carrying the *child's* auth_subject; the parent's real upsert here
 -- is authoritative and must reclaim attribution. Counters are NOT
--- touched here — UpdateSessionCounters handles that after the nodes
--- insert in the same Tx.
+-- touched here — the derive-time span fold (FoldSessionRollupsFromSpans)
+-- owns the token/turn/cost rollups.
 INSERT INTO sessions (
     id,
     org_id,

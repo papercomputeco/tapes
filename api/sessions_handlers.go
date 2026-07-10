@@ -605,7 +605,7 @@ func (s *Server) handleExportSessions(c *fiber.Ctx) error {
 // handleDeleteSession handles DELETE /v1/sessions/:id.
 //
 //	@Summary		Delete a session
-//	@Description	Permanently deletes a session and its subtree: subagent child sessions, derived nodes, and spans cascade with it. Org-scoped — any caller in the org may delete any of its sessions. The immutable raw_turns capture log is left intact.
+//	@Description	Permanently deletes a session and its subtree: subagent child sessions and their derived traces/spans cascade with it. Org-scoped — any caller in the org may delete any of its sessions. The immutable raw_turns capture log is left intact.
 //	@Tags			sessions
 //	@Param			id	path	string	true	"Session id (UUID)"
 //	@Success		204	"Session deleted"

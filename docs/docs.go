@@ -237,7 +237,7 @@ const docTemplate = `{
         },
         "/v1/sessions": {
             "get": {
-                "description": "Returns one row per harness session from the sessions table, newest first (last_seen_at desc), cursor-paginated.",
+                "description": "Returns one row per harness session from the sessions table, cursor-paginated. Default order is last_active (last_seen_at) desc; override with the sort and direction query params.",
                 "produces": [
                     "application/json"
                 ],
@@ -257,6 +257,18 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Opaque pagination cursor returned by a previous response",
                         "name": "cursor",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort column: last_active|started_at|turn_count|total_cost_usd|total_tokens|duration_ns|derived_status|auth_subject (default last_active)",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort direction: asc|desc (default desc)",
+                        "name": "direction",
                         "in": "query"
                     },
                     {
@@ -427,7 +439,7 @@ const docTemplate = `{
                 }
             },
             "delete": {
-                "description": "Permanently deletes a session and its subtree: subagent child sessions, derived nodes, and spans cascade with it. Org-scoped — any caller in the org may delete any of its sessions. The immutable raw_turns capture log is left intact.",
+                "description": "Permanently deletes a session and its subtree: subagent child sessions and their derived traces/spans cascade with it. Org-scoped — any caller in the org may delete any of its sessions. The immutable raw_turns capture log is left intact.",
                 "tags": [
                     "sessions"
                 ],

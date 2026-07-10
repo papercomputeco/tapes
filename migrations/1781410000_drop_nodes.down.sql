@@ -36,7 +36,10 @@ CREATE TABLE nodes (
     parent_tool_use_id text,
     thread_id text,
     CONSTRAINT nodes_pkey PRIMARY KEY (org_id, hash),
-    CONSTRAINT nodes_session_id_fkey FOREIGN KEY (session_id) REFERENCES sessions(id)
+    -- ON DELETE CASCADE matches the final pre-drop shape: 1781360000
+    -- (session_delete_cascade) recreated this FK with CASCADE before
+    -- this migration dropped the table.
+    CONSTRAINT nodes_session_id_fkey FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
 CREATE INDEX node_agent_name ON nodes USING btree (agent_name);
