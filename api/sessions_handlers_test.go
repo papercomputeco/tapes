@@ -56,6 +56,23 @@ type sessionsStubDriver struct {
 	deleteCalls   int
 	lastDeleteOrg string
 	lastDeleteID  string
+
+	// GetSessionRecord stubbing (used by handleUpdateSession's post-write
+	// re-read; the harness-filter helper above has its own canned nil
+	// return and is left untouched).
+	getRecord     *storage.SessionRecord
+	getErr        error
+	getCalls      int
+	lastGetOrgID  string
+	lastGetID     string
+
+	// UpdateSessionName stubbing.
+	updateRowsAffected int64
+	updateErr          error
+	updateCalls        int
+	lastUpdateOrgID    string
+	lastUpdateID       string
+	lastUpdateName     *string
 }
 
 // errStubDelete is the canned failure the stub returns to exercise the
@@ -88,8 +105,11 @@ func (d *sessionsStubDriver) ListSessionRecords(_ context.Context, orgID string,
 	return d.listRecords, d.listErr
 }
 
-func (d *sessionsStubDriver) GetSessionRecord(_ context.Context, _, _ string) (*storage.SessionRecord, error) {
-	return nil, nil
+func (d *sessionsStubDriver) GetSessionRecord(_ context.Context, orgID, id string) (*storage.SessionRecord, error) {
+	d.getCalls++
+	d.lastGetOrgID = orgID
+	d.lastGetID = id
+	return d.getRecord, d.getErr
 }
 
 func (d *sessionsStubDriver) GetSessionRecordByHarness(_ context.Context, orgID, harnessID, harnessSessionID string) (*storage.SessionRecord, error) {
@@ -98,6 +118,18 @@ func (d *sessionsStubDriver) GetSessionRecordByHarness(_ context.Context, orgID,
 	d.lastHarnessID = harnessID
 	d.lastHarnessSessionID = harnessSessionID
 	return d.harnessRecord, d.harnessErr
+}
+
+// UpdateSessionName records the call (org/id/name) and returns the canned
+// rowsAffected/err, mirroring the real driver's contract: the handler must
+// treat rowsAffected==0 as "not in this org / unknown id" (CC-2) rather than
+// inspecting the name it sent.
+func (d *sessionsStubDriver) UpdateSessionName(_ context.Context, orgID, id string, name *string) (int64, error) {
+	d.updateCalls++
+	d.lastUpdateOrgID = orgID
+	d.lastUpdateID = id
+	d.lastUpdateName = name
+	return d.updateRowsAffected, d.updateErr
 }
 
 func (d *sessionsStubDriver) ListNodesBySession(_ context.Context, _ string) ([]*merkle.Node, error) {
