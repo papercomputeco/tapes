@@ -171,14 +171,22 @@ var _ = Describe("Driver skills persistence", func() {
 		org := newTestOrgID()
 		low := newRec()
 		low.Name = "Low"
-		low.DownloadCount = 1
 		_, err := pgDriver.UpsertSkill(ctx, org, low)
 		Expect(err).NotTo(HaveOccurred())
 		high := newRec()
 		high.Name = "High"
-		high.DownloadCount = 9
 		_, err = pgDriver.UpsertSkill(ctx, org, high)
 		Expect(err).NotTo(HaveOccurred())
+
+		// download_count is owned by the counter, not UpsertSkill (which
+		// ignores the field), so bump the real counter to give High strictly
+		// more downloads than Low. Without this both rows tie at 0 and the
+		// download-sorted query falls back to its id tiebreak, which is a
+		// random UUID — making this assertion a coin flip.
+		Expect(pgDriver.IncrementSkillDownloads(ctx, org, low.ID)).To(Succeed())
+		for range 5 {
+			Expect(pgDriver.IncrementSkillDownloads(ctx, org, high.ID)).To(Succeed())
+		}
 
 		list, err := pgDriver.ListSkills(ctx, org, storage.SkillListOpts{Sort: storage.SkillSortDownloads})
 		Expect(err).NotTo(HaveOccurred())
