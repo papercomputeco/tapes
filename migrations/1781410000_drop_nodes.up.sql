@@ -10,9 +10,11 @@
 -- model — proven by the byte-identical span/trace corpus gate.
 --
 -- ancestry_chains_rows only ever walked this table and has no remaining
--- caller. spans.node_hash is intentionally kept: it is provenance
--- sourced from the retained in-memory merkle hash (merkle.ProjectContent),
--- carries no foreign key to this table, and no reader resolves it.
+-- caller. spans.node_hash is intentionally kept: it is the merkle
+-- message-identity hash sourced from the retained in-memory merkle layer
+-- (merkle.ProjectContent) and carries no foreign key to this table. It is
+-- reserved for v1.1 payload dedup (a derived blob table keyed on this hash)
+-- and is deliberately not exposed on the wire.
 
 DROP FUNCTION IF EXISTS ancestry_chains_rows(text[], integer);
 
