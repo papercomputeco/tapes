@@ -135,3 +135,14 @@ UPDATE sessions SET derived_title = sqlc.arg(derived_title) WHERE id = sqlc.arg(
 -- SQL — so the deriver writes it directly as a JSONB array. Re-derive
 -- overwrites it idempotently.
 UPDATE sessions SET model_usage = sqlc.arg(model_usage) WHERE id = sqlc.arg(id);
+
+-- name: UpdateSessionTasks :exec
+-- Fold the TaskCreate/TaskUpdate replay onto the session. Like model_usage
+-- this is a Go-side fold (it depends on regex id extraction SQL can't do),
+-- written as a JSONB array. Re-derive overwrites it idempotently.
+UPDATE sessions SET tasks = sqlc.arg(tasks) WHERE id = sqlc.arg(id);
+
+-- name: UpdateSessionKindCounts :exec
+-- Write the per-call_kind span tally onto the session as a JSONB object.
+-- Re-derive overwrites it idempotently.
+UPDATE sessions SET kind_counts = sqlc.arg(kind_counts) WHERE id = sqlc.arg(id);

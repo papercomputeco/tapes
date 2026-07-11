@@ -69,7 +69,8 @@ func (d *Driver) ListSessionRecords(
 	const baseCols = `id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, ` +
 		`harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, ` +
 		`total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, ` +
-		`has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage`
+		`has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, ` +
+		`tasks, kind_counts`
 
 	// Values bind as pgx named args (@name). The dynamic ORDER BY forces a
 	// hand-built query, but every caller value is still a named, bound parameter
@@ -129,6 +130,7 @@ func (d *Driver) ListSessionRecords(
 			&g.HarnessVersion, &g.ParentSessionID, &g.StartedAt, &g.LastSeenAt, &g.EndedAt, &g.HarnessMetadata,
 			&g.TotalInputTokens, &g.TotalOutputTokens, &g.TotalCostUsd, &g.TurnCount, &g.DerivedStatus,
 			&g.HasGitActivity, &g.ToolResultCount, &g.ToolErrorCount, &g.DerivedTitle, &g.DerivedModel, &g.ModelUsage,
+			&g.Tasks, &g.KindCounts,
 			&sortVal,
 		); err != nil {
 			return nil, fmt.Errorf("list session records: scan: %w", err)
@@ -339,6 +341,10 @@ func sessionRecordFromRow(row gensqlc.Session) storage.SessionRecord {
 			s.ModelUsage = mu
 		}
 	}
+	// Tasks and KindCounts are deriver-written JSONB rollups served
+	// verbatim on the composite traces response; carry the raw bytes.
+	s.Tasks = json.RawMessage(row.Tasks)
+	s.KindCounts = json.RawMessage(row.KindCounts)
 	if row.TotalCostUsd.Valid {
 		if f, err := row.TotalCostUsd.Float64Value(); err == nil && f.Valid {
 			s.TotalCostUsd = f.Float64

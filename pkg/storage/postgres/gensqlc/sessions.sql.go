@@ -35,7 +35,7 @@ func (q *Queries) DeleteSession(ctx context.Context, arg DeleteSessionParams) (i
 }
 
 const getSessionByNaturalKey = `-- name: GetSessionByNaturalKey :one
-SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns FROM sessions
+SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns, tasks, kind_counts FROM sessions
 WHERE org_id = $1
   AND harness_id = $2
   AND harness_session_id = $3
@@ -81,12 +81,14 @@ func (q *Queries) GetSessionByNaturalKey(ctx context.Context, arg GetSessionByNa
 		&i.ModelUsage,
 		&i.TotalTokens,
 		&i.DurationNs,
+		&i.Tasks,
+		&i.KindCounts,
 	)
 	return i, err
 }
 
 const getSessionRecord = `-- name: GetSessionRecord :one
-SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns FROM sessions
+SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns, tasks, kind_counts FROM sessions
 WHERE org_id = $1 AND id = $2
 `
 
@@ -125,6 +127,8 @@ func (q *Queries) GetSessionRecord(ctx context.Context, arg GetSessionRecordPara
 		&i.ModelUsage,
 		&i.TotalTokens,
 		&i.DurationNs,
+		&i.Tasks,
+		&i.KindCounts,
 	)
 	return i, err
 }
@@ -202,6 +206,22 @@ func (q *Queries) UpdateSessionDerivedTitle(ctx context.Context, arg UpdateSessi
 	return err
 }
 
+const updateSessionKindCounts = `-- name: UpdateSessionKindCounts :exec
+UPDATE sessions SET kind_counts = $1 WHERE id = $2
+`
+
+type UpdateSessionKindCountsParams struct {
+	KindCounts []byte
+	ID         pgtype.UUID
+}
+
+// Write the per-call_kind span tally onto the session as a JSONB object.
+// Re-derive overwrites it idempotently.
+func (q *Queries) UpdateSessionKindCounts(ctx context.Context, arg UpdateSessionKindCountsParams) error {
+	_, err := q.db.Exec(ctx, updateSessionKindCounts, arg.KindCounts, arg.ID)
+	return err
+}
+
 const updateSessionModelUsage = `-- name: UpdateSessionModelUsage :exec
 UPDATE sessions SET model_usage = $1 WHERE id = $2
 `
@@ -256,6 +276,23 @@ func (q *Queries) UpdateSessionStatus(ctx context.Context, arg UpdateSessionStat
 	return err
 }
 
+const updateSessionTasks = `-- name: UpdateSessionTasks :exec
+UPDATE sessions SET tasks = $1 WHERE id = $2
+`
+
+type UpdateSessionTasksParams struct {
+	Tasks []byte
+	ID    pgtype.UUID
+}
+
+// Fold the TaskCreate/TaskUpdate replay onto the session. Like model_usage
+// this is a Go-side fold (it depends on regex id extraction SQL can't do),
+// written as a JSONB array. Re-derive overwrites it idempotently.
+func (q *Queries) UpdateSessionTasks(ctx context.Context, arg UpdateSessionTasksParams) error {
+	_, err := q.db.Exec(ctx, updateSessionTasks, arg.Tasks, arg.ID)
+	return err
+}
+
 const upsertSession = `-- name: UpsertSession :one
 INSERT INTO sessions (
     id,
@@ -292,7 +329,7 @@ SET last_seen_at     = $10,
     cwd              = COALESCE($7, sessions.cwd),
     harness_version  = COALESCE($8, sessions.harness_version),
     parent_session_id = COALESCE($9, sessions.parent_session_id)
-RETURNING id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns
+RETURNING id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns, tasks, kind_counts
 `
 
 type UpsertSessionParams struct {
@@ -367,6 +404,8 @@ func (q *Queries) UpsertSession(ctx context.Context, arg UpsertSessionParams) (S
 		&i.ModelUsage,
 		&i.TotalTokens,
 		&i.DurationNs,
+		&i.Tasks,
+		&i.KindCounts,
 	)
 	return i, err
 }

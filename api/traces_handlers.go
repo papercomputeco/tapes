@@ -2,9 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"regexp"
-	"sort"
-	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -213,9 +210,16 @@ func BuildSessionTraces(
 		if sp.ParentSpanID != "" {
 			children[sp.ParentSpanID] = append(children[sp.ParentSpanID], sp.SpanID)
 		}
-		if sp.CallKind != "" {
-			resp.KindCounts[sp.CallKind]++
-		}
+	}
+
+	// Tasks and kind_counts are deriver-owned session rollups, read from
+	// the session record (sessions.tasks / sessions.kind_counts). Empty
+	// defaults survive an un-derived or JSON-drifted session.
+	if len(session.Tasks) > 0 {
+		_ = json.Unmarshal(session.Tasks, &resp.Tasks)
+	}
+	if len(session.KindCounts) > 0 {
+		_ = json.Unmarshal(session.KindCounts, &resp.KindCounts)
 	}
 
 	linksByTrace := map[string][]SpanLinkItem{}
@@ -254,7 +258,6 @@ func BuildSessionTraces(
 		resp.Traces = append(resp.Traces, detail)
 	}
 
-	resp.Tasks = foldTasksFromSpans(spans)
 	return resp
 }
 
@@ -406,98 +409,6 @@ type TreeTask struct {
 	Description string `json:"description,omitempty"`
 	Status      string `json:"status"`
 	Updates     int    `json:"updates"`
-}
-
-// taskCreatedPattern extracts the task id the harness reports back in
-// the TaskCreate tool_result ("Task #3 created successfully: …").
-var taskCreatedPattern = regexp.MustCompile(`#(\d+)`)
-
-// foldTaskBlocks replays TaskCreate/TaskUpdate tool_use blocks (in
-// capture order) against their results. The fold is a function of the
-// calls, not of the storage model.
-func foldTaskBlocks(uses []llm.ContentBlock, resultText map[string]string) []TreeTask {
-	byID := map[string]*TreeTask{}
-	var order []*TreeTask
-	{
-		for _, b := range uses {
-			switch b.ToolName {
-			case "TaskCreate":
-				subject, _ := b.ToolInput["subject"].(string)
-				description, _ := b.ToolInput["description"].(string)
-				id := ""
-				if m := taskCreatedPattern.FindStringSubmatch(resultText[b.ToolUseID]); m != nil {
-					id = m[1]
-				}
-				task := &TreeTask{ID: id, Subject: subject, Description: description, Status: "pending"}
-				if id != "" {
-					if _, dup := byID[id]; dup {
-						continue
-					}
-					byID[id] = task
-				}
-				order = append(order, task)
-			case "TaskUpdate":
-				id, _ := b.ToolInput["taskId"].(string)
-				if id == "" {
-					if f, ok := b.ToolInput["taskId"].(float64); ok {
-						id = strconv.Itoa(int(f))
-					}
-				}
-				task, ok := byID[id]
-				if !ok {
-					continue
-				}
-				task.Updates++
-				if status, ok := b.ToolInput["status"].(string); ok && status != "" {
-					task.Status = status
-				}
-				if subject, ok := b.ToolInput["subject"].(string); ok && subject != "" {
-					task.Subject = subject
-				}
-			}
-		}
-	}
-	out := make([]TreeTask, 0, len(order))
-	for _, t := range order {
-		if t.Status == "deleted" {
-			continue
-		}
-		out = append(out, *t)
-	}
-	return out
-}
-
-// foldTasksFromSpans replays TaskCreate/TaskUpdate from tool spans —
-// the same fold as the retired tree projection, sourced from span
-// rows. The replay must run in event order: storage hands spans back
-// sorted by trace_id, which is lexicographic, not chronological.
-func foldTasksFromSpans(spans []storage.SpanRecord) []TreeTask {
-	tools := make([]storage.SpanRecord, 0, len(spans))
-	for _, sp := range spans {
-		if sp.Kind == "tool" {
-			tools = append(tools, sp)
-		}
-	}
-	sort.SliceStable(tools, func(i, j int) bool {
-		if !tools[i].StartedAt.Equal(tools[j].StartedAt) {
-			return tools[i].StartedAt.Before(tools[j].StartedAt)
-		}
-		return tools[i].Seq < tools[j].Seq
-	})
-
-	resultText := map[string]string{}
-	var uses []llm.ContentBlock
-	for _, sp := range tools {
-		if in := decodeBlocks(sp.Input); len(in) > 0 {
-			uses = append(uses, in[0])
-		}
-		if out := decodeBlocks(sp.Output); len(out) > 0 {
-			if _, ok := resultText[sp.SpanID]; !ok {
-				resultText[sp.SpanID] = out[0].ToolOutput
-			}
-		}
-	}
-	return foldTaskBlocks(uses, resultText)
 }
 
 // emptyObjectIfNil keeps wire fields object-typed when the stored

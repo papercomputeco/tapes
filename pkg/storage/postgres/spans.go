@@ -224,6 +224,36 @@ func writeSpanSet(
 			return fmt.Errorf("update session model usage: %w", err)
 		}
 	}
+
+	// Session-scoped task fold and call_kind tally (deriver-owned, folded
+	// in Go for the same reason as model_usage). Written as JSONB so the
+	// read/export paths never re-fold.
+	for key, tasks := range spans.Tasks {
+		sid, ok := sessionIDs[key]
+		if !ok || !sid.Valid {
+			continue
+		}
+		payload, err := json.Marshal(tasks)
+		if err != nil {
+			return fmt.Errorf("marshal session tasks: %w", err)
+		}
+		if err := qtx.UpdateSessionTasks(ctx, gensqlc.UpdateSessionTasksParams{ID: sid, Tasks: payload}); err != nil {
+			return fmt.Errorf("update session tasks: %w", err)
+		}
+	}
+	for key, counts := range spans.KindCounts {
+		sid, ok := sessionIDs[key]
+		if !ok || !sid.Valid {
+			continue
+		}
+		payload, err := json.Marshal(counts)
+		if err != nil {
+			return fmt.Errorf("marshal session kind_counts: %w", err)
+		}
+		if err := qtx.UpdateSessionKindCounts(ctx, gensqlc.UpdateSessionKindCountsParams{ID: sid, KindCounts: payload}); err != nil {
+			return fmt.Errorf("update session kind_counts: %w", err)
+		}
+	}
 	return nil
 }
 

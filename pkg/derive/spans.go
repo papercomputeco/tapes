@@ -71,6 +71,13 @@ type SpanSet struct {
 	// main-spine model (#28).
 	ModelUsage map[SessionKey][]ModelUsage
 
+	// Tasks is the per-session TaskCreate/TaskUpdate fold, replayed in
+	// event order. KindCounts is the per-session tally of span call_kinds.
+	// Both are session-rollup facts the deriver owns; the API serves them
+	// on the composite traces response without re-folding.
+	Tasks      map[SessionKey][]Task
+	KindCounts map[SessionKey]map[string]int
+
 	Report SpanReport
 }
 
@@ -687,6 +694,10 @@ func (em *spanEmitter) finish() {
 	// trace's llm spans below — subagent models included — then sorted
 	// into ModelUsage at the end.
 	modelFold := map[SessionKey]map[string]*ModelUsage{}
+	// Per-session call_kind tally and tool-span collection for the task
+	// fold, accumulated across every trace below.
+	kindFold := map[SessionKey]map[string]int{}
+	toolsBySession := map[SessionKey][]*Span{}
 	for _, turn := range em.set.Turns {
 		root := turn.Spans[0]
 		// phases append out of time order within a trace; StartedAt is
@@ -707,6 +718,17 @@ func (em *spanEmitter) finish() {
 		for _, s := range turn.Spans {
 			if end := s.StartedAt.Add(time.Duration(s.DurationNS)); end.After(turn.EndedAt) {
 				turn.EndedAt = end
+			}
+			if s.CallKind != "" {
+				byKind := kindFold[turn.Session]
+				if byKind == nil {
+					byKind = map[string]int{}
+					kindFold[turn.Session] = byKind
+				}
+				byKind[s.CallKind]++
+			}
+			if s.Kind == SpanKindTool {
+				toolsBySession[turn.Session] = append(toolsBySession[turn.Session], s)
 			}
 			if s.Kind == SpanKindLLM && s.Usage != nil {
 				turn.TotalInputTokens += int64(s.Usage.PromptTokens)
@@ -748,6 +770,18 @@ func (em *spanEmitter) finish() {
 		turn.ResponsePreview = responsePreview(turn)
 	}
 	em.foldModelUsage(modelFold)
+
+	if len(kindFold) > 0 {
+		em.set.KindCounts = kindFold
+	}
+	if len(toolsBySession) > 0 {
+		em.set.Tasks = map[SessionKey][]Task{}
+		for key, tools := range toolsBySession {
+			if tasks := FoldSessionTasks(tools); len(tasks) > 0 {
+				em.set.Tasks[key] = tasks
+			}
+		}
+	}
 }
 
 // foldModelUsage flattens the per-session model accumulator into the

@@ -67,6 +67,8 @@ type Session struct {
 	ModelUsage        []byte
 	TotalTokens       pgtype.Int8
 	DurationNs        pgtype.Int8
+	Tasks             []byte
+	KindCounts        []byte
 }
 
 type Skill struct {

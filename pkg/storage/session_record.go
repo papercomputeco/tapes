@@ -1,6 +1,9 @@
 package storage
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // SessionRecord is the flat sessions-table row surfaced by
 // GET /v1/sessions. Fields absent in the DB (NULL) are represented as empty
@@ -34,6 +37,12 @@ type SessionRecord struct {
 	// share reflects spend rather than call count. Nil until the session
 	// derives; ordered dominant-model-first (by cost).
 	ModelUsage []ModelUsage
+	// Tasks is the deriver's session-scoped TaskCreate/TaskUpdate fold and
+	// KindCounts the per-call_kind span tally (sessions.tasks /
+	// sessions.kind_counts), both JSONB served verbatim on the composite
+	// traces response. Nil until the session derives.
+	Tasks      json.RawMessage
+	KindCounts json.RawMessage
 	Preview    string // first user turn text, truncated; empty when unavailable
 	// AuthSubject is the gateway-stamped JWT subject (the WorkOS user id)
 	// captured at ingest. Empty for rows captured before the edge began

@@ -124,6 +124,19 @@ func (cmder *traceFixturesCommander) renderCorpus(cmd *cobra.Command, path strin
 	turns, spans, links := recordsFromSpanSet(spanSet, sessionID)
 	session := foldSessionItem(key, sessionID, set, wire, transcriptRows, turns)
 	session.ModelUsage = modelUsageItems(spanSet.ModelUsage[key])
+	// Mirror the deriver's session rollups the handler reads from the
+	// session record, so fixtures match a re-derived session. Only set
+	// when present, so an empty session keeps the wire's [] / {}.
+	if tasks := spanSet.Tasks[key]; len(tasks) > 0 {
+		if b, err := json.Marshal(tasks); err == nil {
+			session.Tasks = b
+		}
+	}
+	if kc := spanSet.KindCounts[key]; len(kc) > 0 {
+		if b, err := json.Marshal(kc); err == nil {
+			session.KindCounts = b
+		}
+	}
 
 	short := key.HarnessSessionID
 	if len(short) > 8 {
@@ -246,6 +259,13 @@ func recordsFromSpanSet(spanSet *derive.SpanSet, sessionID string) ([]storage.Sp
 					panic(fmt.Sprintf("marshal span %s usage: %v", s.SpanID, err))
 				}
 			}
+			var verdict json.RawMessage
+			if s.Verdict != nil {
+				verdict, err = json.Marshal(s.Verdict)
+				if err != nil {
+					panic(fmt.Sprintf("marshal span %s verdict: %v", s.SpanID, err))
+				}
+			}
 			spans = append(spans, storage.SpanRecord{
 				TraceID:      turn.TraceID,
 				SpanID:       s.SpanID,
@@ -265,6 +285,7 @@ func recordsFromSpanSet(spanSet *derive.SpanSet, sessionID string) ([]storage.Sp
 				Usage:        usage,
 				RawTurnID:    s.RawTurnID,
 				NodeHash:     s.NodeHash,
+				Verdict:      verdict,
 			})
 		}
 		for _, l := range turn.Links {

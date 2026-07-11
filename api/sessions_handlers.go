@@ -74,6 +74,11 @@ type SessionItem struct {
 	// captured at ingest; empty for rows captured before the edge began
 	// stamping it.
 	AuthSubject string `json:"auth_subject,omitempty"`
+	// Tasks and KindCounts are the deriver's session rollups, carried on
+	// the record but NOT serialized on SessionItem (the list stays lean);
+	// BuildSessionTraces reads them onto the composite traces response.
+	Tasks      json.RawMessage `json:"-"`
+	KindCounts json.RawMessage `json:"-"`
 }
 
 // ModelUsage is one model's contribution to a session in the API: how
@@ -122,6 +127,8 @@ func sessionItemFromStorage(s storage.SessionRecord) SessionItem {
 		HarnessMetadata:   s.HarnessMetadata,
 		Preview:           s.Preview,
 		AuthSubject:       s.AuthSubject,
+		Tasks:             s.Tasks,
+		KindCounts:        s.KindCounts,
 	}
 }
 
