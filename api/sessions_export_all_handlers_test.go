@@ -231,6 +231,29 @@ var _ = Describe("GET /v1/sessions/export", func() {
 		Entry("when until is before since", now.Add(-2*time.Minute), now.Add(-5*time.Minute)),
 	)
 
+	// detail=traces: one header-only line per session, grain in the filename.
+	It("exports turn headers per session at detail=traces", func() {
+		drv := newPagingDriver(org, 3, now)
+		server := newExportServer(drv)
+
+		resp, body := getRaw(server, "/v1/sessions/export?detail=traces", org)
+		Expect(resp.StatusCode).To(Equal(fiber.StatusOK))
+		Expect(resp.Header.Get("Content-Disposition")).To(ContainSubstring("-traces.jsonl"))
+
+		lines := nonEmptyLinesAPI(string(body))
+		Expect(lines).To(HaveLen(3))
+		Expect(string(body)).To(ContainSubstring(`"trace_id":"session-0000-t1"`))
+		Expect(string(body)).NotTo(ContainSubstring(`"spans"`))
+	})
+
+	It("returns 400 for an unrecognized detail value", func() {
+		drv := newPagingDriver(org, 1, now)
+		server := newExportServer(drv)
+
+		resp, _ := getRaw(server, "/v1/sessions/export?detail=bogus", org)
+		Expect(resp.StatusCode).To(Equal(fiber.StatusBadRequest))
+	})
+
 	// T-9: org isolation.
 	It("only includes sessions belonging to the requesting org", func() {
 		drv := newPagingDriver(org, 5, now)

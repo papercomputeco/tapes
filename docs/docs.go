@@ -237,7 +237,7 @@ const docTemplate = `{
         },
         "/v1/sessions": {
             "get": {
-                "description": "Returns one row per harness session from the sessions table, newest first (last_seen_at desc), cursor-paginated.",
+                "description": "Returns one row per harness session from the sessions table, cursor-paginated. Default order is last_active (last_seen_at) desc; override with the sort and direction query params.",
                 "produces": [
                     "application/json"
                 ],
@@ -257,6 +257,18 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Opaque pagination cursor returned by a previous response",
                         "name": "cursor",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort column: last_active|started_at|turn_count|total_cost_usd|total_tokens|duration_ns|derived_status|auth_subject (default last_active)",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort direction: asc|desc (default desc)",
+                        "name": "direction",
                         "in": "query"
                     },
                     {
@@ -322,7 +334,7 @@ const docTemplate = `{
         },
         "/v1/sessions/export": {
             "get": {
-                "description": "Streams every session's turns (NDJSON) in the given window, newest-first, as a downloadable attachment. Defaults to the trailing 30 days. Not bounded by the /v1/sessions list cap — pages internally.",
+                "description": "Streams one JSON line per session in the given window, newest-first, as a downloadable attachment. Each line is the session object with its traces, each trace carrying its full spans — the same shape as GET /v1/sessions/{id}/traces with payload=full. detail=traces exports turn headers only (no spans or links). Defaults to the trailing 30 days. Not bounded by the /v1/sessions list cap — pages internally.",
                 "produces": [
                     "application/x-ndjson"
                 ],
@@ -344,17 +356,27 @@ const docTemplate = `{
                         "description": "Only include sessions active (last_seen_at) before this RFC3339 timestamp",
                         "name": "until",
                         "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "spans",
+                            "traces"
+                        ],
+                        "type": "string",
+                        "description": "Export granularity: spans (default, traces with full spans) or traces (turn headers only)",
+                        "name": "detail",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "NDJSON body, one JSON object per turn across every session in the window",
+                        "description": "JSONL body, one JSON object per session with nested traces (and spans at detail=spans)",
                         "schema": {
                             "type": "string"
                         }
                     },
                     "400": {
-                        "description": "Malformed since/until",
+                        "description": "Malformed since/until, or unrecognized detail",
                         "schema": {
                             "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
                         }
@@ -474,7 +496,7 @@ const docTemplate = `{
         },
         "/v1/sessions/{id}/export": {
             "get": {
-                "description": "Streams one JSON object per turn (NDJSON) as a downloadable attachment: the same conversation-export grain as ` + "`" + `tapes checkout --format jsonl` + "`" + `.",
+                "description": "Returns the session as a single JSON line (downloadable attachment): the session object with its traces, each trace carrying its full spans — the same shape as GET /v1/sessions/{id}/traces with payload=full. detail=traces exports turn headers only (no spans or links).",
                 "produces": [
                     "application/x-ndjson"
                 ],
@@ -489,17 +511,27 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "enum": [
+                            "spans",
+                            "traces"
+                        ],
+                        "type": "string",
+                        "description": "Export granularity: spans (default, traces with full spans) or traces (turn headers only)",
+                        "name": "detail",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "NDJSON body, one JSON object per turn",
+                        "description": "JSONL body, one session object with nested traces (and spans at detail=spans)",
                         "schema": {
                             "type": "string"
                         }
                     },
                     "400": {
-                        "description": "Missing or malformed id",
+                        "description": "Missing or malformed id, or unrecognized detail",
                         "schema": {
                             "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
                         }

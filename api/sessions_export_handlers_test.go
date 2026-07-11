@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -17,13 +18,14 @@ import (
 )
 
 // exportStubDriver wraps a real storage.Driver and implements the
-// sessionsReader and spanModelReader capability interfaces needed by the
-// export handlers and the in-process skillTraceQuerier they use.
+// sessionsReader and spanModelReader capability interfaces the export
+// handlers need.
 type exportStubDriver struct {
 	storage.Driver
 
 	sessionsByOrg map[string]map[string]storage.SessionRecord // orgID -> sessionID -> record
 	summaries     map[string][]storage.TraceSummaryRecord     // sessionID -> turns
+	spans         map[string][]storage.SpanRecord             // sessionID -> spans
 
 	getSessionCalls int
 	lastGetOrg      string
@@ -61,8 +63,16 @@ func (d *exportStubDriver) GetTraceDetail(_ context.Context, _, _ string) (*stor
 	return nil, nil, nil, nil
 }
 
-func (d *exportStubDriver) ListSessionSpanModel(context.Context, string) ([]storage.SpanTurnRecord, []storage.SpanRecord, []storage.SpanLinkRecord, error) {
-	return nil, nil, nil, nil
+// ListSessionSpanModel serves the fixture turns/spans for a session. Like
+// the real driver's rows, every returned record carries its session id.
+func (d *exportStubDriver) ListSessionSpanModel(_ context.Context, sessionID string) ([]storage.SpanTurnRecord, []storage.SpanRecord, []storage.SpanLinkRecord, error) {
+	turns := make([]storage.SpanTurnRecord, 0, len(d.summaries[sessionID]))
+	for _, t := range d.summaries[sessionID] {
+		turn := t.SpanTurnRecord
+		turn.SessionID = sessionID
+		turns = append(turns, turn)
+	}
+	return turns, d.spans[sessionID], nil, nil
 }
 
 func (d *exportStubDriver) GetSpanRecord(context.Context, string, string, string) (*storage.SpanRecord, error) {
@@ -129,11 +139,32 @@ var _ = Describe("GET /v1/sessions/:id/export", func() {
 					}},
 				},
 			},
+			spans: map[string][]storage.SpanRecord{
+				sessionID: {
+					{
+						TraceID: "t1", SpanID: "s1", Kind: "llm", Status: "ok",
+						CallKind: "main", Model: "claude-test", Seq: 1,
+						StartedAt: record.StartedAt,
+						Input:     []byte(`[{"type":"text","text":"hi"}]`),
+						Output:    []byte(`[{"type":"text","text":"hello"}]`),
+						Usage:     []byte(`{"input_tokens":10,"output_tokens":5}`),
+					},
+					{
+						TraceID: "t2", SpanID: "s2", Kind: "llm", Status: "ok",
+						CallKind: "main", Model: "claude-test", Seq: 1,
+						StartedAt: record.StartedAt.Add(time.Minute),
+						Input:     []byte(`[{"type":"text","text":"thanks"}]`),
+						Output:    []byte(`[{"type":"text","text":"np"}]`),
+						Usage:     []byte(`{"input_tokens":4,"output_tokens":2}`),
+					},
+				},
+			},
 		}
 	}
 
-	// T-3: 200 + headers + line count + full fidelity.
-	It("returns 200 NDJSON with one line per turn and the expected headers", func() {
+	// T-3: 200 + headers + the nested session → traces → spans grain on a
+	// single JSONL line.
+	It("returns 200 with one JSONL line nesting the session's traces and their spans", func() {
 		drv := newDriverWithSession()
 		server := newExportServer(drv)
 
@@ -142,19 +173,72 @@ var _ = Describe("GET /v1/sessions/:id/export", func() {
 		Expect(resp.Header.Get("Content-Type")).To(ContainSubstring("application/x-ndjson"))
 
 		lines := nonEmptyLinesAPI(string(body))
-		Expect(lines).To(HaveLen(2))
-		Expect(string(body)).To(ContainSubstring(`"trace_id":"t1"`))
-		Expect(string(body)).To(ContainSubstring(`"trace_id":"t2"`))
-		Expect(string(body)).To(ContainSubstring(`"session_id":"` + sessionID + `"`))
+		Expect(lines).To(HaveLen(1))
 
-		// GetSessionRecord is called twice by design: once by the handler's
-		// own pre-flight 404 gate (so no headers/body are ever sent for a
-		// session outside the org), and once more inside
-		// skillTraceQuerier.TraceSummaries, which independently re-scopes
-		// every read to the bound org.
-		Expect(drv.getSessionCalls).To(Equal(2))
+		// The line is the same nested shape GET /v1/sessions/{id}/traces
+		// serves: the session object, its traces, and each trace's spans
+		// with full payloads.
+		var line SessionTracesResponse
+		Expect(json.Unmarshal([]byte(lines[0]), &line)).To(Succeed())
+		Expect(line.Session.ID).To(Equal(sessionID))
+		Expect(line.Traces).To(HaveLen(2))
+		Expect(line.Traces[0].Trace.TraceID).To(Equal("t1"))
+		Expect(line.Traces[0].Trace.SessionID).To(Equal(sessionID))
+		Expect(line.Traces[0].Spans).To(HaveLen(1))
+		Expect(line.Traces[0].Spans[0].SpanID).To(Equal("s1"))
+		Expect(line.Traces[0].Spans[0].Metadata).To(HaveKeyWithValue("model", "claude-test"))
+		Expect(line.Traces[1].Trace.TraceID).To(Equal("t2"))
+		Expect(line.Traces[1].Spans).To(HaveLen(1))
+		Expect(line.Traces[1].Spans[0].SpanID).To(Equal("s2"))
+		// Full payload mode: span input/output content is embedded verbatim.
+		Expect(lines[0]).To(ContainSubstring(`"text":"hello"`))
+		Expect(lines[0]).To(ContainSubstring(`"input_tokens":10`))
+
+		// GetSessionRecord is called exactly once, by the handler's
+		// pre-flight 404 gate, so no headers/body are ever sent for a
+		// session outside the org.
+		Expect(drv.getSessionCalls).To(Equal(1))
 		Expect(drv.lastGetOrg).To(Equal(org))
 		Expect(drv.lastGetID).To(Equal(sessionID))
+	})
+
+	// detail=traces: turn headers only, no span payloads loaded.
+	It("exports turn headers without spans or links at detail=traces", func() {
+		drv := newDriverWithSession()
+		server := newExportServer(drv)
+
+		resp, body := getRaw(server, "/v1/sessions/"+sessionID+"/export?detail=traces", org)
+		Expect(resp.StatusCode).To(Equal(fiber.StatusOK))
+		Expect(resp.Header.Get("Content-Disposition")).To(ContainSubstring("-traces.jsonl"))
+
+		lines := nonEmptyLinesAPI(string(body))
+		Expect(lines).To(HaveLen(1))
+
+		var line map[string]json.RawMessage
+		Expect(json.Unmarshal([]byte(lines[0]), &line)).To(Succeed())
+		Expect(line).To(HaveKey("session"))
+		Expect(line).NotTo(HaveKey("tasks"))
+		Expect(line).NotTo(HaveKey("kind_counts"))
+
+		var traces []map[string]json.RawMessage
+		Expect(json.Unmarshal(line["traces"], &traces)).To(Succeed())
+		Expect(traces).To(HaveLen(2))
+		for _, td := range traces {
+			Expect(td).To(HaveKey("trace"))
+			Expect(td).NotTo(HaveKey("spans"))
+			Expect(td).NotTo(HaveKey("links"))
+		}
+		// Header content survives; span payloads do not.
+		Expect(lines[0]).To(ContainSubstring(`"trace_id":"t1"`))
+		Expect(lines[0]).NotTo(ContainSubstring(`"span_id"`))
+	})
+
+	It("returns 400 for an unrecognized detail value", func() {
+		drv := newDriverWithSession()
+		server := newExportServer(drv)
+
+		resp, _ := getRaw(server, "/v1/sessions/"+sessionID+"/export?detail=bogus", org)
+		Expect(resp.StatusCode).To(Equal(fiber.StatusBadRequest))
 	})
 
 	// T-4: filename includes the session id.
