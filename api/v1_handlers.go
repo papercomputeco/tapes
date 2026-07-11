@@ -20,15 +20,12 @@ import (
 //     (each main call re-bills the whole conversation on the wire).
 //   - TotalDurationNs is the SUM of trace durations — agent time. Idle
 //     time between turns does not count.
-//   - TurnCount counts traces (user-visible turns). RootCount counts
-//     traces opened by a genuine prompt (synthetic compaction
-//     continuations excluded).
+//   - TurnCount counts traces (user-visible turns).
 //   - CompletedCount counts distinct sessions whose denormalized
 //     derived_status is 'completed' (chain-aware, PCC-515).
 type StatsResponse struct {
 	SessionCount    int     `json:"session_count"`
 	TurnCount       int     `json:"turn_count"`
-	RootCount       int     `json:"root_count"`
 	CompletedCount  int     `json:"completed_count"`
 	TotalCost       float64 `json:"total_cost"`
 	InputTokens     int64   `json:"input_tokens"`
@@ -70,7 +67,6 @@ func (s *Server) handleStats(c *fiber.Ctx) error {
 	return c.JSON(StatsResponse{
 		SessionCount:    stats.SessionCount,
 		TurnCount:       stats.TurnCount,
-		RootCount:       stats.RootCount,
 		CompletedCount:  stats.CompletedCount,
 		TotalCost:       stats.TotalCostUSD,
 		InputTokens:     stats.InputTokens,

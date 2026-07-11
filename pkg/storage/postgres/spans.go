@@ -488,7 +488,6 @@ func (d *Driver) AggregateSpanStats(ctx context.Context, orgID string, since, un
 	}
 	stats := storage.SpanStats{
 		TurnCount:           int(row.TurnCount),
-		RootCount:           int(row.RootCount),
 		SessionCount:        int(row.SessionCount),
 		CompletedCount:      int(row.CompletedCount),
 		InputTokens:         row.InputTokens,

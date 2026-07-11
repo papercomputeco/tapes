@@ -13,7 +13,7 @@ import (
 
 const aggregateSpanStats = `-- name: AggregateSpanStats :one
 WITH matched AS (
-    SELECT t.org_id, t.trace_id, t.session_id, t.synthetic, t.duration_ns,
+    SELECT t.org_id, t.trace_id, t.session_id, t.duration_ns,
            t.total_input_tokens, t.total_output_tokens,
            t.cache_read_tokens, t.cache_creation_tokens, t.total_cost_usd
     FROM span_turns_20260615 t
@@ -23,7 +23,6 @@ WITH matched AS (
 )
 SELECT
     COUNT(*)::bigint                                        AS turn_count,
-    COUNT(*) FILTER (WHERE synthetic = '')::bigint          AS root_count,
     COUNT(DISTINCT session_id)::bigint                      AS session_count,
     COUNT(DISTINCT session_id) FILTER (
         WHERE EXISTS (
@@ -54,7 +53,6 @@ type AggregateSpanStatsParams struct {
 
 type AggregateSpanStatsRow struct {
 	TurnCount           int64
-	RootCount           int64
 	SessionCount        int64
 	CompletedCount      int64
 	InputTokens         int64
@@ -72,7 +70,6 @@ type AggregateSpanStatsRow struct {
 // usage, which re-bills the conversation history on every call.
 //
 //	turn_count        = traces started in the window
-//	root_count        = traces opened by a genuine prompt (synthetic = '')
 //	total_duration_ns = SUM of trace durations — agent time, not the
 //	                    wall-clock MAX-MIN window (idle time between
 //	                    turns no longer counts)
@@ -82,7 +79,6 @@ func (q *Queries) AggregateSpanStats(ctx context.Context, arg AggregateSpanStats
 	var i AggregateSpanStatsRow
 	err := row.Scan(
 		&i.TurnCount,
-		&i.RootCount,
 		&i.SessionCount,
 		&i.CompletedCount,
 		&i.InputTokens,

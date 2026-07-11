@@ -230,13 +230,12 @@ WHERE sessions.id = f.id;
 -- usage, which re-bills the conversation history on every call.
 --
 --   turn_count        = traces started in the window
---   root_count        = traces opened by a genuine prompt (synthetic = '')
 --   total_duration_ns = SUM of trace durations — agent time, not the
 --                       wall-clock MAX-MIN window (idle time between
 --                       turns no longer counts)
 --   tool_calls        = tool spans_20260615 started in the window
 WITH matched AS (
-    SELECT t.org_id, t.trace_id, t.session_id, t.synthetic, t.duration_ns,
+    SELECT t.org_id, t.trace_id, t.session_id, t.duration_ns,
            t.total_input_tokens, t.total_output_tokens,
            t.cache_read_tokens, t.cache_creation_tokens, t.total_cost_usd
     FROM span_turns_20260615 t
@@ -246,7 +245,6 @@ WITH matched AS (
 )
 SELECT
     COUNT(*)::bigint                                        AS turn_count,
-    COUNT(*) FILTER (WHERE synthetic = '')::bigint          AS root_count,
     COUNT(DISTINCT session_id)::bigint                      AS session_count,
     COUNT(DISTINCT session_id) FILTER (
         WHERE EXISTS (

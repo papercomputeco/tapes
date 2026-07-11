@@ -55,7 +55,6 @@ var _ = Describe("v1 session handlers", func() {
 				stats: storage.SpanStats{
 					SessionCount:    2,
 					TurnCount:       4,
-					RootCount:       2,
 					CompletedCount:  1,
 					InputTokens:     1_500_000,
 					OutputTokens:    750_000,
@@ -68,7 +67,6 @@ var _ = Describe("v1 session handlers", func() {
 
 			Expect(body.SessionCount).To(Equal(2))
 			Expect(body.TurnCount).To(Equal(4))
-			Expect(body.RootCount).To(Equal(2))
 			Expect(body.CompletedCount).To(Equal(1))
 			Expect(body.InputTokens).To(Equal(int64(1_500_000)))
 			Expect(body.OutputTokens).To(Equal(int64(750_000)))
@@ -97,7 +95,6 @@ var _ = Describe("v1 session handlers", func() {
 
 			Expect(body.SessionCount).To(Equal(0))
 			Expect(body.TurnCount).To(Equal(0))
-			Expect(body.RootCount).To(Equal(0))
 			Expect(body.CompletedCount).To(Equal(0))
 			Expect(body.TotalCost).To(Equal(0.0))
 			Expect(body.InputTokens).To(Equal(int64(0)))

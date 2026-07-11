@@ -108,7 +108,6 @@ type SpanModelReader interface {
 // of trace durations (agent time), not a wall-clock window.
 type SpanStats struct {
 	TurnCount           int
-	RootCount           int
 	SessionCount        int
 	CompletedCount      int
 	InputTokens         int64

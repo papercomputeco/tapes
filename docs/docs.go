@@ -1196,9 +1196,6 @@ const docTemplate = `{
                 "output_tokens": {
                     "type": "integer"
                 },
-                "root_count": {
-                    "type": "integer"
-                },
                 "session_count": {
                     "type": "integer"
                 },
