@@ -72,6 +72,13 @@ type RawTurn struct {
 	ReceivedAt       pgtype.Timestamptz
 }
 
+type SavedSession struct {
+	OrgID     pgtype.UUID
+	SessionID pgtype.UUID
+	SavedBy   string
+	SavedAt   pgtype.Timestamptz
+}
+
 type Session struct {
 	ID                pgtype.UUID
 	OrgID             pgtype.UUID
