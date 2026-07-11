@@ -113,6 +113,10 @@ type SpanTurn struct {
 	// ("post-compaction" for compaction continuations).
 	Synthetic string
 
+	// Source is the capture source of the raw turns that produced this
+	// trace ('wire' | 'transcript'), promoted from raw_turns.source.
+	Source string
+
 	StartedAt time.Time
 	EndedAt   time.Time
 
@@ -554,6 +558,7 @@ func (em *spanEmitter) openTrace(src *SpanSource, prompt *DerivedNode) *SpanTurn
 	turn := &SpanTurn{
 		TraceID:   "trc_" + callIdentity(src),
 		Session:   src.Session,
+		Source:    src.Source,
 		StartedAt: src.CapturedAt,
 		EndedAt:   src.CapturedAt,
 	}

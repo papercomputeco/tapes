@@ -71,6 +71,7 @@ func writeSpanSet(
 			CacheReadTokens:     turn.CacheReadTokens,
 			CacheCreationTokens: turn.CacheCreationTokens,
 			TotalCostUsd:        costNumeric,
+			Source:              turn.Source,
 		}); err != nil {
 			return fmt.Errorf("upsert span turn %s: %w", turn.TraceID, err)
 		}

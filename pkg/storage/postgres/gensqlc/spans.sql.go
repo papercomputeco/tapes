@@ -187,7 +187,7 @@ func (q *Queries) GetSpan(ctx context.Context, arg GetSpanParams) (Spans20260615
 }
 
 const getSpanTurn = `-- name: GetSpanTurn :one
-SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview FROM span_turns_20260615
+SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview, source FROM span_turns_20260615
 WHERE org_id = $1 AND trace_id = $2
 `
 
@@ -217,6 +217,7 @@ func (q *Queries) GetSpanTurn(ctx context.Context, arg GetSpanTurnParams) (SpanT
 		&i.CacheReadTokens,
 		&i.CacheCreationTokens,
 		&i.ResponsePreview,
+		&i.Source,
 	)
 	return i, err
 }
@@ -297,7 +298,7 @@ func (q *Queries) ListSpanLinksByTrace(ctx context.Context, arg ListSpanLinksByT
 }
 
 const listSpanTurns = `-- name: ListSpanTurns :many
-SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview FROM span_turns_20260615
+SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview, source FROM span_turns_20260615
 WHERE org_id = $1
   AND ($3::timestamptz IS NULL
        OR (started_at, trace_id) < ($3::timestamptz, $4::text))
@@ -344,6 +345,7 @@ func (q *Queries) ListSpanTurns(ctx context.Context, arg ListSpanTurnsParams) ([
 			&i.CacheReadTokens,
 			&i.CacheCreationTokens,
 			&i.ResponsePreview,
+			&i.Source,
 		); err != nil {
 			return nil, err
 		}
@@ -357,7 +359,7 @@ func (q *Queries) ListSpanTurns(ctx context.Context, arg ListSpanTurnsParams) ([
 
 const listSpanTurnsBySession = `-- name: ListSpanTurnsBySession :many
 
-SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview FROM span_turns_20260615
+SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview, source FROM span_turns_20260615
 WHERE session_id = $1
 ORDER BY started_at ASC, trace_id ASC
 `
@@ -390,6 +392,7 @@ func (q *Queries) ListSpanTurnsBySession(ctx context.Context, sessionID pgtype.U
 			&i.CacheReadTokens,
 			&i.CacheCreationTokens,
 			&i.ResponsePreview,
+			&i.Source,
 		); err != nil {
 			return nil, err
 		}
@@ -818,14 +821,14 @@ INSERT INTO span_turns_20260615 (
     total_input_tokens, total_output_tokens,
     main_input_tokens, main_output_tokens,
     cache_read_tokens, cache_creation_tokens,
-    total_cost_usd
+    total_cost_usd, source
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7,
     $8, $9, $10,
     $11, $12,
     $13, $14,
     $15, $16,
-    $17
+    $17, $18
 )
 ON CONFLICT (org_id, trace_id) DO UPDATE SET
     session_id            = COALESCE(span_turns_20260615.session_id, EXCLUDED.session_id),
@@ -842,7 +845,8 @@ ON CONFLICT (org_id, trace_id) DO UPDATE SET
     main_output_tokens    = EXCLUDED.main_output_tokens,
     cache_read_tokens     = EXCLUDED.cache_read_tokens,
     cache_creation_tokens = EXCLUDED.cache_creation_tokens,
-    total_cost_usd        = EXCLUDED.total_cost_usd
+    total_cost_usd        = EXCLUDED.total_cost_usd,
+    source                = EXCLUDED.source
 `
 
 type UpsertSpanTurnParams struct {
@@ -863,6 +867,7 @@ type UpsertSpanTurnParams struct {
 	CacheReadTokens     int64
 	CacheCreationTokens int64
 	TotalCostUsd        pgtype.Numeric
+	Source              string
 }
 
 // Span model writes. Span identity is deterministic (minted from wire
@@ -887,6 +892,7 @@ func (q *Queries) UpsertSpanTurn(ctx context.Context, arg UpsertSpanTurnParams) 
 		arg.CacheReadTokens,
 		arg.CacheCreationTokens,
 		arg.TotalCostUsd,
+		arg.Source,
 	)
 	return err
 }

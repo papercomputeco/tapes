@@ -62,6 +62,9 @@ type SpanSource struct {
 	Kind       string
 	ThreadID   string
 	Session    SessionKey
+	// Source is the capture source of the raw turn this call came from
+	// ('wire' | 'transcript') — provenance carried onto the trace.
+	Source string
 
 	// Chain holds the retained node for every chain position of this
 	// call (root → leaf; last is the response). New marks positions
@@ -256,6 +259,7 @@ func (dv *Deriver) AddTurn(rec *storage.RawTurnRecord) {
 		Kind:       kind,
 		ThreadID:   turn.threadID,
 		Session:    key,
+		Source:     rec.Source,
 	}
 	turn.source = source
 

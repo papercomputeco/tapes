@@ -9,14 +9,14 @@ INSERT INTO span_turns_20260615 (
     total_input_tokens, total_output_tokens,
     main_input_tokens, main_output_tokens,
     cache_read_tokens, cache_creation_tokens,
-    total_cost_usd
+    total_cost_usd, source
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7,
     $8, $9, $10,
     $11, $12,
     $13, $14,
     $15, $16,
-    $17
+    $17, $18
 )
 ON CONFLICT (org_id, trace_id) DO UPDATE SET
     session_id            = COALESCE(span_turns_20260615.session_id, EXCLUDED.session_id),
@@ -33,7 +33,8 @@ ON CONFLICT (org_id, trace_id) DO UPDATE SET
     main_output_tokens    = EXCLUDED.main_output_tokens,
     cache_read_tokens     = EXCLUDED.cache_read_tokens,
     cache_creation_tokens = EXCLUDED.cache_creation_tokens,
-    total_cost_usd        = EXCLUDED.total_cost_usd;
+    total_cost_usd        = EXCLUDED.total_cost_usd,
+    source                = EXCLUDED.source;
 
 -- name: UpsertSpan :exec
 INSERT INTO spans_20260615 (

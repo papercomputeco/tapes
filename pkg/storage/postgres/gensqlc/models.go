@@ -134,6 +134,7 @@ type SpanTurns20260615 struct {
 	CacheReadTokens     int64
 	CacheCreationTokens int64
 	ResponsePreview     string
+	Source              string
 }
 
 // Derived span projection schema version 2026-06-15.
