@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -328,11 +327,12 @@ func spanItemFromRecord(sp storage.SpanRecord, childIDs []string, mode PayloadMo
 		if len(sp.Output) > 0 {
 			item.Output["content"] = payloadContent(sp.Output, mode)
 		}
-		if strings.HasPrefix(sp.CallKind, "offshoot:permission-check") {
-			if v := verdictFromBlocks(sp.CallKind, decodeBlocks(sp.Output)); v != nil {
-				item.Metadata["verdict"] = v
-			}
-		}
+	}
+	// Verdict is deriver-written (pkg/derive.ClassifyVerdict) and non-null
+	// only on permission-check spans; serve the stored JSON verbatim so the
+	// wire position (metadata.verdict) and shape are unchanged.
+	if len(sp.Verdict) > 0 {
+		item.Metadata["verdict"] = json.RawMessage(sp.Verdict)
 	}
 	if mode == PayloadPreview {
 		item.Metadata["payload"] = string(PayloadPreview)
@@ -407,15 +407,6 @@ type TreeTask struct {
 	Status      string `json:"status"`
 	Updates     int    `json:"updates"`
 }
-
-// TreeVerdict is a security-monitor disposition.
-type TreeVerdict struct {
-	Disposition string `json:"disposition"` // ALLOW | BLOCK
-	Stage       int    `json:"stage"`
-	Reasoned    bool   `json:"reasoned"`
-}
-
-var blockVerdictPattern = regexp.MustCompile(`(?i)<block>\s*(yes|no)`)
 
 // taskCreatedPattern extracts the task id the harness reports back in
 // the TaskCreate tool_result ("Task #3 created successfully: …").
@@ -507,32 +498,6 @@ func foldTasksFromSpans(spans []storage.SpanRecord) []TreeTask {
 		}
 	}
 	return foldTaskBlocks(uses, resultText)
-}
-
-// verdictFromBlocks extracts the security monitor's disposition from a
-// permission-check span's output.
-func verdictFromBlocks(callKind string, blocks []llm.ContentBlock) *TreeVerdict {
-	var text strings.Builder
-	for _, b := range blocks {
-		if b.Text != "" {
-			text.WriteString(b.Text)
-		}
-	}
-	m := blockVerdictPattern.FindStringSubmatch(text.String())
-	if m == nil {
-		return nil
-	}
-	v := &TreeVerdict{Disposition: "ALLOW", Stage: 1}
-	if strings.EqualFold(m[1], "yes") {
-		v.Disposition = "BLOCK"
-	}
-	if strings.HasSuffix(callKind, "stage2") {
-		v.Stage = 2
-	}
-	if strings.Contains(text.String(), "<thinking>") {
-		v.Reasoned = true
-	}
-	return v
 }
 
 // emptyObjectIfNil keeps wire fields object-typed when the stored

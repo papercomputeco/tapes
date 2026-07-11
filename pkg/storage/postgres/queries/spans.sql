@@ -39,11 +39,13 @@ ON CONFLICT (org_id, trace_id) DO UPDATE SET
 INSERT INTO spans_20260615 (
     org_id, trace_id, span_id, parent_span_id, session_id,
     kind, name, status, call_kind, thread_id, model, stop_reason,
-    started_at, duration_ns, seq, input, output, usage, raw_turn_id, node_hash
+    started_at, duration_ns, seq, input, output, usage, raw_turn_id, node_hash,
+    verdict
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11, $12,
-    $13, $14, $15, $16, $17, $18, $19, $20
+    $13, $14, $15, $16, $17, $18, $19, $20,
+    $21
 )
 ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     parent_span_id = EXCLUDED.parent_span_id,
@@ -62,7 +64,8 @@ ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     output         = EXCLUDED.output,
     usage          = EXCLUDED.usage,
     raw_turn_id    = EXCLUDED.raw_turn_id,
-    node_hash      = EXCLUDED.node_hash;
+    node_hash      = EXCLUDED.node_hash,
+    verdict        = EXCLUDED.verdict;
 
 -- name: UpsertSpanLink :exec
 INSERT INTO span_links_20260615 (

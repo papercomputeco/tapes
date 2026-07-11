@@ -163,6 +163,10 @@ type Span struct {
 	StopReason string
 	Usage      *llm.Usage
 
+	// Verdict is the security-monitor disposition on a permission-check
+	// span (nil elsewhere), extracted at derive time by ClassifyVerdict.
+	Verdict *Verdict
+
 	// RawTurnID is the raw row whose call produced this span (0 for
 	// tool/agent spans, which are assembled across calls).
 	RawTurnID int64
@@ -632,6 +636,9 @@ func (em *spanEmitter) llmSpan(src *SpanSource, parentID string, input []llm.Con
 	if resp.Usage != nil {
 		span.DurationNS = resp.Usage.TotalDurationNs
 	}
+	// Permission-check spans carry the security-monitor verdict; extract
+	// it once, at derive time, so the read path never re-parses text.
+	span.Verdict = ClassifyVerdict(span.CallKind, span.Output)
 	return span
 }
 

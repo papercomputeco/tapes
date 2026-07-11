@@ -58,6 +58,9 @@ type SpanRecord struct {
 	Usage     json.RawMessage
 	RawTurnID int64
 	NodeHash  string
+	// Verdict is the deriver-written security-monitor disposition JSON
+	// (null on non-permission-check spans). Served verbatim on the wire.
+	Verdict json.RawMessage
 }
 
 // SpanLinkRecord is a dataflow edge between spans, possibly across

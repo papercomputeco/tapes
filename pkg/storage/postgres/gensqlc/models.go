@@ -156,4 +156,5 @@ type Spans20260615 struct {
 	RawTurnID    pgtype.Int8
 	NodeHash     string
 	Seq          int64
+	Verdict      []byte
 }

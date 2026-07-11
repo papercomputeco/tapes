@@ -147,7 +147,7 @@ func (q *Queries) FoldSessionRollupsFromSpans(ctx context.Context, sessionIds []
 }
 
 const getSpan = `-- name: GetSpan :one
-SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq FROM spans_20260615
+SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq, verdict FROM spans_20260615
 WHERE org_id = $1 AND trace_id = $2 AND span_id = $3
 `
 
@@ -181,6 +181,7 @@ func (q *Queries) GetSpan(ctx context.Context, arg GetSpanParams) (Spans20260615
 		&i.RawTurnID,
 		&i.NodeHash,
 		&i.Seq,
+		&i.Verdict,
 	)
 	return i, err
 }
@@ -401,7 +402,7 @@ func (q *Queries) ListSpanTurnsBySession(ctx context.Context, sessionID pgtype.U
 }
 
 const listSpansBySession = `-- name: ListSpansBySession :many
-SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq FROM spans_20260615
+SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq, verdict FROM spans_20260615
 WHERE session_id = $1
 ORDER BY trace_id ASC, seq ASC, started_at ASC, span_id ASC
 `
@@ -438,6 +439,7 @@ func (q *Queries) ListSpansBySession(ctx context.Context, sessionID pgtype.UUID)
 			&i.RawTurnID,
 			&i.NodeHash,
 			&i.Seq,
+			&i.Verdict,
 		); err != nil {
 			return nil, err
 		}
@@ -450,7 +452,7 @@ func (q *Queries) ListSpansBySession(ctx context.Context, sessionID pgtype.UUID)
 }
 
 const listSpansByTrace = `-- name: ListSpansByTrace :many
-SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq FROM spans_20260615
+SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq, verdict FROM spans_20260615
 WHERE org_id = $1 AND trace_id = $2
 ORDER BY seq ASC, started_at ASC, span_id ASC
 `
@@ -490,6 +492,7 @@ func (q *Queries) ListSpansByTrace(ctx context.Context, arg ListSpansByTracePara
 			&i.RawTurnID,
 			&i.NodeHash,
 			&i.Seq,
+			&i.Verdict,
 		); err != nil {
 			return nil, err
 		}
@@ -686,11 +689,13 @@ const upsertSpan = `-- name: UpsertSpan :exec
 INSERT INTO spans_20260615 (
     org_id, trace_id, span_id, parent_span_id, session_id,
     kind, name, status, call_kind, thread_id, model, stop_reason,
-    started_at, duration_ns, seq, input, output, usage, raw_turn_id, node_hash
+    started_at, duration_ns, seq, input, output, usage, raw_turn_id, node_hash,
+    verdict
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11, $12,
-    $13, $14, $15, $16, $17, $18, $19, $20
+    $13, $14, $15, $16, $17, $18, $19, $20,
+    $21
 )
 ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     parent_span_id = EXCLUDED.parent_span_id,
@@ -709,7 +714,8 @@ ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     output         = EXCLUDED.output,
     usage          = EXCLUDED.usage,
     raw_turn_id    = EXCLUDED.raw_turn_id,
-    node_hash      = EXCLUDED.node_hash
+    node_hash      = EXCLUDED.node_hash,
+    verdict        = EXCLUDED.verdict
 `
 
 type UpsertSpanParams struct {
@@ -733,6 +739,7 @@ type UpsertSpanParams struct {
 	Usage        []byte
 	RawTurnID    pgtype.Int8
 	NodeHash     string
+	Verdict      []byte
 }
 
 func (q *Queries) UpsertSpan(ctx context.Context, arg UpsertSpanParams) error {
@@ -757,6 +764,7 @@ func (q *Queries) UpsertSpan(ctx context.Context, arg UpsertSpanParams) error {
 		arg.Usage,
 		arg.RawTurnID,
 		arg.NodeHash,
+		arg.Verdict,
 	)
 	return err
 }

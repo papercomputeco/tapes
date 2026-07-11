@@ -92,6 +92,12 @@ func writeSpanSet(
 					return fmt.Errorf("marshal span %s usage: %w", s.SpanID, err)
 				}
 			}
+			var verdict []byte
+			if s.Verdict != nil {
+				if verdict, err = json.Marshal(s.Verdict); err != nil {
+					return fmt.Errorf("marshal span %s verdict: %w", s.SpanID, err)
+				}
+			}
 			rawTurn := pgtype.Int8{}
 			if s.RawTurnID != 0 {
 				rawTurn = pgtype.Int8{Int64: s.RawTurnID, Valid: true}
@@ -117,6 +123,7 @@ func writeSpanSet(
 				Usage:        usage,
 				RawTurnID:    rawTurn,
 				NodeHash:     s.NodeHash,
+				Verdict:      verdict,
 			}); err != nil {
 				return fmt.Errorf("upsert span %s/%s: %w", turn.TraceID, s.SpanID, err)
 			}
@@ -356,6 +363,7 @@ func spanRecordFromRow(row gensqlc.Spans20260615) storage.SpanRecord {
 		Usage:        row.Usage,
 		RawTurnID:    row.RawTurnID.Int64,
 		NodeHash:     row.NodeHash,
+		Verdict:      row.Verdict,
 	}
 }
 
