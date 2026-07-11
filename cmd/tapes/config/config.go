@@ -26,7 +26,7 @@ Use subcommands to get, set, or list configuration values:
 
 Examples:
   tapes config set proxy.provider anthropic
-  tapes config set embedding.model nomic-embed-text
+  tapes config set embedding.model embeddinggemma
   tapes config get proxy.provider
   tapes config list`
 

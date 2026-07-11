@@ -1,4 +1,5 @@
-// Package api provides an HTTP API server for inspecting and managing the Merkle DAG.
+// Package api provides an HTTP API server over the derived
+// sessions/traces/spans read model.
 package api
 
 import (

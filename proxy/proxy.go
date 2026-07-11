@@ -1,4 +1,4 @@
-// Package proxy provides an LLM inference proxy that stores conversations in a Merkle DAG.
+// Package proxy provides an LLM inference proxy that captures conversations to the immutable raw_turns log.
 package proxy
 
 import (
@@ -35,9 +35,9 @@ const (
 	providerOllama    = "ollama"
 )
 
-// Proxy is a client, LLM inference proxy that instruments storing sessions as Merkle DAGs.
+// Proxy is a client, LLM inference proxy that captures sessions to the raw_turns log.
 // The proxy is transparent: it forwards requests to the upstream LLM provider and
-// enqueues conversation turns for async storage via its worker pool.
+// enqueues conversation turns for async capture via its worker pool.
 type Proxy struct {
 	config        Config
 	driver        storage.Driver
@@ -150,7 +150,7 @@ func (p *Proxy) Close() error {
 }
 
 // handleProxy is a transparent proxy handler that forwards requests to upstream
-// and stores conversation turns in the Merkle DAG.
+// and captures conversation turns to the raw_turns log.
 func (p *Proxy) handleProxy(c *fiber.Ctx) error {
 	startTime := time.Now()
 

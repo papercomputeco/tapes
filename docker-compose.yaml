@@ -33,7 +33,7 @@ services:
       --vector-store-target postgres://tapes:tapes@postgres:5432/tapes?sslmode=disable
       --embedding-provider ollama
       --embedding-target http://ollama:11434
-      --embedding-model nomic-embed-text
+      --embedding-model embeddinggemma
       --debug
     volumes:
       - tapes-data:/data

@@ -150,7 +150,7 @@ type rawBatchEnvelope struct {
 }
 
 // Server is an HTTP server that accepts completed LLM conversation turns
-// for async storage in the Merkle DAG.
+// for async capture to the raw_turns log.
 type Server struct {
 	config     Config
 	driver     storage.Driver
