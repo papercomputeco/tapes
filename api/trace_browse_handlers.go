@@ -41,14 +41,8 @@ type RawTurnListResponse struct {
 }
 
 func traceItemFromTurn(turn storage.SpanTurnRecord, spanCount int) TraceItem {
-	meta := map[string]any{}
-	if turn.Synthetic != "" {
-		meta["synthetic"] = turn.Synthetic
-	}
 	return TraceItem{
-		ID:                  turn.TraceID,
 		TraceID:             turn.TraceID,
-		SessionID:           turn.SessionID,
 		UserPrompt:          turn.UserPrompt,
 		ResponsePreview:     turn.ResponsePreview,
 		Status:              turn.Status,
@@ -63,7 +57,7 @@ func traceItemFromTurn(turn storage.SpanTurnRecord, spanCount int) TraceItem {
 		CacheCreationTokens: turn.CacheCreationTokens,
 		TotalCostUSD:        turn.TotalCostUSD,
 		SpanCount:           spanCount,
-		Metadata:            meta,
+		Synthetic:           turn.Synthetic,
 	}
 }
 
@@ -157,26 +151,16 @@ func (s *Server) handleGetTrace(c *fiber.Ctx) error {
 // so `tapes dev trace-fixtures` emits byte-identical JSON to the
 // handler.
 func BuildTraceDetail(turn storage.SpanTurnRecord, spans []storage.SpanRecord, links []storage.SpanLinkRecord, mode PayloadMode) TraceDetail {
-	children := map[string][]string{}
-	for _, sp := range spans {
-		if sp.ParentSpanID != "" {
-			children[sp.ParentSpanID] = append(children[sp.ParentSpanID], sp.SpanID)
-		}
-	}
 	detail := TraceDetail{
 		Trace: traceItemFromTurn(turn, len(spans)),
 		Spans: make([]SpanItem, 0, len(spans)),
 		Links: make([]SpanLinkItem, 0, len(links)),
 	}
 	for _, sp := range spans {
-		detail.Spans = append(detail.Spans, spanItemFromRecord(sp, children[sp.SpanID], mode))
+		detail.Spans = append(detail.Spans, spanItemFromRecord(sp, mode))
 	}
 	for _, l := range links {
-		detail.Links = append(detail.Links, SpanLinkItem{
-			FromTraceID: l.FromTraceID, FromSpanID: l.FromSpanID, FromIO: l.FromIO,
-			ToTraceID: l.ToTraceID, ToSpanID: l.ToSpanID, ToIO: l.ToIO,
-			Metadata: map[string]any{"kind": l.Kind},
-		})
+		detail.Links = append(detail.Links, spanLinkItem(l))
 	}
 	return detail
 }
@@ -208,7 +192,7 @@ func (s *Server) handleGetSpan(c *fiber.Ctx) error {
 	if rec == nil {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "span not found"})
 	}
-	item := spanItemFromRecord(*rec, nil, PayloadFull)
+	item := spanItemFromRecord(*rec, PayloadFull)
 	return c.JSON(item)
 }
 

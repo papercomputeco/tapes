@@ -1028,6 +1028,9 @@ const docTemplate = `{
                         "$ref": "#/definitions/api.SpanLinkItem"
                     }
                 },
+                "schema": {
+                    "type": "string"
+                },
                 "session": {
                     "$ref": "#/definitions/api.SessionItem"
                 },
@@ -1048,55 +1051,51 @@ const docTemplate = `{
         "api.SpanItem": {
             "type": "object",
             "properties": {
-                "children_ids": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
+                "call_kind": {
+                    "description": "Deriver-written taxonomy, promoted from the old metadata grab-bag.",
+                    "type": "string"
                 },
                 "duration_ns": {
                     "type": "integer"
                 },
-                "id": {
-                    "type": "string"
-                },
                 "input": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "kind": {
-                    "type": "string"
-                },
-                "metadata": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "metrics": {
-                    "description": "Metrics is always an object on the wire — the contract fixture\npins {} for usage-less spans (agent/tool/event), and the console\nschema requires it.",
+                    "description": "Input/Output are content-block arrays, uniform for every kind\n(tool spans included — no unwrapping). Pinned to [] when empty.",
                     "type": "array",
                     "items": {
                         "type": "integer"
                     }
                 },
+                "kind": {
+                    "type": "string"
+                },
+                "model": {
+                    "type": "string"
+                },
                 "name": {
                     "type": "string"
                 },
                 "output": {
-                    "type": "object",
-                    "additionalProperties": {}
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
                 },
                 "parent_span_id": {
                     "type": "string"
                 },
+                "payload": {
+                    "description": "Payload marks a preview-truncated span so the console drills in for\nthe full payload; absent in full mode.",
+                    "type": "string"
+                },
+                "raw_turn_id": {
+                    "type": "integer"
+                },
                 "seq": {
-                    "description": "Seq is the span's presentation ordinal within its trace; spans\narrive sorted by it. start_ns cannot order spans inside one llm\ncall (parallel tool batches share an instant).",
+                    "description": "Seq is the span's presentation ordinal within its trace; spans\narrive sorted by it (started_at ties inside one llm call — parallel\ntool batches share an instant).",
                     "type": "integer"
                 },
                 "span_id": {
                     "type": "string"
-                },
-                "start_ns": {
-                    "type": "integer"
                 },
                 "started_at": {
                     "type": "string"
@@ -1104,8 +1103,28 @@ const docTemplate = `{
                 "status": {
                     "type": "string"
                 },
+                "stop_reason": {
+                    "type": "string"
+                },
+                "thread_id": {
+                    "type": "string"
+                },
                 "trace_id": {
                     "type": "string"
+                },
+                "usage": {
+                    "description": "Usage (was ` + "`" + `metrics` + "`" + `) is always an object on the wire — {}-pinned\nfor usage-less spans.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "verdict": {
+                    "description": "Verdict is the typed security-monitor disposition (null off\npermission-check spans), deriver-written.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
                 }
             }
         },
@@ -1121,9 +1140,8 @@ const docTemplate = `{
                 "from_trace_id": {
                     "type": "string"
                 },
-                "metadata": {
-                    "type": "object",
-                    "additionalProperties": {}
+                "kind": {
+                    "type": "string"
                 },
                 "to_io": {
                     "type": "string"
@@ -1248,15 +1266,6 @@ const docTemplate = `{
                 "ended_at": {
                     "type": "string"
                 },
-                "harness_id": {
-                    "type": "string"
-                },
-                "harness_session_id": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
                 "main_input_tokens": {
                     "description": "Main* counts conversation-spine calls only; Total − Main is the\nharness's shadow spend on the turn.",
                     "type": "integer"
@@ -1264,15 +1273,8 @@ const docTemplate = `{
                 "main_output_tokens": {
                     "type": "integer"
                 },
-                "metadata": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
                 "response_preview": {
                     "description": "ResponsePreview is the derive-time fold of the closing\nconversation-spine llm call's text output — the answer line for\ncollapsed turn cards, so summary consumers never need spans.",
-                    "type": "string"
-                },
-                "session_id": {
                     "type": "string"
                 },
                 "span_count": {
@@ -1282,6 +1284,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "status": {
+                    "type": "string"
+                },
+                "synthetic": {
+                    "description": "Synthetic is a typed deriver signal (\"post-compaction\" for a\ncompaction continuation, \"shadow-opener\" for a shadow-only opener),\npromoted out of the old metadata grab-bag. Absent for genuine\nprompt-opened turns.",
                     "type": "string"
                 },
                 "total_cost_usd": {

@@ -46,14 +46,13 @@ func payloadModeFromQuery(v string) PayloadMode {
 	return PayloadFull
 }
 
-// TraceItem is one user-visible turn's header.
+// TraceItem is one user-visible turn's header. session_id / harness ids
+// are not duplicated here — they belong to the session; a trace's
+// post-compaction status is read from compaction-seam links, not a
+// metadata flag.
 type TraceItem struct {
-	ID               string `json:"id"`
-	TraceID          string `json:"trace_id"`
-	SessionID        string `json:"session_id"`
-	HarnessID        string `json:"harness_id"`
-	HarnessSessionID string `json:"harness_session_id"`
-	UserPrompt       string `json:"user_prompt,omitempty"`
+	TraceID    string `json:"trace_id"`
+	UserPrompt string `json:"user_prompt,omitempty"`
 	// ResponsePreview is the derive-time fold of the closing
 	// conversation-spine llm call's text output — the answer line for
 	// collapsed turn cards, so summary consumers never need spans.
@@ -66,72 +65,110 @@ type TraceItem struct {
 	TotalOutputTokens int64      `json:"total_output_tokens"`
 	// Main* counts conversation-spine calls only; Total − Main is the
 	// harness's shadow spend on the turn.
-	MainInputTokens     int64          `json:"main_input_tokens"`
-	MainOutputTokens    int64          `json:"main_output_tokens"`
-	CacheReadTokens     int64          `json:"cache_read_tokens"`
-	CacheCreationTokens int64          `json:"cache_creation_tokens"`
-	TotalCostUSD        float64        `json:"total_cost_usd"`
-	SpanCount           int            `json:"span_count"`
-	Metadata            map[string]any `json:"metadata"`
+	MainInputTokens     int64   `json:"main_input_tokens"`
+	MainOutputTokens    int64   `json:"main_output_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	TotalCostUSD        float64 `json:"total_cost_usd"`
+	SpanCount           int     `json:"span_count"`
+	// Synthetic is a typed deriver signal ("post-compaction" for a
+	// compaction continuation, "shadow-opener" for a shadow-only opener),
+	// promoted out of the old metadata grab-bag. Absent for genuine
+	// prompt-opened turns.
+	Synthetic string `json:"synthetic,omitempty"`
 }
 
-// SpanItem is one observed unit of work. start_ns is the epoch-ns
-// start (kept for the pinned contract); started_at carries the same
-// instant losslessly for JS clients, since 1.7e18 exceeds
-// Number.MAX_SAFE_INTEGER.
+// SpanItem is one observed unit of work. Every field is a deriver
+// output, formatting-only: the harness-taxonomy fields (call_kind, model,
+// stop_reason, thread_id, verdict) are typed rather than bagged in a
+// metadata map, and input/output are uniform content-block arrays for
+// ALL kinds — the console owns per-kind rendering.
 type SpanItem struct {
-	ID           string    `json:"id"`
-	TraceID      string    `json:"trace_id"`
-	SpanID       string    `json:"span_id"`
-	ParentSpanID string    `json:"parent_span_id,omitempty"`
-	Kind         string    `json:"kind"`
-	Name         string    `json:"name"`
-	Status       string    `json:"status"`
-	StartedAt    time.Time `json:"started_at"`
-	StartNS      int64     `json:"start_ns"`
-	DurationNS   int64     `json:"duration_ns"`
+	TraceID      string `json:"trace_id"`
+	SpanID       string `json:"span_id"`
+	ParentSpanID string `json:"parent_span_id,omitempty"`
 	// Seq is the span's presentation ordinal within its trace; spans
-	// arrive sorted by it. start_ns cannot order spans inside one llm
-	// call (parallel tool batches share an instant).
-	Seq      int64          `json:"seq"`
-	Input    map[string]any `json:"input"`
-	Output   map[string]any `json:"output"`
-	Metadata map[string]any `json:"metadata"`
-	// Metrics is always an object on the wire — the contract fixture
-	// pins {} for usage-less spans (agent/tool/event), and the console
-	// schema requires it.
-	Metrics     json.RawMessage `json:"metrics"`
-	ChildrenIDs []string        `json:"children_ids,omitempty"`
+	// arrive sorted by it (started_at ties inside one llm call — parallel
+	// tool batches share an instant).
+	Seq        int64     `json:"seq"`
+	Kind       string    `json:"kind"`
+	Name       string    `json:"name"`
+	Status     string    `json:"status"`
+	StartedAt  time.Time `json:"started_at"`
+	DurationNS int64     `json:"duration_ns"`
+	// Deriver-written taxonomy, promoted from the old metadata grab-bag.
+	CallKind   string `json:"call_kind"`
+	Model      string `json:"model"`
+	StopReason string `json:"stop_reason"`
+	ThreadID   string `json:"thread_id"`
+	RawTurnID  int64  `json:"raw_turn_id,omitempty"`
+	// Verdict is the typed security-monitor disposition (null off
+	// permission-check spans), deriver-written.
+	Verdict json.RawMessage `json:"verdict"`
+	// Input/Output are content-block arrays, uniform for every kind
+	// (tool spans included — no unwrapping). Pinned to [] when empty.
+	Input  json.RawMessage `json:"input"`
+	Output json.RawMessage `json:"output"`
+	// Usage (was `metrics`) is always an object on the wire — {}-pinned
+	// for usage-less spans.
+	Usage json.RawMessage `json:"usage"`
+	// Payload marks a preview-truncated span so the console drills in for
+	// the full payload; absent in full mode.
+	Payload string `json:"payload,omitempty"`
 }
 
-// SpanLinkItem is a dataflow edge; from/to trace ids differ on
-// cross-trace causality.
+// SpanLinkItem is a dataflow edge. kind is a typed top-level field
+// (rejoin / verdict / compaction-seam / emits / feeds); from/to trace ids
+// differ on cross-trace causality.
 type SpanLinkItem struct {
-	FromTraceID string         `json:"from_trace_id"`
-	FromSpanID  string         `json:"from_span_id"`
-	FromIO      string         `json:"from_io,omitempty"`
-	ToTraceID   string         `json:"to_trace_id"`
-	ToSpanID    string         `json:"to_span_id"`
-	ToIO        string         `json:"to_io,omitempty"`
-	Metadata    map[string]any `json:"metadata"`
+	Kind        string `json:"kind"`
+	FromTraceID string `json:"from_trace_id"`
+	FromSpanID  string `json:"from_span_id"`
+	FromIO      string `json:"from_io,omitempty"`
+	ToTraceID   string `json:"to_trace_id"`
+	ToSpanID    string `json:"to_span_id"`
+	ToIO        string `json:"to_io,omitempty"`
 }
 
-// TraceDetail is one trace with its spans and intra-trace links.
+// spanLinkItem renders a stored link with its kind as a typed field.
+func spanLinkItem(l storage.SpanLinkRecord) SpanLinkItem {
+	return SpanLinkItem{
+		Kind:        l.Kind,
+		FromTraceID: l.FromTraceID,
+		FromSpanID:  l.FromSpanID,
+		FromIO:      l.FromIO,
+		ToTraceID:   l.ToTraceID,
+		ToSpanID:    l.ToSpanID,
+		ToIO:        l.ToIO,
+	}
+}
+
+// TraceDetail is one trace with its spans. In the composite session
+// response links are session-scoped (top level); the single-trace
+// endpoint sets Links to the edges touching that trace.
 type TraceDetail struct {
 	Trace TraceItem      `json:"trace"`
 	Spans []SpanItem     `json:"spans"`
-	Links []SpanLinkItem `json:"links"`
+	Links []SpanLinkItem `json:"links,omitempty"`
 }
 
 // SessionTracesResponse is the composite session view on the span
-// model.
+// model. `schema` stamps the projection generation the rows were derived
+// against, so the presentational shape can version independently.
 type SessionTracesResponse struct {
+	Schema     string         `json:"schema"`
 	Session    SessionItem    `json:"session"`
 	Tasks      []TreeTask     `json:"tasks"`
 	KindCounts map[string]int `json:"kind_counts"`
 	Traces     []TraceDetail  `json:"traces"`
 	Links      []SpanLinkItem `json:"links"`
 }
+
+// ProjectionSchema is the compatibility date of the derived projection
+// generation currently served (the dated *_20260615 table family). It is
+// stamped onto the wire `schema` field; a future generation bumps this in
+// lockstep with a new dated table family (derived_projection_schemas).
+const ProjectionSchema = "2026-06-15"
 
 // handleGetSessionTraces handles GET /v1/sessions/:id/traces.
 //
@@ -196,6 +233,7 @@ func BuildSessionTraces(
 	mode PayloadMode,
 ) *SessionTracesResponse {
 	resp := &SessionTracesResponse{
+		Schema:     ProjectionSchema,
 		Session:    session,
 		Tasks:      []TreeTask{},
 		KindCounts: map[string]int{},
@@ -204,12 +242,8 @@ func BuildSessionTraces(
 	}
 
 	spansByTrace := map[string][]storage.SpanRecord{}
-	children := map[string][]string{}
 	for _, sp := range spans {
 		spansByTrace[sp.TraceID] = append(spansByTrace[sp.TraceID], sp)
-		if sp.ParentSpanID != "" {
-			children[sp.ParentSpanID] = append(children[sp.ParentSpanID], sp.SpanID)
-		}
 	}
 
 	// Tasks and kind_counts are deriver-owned session rollups, read from
@@ -222,38 +256,20 @@ func BuildSessionTraces(
 		_ = json.Unmarshal(session.KindCounts, &resp.KindCounts)
 	}
 
-	linksByTrace := map[string][]SpanLinkItem{}
+	// ALL links live in one flat session-scoped list — containment nests
+	// (spans in traces), graph edges don't. An edge may touch one trace
+	// (emits/feeds/rejoin/verdict) or two (compaction seams, rejoins).
 	for _, l := range links {
-		item := SpanLinkItem{
-			FromTraceID: l.FromTraceID,
-			FromSpanID:  l.FromSpanID,
-			FromIO:      l.FromIO,
-			ToTraceID:   l.ToTraceID,
-			ToSpanID:    l.ToSpanID,
-			ToIO:        l.ToIO,
-			Metadata:    map[string]any{"kind": l.Kind},
-		}
-		if l.FromTraceID == l.ToTraceID {
-			linksByTrace[l.FromTraceID] = append(linksByTrace[l.FromTraceID], item)
-		} else {
-			resp.Links = append(resp.Links, item)
-		}
+		resp.Links = append(resp.Links, spanLinkItem(l))
 	}
 
 	for _, turn := range turns {
-		item := traceItemFromTurn(turn, len(spansByTrace[turn.TraceID]))
-		item.HarnessID = session.HarnessID
-		item.HarnessSessionID = session.HarnessSessionID
 		detail := TraceDetail{
-			Trace: item,
+			Trace: traceItemFromTurn(turn, len(spansByTrace[turn.TraceID])),
 			Spans: make([]SpanItem, 0, len(spansByTrace[turn.TraceID])),
-			Links: linksByTrace[turn.TraceID],
-		}
-		if detail.Links == nil {
-			detail.Links = []SpanLinkItem{}
 		}
 		for _, sp := range spansByTrace[turn.TraceID] {
-			detail.Spans = append(detail.Spans, spanItemFromRecord(sp, children[sp.SpanID], mode))
+			detail.Spans = append(detail.Spans, spanItemFromRecord(sp, mode))
 		}
 		resp.Traces = append(resp.Traces, detail)
 	}
@@ -261,86 +277,52 @@ func BuildSessionTraces(
 	return resp
 }
 
-// spanItemFromRecord renders one stored span. Tool spans unwrap their
-// single tool_use/tool_result block into arguments/output; llm and
-// event spans carry their content-block arrays. Preview mode truncates
-// payload strings and marks the item so clients know to drill in.
-func spanItemFromRecord(sp storage.SpanRecord, childIDs []string, mode PayloadMode) SpanItem {
+// spanItemFromRecord renders one stored span as uniform content-block
+// input/output for every kind — no tool unwrapping — with the taxonomy
+// fields promoted to typed columns. Preview mode truncates payload
+// strings and marks the item so clients drill in for the full payload.
+func spanItemFromRecord(sp storage.SpanRecord, mode PayloadMode) SpanItem {
 	item := SpanItem{
-		ID:           sp.SpanID,
 		TraceID:      sp.TraceID,
 		SpanID:       sp.SpanID,
 		ParentSpanID: sp.ParentSpanID,
+		Seq:          sp.Seq,
 		Kind:         sp.Kind,
 		Name:         sp.Name,
 		Status:       sp.Status,
 		StartedAt:    sp.StartedAt,
-		StartNS:      sp.StartedAt.UnixNano(),
 		DurationNS:   sp.DurationNS,
-		Seq:          sp.Seq,
-		Input:        map[string]any{},
-		Output:       map[string]any{},
-		Metadata:     map[string]any{},
-		Metrics:      emptyObjectIfNil(sp.Usage),
-		ChildrenIDs:  childIDs,
-	}
-
-	if sp.CallKind != "" {
-		item.Metadata["call_kind"] = sp.CallKind
-	}
-	if sp.ThreadID != "" {
-		item.Metadata["thread_id"] = sp.ThreadID
-	}
-	if sp.Model != "" {
-		item.Metadata["model"] = sp.Model
-	}
-	if sp.StopReason != "" {
-		item.Metadata["stop_reason"] = sp.StopReason
-	}
-	if sp.RawTurnID != 0 {
-		item.Metadata["raw_turn_id"] = sp.RawTurnID
-	}
-
-	switch sp.Kind {
-	case "tool":
-		if blocks := decodeBlocks(sp.Input); len(blocks) > 0 {
-			args := blocks[0].ToolInput
-			if args == nil {
-				// no-argument tool calls (ExitPlanMode et al.) must
-				// still serialize as a record, not null
-				args = map[string]any{}
-			}
-			if mode == PayloadPreview {
-				args = previewValue(args).(map[string]any)
-			}
-			item.Input["arguments"] = args
-		}
-		if blocks := decodeBlocks(sp.Output); len(blocks) > 0 {
-			out := blocks[0].ToolOutput
-			if mode == PayloadPreview {
-				out = previewString(out)
-			}
-			item.Output["content"] = out
-			item.Output["is_error"] = blocks[0].IsError
-		}
-	default:
-		if len(sp.Input) > 0 {
-			item.Input["content"] = payloadContent(sp.Input, mode)
-		}
-		if len(sp.Output) > 0 {
-			item.Output["content"] = payloadContent(sp.Output, mode)
-		}
-	}
-	// Verdict is deriver-written (pkg/derive.ClassifyVerdict) and non-null
-	// only on permission-check spans; serve the stored JSON verbatim so the
-	// wire position (metadata.verdict) and shape are unchanged.
-	if len(sp.Verdict) > 0 {
-		item.Metadata["verdict"] = json.RawMessage(sp.Verdict)
+		CallKind:     sp.CallKind,
+		Model:        sp.Model,
+		StopReason:   sp.StopReason,
+		ThreadID:     sp.ThreadID,
+		RawTurnID:    sp.RawTurnID,
+		Verdict:      json.RawMessage(sp.Verdict), // nil → null on the wire
+		Input:        contentArray(sp.Input, mode),
+		Output:       contentArray(sp.Output, mode),
+		Usage:        emptyObjectIfNil(sp.Usage),
 	}
 	if mode == PayloadPreview {
-		item.Metadata["payload"] = string(PayloadPreview)
+		item.Payload = string(PayloadPreview)
 	}
 	return item
+}
+
+// contentArray renders a stored content-block array for the wire, pinned
+// to [] when empty. Full mode passes the stored JSON through verbatim;
+// preview mode truncates every string.
+func contentArray(raw json.RawMessage, mode PayloadMode) json.RawMessage {
+	if len(raw) == 0 || string(raw) == "null" {
+		return json.RawMessage("[]")
+	}
+	if mode != PayloadPreview {
+		return raw
+	}
+	b, err := json.Marshal(payloadContent(raw, mode))
+	if err != nil {
+		return raw
+	}
+	return b
 }
 
 // payloadContent renders a stored content-block array for the wire. In

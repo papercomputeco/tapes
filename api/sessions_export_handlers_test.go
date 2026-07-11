@@ -180,13 +180,13 @@ var _ = Describe("GET /v1/sessions/:id/export", func() {
 		// with full payloads.
 		var line SessionTracesResponse
 		Expect(json.Unmarshal([]byte(lines[0]), &line)).To(Succeed())
+		Expect(line.Schema).To(Equal(ProjectionSchema))
 		Expect(line.Session.ID).To(Equal(sessionID))
 		Expect(line.Traces).To(HaveLen(2))
 		Expect(line.Traces[0].Trace.TraceID).To(Equal("t1"))
-		Expect(line.Traces[0].Trace.SessionID).To(Equal(sessionID))
 		Expect(line.Traces[0].Spans).To(HaveLen(1))
 		Expect(line.Traces[0].Spans[0].SpanID).To(Equal("s1"))
-		Expect(line.Traces[0].Spans[0].Metadata).To(HaveKeyWithValue("model", "claude-test"))
+		Expect(line.Traces[0].Spans[0].Model).To(Equal("claude-test"))
 		Expect(line.Traces[1].Trace.TraceID).To(Equal("t2"))
 		Expect(line.Traces[1].Spans).To(HaveLen(1))
 		Expect(line.Traces[1].Spans[0].SpanID).To(Equal("s2"))

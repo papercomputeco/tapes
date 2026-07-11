@@ -127,6 +127,8 @@ definitions:
         items:
           $ref: '#/definitions/api.SpanLinkItem'
         type: array
+      schema:
+        type: string
       session:
         $ref: '#/definitions/api.SessionItem'
       tasks:
@@ -140,53 +142,69 @@ definitions:
     type: object
   api.SpanItem:
     properties:
-      children_ids:
-        items:
-          type: string
-        type: array
+      call_kind:
+        description: Deriver-written taxonomy, promoted from the old metadata grab-bag.
+        type: string
       duration_ns:
         type: integer
-      id:
-        type: string
       input:
-        additionalProperties: {}
-        type: object
-      kind:
-        type: string
-      metadata:
-        additionalProperties: {}
-        type: object
-      metrics:
         description: |-
-          Metrics is always an object on the wire — the contract fixture
-          pins {} for usage-less spans (agent/tool/event), and the console
-          schema requires it.
+          Input/Output are content-block arrays, uniform for every kind
+          (tool spans included — no unwrapping). Pinned to [] when empty.
         items:
           type: integer
         type: array
+      kind:
+        type: string
+      model:
+        type: string
       name:
         type: string
       output:
-        additionalProperties: {}
-        type: object
+        items:
+          type: integer
+        type: array
       parent_span_id:
         type: string
+      payload:
+        description: |-
+          Payload marks a preview-truncated span so the console drills in for
+          the full payload; absent in full mode.
+        type: string
+      raw_turn_id:
+        type: integer
       seq:
         description: |-
           Seq is the span's presentation ordinal within its trace; spans
-          arrive sorted by it. start_ns cannot order spans inside one llm
-          call (parallel tool batches share an instant).
+          arrive sorted by it (started_at ties inside one llm call — parallel
+          tool batches share an instant).
         type: integer
       span_id:
         type: string
-      start_ns:
-        type: integer
       started_at:
         type: string
       status:
         type: string
+      stop_reason:
+        type: string
+      thread_id:
+        type: string
       trace_id:
         type: string
+      usage:
+        description: |-
+          Usage (was `metrics`) is always an object on the wire — {}-pinned
+          for usage-less spans.
+        items:
+          type: integer
+        type: array
+      verdict:
+        description: |-
+          Verdict is the typed security-monitor disposition (null off
+          permission-check spans), deriver-written.
+        items:
+          type: integer
+        type: array
     type: object
   api.SpanLinkItem:
     properties:
@@ -196,9 +214,8 @@ definitions:
         type: string
       from_trace_id:
         type: string
-      metadata:
-        additionalProperties: {}
-        type: object
+      kind:
+        type: string
       to_io:
         type: string
       to_span_id:
@@ -281,12 +298,6 @@ definitions:
         type: integer
       ended_at:
         type: string
-      harness_id:
-        type: string
-      harness_session_id:
-        type: string
-      id:
-        type: string
       main_input_tokens:
         description: |-
           Main* counts conversation-spine calls only; Total − Main is the
@@ -294,22 +305,24 @@ definitions:
         type: integer
       main_output_tokens:
         type: integer
-      metadata:
-        additionalProperties: {}
-        type: object
       response_preview:
         description: |-
           ResponsePreview is the derive-time fold of the closing
           conversation-spine llm call's text output — the answer line for
           collapsed turn cards, so summary consumers never need spans.
         type: string
-      session_id:
-        type: string
       span_count:
         type: integer
       started_at:
         type: string
       status:
+        type: string
+      synthetic:
+        description: |-
+          Synthetic is a typed deriver signal ("post-compaction" for a
+          compaction continuation, "shadow-opener" for a shadow-only opener),
+          promoted out of the old metadata grab-bag. Absent for genuine
+          prompt-opened turns.
         type: string
       total_cost_usd:
         type: number
