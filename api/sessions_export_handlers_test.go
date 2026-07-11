@@ -202,6 +202,45 @@ var _ = Describe("GET /v1/sessions/:id/export", func() {
 		Expect(drv.lastGetID).To(Equal(sessionID))
 	})
 
+	// detail=traces: turn headers only, no span payloads loaded.
+	It("exports turn headers without spans or links at detail=traces", func() {
+		drv := newDriverWithSession()
+		server := newExportServer(drv)
+
+		resp, body := getRaw(server, "/v1/sessions/"+sessionID+"/export?detail=traces", org)
+		Expect(resp.StatusCode).To(Equal(fiber.StatusOK))
+		Expect(resp.Header.Get("Content-Disposition")).To(ContainSubstring("-traces.jsonl"))
+
+		lines := nonEmptyLinesAPI(string(body))
+		Expect(lines).To(HaveLen(1))
+
+		var line map[string]json.RawMessage
+		Expect(json.Unmarshal([]byte(lines[0]), &line)).To(Succeed())
+		Expect(line).To(HaveKey("session"))
+		Expect(line).NotTo(HaveKey("tasks"))
+		Expect(line).NotTo(HaveKey("kind_counts"))
+
+		var traces []map[string]json.RawMessage
+		Expect(json.Unmarshal(line["traces"], &traces)).To(Succeed())
+		Expect(traces).To(HaveLen(2))
+		for _, td := range traces {
+			Expect(td).To(HaveKey("trace"))
+			Expect(td).NotTo(HaveKey("spans"))
+			Expect(td).NotTo(HaveKey("links"))
+		}
+		// Header content survives; span payloads do not.
+		Expect(lines[0]).To(ContainSubstring(`"trace_id":"t1"`))
+		Expect(lines[0]).NotTo(ContainSubstring(`"span_id"`))
+	})
+
+	It("returns 400 for an unrecognized detail value", func() {
+		drv := newDriverWithSession()
+		server := newExportServer(drv)
+
+		resp, _ := getRaw(server, "/v1/sessions/"+sessionID+"/export?detail=bogus", org)
+		Expect(resp.StatusCode).To(Equal(fiber.StatusBadRequest))
+	})
+
 	// T-4: filename includes the session id.
 	It("sets Content-Disposition with a filename containing the session id", func() {
 		drv := newDriverWithSession()
