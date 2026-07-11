@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"sync"
 	"time"
 
-	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
@@ -70,15 +68,6 @@ func (s *Driver) Get(_ context.Context, hash string) (*merkle.Node, error) {
 	return node, nil
 }
 
-// Has checks if a node exists by its hash.
-func (s *Driver) Has(_ context.Context, hash string) (bool, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	_, ok := s.nodes[hash]
-	return ok, nil
-}
-
 // GetByParent retrieves all nodes that have the provided parent.
 // This is useful for determining where branching occurs.
 func (s *Driver) GetByParent(_ context.Context, parentHash *string) ([]*merkle.Node, error) {
@@ -111,35 +100,6 @@ func (s *Driver) List(_ context.Context) ([]*merkle.Node, error) {
 	}
 
 	return nodes, nil
-}
-
-// Roots returns all root nodes
-func (s *Driver) Roots(ctx context.Context) ([]*merkle.Node, error) {
-	return s.GetByParent(ctx, nil)
-}
-
-// Leaves returns all leaf nodes
-func (s *Driver) Leaves(_ context.Context) ([]*merkle.Node, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	// Build a set of all parent hashes
-	hasChildren := make(map[string]bool)
-	for _, node := range s.nodes {
-		if node.ParentHash != nil {
-			hasChildren[*node.ParentHash] = true
-		}
-	}
-
-	// Find nodes that are not parents of any other node
-	var leaves []*merkle.Node
-	for _, node := range s.nodes {
-		if !hasChildren[node.Hash] {
-			leaves = append(leaves, node)
-		}
-	}
-
-	return leaves, nil
 }
 
 // Ancestry returns the path from a node back to its root (node first, root last).
@@ -264,180 +224,6 @@ func (s *Driver) LoadDag(ctx context.Context, hash string) (*merkle.Dag, error) 
 
 // Open is a no-op for the in-memory storer.
 func (s *Driver) Open(_ context.Context) error {
-	return nil
-}
-
-// UpdateUsage updates only usage metadata on an existing node by hash.
-func (s *Driver) UpdateUsage(_ context.Context, hash string, usage *llm.Usage) error {
-	if usage == nil {
-		return errors.New("cannot update with nil usage")
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	node, ok := s.nodes[hash]
-	if !ok {
-		return storage.NotFoundError{Hash: hash}
-	}
-	if node.Usage == nil {
-		node.Usage = &llm.Usage{}
-	}
-
-	if usage.PromptTokens > 0 {
-		node.Usage.PromptTokens = usage.PromptTokens
-	}
-	if usage.CompletionTokens > 0 {
-		node.Usage.CompletionTokens = usage.CompletionTokens
-	}
-	if usage.TotalTokens > 0 {
-		node.Usage.TotalTokens = usage.TotalTokens
-	}
-	if usage.CacheCreationInputTokens > 0 {
-		node.Usage.CacheCreationInputTokens = usage.CacheCreationInputTokens
-	}
-	if usage.CacheReadInputTokens > 0 {
-		node.Usage.CacheReadInputTokens = usage.CacheReadInputTokens
-	}
-	if usage.TotalDurationNs > 0 {
-		node.Usage.TotalDurationNs = usage.TotalDurationNs
-	}
-	if usage.PromptDurationNs > 0 {
-		node.Usage.PromptDurationNs = usage.PromptDurationNs
-	}
-
-	return nil
-}
-
-// Depth returns the depth of a node (0 for roots).
-func (s *Driver) Depth(ctx context.Context, hash string) (int, error) {
-	depth := 0
-	current := hash
-
-	for {
-		node, err := s.Get(ctx, current)
-		if err != nil {
-			return 0, err
-		}
-		if node.ParentHash == nil {
-			break
-		}
-		depth++
-		current = *node.ParentHash
-	}
-
-	return depth, nil
-}
-
-// Count returns the number of nodes in the in-memory store.
-func (s *Driver) Count() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return len(s.nodes)
-}
-
-// ListSessions returns a page of leaf nodes (sessions), ordered by created_at
-// descending then hash descending, optionally filtered by opts.
-func (s *Driver) ListSessions(_ context.Context, opts storage.ListOpts) (*storage.Page[*merkle.Node], error) {
-	opts = opts.Normalize()
-
-	cursor, err := storage.DecodeCursor(opts.Cursor)
-	if err != nil {
-		return nil, err
-	}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	hasChildren := s.computeHasChildren()
-
-	var matches []*merkle.Node
-	for _, node := range s.nodes {
-		if hasChildren[node.Hash] {
-			continue
-		}
-		if !matchesFilter(node, opts) {
-			continue
-		}
-		if opts.Cursor != "" && !beforeCursor(node, cursor) {
-			continue
-		}
-		matches = append(matches, node)
-	}
-
-	sort.Slice(matches, func(i, j int) bool {
-		if !matches[i].CreatedAt.Equal(matches[j].CreatedAt) {
-			return matches[i].CreatedAt.After(matches[j].CreatedAt)
-		}
-		return matches[i].Hash > matches[j].Hash
-	})
-
-	hasMore := len(matches) > opts.Limit
-	if hasMore {
-		matches = matches[:opts.Limit]
-	}
-
-	page := &storage.Page[*merkle.Node]{Items: matches}
-	if hasMore && len(matches) > 0 {
-		last := matches[len(matches)-1]
-		page.NextCursor = storage.Cursor{
-			CreatedAt: last.CreatedAt,
-			Hash:      last.Hash,
-		}.Encode()
-	}
-	return page, nil
-}
-
-// computeHasChildren builds a set of node hashes that are referenced as a
-// parent by some other node. Caller must hold s.mu.
-func (s *Driver) computeHasChildren() map[string]bool {
-	hasChildren := make(map[string]bool, len(s.nodes))
-	for _, node := range s.nodes {
-		if node.ParentHash != nil {
-			hasChildren[*node.ParentHash] = true
-		}
-	}
-	return hasChildren
-}
-
-// matchesFilter reports whether n matches the per-field filters in opts.
-// Pagination fields are ignored here.
-func matchesFilter(n *merkle.Node, opts storage.ListOpts) bool {
-	if opts.Project != "" && n.Project != opts.Project {
-		return false
-	}
-	if opts.Agent != "" && n.Bucket.AgentName != opts.Agent {
-		return false
-	}
-	if opts.Model != "" && n.Bucket.Model != opts.Model {
-		return false
-	}
-	if opts.Provider != "" && n.Bucket.Provider != opts.Provider {
-		return false
-	}
-	if opts.Since != nil && n.CreatedAt.Before(*opts.Since) {
-		return false
-	}
-	if opts.Until != nil && !n.CreatedAt.Before(*opts.Until) {
-		return false
-	}
-	return true
-}
-
-// beforeCursor reports whether n comes strictly after the cursor in
-// (CreatedAt DESC, Hash DESC) order — that is, n should appear on a later page.
-func beforeCursor(n *merkle.Node, c storage.Cursor) bool {
-	if n.CreatedAt.Before(c.CreatedAt) {
-		return true
-	}
-	if n.CreatedAt.Equal(c.CreatedAt) && n.Hash < c.Hash {
-		return true
-	}
-	return false
-}
-
-// Migrate is a no-op for the in-memory storer.
-func (s *Driver) Migrate(_ context.Context) error {
 	return nil
 }
 

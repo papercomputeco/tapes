@@ -2,7 +2,6 @@ package api
 
 import (
 	"errors"
-	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -51,13 +50,10 @@ type StatsResponse struct {
 //	@Failure		500			{object}	llm.ErrorResponse	"Failed to compute stats"
 //	@Router			/v1/stats [get]
 func (s *Server) handleStats(c *fiber.Ctx) error {
-	opts, err := parseListOpts(c)
+	since, until, err := parseStatsWindow(c)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
 	}
-	// Pagination fields are meaningless for stats.
-	opts.Limit = 0
-	opts.Cursor = ""
 
 	// Span-layer trace-grain rollups are the only accounting: the deriver
 	// is the single writer of session/trace totals.
@@ -66,7 +62,7 @@ func (s *Server) handleStats(c *fiber.Ctx) error {
 		s.logger.Error("stats unavailable: driver is not a SpanStatsReader")
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to compute stats"})
 	}
-	stats, err := reader.AggregateSpanStats(c.Context(), orgIDFromCtx(c), opts.Since, opts.Until)
+	stats, err := reader.AggregateSpanStats(c.Context(), orgIDFromCtx(c), since, until)
 	if err != nil {
 		s.logger.Error("aggregate span stats", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to compute stats"})
@@ -84,54 +80,29 @@ func (s *Server) handleStats(c *fiber.Ctx) error {
 	})
 }
 
-// parseListOpts reads ListOpts fields from query params. Filter fields are
-// shared by /v1/sessions and /v1/stats. Pagination fields (limit, cursor) are
-// parsed here too; callers that don't need them overwrite afterwards.
+// parseStatsWindow reads the optional since/until time window from query
+// params. /v1/stats is a whole-window aggregate: it has no filter or
+// pagination parameters, only the time bounds.
 //
-// All validation errors are returned as plain Go errors so the calling
-// handler can map them to a 400 Bad Request response, instead of letting
-// them surface from the storage driver as a 500.
-func parseListOpts(c *fiber.Ctx) (storage.ListOpts, error) {
-	opts := storage.ListOpts{
-		Project:  c.Query("project"),
-		Agent:    c.Query("agent_name"),
-		Model:    c.Query("model"),
-		Provider: c.Query("provider"),
-	}
-
-	if raw := c.Query("cursor"); raw != "" {
-		// Decode the cursor up front so a malformed token produces a
-		// 400 from the handler, not a 500 from the driver. The driver
-		// will decode it again later, which is harmless.
-		if _, err := storage.DecodeCursor(raw); err != nil {
-			return storage.ListOpts{}, err
-		}
-		opts.Cursor = raw
-	}
-
-	if raw := c.Query("limit"); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed <= 0 {
-			return storage.ListOpts{}, errors.New("limit must be a positive integer")
-		}
-		opts.Limit = parsed
-	}
-
+// Validation errors are returned as plain Go errors so the calling handler
+// can map them to a 400 Bad Request response, instead of letting them
+// surface from the storage driver as a 500.
+func parseStatsWindow(c *fiber.Ctx) (since, until *time.Time, err error) {
 	if raw := c.Query("since"); raw != "" {
-		t, err := time.Parse(time.RFC3339, raw)
-		if err != nil {
-			return storage.ListOpts{}, errors.New("since must be an RFC3339 timestamp")
+		t, perr := time.Parse(time.RFC3339, raw)
+		if perr != nil {
+			return nil, nil, errors.New("since must be an RFC3339 timestamp")
 		}
-		opts.Since = &t
+		since = &t
 	}
 
 	if raw := c.Query("until"); raw != "" {
-		t, err := time.Parse(time.RFC3339, raw)
-		if err != nil {
-			return storage.ListOpts{}, errors.New("until must be an RFC3339 timestamp")
+		t, perr := time.Parse(time.RFC3339, raw)
+		if perr != nil {
+			return nil, nil, errors.New("until must be an RFC3339 timestamp")
 		}
-		opts.Until = &t
+		until = &t
 	}
 
-	return opts, nil
+	return since, until, nil
 }
