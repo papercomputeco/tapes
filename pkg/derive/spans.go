@@ -78,6 +78,10 @@ type SpanSet struct {
 	Tasks      map[SessionKey][]Task
 	KindCounts map[SessionKey]map[string]int
 
+	// Status is the per-session chain-aware outcome + signals, folded from
+	// the spans at derive time (moved off the ingest hot path).
+	Status map[SessionKey]SessionStatus
+
 	Report SpanReport
 }
 
@@ -787,6 +791,37 @@ func (em *spanEmitter) finish() {
 			}
 		}
 	}
+
+	// Chain-aware status, folded from each session's tool spans and its
+	// terminal main-spine response. Every session with a trace gets one,
+	// so a tool-less session still resolves (leaf-only DetermineStatus).
+	sessionSet := map[SessionKey]struct{}{}
+	for _, turn := range em.set.Turns {
+		sessionSet[turn.Session] = struct{}{}
+	}
+	if len(sessionSet) > 0 {
+		em.set.Status = make(map[SessionKey]SessionStatus, len(sessionSet))
+		for key := range sessionSet {
+			em.set.Status[key] = FoldSessionStatus(toolsBySession[key], em.terminalMainSpan(key))
+		}
+	}
+}
+
+// terminalMainSpan returns a session's closing main-spine llm span — the
+// last (latest trace, latest span) llm span with call_kind=main on the
+// main thread. It is the status leaf: the response the session ended on.
+func (em *spanEmitter) terminalMainSpan(key SessionKey) *Span {
+	traces := em.timeline[key]
+	for i := len(traces) - 1; i >= 0; i-- {
+		spans := traces[i].Spans
+		for j := len(spans) - 1; j >= 0; j-- {
+			s := spans[j]
+			if s.Kind == SpanKindLLM && s.CallKind == KindMain && s.ThreadID == "" {
+				return s
+			}
+		}
+	}
+	return nil
 }
 
 // foldModelUsage flattens the per-session model accumulator into the

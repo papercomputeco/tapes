@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -255,7 +256,37 @@ func writeSpanSet(
 			return fmt.Errorf("update session kind_counts: %w", err)
 		}
 	}
+
+	// Chain-aware status is derived data too: the deriver folds it (moved
+	// off the ingest hot path) and is the sole writer of derived_status /
+	// has_git_activity / tool_result_count / tool_error_count.
+	for key, status := range spans.Status {
+		sid, ok := sessionIDs[key]
+		if !ok || !sid.Valid {
+			continue
+		}
+		if err := qtx.UpdateSessionStatus(ctx, gensqlc.UpdateSessionStatusParams{
+			HasGitActivity:  status.HasGitActivity,
+			ToolResultCount: int32Count(status.ToolResultCount),
+			ToolErrorCount:  int32Count(status.ToolErrorCount),
+			DerivedStatus:   status.DerivedStatus,
+			ID:              sid,
+		}); err != nil {
+			return fmt.Errorf("update session status: %w", err)
+		}
+	}
 	return nil
+}
+
+// int32Count clamps a non-negative count into an int32 column.
+func int32Count(n int) int32 {
+	if n < 0 {
+		return 0
+	}
+	if n > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(n)
 }
 
 // contentJSON marshals content blocks, keeping empty payloads as SQL

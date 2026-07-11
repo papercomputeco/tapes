@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"math/big"
 	"strconv"
 	"time"
@@ -38,9 +37,10 @@ var _ storage.SessionIngester = (*Driver)(nil)
 // resolve / UPSERT a sessions row (keyed by the envelope's natural key
 // or a synthetic harness_session_id from the turn's Merkle root),
 // resolve the optional fork-parent FK (placeholder-inserting the parent
-// when its own first turn hasn't landed yet), and fold derived_status
-// from the in-memory turn chain. It no longer persists nodes — the
-// merkle layer is in-memory only — and token/turn/cost counters are
+// when its own first turn hasn't landed yet), and fold the derived title.
+// It writes session IDENTITY only: nodes are not persisted (the merkle
+// layer is in-memory), and every derived rollup — counters, model_usage,
+// tasks, kind_counts, and the chain-aware status/git/tool signals — is
 // owned by the derive-time span fold.
 func (d *Driver) IngestTurn(ctx context.Context, req storage.IngestTurnRequest) (storage.IngestTurnResult, error) {
 	if d == nil || d.conn == nil {
@@ -111,44 +111,12 @@ func (d *Driver) IngestTurn(ctx context.Context, req storage.IngestTurnRequest) 
 		}
 	}
 
-	// Node persistence is retired: nodes are no longer written here. The
-	// session's token/turn/cost counters are owned by the derive-time span
-	// fold (FoldSessionRollupsFromSpans) — the ingest path's per-call
-	// counters double-counted re-sent history anyway — so this path no
-	// longer touches them.
-	//
-	// derived_status is still folded here from the in-memory turn chain,
-	// because status is not a span-fold output (has_git_activity is a
-	// content heuristic the spans don't carry). The full conversation is
-	// re-sent every turn, so absolute tool counts over req.Nodes (SET, not
-	// accumulated) converge to the conversation total without the per-row
-	// dedup the node writes used to provide; has_git_activity stays sticky
-	// by OR-ing the pre-turn session value.
-	hasGitActivity := sessionRow.HasGitActivity
-	toolResultCount := 0
-	toolErrorCount := 0
-	for _, n := range req.Nodes {
-		if n == nil {
-			continue
-		}
-		if !hasGitActivity && sessions.BlocksHaveGitActivity(n.Bucket.Content) {
-			hasGitActivity = true
-		}
-		toolResultCount += sessions.CountToolResults(n.Bucket.Content)
-		toolErrorCount += sessions.CountToolResultErrors(n.Bucket.Content)
-	}
-	leaf := req.Nodes[len(req.Nodes)-1]
-	status := sessions.DetermineStatus(leaf, hasGitActivity, toolResultCount, toolErrorCount)
-	if err := qtx.UpdateSessionStatus(ctx, gensqlc.UpdateSessionStatusParams{
-		HasGitActivity:  hasGitActivity,
-		ToolResultCount: int32Count(toolResultCount),
-		ToolErrorCount:  int32Count(toolErrorCount),
-		DerivedStatus:   status,
-		ID:              sessionRow.ID,
-	}); err != nil {
-		return storage.IngestTurnResult{}, fmt.Errorf("update session status: %w", err)
-	}
-
+	// Ingest touches session identity only. Every derived rollup — token/
+	// turn/cost counters, model_usage, tasks, kind_counts, and the
+	// chain-aware status/git/tool-count signals — is owned by the derive
+	// pass (writeSpanSet), so nothing but the deriver writes derived
+	// columns. Status is 'unknown' until the derive worker folds the
+	// session's first turn.
 	if err := tx.Commit(ctx); err != nil {
 		return storage.IngestTurnResult{}, fmt.Errorf("commit ingest turn tx: %w", err)
 	}
@@ -293,19 +261,6 @@ func uuidString(id pgtype.UUID) string {
 	var u uuid.UUID
 	copy(u[:], id.Bytes[:])
 	return u.String()
-}
-
-// int32Count clamps a non-negative running count into int32 for the session
-// counter columns. Tool-result counts are realistically tiny; the clamp only
-// guards against a pathological overflow and keeps gosec G115 satisfied.
-func int32Count(n int) int32 {
-	if n < 0 {
-		return 0
-	}
-	if n > math.MaxInt32 {
-		return math.MaxInt32
-	}
-	return int32(n)
 }
 
 // numericFromFloat encodes a float64 dollars amount into pgtype.Numeric

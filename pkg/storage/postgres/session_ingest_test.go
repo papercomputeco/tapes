@@ -125,82 +125,26 @@ var _ = Describe("Driver.IngestTurn", func() {
 		Expect(harnessSessionID).To(Equal("harness-happy"))
 	})
 
-	It("derives status 'completed' for an assistant leaf with a terminal stop_reason", func() {
+	It("writes session identity only — status stays at its 'unknown' default until derive folds it", func() {
+		// Phase 1d: derived_status / has_git_activity / tool counts are
+		// deriver outputs now; ingest must not write them. A freshly
+		// ingested-but-not-yet-derived session carries the column defaults.
 		orgID := newTestOrgID()
-		env := &sessions.IngestEnvelope{OrgID: orgID, AuthSubject: "s", HarnessID: "claude", HarnessSessionID: "hs-complete"}
+		env := &sessions.IngestEnvelope{OrgID: orgID, AuthSubject: "s", HarnessID: "claude", HarnessSessionID: "hs-identity-only"}
 
 		_, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{Session: env, Nodes: sessionFixture("done")})
 		Expect(err).NotTo(HaveOccurred())
 
 		var status string
-		var toolErrors int
+		var toolResults, toolErrors int
 		var hasGit bool
 		pg := driver.(*postgres.Driver)
-		Expect(pg.DB().QueryRow(ctx, `SELECT derived_status, tool_error_count, has_git_activity FROM sessions WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
-			mustUUID(orgID), "claude", "hs-complete").Scan(&status, &toolErrors, &hasGit)).To(Succeed())
-		Expect(status).To(Equal(sessions.StatusCompleted))
+		Expect(pg.DB().QueryRow(ctx, `SELECT derived_status, tool_result_count, tool_error_count, has_git_activity FROM sessions WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
+			mustUUID(orgID), "claude", "hs-identity-only").Scan(&status, &toolResults, &toolErrors, &hasGit)).To(Succeed())
+		Expect(status).To(Equal(sessions.StatusUnknown))
+		Expect(toolResults).To(Equal(0))
 		Expect(toolErrors).To(Equal(0))
 		Expect(hasGit).To(BeFalse())
-	})
-
-	It("derives 'completed' via git activity even when the leaf is a non-terminal tool_result (PCC-515)", func() {
-		orgID := newTestOrgID()
-		env := &sessions.IngestEnvelope{OrgID: orgID, AuthSubject: "s", HarnessID: "claude", HarnessSessionID: "hs-git"}
-
-		user := merkle.NewNode(merkle.Bucket{Type: "message", Role: "user", Content: []llm.ContentBlock{{Type: "text", Text: "ship it"}}}, nil)
-		asst := merkle.NewNode(merkle.Bucket{Type: "message", Role: "assistant", Content: []llm.ContentBlock{{Type: "tool_use", ToolName: "Bash", ToolInput: map[string]any{"command": "git commit -m wip"}}}}, user, merkle.NodeOptions{StopReason: "tool_use"})
-		// Leaf is the tool_result (user role, no terminal stop_reason): the
-		// leaf-only SQL classifier would call this abandoned, while the
-		// chain-aware classifier sees the git commit and returns completed.
-		toolRes := merkle.NewNode(merkle.Bucket{Type: "message", Role: "user", Content: []llm.ContentBlock{{Type: "tool_result", ToolOutput: "ok"}}}, asst)
-
-		_, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{Session: env, Nodes: []*merkle.Node{user, asst, toolRes}})
-		Expect(err).NotTo(HaveOccurred())
-
-		var status string
-		var hasGit bool
-		pg := driver.(*postgres.Driver)
-		Expect(pg.DB().QueryRow(ctx, `SELECT derived_status, has_git_activity FROM sessions WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
-			mustUUID(orgID), "claude", "hs-git").Scan(&status, &hasGit)).To(Succeed())
-		Expect(status).To(Equal(sessions.StatusCompleted))
-		Expect(hasGit).To(BeTrue())
-	})
-
-	It("derives 'failed' when the session ends on an unrecovered tool_result error", func() {
-		orgID := newTestOrgID()
-		env := &sessions.IngestEnvelope{OrgID: orgID, AuthSubject: "s", HarnessID: "claude", HarnessSessionID: "hs-err"}
-
-		user := merkle.NewNode(merkle.Bucket{Type: "message", Role: "user", Content: []llm.ContentBlock{{Type: "text", Text: "do it"}}}, nil)
-		asst := merkle.NewNode(merkle.Bucket{Type: "message", Role: "assistant", Content: []llm.ContentBlock{{Type: "tool_use", ToolName: "Bash", ToolInput: map[string]any{"command": "ls"}}}}, user, merkle.NodeOptions{StopReason: "tool_use"})
-		toolRes := merkle.NewNode(merkle.Bucket{Type: "message", Role: "user", Content: []llm.ContentBlock{{Type: "tool_result", IsError: true, ToolOutput: "boom"}}}, asst)
-
-		_, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{Session: env, Nodes: []*merkle.Node{user, asst, toolRes}})
-		Expect(err).NotTo(HaveOccurred())
-
-		var status string
-		var toolErrors int
-		pg := driver.(*postgres.Driver)
-		Expect(pg.DB().QueryRow(ctx, `SELECT derived_status, tool_error_count FROM sessions WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
-			mustUUID(orgID), "claude", "hs-err").Scan(&status, &toolErrors)).To(Succeed())
-		Expect(status).To(Equal(sessions.StatusFailed))
-		Expect(toolErrors).To(Equal(1))
-	})
-
-	It("folds derived_status from the in-memory chain at ingest time", func() {
-		// derived_status is computed and written on every IngestTurn from the
-		// in-memory turn chain (it is not a span-fold output), so a freshly
-		// ingested session already carries the correct status with no separate
-		// backfill pass.
-		orgID := newTestOrgID()
-		env := &sessions.IngestEnvelope{OrgID: orgID, AuthSubject: "s", HarnessID: "claude", HarnessSessionID: "hs-status-fold"}
-		_, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{Session: env, Nodes: sessionFixture("status fold")})
-		Expect(err).NotTo(HaveOccurred())
-
-		pg := driver.(*postgres.Driver)
-		var status string
-		Expect(pg.DB().QueryRow(ctx, `SELECT derived_status FROM sessions WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
-			mustUUID(orgID), "claude", "hs-status-fold").Scan(&status)).To(Succeed())
-		Expect(status).To(Equal(sessions.StatusCompleted))
 	})
 
 	It("is idempotent across a retried envelope: one row, same session id", func() {

@@ -46,10 +46,9 @@ shape its trace carries there.
 
 The embedded session stanza is folded from the corpus itself: identity
 and metadata from the ingest envelopes, title from the deriver's
-title fold, token/cost counters rolled up from the span layer (the v2
-direction — ingest counters are retiring), derived_status pinned to
-"completed" because status is an ingest-time denormalization the
-corpus does not replay. The session UUID is minted deterministically
+title fold, token/cost counters and derived_status/tasks/kind_counts
+rolled up from the span layer (the v2 direction — every derived rollup
+is a deriver output now). The session UUID is minted deterministically
 from the harness session id so regeneration is reproducible.
 
 Example:
@@ -137,6 +136,9 @@ func (cmder *traceFixturesCommander) renderCorpus(cmd *cobra.Command, path strin
 			session.KindCounts = b
 		}
 	}
+	// derived_status is a deriver output now (Phase 1d), so the fixture
+	// reflects what a re-derive computes rather than a hard-coded value.
+	session.DerivedStatus = spanSet.Status[key].DerivedStatus
 
 	short := key.HarnessSessionID
 	if len(short) > 8 {
@@ -361,7 +363,6 @@ func foldSessionItem(
 		ID:               sessionID,
 		HarnessID:        key.HarnessID,
 		HarnessSessionID: key.HarnessSessionID,
-		DerivedStatus:    "completed",
 	}
 
 	var first, last time.Time
