@@ -7,22 +7,20 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres/gensqlc"
 )
 
-// pgForeignKeyViolation is the Postgres SQLSTATE for an FK breach (23503),
-// used to turn "saved a session that doesn't exist" into a nil record
-// rather than a 500.
-const pgForeignKeyViolation = "23503"
-
 // SaveSession records the org-wide saved marker for a session. Idempotent:
 // re-saving preserves the first saver's saved_by/saved_at. Returns (nil,
 // nil) when the session id is malformed or no such session exists in the
-// org — the handler maps that to 404.
+// org — the handler maps that to 404. Ownership is enforced at the query
+// level (INSERT..SELECT gated on sessions.org_id), so a session that
+// belongs to a different org is indistinguishable from one that doesn't
+// exist at all.
 func (d *Driver) SaveSession(ctx context.Context, orgID, sessionID, savedBy string) (*storage.SavedSessionRecord, error) {
 	oid, err := orgIDFromString(orgID)
 	if err != nil {
@@ -35,14 +33,15 @@ func (d *Driver) SaveSession(ctx context.Context, orgID, sessionID, savedBy stri
 	}
 
 	row, err := d.q.SaveSession(ctx, gensqlc.SaveSessionParams{
-		OrgID:     oid,
-		SessionID: pgtype.UUID{Bytes: parsed, Valid: true},
 		SavedBy:   savedBy,
 		Now:       pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+		SessionID: pgtype.UUID{Bytes: parsed, Valid: true},
+		OrgID:     oid,
 	})
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == pgForeignKeyViolation {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// No (id, org_id) match in sessions — either the id doesn't
+			// exist at all, or it belongs to a different org.
 			return nil, nil
 		}
 		return nil, fmt.Errorf("save session: %w", err)

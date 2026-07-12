@@ -1,11 +1,17 @@
 -- name: SaveSession :one
--- Idempotent org-wide save. On conflict the existing row is preserved via a
--- no-op DO UPDATE (instead of DO NOTHING) so RETURNING still emits it —
--- sqlc/pgx treats DO NOTHING RETURNING as "no rows" on conflict, the same
--- trick InsertSessionPlaceholder uses. First saver's attribution wins:
--- saved_by and saved_at are never overwritten.
+-- Idempotent org-wide save, gated on the session actually belonging to the
+-- caller's org: the INSERT..SELECT inserts nothing when (id, org_id) has no
+-- match in sessions, and pgx surfaces that as ErrNoRows — the driver maps it
+-- to "not found". The FK still guards dangling ids and cascades deletes.
+-- On conflict the existing row is preserved via a no-op DO UPDATE (instead
+-- of DO NOTHING) so RETURNING still emits it — sqlc/pgx treats DO NOTHING
+-- RETURNING as "no rows" on conflict, the same trick
+-- InsertSessionPlaceholder uses. First saver's attribution wins: saved_by
+-- and saved_at are never overwritten.
 INSERT INTO saved_sessions (org_id, session_id, saved_by, saved_at)
-VALUES (sqlc.arg(org_id), sqlc.arg(session_id), sqlc.arg(saved_by), sqlc.arg(now))
+SELECT s.org_id, s.id, sqlc.arg(saved_by), sqlc.arg(now)
+FROM sessions s
+WHERE s.id = sqlc.arg(session_id) AND s.org_id = sqlc.arg(org_id)
 ON CONFLICT (org_id, session_id) DO UPDATE
 SET saved_at = saved_sessions.saved_at
 RETURNING *;

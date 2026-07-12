@@ -46,30 +46,36 @@ func (q *Queries) ListSavedSessions(ctx context.Context, orgID pgtype.UUID) ([]S
 
 const saveSession = `-- name: SaveSession :one
 INSERT INTO saved_sessions (org_id, session_id, saved_by, saved_at)
-VALUES ($1, $2, $3, $4)
+SELECT s.org_id, s.id, $1, $2
+FROM sessions s
+WHERE s.id = $3 AND s.org_id = $4
 ON CONFLICT (org_id, session_id) DO UPDATE
 SET saved_at = saved_sessions.saved_at
 RETURNING org_id, session_id, saved_by, saved_at
 `
 
 type SaveSessionParams struct {
-	OrgID     pgtype.UUID
-	SessionID pgtype.UUID
 	SavedBy   string
 	Now       pgtype.Timestamptz
+	SessionID pgtype.UUID
+	OrgID     pgtype.UUID
 }
 
-// Idempotent org-wide save. On conflict the existing row is preserved via a
-// no-op DO UPDATE (instead of DO NOTHING) so RETURNING still emits it —
-// sqlc/pgx treats DO NOTHING RETURNING as "no rows" on conflict, the same
-// trick InsertSessionPlaceholder uses. First saver's attribution wins:
-// saved_by and saved_at are never overwritten.
+// Idempotent org-wide save, gated on the session actually belonging to the
+// caller's org: the INSERT..SELECT inserts nothing when (id, org_id) has no
+// match in sessions, and pgx surfaces that as ErrNoRows — the driver maps it
+// to "not found". The FK still guards dangling ids and cascades deletes.
+// On conflict the existing row is preserved via a no-op DO UPDATE (instead
+// of DO NOTHING) so RETURNING still emits it — sqlc/pgx treats DO NOTHING
+// RETURNING as "no rows" on conflict, the same trick
+// InsertSessionPlaceholder uses. First saver's attribution wins: saved_by
+// and saved_at are never overwritten.
 func (q *Queries) SaveSession(ctx context.Context, arg SaveSessionParams) (SavedSession, error) {
 	row := q.db.QueryRow(ctx, saveSession,
-		arg.OrgID,
-		arg.SessionID,
 		arg.SavedBy,
 		arg.Now,
+		arg.SessionID,
+		arg.OrgID,
 	)
 	var i SavedSession
 	err := row.Scan(

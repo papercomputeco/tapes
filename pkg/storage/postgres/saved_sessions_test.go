@@ -34,6 +34,18 @@ var _ = Describe("Driver saved sessions persistence", func() {
 		Expect(err).NotTo(HaveOccurred())
 	}
 
+	// insertSessionInOrg seeds a minimal sessions row owned by an explicit
+	// org id, distinct from the outer orgID, so cross-org ownership checks
+	// have a real row to point at.
+	insertSessionInOrg := func(id, owningOrgID string) {
+		_, err := pgDriver.DB().Exec(ctx, `
+			INSERT INTO sessions (id, org_id, auth_subject, harness_id,
+				harness_session_id, started_at, last_seen_at, harness_metadata)
+			VALUES ($1, $2, 'user_owner', 'claude', $3, now(), now(), '{}')`,
+			id, owningOrgID, id)
+		Expect(err).NotTo(HaveOccurred())
+	}
+
 	BeforeEach(func() {
 		ctx = context.Background()
 		orgID = uuid.NewString()
@@ -102,6 +114,20 @@ var _ = Describe("Driver saved sessions persistence", func() {
 		rec, err = pgDriver.SaveSession(ctx, orgID, "not-a-uuid", "user_alice")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rec).To(BeNil())
+	})
+
+	It("returns nil for a session that exists but belongs to a different org", func() {
+		otherOrgID := uuid.NewString()
+		sid := uuid.NewString()
+		insertSessionInOrg(sid, otherOrgID)
+
+		rec, err := pgDriver.SaveSession(ctx, orgID, sid, "user_alice")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rec).To(BeNil())
+
+		list, err := pgDriver.ListSavedSessions(ctx, orgID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(list).To(BeEmpty())
 	})
 
 	It("scopes markers to the org", func() {
