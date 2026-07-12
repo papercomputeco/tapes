@@ -170,6 +170,38 @@
                 }
             }
         },
+        "/v1/saved_sessions": {
+            "get": {
+                "description": "Every org-wide saved marker, newest-saved-first. The console joins these ids against the sessions list to render saved state.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "List the org's saved sessions",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.SavedSessionListResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to list saved sessions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Saved sessions not supported by this backend",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/search/spans": {
             "get": {
                 "description": "Embeds the query text and runs vector similarity over the embedded span projection (main llm spans, delta-only content). Each hit carries span, trace, and turn context.",
@@ -322,6 +354,58 @@
                 }
             }
         },
+        "/v1/sessions/save": {
+            "put": {
+                "description": "Idempotently marks each listed session as saved for the whole org. Unknown ids are reported under not_found rather than failing the batch.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Save several sessions org-wide",
+                "parameters": [
+                    {
+                        "description": "Session ids to save",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.saveSessionsBatchRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.SaveSessionsBatchResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Empty or oversized session_ids",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to save sessions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Saved sessions not supported by this backend",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/sessions/{id}": {
             "get": {
                 "description": "Returns a single session record. The conversation content lives on the span model: GET /v1/sessions/{id}/traces.",
@@ -421,6 +505,86 @@
                     },
                     "501": {
                         "description": "Not Implemented",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sessions/{id}/save": {
+            "put": {
+                "description": "Idempotently marks a session as saved for the whole org. The caller's gateway-stamped subject is recorded as attribution (first saver wins).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Save a session org-wide",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session id (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.SavedSessionItem"
+                        }
+                    },
+                    "404": {
+                        "description": "No such session in the org",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to save session",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Saved sessions not supported by this backend",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Removes the shared saved marker for everyone in the org. Idempotent — deleting an absent marker is still a 204.",
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Unsave a session org-wide",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session id (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "500": {
+                        "description": "Failed to unsave session",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Saved sessions not supported by this backend",
                         "schema": {
                             "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
                         }
@@ -777,6 +941,48 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/api.RawTurnHeaderItem"
+                    }
+                }
+            }
+        },
+        "api.SaveSessionsBatchResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.SavedSessionItem"
+                    }
+                },
+                "not_found": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "api.SavedSessionItem": {
+            "type": "object",
+            "properties": {
+                "saved_at": {
+                    "type": "string"
+                },
+                "saved_by": {
+                    "type": "string"
+                },
+                "session_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.SavedSessionListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.SavedSessionItem"
                     }
                 }
             }
@@ -1198,6 +1404,17 @@
                 },
                 "updates": {
                     "type": "integer"
+                }
+            }
+        },
+        "api.saveSessionsBatchRequest": {
+            "type": "object",
+            "properties": {
+                "session_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },

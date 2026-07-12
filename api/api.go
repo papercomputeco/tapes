@@ -90,6 +90,13 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	app.Get("/v1/sessions/:id/skills", s.handleListSessionSkills)
 	app.Get("/v1/search/spans", s.handleSearchSpansEndpoint)
 
+	// Org-wide saved sessions (PCC-815): a shared team shortlist. Static
+	// /save path registered before the parameterised :id/save.
+	app.Get("/v1/saved_sessions", s.handleListSavedSessions)
+	app.Put("/v1/sessions/save", s.handleSaveSessionsBatch)
+	app.Put("/v1/sessions/:id/save", s.handleSaveSession)
+	app.Delete("/v1/sessions/:id/save", s.handleUnsaveSession)
+
 	// Skills: generate from sessions, persist, edit, version, duplicate, and
 	// render a drop-in SKILL.md. Skills are keyed on an opaque id (the route
 	// key, mirroring sessions); slug is a cosmetic label. Literal/sub-path routes

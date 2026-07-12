@@ -43,6 +43,33 @@ definitions:
           $ref: '#/definitions/api.RawTurnHeaderItem'
         type: array
     type: object
+  api.SaveSessionsBatchResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/api.SavedSessionItem'
+        type: array
+      not_found:
+        items:
+          type: string
+        type: array
+    type: object
+  api.SavedSessionItem:
+    properties:
+      saved_at:
+        type: string
+      saved_by:
+        type: string
+      session_id:
+        type: string
+    type: object
+  api.SavedSessionListResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/api.SavedSessionItem'
+        type: array
+    type: object
   api.SessionDetailResponse:
     properties:
       session:
@@ -349,6 +376,13 @@ definitions:
       updates:
         type: integer
     type: object
+  api.saveSessionsBatchRequest:
+    properties:
+      session_ids:
+        items:
+          type: string
+        type: array
+    type: object
   api.seedDemoRequest:
     properties:
       overwrite:
@@ -539,6 +573,28 @@ paths:
       summary: Invoke the streamable MCP endpoint
       tags:
       - mcp
+  /v1/saved_sessions:
+    get:
+      description: Every org-wide saved marker, newest-saved-first. The console joins
+        these ids against the sessions list to render saved state.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SavedSessionListResponse'
+        "500":
+          description: Failed to list saved sessions
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Saved sessions not supported by this backend
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: List the org's saved sessions
+      tags:
+      - sessions
   /v1/search/spans:
     get:
       description: Embeds the query text and runs vector similarity over the embedded
@@ -726,6 +782,61 @@ paths:
       summary: List a session's raw capture log (operator)
       tags:
       - sessions
+  /v1/sessions/{id}/save:
+    delete:
+      description: Removes the shared saved marker for everyone in the org. Idempotent
+        — deleting an absent marker is still a 204.
+      parameters:
+      - description: Session id (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "500":
+          description: Failed to unsave session
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Saved sessions not supported by this backend
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Unsave a session org-wide
+      tags:
+      - sessions
+    put:
+      description: Idempotently marks a session as saved for the whole org. The caller's
+        gateway-stamped subject is recorded as attribution (first saver wins).
+      parameters:
+      - description: Session id (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SavedSessionItem'
+        "404":
+          description: No such session in the org
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Failed to save session
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Saved sessions not supported by this backend
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Save a session org-wide
+      tags:
+      - sessions
   /v1/sessions/{id}/traces:
     get:
       description: Returns the session's user-visible turns as traces with nested
@@ -766,6 +877,41 @@ paths:
           schema:
             $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
       summary: Get a session's trace/span projection
+      tags:
+      - sessions
+  /v1/sessions/save:
+    put:
+      consumes:
+      - application/json
+      description: Idempotently marks each listed session as saved for the whole org.
+        Unknown ids are reported under not_found rather than failing the batch.
+      parameters:
+      - description: Session ids to save
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.saveSessionsBatchRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SaveSessionsBatchResponse'
+        "400":
+          description: Empty or oversized session_ids
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Failed to save sessions
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Saved sessions not supported by this backend
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Save several sessions org-wide
       tags:
       - sessions
   /v1/stats:
