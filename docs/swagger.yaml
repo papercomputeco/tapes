@@ -625,6 +625,11 @@ paths:
         in: query
         name: auth_subject
         type: string
+      - description: Filter the paged list to sessions carrying the org-wide saved
+          marker
+        in: query
+        name: saved
+        type: boolean
       produces:
       - application/json
       responses:

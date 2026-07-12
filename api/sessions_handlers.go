@@ -177,10 +177,11 @@ func decodeSessionsCursor(token string) (sessionsCursor, error) {
 //	@Param			limit				query		int		false	"Maximum number of sessions to return (default 50, max 200)"	minimum(1)
 //	@Param			cursor				query		string	false	"Opaque pagination cursor returned by a previous response"
 //	@Param			since				query		string	false	"Only include sessions active (last_seen_at) at or after this RFC3339 timestamp"	format(date-time)
-//	@Param			until				query		string	false	"Only include sessions active (last_seen_at) before this RFC3339 timestamp"		format(date-time)
+//	@Param			until				query		string	false	"Only include sessions active (last_seen_at) before this RFC3339 timestamp"			format(date-time)
 //	@Param			harness_id			query		string	false	"Filter to the single session with this harness id (exact match; requires harness_session_id, incompatible with cursor; limit is ignored when the filter is active)"
 //	@Param			harness_session_id	query		string	false	"Filter to the single session with this harness session id (exact match; requires harness_id, incompatible with cursor; limit is ignored when the filter is active)"
 //	@Param			auth_subject		query		string	false	"Filter the paged list to sessions captured for this gateway-stamped JWT subject (exact match; ignored on the harness filter path)"
+//	@Param			saved				query		bool	false	"Filter the paged list to sessions carrying the org-wide saved marker"
 //	@Success		200					{object}	SessionListResponse
 //	@Failure		400					{object}	llm.ErrorResponse	"Invalid query parameters, a lone harness filter param, or cursor combined with the harness filter"
 //	@Failure		500					{object}	llm.ErrorResponse	"Failed to list sessions"
@@ -237,6 +238,13 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "until must be an RFC3339 timestamp"})
 		}
 		opts.Until = &t
+	}
+	if raw := c.Query("saved"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "saved must be a boolean"})
+		}
+		opts.SavedOnly = parsed
 	}
 
 	orgID := orgIDFromCtx(c)

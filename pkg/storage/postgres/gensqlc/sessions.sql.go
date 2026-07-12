@@ -216,21 +216,28 @@ func (q *Queries) ListNodesBySession(ctx context.Context, sessionID pgtype.UUID)
 }
 
 const listSessionRecords = `-- name: ListSessionRecords :many
-SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage FROM sessions
-WHERE org_id = $1
-  AND ($2::timestamptz IS NULL OR last_seen_at >= $2::timestamptz)
-  AND ($3::timestamptz IS NULL OR last_seen_at < $3::timestamptz)
+SELECT s.id, s.org_id, s.auth_subject, s.harness_id, s.harness_session_id, s.name, s.cwd, s.harness_version, s.parent_session_id, s.started_at, s.last_seen_at, s.ended_at, s.harness_metadata, s.total_input_tokens, s.total_output_tokens, s.total_cost_usd, s.turn_count, s.derived_status, s.has_git_activity, s.tool_result_count, s.tool_error_count, s.derived_title, s.derived_model, s.model_usage FROM sessions s
+WHERE s.org_id = $1
+  AND ($2::timestamptz IS NULL OR s.last_seen_at >= $2::timestamptz)
+  AND ($3::timestamptz IS NULL OR s.last_seen_at < $3::timestamptz)
   AND (
     $4::text IS NULL
-    OR auth_subject = $4::text
+    OR s.auth_subject = $4::text
   )
   AND (
-    $5::timestamptz IS NULL
-    OR last_seen_at < $5::timestamptz
-    OR (last_seen_at = $5::timestamptz AND id < $6::uuid)
+    $5::boolean IS FALSE
+    OR EXISTS (
+      SELECT 1 FROM saved_sessions ss
+      WHERE ss.org_id = s.org_id AND ss.session_id = s.id
+    )
   )
-ORDER BY last_seen_at DESC, id DESC
-LIMIT $7
+  AND (
+    $6::timestamptz IS NULL
+    OR s.last_seen_at < $6::timestamptz
+    OR (s.last_seen_at = $6::timestamptz AND s.id < $7::uuid)
+  )
+ORDER BY s.last_seen_at DESC, s.id DESC
+LIMIT $8
 `
 
 type ListSessionRecordsParams struct {
@@ -238,6 +245,7 @@ type ListSessionRecordsParams struct {
 	SinceFilter pgtype.Timestamptz
 	UntilFilter pgtype.Timestamptz
 	AuthSubject pgtype.Text
+	SavedOnly   bool
 	CursorTs    pgtype.Timestamptz
 	CursorID    pgtype.UUID
 	Lim         int32
@@ -249,13 +257,15 @@ type ListSessionRecordsParams struct {
 // so "sessions active in the period" pages consistently. Pass a NULL
 // auth_subject to list every user's sessions; a non-NULL value is an
 // exact match against the gateway-stamped JWT subject captured at
-// ingest (sessions_auth_subject_idx).
+// ingest (sessions_auth_subject_idx). saved_only false lists everything;
+// true narrows to sessions carrying an org-wide saved_sessions marker.
 func (q *Queries) ListSessionRecords(ctx context.Context, arg ListSessionRecordsParams) ([]Session, error) {
 	rows, err := q.db.Query(ctx, listSessionRecords,
 		arg.OrgID,
 		arg.SinceFilter,
 		arg.UntilFilter,
 		arg.AuthSubject,
+		arg.SavedOnly,
 		arg.CursorTs,
 		arg.CursorID,
 		arg.Lim,

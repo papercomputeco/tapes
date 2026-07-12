@@ -56,6 +56,7 @@ func (d *Driver) ListSessionRecords(
 	rows, err := d.q.ListSessionRecords(ctx, gensqlc.ListSessionRecordsParams{
 		OrgID:       oid,
 		AuthSubject: subjectPg,
+		SavedOnly:   opts.SavedOnly,
 		CursorTs:    tsPg,
 		CursorID:    idPg,
 		SinceFilter: nullTimePtr(opts.Since),

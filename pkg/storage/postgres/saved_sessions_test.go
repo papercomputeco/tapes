@@ -140,4 +140,17 @@ var _ = Describe("Driver saved sessions persistence", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(otherOrg).To(BeEmpty())
 	})
+
+	It("ListSessionRecords with SavedOnly returns only saved sessions", func() {
+		savedID, unsavedID := uuid.NewString(), uuid.NewString()
+		insertSession(savedID)
+		insertSession(unsavedID)
+		_, err := pgDriver.SaveSession(ctx, orgID, savedID, "user_alice")
+		Expect(err).NotTo(HaveOccurred())
+
+		records, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{SavedOnly: true})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(records).To(HaveLen(1))
+		Expect(records[0].ID).To(Equal(savedID))
+	})
 })

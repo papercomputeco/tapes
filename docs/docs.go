@@ -290,6 +290,12 @@ const docTemplate = `{
                         "description": "Filter the paged list to sessions captured for this gateway-stamped JWT subject (exact match; ignored on the harness filter path)",
                         "name": "auth_subject",
                         "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Filter the paged list to sessions carrying the org-wide saved marker",
+                        "name": "saved",
+                        "in": "query"
                     }
                 ],
                 "responses": {

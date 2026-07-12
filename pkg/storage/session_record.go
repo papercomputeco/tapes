@@ -67,4 +67,7 @@ type SessionListOpts struct {
 	Since       *time.Time
 	Until       *time.Time
 	AuthSubject string
+	// SavedOnly narrows the list to sessions carrying an org-wide saved
+	// marker (saved_sessions table). False lists everything.
+	SavedOnly bool
 }

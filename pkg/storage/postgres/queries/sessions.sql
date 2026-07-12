@@ -127,21 +127,29 @@ UPDATE sessions
 -- so "sessions active in the period" pages consistently. Pass a NULL
 -- auth_subject to list every user's sessions; a non-NULL value is an
 -- exact match against the gateway-stamped JWT subject captured at
--- ingest (sessions_auth_subject_idx).
-SELECT * FROM sessions
-WHERE org_id = sqlc.arg(org_id)
-  AND (sqlc.narg(since_filter)::timestamptz IS NULL OR last_seen_at >= sqlc.narg(since_filter)::timestamptz)
-  AND (sqlc.narg(until_filter)::timestamptz IS NULL OR last_seen_at < sqlc.narg(until_filter)::timestamptz)
+-- ingest (sessions_auth_subject_idx). saved_only false lists everything;
+-- true narrows to sessions carrying an org-wide saved_sessions marker.
+SELECT s.* FROM sessions s
+WHERE s.org_id = sqlc.arg(org_id)
+  AND (sqlc.narg(since_filter)::timestamptz IS NULL OR s.last_seen_at >= sqlc.narg(since_filter)::timestamptz)
+  AND (sqlc.narg(until_filter)::timestamptz IS NULL OR s.last_seen_at < sqlc.narg(until_filter)::timestamptz)
   AND (
     sqlc.narg(auth_subject)::text IS NULL
-    OR auth_subject = sqlc.narg(auth_subject)::text
+    OR s.auth_subject = sqlc.narg(auth_subject)::text
+  )
+  AND (
+    sqlc.arg(saved_only)::boolean IS FALSE
+    OR EXISTS (
+      SELECT 1 FROM saved_sessions ss
+      WHERE ss.org_id = s.org_id AND ss.session_id = s.id
+    )
   )
   AND (
     sqlc.narg(cursor_ts)::timestamptz IS NULL
-    OR last_seen_at < sqlc.narg(cursor_ts)::timestamptz
-    OR (last_seen_at = sqlc.narg(cursor_ts)::timestamptz AND id < sqlc.narg(cursor_id)::uuid)
+    OR s.last_seen_at < sqlc.narg(cursor_ts)::timestamptz
+    OR (s.last_seen_at = sqlc.narg(cursor_ts)::timestamptz AND s.id < sqlc.narg(cursor_id)::uuid)
   )
-ORDER BY last_seen_at DESC, id DESC
+ORDER BY s.last_seen_at DESC, s.id DESC
 LIMIT sqlc.arg(lim);
 
 -- name: GetSessionRecord :one

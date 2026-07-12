@@ -35,6 +35,7 @@ type sessionsStubDriver struct {
 	lastLimit       int
 	lastCursorTs    *time.Time
 	lastCursorID    *string
+	lastSavedOnly   bool
 
 	// GetSessionRecordByHarness stubbing.
 	harnessRecord        *storage.SessionRecord
@@ -52,6 +53,7 @@ func (d *sessionsStubDriver) ListSessionRecords(_ context.Context, orgID string,
 	d.lastLimit = opts.Limit
 	d.lastCursorTs = opts.CursorTs
 	d.lastCursorID = opts.CursorID
+	d.lastSavedOnly = opts.SavedOnly
 	return d.listRecords, d.listErr
 }
 
@@ -361,5 +363,42 @@ var _ = Describe("harness natural-key filter on GET /v1/sessions", func() {
 
 		_, _, status = getSessionList(server, "/v1/sessions", "")
 		Expect(status).To(Equal(fiber.StatusNotImplemented))
+	})
+})
+
+var _ = Describe("saved filter on GET /v1/sessions", func() {
+	newServer := func(driver storage.Driver) *Server {
+		server, err := NewServer(Config{ListenAddr: ":0"}, driver, tapeslogger.NewNoop())
+		Expect(err).NotTo(HaveOccurred())
+		return server
+	}
+
+	It("threads saved=true through to SessionListOpts.SavedOnly", func() {
+		drv := &sessionsStubDriver{Driver: inmemory.NewDriver()}
+		server := newServer(drv)
+
+		_, _, status := getSessionList(server, "/v1/sessions?saved=true", "")
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(drv.listCalls).To(Equal(1))
+		Expect(drv.lastSavedOnly).To(BeTrue())
+	})
+
+	It("defaults SavedOnly to false when the param is absent", func() {
+		drv := &sessionsStubDriver{Driver: inmemory.NewDriver()}
+		server := newServer(drv)
+
+		_, _, status := getSessionList(server, "/v1/sessions", "")
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(drv.lastSavedOnly).To(BeFalse())
+	})
+
+	It("400s on a non-boolean saved param", func() {
+		drv := &sessionsStubDriver{Driver: inmemory.NewDriver()}
+		server := newServer(drv)
+
+		_, errBody, status := getSessionList(server, "/v1/sessions?saved=maybe", "")
+		Expect(status).To(Equal(fiber.StatusBadRequest))
+		Expect(errBody.Error).To(Equal("saved must be a boolean"))
+		Expect(drv.listCalls).To(BeZero())
 	})
 })
