@@ -90,24 +90,61 @@ func newTraceFixturesCmd() *cobra.Command {
 	return cmd
 }
 
+// fixtureArtifact is one rendered fixture: the output filename and the
+// wire value it serializes to.
+type fixtureArtifact struct {
+	name string
+	v    any
+}
+
+// corpusSummary is the one-line render tally renderCorpus prints.
+type corpusSummary struct {
+	harnessSessionID string
+	traces           int
+	spans            int
+	links            int
+}
+
 func (cmder *traceFixturesCommander) renderCorpus(cmd *cobra.Command, path string) error {
-	wire, transcriptRows, err := derive.LoadCorpusFile(path)
+	arts, sum, err := buildFixtureArtifacts(path)
 	if err != nil {
 		return err
 	}
+	for _, out := range arts {
+		dst := filepath.Join(cmder.outDir, out.name)
+		if err := writeJSONFile(dst, out.v); err != nil {
+			return err
+		}
+		cmd.Printf("wrote %s\n", dst)
+	}
+	cmd.Printf("session %s: %d traces, %d spans, %d links\n",
+		sum.harnessSessionID, sum.traces, sum.spans, sum.links)
+	return nil
+}
+
+// buildFixtureArtifacts replays one corpus file through the deriver and
+// the real API renderers and returns the four fixture artifacts plus a
+// render tally — no file I/O, so it is shared by the trace-fixtures
+// command (which writes the artifacts) and the idempotency gate (which
+// renders twice and diffs the bytes).
+func buildFixtureArtifacts(path string) ([]fixtureArtifact, corpusSummary, error) {
+	wire, transcriptRows, err := derive.LoadCorpusFile(path)
+	if err != nil {
+		return nil, corpusSummary{}, err
+	}
 	if len(wire) == 0 {
-		return errors.New("corpus has no wire rows")
+		return nil, corpusSummary{}, errors.New("corpus has no wire rows")
 	}
 
 	set, err := derive.BuildDerivedSet(wire, "")
 	if err != nil {
-		return fmt.Errorf("derive: %w", err)
+		return nil, corpusSummary{}, fmt.Errorf("derive: %w", err)
 	}
 	files := make([]*derive.TranscriptFile, 0, len(transcriptRows))
 	for i := range transcriptRows {
 		file, err := derive.ParseTranscriptFile(&transcriptRows[i])
 		if err != nil {
-			return fmt.Errorf("parse transcript row %d: %w", transcriptRows[i].ID, err)
+			return nil, corpusSummary{}, fmt.Errorf("parse transcript row %d: %w", transcriptRows[i].ID, err)
 		}
 		files = append(files, file)
 	}
@@ -116,7 +153,7 @@ func (cmder *traceFixturesCommander) renderCorpus(cmd *cobra.Command, path strin
 
 	key, err := singleSessionKey(spanSet)
 	if err != nil {
-		return err
+		return nil, corpusSummary{}, err
 	}
 	sessionID := fixtureSessionID(key)
 
@@ -167,25 +204,19 @@ func (cmder *traceFixturesCommander) renderCorpus(cmd *cobra.Command, path strin
 			turn, spansByTrace[turn.TraceID], linksTouching(links, turn.TraceID), api.PayloadPreview)
 	}
 
-	outputs := []struct {
-		name string
-		v    any
-	}{
+	artifacts := []fixtureArtifact{
 		{fmt.Sprintf("session-traces-%s.json", short), full},
 		{fmt.Sprintf("session-traces-%s.slim.json", short), slim},
 		{fmt.Sprintf("trace-summaries-%s.json", short), traceList},
 		{fmt.Sprintf("trace-details-%s.slim.json", short), details},
 	}
-	for _, out := range outputs {
-		dst := filepath.Join(cmder.outDir, out.name)
-		if err := writeJSONFile(dst, out.v); err != nil {
-			return err
-		}
-		cmd.Printf("wrote %s\n", dst)
+	summary := corpusSummary{
+		harnessSessionID: key.HarnessSessionID,
+		traces:           len(turns),
+		spans:            len(spans),
+		links:            len(links),
 	}
-	cmd.Printf("session %s: %d traces, %d spans, %d links\n",
-		key.HarnessSessionID, len(turns), len(spans), len(links))
-	return nil
+	return artifacts, summary, nil
 }
 
 // singleSessionKey asserts the corpus derives to exactly one session —
@@ -460,17 +491,28 @@ func modelUsageItems(in []derive.ModelUsage) []api.ModelUsage {
 	return out
 }
 
-// writeJSONFile writes indented JSON without HTML escaping — payload
-// text is full of <tags>, and fixtures get read by humans in review.
-func writeJSONFile(path string, v any) error {
+// marshalFixture encodes a fixture value the way the fixtures land on
+// disk: indented, no HTML escaping — payload text is full of <tags>, and
+// fixtures get read by humans in review. Shared so the idempotency gate
+// diffs the exact bytes writeJSONFile would write.
+func marshalFixture(v any) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// writeJSONFile serializes v with marshalFixture and writes it to path.
+func writeJSONFile(path string, v any) error {
+	b, err := marshalFixture(v)
+	if err != nil {
 		return fmt.Errorf("encode %s: %w", filepath.Base(path), err)
 	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+	if err := os.WriteFile(path, b, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
