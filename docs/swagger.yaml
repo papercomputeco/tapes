@@ -426,6 +426,7 @@ info:
 
     The REST surface exposes health checks, session listing and retrieval, derived session summaries, aggregate stats, semantic search, and a streamable MCP endpoint.
   title: Tapes API
+  version: "1.0"
 paths:
   /ping:
     get:

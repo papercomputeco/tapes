@@ -1,6 +1,7 @@
 package api
 
 //	@title			Tapes API
+//	@version		1.0
 //	@description	HTTP API for inspecting, querying, and searching stored Tapes sessions.
 //	@description
 //	@description	The REST surface exposes health checks, session listing and retrieval, derived session summaries, aggregate stats, semantic search, and a streamable MCP endpoint.

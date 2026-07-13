@@ -37,6 +37,13 @@ func (s *Server) mountSwagger(app *fiber.App) {
 		return c.Send(openAPISpec)
 	})
 
+	// Backward-compat: the viewer served Swagger 2.0 JSON here before the
+	// switch to the embedded 3.0.3 spec. Redirect stale bookmarks / tooling
+	// to the new path instead of 404ing them.
+	app.Get("/swagger/doc.json", func(c *fiber.Ctx) error {
+		return c.Redirect("/swagger/openapi.yaml", fiber.StatusMovedPermanently)
+	})
+
 	app.Get("/swagger", func(c *fiber.Ctx) error {
 		return c.Type("html").SendString(scalarHTML)
 	})

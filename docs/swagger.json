@@ -7,7 +7,8 @@
     "info": {
         "description": "HTTP API for inspecting, querying, and searching stored Tapes sessions.\n\nThe REST surface exposes health checks, session listing and retrieval, derived session summaries, aggregate stats, semantic search, and a streamable MCP endpoint.",
         "title": "Tapes API",
-        "contact": {}
+        "contact": {},
+        "version": "1.0"
     },
     "basePath": "/",
     "paths": {
