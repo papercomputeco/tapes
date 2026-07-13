@@ -137,8 +137,12 @@ WHERE session_id = $1
 ORDER BY trace_id ASC, seq ASC, started_at ASC, span_id ASC;
 
 -- name: ListSpanLinksBySession :many
+-- Ordered by the unique key (org_id is constant within a session), so the
+-- session-scoped links array is deterministic across reads and re-derives
+-- — a heap-order scan otherwise shuffles the wire on every upsert.
 SELECT * FROM span_links_20260615
-WHERE session_id = $1;
+WHERE session_id = $1
+ORDER BY from_trace_id, from_span_id, to_trace_id, to_span_id, from_io, to_io;
 
 -- name: ListSpanTurns :many
 SELECT * FROM span_turns_20260615

@@ -225,8 +225,12 @@ func (q *Queries) GetSpanTurn(ctx context.Context, arg GetSpanTurnParams) (SpanT
 const listSpanLinksBySession = `-- name: ListSpanLinksBySession :many
 SELECT org_id, from_trace_id, from_span_id, from_io, to_trace_id, to_span_id, to_io, kind, session_id FROM span_links_20260615
 WHERE session_id = $1
+ORDER BY from_trace_id, from_span_id, to_trace_id, to_span_id, from_io, to_io
 `
 
+// Ordered by the unique key (org_id is constant within a session), so the
+// session-scoped links array is deterministic across reads and re-derives
+// — a heap-order scan otherwise shuffles the wire on every upsert.
 func (q *Queries) ListSpanLinksBySession(ctx context.Context, sessionID pgtype.UUID) ([]SpanLinks20260615, error) {
 	rows, err := q.db.Query(ctx, listSpanLinksBySession, sessionID)
 	if err != nil {
