@@ -25,15 +25,19 @@ func toolSpan(seq int64, at time.Time, in, out llm.ContentBlock) *derive.Span {
 }
 
 func taskCreate(id, subject string) (llm.ContentBlock, llm.ContentBlock) {
-	use := llm.ContentBlock{Type: "tool_use", ToolUseID: "u" + id, ToolName: "TaskCreate",
-		ToolInput: map[string]any{"subject": subject, "description": "d" + id}}
+	use := llm.ContentBlock{
+		Type: "tool_use", ToolUseID: "u" + id, ToolName: "TaskCreate",
+		ToolInput: map[string]any{"subject": subject, "description": "d" + id},
+	}
 	res := llm.ContentBlock{Type: "tool_result", ToolOutput: "Task #" + id + " created successfully: " + subject}
 	return use, res
 }
 
 func taskUpdate(id, status string) (llm.ContentBlock, llm.ContentBlock) {
-	use := llm.ContentBlock{Type: "tool_use", ToolUseID: "up" + id, ToolName: "TaskUpdate",
-		ToolInput: map[string]any{"taskId": id, "status": status}}
+	use := llm.ContentBlock{
+		Type: "tool_use", ToolUseID: "up" + id, ToolName: "TaskUpdate",
+		ToolInput: map[string]any{"taskId": id, "status": status},
+	}
 	return use, llm.ContentBlock{Type: "tool_result", ToolOutput: "ok"}
 }
 

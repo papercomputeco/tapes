@@ -297,7 +297,7 @@ func spanItemFromRecord(sp storage.SpanRecord, mode PayloadMode) SpanItem {
 		StopReason:   sp.StopReason,
 		ThreadID:     sp.ThreadID,
 		RawTurnID:    sp.RawTurnID,
-		Verdict:      json.RawMessage(sp.Verdict), // nil → null on the wire
+		Verdict:      sp.Verdict, // already json.RawMessage; nil → null on the wire
 		Input:        contentArray(sp.Input, mode),
 		Output:       contentArray(sp.Output, mode),
 		Usage:        emptyObjectIfNil(sp.Usage),
