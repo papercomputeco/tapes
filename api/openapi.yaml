@@ -49,29 +49,6 @@ components:
             $ref: '#/components/schemas/RawTurnHeaderItem'
           type: array
       type: object
-    Result:
-      properties:
-        nodes_derived:
-          description: |-
-            NodesDerived counts derived rows upserted by the synchronous
-            derive pass across the seeded sessions.
-          type: integer
-        raw_turns:
-          description: RawTurns is the total number of corpus rows replayed.
-          type: integer
-        raw_turns_deduped:
-          type: integer
-        raw_turns_inserted:
-          description: |-
-            RawTurnsInserted counts rows that landed as new raw turns;
-            RawTurnsDeduped counts replays the raw layer's dedup absorbed
-            (a re-seed reports everything deduped).
-          type: integer
-        sessions:
-          description: Sessions is the number of demo sessions the corpora replay
-            into.
-          type: integer
-      type: object
     SessionDetailResponse:
       properties:
         session:
@@ -378,6 +355,29 @@ components:
         updates:
           type: integer
       type: object
+    github_com_papercomputeco_tapes_pkg_seed.Result:
+      properties:
+        nodes_derived:
+          description: |-
+            NodesDerived counts derived rows upserted by the synchronous
+            derive pass across the seeded sessions.
+          type: integer
+        raw_turns:
+          description: RawTurns is the total number of corpus rows replayed.
+          type: integer
+        raw_turns_deduped:
+          type: integer
+        raw_turns_inserted:
+          description: |-
+            RawTurnsInserted counts rows that landed as new raw turns;
+            RawTurnsDeduped counts replays the raw layer's dedup absorbed
+            (a re-seed reports everything deduped).
+          type: integer
+        sessions:
+          description: Sessions is the number of demo sessions the corpora replay
+            into.
+          type: integer
+      type: object
     seedDemoRequest:
       properties:
         overwrite:
@@ -464,7 +464,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Result'
+                $ref: '#/components/schemas/github_com_papercomputeco_tapes_pkg_seed.Result'
           description: OK
         "400":
           content:

@@ -151,11 +151,23 @@ func synthesizeID(method, path string) string {
 	return b.String()
 }
 
+// reservedBareNames are type/trait names that must NOT become a component schema
+// key: a downstream Rust client (progenitor) emits a `pub struct <name>` per
+// schema, and if that name shadows a prelude type the generated code stops
+// compiling (e.g. `Result` shadows `std::result::Result`). Schemas whose bare
+// name lands here keep their package-qualified key, which progenitor sanitizes
+// into a safe, unique CamelCase identifier.
+var reservedBareNames = map[string]bool{
+	"Result": true, "Option": true, "String": true, "Vec": true, "Box": true,
+	"Self": true, "Ok": true, "Err": true, "Some": true, "None": true,
+	"Iterator": true, "Future": true,
+}
+
 // stripSchemaPrefixes renames component schema keys from swag's package-qualified
 // form (api.SessionItem, github_com_..._pkg_llm.ErrorResponse) to their bare type
-// name (SessionItem, ErrorResponse) and rewrites every $ref accordingly. If two
-// qualified names would collapse onto the same bare name, both keep their
-// original qualified names to avoid a collision.
+// name (SessionItem, ErrorResponse) and rewrites every $ref accordingly. A
+// qualified name is left untouched when its bare form would either collide with
+// another schema's bare form or shadow a reserved Rust prelude name.
 func stripSchemaPrefixes(tree map[string]any) error {
 	components, ok := tree["components"].(map[string]any)
 	if !ok {
@@ -175,7 +187,7 @@ func stripSchemaPrefixes(tree map[string]any) error {
 	rename := map[string]string{}
 	for name := range schemas {
 		bare := bareName(name)
-		if bare != name && bareCount[bare] == 1 {
+		if bare != name && bareCount[bare] == 1 && !reservedBareNames[bare] {
 			rename[name] = bare
 		}
 	}

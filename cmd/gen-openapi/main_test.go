@@ -93,6 +93,33 @@ var _ = Describe("stripSchemaPrefixes", func() {
 		Expect(errRef).To(Equal("#/components/schemas/ErrorResponse"))
 	})
 
+	It("does not strip a prefix when the bare name shadows a Rust prelude type", func() {
+		tree := map[string]any{
+			"components": map[string]any{
+				"schemas": map[string]any{
+					"github_com_x_pkg_seed.Result": map[string]any{"type": "object"},
+					"api.SessionItem": map[string]any{
+						"properties": map[string]any{
+							"seed": map[string]any{"$ref": "#/components/schemas/github_com_x_pkg_seed.Result"},
+						},
+					},
+				},
+			},
+		}
+
+		Expect(stripSchemaPrefixes(tree)).To(Succeed())
+
+		schemas := tree["components"].(map[string]any)["schemas"].(map[string]any)
+		// SessionItem is safe to strip; Result would shadow the prelude, so it
+		// keeps its qualified key.
+		Expect(schemas).To(HaveKey("SessionItem"))
+		Expect(schemas).To(HaveKey("github_com_x_pkg_seed.Result"))
+		Expect(schemas).NotTo(HaveKey("Result"))
+
+		ref := schemas["SessionItem"].(map[string]any)["properties"].(map[string]any)["seed"].(map[string]any)["$ref"]
+		Expect(ref).To(Equal("#/components/schemas/github_com_x_pkg_seed.Result"))
+	})
+
 	It("keeps qualified names when two schemas would collapse onto the same bare name", func() {
 		tree := map[string]any{
 			"components": map[string]any{
