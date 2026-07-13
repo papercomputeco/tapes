@@ -667,8 +667,11 @@ func (em *spanEmitter) eventSpan(turn *SpanTurn, parent *Span, kind, hash string
 		Status:       "ok",
 		StartedAt:    at,
 		CallKind:     kind,
-		Output:       content,
-		NodeHash:     hash,
+		// Injected context is semantically an input to the turn (it
+		// arrives before the assistant acts), so it rides in Input, not
+		// Output — uniform with how llm/tool spans carry their stimulus.
+		Input:    content,
+		NodeHash: hash,
 	})
 }
 
