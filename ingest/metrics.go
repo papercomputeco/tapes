@@ -80,6 +80,11 @@ const (
 	ResultUnknownProv   Result = "unknown_provider"
 	ResultQueueFull     Result = "queue_full"
 	ResultDownstreamErr Result = "downstream_error"
+	// ResultInternalErr covers a failure inside the handler itself (e.g. a
+	// server-side marshal that should never fail) — a 500, distinct from a bad
+	// payload or a downstream outage — so no handler exit is invisible to the
+	// writes counter.
+	ResultInternalErr Result = "internal_error"
 )
 
 // ObserveWrite increments the writes counter for a given provider/result.

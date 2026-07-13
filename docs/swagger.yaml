@@ -737,22 +737,32 @@ paths:
     get:
       description: 'Returns the session as a single JSON line (downloadable attachment):
         the session object with its traces, each trace carrying its full spans — the
-        same shape as GET /v1/sessions/{id}/traces with payload=full.'
+        same shape as GET /v1/sessions/{id}/traces with payload=full. detail=traces
+        exports turn headers only (no spans or links).'
       parameters:
       - description: Session id (UUID)
         in: path
         name: id
         required: true
         type: string
+      - description: 'Export granularity: spans (default, traces with full spans)
+          or traces (turn headers only)'
+        enum:
+        - spans
+        - traces
+        in: query
+        name: detail
+        type: string
       produces:
       - application/x-ndjson
       responses:
         "200":
-          description: JSONL body, one session object with nested traces and spans
+          description: JSONL body, one session object with nested traces (and spans
+            at detail=spans)
           schema:
             type: string
         "400":
-          description: Missing or malformed id
+          description: Missing or malformed id, or unrecognized detail
           schema:
             $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
         "404":
@@ -854,8 +864,9 @@ paths:
       description: Streams one JSON line per session in the given window, newest-first,
         as a downloadable attachment. Each line is the session object with its traces,
         each trace carrying its full spans — the same shape as GET /v1/sessions/{id}/traces
-        with payload=full. Defaults to the trailing 30 days. Not bounded by the /v1/sessions
-        list cap — pages internally.
+        with payload=full. detail=traces exports turn headers only (no spans or links).
+        Defaults to the trailing 30 days. Not bounded by the /v1/sessions list cap
+        — pages internally.
       parameters:
       - description: 'Only include sessions active (last_seen_at) at or after this
           RFC3339 timestamp (default: now - 30 days)'
@@ -869,16 +880,24 @@ paths:
         in: query
         name: until
         type: string
+      - description: 'Export granularity: spans (default, traces with full spans)
+          or traces (turn headers only)'
+        enum:
+        - spans
+        - traces
+        in: query
+        name: detail
+        type: string
       produces:
       - application/x-ndjson
       responses:
         "200":
           description: JSONL body, one JSON object per session with nested traces
-            and spans
+            (and spans at detail=spans)
           schema:
             type: string
         "400":
-          description: Malformed since/until
+          description: Malformed since/until, or unrecognized detail
           schema:
             $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
         "500":
