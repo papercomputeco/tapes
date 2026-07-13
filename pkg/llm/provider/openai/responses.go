@@ -26,9 +26,18 @@ type responsesRequest struct {
 	TopP            *float64          `json:"top_p,omitempty"`
 	Stream          *bool             `json:"stream,omitempty"`
 	Tools           []json.RawMessage `json:"tools,omitempty"`
+	ToolChoice      json.RawMessage   `json:"tool_choice,omitempty"`
 	Reasoning       map[string]any    `json:"reasoning,omitempty"`
 	PreviousID      string            `json:"previous_response_id,omitempty"`
 }
+
+// Responses item types for the custom-tool spine (GPT-5.6 Codex's
+// freeform exec runtime). Shared by the request parser and the
+// derive-time content normalizer.
+const (
+	itemCustomToolCall       = "custom_tool_call"
+	itemCustomToolCallOutput = "custom_tool_call_output"
+)
 
 // responsesItem is the union of the Responses input/output item shapes tapes
 // understands. Codex omits `"type":"message"` on plain role/content items,
@@ -38,10 +47,12 @@ type responsesItem struct {
 	Role    string          `json:"role"`
 	Content json.RawMessage `json:"content"`
 
-	// function_call / function_call_output
+	// function_call / function_call_output; custom_tool_call shares
+	// call_id/name and carries its freeform input on `input`.
 	CallID    string          `json:"call_id"`
 	Name      string          `json:"name"`
 	Arguments string          `json:"arguments"`
+	Input     string          `json:"input"`
 	Output    json.RawMessage `json:"output"`
 
 	// reasoning
@@ -129,6 +140,13 @@ func parseResponsesRequest(payload []byte) (*llm.ChatRequest, error) {
 	if req.PreviousID != "" {
 		extra["previous_response_id"] = req.PreviousID
 	}
+	// GPT-5.6 Codex omits client-side tool definitions (the backend
+	// injects them server-side) but still declares tool routing via
+	// tool_choice — preserve it so classification can recognize the
+	// conversation spine without a `tools` array.
+	if jsonFieldPresent(req.ToolChoice) {
+		extra["tool_choice"] = string(req.ToolChoice)
+	}
 	result.Extra = extra
 
 	return result, nil
@@ -164,6 +182,18 @@ func responsesItemToMessage(raw json.RawMessage) (llm.Message, bool) {
 				ToolResultID: item.CallID,
 				ToolOutput:   rawToText(item.Output),
 			}},
+		}, true
+
+	case item.Type == itemCustomToolCall:
+		return llm.Message{
+			Role:    "assistant",
+			Content: []llm.ContentBlock{customToolCallBlock(item)},
+		}, true
+
+	case item.Type == itemCustomToolCallOutput:
+		return llm.Message{
+			Role:    "tool",
+			Content: []llm.ContentBlock{customToolCallOutputBlock(item)},
 		}, true
 
 	case item.Type == "reasoning":
@@ -231,6 +261,92 @@ func functionCallBlock(item responsesItem, raw json.RawMessage) llm.ContentBlock
 		}
 	}
 	return cb
+}
+
+// customToolCallBlock maps a custom_tool_call item to a tool_use block.
+// Custom tools (GPT-5.6 Codex's exec runtime) carry a freeform string
+// instead of JSON arguments; it lands under the "input" key so the block
+// stays a structured tool call rather than an opaque blob. Only the
+// call identity fields participate, so a response item (which also
+// carries id/status) and its request-echo map to identical blocks.
+func customToolCallBlock(item responsesItem) llm.ContentBlock {
+	cb := llm.ContentBlock{
+		Type:      "tool_use",
+		ToolUseID: item.CallID,
+		ToolName:  item.Name,
+	}
+	if item.Input != "" {
+		cb.ToolInput = map[string]any{"input": item.Input}
+	}
+	return cb
+}
+
+// customToolCallOutputBlock maps a custom_tool_call_output item to a
+// tool_result block. The wire output is either a bare string or an
+// array of content parts ({type:"input_text",text:...}); parts are
+// joined so the result reads as the text the model saw.
+func customToolCallOutputBlock(item responsesItem) llm.ContentBlock {
+	return llm.ContentBlock{
+		Type:         "tool_result",
+		ToolResultID: item.CallID,
+		ToolOutput:   customToolOutputText(item.Output),
+	}
+}
+
+// customToolOutputText renders a custom_tool_call_output payload as
+// text: bare strings unquote, content-part arrays join their text, and
+// anything else stays compact JSON so nothing is lost.
+func customToolOutputText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	var parts []responsesContentPart
+	if err := json.Unmarshal(raw, &parts); err == nil {
+		var b strings.Builder
+		for _, part := range parts {
+			b.WriteString(part.Text)
+		}
+		return b.String()
+	}
+	return string(raw)
+}
+
+// NormalizeResponsesContent rewrites Responses output items that the
+// capture reducer preserved verbatim — custom_tool_call and
+// custom_tool_call_output — into the canonical tool blocks the derived
+// layer understands. The reducer keeps unknown item types raw by
+// design, so this runs at derive time (chain construction), which also
+// heals sessions whose responses were reduced before these item types
+// were cataloged: a re-derive reprojects them from the preserved raw
+// item. Blocks of any other type pass through untouched.
+func NormalizeResponsesContent(blocks []llm.ContentBlock) []llm.ContentBlock {
+	normalized := blocks
+	copied := false
+	for i, b := range blocks {
+		if (b.Type != itemCustomToolCall && b.Type != itemCustomToolCallOutput) || len(b.Content) == 0 {
+			continue
+		}
+		var item responsesItem
+		if err := json.Unmarshal(b.Content, &item); err != nil || item.CallID == "" {
+			continue
+		}
+		if !copied {
+			normalized = make([]llm.ContentBlock, len(blocks))
+			copy(normalized, blocks)
+			copied = true
+		}
+		switch b.Type {
+		case itemCustomToolCall:
+			normalized[i] = customToolCallBlock(item)
+		case itemCustomToolCallOutput:
+			normalized[i] = customToolCallOutputBlock(item)
+		}
+	}
+	return normalized
 }
 
 // reasoningBlock maps a reasoning item to a thinking block. The summary text

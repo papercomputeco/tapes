@@ -142,6 +142,18 @@ Be concise, structured, and focused on helping the next LLM seamlessly continue 
 		Expect(derive.ClassifyCall(req, assistantText("on it"))).To(Equal(derive.KindMain))
 	})
 
+	It("does not treat disabled Responses tool routing as the conversation spine", func() {
+		req := &llm.ChatRequest{
+			Stream: boolp(true),
+			Extra: map[string]any{
+				"endpoint":    "responses",
+				"tool_choice": `"none"`,
+			},
+			Messages: []llm.Message{textMsg("user", "some background call")},
+		}
+		Expect(derive.ClassifyCall(req, assistantText("done"))).To(Equal(derive.KindUnknown))
+	})
+
 	It("surfaces unmatched shapes as unknown rather than guessing", func() {
 		req := &llm.ChatRequest{
 			Stream:    boolp(true),
@@ -377,6 +389,98 @@ var _ = Describe("BuildDerivedSet", func() {
 		Expect(tool).NotTo(BeNil())
 		Expect(tool.SpanID).To(Equal("call_1"))
 		Expect(tool.Name).To(Equal("Bash"))
+		Expect(tool.Output).To(HaveLen(1))
+		Expect(tool.Output[0].ToolOutput).To(Equal("README.md"))
+	})
+
+	It("projects GPT-5.6 Codex custom tool calls as the conversation spine", func() {
+		// GPT-5.6 Codex sends no client-side `tools` array (the ChatGPT
+		// Codex backend injects definitions server-side) and expresses
+		// its tool spine as custom_tool_call / custom_tool_call_output
+		// items. The stored reduced response carries the custom item
+		// verbatim (the reducer preserves unknown types raw), so this
+		// exercises classification via tool_choice, request-echo
+		// mapping, AND derive-time response normalization together.
+		turn1 := storage.RawTurnRecord{
+			ID:               1,
+			Provider:         "openai",
+			HarnessID:        "codex",
+			HarnessSessionID: "sess-codex-56",
+			RequestID:        "resp_req_1",
+			ReceivedAt:       time.Unix(1783985110, 0),
+			RawRequest: json.RawMessage(`{
+				"model":"gpt-5.6-sol",
+				"instructions":"You are Codex.",
+				"stream":true,
+				"tool_choice":"auto",
+				"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"list files"}]}]
+			}`),
+			Response: json.RawMessage(`{
+				"model":"gpt-5.6-sol",
+				"message":{"role":"assistant","content":[
+					{"type":"thinking","thinking_signature":"enc_blob"},
+					{"type":"custom_tool_call","content":{"type":"custom_tool_call","id":"ctc_1","status":"completed","call_id":"call_1","name":"exec","input":"const r = await tools.exec_command({cmd:\"ls\"})"}}
+				]},
+				"stop_reason":"tool_use",
+				"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}
+			}`),
+			Meta: json.RawMessage(`{}`),
+		}
+		turn2 := storage.RawTurnRecord{
+			ID:               2,
+			Provider:         "openai",
+			HarnessID:        "codex",
+			HarnessSessionID: "sess-codex-56",
+			RequestID:        "resp_req_2",
+			ReceivedAt:       time.Unix(1783985111, 0),
+			RawRequest: json.RawMessage(`{
+				"model":"gpt-5.6-sol",
+				"instructions":"You are Codex.",
+				"stream":true,
+				"tool_choice":"auto",
+				"input":[
+					{"type":"message","role":"user","content":[{"type":"input_text","text":"list files"}]},
+					{"type":"custom_tool_call","id":"ctc_1","status":"completed","call_id":"call_1","name":"exec","input":"const r = await tools.exec_command({cmd:\"ls\"})"},
+					{"type":"custom_tool_call_output","call_id":"call_1","output":[{"type":"input_text","text":"README.md"}]}
+				]
+			}`),
+			Response: json.RawMessage(`{
+				"model":"gpt-5.6-sol",
+				"message":{"role":"assistant","content":[{"type":"text","text":"README.md"}]},
+				"stop_reason":"stop",
+				"usage":{"prompt_tokens":20,"completion_tokens":2,"total_tokens":22}
+			}`),
+			Meta: json.RawMessage(`{}`),
+		}
+
+		set, err := derive.BuildDerivedSet([]storage.RawTurnRecord{turn1, turn2}, "p")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(set.Report.CallKinds).To(HaveKeyWithValue(derive.KindMain, 2))
+		Expect(set.Report.CallKinds).NotTo(HaveKey(derive.KindUnknown))
+
+		spans := derive.EmitSpans(set)
+		Expect(spans.Report.Traces).To(Equal(1))
+		Expect(spans.Report.SpanKinds).To(HaveKeyWithValue(derive.SpanKindLLM, 2))
+		Expect(spans.Report.SpanKinds).To(HaveKeyWithValue(derive.SpanKindTool, 1))
+		Expect(spans.Report.LinkKinds).To(HaveKeyWithValue(derive.LinkFeeds, 1))
+
+		trace := spans.Turns[0]
+		Expect(trace.UserPrompt).To(Equal("list files"))
+		Expect(trace.ResponsePreview).To(Equal("README.md"))
+
+		var tool *derive.Span
+		for _, span := range trace.Spans {
+			if span.Kind == derive.SpanKindTool {
+				tool = span
+				break
+			}
+		}
+		Expect(tool).NotTo(BeNil())
+		Expect(tool.SpanID).To(Equal("call_1"))
+		Expect(tool.Name).To(Equal("exec"))
+		Expect(tool.Input).To(HaveLen(1))
+		Expect(tool.Input[0].Type).To(Equal("tool_use"))
+		Expect(tool.Input[0].ToolInput).To(HaveKeyWithValue("input", `const r = await tools.exec_command({cmd:"ls"})`))
 		Expect(tool.Output).To(HaveLen(1))
 		Expect(tool.Output[0].ToolOutput).To(Equal("README.md"))
 	})

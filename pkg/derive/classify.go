@@ -1,6 +1,7 @@
 package derive
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
@@ -151,7 +152,42 @@ func ClassifyCall(req *llm.ChatRequest, resp *llm.ChatResponse) string {
 		return KindMain
 	}
 
+	// GPT-5.6 Codex spine: the request carries NO client-side tool
+	// definitions (the ChatGPT Codex backend injects them server-side)
+	// but still declares tool routing. A streaming Responses call with
+	// an enabled tool_choice is the conversation spine — tool-less shadow
+	// calls (title-gen, plan-name) send neither.
+	if streaming && responsesToolRoutingEnabled(req) {
+		return KindMain
+	}
+
 	return KindUnknown
+}
+
+// responsesToolRoutingEnabled reports whether a Responses API request
+// declared active tool routing via tool_choice. The parser preserves the
+// choice as raw JSON in Extra (see parseResponsesRequest).
+func responsesToolRoutingEnabled(req *llm.ChatRequest) bool {
+	if req.Extra == nil || req.Extra["endpoint"] != "responses" {
+		return false
+	}
+	raw, ok := req.Extra["tool_choice"].(string)
+	if !ok {
+		return false
+	}
+
+	var choice any
+	if err := json.Unmarshal([]byte(raw), &choice); err != nil {
+		return false
+	}
+	switch choice := choice.(type) {
+	case string:
+		return choice != "" && choice != "none"
+	case map[string]any:
+		return len(choice) > 0
+	default:
+		return false
+	}
 }
 
 // ClassifyInjected reports the injected-context kind for one request

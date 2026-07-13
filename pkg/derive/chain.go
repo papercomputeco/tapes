@@ -11,6 +11,7 @@ package derive
 
 import (
 	"github.com/papercomputeco/tapes/pkg/llm"
+	"github.com/papercomputeco/tapes/pkg/llm/provider/openai"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 )
 
@@ -81,10 +82,21 @@ func TurnChain(call CallContext, req *llm.ChatRequest, resp *llm.ChatResponse) [
 		parent = node
 	}
 
+	// OpenAI Responses items the reducer preserved verbatim
+	// (custom_tool_call, custom_tool_call_output) normalize to
+	// canonical tool blocks HERE — the shared constructor — so
+	// capture-time ingest and offline re-derive produce identical
+	// hashes, and sessions captured before those item types were
+	// cataloged heal on re-derive.
+	responseContent := resp.Message.Content
+	if call.Provider == "openai" {
+		responseContent = openai.NormalizeResponsesContent(responseContent)
+	}
+
 	responseBucket := merkle.Bucket{
 		Type:      "message",
 		Role:      resp.Message.Role,
-		Content:   resp.Message.Content,
+		Content:   responseContent,
 		Model:     resp.Model,
 		Provider:  call.Provider,
 		AgentName: call.AgentName,
