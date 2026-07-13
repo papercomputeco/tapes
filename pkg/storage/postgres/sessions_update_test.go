@@ -191,4 +191,27 @@ var _ = Describe("Driver.UpdateSessionName", func() {
 		Expect(after.AuthSubject).To(Equal(before.AuthSubject))
 		Expect(after.StartedAt).To(Equal(before.StartedAt))
 	})
+
+	It("a user-set name takes display precedence over an existing derived_title (EST-2, CC-4 carve-out)", func() {
+		orgA := newTestOrgID()
+		id := seedSession(orgA, "harness-precedence-carveout", "precedence carve-out text")
+		setDerivedTitle(id, "auto-generated title")
+
+		// Sanity: with only a derived_title and no user name, the read path
+		// must fall back to it.
+		before, err := pgDriver.GetSessionRecord(ctx, orgA, id)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(before).NotTo(BeNil())
+		Expect(before.Name).To(Equal("auto-generated title"))
+
+		rows, err := pgDriver.UpdateSessionName(ctx, orgA, id, ptr("user chosen title"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rows).To(Equal(int64(1)))
+
+		after, err := pgDriver.GetSessionRecord(ctx, orgA, id)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(after).NotTo(BeNil())
+		Expect(after.Name).To(Equal("user chosen title"),
+			"a non-empty user name must win over derived_title in the display precedence")
+	})
 })

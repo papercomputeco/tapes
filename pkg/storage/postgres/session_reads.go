@@ -355,13 +355,13 @@ func sessionRecordFromRow(row gensqlc.Session) storage.SessionRecord {
 		Model:             row.DerivedModel,
 		AuthSubject:       row.AuthSubject,
 	}
-	// The folded title-gen output is the session's display title; the
-	// envelope's internal name (a plan slug for Claude Code) is the
-	// fallback. See the derived_title migration.
-	if row.DerivedTitle.Valid && row.DerivedTitle.String != "" {
-		s.Name = row.DerivedTitle.String
-	} else if row.Name.Valid {
+	// A user-set name is the session's display title; the folded
+	// title-gen output (derived_title) is only the auto-generated
+	// fallback when no user name is set (EST-2, CC-4 carve-out).
+	if row.Name.Valid && row.Name.String != "" {
 		s.Name = row.Name.String
+	} else if row.DerivedTitle.Valid && row.DerivedTitle.String != "" {
+		s.Name = row.DerivedTitle.String
 	}
 	if row.Cwd.Valid {
 		s.Cwd = row.Cwd.String
