@@ -1,5 +1,12 @@
 basePath: /
 definitions:
+  api.MainUsage:
+    properties:
+      input_tokens:
+        type: integer
+      output_tokens:
+        type: integer
+    type: object
   api.ModelUsage:
     properties:
       calls:
@@ -290,21 +297,12 @@ definitions:
     type: object
   api.TraceItem:
     properties:
-      cache_creation_tokens:
-        type: integer
-      cache_read_tokens:
-        type: integer
       duration_ns:
         type: integer
       ended_at:
         type: string
-      main_input_tokens:
-        description: |-
-          Main* counts conversation-spine calls only; Total − Main is the
-          harness's shadow spend on the turn.
-        type: integer
-      main_output_tokens:
-        type: integer
+      main_usage:
+        $ref: '#/definitions/api.MainUsage'
       response_preview:
         description: |-
           ResponsePreview is the derive-time fold of the closing
@@ -324,14 +322,15 @@ definitions:
           promoted out of the old metadata grab-bag. Absent for genuine
           prompt-opened turns.
         type: string
-      total_cost_usd:
-        type: number
-      total_input_tokens:
-        type: integer
-      total_output_tokens:
-        type: integer
       trace_id:
         type: string
+      usage:
+        allOf:
+        - $ref: '#/definitions/api.TraceUsage'
+        description: |-
+          Usage is the trace's total token/cost spend over ALL llm spans,
+          shadow calls included; MainUsage is the conversation-spine slice
+          (Usage − MainUsage is the harness's shadow spend on the turn).
       user_prompt:
         type: string
     type: object
@@ -341,6 +340,19 @@ definitions:
         items:
           $ref: '#/definitions/api.TraceItem'
         type: array
+    type: object
+  api.TraceUsage:
+    properties:
+      cache_creation_tokens:
+        type: integer
+      cache_read_tokens:
+        type: integer
+      cost_usd:
+        type: number
+      input_tokens:
+        type: integer
+      output_tokens:
+        type: integer
     type: object
   api.TreeTask:
     properties:

@@ -873,6 +873,17 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "api.MainUsage": {
+            "type": "object",
+            "properties": {
+                "input_tokens": {
+                    "type": "integer"
+                },
+                "output_tokens": {
+                    "type": "integer"
+                }
+            }
+        },
         "api.ModelUsage": {
             "type": "object",
             "properties": {
@@ -1274,24 +1285,14 @@ const docTemplate = `{
         "api.TraceItem": {
             "type": "object",
             "properties": {
-                "cache_creation_tokens": {
-                    "type": "integer"
-                },
-                "cache_read_tokens": {
-                    "type": "integer"
-                },
                 "duration_ns": {
                     "type": "integer"
                 },
                 "ended_at": {
                     "type": "string"
                 },
-                "main_input_tokens": {
-                    "description": "Main* counts conversation-spine calls only; Total − Main is the\nharness's shadow spend on the turn.",
-                    "type": "integer"
-                },
-                "main_output_tokens": {
-                    "type": "integer"
+                "main_usage": {
+                    "$ref": "#/definitions/api.MainUsage"
                 },
                 "response_preview": {
                     "description": "ResponsePreview is the derive-time fold of the closing\nconversation-spine llm call's text output — the answer line for\ncollapsed turn cards, so summary consumers never need spans.",
@@ -1310,17 +1311,16 @@ const docTemplate = `{
                     "description": "Synthetic is a typed deriver signal (\"post-compaction\" for a\ncompaction continuation, \"shadow-opener\" for a shadow-only opener),\npromoted out of the old metadata grab-bag. Absent for genuine\nprompt-opened turns.",
                     "type": "string"
                 },
-                "total_cost_usd": {
-                    "type": "number"
-                },
-                "total_input_tokens": {
-                    "type": "integer"
-                },
-                "total_output_tokens": {
-                    "type": "integer"
-                },
                 "trace_id": {
                     "type": "string"
+                },
+                "usage": {
+                    "description": "Usage is the trace's total token/cost spend over ALL llm spans,\nshadow calls included; MainUsage is the conversation-spine slice\n(Usage − MainUsage is the harness's shadow spend on the turn).",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/api.TraceUsage"
+                        }
+                    ]
                 },
                 "user_prompt": {
                     "type": "string"
@@ -1335,6 +1335,26 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/api.TraceItem"
                     }
+                }
+            }
+        },
+        "api.TraceUsage": {
+            "type": "object",
+            "properties": {
+                "cache_creation_tokens": {
+                    "type": "integer"
+                },
+                "cache_read_tokens": {
+                    "type": "integer"
+                },
+                "cost_usd": {
+                    "type": "number"
+                },
+                "input_tokens": {
+                    "type": "integer"
+                },
+                "output_tokens": {
+                    "type": "integer"
                 }
             }
         },

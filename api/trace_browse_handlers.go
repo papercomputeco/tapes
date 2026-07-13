@@ -42,22 +42,26 @@ type RawTurnListResponse struct {
 
 func traceItemFromTurn(turn storage.SpanTurnRecord, spanCount int) TraceItem {
 	return TraceItem{
-		TraceID:             turn.TraceID,
-		UserPrompt:          turn.UserPrompt,
-		ResponsePreview:     turn.ResponsePreview,
-		Status:              turn.Status,
-		StartedAt:           turn.StartedAt,
-		EndedAt:             turn.EndedAt,
-		DurationNS:          turn.DurationNS,
-		TotalInputTokens:    turn.TotalInputTokens,
-		TotalOutputTokens:   turn.TotalOutputTokens,
-		MainInputTokens:     turn.MainInputTokens,
-		MainOutputTokens:    turn.MainOutputTokens,
-		CacheReadTokens:     turn.CacheReadTokens,
-		CacheCreationTokens: turn.CacheCreationTokens,
-		TotalCostUSD:        turn.TotalCostUSD,
-		SpanCount:           spanCount,
-		Synthetic:           turn.Synthetic,
+		TraceID:         turn.TraceID,
+		UserPrompt:      turn.UserPrompt,
+		ResponsePreview: turn.ResponsePreview,
+		Status:          turn.Status,
+		StartedAt:       turn.StartedAt,
+		EndedAt:         turn.EndedAt,
+		DurationNS:      turn.DurationNS,
+		SpanCount:       spanCount,
+		Usage: TraceUsage{
+			InputTokens:         turn.TotalInputTokens,
+			OutputTokens:        turn.TotalOutputTokens,
+			CacheReadTokens:     turn.CacheReadTokens,
+			CacheCreationTokens: turn.CacheCreationTokens,
+			CostUSD:             turn.TotalCostUSD,
+		},
+		MainUsage: MainUsage{
+			InputTokens:  turn.MainInputTokens,
+			OutputTokens: turn.MainOutputTokens,
+		},
+		Synthetic: turn.Synthetic,
 	}
 }
 

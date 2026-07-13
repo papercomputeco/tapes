@@ -56,26 +56,39 @@ type TraceItem struct {
 	// ResponsePreview is the derive-time fold of the closing
 	// conversation-spine llm call's text output — the answer line for
 	// collapsed turn cards, so summary consumers never need spans.
-	ResponsePreview   string     `json:"response_preview,omitempty"`
-	Status            string     `json:"status"`
-	StartedAt         time.Time  `json:"started_at"`
-	EndedAt           *time.Time `json:"ended_at,omitempty"`
-	DurationNS        int64      `json:"duration_ns"`
-	TotalInputTokens  int64      `json:"total_input_tokens"`
-	TotalOutputTokens int64      `json:"total_output_tokens"`
-	// Main* counts conversation-spine calls only; Total − Main is the
-	// harness's shadow spend on the turn.
-	MainInputTokens     int64   `json:"main_input_tokens"`
-	MainOutputTokens    int64   `json:"main_output_tokens"`
-	CacheReadTokens     int64   `json:"cache_read_tokens"`
-	CacheCreationTokens int64   `json:"cache_creation_tokens"`
-	TotalCostUSD        float64 `json:"total_cost_usd"`
-	SpanCount           int     `json:"span_count"`
+	ResponsePreview string     `json:"response_preview,omitempty"`
+	Status          string     `json:"status"`
+	StartedAt       time.Time  `json:"started_at"`
+	EndedAt         *time.Time `json:"ended_at,omitempty"`
+	DurationNS      int64      `json:"duration_ns"`
+	SpanCount       int        `json:"span_count"`
+	// Usage is the trace's total token/cost spend over ALL llm spans,
+	// shadow calls included; MainUsage is the conversation-spine slice
+	// (Usage − MainUsage is the harness's shadow spend on the turn).
+	Usage     TraceUsage `json:"usage"`
+	MainUsage MainUsage  `json:"main_usage"`
 	// Synthetic is a typed deriver signal ("post-compaction" for a
 	// compaction continuation, "shadow-opener" for a shadow-only opener),
 	// promoted out of the old metadata grab-bag. Absent for genuine
 	// prompt-opened turns.
 	Synthetic string `json:"synthetic,omitempty"`
+}
+
+// TraceUsage is a trace's total token/cost rollup. Fields are pinned
+// (no omitempty) so the object shape is uniform across traces.
+type TraceUsage struct {
+	InputTokens         int64   `json:"input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	CostUSD             float64 `json:"cost_usd"`
+}
+
+// MainUsage is the conversation-spine token slice of a trace — spine
+// calls only, no cache split or cost (those live on the total Usage).
+type MainUsage struct {
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
 }
 
 // SpanItem is one observed unit of work. Every field is a deriver
