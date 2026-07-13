@@ -25,6 +25,7 @@ const docTemplate = `{
                     "health"
                 ],
                 "summary": "Health check",
+                "operationId": "ping",
                 "responses": {
                     "200": {
                         "description": "pong",
@@ -48,6 +49,7 @@ const docTemplate = `{
                     "admin"
                 ],
                 "summary": "Seed demo sessions (operator)",
+                "operationId": "seedDemo",
                 "parameters": [
                     {
                         "description": "Seed options (overwrite is no longer supported)",
@@ -96,6 +98,7 @@ const docTemplate = `{
                     "mcp"
                 ],
                 "summary": "Open an MCP event stream",
+                "operationId": "openMcpStream",
                 "responses": {
                     "200": {
                         "description": "Server-sent event stream",
@@ -117,6 +120,7 @@ const docTemplate = `{
                     "mcp"
                 ],
                 "summary": "Invoke the streamable MCP endpoint",
+                "operationId": "invokeMcp",
                 "parameters": [
                     {
                         "description": "JSON-RPC 2.0 request",
@@ -158,6 +162,7 @@ const docTemplate = `{
                     "mcp"
                 ],
                 "summary": "Close an MCP session",
+                "operationId": "closeMcpSession",
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -184,6 +189,7 @@ const docTemplate = `{
                     "search"
                 ],
                 "summary": "Semantic search over span embeddings",
+                "operationId": "searchSpans",
                 "parameters": [
                     {
                         "type": "string",
@@ -245,6 +251,7 @@ const docTemplate = `{
                     "sessions"
                 ],
                 "summary": "List sessions",
+                "operationId": "listSessions",
                 "parameters": [
                     {
                         "minimum": 1,
@@ -342,6 +349,7 @@ const docTemplate = `{
                     "sessions"
                 ],
                 "summary": "Export sessions in a time window as JSONL",
+                "operationId": "exportSessions",
                 "parameters": [
                     {
                         "type": "string",
@@ -406,6 +414,7 @@ const docTemplate = `{
                     "sessions"
                 ],
                 "summary": "Get a session",
+                "operationId": "getSession",
                 "parameters": [
                     {
                         "type": "string",
@@ -454,6 +463,7 @@ const docTemplate = `{
                     "sessions"
                 ],
                 "summary": "Delete a session",
+                "operationId": "deleteSession",
                 "parameters": [
                     {
                         "type": "string",
@@ -504,6 +514,7 @@ const docTemplate = `{
                     "sessions"
                 ],
                 "summary": "Export a session as JSONL",
+                "operationId": "exportSession",
                 "parameters": [
                     {
                         "type": "string",
@@ -567,6 +578,7 @@ const docTemplate = `{
                     "sessions"
                 ],
                 "summary": "List a session's raw capture log (operator)",
+                "operationId": "listRawTurns",
                 "parameters": [
                     {
                         "type": "string",
@@ -620,6 +632,7 @@ const docTemplate = `{
                     "sessions"
                 ],
                 "summary": "Get a session's trace/span projection",
+                "operationId": "getSessionTraces",
                 "parameters": [
                     {
                         "type": "string",
@@ -679,6 +692,7 @@ const docTemplate = `{
                     "sessions"
                 ],
                 "summary": "Get aggregate session stats",
+                "operationId": "getStats",
                 "parameters": [
                     {
                         "type": "string",
@@ -751,6 +765,7 @@ const docTemplate = `{
                     "traces"
                 ],
                 "summary": "List a session's traces (summaries)",
+                "operationId": "listTraces",
                 "parameters": [
                     {
                         "type": "string",
@@ -798,6 +813,7 @@ const docTemplate = `{
                     "traces"
                 ],
                 "summary": "Get one trace with spans and links",
+                "operationId": "getTrace",
                 "parameters": [
                     {
                         "type": "string",
@@ -851,6 +867,7 @@ const docTemplate = `{
                     "traces"
                 ],
                 "summary": "Get one span with full payloads",
+                "operationId": "getSpan",
                 "parameters": [
                     {
                         "type": "string",

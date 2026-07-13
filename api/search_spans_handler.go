@@ -40,6 +40,7 @@ type SpanSearchOutput struct {
 // handleSearchSpansEndpoint handles GET /v1/search/spans requests.
 //
 //	@Summary		Semantic search over span embeddings
+//	@ID			searchSpans
 //	@Description	Embeds the query text and runs vector similarity over the embedded span projection (main llm spans, delta-only content). Each hit carries span, trace, and turn context.
 //	@Tags			search
 //	@Produce		json

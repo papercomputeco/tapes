@@ -192,6 +192,7 @@ func decodeSessionsCursor(token string) (sessionsCursor, error) {
 // handleListSessions handles GET /v1/sessions.
 //
 //	@Summary		List sessions
+//	@ID			listSessions
 //	@Description	Returns one row per harness session from the sessions table, cursor-paginated. Default order is last_active (last_seen_at) desc; override with the sort and direction query params.
 //	@Tags			sessions
 //	@Produce		json
@@ -361,6 +362,7 @@ func (s *Server) listSessionsByHarness(c *fiber.Ctx, reader sessionsReader) erro
 // handleGetSession handles GET /v1/sessions/:id.
 //
 //	@Summary		Get a session
+//	@ID			getSession
 //	@Description	Returns a single session record. The conversation content lives on the span model: GET /v1/sessions/{id}/traces.
 //	@Tags			sessions
 //	@Produce		json
@@ -495,6 +497,7 @@ func exportFilename(base string, detail exportDetail) string {
 // console's per-session download.
 //
 //	@Summary		Export a session as JSONL
+//	@ID			exportSession
 //	@Description	Returns the session as a single JSON line (downloadable attachment): the session object with its traces, each trace carrying its full spans — the same shape as GET /v1/sessions/{id}/traces with payload=full. detail=traces exports turn headers only (no spans or links).
 //	@Tags			sessions
 //	@Produce		application/x-ndjson
@@ -578,6 +581,7 @@ const exportSessionsPageLimit = maxSessionsLimit
 // handleListSessions uses.
 //
 //	@Summary		Export sessions in a time window as JSONL
+//	@ID			exportSessions
 //	@Description	Streams one JSON line per session in the given window, newest-first, as a downloadable attachment. Each line is the session object with its traces, each trace carrying its full spans — the same shape as GET /v1/sessions/{id}/traces with payload=full. detail=traces exports turn headers only (no spans or links). Defaults to the trailing 30 days. Not bounded by the /v1/sessions list cap — pages internally.
 //	@Tags			sessions
 //	@Produce		application/x-ndjson
@@ -705,6 +709,7 @@ func (s *Server) handleExportSessions(c *fiber.Ctx) error {
 // handleDeleteSession handles DELETE /v1/sessions/:id.
 //
 //	@Summary		Delete a session
+//	@ID			deleteSession
 //	@Description	Permanently deletes a session and its subtree: subagent child sessions, derived nodes, and spans cascade with it. Org-scoped — any caller in the org may delete any of its sessions. The immutable raw_turns capture log is left intact.
 //	@Tags			sessions
 //	@Param			id	path	string	true	"Session id (UUID)"

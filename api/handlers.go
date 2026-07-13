@@ -5,6 +5,7 @@ import "github.com/gofiber/fiber/v2"
 // handlePing returns a simple health check response.
 //
 //	@Summary		Health check
+//	@ID			ping
 //	@Description	Returns a simple JSON string confirming that the API server is reachable.
 //	@Tags			health
 //	@Produce		json

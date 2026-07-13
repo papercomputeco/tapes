@@ -54,6 +54,7 @@ type StatsResponse struct {
 // handleStats handles GET /v1/stats.
 //
 //	@Summary		Get aggregate session stats
+//	@ID			getStats
 //	@Description	Returns counts plus cost / token / duration / tool-call / completed-count totals for the window. On span-projection backends the numbers are trace-grain rollup sums (delta-only usage, agent time = sum of trace durations) so they agree with the session and trace views; turn_count counts traces and stem_count is omitted. Supplying any legacy per-node filter (project / agent_name / model / provider) forces the legacy node-layer aggregate, whose sums re-bill re-sent history and whose duration is wall-clock MAX-MIN (PCC-514).
 //	@Tags			sessions
 //	@Produce		json
