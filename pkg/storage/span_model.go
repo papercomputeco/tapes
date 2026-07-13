@@ -17,9 +17,12 @@ type SpanTurnRecord struct {
 	UserPrompt string
 	// ResponsePreview is the derive-time fold of the closing spine llm
 	// call's text output — the turn card's answer line.
-	ResponsePreview   string
-	Synthetic         string
-	Status            string
+	ResponsePreview string
+	Synthetic       string
+	Status          string
+	// Source is the capture origin of the turn's raw rows ("wire" |
+	// "transcript"), promoted from raw_turns.source at derive time.
+	Source            string
 	StartedAt         time.Time
 	EndedAt           *time.Time
 	DurationNS        int64

@@ -329,7 +329,7 @@ func (d *Driver) ListSessionSpanModel(ctx context.Context, sessionID string) ([]
 		rec := spanTurnRecordFromColumns(spanTurnColumns{
 			traceID: row.TraceID, userPrompt: row.UserPrompt,
 			responsePreview: row.ResponsePreview,
-			synthetic:       row.Synthetic, status: row.Status,
+			synthetic:       row.Synthetic, status: row.Status, source: row.Source,
 			sessionID: row.SessionID, startedAt: row.StartedAt,
 			endedAt: row.EndedAt, durationNs: row.DurationNs,
 			totalIn: row.TotalInputTokens, totalOut: row.TotalOutputTokens,
@@ -364,7 +364,7 @@ func (d *Driver) ListSessionSpanModel(ctx context.Context, sessionID string) ([]
 // spanTurnRecordFromRow converts a span_turns row to its flat record.
 type spanTurnColumns struct {
 	traceID, userPrompt, responsePreview      string
-	synthetic, status                         string
+	synthetic, status, source                 string
 	sessionID                                 pgtype.UUID
 	startedAt, endedAt                        pgtype.Timestamptz
 	durationNs, totalIn, totalOut             int64
@@ -379,6 +379,7 @@ func spanTurnRecordFromColumns(c spanTurnColumns) storage.SpanTurnRecord {
 		ResponsePreview:     c.responsePreview,
 		Synthetic:           c.synthetic,
 		Status:              c.status,
+		Source:              c.source,
 		StartedAt:           c.startedAt.Time,
 		DurationNS:          c.durationNs,
 		TotalInputTokens:    c.totalIn,
@@ -449,7 +450,7 @@ func (d *Driver) ListTraceSummaries(ctx context.Context, sessionID string) ([]st
 			SpanTurnRecord: spanTurnRecordFromColumns(spanTurnColumns{
 				traceID: row.TraceID, userPrompt: row.UserPrompt,
 				responsePreview: row.ResponsePreview,
-				synthetic:       row.Synthetic, status: row.Status,
+				synthetic:       row.Synthetic, status: row.Status, source: row.Source,
 				sessionID: row.SessionID, startedAt: row.StartedAt,
 				endedAt: row.EndedAt, durationNs: row.DurationNs,
 				totalIn: row.TotalInputTokens, totalOut: row.TotalOutputTokens,
@@ -483,7 +484,7 @@ func (d *Driver) GetTraceDetail(ctx context.Context, orgID, traceID string) (*st
 	turn := spanTurnRecordFromColumns(spanTurnColumns{
 		traceID: row.TraceID, userPrompt: row.UserPrompt,
 		responsePreview: row.ResponsePreview,
-		synthetic:       row.Synthetic, status: row.Status,
+		synthetic:       row.Synthetic, status: row.Status, source: row.Source,
 		sessionID: row.SessionID, startedAt: row.StartedAt,
 		endedAt: row.EndedAt, durationNs: row.DurationNs,
 		totalIn: row.TotalInputTokens, totalOut: row.TotalOutputTokens,

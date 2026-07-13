@@ -168,7 +168,7 @@ WHERE org_id = $1 AND (from_trace_id = $2 OR to_trace_id = $2);
 -- name: ListTraceSummariesBySession :many
 -- Session detail's lazy view: turn headers only, no span payloads.
 SELECT t.org_id, t.trace_id, t.session_id, t.user_prompt, t.response_preview, t.synthetic,
-       t.status, t.started_at, t.ended_at, t.duration_ns,
+       t.status, t.source, t.started_at, t.ended_at, t.duration_ns,
        t.total_input_tokens, t.total_output_tokens,
        t.main_input_tokens, t.main_output_tokens,
        t.cache_read_tokens, t.cache_creation_tokens, t.total_cost_usd,

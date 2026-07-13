@@ -513,7 +513,7 @@ func (q *Queries) ListSpansByTrace(ctx context.Context, arg ListSpansByTracePara
 
 const listTraceSummariesBySession = `-- name: ListTraceSummariesBySession :many
 SELECT t.org_id, t.trace_id, t.session_id, t.user_prompt, t.response_preview, t.synthetic,
-       t.status, t.started_at, t.ended_at, t.duration_ns,
+       t.status, t.source, t.started_at, t.ended_at, t.duration_ns,
        t.total_input_tokens, t.total_output_tokens,
        t.main_input_tokens, t.main_output_tokens,
        t.cache_read_tokens, t.cache_creation_tokens, t.total_cost_usd,
@@ -533,6 +533,7 @@ type ListTraceSummariesBySessionRow struct {
 	ResponsePreview     string
 	Synthetic           string
 	Status              string
+	Source              string
 	StartedAt           pgtype.Timestamptz
 	EndedAt             pgtype.Timestamptz
 	DurationNs          int64
@@ -564,6 +565,7 @@ func (q *Queries) ListTraceSummariesBySession(ctx context.Context, sessionID pgt
 			&i.ResponsePreview,
 			&i.Synthetic,
 			&i.Status,
+			&i.Source,
 			&i.StartedAt,
 			&i.EndedAt,
 			&i.DurationNs,

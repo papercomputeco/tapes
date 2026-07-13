@@ -259,6 +259,7 @@ func recordsFromSpanSet(spanSet *derive.SpanSet, sessionID string) ([]storage.Sp
 			UserPrompt:          turn.UserPrompt,
 			ResponsePreview:     turn.ResponsePreview,
 			Synthetic:           turn.Synthetic,
+			Source:              turn.Source,
 			Status:              "ok",
 			StartedAt:           turn.StartedAt.UTC(),
 			DurationNS:          turn.EndedAt.Sub(turn.StartedAt).Nanoseconds(),

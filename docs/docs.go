@@ -1298,6 +1298,10 @@ const docTemplate = `{
                     "description": "ResponsePreview is the derive-time fold of the closing\nconversation-spine llm call's text output — the answer line for\ncollapsed turn cards, so summary consumers never need spans.",
                     "type": "string"
                 },
+                "source": {
+                    "description": "Source is the capture origin of the turn's rows (\"wire\" |\n\"transcript\"), promoted from raw_turns.source. Per-trace, so a\nsession can mix live wire capture and transcript backfill.",
+                    "type": "string"
+                },
                 "span_count": {
                     "type": "integer"
                 },
