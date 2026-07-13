@@ -145,7 +145,10 @@ func (d *Driver) IngestTurn(ctx context.Context, req storage.IngestTurnRequest) 
 		}
 		rows, err := qtx.InsertNode(ctx, params)
 		if err != nil {
-			return storage.IngestTurnResult{}, fmt.Errorf("insert node %s: %w", node.Hash, err)
+			// Classify content-level rejections (e.g. a JSONB escape Postgres
+			// refuses) as storage.ErrInvalidContent so the derive/worker path
+			// can tell a poison payload from an infra fault.
+			return storage.IngestTurnResult{}, fmt.Errorf("insert node %s: %w", node.Hash, asContentError(err))
 		}
 		if rows == 0 {
 			// Duplicate (org_id, hash): the row already exists from a
@@ -579,10 +582,10 @@ func insertNodeParamsFromMerkle(orgID pgtype.UUID, n *merkle.Node) (gensqlc.Inse
 	return gensqlc.InsertNodeParams{
 		OrgID:                    orgID,
 		Hash:                     n.Hash,
-		Bucket:                   bucketJSON,
+		Bucket:                   sanitizeJSONB(bucketJSON),
 		Type:                     nullStringValue(n.Bucket.Type),
 		Role:                     nullStringValue(n.Bucket.Role),
-		Content:                  contentJSON,
+		Content:                  sanitizeJSONB(contentJSON),
 		Model:                    nullStringValue(n.Bucket.Model),
 		Provider:                 nullStringValue(n.Bucket.Provider),
 		AgentName:                nullStringValue(n.Bucket.AgentName),

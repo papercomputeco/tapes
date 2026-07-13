@@ -83,6 +83,36 @@ var _ = Describe("RawTurnStore", func() {
 		Expect(req).To(HaveKeyWithValue("system", "You are a security monitor."))
 	})
 
+	It("scrubs an escaped NUL so the row lands instead of raising SQLSTATE 22P05", func() {
+		// An escaped NUL (the six bytes: backslash u 0 0 0 0) inside a jsonb
+		// string is exactly what Postgres rejects with 22P05 — the incident's
+		// synchronous-502 trigger. sanitizeJSONB must rewrite it to U+FFFD so
+		// the write succeeds and the turn is still captured.
+		escNUL := []byte{0x5c, 0x75, 0x30, 0x30, 0x30, 0x30}
+		payload := append([]byte(`{"model":"x","messages":[{"role":"user","content":"hi`), escNUL...)
+		payload = append(payload, []byte(`"}]}`)...)
+
+		rec := rawRecord("req-nul")
+		rec.RawRequest = json.RawMessage(payload)
+
+		inserted, err := driver.PutRawTurn(ctx, rec)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(inserted).To(BeTrue())
+
+		rows, err := driver.ListRawTurns(ctx, 0, 10)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rows).To(HaveLen(1))
+
+		var req struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		Expect(json.Unmarshal(rows[0].RawRequest, &req)).To(Succeed())
+		Expect(req.Messages).To(HaveLen(1))
+		Expect(req.Messages[0].Content).To(Equal("hi" + string(rune(0xFFFD))))
+	})
+
 	It("dedupes retried writes by (org, request_id) but appends distinct calls", func() {
 		inserted, err := driver.PutRawTurn(ctx, rawRecord("req-dup"))
 		Expect(err).NotTo(HaveOccurred())

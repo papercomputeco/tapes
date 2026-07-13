@@ -387,6 +387,14 @@ type transcriptMeta struct {
 	Records     int    `json:"records"`
 }
 
+// transcriptWriteProvider labels transcript-sourced writes on the shared
+// tapes_ingest_writes_total counter. The counter's "provider" dimension is
+// a wire-capture notion; a transcript has no LLM provider, so it carries
+// this sentinel instead of falling into the "unknown" bucket it would
+// otherwise share with malformed wire turns. Dashboards select
+// provider="transcript" to see this path's health in isolation.
+const transcriptWriteProvider = "transcript"
+
 // handleTranscriptIngest appends one transcript file to the raw layer.
 // Idempotent per content version: the dedup key includes a content
 // hash, so re-uploading an unchanged file is a no-op while a grown
@@ -400,26 +408,31 @@ func (s *Server) handleTranscriptIngest(c *fiber.Ctx) error {
 		})
 	}
 
+	bodySize := len(c.Body())
+
 	var payload TranscriptPayload
 	if err := c.BodyParser(&payload); err != nil {
-		s.metrics.ObserveWrite("", ResultRejectEnv, len(c.Body()))
+		s.metrics.ObserveWrite(transcriptWriteProvider, ResultRejectEnv, bodySize)
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{
 			Error: fmt.Sprintf("%s: %s", ErrEnvelope, err),
 		})
 	}
 	resolveGatewayIdentity(c, payload.Session)
 	if err := payload.Session.Validate(); err != nil {
+		s.metrics.ObserveWrite(transcriptWriteProvider, ResultRejectEnv, bodySize)
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{
 			Error: fmt.Sprintf("%s: %s", ErrEnvelope, err),
 		})
 	}
 	if payload.Session == nil || payload.Session.HarnessSessionID == "" {
+		s.metrics.ObserveWrite(transcriptWriteProvider, ResultRejectEnv, bodySize)
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{
 			Error: fmt.Sprintf("%s: transcript ingest requires session.harness_session_id", ErrEnvelope),
 		})
 	}
 	var records []json.RawMessage
 	if err := json.Unmarshal(payload.Records, &records); err != nil {
+		s.metrics.ObserveWrite(transcriptWriteProvider, ResultRejectEnv, bodySize)
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{
 			Error: fmt.Sprintf("%s: records must be a JSON array: %s", ErrEnvelope, err),
 		})
@@ -442,10 +455,12 @@ func (s *Server) handleTranscriptIngest(c *fiber.Ctx) error {
 		Records:     len(records),
 	})
 	if err != nil {
+		s.metrics.ObserveWrite(transcriptWriteProvider, ResultInternalErr, bodySize)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: err.Error()})
 	}
 	sessionJSON, err := json.Marshal(payload.Session)
 	if err != nil {
+		s.metrics.ObserveWrite(transcriptWriteProvider, ResultInternalErr, bodySize)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: err.Error()})
 	}
 
@@ -460,11 +475,24 @@ func (s *Server) handleTranscriptIngest(c *fiber.Ctx) error {
 		SessionEnvelope:  sessionJSON,
 	})
 	if err != nil {
+		// A content-level rejection (invalid Unicode/bytes Postgres JSONB
+		// refuses) is the client's malformed payload, not a storage outage:
+		// return 422 so it stops reading as a gateway fault, and retrying the
+		// identical bytes will never succeed. Everything else stays a 502.
+		if errors.Is(err, storage.ErrInvalidContent) {
+			s.logger.Warn("transcript ingest rejected: unstorable content", "error", err)
+			s.metrics.ObserveWrite(transcriptWriteProvider, ResultRejectParse, bodySize)
+			return c.Status(fiber.StatusUnprocessableEntity).JSON(llm.ErrorResponse{
+				Error: fmt.Sprintf("%s: %v", ErrUnprocessable, err),
+			})
+		}
 		s.logger.Error("transcript ingest failed", "error", err)
+		s.metrics.ObserveWrite(transcriptWriteProvider, ResultDownstreamErr, bodySize)
 		return c.Status(fiber.StatusBadGateway).JSON(llm.ErrorResponse{
 			Error: fmt.Sprintf("%s: %v", ErrDownstream, err),
 		})
 	}
+	s.metrics.ObserveWrite(transcriptWriteProvider, ResultAccepted, bodySize)
 	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
 		"status":   "accepted",
 		"deduped":  !inserted,
