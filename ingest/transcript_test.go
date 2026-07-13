@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"sync"
@@ -28,6 +31,10 @@ type rawStoreDriver struct {
 
 	mu      sync.Mutex
 	records []storage.RawTurnRecord
+
+	// putErr, when non-nil, is returned by PutRawTurn instead of appending —
+	// lets a test drive the handler's error-classification branches.
+	putErr error
 }
 
 func newRawStoreDriver() *rawStoreDriver {
@@ -37,6 +44,9 @@ func newRawStoreDriver() *rawStoreDriver {
 func (d *rawStoreDriver) PutRawTurn(_ context.Context, rec storage.RawTurnRecord) (bool, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.putErr != nil {
+		return false, d.putErr
+	}
 	if rec.RequestID != "" {
 		for _, existing := range d.records {
 			if existing.OrgID == rec.OrgID && existing.RequestID == rec.RequestID {
@@ -243,6 +253,42 @@ var _ = Describe("POST /v1/ingest/transcript", func() {
 		count, err := driver.CountRawTurns(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(count).To(Equal(int64(2)))
+	})
+
+	scrapeMetrics := func() string {
+		resp, err := client.Get(baseURL + "/metrics")
+		Expect(err).NotTo(HaveOccurred())
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		Expect(err).NotTo(HaveOccurred())
+		return string(body)
+	}
+
+	It("meters an accepted transcript on writes_total{provider=transcript}", func() {
+		resp := post(transcriptBody(payloadOrg, ""), nil)
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
+		Expect(scrapeMetrics()).To(ContainSubstring(`tapes_ingest_writes_total{provider="transcript",status="accepted"}`))
+	})
+
+	It("returns 422 (not 502) and meters reject_parse when content is unstorable", func() {
+		// A content-level rejection is the client's malformed payload: the
+		// handler must classify it as unprocessable, not a downstream fault.
+		driver.putErr = fmt.Errorf("insert raw turn: %w", storage.ErrInvalidContent)
+
+		resp := post(transcriptBody(payloadOrg, ""), nil)
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(http.StatusUnprocessableEntity))
+		Expect(scrapeMetrics()).To(ContainSubstring(`tapes_ingest_writes_total{provider="transcript",status="reject_parse"}`))
+	})
+
+	It("returns 502 and meters downstream_error on a genuine storage fault", func() {
+		driver.putErr = errors.New("connection refused")
+
+		resp := post(transcriptBody(payloadOrg, ""), nil)
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(http.StatusBadGateway))
+		Expect(scrapeMetrics()).To(ContainSubstring(`tapes_ingest_writes_total{provider="transcript",status="downstream_error"}`))
 	})
 
 	It("returns 501 when the driver has no raw layer", func() {

@@ -46,6 +46,10 @@ func (d *Driver) PutRawTurn(ctx context.Context, rec storage.RawTurnRecord) (boo
 	defer tx.Rollback(ctx) //nolint:errcheck // commit shadows on success
 	qtx := d.q.WithTx(tx)
 
+	// Scrub the JSONB payloads of escapes/bytes Postgres cannot store
+	// (SQLSTATE 22P05 / 22021). A clean payload passes through byte-identical,
+	// so the raw layer stays verbatim for everything but the offending
+	// sequences — which could not be stored faithfully anyway.
 	rows, err := qtx.InsertRawTurn(ctx, gensqlc.InsertRawTurnParams{
 		OrgID:            orgID,
 		Source:           source,
@@ -54,13 +58,16 @@ func (d *Driver) PutRawTurn(ctx context.Context, rec storage.RawTurnRecord) (boo
 		HarnessID:        rec.HarnessID,
 		HarnessSessionID: rec.HarnessSessionID,
 		RequestID:        rec.RequestID,
-		RawRequest:       rec.RawRequest,
-		Response:         rec.Response,
-		Meta:             metaOrEmptyObject(rec.Meta),
-		SessionEnvelope:  rec.SessionEnvelope,
+		RawRequest:       sanitizeJSONB(rec.RawRequest),
+		Response:         sanitizeJSONB(rec.Response),
+		Meta:             sanitizeJSONB(metaOrEmptyObject(rec.Meta)),
+		SessionEnvelope:  sanitizeJSONB(rec.SessionEnvelope),
 	})
 	if err != nil {
-		return false, fmt.Errorf("insert raw turn: %w", err)
+		// Classify so a content-level rejection that slips past the scrubber
+		// surfaces as storage.ErrInvalidContent (→ 4xx) rather than a generic
+		// downstream fault (→ 502).
+		return false, fmt.Errorf("insert raw turn: %w", asContentError(err))
 	}
 
 	if rec.HarnessSessionID != "" {
