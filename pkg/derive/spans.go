@@ -1038,7 +1038,20 @@ func promptText(node *merkle.Node) string {
 	return text
 }
 
-const systemReminderMarker = "<system-reminder>"
+// leadsWithHarnessTag reports whether a text block opens with a known
+// harness-insert tag (<system-reminder>, <local-command-caveat>, the slash
+// command wrappers, …). Such a block is harness scaffolding, not the human's
+// prompt, so the preview fold skips it — otherwise a turn opened by a slash
+// command previews the caveat text instead of what the user typed.
+func leadsWithHarnessTag(text string) bool {
+	t := strings.TrimSpace(text)
+	for _, tag := range merkle.HarnessTags {
+		if strings.HasPrefix(t, "<"+tag+">") {
+			return true
+		}
+	}
+	return false
+}
 
 func joinTextBlocks(blocks []llm.ContentBlock, includeInjected bool) string {
 	var sb strings.Builder
@@ -1046,7 +1059,7 @@ func joinTextBlocks(blocks []llm.ContentBlock, includeInjected bool) string {
 		if b.Type != blockText || b.Text == "" {
 			continue
 		}
-		if !includeInjected && strings.HasPrefix(strings.TrimSpace(b.Text), systemReminderMarker) {
+		if !includeInjected && leadsWithHarnessTag(b.Text) {
 			continue
 		}
 		if sb.Len() > 0 {
