@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -160,6 +161,53 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 		all, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{Limit: 10})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(all).To(HaveLen(2))
+	})
+
+	It("windows the list on turns started in the window, matching /v1/stats", func() {
+		// The since/until window is an EXISTS over span_turns started in
+		// range — the same predicate AggregateSpanStats matches — so the
+		// list row set equals the stat strip's session set for a window.
+		// Bare ingest writes no span_turns, so the window is driven entirely
+		// by these planted turn rows.
+		orgID := newTestOrgID()
+		plantTurn := func(sessionID, traceID string, startedAt time.Time) {
+			_, err := pgDriver.DB().Exec(ctx, `
+				INSERT INTO span_turns_20260615 (org_id, trace_id, session_id, started_at)
+				VALUES ($1::uuid, $2, $3::uuid, $4::timestamptz)`,
+				orgID, traceID, sessionID, startedAt)
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		now := time.Now().UTC()
+		recent := seedSession(orgID, "claude", "sess-recent", "recent turn")
+		plantTurn(recent, "trace-recent", now.Add(-1*time.Hour)) // inside a 24h window
+		old := seedSession(orgID, "claude", "sess-old", "old turn")
+		plantTurn(old, "trace-old", now.Add(-48*time.Hour)) // before a 24h window
+		// Ingested but never derived: no span_turn, so out of every window
+		// even though the session row exists.
+		undived := seedSession(orgID, "claude", "sess-undived", "no derived turn")
+
+		// Unwindowed: every session in the org, derived or not.
+		all, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{Limit: 10})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(idsOf(all)).To(ConsistOf(recent, old, undived))
+
+		// Windowed to the last 24h: only the session whose turn started in
+		// the window; the older-turn and never-derived sessions drop out.
+		since := now.Add(-24 * time.Hour)
+		windowed, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{Limit: 10, Since: &since})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(idsOf(windowed)).To(ConsistOf(recent))
+
+		// The exclusive upper bound drops a turn that starts exactly at
+		// `until` and keeps only the strictly-earlier one.
+		until := now.Add(-30 * time.Minute)
+		earlier := now.Add(-90 * time.Minute)
+		bounded, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{
+			Limit: 10, Since: &earlier, Until: &until,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(idsOf(bounded)).To(ConsistOf(recent)) // trace-recent at -1h is in [-90m, -30m)
 	})
 
 	It("does not match case-folded, trimmed, or prefix variants of the harness ids", func() {

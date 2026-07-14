@@ -231,8 +231,8 @@ func decodeSessionsCursor(token string) (sessionsCursor, error) {
 //	@Param			cursor				query		string	false	"Opaque pagination cursor returned by a previous response"
 //	@Param			sort				query		string	false	"Sort column: last_active|started_at|turn_count|total_cost_usd|total_tokens|duration_ns|derived_status|auth_subject (default last_active)"
 //	@Param			direction			query		string	false	"Sort direction: asc|desc (default desc)"
-//	@Param			since				query		string	false	"Only include sessions active (last_seen_at) at or after this RFC3339 timestamp"	format(date-time)
-//	@Param			until				query		string	false	"Only include sessions active (last_seen_at) before this RFC3339 timestamp"			format(date-time)
+//	@Param			since				query		string	false	"Only include sessions with a turn started at or after this RFC3339 timestamp (activity window, matches /v1/stats)"	format(date-time)
+//	@Param			until				query		string	false	"Only include sessions with a turn started before this RFC3339 timestamp (activity window, matches /v1/stats)"			format(date-time)
 //	@Param			harness_id			query		string	false	"Filter to the single session with this harness id (exact match; requires harness_session_id, incompatible with cursor; limit is ignored when the filter is active)"
 //	@Param			harness_session_id	query		string	false	"Filter to the single session with this harness session id (exact match; requires harness_id, incompatible with cursor; limit is ignored when the filter is active)"
 //	@Param			auth_subject		query		string	false	"Filter the paged list to sessions captured for this gateway-stamped JWT subject (exact match; ignored on the harness filter path)"
@@ -611,8 +611,8 @@ const exportSessionsPageLimit = maxSessionsLimit
 //	@Description	Streams one JSON line per session in the given window, newest-first, as a downloadable attachment. Each line is the session object with its traces, each trace carrying its full spans — the same shape as GET /v1/sessions/{id}/traces with payload=full. detail=traces exports turn headers only (no spans or links). Defaults to the trailing 30 days. Not bounded by the /v1/sessions list cap — pages internally.
 //	@Tags			sessions
 //	@Produce		application/x-ndjson
-//	@Param			since	query	string	false	"Only include sessions active (last_seen_at) at or after this RFC3339 timestamp (default: now - 30 days)"	format(date-time)
-//	@Param			until	query	string	false	"Only include sessions active (last_seen_at) before this RFC3339 timestamp"								format(date-time)
+//	@Param			since	query	string	false	"Only include sessions with a turn started at or after this RFC3339 timestamp (activity window; default: now - 30 days)"	format(date-time)
+//	@Param			until	query	string	false	"Only include sessions with a turn started before this RFC3339 timestamp (activity window)"								format(date-time)
 //	@Param			detail	query	string	false	"Export granularity: spans (default, traces with full spans) or traces (turn headers only)"				Enums(spans, traces)
 //	@Success		200		{string}	string	"JSONL body, one JSON object per session with nested traces (and spans at detail=spans)"
 //	@Failure		400		{object}	llm.ErrorResponse	"Malformed since/until, or unrecognized detail"

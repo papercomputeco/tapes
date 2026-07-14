@@ -274,14 +274,14 @@ const docTemplate = `{
                     {
                         "type": "string",
                         "format": "date-time",
-                        "description": "Only include sessions active (last_seen_at) at or after this RFC3339 timestamp",
+                        "description": "Only include sessions with a turn started at or after this RFC3339 timestamp (activity window, matches /v1/stats)",
                         "name": "since",
                         "in": "query"
                     },
                     {
                         "type": "string",
                         "format": "date-time",
-                        "description": "Only include sessions active (last_seen_at) before this RFC3339 timestamp",
+                        "description": "Only include sessions with a turn started before this RFC3339 timestamp (activity window, matches /v1/stats)",
                         "name": "until",
                         "in": "query"
                     },
@@ -346,14 +346,14 @@ const docTemplate = `{
                     {
                         "type": "string",
                         "format": "date-time",
-                        "description": "Only include sessions active (last_seen_at) at or after this RFC3339 timestamp (default: now - 30 days)",
+                        "description": "Only include sessions with a turn started at or after this RFC3339 timestamp (activity window; default: now - 30 days)",
                         "name": "since",
                         "in": "query"
                     },
                     {
                         "type": "string",
                         "format": "date-time",
-                        "description": "Only include sessions active (last_seen_at) before this RFC3339 timestamp",
+                        "description": "Only include sessions with a turn started before this RFC3339 timestamp (activity window)",
                         "name": "until",
                         "in": "query"
                     },

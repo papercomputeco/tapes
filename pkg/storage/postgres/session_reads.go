@@ -19,8 +19,9 @@ import (
 
 // ListSessionRecords returns a page of sessions for an org ordered by the
 // requested sort column (default last_seen_at DESC), optionally windowed by
-// activity (last_seen_at) and narrowed to one gateway-stamped JWT subject
-// (exact match on the indexed column; empty lists every user's sessions).
+// activity (a turn started in the window, matching /v1/stats) and narrowed to
+// one gateway-stamped JWT subject (exact match on the indexed column; empty
+// lists every user's sessions).
 // Pass zero-value opts to start from the beginning, unwindowed and unfiltered.
 func (d *Driver) ListSessionRecords(
 	ctx context.Context,
@@ -78,13 +79,24 @@ func (d *Driver) ListSessionRecords(
 	named := pgx.NamedArgs{"org_id": oid, "lim": int32(limit)} //nolint:gosec // limit bounded by the API handler
 	where := []string{"org_id = @org_id"}
 
-	if opts.Since != nil {
-		named["since"] = *opts.Since
-		where = append(where, "last_seen_at >= @since::timestamptz")
-	}
-	if opts.Until != nil {
-		named["until"] = *opts.Until
-		where = append(where, "last_seen_at < @until::timestamptz")
+	// Window on activity: a session is in-window when it has a turn (trace)
+	// started in [since, until) — the same predicate AggregateSpanStats
+	// matches, so the list row set equals the /v1/stats session_count for
+	// the same window. Windowing on last_seen_at instead would keep a long
+	// session last touched in the window even when no new turn started
+	// there, inflating the list past the stat strip.
+	if opts.Since != nil || opts.Until != nil {
+		conds := []string{"t.session_id = sessions.id", "t.org_id = @org_id"}
+		if opts.Since != nil {
+			named["since"] = *opts.Since
+			conds = append(conds, "t.started_at >= @since::timestamptz")
+		}
+		if opts.Until != nil {
+			named["until"] = *opts.Until
+			conds = append(conds, "t.started_at < @until::timestamptz")
+		}
+		where = append(where,
+			"EXISTS (SELECT 1 FROM span_turns_20260615 t WHERE "+strings.Join(conds, " AND ")+")")
 	}
 	if opts.AuthSubject != "" {
 		named["auth_subject"] = opts.AuthSubject

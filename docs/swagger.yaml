@@ -641,14 +641,14 @@ paths:
         in: query
         name: direction
         type: string
-      - description: Only include sessions active (last_seen_at) at or after this
-          RFC3339 timestamp
+      - description: Only include sessions with a turn started at or after this RFC3339
+          timestamp (activity window, matches /v1/stats)
         format: date-time
         in: query
         name: since
         type: string
-      - description: Only include sessions active (last_seen_at) before this RFC3339
-          timestamp
+      - description: Only include sessions with a turn started before this RFC3339
+          timestamp (activity window, matches /v1/stats)
         format: date-time
         in: query
         name: until
@@ -897,14 +897,14 @@ paths:
         Defaults to the trailing 30 days. Not bounded by the /v1/sessions list cap
         — pages internally.
       parameters:
-      - description: 'Only include sessions active (last_seen_at) at or after this
-          RFC3339 timestamp (default: now - 30 days)'
+      - description: 'Only include sessions with a turn started at or after this RFC3339
+          timestamp (activity window; default: now - 30 days)'
         format: date-time
         in: query
         name: since
         type: string
-      - description: Only include sessions active (last_seen_at) before this RFC3339
-          timestamp
+      - description: Only include sessions with a turn started before this RFC3339
+          timestamp (activity window)
         format: date-time
         in: query
         name: until
