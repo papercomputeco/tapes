@@ -106,28 +106,43 @@ func normalizeAPITarget(apiTarget string) string {
 	return strings.TrimRight(target, "/")
 }
 
-// wireTrace mirrors api.TraceItem.
+// wireTrace mirrors api.TraceItem. Token totals live under `usage`; the
+// conversation-spine slice under `main_usage`. Synthetic is a typed
+// deriver field (was carried in the old metadata grab-bag).
 type wireTrace struct {
-	TraceID           string         `json:"trace_id"`
-	UserPrompt        string         `json:"user_prompt"`
-	ResponsePreview   string         `json:"response_preview"`
-	StartedAt         time.Time      `json:"started_at"`
-	TotalInputTokens  int64          `json:"total_input_tokens"`
-	TotalOutputTokens int64          `json:"total_output_tokens"`
-	MainInputTokens   int64          `json:"main_input_tokens"`
-	MainOutputTokens  int64          `json:"main_output_tokens"`
-	Metadata          map[string]any `json:"metadata"`
+	TraceID         string         `json:"trace_id"`
+	UserPrompt      string         `json:"user_prompt"`
+	ResponsePreview string         `json:"response_preview"`
+	Synthetic       string         `json:"synthetic"`
+	StartedAt       time.Time      `json:"started_at"`
+	Usage           wireTraceUsage `json:"usage"`
+	MainUsage       wireMainUsage  `json:"main_usage"`
 }
 
-// wireSpan mirrors the subset of api.SpanItem the builder consumes.
+// wireTraceUsage / wireMainUsage mirror api.TraceUsage / api.MainUsage —
+// the subset (input/output tokens) the transcript builder surfaces.
+type wireTraceUsage struct {
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
+}
+
+type wireMainUsage struct {
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
+}
+
+// wireSpan mirrors the subset of api.SpanItem the builder consumes. The
+// harness taxonomy (call_kind, thread_id) is typed rather than bagged in a
+// metadata map, and output is a content-block array uniform for every kind.
 type wireSpan struct {
-	SpanID       string                     `json:"span_id"`
-	ParentSpanID string                     `json:"parent_span_id"`
-	Kind         string                     `json:"kind"`
-	Name         string                     `json:"name"`
-	Seq          int64                      `json:"seq"`
-	Metadata     map[string]any             `json:"metadata"`
-	Output       map[string]json.RawMessage `json:"output"`
+	SpanID       string          `json:"span_id"`
+	ParentSpanID string          `json:"parent_span_id"`
+	Kind         string          `json:"kind"`
+	Name         string          `json:"name"`
+	Seq          int64           `json:"seq"`
+	CallKind     string          `json:"call_kind"`
+	ThreadID     string          `json:"thread_id"`
+	Output       json.RawMessage `json:"output"`
 }
 
 // wireTraceList mirrors api.TraceListResponse.
@@ -162,12 +177,12 @@ func (c *APIClient) TraceSummaries(ctx context.Context, sessionID string) ([]Tra
 			TraceID:           item.TraceID,
 			UserPrompt:        item.UserPrompt,
 			ResponsePreview:   item.ResponsePreview,
-			Synthetic:         metadataString(item.Metadata, "synthetic"),
+			Synthetic:         item.Synthetic,
 			StartedAt:         item.StartedAt,
-			TotalInputTokens:  item.TotalInputTokens,
-			TotalOutputTokens: item.TotalOutputTokens,
-			MainInputTokens:   item.MainInputTokens,
-			MainOutputTokens:  item.MainOutputTokens,
+			TotalInputTokens:  item.Usage.InputTokens,
+			TotalOutputTokens: item.Usage.OutputTokens,
+			MainInputTokens:   item.MainUsage.InputTokens,
+			MainOutputTokens:  item.MainUsage.OutputTokens,
 		})
 	}
 	return out, nil
@@ -185,16 +200,22 @@ type SessionInfo struct {
 	Preview       string
 }
 
-// wireSessionList mirrors the subset of api.SessionListResponse we read.
+// wireSessionList mirrors the subset of api.SessionListResponse we read:
+// capture identity at the top level, the deriver rollup (status, model,
+// preview, spend) nested under `rollup`.
 type wireSessionList struct {
 	Items []struct {
-		ID            string    `json:"id"`
-		StartedAt     time.Time `json:"started_at"`
-		TurnCount     int       `json:"turn_count"`
-		TotalCostUsd  float64   `json:"total_cost_usd"`
-		Model         string    `json:"model"`
-		DerivedStatus string    `json:"derived_status"`
-		Preview       string    `json:"preview"`
+		ID        string    `json:"id"`
+		StartedAt time.Time `json:"started_at"`
+		Rollup    struct {
+			TurnCount int    `json:"turn_count"`
+			Model     string `json:"model"`
+			Status    string `json:"status"`
+			Preview   string `json:"preview"`
+			Usage     struct {
+				CostUSD float64 `json:"cost_usd"`
+			} `json:"usage"`
+		} `json:"rollup"`
 	} `json:"items"`
 }
 
@@ -218,11 +239,11 @@ func (c *APIClient) Sessions(ctx context.Context) ([]SessionInfo, error) {
 		out = append(out, SessionInfo{
 			ID:            item.ID,
 			StartedAt:     item.StartedAt,
-			TurnCount:     item.TurnCount,
-			TotalCostUSD:  item.TotalCostUsd,
-			Model:         item.Model,
-			DerivedStatus: item.DerivedStatus,
-			Preview:       item.Preview,
+			TurnCount:     item.Rollup.TurnCount,
+			TotalCostUSD:  item.Rollup.Usage.CostUSD,
+			Model:         item.Rollup.Model,
+			DerivedStatus: item.Rollup.Status,
+			Preview:       item.Rollup.Preview,
 		})
 	}
 	return out, nil
@@ -261,13 +282,13 @@ func (c *APIClient) Trace(ctx context.Context, traceID string) (*Trace, error) {
 			Kind:         sp.Kind,
 			Name:         sp.Name,
 			Seq:          sp.Seq,
-			CallKind:     metadataString(sp.Metadata, "call_kind"),
-			ThreadID:     metadataString(sp.Metadata, "thread_id"),
+			CallKind:     sp.CallKind,
+			ThreadID:     sp.ThreadID,
 		}
-		if raw, ok := sp.Output["content"]; ok && len(raw) > 0 {
-			// Tool spans carry a plain string here; llm/event spans a
-			// content-block array. A failed decode just means no text.
-			_ = json.Unmarshal(raw, &span.Output)
+		if len(sp.Output) > 0 {
+			// Output is a content-block array for every kind (tool spans
+			// included). A failed decode just means no text.
+			_ = json.Unmarshal(sp.Output, &span.Output)
 		}
 		trace.Spans = append(trace.Spans, span)
 	}
@@ -295,14 +316,4 @@ func (c *APIClient) getJSON(ctx context.Context, rawURL string, out any) error {
 		return fmt.Errorf("decoding response: %w", err)
 	}
 	return nil
-}
-
-func metadataString(meta map[string]any, key string) string {
-	if meta == nil {
-		return ""
-	}
-	if v, ok := meta[key].(string); ok {
-		return v
-	}
-	return ""
 }

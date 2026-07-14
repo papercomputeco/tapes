@@ -9,48 +9,55 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/papercomputeco/tapes/api"
+	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
-var _ = Describe("HTTPQuery", func() {
+// These specs feed the deck HTTP client the EXACT wire the API server
+// emits: fixtures are built from the real api response types and renderers
+// (api.SessionItem / api.BuildTraceList / api.BuildTraceDetail), then
+// marshaled and served. If a wire field the deck reads moves or is renamed
+// on the server side, the decoded DTO zeroes out and these assertions fail
+// — which is the point. Self-encoded deck-shaped literals could not catch a
+// server/client wire drift.
+var _ = Describe("HTTPQuery against real API-renderer fixtures", func() {
 	started := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
 
-	Describe("NewHTTPQuery", func() {
-		It("assumes http when the api target omits a scheme", func() {
-			q := NewHTTPQuery("localhost:8081", nil)
-			Expect(q.apiTarget).To(Equal("http://localhost:8081"))
-		})
+	// apiSession builds one api.SessionItem with a populated deriver rollup.
+	apiSession := func(id, title, model, status string, in, out int64, cost float64, turns int) api.SessionItem {
+		return api.SessionItem{
+			ID:         id,
+			HarnessID:  "claude-code",
+			StartedAt:  started,
+			LastSeenAt: started.Add(time.Hour),
+			Rollup: api.SessionRollup{
+				Status:     status,
+				Title:      title,
+				Model:      model,
+				TurnCount:  turns,
+				KindCounts: map[string]int{},
+				Tasks:      []api.TreeTask{},
+				Usage:      api.SessionUsage{InputTokens: in, OutputTokens: out, CostUSD: cost},
+			},
+		}
+	}
 
-		It("preserves explicit schemes", func() {
-			q := NewHTTPQuery("https://example.com/api/", nil)
-			Expect(q.apiTarget).To(Equal("https://example.com/api"))
-		})
-	})
+	mustJSON := func(w http.ResponseWriter, v any) {
+		Expect(json.NewEncoder(w).Encode(v)).To(Succeed())
+	}
 
 	Describe("Overview", func() {
-		It("fetches a single bounded page of sessions and rolls it up", func() {
+		It("rolls up a page of sessions from the rollup/usage wire", func() {
 			var limits, cursors []string
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				Expect(r.URL.Path).To(Equal("/v1/sessions"))
 				limits = append(limits, r.URL.Query().Get("limit"))
 				cursors = append(cursors, r.URL.Query().Get("cursor"))
-				Expect(json.NewEncoder(w).Encode(httpSessionListResponse{
-					Items: []httpSessionItem{
-						{
-							ID: "s1", Name: "one", Model: "m1",
-							StartedAt: started, LastSeenAt: started.Add(time.Minute),
-							TotalInputTokens: 100, TotalOutputTokens: 50,
-							TotalCostUsd: 0.30, TurnCount: 4,
-							DerivedStatus: StatusCompleted,
-						},
-						{
-							ID: "s2", Name: "two", Model: "m2",
-							StartedAt: started, LastSeenAt: started.Add(2 * time.Minute),
-							TotalInputTokens: 10, TotalOutputTokens: 5,
-							TotalCostUsd: 0.10, TurnCount: 1,
-							DerivedStatus: StatusFailed,
-						},
-					},
-				})).To(Succeed())
+				mustJSON(w, api.SessionListResponse{Items: []api.SessionItem{
+					apiSession("s1", "one", "m1", StatusCompleted, 100, 50, 0.30, 4),
+					apiSession("s2", "two", "m2", StatusFailed, 10, 5, 0.10, 1),
+				}})
 			}))
 			defer srv.Close()
 
@@ -61,6 +68,8 @@ var _ = Describe("HTTPQuery", func() {
 			Expect(cursors).To(Equal([]string{""}))
 
 			Expect(overview.Sessions).To(HaveLen(2))
+			// Non-zero rollup values prove the nested wire decoded — the
+			// regression symptom was zeros/blanks here.
 			Expect(overview.TotalCost).To(BeNumerically("~", 0.40, 1e-9))
 			Expect(overview.TotalTokens).To(Equal(int64(165)))
 			Expect(overview.TotalTurns).To(Equal(5))
@@ -69,17 +78,16 @@ var _ = Describe("HTTPQuery", func() {
 			Expect(overview.SuccessRate).To(BeNumerically("~", 0.5, 1e-9))
 			Expect(overview.CostByModel).To(HaveKey("m1"))
 			Expect(overview.CostByModel["m1"].SessionCount).To(Equal(1))
+			Expect(overview.Sessions[0].Label).To(Equal("one"))
 		})
 
 		It("applies model and status filters client-side", func() {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				Expect(json.NewEncoder(w).Encode(httpSessionListResponse{
-					Items: []httpSessionItem{
-						{ID: "s1", Model: "m1", DerivedStatus: StatusCompleted, StartedAt: started, LastSeenAt: started},
-						{ID: "s2", Model: "m2", DerivedStatus: StatusCompleted, StartedAt: started, LastSeenAt: started},
-						{ID: "s3", Model: "m1", DerivedStatus: StatusFailed, StartedAt: started, LastSeenAt: started},
-					},
-				})).To(Succeed())
+				mustJSON(w, api.SessionListResponse{Items: []api.SessionItem{
+					apiSession("s1", "", "m1", StatusCompleted, 0, 0, 0, 0),
+					apiSession("s2", "", "m2", StatusCompleted, 0, 0, 0, 0),
+					apiSession("s3", "", "m1", StatusFailed, 0, 0, 0, 0),
+				}})
 			}))
 			defer srv.Close()
 
@@ -98,10 +106,10 @@ var _ = Describe("HTTPQuery", func() {
 				Expect(r.URL.Path).To(Equal("/v1/sessions"))
 				seenLimit = r.URL.Query().Get("limit")
 				seenCursor = r.URL.Query().Get("cursor")
-				Expect(json.NewEncoder(w).Encode(httpSessionListResponse{
-					Items:      []httpSessionItem{{ID: "s1", Name: "one"}},
+				mustJSON(w, api.SessionListResponse{
+					Items:      []api.SessionItem{apiSession("s1", "one", "", "", 0, 0, 0, 0)},
 					NextCursor: "cursor-2",
-				})).To(Succeed())
+				})
 			}))
 			defer srv.Close()
 
@@ -117,47 +125,34 @@ var _ = Describe("HTTPQuery", func() {
 	})
 
 	Describe("SessionDetail", func() {
+		traceSummary := func(id, prompt, preview string, dur time.Duration, in, out int64, cost float64, spans int, at time.Time) storage.TraceSummaryRecord {
+			return storage.TraceSummaryRecord{
+				SpanTurnRecord: storage.SpanTurnRecord{
+					TraceID: id, UserPrompt: prompt, ResponsePreview: preview,
+					Status: "completed", Source: "wire", StartedAt: at, DurationNS: int64(dur),
+					TotalInputTokens: in, TotalOutputTokens: out, TotalCostUSD: cost,
+				},
+				SpanCount: spans,
+			}
+		}
+
 		newServer := func() *httptest.Server {
 			return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/v1/sessions":
-					Expect(json.NewEncoder(w).Encode(httpSessionListResponse{
-						Items: []httpSessionItem{{
-							ID: "sess-1", Name: "the session", Model: "claude-opus-4.6",
-							StartedAt: started, LastSeenAt: started.Add(time.Hour),
-							DerivedStatus: StatusCompleted, TurnCount: 2,
-						}},
-					})).To(Succeed())
+					mustJSON(w, api.SessionListResponse{Items: []api.SessionItem{
+						apiSession("sess-1", "the session", "claude-opus-4.6", StatusCompleted, 0, 0, 0, 2),
+					}})
 				case "/v1/sessions/sess-1":
-					Expect(json.NewEncoder(w).Encode(httpSessionDetailResponse{
-						Session: httpSessionItem{
-							ID: "sess-1", Name: "the session", Model: "claude-opus-4.6",
-							StartedAt: started, LastSeenAt: started.Add(time.Hour),
-							DerivedStatus: StatusCompleted, TurnCount: 2,
-						},
-					})).To(Succeed())
+					mustJSON(w, api.SessionDetailResponse{
+						Session: apiSession("sess-1", "the session", "claude-opus-4.6", StatusCompleted, 0, 0, 0, 2),
+					})
 				case "/v1/traces":
 					Expect(r.URL.Query().Get("session_id")).To(Equal("sess-1"))
-					Expect(json.NewEncoder(w).Encode(httpTraceListResponse{
-						Items: []httpTraceItem{
-							{
-								TraceID: "trace-1", SessionID: "sess-1",
-								UserPrompt: "first prompt", ResponsePreview: "first answer",
-								Status: "completed", StartedAt: started,
-								DurationNS:       int64(20 * time.Second),
-								TotalInputTokens: 100, TotalOutputTokens: 40,
-								TotalCostUSD: 0.05, SpanCount: 7,
-							},
-							{
-								TraceID: "trace-2", SessionID: "sess-1",
-								UserPrompt: "second prompt", ResponsePreview: "second answer",
-								Status: "completed", StartedAt: started.Add(time.Minute),
-								DurationNS:       int64(5 * time.Second),
-								TotalInputTokens: 50, TotalOutputTokens: 10,
-								TotalCostUSD: 0.01, SpanCount: 3,
-							},
-						},
-					})).To(Succeed())
+					mustJSON(w, api.BuildTraceList([]storage.TraceSummaryRecord{
+						traceSummary("trace-1", "first prompt", "first answer", 20*time.Second, 100, 40, 0.05, 7, started),
+						traceSummary("trace-2", "second prompt", "second answer", 5*time.Second, 50, 10, 0.01, 3, started.Add(time.Minute)),
+					}))
 				default:
 					http.NotFound(w, r)
 				}
@@ -180,11 +175,13 @@ var _ = Describe("HTTPQuery", func() {
 			Expect(detail.Turns[0].UserPrompt).To(Equal("first prompt"))
 			Expect(detail.Turns[0].SpanCount).To(Equal(7))
 			Expect(detail.Turns[0].Duration).To(Equal(20 * time.Second))
+			Expect(detail.Turns[0].InputTokens).To(Equal(int64(100)))
+			Expect(detail.Turns[0].TotalCost).To(BeNumerically("~", 0.05, 1e-9))
 
 			Expect(detail.Messages).To(HaveLen(4))
 			Expect(detail.Messages[0].Text).To(Equal("first prompt"))
 			Expect(detail.Messages[1].Text).To(Equal("first answer"))
-			Expect(detail.Messages[1].TotalCost).To(Equal(0.05))
+			Expect(detail.Messages[1].TotalCost).To(BeNumerically("~", 0.05, 1e-9))
 			Expect(detail.GroupedMessages).NotTo(BeEmpty())
 		})
 
@@ -193,16 +190,14 @@ var _ = Describe("HTTPQuery", func() {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/v1/sessions":
-					Expect(json.NewEncoder(w).Encode(httpSessionListResponse{
-						Items: []httpSessionItem{{ID: "sess-1", Name: "cached"}},
-					})).To(Succeed())
+					mustJSON(w, api.SessionListResponse{Items: []api.SessionItem{
+						apiSession("sess-1", "cached", "", "", 0, 0, 0, 0),
+					}})
 				case "/v1/sessions/sess-1":
 					sessionGets++
-					Expect(json.NewEncoder(w).Encode(httpSessionDetailResponse{
-						Session: httpSessionItem{ID: "sess-1", Name: "fetched"},
-					})).To(Succeed())
+					mustJSON(w, api.SessionDetailResponse{Session: apiSession("sess-1", "fetched", "", "", 0, 0, 0, 0)})
 				case "/v1/traces":
-					Expect(json.NewEncoder(w).Encode(httpTraceListResponse{})).To(Succeed())
+					mustJSON(w, api.TraceListResponse{})
 				default:
 					http.NotFound(w, r)
 				}
@@ -222,42 +217,34 @@ var _ = Describe("HTTPQuery", func() {
 
 	Describe("TurnConversation", func() {
 		It("builds the conversation from main llm spans and counts the rest", func() {
+			turn := storage.SpanTurnRecord{
+				TraceID: "trace-1", UserPrompt: "do the thing", Status: "completed", Source: "wire",
+				StartedAt: started, DurationNS: int64(12 * time.Second), TotalCostUSD: 0.07,
+			}
+			spans := []storage.SpanRecord{
+				{
+					TraceID: "trace-1", SpanID: "sp-1", Kind: "llm", Name: "llm claude-opus-4.6", Seq: 1,
+					CallKind: "main", Model: "claude-opus-4.6", StartedAt: started,
+					Input:  json.RawMessage(`[{"type":"text","text":"do the thing"}]`),
+					Output: json.RawMessage(`[{"type":"text","text":"on it"},{"type":"tool_use","tool_name":"Bash","tool_use_id":"t1"}]`),
+					Usage:  json.RawMessage(`{"prompt_tokens":120,"completion_tokens":30}`),
+				},
+				{
+					TraceID: "trace-1", SpanID: "sp-2", Kind: "tool", Name: "Bash", Seq: 2,
+					StartedAt: started.Add(2 * time.Second),
+				},
+				{
+					TraceID: "trace-1", SpanID: "sp-3", Kind: "llm", Name: "haiku title", Seq: 3,
+					CallKind: "offshoot:topic-detection", StartedAt: started.Add(3 * time.Second),
+				},
+				{
+					TraceID: "trace-1", SpanID: "sp-4", Kind: "event", Name: "claude-md", Seq: 4,
+					CallKind: "injected:claude-md", StartedAt: started,
+				},
+			}
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				Expect(r.URL.Path).To(Equal("/v1/traces/trace-1"))
-				Expect(json.NewEncoder(w).Encode(httpTraceDetailResponse{
-					Trace: httpTraceItem{
-						TraceID: "trace-1", UserPrompt: "do the thing",
-						StartedAt: started, DurationNS: int64(12 * time.Second),
-						TotalCostUSD: 0.07, SpanCount: 4,
-					},
-					Spans: []httpSpanItem{
-						{
-							SpanID: "sp-1", Kind: "llm", Name: "llm claude-opus-4.6", Seq: 1,
-							StartedAt: started,
-							Metadata:  map[string]any{"call_kind": "main", "model": "claude-opus-4.6"},
-							Input:     map[string]json.RawMessage{"content": json.RawMessage(`[{"type":"text","text":"do the thing"}]`)},
-							Output:    map[string]json.RawMessage{"content": json.RawMessage(`[{"type":"text","text":"on it"},{"type":"tool_use","tool_name":"Bash","tool_use_id":"t1"}]`)},
-							Metrics:   json.RawMessage(`{"prompt_tokens":120,"completion_tokens":30}`),
-						},
-						{
-							SpanID: "sp-2", Kind: "tool", Name: "Bash", Seq: 2,
-							StartedAt: started.Add(2 * time.Second),
-							Metrics:   json.RawMessage(`{}`),
-						},
-						{
-							SpanID: "sp-3", Kind: "llm", Name: "haiku title", Seq: 3,
-							StartedAt: started.Add(3 * time.Second),
-							Metadata:  map[string]any{"call_kind": "offshoot:topic-detection"},
-							Metrics:   json.RawMessage(`{}`),
-						},
-						{
-							SpanID: "sp-4", Kind: "event", Name: "claude-md", Seq: 4,
-							StartedAt: started,
-							Metadata:  map[string]any{"call_kind": "injected:claude-md"},
-							Metrics:   json.RawMessage(`{}`),
-						},
-					},
-				})).To(Succeed())
+				mustJSON(w, api.BuildTraceDetail(turn, spans, nil, api.PayloadFull))
 			}))
 			defer srv.Close()
 

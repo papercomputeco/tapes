@@ -67,24 +67,37 @@ func normalizeAPITarget(apiTarget string) string {
 	return strings.TrimRight(target, "/")
 }
 
-// httpSessionItem mirrors api.SessionItem for JSON deserialization. We do
-// not import the api package to avoid pkg/deck depending on a server-side
-// package.
+// httpSessionItem mirrors api.SessionItem for JSON deserialization: capture
+// identity at the top level, the deriver-owned projection nested under
+// `rollup`. We do not import the api package to avoid pkg/deck depending on
+// a server-side package.
 type httpSessionItem struct {
-	ID                string     `json:"id"`
-	HarnessID         string     `json:"harness_id"`
-	Name              string     `json:"name,omitempty"`
-	Cwd               string     `json:"cwd,omitempty"`
-	StartedAt         time.Time  `json:"started_at"`
-	LastSeenAt        time.Time  `json:"last_seen_at"`
-	EndedAt           *time.Time `json:"ended_at,omitempty"`
-	TurnCount         int        `json:"turn_count"`
-	TotalInputTokens  int64      `json:"total_input_tokens"`
-	TotalOutputTokens int64      `json:"total_output_tokens"`
-	TotalCostUsd      float64    `json:"total_cost_usd"`
-	DerivedStatus     string     `json:"derived_status"`
-	Model             string     `json:"model,omitempty"`
-	Preview           string     `json:"preview,omitempty"`
+	ID         string            `json:"id"`
+	HarnessID  string            `json:"harness_id"`
+	Cwd        string            `json:"cwd,omitempty"`
+	StartedAt  time.Time         `json:"started_at"`
+	LastSeenAt time.Time         `json:"last_seen_at"`
+	EndedAt    *time.Time        `json:"ended_at,omitempty"`
+	Rollup     httpSessionRollup `json:"rollup"`
+}
+
+// httpSessionRollup mirrors api.SessionRollup — the deriver-owned session
+// projection (status, title, spend), split from capture identity on the
+// wire so the client can't blur which layer owns a field.
+type httpSessionRollup struct {
+	Status    string           `json:"status"`
+	Title     string           `json:"title,omitempty"`
+	Preview   string           `json:"preview,omitempty"`
+	TurnCount int              `json:"turn_count"`
+	Model     string           `json:"model,omitempty"`
+	Usage     httpSessionUsage `json:"usage"`
+}
+
+// httpSessionUsage mirrors api.SessionUsage — the session's total spend.
+type httpSessionUsage struct {
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	CostUSD      float64 `json:"cost_usd"`
 }
 
 // httpSessionListResponse mirrors api.SessionListResponse.
@@ -98,24 +111,37 @@ type httpSessionDetailResponse struct {
 	Session httpSessionItem `json:"session"`
 }
 
-// httpTraceItem mirrors api.TraceItem (one turn header).
+// httpTraceItem mirrors api.TraceItem (one turn header). Trace token
+// totals live under `usage`; the conversation-spine slice under
+// `main_usage`. session_id is not on the wire — it belongs to the session.
 type httpTraceItem struct {
-	TraceID             string     `json:"trace_id"`
-	SessionID           string     `json:"session_id"`
-	UserPrompt          string     `json:"user_prompt,omitempty"`
-	ResponsePreview     string     `json:"response_preview,omitempty"`
-	Status              string     `json:"status"`
-	StartedAt           time.Time  `json:"started_at"`
-	EndedAt             *time.Time `json:"ended_at,omitempty"`
-	DurationNS          int64      `json:"duration_ns"`
-	TotalInputTokens    int64      `json:"total_input_tokens"`
-	TotalOutputTokens   int64      `json:"total_output_tokens"`
-	MainInputTokens     int64      `json:"main_input_tokens"`
-	MainOutputTokens    int64      `json:"main_output_tokens"`
-	CacheReadTokens     int64      `json:"cache_read_tokens"`
-	CacheCreationTokens int64      `json:"cache_creation_tokens"`
-	TotalCostUSD        float64    `json:"total_cost_usd"`
-	SpanCount           int        `json:"span_count"`
+	TraceID         string         `json:"trace_id"`
+	UserPrompt      string         `json:"user_prompt,omitempty"`
+	ResponsePreview string         `json:"response_preview,omitempty"`
+	Status          string         `json:"status"`
+	Source          string         `json:"source"`
+	StartedAt       time.Time      `json:"started_at"`
+	EndedAt         *time.Time     `json:"ended_at,omitempty"`
+	DurationNS      int64          `json:"duration_ns"`
+	SpanCount       int            `json:"span_count"`
+	Usage           httpTraceUsage `json:"usage"`
+	MainUsage       httpMainUsage  `json:"main_usage"`
+	Synthetic       string         `json:"synthetic,omitempty"`
+}
+
+// httpTraceUsage mirrors api.TraceUsage — a trace's total token/cost spend.
+type httpTraceUsage struct {
+	InputTokens         int64   `json:"input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	CostUSD             float64 `json:"cost_usd"`
+}
+
+// httpMainUsage mirrors api.MainUsage — the conversation-spine slice.
+type httpMainUsage struct {
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
 }
 
 // httpTraceListResponse mirrors api.TraceListResponse.
@@ -123,20 +149,23 @@ type httpTraceListResponse struct {
 	Items []httpTraceItem `json:"items"`
 }
 
-// httpSpanItem mirrors api.SpanItem. Input and Output are key→raw-JSON maps:
-// llm/event spans carry a content-block array under "content"; tool spans
-// carry "arguments" (object) and "content" (string) / "is_error" (bool).
+// httpSpanItem mirrors api.SpanItem. Input and Output are content-block
+// arrays uniform for every kind (tool spans included — no unwrapping); the
+// harness taxonomy (call_kind, model, thread_id, …) is typed rather than
+// bagged in a metadata map; usage is an object (was `metrics`).
 type httpSpanItem struct {
-	SpanID     string                     `json:"span_id"`
-	Kind       string                     `json:"kind"`
-	Name       string                     `json:"name"`
-	StartedAt  time.Time                  `json:"started_at"`
-	DurationNS int64                      `json:"duration_ns"`
-	Seq        int64                      `json:"seq"`
-	Input      map[string]json.RawMessage `json:"input"`
-	Output     map[string]json.RawMessage `json:"output"`
-	Metadata   map[string]any             `json:"metadata"`
-	Metrics    json.RawMessage            `json:"metrics"`
+	SpanID     string          `json:"span_id"`
+	Kind       string          `json:"kind"`
+	Name       string          `json:"name"`
+	StartedAt  time.Time       `json:"started_at"`
+	DurationNS int64           `json:"duration_ns"`
+	Seq        int64           `json:"seq"`
+	CallKind   string          `json:"call_kind"`
+	Model      string          `json:"model"`
+	ThreadID   string          `json:"thread_id"`
+	Input      json.RawMessage `json:"input"`
+	Output     json.RawMessage `json:"output"`
+	Usage      json.RawMessage `json:"usage"`
 }
 
 // httpTraceDetailResponse mirrors api.TraceDetail.
@@ -238,7 +267,7 @@ func (q *HTTPQuery) TurnConversation(ctx context.Context, traceID string) (*Turn
 
 	var lastTime time.Time
 	for _, sp := range detail.Spans {
-		callKind, _ := sp.Metadata["call_kind"].(string)
+		callKind := sp.CallKind
 		switch sp.Kind {
 		case "llm":
 			switch {
@@ -269,11 +298,10 @@ func (q *HTTPQuery) TurnConversation(ctx context.Context, traceID string) (*Turn
 // assistant output. Cost is estimated client-side from the span's usage and
 // model via the pricing table.
 func (q *HTTPQuery) messagesFromLLMSpan(traceID string, sp httpSpanItem, lastTime *time.Time) []SessionMessage {
-	model, _ := sp.Metadata["model"].(string)
-	model = sessions.NormalizeModel(model)
+	model := sessions.NormalizeModel(sp.Model)
 
 	var messages []SessionMessage
-	if inBlocks := decodeContentBlocks(sp.Input["content"]); len(inBlocks) > 0 {
+	if inBlocks := decodeContentBlocks(sp.Input); len(inBlocks) > 0 {
 		if text := strings.TrimSpace(sessions.ExtractText(inBlocks)); text != "" {
 			delta := time.Duration(0)
 			if !lastTime.IsZero() {
@@ -292,7 +320,7 @@ func (q *HTTPQuery) messagesFromLLMSpan(traceID string, sp httpSpanItem, lastTim
 		}
 	}
 
-	tokens := tokensFromMetrics(sp.Metrics)
+	tokens := tokensFromMetrics(sp.Usage)
 	var inputCost, outputCost, totalCost float64
 	if model != "" {
 		if price, ok := sessions.PricingForModel(q.pricing, model); ok {
@@ -300,7 +328,7 @@ func (q *HTTPQuery) messagesFromLLMSpan(traceID string, sp httpSpanItem, lastTim
 		}
 	}
 
-	outBlocks := decodeContentBlocks(sp.Output["content"])
+	outBlocks := decodeContentBlocks(sp.Output)
 	endTime := sp.StartedAt.Add(time.Duration(sp.DurationNS))
 	delta := time.Duration(0)
 	if !lastTime.IsZero() {
@@ -480,28 +508,29 @@ func summaryFromSessionItem(item httpSessionItem) SessionSummary {
 	return SessionSummary{
 		ID:           item.ID,
 		Label:        sessionLabel(item),
-		Model:        item.Model,
+		Model:        item.Rollup.Model,
 		Project:      projectFromCwd(item.Cwd),
 		AgentName:    item.HarnessID,
-		Status:       item.DerivedStatus,
+		Status:       item.Rollup.Status,
 		StartTime:    item.StartedAt,
 		EndTime:      end,
 		Duration:     duration,
-		InputTokens:  item.TotalInputTokens,
-		OutputTokens: item.TotalOutputTokens,
-		TotalCost:    item.TotalCostUsd,
-		MessageCount: item.TurnCount,
+		InputTokens:  item.Rollup.Usage.InputTokens,
+		OutputTokens: item.Rollup.Usage.OutputTokens,
+		TotalCost:    item.Rollup.Usage.CostUSD,
+		MessageCount: item.Rollup.TurnCount,
 		SessionCount: 1,
 	}
 }
 
-// sessionLabel picks the row label: the session's name when set, else the
-// first line of the first-prompt preview, else a short form of the id.
+// sessionLabel picks the row label: the session's derived title when set,
+// else the first line of the first-prompt preview, else a short form of
+// the id. Title and preview are both deriver-owned rollup fields.
 func sessionLabel(item httpSessionItem) string {
-	if name := strings.TrimSpace(item.Name); name != "" {
-		return name
+	if title := strings.TrimSpace(item.Rollup.Title); title != "" {
+		return title
 	}
-	if preview := firstLine(item.Preview); preview != "" {
+	if preview := firstLine(item.Rollup.Preview); preview != "" {
 		return truncateID(preview, 48)
 	}
 	return truncateID(item.ID, 12)
@@ -538,13 +567,13 @@ func turnSummaryFromTraceItem(item httpTraceItem) TurnSummary {
 		StartedAt:           item.StartedAt,
 		EndedAt:             item.EndedAt,
 		Duration:            time.Duration(item.DurationNS),
-		InputTokens:         item.TotalInputTokens,
-		OutputTokens:        item.TotalOutputTokens,
-		MainInputTokens:     item.MainInputTokens,
-		MainOutputTokens:    item.MainOutputTokens,
-		CacheReadTokens:     item.CacheReadTokens,
-		CacheCreationTokens: item.CacheCreationTokens,
-		TotalCost:           item.TotalCostUSD,
+		InputTokens:         item.Usage.InputTokens,
+		OutputTokens:        item.Usage.OutputTokens,
+		MainInputTokens:     item.MainUsage.InputTokens,
+		MainOutputTokens:    item.MainUsage.OutputTokens,
+		CacheReadTokens:     item.Usage.CacheReadTokens,
+		CacheCreationTokens: item.Usage.CacheCreationTokens,
+		TotalCost:           item.Usage.CostUSD,
 		SpanCount:           item.SpanCount,
 	}
 }
@@ -606,7 +635,7 @@ func decodeContentBlocks(raw json.RawMessage) []llm.ContentBlock {
 	return blocks
 }
 
-// tokensFromMetrics extracts token usage from a span's metrics object
+// tokensFromMetrics extracts token usage from a span's usage object
 // (llm.Usage JSON; {} for usage-less spans).
 func tokensFromMetrics(raw json.RawMessage) sessions.NodeTokens {
 	var nt sessions.NodeTokens
