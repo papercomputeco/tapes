@@ -213,6 +213,31 @@ var _ = Describe("Derive worker storage (postgres)", func() {
 	})
 
 	Describe("RederiveSession", func() {
+		It("clears a stale task fold when the session re-derives to no tasks", func() {
+			// Rebuild-from-raw: the raw layer is the sole source of truth, so a
+			// task no longer present in the fold must vanish from the rollup. A
+			// session whose current derive folds no tasks (plain text turns) but
+			// carries a stale non-empty tasks JSONB (an old deriver, or a task
+			// since deleted) must be CLEARED to [] — not left untouched because
+			// the empty fold was omitted from the write.
+			insertSessionRow(sessionARowID, sessionA)
+			putWireTurn("req-a-1", sessionA, "hello from session A")
+
+			_, err := driver.DB().Exec(ctx,
+				`UPDATE sessions SET tasks = '[{"id":"1","subject":"stale","status":"pending","updates":0}]'::jsonb WHERE id = $1`,
+				sessionARowID)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = driver.RederiveSession(ctx, "", "", harnessID, sessionA)
+			Expect(err).NotTo(HaveOccurred())
+
+			var tasks string
+			Expect(driver.DB().QueryRow(ctx,
+				"SELECT COALESCE(tasks::text, 'null') FROM sessions WHERE id = $1", sessionARowID).Scan(&tasks),
+			).To(Succeed())
+			Expect(tasks).To(Equal("[]"), "the re-derive must overwrite the stale tasks with an empty array")
+		})
+
 		It("writes the span projection alongside nodes, idempotently", func() {
 			insertSessionRow(sessionARowID, sessionA)
 			putWireTurn("req-a-1", sessionA, "hello from session A")

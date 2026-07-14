@@ -786,25 +786,24 @@ func (em *spanEmitter) finish() {
 	if len(kindFold) > 0 {
 		em.set.KindCounts = kindFold
 	}
-	if len(toolsBySession) > 0 {
-		em.set.Tasks = map[SessionKey][]Task{}
-		for key, tools := range toolsBySession {
-			if tasks := FoldSessionTasks(tools); len(tasks) > 0 {
-				em.set.Tasks[key] = tasks
-			}
-		}
-	}
-
-	// Chain-aware status, folded from each session's tool spans and its
-	// terminal main-spine response. Every session with a trace gets one,
-	// so a tool-less session still resolves (leaf-only DetermineStatus).
+	// Task fold and chain-aware status are per-covered-session: every
+	// session with at least one trace resolves one, EMPTY folds included.
+	// Emitting an empty task array for a covered session is what lets a
+	// re-derive CLEAR a session whose last task was deleted — an omitted
+	// session is never written, so storage would otherwise keep the prior
+	// non-empty tasks JSONB forever (a rebuild-from-raw break: the raw is
+	// the sole source of truth, so a task no longer present must vanish).
+	// A tool-less session resolves via the non-nil empty slice
+	// FoldSessionTasks returns and the leaf-only DetermineStatus.
 	sessionSet := map[SessionKey]struct{}{}
 	for _, turn := range em.set.Turns {
 		sessionSet[turn.Session] = struct{}{}
 	}
 	if len(sessionSet) > 0 {
+		em.set.Tasks = make(map[SessionKey][]Task, len(sessionSet))
 		em.set.Status = make(map[SessionKey]SessionStatus, len(sessionSet))
 		for key := range sessionSet {
+			em.set.Tasks[key] = FoldSessionTasks(toolsBySession[key])
 			em.set.Status[key] = FoldSessionStatus(toolsBySession[key], em.terminalMainSpan(key))
 		}
 	}
