@@ -173,12 +173,10 @@ type TraceDetail struct {
 // model. `schema` stamps the projection generation the rows were derived
 // against, so the presentational shape can version independently.
 type SessionTracesResponse struct {
-	Schema     string         `json:"schema"`
-	Session    SessionItem    `json:"session"`
-	Tasks      []TreeTask     `json:"tasks"`
-	KindCounts map[string]int `json:"kind_counts"`
-	Traces     []TraceDetail  `json:"traces"`
-	Links      []SpanLinkItem `json:"links"`
+	Schema  string         `json:"schema"`
+	Session SessionItem    `json:"session"`
+	Traces  []TraceDetail  `json:"traces"`
+	Links   []SpanLinkItem `json:"links"`
 }
 
 // ProjectionSchema is the compatibility date of the derived projection
@@ -250,12 +248,10 @@ func BuildSessionTraces(
 	mode PayloadMode,
 ) *SessionTracesResponse {
 	resp := &SessionTracesResponse{
-		Schema:     ProjectionSchema,
-		Session:    session,
-		Tasks:      []TreeTask{},
-		KindCounts: map[string]int{},
-		Traces:     []TraceDetail{},
-		Links:      []SpanLinkItem{},
+		Schema:  ProjectionSchema,
+		Session: session,
+		Traces:  []TraceDetail{},
+		Links:   []SpanLinkItem{},
 	}
 
 	spansByTrace := map[string][]storage.SpanRecord{}
@@ -263,15 +259,9 @@ func BuildSessionTraces(
 		spansByTrace[sp.TraceID] = append(spansByTrace[sp.TraceID], sp)
 	}
 
-	// Tasks and kind_counts are deriver-owned session rollups, read from
-	// the session record (sessions.tasks / sessions.kind_counts). Empty
-	// defaults survive an un-derived or JSON-drifted session.
-	if len(session.Tasks) > 0 {
-		_ = json.Unmarshal(session.Tasks, &resp.Tasks)
-	}
-	if len(session.KindCounts) > 0 {
-		_ = json.Unmarshal(session.KindCounts, &resp.KindCounts)
-	}
+	// Tasks and kind_counts are deriver-owned session rollups; they ride
+	// in session.rollup now, folded by sessionItemFromStorage — the
+	// composite no longer carries a top-level copy.
 
 	// ALL links live in one flat session-scoped list — containment nests
 	// (spans in traces), graph edges don't. An edge may touch one trace

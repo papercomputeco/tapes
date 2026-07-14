@@ -245,7 +245,7 @@ func checkKindCounts(resp *api.SessionTracesResponse) []string {
 		}
 	}
 	got := 0
-	for kind, n := range resp.KindCounts {
+	for kind, n := range resp.Session.Rollup.KindCounts {
 		if n < 0 {
 			return []string{fmt.Sprintf("kind_counts[%q] = %d is negative", kind, n)}
 		}

@@ -70,7 +70,8 @@ var _ = Describe("check-invariants", func() {
 			})
 		}, "dangling"),
 		Entry("kind_counts drift", func(d map[string]any) {
-			kc := d["kind_counts"].(map[string]any)
+			rollup := d["session"].(map[string]any)["rollup"].(map[string]any)
+			kc := rollup["kind_counts"].(map[string]any)
 			for k := range kc {
 				kc[k] = kc[k].(float64) + 9
 				break

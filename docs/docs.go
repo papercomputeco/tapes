@@ -968,9 +968,6 @@ const docTemplate = `{
                 "cwd": {
                     "type": "string"
                 },
-                "derived_status": {
-                    "type": "string"
-                },
                 "ended_at": {
                     "type": "string"
                 },
@@ -988,45 +985,25 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "id": {
+                    "description": "Identity — capture-side facts, ingest-written.",
                     "type": "string"
                 },
                 "last_seen_at": {
                     "type": "string"
                 },
-                "model": {
-                    "description": "Model is the dominant conversation-spine model, folded at derive\ntime; empty until the session first derives.",
-                    "type": "string"
-                },
-                "model_usage": {
-                    "description": "ModelUsage is the per-model spend breakdown folded at derive time\nacross every thread (subagent models included), ordered\ndominant-model-first by cost. The share basis is cost, not call\ncount, so the UI can show \"dominant model + per-model %\" without a\ncheap-subagent fan-out skewing it. Populated on the session detail;\nnil until the session first derives.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.ModelUsage"
-                    }
-                },
-                "name": {
-                    "type": "string"
-                },
                 "parent_session_id": {
                     "type": "string"
                 },
-                "preview": {
-                    "type": "string"
+                "rollup": {
+                    "description": "Rollup is the deriver-owned projection over the session's spans.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/api.SessionRollup"
+                        }
+                    ]
                 },
                 "started_at": {
                     "type": "string"
-                },
-                "total_cost_usd": {
-                    "type": "number"
-                },
-                "total_input_tokens": {
-                    "type": "integer"
-                },
-                "total_output_tokens": {
-                    "type": "integer"
-                },
-                "turn_count": {
-                    "type": "integer"
                 }
             }
         },
@@ -1044,15 +1021,52 @@ const docTemplate = `{
                 }
             }
         },
-        "api.SessionTracesResponse": {
+        "api.SessionRollup": {
             "type": "object",
             "properties": {
                 "kind_counts": {
+                    "description": "KindCounts (spans per call_kind) and Tasks (TaskCreate/TaskUpdate\nfolds) are pinned so the rollup shape is uniform across sessions.",
                     "type": "object",
                     "additionalProperties": {
                         "type": "integer"
                     }
                 },
+                "model": {
+                    "description": "Model is the dominant conversation-spine model; ModelUsage is the\nper-model spend breakdown across every thread (subagent models\nincluded), cost-ordered so the UI can show \"dominant model + share\"\nwithout a cheap-subagent fan-out skewing it.",
+                    "type": "string"
+                },
+                "model_usage": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.ModelUsage"
+                    }
+                },
+                "preview": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "tasks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.TreeTask"
+                    }
+                },
+                "title": {
+                    "type": "string"
+                },
+                "turn_count": {
+                    "type": "integer"
+                },
+                "usage": {
+                    "$ref": "#/definitions/api.SessionUsage"
+                }
+            }
+        },
+        "api.SessionTracesResponse": {
+            "type": "object",
+            "properties": {
                 "links": {
                     "type": "array",
                     "items": {
@@ -1065,17 +1079,25 @@ const docTemplate = `{
                 "session": {
                     "$ref": "#/definitions/api.SessionItem"
                 },
-                "tasks": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.TreeTask"
-                    }
-                },
                 "traces": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/api.TraceDetail"
                     }
+                }
+            }
+        },
+        "api.SessionUsage": {
+            "type": "object",
+            "properties": {
+                "cost_usd": {
+                    "type": "number"
+                },
+                "input_tokens": {
+                    "type": "integer"
+                },
+                "output_tokens": {
+                    "type": "integer"
                 }
             }
         },

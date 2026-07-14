@@ -41,45 +41,57 @@ const (
 	maxSessionsLimit     = 200
 )
 
-// SessionItem is the per-row shape returned by GET /v1/sessions. It mirrors
-// the sessions table directly — no ancestry walk, no stem aggregation.
+// SessionItem is the per-session shape: capture identity at the top
+// level, the deriver-owned projection nested under `rollup`. The split
+// mirrors the storage rows — identity is ingest-written, rollup is
+// deriver-written — so the wire can't blur which layer owns a field.
 type SessionItem struct {
-	ID                string     `json:"id"`
-	HarnessID         string     `json:"harness_id"`
-	HarnessSessionID  string     `json:"harness_session_id"`
-	Name              string     `json:"name,omitempty"`
-	Cwd               string     `json:"cwd,omitempty"`
-	HarnessVersion    string     `json:"harness_version,omitempty"`
-	ParentSessionID   string     `json:"parent_session_id,omitempty"`
-	StartedAt         time.Time  `json:"started_at"`
-	LastSeenAt        time.Time  `json:"last_seen_at"`
-	EndedAt           *time.Time `json:"ended_at,omitempty"`
-	TurnCount         int        `json:"turn_count"`
-	TotalInputTokens  int64      `json:"total_input_tokens"`
-	TotalOutputTokens int64      `json:"total_output_tokens"`
-	TotalCostUsd      float64    `json:"total_cost_usd"`
-	DerivedStatus     string     `json:"derived_status"`
-	// Model is the dominant conversation-spine model, folded at derive
-	// time; empty until the session first derives.
-	Model string `json:"model,omitempty"`
-	// ModelUsage is the per-model spend breakdown folded at derive time
-	// across every thread (subagent models included), ordered
-	// dominant-model-first by cost. The share basis is cost, not call
-	// count, so the UI can show "dominant model + per-model %" without a
-	// cheap-subagent fan-out skewing it. Populated on the session detail;
-	// nil until the session first derives.
-	ModelUsage      []ModelUsage   `json:"model_usage,omitempty"`
-	HarnessMetadata map[string]any `json:"harness_metadata,omitempty"`
-	Preview         string         `json:"preview,omitempty"`
+	// Identity — capture-side facts, ingest-written.
+	ID               string         `json:"id"`
+	HarnessID        string         `json:"harness_id"`
+	HarnessSessionID string         `json:"harness_session_id"`
+	Cwd              string         `json:"cwd,omitempty"`
+	HarnessVersion   string         `json:"harness_version,omitempty"`
+	ParentSessionID  string         `json:"parent_session_id,omitempty"`
+	StartedAt        time.Time      `json:"started_at"`
+	LastSeenAt       time.Time      `json:"last_seen_at"`
+	EndedAt          *time.Time     `json:"ended_at,omitempty"`
+	HarnessMetadata  map[string]any `json:"harness_metadata,omitempty"`
 	// AuthSubject is the gateway-stamped JWT subject (WorkOS user id)
 	// captured at ingest; empty for rows captured before the edge began
 	// stamping it.
 	AuthSubject string `json:"auth_subject,omitempty"`
-	// Tasks and KindCounts are the deriver's session rollups, carried on
-	// the record but NOT serialized on SessionItem (the list stays lean);
-	// BuildSessionTraces reads them onto the composite traces response.
-	Tasks      json.RawMessage `json:"-"`
-	KindCounts json.RawMessage `json:"-"`
+	// Rollup is the deriver-owned projection over the session's spans.
+	Rollup SessionRollup `json:"rollup"`
+}
+
+// SessionRollup is the deriver-owned session projection — status, title,
+// counts, and spend, all folded from the span layer at derive time.
+// Every field is 'unknown'/zero/empty until the session first derives.
+type SessionRollup struct {
+	Status    string `json:"status"`
+	Title     string `json:"title,omitempty"`
+	Preview   string `json:"preview,omitempty"`
+	TurnCount int    `json:"turn_count"`
+	// Model is the dominant conversation-spine model; ModelUsage is the
+	// per-model spend breakdown across every thread (subagent models
+	// included), cost-ordered so the UI can show "dominant model + share"
+	// without a cheap-subagent fan-out skewing it.
+	Model      string       `json:"model,omitempty"`
+	ModelUsage []ModelUsage `json:"model_usage,omitempty"`
+	// KindCounts (spans per call_kind) and Tasks (TaskCreate/TaskUpdate
+	// folds) are pinned so the rollup shape is uniform across sessions.
+	KindCounts map[string]int `json:"kind_counts"`
+	Tasks      []TreeTask     `json:"tasks"`
+	Usage      SessionUsage   `json:"usage"`
+}
+
+// SessionUsage is the session's total token/cost spend, folded from the
+// span layer. Pinned (no omitempty) for a uniform object shape.
+type SessionUsage struct {
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	CostUSD      float64 `json:"cost_usd"`
 }
 
 // ModelUsage is one model's contribution to a session in the API: how
@@ -107,30 +119,43 @@ type SessionDetailResponse struct {
 }
 
 func sessionItemFromStorage(s storage.SessionRecord) SessionItem {
-	return SessionItem{
-		ID:                s.ID,
-		HarnessID:         s.HarnessID,
-		HarnessSessionID:  s.HarnessSessionID,
-		Name:              s.Name,
-		Cwd:               s.Cwd,
-		HarnessVersion:    s.HarnessVersion,
-		ParentSessionID:   s.ParentSessionID,
-		StartedAt:         s.StartedAt,
-		LastSeenAt:        s.LastSeenAt,
-		EndedAt:           s.EndedAt,
-		TurnCount:         s.TurnCount,
-		TotalInputTokens:  s.TotalInputTokens,
-		TotalOutputTokens: s.TotalOutputTokens,
-		TotalCostUsd:      s.TotalCostUsd,
-		DerivedStatus:     s.DerivedStatus,
-		Model:             s.Model,
-		ModelUsage:        modelUsageFromStorage(s.ModelUsage),
-		HarnessMetadata:   s.HarnessMetadata,
-		Preview:           s.Preview,
-		AuthSubject:       s.AuthSubject,
-		Tasks:             s.Tasks,
-		KindCounts:        s.KindCounts,
+	item := SessionItem{
+		ID:               s.ID,
+		HarnessID:        s.HarnessID,
+		HarnessSessionID: s.HarnessSessionID,
+		Cwd:              s.Cwd,
+		HarnessVersion:   s.HarnessVersion,
+		ParentSessionID:  s.ParentSessionID,
+		StartedAt:        s.StartedAt,
+		LastSeenAt:       s.LastSeenAt,
+		EndedAt:          s.EndedAt,
+		HarnessMetadata:  s.HarnessMetadata,
+		AuthSubject:      s.AuthSubject,
+		Rollup: SessionRollup{
+			Status:     s.DerivedStatus,
+			Title:      s.Name,
+			Preview:    s.Preview,
+			TurnCount:  s.TurnCount,
+			Model:      s.Model,
+			ModelUsage: modelUsageFromStorage(s.ModelUsage),
+			KindCounts: map[string]int{},
+			Tasks:      []TreeTask{},
+			Usage: SessionUsage{
+				InputTokens:  s.TotalInputTokens,
+				OutputTokens: s.TotalOutputTokens,
+				CostUSD:      s.TotalCostUsd,
+			},
+		},
 	}
+	// Tasks/kind_counts are stored as raw deriver JSON; decode them into
+	// the rollup, leaving the pinned []/{} on absent or malformed values.
+	if len(s.Tasks) > 0 {
+		_ = json.Unmarshal(s.Tasks, &item.Rollup.Tasks)
+	}
+	if len(s.KindCounts) > 0 {
+		_ = json.Unmarshal(s.KindCounts, &item.Rollup.KindCounts)
+	}
+	return item
 }
 
 // modelUsageFromStorage maps the storage-layer per-model breakdown to

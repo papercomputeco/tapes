@@ -65,8 +65,6 @@ definitions:
         type: string
       cwd:
         type: string
-      derived_status:
-        type: string
       ended_at:
         type: string
       harness_id:
@@ -79,41 +77,18 @@ definitions:
       harness_version:
         type: string
       id:
+        description: Identity — capture-side facts, ingest-written.
         type: string
       last_seen_at:
         type: string
-      model:
-        description: |-
-          Model is the dominant conversation-spine model, folded at derive
-          time; empty until the session first derives.
-        type: string
-      model_usage:
-        description: |-
-          ModelUsage is the per-model spend breakdown folded at derive time
-          across every thread (subagent models included), ordered
-          dominant-model-first by cost. The share basis is cost, not call
-          count, so the UI can show "dominant model + per-model %" without a
-          cheap-subagent fan-out skewing it. Populated on the session detail;
-          nil until the session first derives.
-        items:
-          $ref: '#/definitions/api.ModelUsage'
-        type: array
-      name:
-        type: string
       parent_session_id:
         type: string
-      preview:
-        type: string
+      rollup:
+        allOf:
+        - $ref: '#/definitions/api.SessionRollup'
+        description: Rollup is the deriver-owned projection over the session's spans.
       started_at:
         type: string
-      total_cost_usd:
-        type: number
-      total_input_tokens:
-        type: integer
-      total_output_tokens:
-        type: integer
-      turn_count:
-        type: integer
     type: object
   api.SessionListResponse:
     properties:
@@ -124,12 +99,43 @@ definitions:
       next_cursor:
         type: string
     type: object
-  api.SessionTracesResponse:
+  api.SessionRollup:
     properties:
       kind_counts:
         additionalProperties:
           type: integer
+        description: |-
+          KindCounts (spans per call_kind) and Tasks (TaskCreate/TaskUpdate
+          folds) are pinned so the rollup shape is uniform across sessions.
         type: object
+      model:
+        description: |-
+          Model is the dominant conversation-spine model; ModelUsage is the
+          per-model spend breakdown across every thread (subagent models
+          included), cost-ordered so the UI can show "dominant model + share"
+          without a cheap-subagent fan-out skewing it.
+        type: string
+      model_usage:
+        items:
+          $ref: '#/definitions/api.ModelUsage'
+        type: array
+      preview:
+        type: string
+      status:
+        type: string
+      tasks:
+        items:
+          $ref: '#/definitions/api.TreeTask'
+        type: array
+      title:
+        type: string
+      turn_count:
+        type: integer
+      usage:
+        $ref: '#/definitions/api.SessionUsage'
+    type: object
+  api.SessionTracesResponse:
+    properties:
       links:
         items:
           $ref: '#/definitions/api.SpanLinkItem'
@@ -138,14 +144,19 @@ definitions:
         type: string
       session:
         $ref: '#/definitions/api.SessionItem'
-      tasks:
-        items:
-          $ref: '#/definitions/api.TreeTask'
-        type: array
       traces:
         items:
           $ref: '#/definitions/api.TraceDetail'
         type: array
+    type: object
+  api.SessionUsage:
+    properties:
+      cost_usd:
+        type: number
+      input_tokens:
+        type: integer
+      output_tokens:
+        type: integer
     type: object
   api.SpanItem:
     properties:

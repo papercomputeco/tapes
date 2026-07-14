@@ -159,23 +159,23 @@ func buildFixtureArtifacts(path string) ([]fixtureArtifact, corpusSummary, error
 
 	turns, spans, links := recordsFromSpanSet(spanSet, sessionID)
 	session := foldSessionItem(key, sessionID, set, wire, transcriptRows, turns)
-	session.ModelUsage = modelUsageItems(spanSet.ModelUsage[key])
-	// Mirror the deriver's session rollups the handler reads from the
-	// session record, so fixtures match a re-derived session. Only set
-	// when present, so an empty session keeps the wire's [] / {}.
+	session.Rollup.ModelUsage = modelUsageItems(spanSet.ModelUsage[key])
+	// Mirror the deriver's session rollups the handler folds onto the
+	// session record, so fixtures match a re-derived session. Pinned
+	// []/{} default keeps an empty session's shape uniform.
+	session.Rollup.Tasks = []api.TreeTask{}
+	session.Rollup.KindCounts = map[string]int{}
 	if tasks := spanSet.Tasks[key]; len(tasks) > 0 {
 		if b, err := json.Marshal(tasks); err == nil {
-			session.Tasks = b
+			_ = json.Unmarshal(b, &session.Rollup.Tasks)
 		}
 	}
 	if kc := spanSet.KindCounts[key]; len(kc) > 0 {
-		if b, err := json.Marshal(kc); err == nil {
-			session.KindCounts = b
-		}
+		session.Rollup.KindCounts = kc
 	}
 	// derived_status is a deriver output now (Phase 1d), so the fixture
 	// reflects what a re-derive computes rather than a hard-coded value.
-	session.DerivedStatus = spanSet.Status[key].DerivedStatus
+	session.Rollup.Status = spanSet.Status[key].DerivedStatus
 
 	short := key.HarnessSessionID
 	if len(short) > 8 {
@@ -449,23 +449,23 @@ func foldSessionItem(
 	// Display title: the folded title-gen output, envelope name as
 	// fallback — same precedence as the sessions read path.
 	if title, ok := set.SessionTitles[key]; ok && title != "" {
-		item.Name = title
+		item.Rollup.Title = title
 	} else {
-		item.Name = envelopeName
+		item.Rollup.Title = envelopeName
 	}
 
 	// Counters roll up from the span layer (the v2 direction; ingest
 	// counters retire). turn_count is user-visible turns.
-	item.TurnCount = len(turns)
+	item.Rollup.TurnCount = len(turns)
 	for _, turn := range turns {
-		item.TotalInputTokens += turn.TotalInputTokens
-		item.TotalOutputTokens += turn.TotalOutputTokens
-		item.TotalCostUsd += turn.TotalCostUSD
+		item.Rollup.Usage.InputTokens += turn.TotalInputTokens
+		item.Rollup.Usage.OutputTokens += turn.TotalOutputTokens
+		item.Rollup.Usage.CostUSD += turn.TotalCostUSD
 	}
 
 	for _, turn := range turns {
 		if turn.Synthetic == "" && turn.UserPrompt != "" {
-			item.Preview = turn.UserPrompt
+			item.Rollup.Preview = turn.UserPrompt
 			break
 		}
 	}
