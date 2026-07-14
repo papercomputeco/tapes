@@ -42,6 +42,19 @@ type rawTurnIndexEntry struct {
 //
 // The pass is idempotent: re-running against an unchanged raw layer
 // upserts the same set and prunes nothing. Raw rows are never written.
+//
+// CONCURRENCY (PCC-687 G, partial): unlike RederiveSessionLocked, this
+// whole-org pass does NOT hold the per-session derive lock, so running it
+// while the derive worker is live can still race — this pass reads the
+// whole org's raw UP FRONT, and a turn the worker writes after that read
+// but before this pass's prune is deleted as "not in my set". A write-only
+// lock does not fix this: the stale READ is the defect, so a correct fix
+// must read-and-write each session under its lock — i.e. reimplement this
+// as a loop of RederiveSessionLocked calls, trading the org-wide single
+// deriver (and its cross-session dedup + one-tx-per-org atomicity) for the
+// worker's per-session model. That trade is a design decision left for a
+// human; the session-scoped race (seed, ad-hoc re-derive) is closed by
+// RederiveSessionLocked in the meantime.
 func (d *Driver) RederiveFromRaw(ctx context.Context, project string) (map[string]*derive.RederiveReport, error) {
 	if d == nil || d.conn == nil {
 		return nil, errors.New("postgres driver not open")
@@ -225,6 +238,27 @@ func (d *Driver) RederiveSession(ctx context.Context, project, orgID, harnessID,
 		return nil, fmt.Errorf("write derived set for session %s/%s: %w", harnessID, harnessSessionID, err)
 	}
 	return &set.Report, nil
+}
+
+// RederiveSessionLocked is the externally-safe entry point for a
+// session-scoped re-derive that may run WHILE the derive worker is live:
+// it holds the per-session advisory lock across the whole read-derive-write
+// pass, so it cannot interleave with the worker's derive of the same
+// session and prune a turn the worker just wrote. The worker's own path
+// (RederiveSession) is already called under this lock — it takes it in
+// processEntry — so RederiveSession stays lock-free and this wrapper is the
+// one non-worker callers use. Blocking: it waits out a concurrent worker
+// derive rather than skipping, since a manual re-derive must actually run.
+func (d *Driver) RederiveSessionLocked(ctx context.Context, project, orgID, harnessID, harnessSessionID string) (*derive.RederiveReport, error) {
+	if d == nil || d.conn == nil {
+		return nil, errors.New("postgres driver not open")
+	}
+	release, err := d.AcquireDeriveSessionLock(ctx, orgID, harnessID, harnessSessionID)
+	if err != nil {
+		return nil, fmt.Errorf("acquire derive lock %s/%s: %w", harnessID, harnessSessionID, err)
+	}
+	defer release()
+	return d.RederiveSession(ctx, project, orgID, harnessID, harnessSessionID)
 }
 
 func orgDisplayKey(org string) string {

@@ -178,6 +178,40 @@ var _ = Describe("Derive worker storage (postgres)", func() {
 		})
 	})
 
+	Describe("AcquireDeriveSessionLock", func() {
+		It("blocks behind a concurrent holder, then acquires on release", func() {
+			// The worker's non-blocking hold on session A.
+			release1, acquired, err := driver.TryDeriveSessionLock(ctx, "", harnessID, sessionA)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(acquired).To(BeTrue())
+
+			got := make(chan func(), 1)
+			errc := make(chan error, 1)
+			go func() {
+				defer GinkgoRecover()
+				// The nil-UUID org spelling must canonicalize to the SAME lock
+				// as the "" the holder used, so this blocks rather than taking
+				// a different key and racing.
+				rel, err := driver.AcquireDeriveSessionLock(
+					ctx, "00000000-0000-0000-0000-000000000000", harnessID, sessionA)
+				if err != nil {
+					errc <- err
+					return
+				}
+				got <- rel
+			}()
+
+			// While the worker holds it, the blocking acquire must not return.
+			Consistently(got, "80ms", "10ms").ShouldNot(Receive())
+
+			release1() // worker done — the blocking acquire can now proceed.
+			var rel func()
+			Eventually(got, "5s", "10ms").Should(Receive(&rel))
+			Consistently(errc, "10ms").ShouldNot(Receive())
+			rel()
+		})
+	})
+
 	Describe("RederiveSession", func() {
 		It("writes the span projection alongside nodes, idempotently", func() {
 			insertSessionRow(sessionARowID, sessionA)

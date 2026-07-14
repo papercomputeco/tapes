@@ -175,9 +175,51 @@ func (d *Driver) TryDeriveSessionLock(ctx context.Context, orgID, harnessID, har
 	return release, true, nil
 }
 
+// AcquireDeriveSessionLock is the BLOCKING sibling of
+// TryDeriveSessionLock: it waits until the per-session advisory lock is
+// held rather than returning acquired=false. This is the right semantics
+// for a manual/one-off re-derive that must serialize BEHIND the derive
+// worker (finish deriving after the worker releases) instead of skipping.
+// The worker itself keeps using the non-blocking probe, so it never waits
+// on a manual re-derive — only the reverse — which keeps the two free of
+// a lock cycle.
+//
+// Like TryDeriveSessionLock the lock is connection-scoped: the pooled
+// connection is pinned until release unlocks it (on a fresh background
+// context, since the caller's ctx may already be canceled).
+func (d *Driver) AcquireDeriveSessionLock(ctx context.Context, orgID, harnessID, harnessSessionID string) (release func(), err error) {
+	if d == nil || d.conn == nil {
+		return nil, errors.New("postgres driver not open")
+	}
+	key := deriveLockKey(orgID, harnessID, harnessSessionID)
+	conn, err := d.conn.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire conn for advisory lock: %w", err)
+	}
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", key); err != nil {
+		conn.Release()
+		return nil, fmt.Errorf("pg_advisory_lock: %w", err)
+	}
+	return func() { //nolint:contextcheck // deliberate fresh context, see TryDeriveSessionLock
+		_, _ = conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", key)
+		conn.Release()
+	}, nil
+}
+
 // deriveLockKey folds the harness triple into the 64-bit advisory-lock
-// keyspace. NUL separators keep ("a","bc") and ("ab","c") distinct.
+// keyspace. NUL separators keep ("a","bc") and ("ab","c") distinct. The
+// org is canonicalized first so a caller passing "" (default tenant) and
+// one passing the nil-UUID string fold to the SAME lock — otherwise a
+// manual re-derive and the worker could take different locks and fail to
+// serialize.
 func deriveLockKey(orgID, harnessID, harnessSessionID string) int64 {
+	if canon, err := orgIDFromString(orgKeyForLookup(orgID)); err == nil {
+		orgID = uuidString(canon)
+	}
+	return deriveLockKeyRaw(orgID, harnessID, harnessSessionID)
+}
+
+func deriveLockKeyRaw(orgID, harnessID, harnessSessionID string) int64 {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(orgID))
 	_, _ = h.Write([]byte{0})
