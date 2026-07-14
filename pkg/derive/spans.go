@@ -862,7 +862,7 @@ func responsePreview(turn *SpanTurn) string {
 		if s.Kind != SpanKindLLM || s.CallKind != KindMain || s.ThreadID != "" {
 			continue
 		}
-		if text := joinTextBlocks(s.Output, true); text != "" {
+		if text := joinTextBlocks(s.Output); text != "" {
 			return text
 		}
 	}
@@ -1026,40 +1026,41 @@ func toolID(ts *Span) string {
 const maxPreviewText = 280
 
 // promptText renders a prompt node's text blocks for the trace header,
-// truncated for display. Harnesses prepend injected context (e.g. Claude
-// Code's claudeMd) as <system-reminder> text blocks ahead of the human
-// prompt; those would eat the whole preview budget, so blocks that open
-// with the marker only render when the turn carries nothing else.
+// truncated for display. Harnesses wrap injected context (e.g. Claude
+// Code's claudeMd in <system-reminder>) and slash-command framing into the
+// user-role content; merkle.PreviewText strips that scaffolding per block
+// while UNWRAPPING the content-bearing wrappers (<command-args>, <session>,
+// …), so a turn that is nothing but harness scaffolding still previews the
+// human's words rather than the boilerplate. A block that projects to
+// nothing human is dropped — never the pre-projection raw text.
 func promptText(node *merkle.Node) string {
-	text := joinTextBlocks(node.Bucket.Content, false)
-	if text == "" {
-		text = joinTextBlocks(node.Bucket.Content, true)
-	}
-	return text
-}
-
-// leadsWithHarnessTag reports whether a text block opens with a known
-// harness-insert tag (<system-reminder>, <local-command-caveat>, the slash
-// command wrappers, …). Such a block is harness scaffolding, not the human's
-// prompt, so the preview fold skips it — otherwise a turn opened by a slash
-// command previews the caveat text instead of what the user typed.
-func leadsWithHarnessTag(text string) bool {
-	t := strings.TrimSpace(text)
-	for _, tag := range merkle.HarnessTags {
-		if strings.HasPrefix(t, "<"+tag+">") {
-			return true
-		}
-	}
-	return false
-}
-
-func joinTextBlocks(blocks []llm.ContentBlock, includeInjected bool) string {
 	var sb strings.Builder
-	for _, b := range blocks {
+	for _, b := range node.Bucket.Content {
 		if b.Type != blockText || b.Text == "" {
 			continue
 		}
-		if !includeInjected && leadsWithHarnessTag(b.Text) {
+		prose := merkle.PreviewText(b.Text)
+		if prose == "" {
+			continue
+		}
+		if sb.Len() > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString(prose)
+		if sb.Len() >= maxPreviewText {
+			break
+		}
+	}
+	return truncatePreview(sb.String())
+}
+
+// joinTextBlocks concatenates a node's text blocks verbatim for the
+// response preview — assistant output, which carries no harness
+// scaffolding — truncated for display.
+func joinTextBlocks(blocks []llm.ContentBlock) string {
+	var sb strings.Builder
+	for _, b := range blocks {
+		if b.Type != blockText || b.Text == "" {
 			continue
 		}
 		if sb.Len() > 0 {
@@ -1070,16 +1071,19 @@ func joinTextBlocks(blocks []llm.ContentBlock, includeInjected bool) string {
 			break
 		}
 	}
-	text := sb.String()
-	if len(text) > maxPreviewText {
-		// Truncate on a rune boundary: a byte slice can split a
-		// multi-byte rune, and Postgres rejects the resulting invalid
-		// UTF-8 when the preview lands in span_turns (22021).
-		cut := maxPreviewText
-		for cut > 0 && !utf8.RuneStart(text[cut]) {
-			cut--
-		}
-		text = text[:cut]
+	return truncatePreview(sb.String())
+}
+
+// truncatePreview caps a preview string at maxPreviewText on a rune
+// boundary: a byte slice can split a multi-byte rune, and Postgres rejects
+// the resulting invalid UTF-8 when the preview lands in span_turns (22021).
+func truncatePreview(text string) string {
+	if len(text) <= maxPreviewText {
+		return text
 	}
-	return text
+	cut := maxPreviewText
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut]
 }

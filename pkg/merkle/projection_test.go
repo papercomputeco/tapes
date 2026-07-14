@@ -330,3 +330,36 @@ var _ = Describe("Node.Hash with harness drift", func() {
 		Expect(a.Hash).To(Equal(b.Hash))
 	})
 })
+
+var _ = Describe("PreviewText", func() {
+	It("strips volatile harness spans whole", func() {
+		Expect(merkle.PreviewText(
+			"<system-reminder># claudeMd boilerplate</system-reminder>\nActual human question")).
+			To(Equal("Actual human question"))
+	})
+
+	It("unwraps content-bearing wrappers, keeping the human's words", func() {
+		Expect(merkle.PreviewText(
+			"<command-name>/goal</command-name><command-args>Ship it tonight.</command-args>")).
+			To(Equal("Ship it tonight."))
+		Expect(merkle.PreviewText("<session>Resume the migration.</session>")).
+			To(Equal("Resume the migration."))
+	})
+
+	It("strips noise nested inside an unwrapped wrapper", func() {
+		Expect(merkle.PreviewText(
+			"<session>Opener<task-notification>bg event</task-notification> continues</session>")).
+			To(Equal("Opener continues"))
+	})
+
+	It("returns empty when a turn is nothing but volatile scaffolding", func() {
+		Expect(merkle.PreviewText(
+			"<system-reminder>x</system-reminder><new-diagnostics>y</new-diagnostics>")).
+			To(BeEmpty())
+	})
+
+	It("keeps the inner text of an unterminated wrapper open tag", func() {
+		Expect(merkle.PreviewText("<command-args>truncated goal text")).
+			To(Equal("truncated goal text"))
+	})
+})
