@@ -47,9 +47,10 @@ func payloadModeFromQuery(v string) PayloadMode {
 }
 
 // TraceItem is one user-visible turn's header. session_id / harness ids
-// are not duplicated here — they belong to the session; a trace's
-// post-compaction status is read from compaction-seam links, not a
-// metadata flag.
+// are not duplicated here — they belong to the session. A trace's
+// post-compaction status is the typed Synthetic field below (promoted out
+// of the old metadata grab-bag); the same seam is also recoverable from
+// the session's compaction-seam links.
 type TraceItem struct {
 	TraceID    string `json:"trace_id"`
 	UserPrompt string `json:"user_prompt,omitempty"`

@@ -248,8 +248,10 @@ func (d *Driver) writeDerivedSet(ctx context.Context, orgKey string, set *derive
 	defer tx.Rollback(ctx) //nolint:errcheck // commit shadows on success
 	qtx := d.q.WithTx(tx)
 
-	// Resolve covered sessions up front. Unknown keys (raw rows whose
-	// session row never landed) derive with NULL attribution.
+	// Resolve covered sessions up front. Unknown keys — raw rows whose
+	// session identity row never landed (a transient pre-ingest race;
+	// ingest is the sole writer of that row) — are skipped below on
+	// ErrNoRows: no session row, no projection.
 	sessionIDs := map[derive.SessionKey]pgtype.UUID{}
 	var coveredSessions []pgtype.UUID
 	for _, key := range set.Sessions {
