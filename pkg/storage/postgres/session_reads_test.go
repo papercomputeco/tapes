@@ -435,3 +435,73 @@ var _ = Describe("Driver.ListSessionRecords (dynamic sort)", func() {
 		}
 	})
 })
+
+var _ = Describe("Driver.GetSessionRecord preview", func() {
+	var (
+		driver   storage.Driver
+		pgDriver *postgres.Driver
+		ctx      context.Context
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		dsn, err := testPostgresDSN()
+		Expect(err).NotTo(HaveOccurred())
+		driver, err = postgres.NewDriver(ctx, dsn)
+		Expect(err).NotTo(HaveOccurred())
+		var ok bool
+		pgDriver, ok = driver.(*postgres.Driver)
+		Expect(ok).To(BeTrue())
+		_, err = pgDriver.DB().Exec(ctx, "TRUNCATE TABLE sessions CASCADE")
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	AfterEach(func() {
+		if driver != nil {
+			driver.Close()
+		}
+	})
+
+	insertSession := func(orgID, id, harnessSessionID string) {
+		_, err := pgDriver.DB().Exec(ctx, `
+			INSERT INTO sessions (id, org_id, auth_subject, harness_id, harness_session_id, started_at, last_seen_at)
+			VALUES ($1, $2, 'subj', 'claude', $3, NOW(), NOW())`, id, orgID, harnessSessionID)
+		Expect(err).NotTo(HaveOccurred())
+	}
+	insertTurn := func(orgID, id, traceID, prompt, synthetic string, offset time.Duration) {
+		_, err := pgDriver.DB().Exec(ctx, `
+			INSERT INTO span_turns_20260615 (org_id, trace_id, session_id, user_prompt, synthetic, started_at)
+			VALUES ($1, $2, $3, $4, $5, NOW() + $6)`, orgID, traceID, id, prompt, synthetic, offset)
+		Expect(err).NotTo(HaveOccurred())
+	}
+
+	// K + M together: the detail endpoint attaches the preview at all, and
+	// picks the first GENUINE turn rather than a shadow-only opener.
+	It("attaches the first non-synthetic, non-empty turn's prompt on the detail read", func() {
+		orgID := newTestOrgID()
+		const id = "01900000-0000-7000-8000-0000000000c1"
+		insertSession(orgID, id, "sess-preview")
+		// Earliest turn is a shadow-only opener (synthetic, empty prompt); the
+		// user's real prompt is the later, genuine turn.
+		insertTurn(orgID, id, "trc-1", "", "shadow-opener", 0)
+		insertTurn(orgID, id, "trc-2", "the real first question", "", time.Second)
+
+		rec, err := pgDriver.GetSessionRecord(ctx, orgID, id)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rec).NotTo(BeNil())
+		Expect(rec.Preview).To(Equal("the real first question"),
+			"detail must attach the preview (K) and skip the shadow opener (M)")
+	})
+
+	It("falls back to an empty preview when the session has no genuine turn", func() {
+		orgID := newTestOrgID()
+		const id = "01900000-0000-7000-8000-0000000000c2"
+		insertSession(orgID, id, "sess-empty")
+		insertTurn(orgID, id, "trc-1", "", "shadow-opener", 0)
+
+		rec, err := pgDriver.GetSessionRecord(ctx, orgID, id)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rec).NotTo(BeNil())
+		Expect(rec.Preview).To(BeEmpty())
+	})
+})

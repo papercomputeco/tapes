@@ -193,11 +193,19 @@ func (d *Driver) getSessionPreviews(ctx context.Context, sessions []storage.Sess
 		ids[i] = s.ID
 	}
 
+	// Prefer the first GENUINE turn's prompt: a synthetic turn (shadow-only
+	// opener, compaction continuation) or an empty-prompt turn is not the
+	// user's first message, so ordering by started_at alone yields a null/
+	// scaffolding preview when the opener is a shadow (live 019f4903). Sort
+	// genuine (non-synthetic, non-empty) turns ahead of the rest, then by
+	// started_at, so DISTINCT ON picks the earliest real prompt and only
+	// falls back to an empty one when the whole session has no real turn.
+	// This matches the fixture generator's preview fold (foldSessionItem).
 	rows, err := d.conn.Query(ctx, `
 SELECT DISTINCT ON (session_id) session_id::text, user_prompt
 FROM span_turns_20260615
 WHERE session_id = ANY($1::uuid[])
-ORDER BY session_id, started_at ASC
+ORDER BY session_id, (synthetic = '' AND TRIM(user_prompt) <> '') DESC, started_at ASC
 `, ids)
 	if err != nil {
 		return nil, fmt.Errorf("get session previews: %w", err)
@@ -241,7 +249,12 @@ func (d *Driver) GetSessionRecord(ctx context.Context, orgID, id string) (*stora
 		return nil, fmt.Errorf("get session record: %w", err)
 	}
 	s := sessionRecordFromRow(row)
-	return &s, nil
+	// Attach the preview like the list and export paths do — otherwise the
+	// detail endpoint's rollup.preview is always null and the console's
+	// sessionDisplayName degrades to an id slice on the detail page.
+	recs := []storage.SessionRecord{s}
+	d.attachPreviews(ctx, recs)
+	return &recs[0], nil
 }
 
 // DeleteSession removes a session by its org-scoped id and returns whether a
