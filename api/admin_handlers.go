@@ -38,6 +38,7 @@ type backfillUsageRequest struct {
 // upserts the same projection.
 //
 //	@Summary		Seed demo sessions (operator)
+//	@ID			seedDemo
 //	@Description	Replays the bundled demo capture corpora through the ingest write path into the caller's org, then derives the seeded sessions. Idempotent: raw-turn dedup makes repeat seeds no-ops.
 //	@Tags			admin
 //	@Accept			json

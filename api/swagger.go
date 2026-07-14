@@ -1,6 +1,7 @@
 package api
 
 //	@title			Tapes API
+//	@version		1.0
 //	@description	HTTP API for inspecting, querying, and searching stored Tapes sessions.
 //	@description
 //	@description	The REST surface exposes health checks, session listing and retrieval, derived session summaries, aggregate stats, semantic search, and a streamable MCP endpoint.
@@ -40,6 +41,7 @@ type swaggerMCPError struct {
 // swaggerMCPPostDoc documents the streamable MCP POST transport.
 //
 //	@Summary		Invoke the streamable MCP endpoint
+//	@ID			invokeMcp
 //	@Description	Sends a JSON-RPC 2.0 request to the stateless Model Context Protocol endpoint mounted at /v1/mcp.
 //	@Description
 //	@Description	Typical calls include initialize, tools/list, and tools/call. When search is configured, the server exposes a search tool over this transport.
@@ -56,6 +58,7 @@ func swaggerMCPPostDoc() {}
 // swaggerMCPGetDoc documents the streamable MCP GET transport.
 //
 //	@Summary		Open an MCP event stream
+//	@ID			openMcpStream
 //	@Description	Opens the streamable MCP endpoint for server-sent events. Stateless clients can use this to receive streamed MCP messages.
 //	@Tags			mcp
 //	@Produce		text/event-stream
@@ -66,6 +69,7 @@ func swaggerMCPGetDoc() {}
 // swaggerMCPDeleteDoc documents the streamable MCP DELETE transport.
 //
 //	@Summary		Close an MCP session
+//	@ID			closeMcpSession
 //	@Description	Requests termination of a streamable MCP session when a client is using session-oriented transport semantics.
 //	@Tags			mcp
 //	@Produce		json

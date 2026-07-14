@@ -70,6 +70,7 @@ func traceItemFromTurn(turn storage.SpanTurnRecord, spanCount int) TraceItem {
 // handleListTraceSummaries handles GET /v1/traces?session_id=.
 //
 //	@Summary		List a session's traces (summaries)
+//	@ID			listTraces
 //	@Description	Returns turn headers for a session — no span payloads. Fetch GET /v1/traces/{trace_id} per turn for spans and links.
 //	@Tags			traces
 //	@Produce		json
@@ -126,6 +127,7 @@ func BuildTraceList(rows []storage.TraceSummaryRecord) TraceListResponse {
 // handleGetTrace handles GET /v1/traces/:trace_id.
 //
 //	@Summary		Get one trace with spans and links
+//	@ID			getTrace
 //	@Description	Returns one user-visible turn: its spans nested by parent_span_id and its dataflow links (links touching other traces included).
 //	@Tags			traces
 //	@Produce		json
@@ -184,6 +186,7 @@ func BuildTraceDetail(turn storage.SpanTurnRecord, spans []storage.SpanRecord, l
 // handleGetSpan handles GET /v1/traces/:trace_id/spans/:span_id.
 //
 //	@Summary		Get one span with full payloads
+//	@ID			getSpan
 //	@Description	The payload drill-in: one span's complete input/output content.
 //	@Tags			traces
 //	@Produce		json
@@ -215,6 +218,7 @@ func (s *Server) handleGetSpan(c *fiber.Ctx) error {
 // handleListSessionRawTurns handles GET /v1/sessions/:id/raw_turns.
 //
 //	@Summary		List a session's raw capture log (operator)
+//	@ID			listRawTurns
 //	@Description	The raw layer's wire log: one row per captured call or transcript push, identity and sizes only. `source` distinguishes what crossed the wire from what the harness pushed as its own account.
 //	@Tags			sessions
 //	@Produce		json

@@ -39,6 +39,10 @@ swag: ## Runs the swaggo/swag utility for generating the swagger yaml
 swagfmt: ## Runs swaggo/swag for formatting swag godoc comments
 	swag fmt
 
+.PHONY: openapi
+openapi: swag ## Regenerates the OpenAPI 3.0.3 contract (api/openapi.yaml) from the swag docs
+	go run ./cmd/gen-openapi
+
 .PHONY: generate
 generate: ## Regenerates sqlc queries
 	sqlc generate
