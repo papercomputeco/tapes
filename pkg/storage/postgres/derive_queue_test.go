@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -11,10 +14,48 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/papercomputeco/tapes/pkg/derive"
+	"github.com/papercomputeco/tapes/pkg/derive/worker"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 	"github.com/papercomputeco/tapes/pkg/storage/storagetest"
 )
+
+// droppingStore wraps the real driver but silently drops the just-
+// derived session's newest trace after each re-derive — a stand-in for a
+// deriver bug that loses a turn. The concurrency gate's full-projection
+// assertion must notice: a gate that still passes against this store is
+// vacuous.
+type droppingStore struct {
+	*postgres.Driver
+}
+
+func (s droppingStore) RederiveSession(ctx context.Context, project, orgID, harnessID, harnessSessionID string) (*derive.RederiveReport, error) {
+	report, err := s.Driver.RederiveSession(ctx, project, orgID, harnessID, harnessSessionID)
+	if err != nil {
+		return report, err
+	}
+	// Simulate a lost turn: delete this session's newest trace across all
+	// three span tables right after the idempotent upsert re-lands it.
+	_, err = s.Driver.DB().Exec(ctx, `
+		WITH sess AS (
+			SELECT id FROM sessions WHERE harness_id = $1 AND harness_session_id = $2
+		), newest AS (
+			SELECT trace_id FROM span_turns_20260615
+			WHERE session_id = (SELECT id FROM sess)
+			ORDER BY started_at DESC, trace_id DESC LIMIT 1
+		), dl AS (
+			DELETE FROM span_links_20260615
+			WHERE session_id = (SELECT id FROM sess) AND from_trace_id IN (SELECT trace_id FROM newest)
+		), ds AS (
+			DELETE FROM spans_20260615
+			WHERE session_id = (SELECT id FROM sess) AND trace_id IN (SELECT trace_id FROM newest)
+		)
+		DELETE FROM span_turns_20260615
+		WHERE session_id = (SELECT id FROM sess) AND trace_id IN (SELECT trace_id FROM newest)`,
+		harnessID, harnessSessionID)
+	return report, err
+}
 
 // The shared DeriveQueue conformance specs run against the Postgres
 // driver (the only driver hosting the raw layer + dirty queue).
@@ -238,104 +279,212 @@ var _ = Describe("Derive worker storage (postgres)", func() {
 			Expect(staleB).To(Equal(1), "sibling sessions' rows are out of scope")
 		})
 
-		// normProjection digests a session's derived projection independently of
-		// its session/trace ids and timestamps: per trace (in started_at order)
-		// the folded user_prompt and the ordered span (kind:name) sequence. Two
-		// sessions built from identical turn content share this digest even
-		// though their deterministic ids differ.
-		normProjection := func(rowID string) string {
-			rows, err := driver.DB().Query(ctx, `
-				SELECT t.trace_id, t.user_prompt, sp.seq, sp.kind, sp.name
-				FROM span_turns_20260615 t
-				JOIN spans_20260615 sp
-				  ON sp.trace_id = t.trace_id AND sp.org_id = t.org_id
-				WHERE t.session_id = $1
-				ORDER BY t.started_at, t.trace_id, sp.seq`, rowID)
-			Expect(err).NotTo(HaveOccurred())
-			defer rows.Close()
-
+		// fullProjection digests a session's ENTIRE derived projection,
+		// independent of its session/trace/span ids and timestamps: the session
+		// rollup (status, git activity, tool counts, tasks, kind_counts,
+		// model_usage, model), every trace in started_at order (folded prompt,
+		// capture source, synthetic flag, token usage), every span in seq order
+		// (kind, name, status, call_kind, model, stop_reason, usage, verdict),
+		// and every link normalized to id-free (trace-ordinal:span-seq)
+		// endpoints. Two sessions built from identical turn content share this
+		// digest even though their deterministic ids differ — so a
+		// concurrent-ingest session can be proven byte-equal to a serial control,
+		// and dropping ANY turn, span, link, task, or rollup field breaks the
+		// match (unlike a prompt+kind digest, which a dropped verdict, link, or
+		// usage delta would slip past).
+		fullProjection := func(rowID string) string {
 			var sb strings.Builder
-			var curTrace string
+
+			var status, model, tasks, kindCounts, modelUsage string
+			var git bool
+			var toolResults, toolErrors int32
+			Expect(driver.DB().QueryRow(ctx, `
+				SELECT derived_status, has_git_activity, tool_result_count, tool_error_count,
+				       derived_model, COALESCE(tasks::text, ''), COALESCE(kind_counts::text, ''),
+				       COALESCE(model_usage::text, '')
+				FROM sessions WHERE id = $1`, rowID).Scan(
+				&status, &git, &toolResults, &toolErrors, &model, &tasks, &kindCounts, &modelUsage),
+			).To(Succeed())
+			fmt.Fprintf(&sb, "rollup status=%s git=%v toolResults=%d toolErrors=%d model=%q tasks=%s kinds=%s usage=%s",
+				status, git, toolResults, toolErrors, model, tasks, kindCounts, modelUsage)
+
+			traceOrdinal := map[string]int{}
+			rows, err := driver.DB().Query(ctx, `
+				SELECT trace_id, user_prompt, source, synthetic,
+				       total_input_tokens, total_output_tokens, main_input_tokens,
+				       main_output_tokens, cache_read_tokens, cache_creation_tokens
+				FROM span_turns_20260615 WHERE session_id = $1
+				ORDER BY started_at, trace_id`, rowID)
+			Expect(err).NotTo(HaveOccurred())
 			ordinal := 0
 			for rows.Next() {
-				var traceID, prompt, kind, name string
-				var seq int64
-				Expect(rows.Scan(&traceID, &prompt, &seq, &kind, &name)).To(Succeed())
-				if traceID != curTrace {
-					curTrace = traceID
-					ordinal++
-					fmt.Fprintf(&sb, "\nturn %d prompt=%q", ordinal, prompt)
-				}
-				fmt.Fprintf(&sb, " [%s:%s]", kind, name)
+				var id, prompt, source, synthetic string
+				var ti, to, mi, mo, cr, cc int64
+				Expect(rows.Scan(&id, &prompt, &source, &synthetic, &ti, &to, &mi, &mo, &cr, &cc)).To(Succeed())
+				ordinal++
+				traceOrdinal[id] = ordinal
+				fmt.Fprintf(&sb, "\ntrace %d prompt=%q source=%s synthetic=%s in=%d out=%d mainIn=%d mainOut=%d cacheR=%d cacheC=%d",
+					ordinal, prompt, source, synthetic, ti, to, mi, mo, cr, cc)
 			}
 			Expect(rows.Err()).NotTo(HaveOccurred())
+			rows.Close()
+
+			spanKey := map[string]string{}
+			srows, err := driver.DB().Query(ctx, `
+				SELECT sp.trace_id, sp.span_id, sp.seq, sp.kind, sp.name, sp.status,
+				       sp.call_kind, sp.model, sp.stop_reason,
+				       COALESCE(sp.usage::text, ''), COALESCE(sp.verdict::text, '')
+				FROM spans_20260615 sp
+				JOIN span_turns_20260615 t ON t.trace_id = sp.trace_id AND t.org_id = sp.org_id
+				WHERE sp.session_id = $1
+				ORDER BY t.started_at, sp.trace_id, sp.seq`, rowID)
+			Expect(err).NotTo(HaveOccurred())
+			for srows.Next() {
+				var traceID, spanID, kind, name, spStatus, callKind, spModel, stop, usage, verdict string
+				var seq int64
+				Expect(srows.Scan(&traceID, &spanID, &seq, &kind, &name, &spStatus, &callKind, &spModel, &stop, &usage, &verdict)).To(Succeed())
+				ord := traceOrdinal[traceID]
+				spanKey[spanID] = fmt.Sprintf("%d:%d", ord, seq)
+				fmt.Fprintf(&sb, "\n  span t%d seq=%d [%s:%s] status=%s call=%s model=%q stop=%q usage=%s verdict=%s",
+					ord, seq, kind, name, spStatus, callKind, spModel, stop, usage, verdict)
+			}
+			Expect(srows.Err()).NotTo(HaveOccurred())
+			srows.Close()
+
+			lrows, err := driver.DB().Query(ctx, `
+				SELECT from_span_id, from_io, to_span_id, to_io, kind
+				FROM span_links_20260615 WHERE session_id = $1`, rowID)
+			Expect(err).NotTo(HaveOccurred())
+			var links []string
+			for lrows.Next() {
+				var fromSpan, fromIO, toSpan, toIO, kind string
+				Expect(lrows.Scan(&fromSpan, &fromIO, &toSpan, &toIO, &kind)).To(Succeed())
+				links = append(links, fmt.Sprintf("%s.%s->%s.%s:%s", spanKey[fromSpan], fromIO, spanKey[toSpan], toIO, kind))
+			}
+			Expect(lrows.Err()).NotTo(HaveOccurred())
+			lrows.Close()
+			sort.Strings(links)
+			for _, l := range links {
+				fmt.Fprintf(&sb, "\nlink %s", l)
+			}
 			return sb.String()
+		}
+
+		// newTestWorker builds a fast-cadence derive worker over the given
+		// store: a few-ms poll/debounce so it interleaves with test-speed
+		// ingest, and a long sweep interval so the periodic backstop never
+		// interferes (the one startup sweep is harmless — it only re-enqueues
+		// already-dirty sessions).
+		newTestWorker := func(store worker.Store) *worker.Worker {
+			return worker.NewWorker(worker.Config{
+				PollInterval:  3 * time.Millisecond,
+				Debounce:      3 * time.Millisecond,
+				MaxDeriveLag:  6 * time.Millisecond,
+				SweepInterval: time.Hour,
+				PageSize:      50,
+			}, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		}
+
+		// runWorkerUntilDrained runs the worker while ingest lands, then blocks
+		// until the dirty queue empties (every mark cleared = every settled turn
+		// derived) and stops the worker. No manual re-derive of the session
+		// under test happens anywhere: the projection asserted after this
+		// returns is purely the worker's own output.
+		runWorkerUntilDrained := func(w *worker.Worker, ingest func()) {
+			runCtx, cancel := context.WithCancel(context.Background())
+			done := make(chan struct{})
+			go func() { defer close(done); _ = w.Run(runCtx) }()
+
+			ingest() // blocks until all raw turns have landed (quiesce)
+
+			Eventually(func() int64 {
+				stats, err := driver.DeriveQueueStats(ctx)
+				Expect(err).NotTo(HaveOccurred())
+				return stats.Depth
+			}, 15*time.Second, 3*time.Millisecond).Should(BeZero(),
+				"the worker must drain the dirty queue after ingest quiesces")
+
+			cancel()
+			<-done
 		}
 
 		// The property under test (RE-DERIVE-TEST-PLAN §0): the raw layer is the
 		// sole source of truth, so the projection is rebuildable from raw "at any
-		// time" — including while ingest is landing new turns. We cannot assert
-		// consistency mid-flight (raw is still growing), but once ingest quiesces
-		// the re-derive must converge to a fixpoint equal to a from-scratch serial
-		// derive over the same turns. This is the concurrent-ingest gap Fable
-		// flagged on the plan.
-		It("converges to the canonical projection after concurrent ingest (quiesce-fixpoint)", func() {
-			// Identical turn content for both sessions, so their projections match
-			// modulo ids/timestamps. Distinct prompts keep started_at ordering
-			// unambiguous.
-			userTexts := []string{"first prompt", "second prompt", "third prompt", "fourth prompt"}
+		// time" — including while ingest is landing new turns through the real
+		// derive worker. We cannot assert consistency mid-flight (raw is still
+		// growing), but once ingest quiesces and the worker drains the dirty
+		// queue, its projection must equal a from-scratch serial derive over the
+		// same turns — with no trailing manual re-derive papering over a lost
+		// turn. Driving the ACTUAL worker (poll → debounce → per-session lock →
+		// RederiveSession → conditional clear) is what makes this gate exercise
+		// the dirty-queue re-trigger rather than a bare re-derive loop.
+		It("converges to the canonical projection under concurrent worker-driven ingest", func() {
+			userTexts := []string{"first prompt", "second prompt", "third prompt", "fourth prompt", "fifth prompt", "sixth prompt"}
 
-			// Control: ingest everything up front, derive once — no concurrency.
-			// This is the canonical projection the experiment must reproduce.
+			// Control: ingest everything up front, derive once, snapshot BEFORE
+			// the worker exists. This is the canonical projection the experiment
+			// must reproduce (snapshotting first means an idempotent re-derive of
+			// the control by the worker's startup sweep can't affect the compare).
 			insertSessionRow(sessionBRowID, sessionB)
 			for i, txt := range userTexts {
 				putWireTurn(fmt.Sprintf("req-ctrl-%d", i), sessionB, txt)
 			}
 			_, err := driver.RederiveSession(ctx, "", "", harnessID, sessionB)
 			Expect(err).NotTo(HaveOccurred())
-			canonical := normProjection(sessionBRowID)
+			canonical := fullProjection(sessionBRowID)
 			Expect(canonical).NotTo(BeEmpty(), "control derive must produce a projection")
 
-			// Experiment: ingest the opener, then race the remaining ingests
-			// against a re-derive loop. Serial re-derives (not re-derive vs
-			// re-derive) racing the raw-layer append is the real interleaving.
+			// Experiment: ingest the opener, then land the remaining turns while
+			// the worker re-derives underneath — the raw-layer append racing the
+			// dirty-queue-triggered derives.
 			insertSessionRow(sessionARowID, sessionA)
 			putWireTurn("req-exp-0", sessionA, userTexts[0])
 
-			var wg sync.WaitGroup
-			wg.Add(1)
-			go func() {
-				defer GinkgoRecover()
-				defer wg.Done()
-				for i := 1; i < len(userTexts); i++ {
-					putWireTurn(fmt.Sprintf("req-exp-%d", i), sessionA, userTexts[i])
-					time.Sleep(2 * time.Millisecond)
-				}
-			}()
+			runWorkerUntilDrained(newTestWorker(driver), func() {
+				var wg sync.WaitGroup
+				wg.Add(1)
+				go func() {
+					defer GinkgoRecover()
+					defer wg.Done()
+					for i := 1; i < len(userTexts); i++ {
+						putWireTurn(fmt.Sprintf("req-exp-%d", i), sessionA, userTexts[i])
+						time.Sleep(3 * time.Millisecond)
+					}
+				}()
+				wg.Wait()
+			})
 
-			for i := 0; i < 12; i++ {
-				_, err := driver.RederiveSession(ctx, "", "", harnessID, sessionA)
-				Expect(err).NotTo(HaveOccurred())
-				time.Sleep(time.Millisecond)
+			// Convergence: the worker's drained projection equals the canonical
+			// serial projection — concurrent ingest during derivation changed
+			// nothing about the result, and no intermediate turn was dropped.
+			Expect(fullProjection(sessionARowID)).To(Equal(canonical),
+				"worker-drained concurrent-ingest projection equals the serial-derive projection")
+		})
+
+		// Sanity: the convergence assertion above is only meaningful if it FAILS
+		// when the worker loses a turn. Drive the same drain through a store that
+		// drops the newest trace on every re-derive; the full-projection digest
+		// must then diverge from canonical. A gate that still matched here would
+		// be vacuous — exactly the defect the prior quiesce-fixpoint gate had.
+		It("full-projection convergence fails when the worker drops a turn", func() {
+			userTexts := []string{"first prompt", "second prompt", "third prompt", "fourth prompt"}
+
+			insertSessionRow(sessionBRowID, sessionB)
+			for i, txt := range userTexts {
+				putWireTurn(fmt.Sprintf("req-ctrl-%d", i), sessionB, txt)
 			}
-			wg.Wait() // quiesce: no more raw turns will land
-
-			// Fixpoint: two quiesced re-derives in a row are byte-identical (same
-			// session, so ids match too — this is the Tier-1 property re-checked
-			// after a concurrent history).
-			_, err = driver.RederiveSession(ctx, "", "", harnessID, sessionA)
+			_, err := driver.RederiveSession(ctx, "", "", harnessID, sessionB)
 			Expect(err).NotTo(HaveOccurred())
-			fix1 := normProjection(sessionARowID)
-			_, err = driver.RederiveSession(ctx, "", "", harnessID, sessionA)
-			Expect(err).NotTo(HaveOccurred())
-			fix2 := normProjection(sessionARowID)
-			Expect(fix2).To(Equal(fix1), "the quiesced re-derive is a fixpoint")
+			canonical := fullProjection(sessionBRowID)
 
-			// Convergence: the fixpoint equals the canonical serial projection —
-			// concurrent ingest during re-derive changed nothing about the result,
-			// and no intermediate turn was dropped.
-			Expect(fix1).To(Equal(canonical),
-				"concurrent-ingest re-derive converges to the serial-derive projection")
+			insertSessionRow(sessionARowID, sessionA)
+			for i, txt := range userTexts {
+				putWireTurn(fmt.Sprintf("req-exp-%d", i), sessionA, txt)
+			}
+			runWorkerUntilDrained(newTestWorker(droppingStore{Driver: driver}), func() {})
+
+			Expect(fullProjection(sessionARowID)).NotTo(Equal(canonical),
+				"a full-projection gate must notice a dropped turn — else it is vacuous")
 		})
 	})
 })
