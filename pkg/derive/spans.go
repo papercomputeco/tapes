@@ -1,8 +1,11 @@
 package derive
 
 import (
+	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -38,10 +41,16 @@ const (
 const (
 	roleUser           = "user"
 	roleTool           = "tool"
+	roleSystem         = "system"
 	blockText          = "text"
 	blockToolUse       = "tool_use"
 	blockServerToolUse = "server_tool_use"
 	blockToolResult    = "tool_result"
+)
+
+const (
+	toolNameAgent = "Agent"
+	toolNameBash  = "Bash"
 )
 
 // Span link kinds — dataflow edges between spans. Containment is the
@@ -205,6 +214,7 @@ type spanEmitter struct {
 	toolTurn  map[string]*SpanTurn
 	agentSpan map[string]*Span // session|thread -> subagent agent span
 	agentTurn map[string]*SpanTurn
+	taskTools map[string]string // session|returned task name -> spawning tool id
 	seam      map[SessionKey]*seamSource
 }
 
@@ -237,6 +247,7 @@ func EmitSpans(set *DerivedSet) *SpanSet {
 		toolTurn:  map[string]*SpanTurn{},
 		agentSpan: map[string]*Span{},
 		agentTurn: map[string]*SpanTurn{},
+		taskTools: map[string]string{},
 		seam:      map[SessionKey]*seamSource{},
 	}
 	var threadCalls, shadowCalls []*SpanSource
@@ -297,6 +308,9 @@ func (em *spanEmitter) threadCall(src *SpanSource) {
 	turn := em.agentTurn[key]
 	if agent == nil {
 		taskID := threadAnchor(src)
+		if taskID == "" {
+			taskID = em.taskTools[src.Session.HarnessID+"|"+src.Session.HarnessSessionID+"|"+src.ThreadID]
+		}
 		task := em.toolSpans[taskID]
 		if task != nil {
 			turn = em.toolTurn[taskID]
@@ -397,7 +411,7 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 			}
 			continue
 		}
-		if node.Bucket.Role == "system" {
+		if node.Bucket.Role == roleSystem {
 			// mid-spine system-role inserts (task reminders, CLAUDE.md
 			// re-injections, post-compaction replays) are harness
 			// context, not user input — same family as injected:*,
@@ -449,15 +463,19 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 			})
 			continue
 		}
+		displayName, displayInput := displayTool(b.ToolName, b.ToolInput)
+		presented := b
+		presented.ToolName = displayName
+		presented.ToolInput = displayInput
 		ts := &Span{
 			SpanID:       b.ToolUseID,
 			ParentSpanID: parent.SpanID,
 			Kind:         SpanKindTool,
-			Name:         displayToolName(b.ToolName, b.ToolInput),
+			Name:         displayName,
 			Status:       "ok",
 			StartedAt:    src.CapturedAt,
 			ThreadID:     src.ThreadID,
-			Input:        []llm.ContentBlock{b},
+			Input:        []llm.ContentBlock{presented},
 		}
 		em.addSpan(turn, ts)
 		em.toolSpans[b.ToolUseID] = ts
@@ -470,22 +488,480 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 	}
 }
 
-// displayToolName returns the user-facing tool name for a span. Some
-// Responses-first harnesses, notably Codex, expose a generic function wrapper
-// such as exec/exec_command while the input shape carries the actual action.
-// Keep the raw tool_use block in Span.Input, but use the semantic label for
-// the span row so Console groups it with Claude's Bash tool.
-func displayToolName(name string, input map[string]any) string {
+// displayTool returns the user-facing tool name and input for a span. Codex's
+// GPT-5.6 runtime wraps developer tools in a freeform `exec` program. The raw
+// program remains in the immutable node/raw-turn layers; this presentation
+// projection exposes only stable nested operations and useful arguments.
+func displayTool(name string, input map[string]any) (string, map[string]any) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "exec", "exec_command", "shell", "shell_command":
-		if hasShellCommandInput(input) {
-			return "Bash"
+	case "exec":
+		if script, ok := input["input"].(string); ok {
+			return displayCodexExec(script)
 		}
+	case "exec_command", "shell", "shell_command":
+		if hasShellCommandInput(input) {
+			return toolNameBash, input
+		}
+	case "spawn_agent":
+		presented := map[string]any{"subagent_type": "Codex"}
+		if task, ok := input["task_name"].(string); ok && task != "" {
+			presented["description"] = task
+		}
+		if turns, ok := input["fork_turns"]; ok {
+			presented["fork_turns"] = turns
+		}
+		return toolNameAgent, presented
+	case "wait_agent":
+		return "Monitor", map[string]any{"description": "waiting for subagent"}
+	case "request_user_input":
+		return "AskUserQuestion", input
 	}
 	if name == "" {
-		return "tool"
+		return "tool", input
 	}
-	return name
+	return name, input
+}
+
+var skillPathPattern = regexp.MustCompile(`(?:^|/)skills/([^/]+)/SKILL\.md(?:$|[^A-Za-z0-9_.-])`)
+
+func displayCodexExec(script string) (string, map[string]any) {
+	calls := codexToolCallSites(script)
+	if len(calls) == 0 {
+		return "exec", map[string]any{}
+	}
+	canonical := make([]string, len(calls))
+	for i, call := range calls {
+		canonical[i] = canonicalCodexToolName(call.Name)
+	}
+	if len(canonical) > 1 {
+		presented := map[string]any{
+			"description": summarizeToolCalls(canonical),
+			"calls":       codexPresentedCalls(calls, codexParallelResultKeys(script, calls)),
+		}
+		if plan := codexPlanItems(script); len(plan) > 0 {
+			presented["plan"] = plan
+		}
+		return "Parallel", presented
+	}
+
+	name := canonical[0]
+	presented := codexPresentedInput(name, calls[0].Body)
+	switch name {
+	case toolNameBash:
+		if cmd, _ := presented["command"].(string); cmd != "" {
+			if match := skillPathPattern.FindStringSubmatch(cmd); match != nil {
+				presented["skill"] = match[1]
+				delete(presented, "command")
+				return "Skill", presented
+			}
+		}
+	case "TaskPlan":
+		presented["plan"] = codexPlanItems(script)
+		presented["description"] = "updated task plan"
+	}
+	return name, presented
+}
+
+func codexPresentedCalls(calls []codexToolCall, resultKeys map[int]string) []any {
+	out := make([]any, 0, len(calls))
+	for i, call := range calls {
+		name := canonicalCodexToolName(call.Name)
+		item := map[string]any{"name": name}
+		if key := resultKeys[i]; key != "" {
+			item["result_key"] = key
+		}
+		if input := codexPresentedInput(name, call.Body); len(input) > 0 {
+			item["arguments"] = input
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func codexPresentedInput(name, body string) map[string]any {
+	out := map[string]any{}
+	keys := []string{"cmd", "workdir", "path", "query", "id", "task_name", "description"}
+	for _, key := range keys {
+		if value := codexStringProperty(body, key); value != "" {
+			out[key] = value
+		}
+	}
+	if cmd, ok := out["cmd"]; ok {
+		out["command"] = cmd
+		delete(out, "cmd")
+	}
+	if name == toolNameAgent {
+		out["subagent_type"] = "Codex"
+	}
+	return out
+}
+
+func canonicalCodexToolName(name string) string {
+	switch name {
+	case "exec_command":
+		return toolNameBash
+	case "apply_patch":
+		return "Edit"
+	case "update_plan":
+		return "TaskPlan"
+	case "request_user_input":
+		return "AskUserQuestion"
+	case "write_stdin", "wait":
+		return "Monitor"
+	case "view_image":
+		return "Read"
+	default:
+		return name
+	}
+}
+
+func summarizeToolCalls(names []string) string {
+	counts := map[string]int{}
+	var order []string
+	for _, name := range names {
+		if counts[name] == 0 {
+			order = append(order, name)
+		}
+		counts[name]++
+	}
+	parts := make([]string, 0, len(order))
+	for _, name := range order {
+		if counts[name] == 1 {
+			parts = append(parts, name)
+		} else {
+			parts = append(parts, fmt.Sprintf("%s x%d", name, counts[name]))
+		}
+	}
+	return strings.Join(parts, " + ")
+}
+
+type codexToolCall struct {
+	Name  string
+	Body  string
+	Start int
+}
+
+// codexToolCallSites is a small lexer for the only syntax needed here:
+// `tools.<identifier>(` call sites outside strings and comments. It avoids
+// treating tool names quoted inside commands or captured documentation as
+// actual calls without pulling a JavaScript runtime into the derive worker.
+func codexToolCallSites(src string) []codexToolCall {
+	var out []codexToolCall
+	for i := 0; i < len(src); {
+		switch src[i] {
+		case '\'', '"':
+			i = skipJSString(src, i)
+			continue
+		case '`':
+			expressions, next := jsTemplateExpressions(src, i)
+			for _, expression := range expressions {
+				calls := codexToolCallSites(src[expression.start:expression.end])
+				for j := range calls {
+					calls[j].Start += expression.start
+				}
+				out = append(out, calls...)
+			}
+			i = next
+			continue
+		case '/':
+			if i+1 < len(src) && src[i+1] == '/' {
+				i = skipJSLineComment(src, i+2)
+				continue
+			}
+			if i+1 < len(src) && src[i+1] == '*' {
+				i = skipJSBlockComment(src, i+2)
+				continue
+			}
+		}
+		if strings.HasPrefix(src[i:], "tools.") && (i == 0 || !isJSIdentifier(src[i-1])) {
+			start := i + len("tools.")
+			end := start
+			for end < len(src) && isJSIdentifier(src[end]) {
+				end++
+			}
+			j := end
+			for j < len(src) && strings.ContainsRune(" \t\n\r", rune(src[j])) {
+				j++
+			}
+			if end > start && j < len(src) && src[j] == '(' {
+				body, next := codexParenthesizedBody(src, j)
+				out = append(out, codexToolCall{Name: src[start:end], Body: body, Start: i})
+				i = next
+				continue
+			}
+		}
+		i++
+	}
+	return out
+}
+
+var codexPromiseAssignmentPattern = regexp.MustCompile(`(?s)(?:const|let|var)\s*\[\s*([A-Za-z_$][A-Za-z0-9_$]*(?:\s*,\s*[A-Za-z_$][A-Za-z0-9_$]*)*)\s*\]\s*=\s*await\s*Promise\.(?:all|allSettled)\s*\(`)
+
+// codexParallelResultKeys maps Promise destructuring names back to the tool
+// calls whose results they hold. The exec wrapper's final text(JSON.stringify)
+// uses these same names as object keys, allowing Console to display each
+// result under the corresponding decomposed child without guessing.
+func codexParallelResultKeys(script string, calls []codexToolCall) map[int]string {
+	out := map[int]string{}
+	for _, match := range codexPromiseAssignmentPattern.FindAllStringSubmatchIndex(script, -1) {
+		open := match[1] - 1
+		_, end := codexParenthesizedBody(script, open)
+		var indexes []int
+		for i, call := range calls {
+			if call.Start > open && call.Start < end {
+				indexes = append(indexes, i)
+			}
+		}
+		keys := strings.Split(script[match[2]:match[3]], ",")
+		if len(keys) != len(indexes) {
+			continue
+		}
+		for i, index := range indexes {
+			out[index] = strings.TrimSpace(keys[i])
+		}
+	}
+	return out
+}
+
+func codexParenthesizedBody(src string, open int) (string, int) {
+	start := open + 1
+	depth := 1
+	for i := start; i < len(src); {
+		switch src[i] {
+		case '\'', '"', '`':
+			i = skipJSString(src, i)
+			continue
+		case '/':
+			if i+1 < len(src) && src[i+1] == '/' {
+				i = skipJSLineComment(src, i+2)
+				continue
+			}
+			if i+1 < len(src) && src[i+1] == '*' {
+				i = skipJSBlockComment(src, i+2)
+				continue
+			}
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return src[start:i], i + 1
+			}
+		}
+		i++
+	}
+	return src[start:], len(src)
+}
+
+func codexStringProperty(src, key string) string {
+	for i := 0; i < len(src); {
+		if src[i] == '"' {
+			end := skipJSString(src, i)
+			quotedKey, err := strconv.Unquote(src[i:end])
+			if err == nil && quotedKey == key {
+				if value := codexStringValueAfterColon(src, end); value != "" {
+					return value
+				}
+			}
+			i = end
+			continue
+		}
+		if src[i] == '\'' || src[i] == '`' {
+			i = skipJSString(src, i)
+			continue
+		}
+		if strings.HasPrefix(src[i:], key) && (i == 0 || !isJSIdentifier(src[i-1])) {
+			if value := codexStringValueAfterColon(src, i+len(key)); value != "" {
+				return value
+			}
+		}
+		i++
+	}
+	return ""
+}
+
+func codexStringValueAfterColon(src string, start int) string {
+	j := start
+	for j < len(src) && strings.ContainsRune(" \t\n\r", rune(src[j])) {
+		j++
+	}
+	if j >= len(src) || src[j] != ':' {
+		return ""
+	}
+	j++
+	for j < len(src) && strings.ContainsRune(" \t\n\r", rune(src[j])) {
+		j++
+	}
+	if j >= len(src) || src[j] != '"' {
+		return ""
+	}
+	end := skipJSString(src, j)
+	value, err := strconv.Unquote(src[j:end])
+	if err != nil {
+		return ""
+	}
+	return value
+}
+
+func codexPlanItems(src string) []any {
+	call := codexCallBody(src, "update_plan")
+	if call == "" {
+		return nil
+	}
+	type item struct {
+		step   string
+		status string
+	}
+	var items []item
+	var current item
+	for i := 0; i < len(call); {
+		key := ""
+		value := ""
+		switch {
+		case call[i] == '"':
+			end := skipJSString(call, i)
+			decoded, err := strconv.Unquote(call[i:end])
+			if err == nil {
+				key = decoded
+				value = codexStringValueAfterColon(call, end)
+			}
+			i = end
+		case isJSIdentifier(call[i]) && (i == 0 || !isJSIdentifier(call[i-1])):
+			end := i + 1
+			for end < len(call) && isJSIdentifier(call[end]) {
+				end++
+			}
+			key = call[i:end]
+			value = codexStringValueAfterColon(call, end)
+			i = end
+		default:
+			i++
+			continue
+		}
+		if value == "" {
+			continue
+		}
+		switch key {
+		case "step":
+			if current.step != "" {
+				items = append(items, current)
+			}
+			current = item{step: value}
+		case "status":
+			current.status = value
+		}
+	}
+	if current.step != "" {
+		items = append(items, current)
+	}
+	out := make([]any, 0, len(items))
+	for _, item := range items {
+		if item.status == "" {
+			item.status = "pending"
+		}
+		out = append(out, map[string]any{"step": item.step, "status": item.status})
+	}
+	return out
+}
+
+func codexCallBody(src, name string) string {
+	for _, call := range codexToolCallSites(src) {
+		if call.Name == name {
+			return call.Body
+		}
+	}
+	return ""
+}
+
+func isJSIdentifier(b byte) bool {
+	return b == '_' || b == '$' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9'
+}
+
+func skipJSString(src string, start int) int {
+	quote := src[start]
+	for i := start + 1; i < len(src); i++ {
+		if src[i] == '\\' {
+			i++
+			continue
+		}
+		if src[i] == quote {
+			return i + 1
+		}
+	}
+	return len(src)
+}
+
+type jsSourceRange struct {
+	start int
+	end   int
+}
+
+// jsTemplateExpressions returns the expression bodies from one template
+// literal. Literal text remains opaque, while each ${...} body is fed back
+// through the tool-call lexer by codexToolCallSites.
+func jsTemplateExpressions(src string, start int) ([]jsSourceRange, int) {
+	var expressions []jsSourceRange
+	for i := start + 1; i < len(src); {
+		switch {
+		case src[i] == '\\':
+			i += 2
+		case src[i] == '`':
+			return expressions, i + 1
+		case src[i] == '$' && i+1 < len(src) && src[i+1] == '{':
+			end := skipJSBracedExpression(src, i+1)
+			expressions = append(expressions, jsSourceRange{start: i + 2, end: end - 1})
+			i = end
+		default:
+			i++
+		}
+	}
+	return expressions, len(src)
+}
+
+func skipJSBracedExpression(src string, open int) int {
+	depth := 1
+	for i := open + 1; i < len(src); {
+		switch src[i] {
+		case '\'', '"':
+			i = skipJSString(src, i)
+			continue
+		case '`':
+			_, i = jsTemplateExpressions(src, i)
+			continue
+		case '/':
+			if i+1 < len(src) && src[i+1] == '/' {
+				i = skipJSLineComment(src, i+2)
+				continue
+			}
+			if i+1 < len(src) && src[i+1] == '*' {
+				i = skipJSBlockComment(src, i+2)
+				continue
+			}
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return i + 1
+			}
+		}
+		i++
+	}
+	return len(src)
+}
+
+func skipJSLineComment(src string, start int) int {
+	if i := strings.IndexByte(src[start:], '\n'); i >= 0 {
+		return start + i + 1
+	}
+	return len(src)
+}
+
+func skipJSBlockComment(src string, start int) int {
+	if i := strings.Index(src[start:], "*/"); i >= 0 {
+		return start + i + 2
+	}
+	return len(src)
 }
 
 func hasShellCommandInput(input map[string]any) bool {
@@ -530,6 +1006,12 @@ func (em *spanEmitter) fillToolResult(b *llm.ContentBlock, at time.Time) *Span {
 		return nil // first result wins; replays don't re-feed
 	}
 	ts.Output = []llm.ContentBlock{*b}
+	if ts.Name == toolNameAgent {
+		if taskName := codexAgentTaskName(b.ToolOutput); taskName != "" {
+			key := em.toolTurn[id].Session.HarnessID + "|" + em.toolTurn[id].Session.HarnessSessionID + "|" + taskName
+			em.taskTools[key] = id
+		}
+	}
 	if b.IsError {
 		ts.Status = "error"
 	}
@@ -537,6 +1019,16 @@ func (em *spanEmitter) fillToolResult(b *llm.ContentBlock, at time.Time) *Span {
 		ts.DurationNS = d.Nanoseconds()
 	}
 	return ts
+}
+
+func codexAgentTaskName(output string) string {
+	var value struct {
+		TaskName string `json:"task_name"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(output)), &value) == nil {
+		return value.TaskName
+	}
+	return ""
 }
 
 func (em *spanEmitter) openTrace(src *SpanSource, prompt *DerivedNode) *SpanTurn {

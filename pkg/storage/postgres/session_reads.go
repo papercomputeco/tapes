@@ -180,6 +180,7 @@ SELECT DISTINCT ON (session_id) session_id::text, bucket
 FROM nodes
 WHERE session_id = ANY($1::uuid[])
   AND role = 'user'
+  AND COALESCE(node_kind, '') NOT LIKE 'injected:%'
 ORDER BY session_id, created_at ASC
 `, ids)
 	if err != nil {
@@ -249,7 +250,9 @@ func (d *Driver) GetSessionRecord(ctx context.Context, orgID, id string) (*stora
 		return nil, fmt.Errorf("get session record: %w", err)
 	}
 	s := sessionRecordFromRow(row)
-	return &s, nil
+	recs := []storage.SessionRecord{s}
+	d.attachPreviews(ctx, recs)
+	return &recs[0], nil
 }
 
 // DeleteSession removes a session by its org-scoped id and returns whether a

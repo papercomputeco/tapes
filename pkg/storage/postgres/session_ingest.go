@@ -8,6 +8,7 @@ import (
 	"math"
 	"math/big"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -65,10 +66,11 @@ func (d *Driver) IngestTurn(ctx context.Context, req storage.IngestTurnRequest) 
 	if len(req.Nodes) == 0 {
 		return storage.IngestTurnResult{}, errors.New("ingest turn: no nodes supplied")
 	}
-	if err := validateChainOrdering(req.Nodes); err != nil {
-		// Synthetic id derivation (req.Nodes[0].Hash) trusts the caller's
-		// root-to-leaf ordering — a scrambled chain would derive the
-		// wrong "root" and silently land turns on the wrong session.
+	root, err := validateChainOrdering(req.Nodes)
+	if err != nil {
+		// Synthetic id derivation trusts the caller's ordered projection.
+		// A scrambled spine would derive the wrong root and silently land
+		// turns on the wrong session.
 		// Reject at the boundary; do not attempt to repair.
 		return storage.IngestTurnResult{}, fmt.Errorf("ingest turn: %w", err)
 	}
@@ -83,7 +85,7 @@ func (d *Driver) IngestTurn(ctx context.Context, req storage.IngestTurnRequest) 
 	now := time.Now().UTC()
 	nowTS := pgtype.Timestamptz{Time: now, Valid: true}
 
-	envelope, harnessSessionID, err := resolveHarnessSessionID(req.Session, req.Nodes[0])
+	envelope, harnessSessionID, err := resolveHarnessSessionID(req.Session, root)
 	if err != nil {
 		return storage.IngestTurnResult{}, fmt.Errorf("resolve harness_session_id: %w", err)
 	}
@@ -335,35 +337,47 @@ UPDATE nodes
 	}, nil
 }
 
-// validateChainOrdering enforces the root-to-leaf invariant documented
-// on storage.IngestTurnRequest: each node's ParentHash must point at
-// the previous node's Hash. Nodes[0] is the conversation root, so its
-// ParentHash must be nil or empty.
+// validateChainOrdering enforces the ordered-projection invariant documented
+// on storage.IngestTurnRequest. Non-injected nodes form a root-to-leaf spine.
+// Injected nodes are side branches from the current spine parent and do not
+// advance it, so leading injected context and the conversation root may both
+// have no ParentHash.
 //
-// The synthetic harness_session_id derivation depends on Nodes[0]
-// actually being the root, and the (org_id, hash) PK on nodes means a
-// scrambled chain produces real duplicate-hash conflicts on the wrong
-// session; we reject at the boundary rather than attempt a repair.
-func validateChainOrdering(nodes []*merkle.Node) error {
+// The returned node is the conversation root used for synthetic session IDs.
+// The (org_id, hash) PK on nodes means a scrambled spine produces real
+// duplicate-hash conflicts on the wrong session, so reject rather than repair.
+func validateChainOrdering(nodes []*merkle.Node) (*merkle.Node, error) {
+	var root *merkle.Node
+	var spineParent *merkle.Node
 	for i, node := range nodes {
 		if node == nil {
-			return fmt.Errorf("nodes[%d] is nil", i)
+			return nil, fmt.Errorf("nodes[%d] is nil", i)
 		}
-		if i == 0 {
-			if node.ParentHash != nil && *node.ParentHash != "" {
-				return fmt.Errorf("nodes[0] must be the conversation root: ParentHash=%q", *node.ParentHash)
-			}
+
+		expectedParent := ""
+		if spineParent != nil {
+			expectedParent = spineParent.Hash
+		}
+		actualParent := ""
+		if node.ParentHash != nil {
+			actualParent = *node.ParentHash
+		}
+		if actualParent != expectedParent {
+			return nil, fmt.Errorf("nodes[%d].ParentHash=%q does not chain to spine parent %q", i, actualParent, expectedParent)
+		}
+
+		if strings.HasPrefix(node.Kind, "injected:") {
 			continue
 		}
-		prev := nodes[i-1]
-		if node.ParentHash == nil || *node.ParentHash == "" {
-			return fmt.Errorf("nodes[%d] has no ParentHash but expected %q", i, prev.Hash)
+		if root == nil {
+			root = node
 		}
-		if *node.ParentHash != prev.Hash {
-			return fmt.Errorf("nodes[%d].ParentHash=%q does not chain to nodes[%d].Hash=%q", i, *node.ParentHash, i-1, prev.Hash)
-		}
+		spineParent = node
 	}
-	return nil
+	if root == nil {
+		return nil, errors.New("nodes contain no conversation spine")
+	}
+	return root, nil
 }
 
 // resolveHarnessSessionID returns the envelope to persist (always

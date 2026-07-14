@@ -54,6 +54,31 @@ var _ = Describe("validateChainOrdering", func() {
 		Expect(postgres.ValidateChainOrderingForTest(nodes)).To(Succeed())
 	})
 
+	It("accepts leading injected context beside the conversation root", func() {
+		nodes := []*merkle.Node{
+			{Hash: "injected", Kind: "injected:agent-context"},
+			{Hash: "h0"},
+			{Hash: "h1", ParentHash: stringPtr("h0")},
+		}
+		Expect(postgres.ValidateChainOrderingForTest(nodes)).To(Succeed())
+	})
+
+	It("accepts an injected side branch without advancing the spine", func() {
+		nodes := []*merkle.Node{
+			{Hash: "h0"},
+			{Hash: "injected", Kind: "injected:mode-banner", ParentHash: stringPtr("h0")},
+			{Hash: "h1", ParentHash: stringPtr("h0")},
+		}
+		Expect(postgres.ValidateChainOrderingForTest(nodes)).To(Succeed())
+	})
+
+	It("rejects a projection containing only injected nodes", func() {
+		nodes := []*merkle.Node{{Hash: "injected", Kind: "injected:agent-context"}}
+		err := postgres.ValidateChainOrderingForTest(nodes)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("no conversation spine"))
+	})
+
 	It("rejects a chain whose root carries a ParentHash", func() {
 		nodes := []*merkle.Node{
 			{Hash: "h0", ParentHash: stringPtr("not-a-root")},
@@ -84,11 +109,11 @@ var _ = Describe("validateChainOrdering", func() {
 		Expect(err.Error()).To(ContainSubstring("nodes[1]"))
 	})
 
-	It("rejects a scrambled chain whose ParentHash does not chain", func() {
+	It("rejects a real side branch from the conversation spine", func() {
 		nodes := []*merkle.Node{
 			{Hash: "h0"},
 			{Hash: "h1", ParentHash: stringPtr("h0")},
-			{Hash: "h2", ParentHash: stringPtr("h0")}, // should be h1
+			{Hash: "h2", ParentHash: stringPtr("h0")}, // not classified as injected
 		}
 		err := postgres.ValidateChainOrderingForTest(nodes)
 		Expect(err).To(HaveOccurred())

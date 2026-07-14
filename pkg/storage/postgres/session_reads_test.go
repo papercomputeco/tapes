@@ -6,6 +6,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
@@ -98,6 +99,42 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 		Expect(listed).To(HaveLen(1))
 		Expect(listed[0].ID).To(Equal(rec.ID))
 		Expect(listed[0].Preview).To(Equal(rec.Preview))
+	})
+
+	It("returns the preview when looking up a session by UUID", func() {
+		orgID := newTestOrgID()
+		sessionID := seedSession(orgID, "codex", "detail-preview", "detail page title")
+
+		rec, err := pgDriver.GetSessionRecord(ctx, orgID, sessionID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rec).NotTo(BeNil())
+		Expect(rec.Preview).To(Equal("detail page title"))
+	})
+
+	It("uses the first human message for a Codex session preview", func() {
+		orgID := newTestOrgID()
+		humanTurn := sessionFixture("fix the linear mcp server")
+		context := sessionFixture("# AGENTS.md instructions for /workspace/project")[0]
+		context.Kind = "injected:agent-context"
+		human := merkle.NewNode(humanTurn[0].Bucket, nil)
+		response := merkle.NewNode(humanTurn[1].Bucket, human, merkle.NodeOptions{StopReason: "stop"})
+		nodes := []*merkle.Node{context, human, response}
+
+		_, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
+			Session: &sessions.IngestEnvelope{
+				OrgID:            orgID,
+				AuthSubject:      "subject-codex",
+				HarnessID:        "codex",
+				HarnessSessionID: "codex-preview",
+			},
+			Nodes: nodes,
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		rec, err := pgDriver.GetSessionRecordByHarness(ctx, orgID, "codex", "codex-preview")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rec).NotTo(BeNil())
+		Expect(rec.Preview).To(Equal("fix the linear mcp server"))
 	})
 
 	It("returns nil without error when no row matches the natural key", func() {

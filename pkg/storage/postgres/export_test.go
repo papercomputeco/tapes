@@ -18,5 +18,6 @@ func InterfaceInt64ForTest(v any) int64 {
 // ordering validator so the unit suite can exercise it without an
 // integration database.
 func ValidateChainOrderingForTest(nodes []*merkle.Node) error {
-	return validateChainOrdering(nodes)
+	_, err := validateChainOrdering(nodes)
+	return err
 }

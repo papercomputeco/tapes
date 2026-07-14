@@ -156,8 +156,18 @@ var _ = Describe("ClassifyInjected", func() {
 	It("marks whole injected blocks", func() {
 		Expect(derive.ClassifyInjected(textMsg("user", "# MCP Server Instructions\n…"))).To(Equal(derive.KindInjectedMCPInstructions))
 		Expect(derive.ClassifyInjected(textMsg("user", "The following skills are available…"))).To(Equal(derive.KindInjectedSkillsList))
+		Expect(derive.ClassifyInjected(textMsg("user", "<skill><name>demo</name></skill>"))).To(Equal(derive.KindInjectedSkillContent))
 		Expect(derive.ClassifyInjected(textMsg("user", "Plan mode is active."))).To(Equal(derive.KindInjectedModeBanner))
 		Expect(derive.ClassifyInjected(textMsg("user", "Exited Plan Mode"))).To(Equal(derive.KindInjectedModeBanner))
+	})
+
+	It("marks Codex agent instructions and environment context", func() {
+		instructions := llm.Message{Role: "user", Content: []llm.ContentBlock{
+			{Type: "text", Text: "# AGENTS.md instructions for /workspace/project\n\n<INSTRUCTIONS>\nuse the grove\n</INSTRUCTIONS>"},
+			{Type: "text", Text: "<environment_context>\n  <cwd>/workspace/project</cwd>\n</environment_context>"},
+		}}
+		Expect(derive.ClassifyInjected(instructions)).To(Equal(derive.KindInjectedAgentContext))
+		Expect(derive.ClassifyInjected(textMsg("user", "<environment_context>\n<cwd>/tmp</cwd>\n</environment_context>"))).To(Equal(derive.KindInjectedEnvironmentContext))
 	})
 
 	It("leaves ordinary conversation and tool messages alone", func() {
@@ -180,6 +190,35 @@ var _ = Describe("BuildDerivedSet", func() {
 			Meta:       json.RawMessage(`{}`),
 		}
 	}
+
+	It("splits a Codex skill invocation from its injected expansion", func() {
+		turn := mkRaw(1, "skill", `{
+			"model":"gpt-5.6-sol","stream":true,"tool_choice":"auto",
+			"input":[{"role":"user","content":"$exercise-demo\n\n<skill><name>exercise-demo</name><path>/skills/exercise-demo/SKILL.md</path></skill>"}]
+		}`, `{"model":"gpt-5.6-sol","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}`)
+		turn.Provider = "openai"
+
+		set, err := derive.BuildDerivedSet([]storage.RawTurnRecord{turn}, "proj")
+		Expect(err).NotTo(HaveOccurred())
+		var prompt, injected string
+		var injectedHasParent bool
+		for _, derived := range set.Nodes {
+			node := derived.Node
+			switch node.Kind {
+			case derive.KindMain:
+				if node.Bucket.Role == "user" {
+					prompt = node.Bucket.ExtractText()
+				}
+			case derive.KindInjectedSkillContent:
+				injected = node.Bucket.ExtractText()
+				injectedHasParent = node.ParentHash != nil
+			}
+		}
+		Expect(prompt).To(Equal("$exercise-demo"))
+		Expect(injected).To(ContainSubstring("<name>exercise-demo</name>"))
+		// The expansion branches from the invocation but never advances the spine.
+		Expect(injectedHasParent).To(BeTrue())
+	})
 
 	It("derives, classifies, and attaches a verdict to its judged tool_use", func() {
 		mainTurn := mkRaw(1, "r1", `{
@@ -377,6 +416,100 @@ var _ = Describe("BuildDerivedSet", func() {
 		Expect(tool).NotTo(BeNil())
 		Expect(tool.SpanID).To(Equal("call_1"))
 		Expect(tool.Name).To(Equal("Bash"))
+		Expect(tool.Output).To(HaveLen(1))
+		Expect(tool.Output[0].ToolOutput).To(Equal("README.md"))
+	})
+
+	It("projects GPT-5.6 Codex custom tool calls as the conversation spine", func() {
+		// GPT-5.6 Codex sends no client-side `tools` array (the ChatGPT
+		// Codex backend injects definitions server-side) and expresses
+		// its tool spine as custom_tool_call / custom_tool_call_output
+		// items. The stored reduced response carries the custom item
+		// verbatim (the reducer preserves unknown types raw), so this
+		// exercises classification via tool_choice, request-echo
+		// mapping, AND derive-time response normalization together.
+		turn1 := storage.RawTurnRecord{
+			ID:               1,
+			Provider:         "openai",
+			HarnessID:        "codex",
+			HarnessSessionID: "sess-codex-56",
+			RequestID:        "resp_req_1",
+			ReceivedAt:       time.Unix(1783985110, 0),
+			RawRequest: json.RawMessage(`{
+				"model":"gpt-5.6-sol",
+				"instructions":"You are Codex.",
+				"stream":true,
+				"tool_choice":"auto",
+				"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"list files"}]}]
+			}`),
+			Response: json.RawMessage(`{
+				"model":"gpt-5.6-sol",
+				"message":{"role":"assistant","content":[
+					{"type":"thinking","thinking_signature":"enc_blob"},
+					{"type":"custom_tool_call","content":{"type":"custom_tool_call","id":"ctc_1","status":"completed","call_id":"call_1","name":"exec","input":"const r = await tools.exec_command({cmd:\"ls\"})"}}
+				]},
+				"stop_reason":"tool_use",
+				"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}
+			}`),
+			Meta: json.RawMessage(`{}`),
+		}
+		turn2 := storage.RawTurnRecord{
+			ID:               2,
+			Provider:         "openai",
+			HarnessID:        "codex",
+			HarnessSessionID: "sess-codex-56",
+			RequestID:        "resp_req_2",
+			ReceivedAt:       time.Unix(1783985111, 0),
+			RawRequest: json.RawMessage(`{
+				"model":"gpt-5.6-sol",
+				"instructions":"You are Codex.",
+				"stream":true,
+				"tool_choice":"auto",
+				"input":[
+					{"type":"message","role":"user","content":[{"type":"input_text","text":"list files"}]},
+					{"type":"custom_tool_call","id":"ctc_1","status":"completed","call_id":"call_1","name":"exec","input":"const r = await tools.exec_command({cmd:\"ls\"})"},
+					{"type":"custom_tool_call_output","call_id":"call_1","output":[{"type":"input_text","text":"README.md"}]}
+				]
+			}`),
+			Response: json.RawMessage(`{
+				"model":"gpt-5.6-sol",
+				"message":{"role":"assistant","content":[{"type":"text","text":"README.md"}]},
+				"stop_reason":"stop",
+				"usage":{"prompt_tokens":20,"completion_tokens":2,"total_tokens":22}
+			}`),
+			Meta: json.RawMessage(`{}`),
+		}
+
+		set, err := derive.BuildDerivedSet([]storage.RawTurnRecord{turn1, turn2}, "p")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(set.Report.CallKinds).To(HaveKeyWithValue(derive.KindMain, 2))
+		Expect(set.Report.CallKinds).NotTo(HaveKey(derive.KindUnknown))
+
+		spans := derive.EmitSpans(set)
+		Expect(spans.Report.Traces).To(Equal(1))
+		Expect(spans.Report.SpanKinds).To(HaveKeyWithValue(derive.SpanKindLLM, 2))
+		Expect(spans.Report.SpanKinds).To(HaveKeyWithValue(derive.SpanKindTool, 1))
+		Expect(spans.Report.LinkKinds).To(HaveKeyWithValue(derive.LinkFeeds, 1))
+
+		trace := spans.Turns[0]
+		Expect(trace.UserPrompt).To(Equal("list files"))
+		Expect(trace.ResponsePreview).To(Equal("README.md"))
+
+		var tool *derive.Span
+		for _, span := range trace.Spans {
+			if span.Kind == derive.SpanKindTool {
+				tool = span
+				break
+			}
+		}
+		Expect(tool).NotTo(BeNil())
+		Expect(tool.SpanID).To(Equal("call_1"))
+		Expect(tool.Name).To(Equal("Bash"))
+		Expect(tool.Input).To(HaveLen(1))
+		Expect(tool.Input[0].Type).To(Equal("tool_use"))
+		Expect(tool.Input[0].ToolName).To(Equal("Bash"))
+		Expect(tool.Input[0].ToolInput).To(HaveKeyWithValue("command", "ls"))
+		Expect(tool.Input[0].ToolInput).NotTo(HaveKey("input"))
 		Expect(tool.Output).To(HaveLen(1))
 		Expect(tool.Output[0].ToolOutput).To(Equal("README.md"))
 	})

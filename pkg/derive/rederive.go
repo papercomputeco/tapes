@@ -161,10 +161,14 @@ func rederiveChain(providers map[string]provider.Provider, rec *storage.RawTurnR
 	if resp.Message.Role == "" || len(resp.Message.Content) == 0 {
 		return nil, true, nil
 	}
+	threadID := threadIDFromMeta(rec.Meta)
+	if threadID == "" && req.Extra != nil {
+		threadID, _ = req.Extra["thread_id"].(string)
+	}
 	chain = TurnChain(CallContext{
 		Provider:  rec.Provider,
 		AgentName: rec.AgentName,
-		ThreadID:  threadIDFromMeta(rec.Meta),
+		ThreadID:  threadID,
 		Project:   project,
 	}, req, &resp)
 	if len(chain) == 0 {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -124,6 +125,11 @@ func (d *Driver) RederiveFromRaw(ctx context.Context, project string) (map[strin
 			rec := rawTurnRecordFromRow(row)
 			file, err := derive.ParseTranscriptFile(&rec)
 			if err != nil {
+				if errors.Is(err, derive.ErrUnsupportedTranscriptHarness) {
+					slog.WarnContext(ctx, "skip unsupported transcript harness",
+						"raw_turn_id", id, "harness_id", rec.HarnessID)
+					continue
+				}
 				return nil, fmt.Errorf("parse transcript row %d: %w", id, err)
 			}
 			files = append(files, file)
@@ -216,6 +222,11 @@ func (d *Driver) RederiveSession(ctx context.Context, project, orgID, harnessID,
 		rec := rawTurnRecordFromRow(row)
 		file, err := derive.ParseTranscriptFile(&rec)
 		if err != nil {
+			if errors.Is(err, derive.ErrUnsupportedTranscriptHarness) {
+				slog.WarnContext(ctx, "skip unsupported transcript harness",
+					"raw_turn_id", id, "harness_id", rec.HarnessID)
+				continue
+			}
 			return nil, fmt.Errorf("parse transcript row %d: %w", id, err)
 		}
 		files = append(files, file)

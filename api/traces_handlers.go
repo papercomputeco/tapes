@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"sort"
 	"strconv"
@@ -430,6 +431,7 @@ var taskCreatedPattern = regexp.MustCompile(`#(\d+)`)
 // calls, not of the storage model.
 func foldTaskBlocks(uses []llm.ContentBlock, resultText map[string]string) []TreeTask {
 	byID := map[string]*TreeTask{}
+	bySubject := map[string]*TreeTask{}
 	var order []*TreeTask
 	{
 		for _, b := range uses {
@@ -466,6 +468,38 @@ func foldTaskBlocks(uses []llm.ContentBlock, resultText map[string]string) []Tre
 				}
 				if subject, ok := b.ToolInput["subject"].(string); ok && subject != "" {
 					task.Subject = subject
+				}
+			case "TaskPlan", "Parallel":
+				plan, ok := b.ToolInput["plan"].([]any)
+				if !ok {
+					continue
+				}
+				for _, raw := range plan {
+					item, ok := raw.(map[string]any)
+					if !ok {
+						continue
+					}
+					subject, _ := item["step"].(string)
+					if subject == "" {
+						continue
+					}
+					status, _ := item["status"].(string)
+					if status == "" {
+						status = "pending"
+					}
+					task := bySubject[subject]
+					if task == nil {
+						task = &TreeTask{
+							ID:      fmt.Sprintf("codex-plan-%d", len(order)+1),
+							Subject: subject,
+							Status:  status,
+						}
+						bySubject[subject] = task
+						order = append(order, task)
+						continue
+					}
+					task.Updates++
+					task.Status = status
 				}
 			}
 		}

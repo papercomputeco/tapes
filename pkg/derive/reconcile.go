@@ -1,5 +1,7 @@
 package derive
 
+import "maps"
+
 // Reconciliation fuses the two sources of truth: the wire capture is
 // the complete call inventory, the harness transcript is the
 // authoritative causal/fork skeleton. The join key is projected
@@ -37,8 +39,22 @@ func ReconcileTranscripts(set *DerivedSet, files []*TranscriptFile) *ReconcileSt
 
 	// Group transcript files per session.
 	bySession := map[SessionKey][]*TranscriptFile{}
+	spawnEdges := map[SessionKey]map[string]string{}
 	for _, f := range files {
 		bySession[f.Session] = append(bySession[f.Session], f)
+		if len(f.spawnEdges) > 0 {
+			if spawnEdges[f.Session] == nil {
+				spawnEdges[f.Session] = map[string]string{}
+			}
+			maps.Copy(spawnEdges[f.Session], f.spawnEdges)
+		}
+	}
+	// Codex stores the spawn call id in the parent rollout rather than the
+	// child session_meta. Resolve those cross-file edges before matching.
+	for _, f := range files {
+		if f.ToolUseID == "" && f.AgentID != "" {
+			f.ToolUseID = spawnEdges[f.Session][f.AgentID]
+		}
 	}
 
 	// Children index over the derived nodes (spine links only).

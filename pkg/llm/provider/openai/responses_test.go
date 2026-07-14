@@ -1,9 +1,12 @@
 package openai_test
 
 import (
+	"encoding/json"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/llm/provider/openai"
 )
 
@@ -91,6 +94,69 @@ var _ = Describe("Responses API request parsing", func() {
 		Expect(req.Messages[0].Content[0].Content).NotTo(BeEmpty())
 	})
 
+	It("infers a Codex child thread from a NEW_TASK agent message", func() {
+		req, err := provider.ParseRequest([]byte(`{
+			"model":"gpt-5.6-sol",
+			"input":[{"type":"agent_message","author":"/root","recipient":"/root/waddup_probe","content":[{"type":"input_text","text":"Message Type: NEW_TASK\nTask name: /root/waddup_probe\nSender: /root\nPayload:\n"}]}]
+		}`))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(req.Extra).To(HaveKeyWithValue("thread_id", "/root/waddup_probe"))
+	})
+
+	It("does not mistake a child FINAL_ANSWER handback for a child call", func() {
+		req, err := provider.ParseRequest([]byte(`{
+			"model":"gpt-5.6-sol",
+			"input":[{"type":"agent_message","author":"/root/waddup_probe","recipient":"/root","content":[{"type":"input_text","text":"Message Type: FINAL_ANSWER\nTask name: /root\nSender: /root/waddup_probe\nPayload:\nwaddup"}]}]
+		}`))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(req.Extra).NotTo(HaveKey("thread_id"))
+	})
+
+	It("maps custom tool calls to canonical tool blocks", func() {
+		// GPT-5.6 Codex wire shape: no `tools` array (the ChatGPT
+		// Codex backend injects definitions server-side), tool_choice
+		// declared, and the tool spine expressed as custom_tool_call /
+		// custom_tool_call_output items with freeform string input.
+		req, err := provider.ParseRequest([]byte(`{
+			"model": "gpt-5.6-sol",
+			"instructions": "You are Codex.",
+			"stream": true,
+			"tool_choice": "auto",
+			"input": [
+				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "list files"}]},
+				{"type": "custom_tool_call", "id": "ctc_1", "status": "completed", "call_id": "call_1", "name": "exec", "input": "const r = await tools.exec_command({cmd:\"ls\"})"},
+				{"type": "custom_tool_call_output", "call_id": "call_1", "output": [{"type": "input_text", "text": "Script completed\n"}, {"type": "input_text", "text": "README.md"}]}
+			]
+		}`))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(req.Tools).To(BeEmpty())
+		Expect(req.Extra).To(HaveKeyWithValue("tool_choice", `"auto"`))
+
+		Expect(req.Messages).To(HaveLen(3))
+
+		call := req.Messages[1]
+		Expect(call.Role).To(Equal("assistant"))
+		Expect(call.Content[0].Type).To(Equal("tool_use"))
+		Expect(call.Content[0].ToolUseID).To(Equal("call_1"))
+		Expect(call.Content[0].ToolName).To(Equal("exec"))
+		Expect(call.Content[0].ToolInput).To(HaveKeyWithValue("input", `const r = await tools.exec_command({cmd:"ls"})`))
+
+		result := req.Messages[2]
+		Expect(result.Role).To(Equal("tool"))
+		Expect(result.Content[0].Type).To(Equal("tool_result"))
+		Expect(result.Content[0].ToolResultID).To(Equal("call_1"))
+		Expect(result.Content[0].ToolOutput).To(Equal("Script completed\nREADME.md"))
+	})
+
+	It("renders a bare-string custom tool output verbatim", func() {
+		req, err := provider.ParseRequest([]byte(`{
+			"model": "gpt-5.6-sol",
+			"input": [{"type": "custom_tool_call_output", "call_id": "call_2", "output": "plain text"}]
+		}`))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(req.Messages[0].Content[0].ToolOutput).To(Equal("plain text"))
+	})
+
 	It("treats an explicit null input as Chat Completions, not Responses", func() {
 		// json.RawMessage keeps the literal `null` bytes; without the
 		// null check this would fabricate an empty user message.
@@ -108,5 +174,38 @@ var _ = Describe("Responses API request parsing", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(req.Messages).To(HaveLen(1))
 		Expect(req.Extra).NotTo(HaveKey("endpoint"))
+	})
+})
+
+var _ = Describe("NormalizeResponsesContent", func() {
+	It("rewrites verbatim custom tool items into canonical tool blocks", func() {
+		blocks := []llm.ContentBlock{
+			{Type: "thinking", ThinkingSignature: "blob"},
+			{Type: "custom_tool_call", Content: json.RawMessage(`{"type":"custom_tool_call","id":"ctc_1","status":"completed","call_id":"call_1","name":"exec","input":"echo hi"}`)},
+			{Type: "text", Text: "done"},
+		}
+
+		normalized := openai.NormalizeResponsesContent(blocks)
+
+		Expect(normalized).To(HaveLen(3))
+		Expect(normalized[0]).To(Equal(blocks[0]))
+		Expect(normalized[2]).To(Equal(blocks[2]))
+		Expect(normalized[1].Type).To(Equal("tool_use"))
+		Expect(normalized[1].ToolUseID).To(Equal("call_1"))
+		Expect(normalized[1].ToolName).To(Equal("exec"))
+		Expect(normalized[1].ToolInput).To(HaveKeyWithValue("input", "echo hi"))
+
+		// The input slice is never mutated — chains hash from it.
+		Expect(blocks[1].Type).To(Equal("custom_tool_call"))
+	})
+
+	It("passes through content without custom tool items untouched", func() {
+		blocks := []llm.ContentBlock{{Type: "text", Text: "hi"}}
+		Expect(openai.NormalizeResponsesContent(blocks)).To(Equal(blocks))
+	})
+
+	It("leaves undecodable custom tool items verbatim", func() {
+		blocks := []llm.ContentBlock{{Type: "custom_tool_call", Content: json.RawMessage(`"not an object"`)}}
+		Expect(openai.NormalizeResponsesContent(blocks)).To(Equal(blocks))
 	})
 })

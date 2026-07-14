@@ -10,7 +10,10 @@
 package derive
 
 import (
+	"strings"
+
 	"github.com/papercomputeco/tapes/pkg/llm"
+	"github.com/papercomputeco/tapes/pkg/llm/provider/openai"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 )
 
@@ -51,40 +54,53 @@ func TurnChain(call CallContext, req *llm.ChatRequest, resp *llm.ChatResponse) [
 	chain := make([]*merkle.Node, 0, len(req.Messages)+1)
 	var parent *merkle.Node
 
-	for _, msg := range req.Messages {
-		bucket := merkle.Bucket{
-			Type:      "message",
-			Role:      msg.Role,
-			Content:   msg.Content,
-			Model:     req.Model,
-			Provider:  call.Provider,
-			AgentName: call.AgentName,
-		}
-		node := merkle.NewNode(bucket, parent, merkle.NodeOptions{
-			Project: call.Project,
-			Request: params,
-		})
-		node.ThreadID = call.ThreadID
-		if injectedKind := ClassifyInjected(msg); injectedKind != "" {
-			// Side branch: keep the node, mark it, do NOT advance the
-			// spine. On the conversation spine this stops injected
-			// drift from forking the chain; on shadow calls it stops
-			// a shared context block (every permission check opens
-			// with the same <user_claude_md> blob) from fusing
-			// otherwise-independent calls into one fan.
-			node.Kind = injectedKind
+	for _, original := range req.Messages {
+		for _, msg := range splitCodexSkillMessage(original) {
+			bucket := merkle.Bucket{
+				Type:      "message",
+				Role:      msg.Role,
+				Content:   msg.Content,
+				Model:     req.Model,
+				Provider:  call.Provider,
+				AgentName: call.AgentName,
+			}
+			node := merkle.NewNode(bucket, parent, merkle.NodeOptions{
+				Project: call.Project,
+				Request: params,
+			})
+			node.ThreadID = call.ThreadID
+			if injectedKind := ClassifyInjected(msg); injectedKind != "" {
+				// Side branch: keep the node, mark it, do NOT advance the
+				// spine. On the conversation spine this stops injected
+				// drift from forking the chain; on shadow calls it stops
+				// a shared context block (every permission check opens
+				// with the same <user_claude_md> blob) from fusing
+				// otherwise-independent calls into one fan.
+				node.Kind = injectedKind
+				chain = append(chain, node)
+				continue
+			}
+			node.Kind = kind
 			chain = append(chain, node)
-			continue
+			parent = node
 		}
-		node.Kind = kind
-		chain = append(chain, node)
-		parent = node
+	}
+
+	// OpenAI Responses items the reducer preserved verbatim
+	// (custom_tool_call, custom_tool_call_output) normalize to
+	// canonical tool blocks HERE — the shared constructor — so
+	// capture-time ingest and offline re-derive produce identical
+	// hashes, and sessions captured before those item types were
+	// cataloged heal on re-derive.
+	responseContent := resp.Message.Content
+	if call.Provider == "openai" {
+		responseContent = openai.NormalizeResponsesContent(responseContent)
 	}
 
 	responseBucket := merkle.Bucket{
 		Type:      "message",
 		Role:      resp.Message.Role,
-		Content:   resp.Message.Content,
+		Content:   responseContent,
 		Model:     resp.Model,
 		Provider:  call.Provider,
 		AgentName: call.AgentName,
@@ -103,4 +119,31 @@ func TurnChain(call CallContext, req *llm.ChatRequest, resp *llm.ChatResponse) [
 	responseNode.ThreadID = call.ThreadID
 	chain = append(chain, responseNode)
 	return chain
+}
+
+// splitCodexSkillMessage separates a human `$skill` invocation from the skill
+// body that Codex appends to the same user message. The invocation belongs on
+// the conversation spine; the expansion is harness context and must remain an
+// injected side branch. Other message shapes pass through byte-for-byte.
+func splitCodexSkillMessage(msg llm.Message) []llm.Message {
+	if (msg.Role != "user" && msg.Role != "system") || len(msg.Content) != 1 {
+		return []llm.Message{msg}
+	}
+	b := msg.Content[0]
+	if b.Type != "text" && b.Type != "input_text" && b.Type != "" {
+		return []llm.Message{msg}
+	}
+	marker := strings.Index(b.Text, "<skill>")
+	if marker <= 0 {
+		return []llm.Message{msg}
+	}
+	prompt := strings.TrimSpace(b.Text[:marker])
+	if prompt == "" {
+		return []llm.Message{msg}
+	}
+	injected := strings.TrimSpace(b.Text[marker:])
+	return []llm.Message{
+		{Role: msg.Role, Content: []llm.ContentBlock{{Type: b.Type, Text: prompt}}},
+		{Role: msg.Role, Content: []llm.ContentBlock{{Type: b.Type, Text: injected}}},
+	}
 }

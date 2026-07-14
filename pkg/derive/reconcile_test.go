@@ -96,4 +96,53 @@ var _ = Describe("ReconcileTranscripts", func() {
 		Expect(forkRoots).To(Equal(1))
 		Expect(plainRoots).To(Equal(1))
 	})
+
+	It("recovers Codex spawn edges from the parent rollout", func() {
+		wire := storage.RawTurnRecord{
+			ID: 1, Source: "wire", Provider: "openai", HarnessID: "codex",
+			HarnessSessionID: "root", RequestID: "r1",
+			RawRequest: json.RawMessage(`{
+				"model":"gpt-5.6-terra","stream":true,"tool_choice":"auto",
+				"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"inspect headlines"}]}]
+			}`),
+			Response: json.RawMessage(`{"model":"gpt-5.6-terra","message":{"role":"assistant","content":[{"type":"text","text":"no browser available"}]}}`),
+			Meta:     json.RawMessage(`{"thread_id":"/root/research"}`),
+		}
+		set, err := derive.BuildDerivedSet([]storage.RawTurnRecord{wire}, "")
+		Expect(err).NotTo(HaveOccurred())
+
+		meta := func(agentID string) json.RawMessage {
+			value, _ := json.Marshal(map[string]any{"transcript": true, "agent_id": agentID})
+			return value
+		}
+		parentRec := storage.RawTurnRecord{
+			Source: "transcript", HarnessID: "codex", HarnessSessionID: "root", Meta: meta(""),
+			RawRequest: json.RawMessage(`[
+				{"type":"event_msg","payload":{"type":"sub_agent_activity","kind":"started","event_id":"call_spawn","agent_thread_id":"child-thread","agent_path":"/root/research"}}
+			]`),
+		}
+		childRec := storage.RawTurnRecord{
+			Source: "transcript", HarnessID: "codex", HarnessSessionID: "root", Meta: meta("/root/research"),
+			RawRequest: json.RawMessage(`[
+				{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"inspect headlines"}]}},
+				{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"no browser available"}]}}
+			]`),
+		}
+		parent, err := derive.ParseTranscriptFile(&parentRec)
+		Expect(err).NotTo(HaveOccurred())
+		child, err := derive.ParseTranscriptFile(&childRec)
+		Expect(err).NotTo(HaveOccurred())
+
+		stats := derive.ReconcileTranscripts(set, []*derive.TranscriptFile{parent, child})
+		Expect(child.ToolUseID).To(Equal("call_spawn"))
+		Expect(stats.SubagentForks).To(Equal(1))
+		Expect(stats.ForkedChains).To(Equal(1))
+		found := false
+		for _, node := range set.Nodes {
+			if node.Node.Kind == derive.KindMain && node.Node.ParentToolUseID == "call_spawn" {
+				found = true
+			}
+		}
+		Expect(found).To(BeTrue())
+	})
 })

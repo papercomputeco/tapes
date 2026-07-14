@@ -53,10 +53,10 @@ type IngestTurnRequest struct {
 	// to a Merkle-derived synthetic harness_session_id.
 	Session *sessions.IngestEnvelope
 
-	// Nodes is the chain of nodes for this turn, ordered root-to-leaf.
-	// The first element is the conversation root; the last is the
-	// assistant response. ParentHash linkage between successive
-	// elements must already be set by NewNode at the call site.
+	// Nodes is the ordered projection for this turn. Non-injected nodes
+	// form the root-to-leaf conversation spine; injected nodes may appear
+	// between them as side branches from the current spine parent. The
+	// last element is the assistant response.
 	Nodes []*merkle.Node
 
 	// InputTokens / OutputTokens / CostUSD are the per-turn deltas

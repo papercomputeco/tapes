@@ -243,7 +243,7 @@ func (dv *Deriver) AddTurn(rec *storage.RawTurnRecord) {
 		dv.set.Sessions = append(dv.set.Sessions, key)
 	}
 
-	turn := &attachTurn{kind: kind, index: len(dv.turns), threadID: threadIDFromMeta(rec.Meta)}
+	turn := &attachTurn{kind: kind, index: len(dv.turns), threadID: chain[len(chain)-1].ThreadID}
 	source := &SpanSource{
 		RawTurnID:  rec.ID,
 		RequestID:  rec.RequestID,

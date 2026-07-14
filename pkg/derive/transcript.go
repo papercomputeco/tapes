@@ -5,16 +5,22 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/json/jsontext"
-	"strings"
+	"errors"
+	"fmt"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
-// blockTypeText is the content-block type for plain text blocks, shared
-// by the transcript parsers below.
-const blockTypeText = "text"
+// blockThinking is shared by transcript parsers. The remaining canonical
+// block discriminators live with the span emitter in spans.go.
+const blockThinking = "thinking"
+
+// ErrUnsupportedTranscriptHarness identifies transcript rows that this
+// version of the derive worker cannot reconcile yet. Callers may skip these
+// rows without suppressing parse failures for supported harnesses.
+var ErrUnsupportedTranscriptHarness = errors.New("unsupported transcript harness")
 
 // TranscriptFile is one parsed harness transcript: the main session
 // file or one subagent's. ToolUseID (from the harness's subagent
@@ -30,32 +36,9 @@ type TranscriptFile struct {
 	// signatures are the projected-content signatures of every block
 	// in the transcript — the join key against wire-derived nodes.
 	signatures map[string]struct{}
-}
-
-// transcriptRecord is the subset of a harness transcript line the
-// reconciler reads.
-type transcriptRecord struct {
-	UUID       string `json:"uuid"`
-	ParentUUID string `json:"parentUuid"`
-	Message    struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
-	} `json:"message"`
-}
-
-// transcriptBlock is a harness-side content block. Field names differ
-// from the wire ContentBlock shape (name vs tool_name, id vs
-// tool_use_id, …); toContentBlock renames them.
-type transcriptBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text"`
-	Thinking  string          `json:"thinking"`
-	Name      string          `json:"name"`
-	ID        string          `json:"id"`
-	Input     map[string]any  `json:"input"`
-	ToolUseID string          `json:"tool_use_id"`
-	Content   json.RawMessage `json:"content"`
-	IsError   bool            `json:"is_error"`
+	// spawnEdges are emitted by Codex's parent rollout. Keys include both
+	// child agent_path and child thread id; values are the spawn tool call id.
+	spawnEdges map[string]string
 }
 
 // transcriptMetaFields mirrors the meta block transcript ingest writes.
@@ -87,11 +70,6 @@ func ParseTranscriptFile(rec *storage.RawTurnRecord) (*TranscriptFile, error) {
 			return nil, err
 		}
 	}
-	var records []transcriptRecord
-	if err := json.Unmarshal(rec.RawRequest, &records); err != nil {
-		return nil, err
-	}
-
 	file := &TranscriptFile{
 		Session:     SessionKey{HarnessID: rec.HarnessID, HarnessSessionID: rec.HarnessSessionID},
 		AgentID:     m.AgentID,
@@ -99,84 +77,25 @@ func ParseTranscriptFile(rec *storage.RawTurnRecord) (*TranscriptFile, error) {
 		Description: m.Description,
 		ToolUseID:   m.ToolUseID,
 		signatures:  map[string]struct{}{},
+		spawnEdges:  map[string]string{},
 	}
-	for _, r := range records {
-		for _, block := range transcriptBlocks(r.Message.Content) {
-			if sig := blockSignature(block); sig != "" {
-				file.signatures[sig] = struct{}{}
-			}
+	switch rec.HarnessID {
+	case "codex":
+		if err := parseCodexTranscript(rec.RawRequest, file); err != nil {
+			return nil, err
 		}
+	case "claude", "claude-code":
+		if err := parseClaudeTranscript(rec.RawRequest, file); err != nil {
+			return nil, err
+		}
+	case "pi":
+		if err := parsePiTranscript(rec.RawRequest, file); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("%w %q", ErrUnsupportedTranscriptHarness, rec.HarnessID)
 	}
 	return file, nil
-}
-
-// transcriptBlocks converts a transcript message's content (string or
-// block array) into wire-shaped ContentBlocks — the §3.2 recipe:
-// rename name→tool_name, id→tool_use_id, tool_use_id→tool_result_id,
-// flatten tool_result content arrays into tool_output.
-func transcriptBlocks(content json.RawMessage) []llm.ContentBlock {
-	if len(content) == 0 {
-		return nil
-	}
-	var asText string
-	if err := json.Unmarshal(content, &asText); err == nil {
-		return []llm.ContentBlock{{Type: blockTypeText, Text: asText}}
-	}
-	var raw []transcriptBlock
-	if err := json.Unmarshal(content, &raw); err != nil {
-		return nil
-	}
-	out := make([]llm.ContentBlock, 0, len(raw))
-	for _, b := range raw {
-		cb := llm.ContentBlock{Type: b.Type}
-		switch b.Type {
-		case blockTypeText, "":
-			cb.Type = blockTypeText
-			cb.Text = b.Text
-		case "thinking":
-			cb.Thinking = b.Thinking
-		case "tool_use", "server_tool_use":
-			cb.ToolUseID = b.ID
-			cb.ToolName = b.Name
-			cb.ToolInput = b.Input
-		case "tool_result":
-			cb.ToolResultID = b.ToolUseID
-			cb.ToolOutput = flattenToolResult(b.Content)
-			cb.IsError = b.IsError
-		case "image":
-			// presence only; bytes don't participate in signatures
-		default:
-			cb.Text = b.Text
-		}
-		out = append(out, cb)
-	}
-	return out
-}
-
-// flattenToolResult collapses a transcript tool_result's content
-// (string or array of text parts) into the wire's tool_output string.
-func flattenToolResult(content json.RawMessage) string {
-	if len(content) == 0 {
-		return ""
-	}
-	var asText string
-	if err := json.Unmarshal(content, &asText); err == nil {
-		return asText
-	}
-	var parts []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	if err := json.Unmarshal(content, &parts); err != nil {
-		return ""
-	}
-	var sb []string
-	for _, p := range parts {
-		if p.Type == blockTypeText {
-			sb = append(sb, p.Text)
-		}
-	}
-	return strings.Join(sb, "\n")
 }
 
 // blockSignature canonicalizes ONE projected content block into a
@@ -191,7 +110,7 @@ func blockSignature(block llm.ContentBlock) string {
 		return ""
 	}
 	p := projected[0]
-	if p.Type == "thinking" {
+	if p.Type == blockThinking {
 		return ""
 	}
 	// Tool ids are harness-stable across both sources and already part

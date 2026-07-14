@@ -39,7 +39,15 @@ const (
 	// side-branch nodes (see TurnChain) and marked with these kinds.
 	KindInjectedMCPInstructions = "injected:mcp-instructions"
 	KindInjectedSkillsList      = "injected:skills-list"
+	KindInjectedSkillContent    = "injected:skill-content"
 	KindInjectedModeBanner      = "injected:mode-banner"
+	// KindInjectedAgentContext is harness-supplied coding-agent context
+	// carried as a user message on the wire. Codex opens a session with
+	// AGENTS.md instructions and environment metadata before the human turn.
+	KindInjectedAgentContext = "injected:agent-context"
+	// KindInjectedEnvironmentContext is Codex's structured cwd, shell,
+	// date/timezone, and filesystem-permission envelope.
+	KindInjectedEnvironmentContext = "injected:environment-context"
 	// KindInjectedClaudeMD is the user-context blob the harness
 	// prepends to its security-monitor checks (<user_claude_md>…).
 	// Every check in a session shares it byte-for-byte, so left on the
@@ -151,7 +159,28 @@ func ClassifyCall(req *llm.ChatRequest, resp *llm.ChatResponse) string {
 		return KindMain
 	}
 
+	// GPT-5.6 Codex spine: the request carries NO client-side tool
+	// definitions (the ChatGPT Codex backend injects them server-side)
+	// but still declares tool routing. A streaming Responses call with
+	// tool_choice set is the conversation spine — tool-less shadow
+	// calls (title-gen, plan-name) send neither.
+	if streaming && responsesToolChoice(req) {
+		return KindMain
+	}
+
 	return KindUnknown
+}
+
+// responsesToolChoice reports whether a Responses API request declared
+// tool routing via tool_choice. The parser stores both markers in
+// Extra (see parseResponsesRequest); presence is the tell, the value
+// is irrelevant.
+func responsesToolChoice(req *llm.ChatRequest) bool {
+	if req.Extra == nil || req.Extra["endpoint"] != "responses" {
+		return false
+	}
+	_, ok := req.Extra["tool_choice"]
+	return ok
 }
 
 // ClassifyInjected reports the injected-context kind for one request
@@ -167,7 +196,7 @@ func ClassifyInjected(msg llm.Message) string {
 	var text strings.Builder
 	for _, b := range msg.Content {
 		switch b.Type {
-		case "text", "":
+		case blockText, "":
 			text.WriteString(b.Text)
 		default:
 			// tool_use / tool_result / image blocks are never injected
@@ -177,10 +206,22 @@ func ClassifyInjected(msg llm.Message) string {
 	}
 	t := strings.TrimSpace(text.String())
 	switch {
+	case strings.HasPrefix(t, "<environment_context>"):
+		return KindInjectedEnvironmentContext
+	case strings.HasPrefix(t, "# AGENTS.md instructions for "),
+		strings.HasPrefix(t, "<permissions instructions>"),
+		strings.HasPrefix(t, "<skills_instructions>"),
+		strings.HasPrefix(t, "<apps_instructions>"),
+		strings.HasPrefix(t, "<plugins_instructions>"),
+		strings.HasPrefix(t, "<collaboration_mode>"),
+		strings.HasPrefix(t, "<multi_agent_mode>"):
+		return KindInjectedAgentContext
 	case strings.HasPrefix(t, "# MCP Server Instructions"):
 		return KindInjectedMCPInstructions
 	case strings.HasPrefix(t, "The following skills are available"):
 		return KindInjectedSkillsList
+	case strings.HasPrefix(t, "<skill>"):
+		return KindInjectedSkillContent
 	case strings.HasPrefix(t, "Plan mode is active"),
 		strings.HasPrefix(t, "Exited Plan Mode"),
 		strings.HasPrefix(t, "## Exited Plan Mode"),
