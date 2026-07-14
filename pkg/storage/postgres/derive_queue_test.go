@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"sync"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -233,6 +236,106 @@ var _ = Describe("Derive worker storage (postgres)", func() {
 				"SELECT COUNT(*) FROM span_turns_20260615 WHERE trace_id = 'stale-trace-session-b'").Scan(&staleB)).To(Succeed())
 			Expect(staleA).To(BeZero(), "session A's stale span row is pruned by the re-derive")
 			Expect(staleB).To(Equal(1), "sibling sessions' rows are out of scope")
+		})
+
+		// normProjection digests a session's derived projection independently of
+		// its session/trace ids and timestamps: per trace (in started_at order)
+		// the folded user_prompt and the ordered span (kind:name) sequence. Two
+		// sessions built from identical turn content share this digest even
+		// though their deterministic ids differ.
+		normProjection := func(rowID string) string {
+			rows, err := driver.DB().Query(ctx, `
+				SELECT t.trace_id, t.user_prompt, sp.seq, sp.kind, sp.name
+				FROM span_turns_20260615 t
+				JOIN spans_20260615 sp
+				  ON sp.trace_id = t.trace_id AND sp.org_id = t.org_id
+				WHERE t.session_id = $1
+				ORDER BY t.started_at, t.trace_id, sp.seq`, rowID)
+			Expect(err).NotTo(HaveOccurred())
+			defer rows.Close()
+
+			var sb strings.Builder
+			var curTrace string
+			ordinal := 0
+			for rows.Next() {
+				var traceID, prompt, kind, name string
+				var seq int64
+				Expect(rows.Scan(&traceID, &prompt, &seq, &kind, &name)).To(Succeed())
+				if traceID != curTrace {
+					curTrace = traceID
+					ordinal++
+					fmt.Fprintf(&sb, "\nturn %d prompt=%q", ordinal, prompt)
+				}
+				fmt.Fprintf(&sb, " [%s:%s]", kind, name)
+			}
+			Expect(rows.Err()).NotTo(HaveOccurred())
+			return sb.String()
+		}
+
+		// The property under test (RE-DERIVE-TEST-PLAN §0): the raw layer is the
+		// sole source of truth, so the projection is rebuildable from raw "at any
+		// time" — including while ingest is landing new turns. We cannot assert
+		// consistency mid-flight (raw is still growing), but once ingest quiesces
+		// the re-derive must converge to a fixpoint equal to a from-scratch serial
+		// derive over the same turns. This is the concurrent-ingest gap Fable
+		// flagged on the plan.
+		It("converges to the canonical projection after concurrent ingest (quiesce-fixpoint)", func() {
+			// Identical turn content for both sessions, so their projections match
+			// modulo ids/timestamps. Distinct prompts keep started_at ordering
+			// unambiguous.
+			userTexts := []string{"first prompt", "second prompt", "third prompt", "fourth prompt"}
+
+			// Control: ingest everything up front, derive once — no concurrency.
+			// This is the canonical projection the experiment must reproduce.
+			insertSessionRow(sessionBRowID, sessionB)
+			for i, txt := range userTexts {
+				putWireTurn(fmt.Sprintf("req-ctrl-%d", i), sessionB, txt)
+			}
+			_, err := driver.RederiveSession(ctx, "", "", harnessID, sessionB)
+			Expect(err).NotTo(HaveOccurred())
+			canonical := normProjection(sessionBRowID)
+			Expect(canonical).NotTo(BeEmpty(), "control derive must produce a projection")
+
+			// Experiment: ingest the opener, then race the remaining ingests
+			// against a re-derive loop. Serial re-derives (not re-derive vs
+			// re-derive) racing the raw-layer append is the real interleaving.
+			insertSessionRow(sessionARowID, sessionA)
+			putWireTurn("req-exp-0", sessionA, userTexts[0])
+
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				defer GinkgoRecover()
+				defer wg.Done()
+				for i := 1; i < len(userTexts); i++ {
+					putWireTurn(fmt.Sprintf("req-exp-%d", i), sessionA, userTexts[i])
+					time.Sleep(2 * time.Millisecond)
+				}
+			}()
+
+			for i := 0; i < 12; i++ {
+				_, err := driver.RederiveSession(ctx, "", "", harnessID, sessionA)
+				Expect(err).NotTo(HaveOccurred())
+				time.Sleep(time.Millisecond)
+			}
+			wg.Wait() // quiesce: no more raw turns will land
+
+			// Fixpoint: two quiesced re-derives in a row are byte-identical (same
+			// session, so ids match too — this is the Tier-1 property re-checked
+			// after a concurrent history).
+			_, err = driver.RederiveSession(ctx, "", "", harnessID, sessionA)
+			Expect(err).NotTo(HaveOccurred())
+			fix1 := normProjection(sessionARowID)
+			_, err = driver.RederiveSession(ctx, "", "", harnessID, sessionA)
+			Expect(err).NotTo(HaveOccurred())
+			fix2 := normProjection(sessionARowID)
+			Expect(fix2).To(Equal(fix1), "the quiesced re-derive is a fixpoint")
+
+			// Convergence: the fixpoint equals the canonical serial projection —
+			// concurrent ingest during re-derive changed nothing about the result,
+			// and no intermediate turn was dropped.
+			Expect(fix1).To(Equal(canonical),
+				"concurrent-ingest re-derive converges to the serial-derive projection")
 		})
 	})
 })
