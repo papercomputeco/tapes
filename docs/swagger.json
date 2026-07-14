@@ -1299,6 +1299,9 @@
                         "$ref": "#/definitions/api.SpanLinkItem"
                     }
                 },
+                "schema": {
+                    "type": "string"
+                },
                 "spans": {
                     "type": "array",
                     "items": {
@@ -1367,6 +1370,9 @@
                     "items": {
                         "$ref": "#/definitions/api.TraceItem"
                     }
+                },
+                "schema": {
+                    "type": "string"
                 }
             }
         },

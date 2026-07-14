@@ -468,8 +468,10 @@ type exportTraceHeader struct {
 
 // exportSessionTraceHeaders is a detail=traces export line: the session
 // with its turn headers. tasks/kind_counts are span-derived, so they are
-// omitted along with the spans.
+// omitted along with the spans. `schema` stamps the projection generation
+// so a traces-grain export line is self-describing like the composite.
 type exportSessionTraceHeaders struct {
+	Schema  string              `json:"schema"`
 	Session SessionItem         `json:"session"`
 	Traces  []exportTraceHeader `json:"traces"`
 }
@@ -489,6 +491,7 @@ func exportSessionLine(ctx context.Context, reader spanModelReader, sess storage
 		}
 		item := sessionItemFromStorage(sess)
 		line := exportSessionTraceHeaders{
+			Schema:  ProjectionSchema,
 			Session: item,
 			Traces:  make([]exportTraceHeader, 0, len(rows)),
 		}

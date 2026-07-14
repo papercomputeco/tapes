@@ -298,6 +298,8 @@ definitions:
         items:
           $ref: '#/definitions/api.SpanLinkItem'
         type: array
+      schema:
+        type: string
       spans:
         items:
           $ref: '#/definitions/api.SpanItem'
@@ -356,6 +358,8 @@ definitions:
         items:
           $ref: '#/definitions/api.TraceItem'
         type: array
+      schema:
+        type: string
     type: object
   api.TraceUsage:
     properties:

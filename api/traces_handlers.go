@@ -167,11 +167,15 @@ func spanLinkItem(l storage.SpanLinkRecord) SpanLinkItem {
 
 // TraceDetail is one trace with its spans. In the composite session
 // response links are session-scoped (top level); the single-trace
-// endpoint sets Links to the edges touching that trace.
+// endpoint sets Links to the edges touching that trace. `schema` stamps
+// the projection generation on the STANDALONE /v1/traces/{id} response
+// (omitempty — the composite embeds TraceDetail and already carries one
+// stamp at the top level, so the embedded copies stay unstamped).
 type TraceDetail struct {
-	Trace TraceItem      `json:"trace"`
-	Spans []SpanItem     `json:"spans"`
-	Links []SpanLinkItem `json:"links,omitempty"`
+	Schema string         `json:"schema,omitempty"`
+	Trace  TraceItem      `json:"trace"`
+	Spans  []SpanItem     `json:"spans"`
+	Links  []SpanLinkItem `json:"links,omitempty"`
 }
 
 // SessionTracesResponse is the composite session view on the span

@@ -304,6 +304,8 @@ components:
           items:
             $ref: '#/components/schemas/SpanLinkItem'
           type: array
+        schema:
+          type: string
         spans:
           items:
             $ref: '#/components/schemas/SpanItem'
@@ -362,6 +364,8 @@ components:
           items:
             $ref: '#/components/schemas/TraceItem'
           type: array
+        schema:
+          type: string
       type: object
     TraceUsage:
       properties:

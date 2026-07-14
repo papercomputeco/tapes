@@ -1302,6 +1302,9 @@ const docTemplate = `{
                         "$ref": "#/definitions/api.SpanLinkItem"
                     }
                 },
+                "schema": {
+                    "type": "string"
+                },
                 "spans": {
                     "type": "array",
                     "items": {
@@ -1370,6 +1373,9 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/api.TraceItem"
                     }
+                },
+                "schema": {
+                    "type": "string"
                 }
             }
         },

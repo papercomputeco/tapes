@@ -15,9 +15,13 @@ import (
 // summaries; spans arrive per trace on expand; full payloads per span
 // on demand. Initial paint is O(turns), not O(session).
 
-// TraceListResponse is the summaries list for one session.
+// TraceListResponse is the summaries list for one session. `schema`
+// stamps the projection generation the rows were derived against — the
+// same stamp the composite carries — so every trace-grain response is
+// self-describing, not just the composite.
 type TraceListResponse struct {
-	Items []TraceItem `json:"items"`
+	Schema string      `json:"schema"`
+	Items  []TraceItem `json:"items"`
 }
 
 // RawTurnHeaderItem is one wire-log row: what crossed the wire (or
@@ -120,7 +124,7 @@ func BuildTraceList(rows []storage.TraceSummaryRecord) TraceListResponse {
 	for _, row := range rows {
 		items = append(items, traceItemFromTurn(row.SpanTurnRecord, row.SpanCount))
 	}
-	return TraceListResponse{Items: items}
+	return TraceListResponse{Schema: ProjectionSchema, Items: items}
 }
 
 // handleGetTrace handles GET /v1/traces/:trace_id.
@@ -159,9 +163,10 @@ func (s *Server) handleGetTrace(c *fiber.Ctx) error {
 // handler.
 func BuildTraceDetail(turn storage.SpanTurnRecord, spans []storage.SpanRecord, links []storage.SpanLinkRecord, mode PayloadMode) TraceDetail {
 	detail := TraceDetail{
-		Trace: traceItemFromTurn(turn, len(spans)),
-		Spans: make([]SpanItem, 0, len(spans)),
-		Links: make([]SpanLinkItem, 0, len(links)),
+		Schema: ProjectionSchema,
+		Trace:  traceItemFromTurn(turn, len(spans)),
+		Spans:  make([]SpanItem, 0, len(spans)),
+		Links:  make([]SpanLinkItem, 0, len(links)),
 	}
 	for _, sp := range spans {
 		detail.Spans = append(detail.Spans, spanItemFromRecord(sp, mode))
