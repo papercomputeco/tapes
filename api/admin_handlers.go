@@ -66,11 +66,13 @@ type deriveRunner interface {
 	RederiveFromRaw(ctx context.Context, project string) (map[string]*derive.RederiveReport, error)
 }
 
-// handleDeriveRun rebuilds the derived node layer (typing, edges,
-// projection) from the immutable raw-turn store. Idempotent and
-// re-runnable: this is the lever that makes data-model iteration cheap
-// — a classifier or projection change redeploys, re-runs, and every
-// captured session reclassifies without re-capture.
+// handleDeriveRun rebuilds the derived span projection (traces, spans,
+// links, and the session rollups) from the immutable raw-turn store. The
+// persisted node layer is retired; the merkle DAG lives only in memory at
+// derive time. Idempotent and re-runnable: this is the lever that makes
+// data-model iteration cheap — a classifier or projection change
+// redeploys, re-runs, and every captured session reclassifies without
+// re-capture.
 func (s *Server) handleDeriveRun(c *fiber.Ctx) error {
 	runner, ok := s.driver.(deriveRunner)
 	if !ok {
