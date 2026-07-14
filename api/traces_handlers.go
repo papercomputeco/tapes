@@ -189,6 +189,7 @@ const ProjectionSchema = "2026-06-15"
 // handleGetSessionTraces handles GET /v1/sessions/:id/traces.
 //
 //	@Summary		Get a session's trace/span projection
+//	@ID			getSessionTraces
 //	@Description	Returns the session's user-visible turns as traces with nested spans (llm calls, tools, subagents, shadow calls, injected context) and dataflow links. Cross-trace links (compaction seams) are at the response top level.
 //	@Tags			sessions
 //	@Produce		json

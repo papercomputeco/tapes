@@ -37,6 +37,7 @@ type StatsResponse struct {
 // handleStats handles GET /v1/stats.
 //
 //	@Summary		Get aggregate session stats
+//	@ID			getStats
 //	@Description	Returns counts plus cost / token / duration / tool-call / completed-count totals for the window. The numbers are span-grain trace rollup sums (delta-only usage, agent time = sum of trace durations) so they agree with the session and trace views; turn_count counts traces. Filter the window with since/until.
 //	@Tags			sessions
 //	@Produce		json

@@ -461,11 +461,13 @@ info:
 
     The REST surface exposes health checks, session listing and retrieval, derived session summaries, aggregate stats, semantic search, and a streamable MCP endpoint.
   title: Tapes API
+  version: "1.0"
 paths:
   /ping:
     get:
       description: Returns a simple JSON string confirming that the API server is
         reachable.
+      operationId: ping
       produces:
       - application/json
       responses:
@@ -483,6 +485,7 @@ paths:
       description: 'Replays the bundled demo capture corpora through the ingest write
         path into the caller''s org, then derives the seeded sessions. Idempotent:
         raw-turn dedup makes repeat seeds no-ops.'
+      operationId: seedDemo
       parameters:
       - description: Seed options (overwrite is no longer supported)
         in: body
@@ -515,6 +518,7 @@ paths:
     delete:
       description: Requests termination of a streamable MCP session when a client
         is using session-oriented transport semantics.
+      operationId: closeMcpSession
       produces:
       - application/json
       responses:
@@ -532,6 +536,7 @@ paths:
     get:
       description: Opens the streamable MCP endpoint for server-sent events. Stateless
         clients can use this to receive streamed MCP messages.
+      operationId: openMcpStream
       produces:
       - text/event-stream
       responses:
@@ -549,6 +554,7 @@ paths:
         Sends a JSON-RPC 2.0 request to the stateless Model Context Protocol endpoint mounted at /v1/mcp.
 
         Typical calls include initialize, tools/list, and tools/call. When search is configured, the server exposes a search tool over this transport.
+      operationId: invokeMcp
       parameters:
       - description: JSON-RPC 2.0 request
         in: body
@@ -579,6 +585,7 @@ paths:
       description: Embeds the query text and runs vector similarity over the embedded
         span projection (main llm spans, delta-only content). Each hit carries span,
         trace, and turn context.
+      operationId: searchSpans
       parameters:
       - description: Search query
         in: query
@@ -622,6 +629,7 @@ paths:
       description: Returns one row per harness session from the sessions table, cursor-paginated.
         Default order is last_active (last_seen_at) desc; override with the sort and
         direction query params.
+      operationId: listSessions
       parameters:
       - description: Maximum number of sessions to return (default 50, max 200)
         in: query
@@ -699,6 +707,7 @@ paths:
         sessions and their derived traces/spans cascade with it. Org-scoped — any
         caller in the org may delete any of its sessions. The immutable raw_turns
         capture log is left intact.'
+      operationId: deleteSession
       parameters:
       - description: Session id (UUID)
         in: path
@@ -730,6 +739,7 @@ paths:
     get:
       description: 'Returns a single session record. The conversation content lives
         on the span model: GET /v1/sessions/{id}/traces.'
+      operationId: getSession
       parameters:
       - description: Session id (UUID)
         in: path
@@ -768,6 +778,7 @@ paths:
         the session object with its traces, each trace carrying its full spans — the
         same shape as GET /v1/sessions/{id}/traces with payload=full. detail=traces
         exports turn headers only (no spans or links).'
+      operationId: exportSession
       parameters:
       - description: Session id (UUID)
         in: path
@@ -814,6 +825,7 @@ paths:
       description: 'The raw layer''s wire log: one row per captured call or transcript
         push, identity and sizes only. `source` distinguishes what crossed the wire
         from what the harness pushed as its own account.'
+      operationId: listRawTurns
       parameters:
       - description: Session id (UUID)
         in: path
@@ -851,6 +863,7 @@ paths:
       description: Returns the session's user-visible turns as traces with nested
         spans (llm calls, tools, subagents, shadow calls, injected context) and dataflow
         links. Cross-trace links (compaction seams) are at the response top level.
+      operationId: getSessionTraces
       parameters:
       - description: Session id (UUID)
         in: path
@@ -896,6 +909,7 @@ paths:
         with payload=full. detail=traces exports turn headers only (no spans or links).
         Defaults to the trailing 30 days. Not bounded by the /v1/sessions list cap
         — pages internally.
+      operationId: exportSessions
       parameters:
       - description: 'Only include sessions with a turn started at or after this RFC3339
           timestamp (activity window; default: now - 30 days)'
@@ -946,6 +960,7 @@ paths:
         totals for the window. The numbers are span-grain trace rollup sums (delta-only
         usage, agent time = sum of trace durations) so they agree with the session
         and trace views; turn_count counts traces. Filter the window with since/until.
+      operationId: getStats
       parameters:
       - description: Only include records at or after this RFC3339 timestamp
         format: date-time
@@ -979,6 +994,7 @@ paths:
     get:
       description: Returns turn headers for a session — no span payloads. Fetch GET
         /v1/traces/{trace_id} per turn for spans and links.
+      operationId: listTraces
       parameters:
       - description: Session id (UUID)
         in: query
@@ -1011,6 +1027,7 @@ paths:
     get:
       description: 'Returns one user-visible turn: its spans nested by parent_span_id
         and its dataflow links (links touching other traces included).'
+      operationId: getTrace
       parameters:
       - description: Trace id
         in: path
@@ -1047,6 +1064,7 @@ paths:
   /v1/traces/{trace_id}/spans/{span_id}:
     get:
       description: 'The payload drill-in: one span''s complete input/output content.'
+      operationId: getSpan
       parameters:
       - description: Trace id
         in: path
