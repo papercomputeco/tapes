@@ -928,10 +928,7 @@
                     "type": "integer"
                 },
                 "meta": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "type": "object"
                 },
                 "provider": {
                     "type": "string"
@@ -1126,10 +1123,10 @@
                     "type": "integer"
                 },
                 "input": {
-                    "description": "Input/Output are content-block arrays, uniform for every kind\n(tool spans included — no unwrapping). Pinned to [] when empty.",
+                    "description": "Input/Output are content-block arrays (llm.ContentBlock), uniform for\nevery kind (tool spans included — no unwrapping). Pinned to [] when\nempty. swaggertype keeps the wire an array-of-object rather than the\njson.RawMessage byte array swag infers.",
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "type": "object"
                     }
                 },
                 "kind": {
@@ -1144,7 +1141,7 @@
                 "output": {
                     "type": "array",
                     "items": {
-                        "type": "integer"
+                        "type": "object"
                     }
                 },
                 "parent_span_id": {
@@ -1180,18 +1177,13 @@
                     "type": "string"
                 },
                 "usage": {
-                    "description": "Usage (was `metrics`) is always an object on the wire — {}-pinned\nfor usage-less spans.",
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "Usage (was `metrics`) is an llm.Usage object on the wire — {}-pinned\nfor usage-less spans.",
+                    "type": "object"
                 },
                 "verdict": {
-                    "description": "Verdict is the typed security-monitor disposition (null off\npermission-check spans), deriver-written.",
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "Verdict is the typed security-monitor disposition (null off\npermission-check spans), deriver-written. It is a Verdict object or\nnull on the wire; typed as `object` (not the json.RawMessage byte\narray swag would otherwise emit) via swaggertype.",
+                    "type": "object",
+                    "x-nullable": true
                 }
             }
         },

@@ -27,9 +27,7 @@ definitions:
       id:
         type: integer
       meta:
-        items:
-          type: integer
-        type: array
+        type: object
       provider:
         type: string
       received_at:
@@ -167,10 +165,12 @@ definitions:
         type: integer
       input:
         description: |-
-          Input/Output are content-block arrays, uniform for every kind
-          (tool spans included — no unwrapping). Pinned to [] when empty.
+          Input/Output are content-block arrays (llm.ContentBlock), uniform for
+          every kind (tool spans included — no unwrapping). Pinned to [] when
+          empty. swaggertype keeps the wire an array-of-object rather than the
+          json.RawMessage byte array swag infers.
         items:
-          type: integer
+          type: object
         type: array
       kind:
         type: string
@@ -180,7 +180,7 @@ definitions:
         type: string
       output:
         items:
-          type: integer
+          type: object
         type: array
       parent_span_id:
         type: string
@@ -211,18 +211,17 @@ definitions:
         type: string
       usage:
         description: |-
-          Usage (was `metrics`) is always an object on the wire — {}-pinned
+          Usage (was `metrics`) is an llm.Usage object on the wire — {}-pinned
           for usage-less spans.
-        items:
-          type: integer
-        type: array
+        type: object
       verdict:
         description: |-
           Verdict is the typed security-monitor disposition (null off
-          permission-check spans), deriver-written.
-        items:
-          type: integer
-        type: array
+          permission-check spans), deriver-written. It is a Verdict object or
+          null on the wire; typed as `object` (not the json.RawMessage byte
+          array swag would otherwise emit) via swaggertype.
+        type: object
+        x-nullable: true
     type: object
   api.SpanLinkItem:
     properties:

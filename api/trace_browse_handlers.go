@@ -30,7 +30,7 @@ type RawTurnHeaderItem struct {
 	AgentName     string          `json:"agent_name,omitempty"`
 	RequestID     string          `json:"request_id,omitempty"`
 	ReceivedAt    time.Time       `json:"received_at"`
-	Meta          json.RawMessage `json:"meta,omitempty"`
+	Meta          json.RawMessage `json:"meta,omitempty" swaggertype:"object"`
 	RequestBytes  int64           `json:"request_bytes"`
 	ResponseBytes int64           `json:"response_bytes"`
 }
