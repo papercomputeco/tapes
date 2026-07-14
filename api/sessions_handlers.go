@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -761,6 +762,12 @@ type sessionUpdateRequest struct {
 	Name *string `json:"name"`
 }
 
+// Referenced only by the swagger @Param annotation on handleUpdateSession (the
+// handler decodes into a raw map to tell an absent field from an explicit
+// null), so keep it alive for the unused linter — same pattern as the swagger
+// request types in swagger.go.
+var _ = sessionUpdateRequest{}
+
 // handleUpdateSession handles PATCH /v1/sessions/:id.
 //
 // It updates the user-editable session title only (CC-1, CC-4): the server
@@ -821,7 +828,7 @@ func (s *Server) handleUpdateSession(c *fiber.Ctx) error {
 	if name != nil {
 		trimmed := strings.TrimSpace(*name)
 		if trimmed != "" {
-			if len(trimmed) > maxSessionNameLength {
+			if utf8.RuneCountInString(trimmed) > maxSessionNameLength {
 				return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "name must be at most 200 characters"})
 			}
 			normalized = &trimmed

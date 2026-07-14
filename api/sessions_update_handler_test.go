@@ -2,10 +2,11 @@ package api
 
 // Specs for PATCH /v1/sessions/:id (handleUpdateSession) land here in the
 // tester phase, driven against sessionsStubDriver (see
-// sessions_handlers_test.go) — no Postgres required. Covers: trim/empty->NULL
-// normalization, length>200->400, missing name field->400, 200 + updated
-// summary via GetSessionRecord, cross-org/unknown id->404 via
-// rowsAffected==0, and the 501-when-unsupported path (CC-2, CC-3, CC-4).
+// sessions_handlers_test.go) — no Postgres required. Covers: whitespace
+// trimming, the rune-counted length>200->400 bound, missing name field->400,
+// 200 + updated summary via GetSessionRecord, and cross-org/unknown id->404
+// via rowsAffected==0 (CC-2, CC-3, CC-4). The empty/null clear-to-NULL and the
+// 501-when-unsupported paths are exercised at the storage layer, not here.
 
 import (
 	"bytes"
@@ -149,6 +150,29 @@ var _ = Describe("PATCH /v1/sessions/:id (handleUpdateSession)", func() {
 		Expect(status).To(Equal(fiber.StatusBadRequest))
 		Expect(errBody.Error).NotTo(BeEmpty())
 		Expect(drv.updateCalls).To(BeZero(), "validation must precede any storage call")
+	})
+
+	It("test_update_session_name_counts_runes_not_bytes", func() {
+		// Given a driver that would accept the update
+		drv := &sessionsStubDriver{
+			Driver:             inmemory.NewDriver(),
+			updateRowsAffected: 1,
+			getRecord:          &record,
+		}
+		server := newSessionsServer(drv)
+
+		// When the client PATCHes a title of exactly maxSessionNameLength
+		// multi-byte runes (200 emoji = 800 UTF-8 bytes)
+		title := strings.Repeat("🚀", maxSessionNameLength)
+		_, _, status := patchSession(server, "/v1/sessions/"+sessionID, org, `{"name":"`+title+`"}`)
+
+		// Then the length bound counts runes, not bytes (CC-3): a title at
+		// the character ceiling is accepted even though its byte length is
+		// well over 200 — the byte-count regression greptile flagged.
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(drv.updateCalls).To(Equal(1))
+		Expect(drv.lastUpdateName).NotTo(BeNil())
+		Expect(*drv.lastUpdateName).To(Equal(title))
 	})
 
 	It("test_update_session_name_missing_field_400", func() {

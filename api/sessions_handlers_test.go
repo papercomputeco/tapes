@@ -60,11 +60,11 @@ type sessionsStubDriver struct {
 	// GetSessionRecord stubbing (used by handleUpdateSession's post-write
 	// re-read; the harness-filter helper above has its own canned nil
 	// return and is left untouched).
-	getRecord     *storage.SessionRecord
-	getErr        error
-	getCalls      int
-	lastGetOrgID  string
-	lastGetID     string
+	getRecord    *storage.SessionRecord
+	getErr       error
+	getCalls     int
+	lastGetOrgID string
+	lastGetID    string
 
 	// UpdateSessionName stubbing.
 	updateRowsAffected int64
