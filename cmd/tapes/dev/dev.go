@@ -26,6 +26,7 @@ func NewDevCmd() *cobra.Command {
 	cmd.AddCommand(newTraceFixturesCmd())
 	cmd.AddCommand(newDumpCorpusCmd())
 	cmd.AddCommand(newCheckInvariantsCmd())
+	cmd.AddCommand(newCheckOpenAPICmd())
 	cmd.AddCommand(newRederiveCmd())
 	cmd.AddCommand(newEmbedSpansCmd())
 	return cmd

@@ -8,10 +8,10 @@ import (
 
 	authcmder "github.com/papercomputeco/tapes/cmd/tapes/auth"
 	backfillcmder "github.com/papercomputeco/tapes/cmd/tapes/backfill"
-	exportcmd "github.com/papercomputeco/tapes/cmd/tapes/export"
 	configcmder "github.com/papercomputeco/tapes/cmd/tapes/config"
 	deckcmder "github.com/papercomputeco/tapes/cmd/tapes/deck"
 	devcmder "github.com/papercomputeco/tapes/cmd/tapes/dev"
+	exportcmd "github.com/papercomputeco/tapes/cmd/tapes/export"
 	initcmder "github.com/papercomputeco/tapes/cmd/tapes/init"
 	localcmder "github.com/papercomputeco/tapes/cmd/tapes/local"
 	searchcmder "github.com/papercomputeco/tapes/cmd/tapes/search"

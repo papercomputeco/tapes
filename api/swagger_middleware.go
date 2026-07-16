@@ -13,6 +13,13 @@ import (
 //go:embed openapi.yaml
 var openAPISpec []byte
 
+// OpenAPISpec returns the embedded OpenAPI 3.0.3 contract bytes. It is the
+// same document served at /swagger/openapi.yaml, exposed so conformance
+// tooling (e.g. `tapes dev check-openapi`) can validate served/rendered
+// responses against the published schema without re-reading the file from
+// disk.
+func OpenAPISpec() []byte { return openAPISpec }
+
 // scalarHTML loads the Scalar API reference viewer from a CDN. Keeping the
 // viewer JS out of our binary saves ~12 MB compared to embedding swagger-ui.
 const scalarHTML = `<!doctype html>
