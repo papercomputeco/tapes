@@ -1005,6 +1005,10 @@ const docTemplate = `{
                 "last_seen_at": {
                     "type": "string"
                 },
+                "live": {
+                    "description": "Live is a runtime presence signal, not a projection fact: true when\nthe session was seen within the liveness window AND the deriver has\nnot marked it terminal. Computed at response time from last_seen_at,\nso the console renders it directly instead of inferring \"running\"\nfrom recency itself (keeps the console dumb; RFD 00007 §C).",
+                    "type": "boolean"
+                },
                 "parent_session_id": {
                     "type": "string"
                 },
@@ -1333,7 +1337,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "source": {
-                    "description": "Source is the capture origin of the turn's rows (\"wire\" |\n\"transcript\"), promoted from raw_turns.source. Per-trace, so a\nsession can mix live wire capture and transcript backfill.",
+                    "description": "Source is the capture origin of the turn's rows (\"wire\" |\n\"transcript\"), promoted from raw_turns.source. Per-trace, so a\nsession can mix live wire capture and transcript backfill. Today\nevery trace is \"wire\": transcripts only reconcile fork/parent edges\nduring derivation, they never form a trace on their own. \"transcript\"\nbecomes real when a session is reconstructed purely from a transcript\nfile with no proxy capture (an OSS backfill path). See RFD 00007 §C.",
                     "type": "string"
                 },
                 "span_count": {
@@ -1353,7 +1357,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "usage": {
-                    "description": "Usage is the trace's total token/cost spend over ALL llm spans,\nshadow calls included; MainUsage is the conversation-spine slice\n(Usage − MainUsage is the harness's shadow spend on the turn).",
+                    "description": "Usage is the trace's total token/cost spend over ALL llm spans,\nshadow calls included; MainUsage is the task slice — the main agent\nand its subagents (every call_kind=main span, across threads). The\ndifference (Usage − MainUsage) is the harness's shadow spend\n(permission checks, title-gen, web summaries) on the turn.",
                     "allOf": [
                         {
                             "$ref": "#/definitions/api.TraceUsage"

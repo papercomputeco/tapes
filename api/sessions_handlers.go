@@ -61,8 +61,29 @@ type SessionItem struct {
 	// captured at ingest; empty for rows captured before the edge began
 	// stamping it.
 	AuthSubject string `json:"auth_subject,omitempty"`
+	// Live is a runtime presence signal, not a projection fact: true when
+	// the session was seen within the liveness window AND the deriver has
+	// not marked it terminal. Computed at response time from last_seen_at,
+	// so the console renders it directly instead of inferring "running"
+	// from recency itself (keeps the console dumb; RFD 00007 §C).
+	Live bool `json:"live"`
 	// Rollup is the deriver-owned projection over the session's spans.
 	Rollup SessionRollup `json:"rollup"`
+}
+
+// sessionLiveWindow bounds how recently a session must have been seen to
+// read as live. Server config now (mirrors the console's old 5-minute
+// client-side window) so liveness is decided in one place.
+const sessionLiveWindow = 5 * time.Minute
+
+// terminalStatus reports whether a derived status is a settled outcome, in
+// which case the session is done regardless of recency.
+func terminalStatus(s string) bool {
+	switch s {
+	case "completed", "failed", "abandoned":
+		return true
+	}
+	return false
 }
 
 // SessionRollup is the deriver-owned session projection — status, title,
@@ -118,7 +139,7 @@ type SessionDetailResponse struct {
 	Session SessionItem `json:"session"`
 }
 
-func sessionItemFromStorage(s storage.SessionRecord) SessionItem {
+func sessionItemFromStorage(s storage.SessionRecord, now time.Time) SessionItem {
 	item := SessionItem{
 		ID:               s.ID,
 		HarnessID:        s.HarnessID,
@@ -131,6 +152,7 @@ func sessionItemFromStorage(s storage.SessionRecord) SessionItem {
 		EndedAt:          s.EndedAt,
 		HarnessMetadata:  s.HarnessMetadata,
 		AuthSubject:      s.AuthSubject,
+		Live:             now.Sub(s.LastSeenAt) < sessionLiveWindow && !terminalStatus(s.DerivedStatus),
 		Rollup: SessionRollup{
 			Status:     s.DerivedStatus,
 			Title:      s.Name,
@@ -345,7 +367,7 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 
 	items := make([]SessionItem, len(sessions))
 	for i, sess := range sessions {
-		items[i] = sessionItemFromStorage(sess)
+		items[i] = sessionItemFromStorage(sess, time.Now())
 	}
 
 	return c.JSON(SessionListResponse{
@@ -386,7 +408,7 @@ func (s *Server) listSessionsByHarness(c *fiber.Ctx, reader sessionsReader) erro
 	// form expresses it (never 404 — that's the :id endpoint's vocabulary).
 	items := []SessionItem{}
 	if sess != nil {
-		items = append(items, sessionItemFromStorage(*sess))
+		items = append(items, sessionItemFromStorage(*sess, time.Now()))
 	}
 	return c.JSON(SessionListResponse{Items: items})
 }
@@ -432,7 +454,7 @@ func (s *Server) handleGetSession(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(SessionDetailResponse{
-		Session: sessionItemFromStorage(*sess),
+		Session: sessionItemFromStorage(*sess, time.Now()),
 	})
 }
 
@@ -489,7 +511,7 @@ func exportSessionLine(ctx context.Context, reader spanModelReader, sess storage
 		if err != nil {
 			return fmt.Errorf("list trace summaries for session %s: %w", sess.ID, err)
 		}
-		item := sessionItemFromStorage(sess)
+		item := sessionItemFromStorage(sess, time.Now())
 		line := exportSessionTraceHeaders{
 			Schema:  ProjectionSchema,
 			Session: item,
@@ -509,7 +531,7 @@ func exportSessionLine(ctx context.Context, reader spanModelReader, sess storage
 	if err != nil {
 		return fmt.Errorf("list span model for session %s: %w", sess.ID, err)
 	}
-	resp := BuildSessionTraces(sessionItemFromStorage(sess), turns, spans, links, PayloadFull)
+	resp := BuildSessionTraces(sessionItemFromStorage(sess, time.Now()), turns, spans, links, PayloadFull)
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		return fmt.Errorf("encoding session %s: %w", sess.ID, err)
 	}

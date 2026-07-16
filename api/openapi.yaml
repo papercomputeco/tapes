@@ -85,6 +85,14 @@ components:
           type: string
         last_seen_at:
           type: string
+        live:
+          description: |-
+            Live is a runtime presence signal, not a projection fact: true when
+            the session was seen within the liveness window AND the deriver has
+            not marked it terminal. Computed at response time from last_seen_at,
+            so the console renders it directly instead of inferring "running"
+            from recency itself (keeps the console dumb; RFD 00007 §C).
+          type: boolean
         parent_session_id:
           type: string
         rollup:
@@ -331,7 +339,11 @@ components:
           description: |-
             Source is the capture origin of the turn's rows ("wire" |
             "transcript"), promoted from raw_turns.source. Per-trace, so a
-            session can mix live wire capture and transcript backfill.
+            session can mix live wire capture and transcript backfill. Today
+            every trace is "wire": transcripts only reconcile fork/parent edges
+            during derivation, they never form a trace on their own. "transcript"
+            becomes real when a session is reconstructed purely from a transcript
+            file with no proxy capture (an OSS backfill path). See RFD 00007 §C.
           type: string
         span_count:
           type: integer
@@ -353,8 +365,10 @@ components:
           - $ref: '#/components/schemas/TraceUsage'
           description: |-
             Usage is the trace's total token/cost spend over ALL llm spans,
-            shadow calls included; MainUsage is the conversation-spine slice
-            (Usage − MainUsage is the harness's shadow spend on the turn).
+            shadow calls included; MainUsage is the task slice — the main agent
+            and its subagents (every call_kind=main span, across threads). The
+            difference (Usage − MainUsage) is the harness's shadow spend
+            (permission checks, title-gen, web summaries) on the turn.
         user_prompt:
           type: string
       type: object

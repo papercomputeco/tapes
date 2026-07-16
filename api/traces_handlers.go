@@ -251,7 +251,7 @@ func (s *Server) handleGetSessionTraces(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session traces"})
 	}
 
-	resp := BuildSessionTraces(sessionItemFromStorage(*sess), turns, spans, links, payloadModeFromQuery(c.Query("payload")))
+	resp := BuildSessionTraces(sessionItemFromStorage(*sess, time.Now()), turns, spans, links, payloadModeFromQuery(c.Query("payload")))
 	return c.JSON(resp)
 }
 
