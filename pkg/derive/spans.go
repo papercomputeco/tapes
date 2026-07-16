@@ -315,7 +315,7 @@ func (em *spanEmitter) threadCall(src *SpanSource) {
 	agent := em.agentSpan[key]
 	turn := em.agentTurn[key]
 	if agent == nil {
-		taskID := threadAnchor(src)
+		taskID := toolKey(src.Session, threadAnchor(src))
 		task := em.toolSpans[taskID]
 		if task != nil {
 			turn = em.toolTurn[taskID]
@@ -370,11 +370,12 @@ func (em *spanEmitter) shadowCall(src *SpanSource) {
 	// checks share deduped prefix nodes, so a node's ParentToolUseID
 	// only carries the last writer's edge and fans every check into
 	// one tool.
-	tool := em.toolSpans[src.Anchor]
+	anchor := toolKey(src.Session, src.Anchor)
+	tool := em.toolSpans[anchor]
 	var turn *SpanTurn
 	var parent string
 	if tool != nil {
-		turn = em.toolTurn[src.Anchor]
+		turn = em.toolTurn[anchor]
 		parent = tool.SpanID
 	} else {
 		turn = em.traceAt(src)
@@ -386,7 +387,7 @@ func (em *spanEmitter) shadowCall(src *SpanSource) {
 	if tool != nil {
 		em.link(turn, &SpanLink{
 			FromTraceID: turn.TraceID, FromSpanID: span.SpanID, FromIO: "output",
-			ToTraceID: em.toolTurn[src.Anchor].TraceID, ToSpanID: tool.SpanID, ToIO: "verdict",
+			ToTraceID: em.toolTurn[anchor].TraceID, ToSpanID: tool.SpanID, ToIO: "verdict",
 			Kind: LinkVerdict,
 		})
 	}
@@ -437,7 +438,7 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 			if b.Type != blockToolResult {
 				continue
 			}
-			if ts := em.fillToolResult(&b, src.CapturedAt); ts != nil {
+			if ts := em.fillToolResult(src.Session, &b, src.CapturedAt); ts != nil {
 				feeds = append(feeds, ts)
 			}
 		}
@@ -447,7 +448,7 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 	em.addSpan(turn, span)
 	for _, ts := range feeds {
 		em.link(turn, &SpanLink{
-			FromTraceID: em.toolTurn[toolID(ts)].TraceID, FromSpanID: ts.SpanID, FromIO: "output",
+			FromTraceID: em.toolTurn[toolKey(src.Session, toolID(ts))].TraceID, FromSpanID: ts.SpanID, FromIO: "output",
 			ToTraceID: turn.TraceID, ToSpanID: span.SpanID, ToIO: "input",
 			Kind: LinkFeeds,
 		})
@@ -458,12 +459,13 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 		if (b.Type != blockToolUse && b.Type != blockServerToolUse) || b.ToolUseID == "" {
 			continue
 		}
-		if existing := em.toolSpans[b.ToolUseID]; existing != nil {
+		tk := toolKey(src.Session, b.ToolUseID)
+		if existing := em.toolSpans[tk]; existing != nil {
 			// branch siblings re-emit the same tool_use: the first
 			// emitter owns the span, later ones only link to it.
 			em.link(turn, &SpanLink{
 				FromTraceID: turn.TraceID, FromSpanID: span.SpanID, FromIO: "output",
-				ToTraceID: em.toolTurn[b.ToolUseID].TraceID, ToSpanID: existing.SpanID, ToIO: "input",
+				ToTraceID: em.toolTurn[tk].TraceID, ToSpanID: existing.SpanID, ToIO: "input",
 				Kind: LinkEmits,
 			})
 			continue
@@ -479,8 +481,8 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 			Input:        []llm.ContentBlock{b},
 		}
 		em.addSpan(turn, ts)
-		em.toolSpans[b.ToolUseID] = ts
-		em.toolTurn[b.ToolUseID] = turn
+		em.toolSpans[tk] = ts
+		em.toolTurn[tk] = turn
 		em.link(turn, &SpanLink{
 			FromTraceID: turn.TraceID, FromSpanID: span.SpanID, FromIO: "output",
 			ToTraceID: turn.TraceID, ToSpanID: ts.SpanID, ToIO: "input",
@@ -536,12 +538,12 @@ func hasShellCommandInput(input map[string]any) bool {
 
 // fillToolResult stores a tool_result block on its tool span and
 // returns the span when this result is fresh dataflow.
-func (em *spanEmitter) fillToolResult(b *llm.ContentBlock, at time.Time) *Span {
+func (em *spanEmitter) fillToolResult(session SessionKey, b *llm.ContentBlock, at time.Time) *Span {
 	id := b.ToolResultID
 	if id == "" {
 		id = b.ToolUseID
 	}
-	ts := em.toolSpans[id]
+	ts := em.toolSpans[toolKey(session, id)]
 	if ts == nil {
 		return nil
 	}
@@ -1018,6 +1020,16 @@ func threadAnchor(src *SpanSource) string {
 // toolID recovers a tool span's tool_use id (its span id, by minting).
 func toolID(ts *Span) string {
 	return ts.SpanID
+}
+
+// toolKey scopes a tool_use_id to its harness session. Tool spans and
+// their turns are keyed by this: one emit pass holds every session in the
+// org, and two of them can carry the same provider-assigned tool_use_id —
+// the session prefix keeps them from colliding. Subagents share their
+// parent's SessionKey (thread_id is not part of it), so a subagent's tools
+// key under the same session as the Task span that spawned them.
+func toolKey(s SessionKey, toolUseID string) string {
+	return s.HarnessID + "|" + s.HarnessSessionID + "|" + toolUseID
 }
 
 // maxPreviewText bounds the trace header's prompt and response
