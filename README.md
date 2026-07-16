@@ -122,13 +122,15 @@ Browse sessions and drill into a single session in the deck TUI:
 tapes deck
 ```
 
-Export a captured conversation as a transcript (Markdown by default, or JSONL).
-The derived span tree is included by default; pass `--spans=false` for just the
-conversation. Pass a full session id or just its short prefix:
+Export a captured session as JSONL — the API's session→traces→spans projection
+verbatim. `tapes export` is a thin client of `GET /v1/sessions/{id}/export`, so
+it needs a running API (pass `--api-target`, or start one with `tapes serve`).
+The full span tree is included by default; pass `--detail traces` for turn
+headers only. Pass a full session id or its short prefix:
 
 ```bash
-tapes checkout <session-id> --format md -o session.md
-tapes checkout <session-id> --format jsonl
+tapes export <session-id> --api-target http://127.0.0.1:8081 -o session.jsonl
+tapes export <session-id> --detail traces
 ```
 
 Search across captured spans (individual main-conversation LLM spans, with

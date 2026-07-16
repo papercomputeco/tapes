@@ -1,5 +1,5 @@
 // Package sessionscmder provides the `tapes sessions` command: a quick list
-// of captured sessions and their ids, so other commands (checkout, search)
+// of captured sessions and their ids, so other commands (export, search)
 // have something to point at.
 package sessionscmder
 
@@ -32,7 +32,7 @@ var sessionsFlags = config.FlagSet{
 const sessionsLongDesc string = `List captured sessions.
 
 Prints the most recent sessions with their full id, turn count, cost, model,
-and a prompt preview. Use a session id with tapes checkout (or its short
+and a prompt preview. Use a session id with tapes export (or its short
 prefix) to export a conversation.
 
 Connect to a running API with --api-target, or read a database directly with

@@ -15,7 +15,7 @@ coding agent. Use --claude to sync to Claude Code's .claude/skills/ directory.
 
 Examples:
   tapes skill generate abc123 --name debug-react-hooks
-  tapes skill generate --name my-skill   (uses current checkout)
+  tapes skill generate --name my-skill   (from the current session)
   tapes skill list
   tapes skill sync debug-react-hooks
   tapes skill sync debug-react-hooks --claude`,

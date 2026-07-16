@@ -8,7 +8,7 @@ import (
 
 	authcmder "github.com/papercomputeco/tapes/cmd/tapes/auth"
 	backfillcmder "github.com/papercomputeco/tapes/cmd/tapes/backfill"
-	checkoutcmder "github.com/papercomputeco/tapes/cmd/tapes/checkout"
+	exportcmd "github.com/papercomputeco/tapes/cmd/tapes/export"
 	configcmder "github.com/papercomputeco/tapes/cmd/tapes/config"
 	deckcmder "github.com/papercomputeco/tapes/cmd/tapes/deck"
 	devcmder "github.com/papercomputeco/tapes/cmd/tapes/dev"
@@ -52,7 +52,7 @@ Browse and search:
   tapes seed --demo    Seed demo sessions to explore the deck
 
 Export a conversation:
-  tapes checkout <session-id>   Render a session (or a single trace) as Markdown or JSONL
+  tapes export <session-id>     Export a session as JSONL (the API projection)
 
 Configuration:
   tapes config set <key> <value>    Set a configuration value
@@ -92,7 +92,7 @@ func NewTapesCmd() *cobra.Command {
 	_ = cmd.PersistentFlags().MarkHidden("disable-update-check")
 
 	// Add subcommands
-	cmd.AddCommand(checkoutcmder.NewCheckoutCmd())
+	cmd.AddCommand(exportcmd.NewExportCmd())
 	cmd.AddCommand(configcmder.NewConfigCmd())
 	cmd.AddCommand(deckcmder.NewDeckCmd())
 	cmd.AddCommand(devcmder.NewDevCmd())

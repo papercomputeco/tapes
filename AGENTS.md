@@ -47,9 +47,10 @@ CLI surface notes for agents:
 
 - `tapes chat` has been **removed**; tapes captures and derives, it does not host
   chat sessions.
-- `tapes checkout` is a conversation-**export** primitive: it reads the derived
-  trace surface and renders a session (or a single trace) as Markdown or JSONL.
-  It owns no state.
+- `tapes export` downloads a captured session as JSONL — the API's
+  session→traces→spans projection verbatim. It is a thin client of
+  `GET /v1/sessions/{id}/export`, not a second renderer, so the CLI and API
+  can't drift. It owns no state and needs a running API (`--api-target`).
 - `tapes search` is **span-only** — it queries the span projection
   (`/v1/search/spans`) and returns individual main-conversation LLM spans with
   their trace/turn context.

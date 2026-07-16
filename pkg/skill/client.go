@@ -43,7 +43,7 @@ type TraceSummary struct {
 	StartedAt time.Time
 	// Token counts folded by the deriver for the turn. Total* spans the
 	// whole turn (spine + harness shadow calls); Main* counts only the
-	// conversation-spine calls. Surfaced by the checkout export.
+	// conversation-spine calls. Surfaced by the session export.
 	TotalInputTokens  int64
 	TotalOutputTokens int64
 	MainInputTokens   int64
@@ -293,6 +293,34 @@ func (c *APIClient) Trace(ctx context.Context, traceID string) (*Trace, error) {
 		trace.Spans = append(trace.Spans, span)
 	}
 	return trace, nil
+}
+
+// ExportSession fetches GET /v1/sessions/{id}/export and returns the raw
+// JSONL body verbatim — the API's session→traces→spans projection, not
+// re-encoded. detail is "spans" (traces with full spans) or "traces" (turn
+// headers only). A single session is bounded, so the body is buffered.
+func (c *APIClient) ExportSession(ctx context.Context, id, detail string) ([]byte, error) {
+	rawURL := fmt.Sprintf("%s/v1/sessions/%s/export", c.apiTarget, url.PathEscape(id))
+	if detail != "" {
+		rawURL += "?detail=" + url.QueryEscape(detail)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errors.New("session not found")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("api returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return body, nil
 }
 
 func (c *APIClient) getJSON(ctx context.Context, rawURL string, out any) error {

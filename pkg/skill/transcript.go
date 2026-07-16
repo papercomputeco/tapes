@@ -19,7 +19,7 @@ type transcriptConfig struct {
 type TranscriptOption func(*transcriptConfig)
 
 // WithoutSpanDetail renders only the [user]/[assistant] conversation, dropping
-// the [tools] span-detail lines — the lean transcript behind checkout's
+// the [tools] span-detail lines — the lean transcript behind skill
 // --spans=false.
 func WithoutSpanDetail() TranscriptOption {
 	return func(c *transcriptConfig) { c.omitSpanDetail = true }
@@ -48,7 +48,7 @@ func WithTraceFilter(traceID string) TranscriptOption {
 // resume replay) and turns outside the time window are filtered out.
 //
 // This is the single transcript code path shared by skill generation and
-// the checkout export.
+// generation.
 func BuildSessionTranscript(ctx context.Context, query Querier, sessionID string, opts ...TranscriptOption) (string, error) {
 	turns, err := SessionTurns(ctx, query, sessionID, opts...)
 	if err != nil {
