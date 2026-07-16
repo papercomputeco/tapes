@@ -163,3 +163,15 @@ UPDATE sessions SET derived_title = sqlc.arg(derived_title) WHERE id = sqlc.arg(
 -- SQL — so the deriver writes it directly as a JSONB array. Re-derive
 -- overwrites it idempotently.
 UPDATE sessions SET model_usage = sqlc.arg(model_usage) WHERE id = sqlc.arg(id);
+
+-- name: UpdateSessionName :execrows
+-- User-driven rename of a session's display title (Console edit affordance).
+-- Unlike UpdateSessionDerivedTitle (title-gen output, Postgres-internal),
+-- this sets the user-facing `name` column and is exposed on the
+-- sessionsReader capability interface. Org-scoped in the WHERE clause
+-- (never just by id) so a cross-org id can never be updated; :execrows
+-- returns the affected-row count, which the caller uses to distinguish a
+-- successful update from an unknown/foreign id (0 rows). A NULL name
+-- clears back to the derived/auto title.
+UPDATE sessions SET name = sqlc.narg(name)
+WHERE id = sqlc.arg(id) AND org_id = sqlc.arg(org_id);

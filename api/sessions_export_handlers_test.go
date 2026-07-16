@@ -55,6 +55,12 @@ func (d *exportStubDriver) GetSessionRecordByHarness(_ context.Context, _, _, _ 
 	return nil, nil
 }
 
+// UpdateSessionName satisfies the widened sessionsReader interface; the
+// export handlers never call it.
+func (d *exportStubDriver) UpdateSessionName(_ context.Context, _, _ string, _ *string) (int64, error) {
+	return 0, nil
+}
+
 func (d *exportStubDriver) ListTraceSummaries(_ context.Context, sessionID string) ([]storage.TraceSummaryRecord, error) {
 	return d.summaries[sessionID], nil
 }
