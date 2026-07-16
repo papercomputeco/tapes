@@ -61,15 +61,21 @@ type TraceItem struct {
 	Status          string `json:"status"`
 	// Source is the capture origin of the turn's rows ("wire" |
 	// "transcript"), promoted from raw_turns.source. Per-trace, so a
-	// session can mix live wire capture and transcript backfill.
+	// session can mix live wire capture and transcript backfill. Today
+	// every trace is "wire": transcripts only reconcile fork/parent edges
+	// during derivation, they never form a trace on their own. "transcript"
+	// becomes real when a session is reconstructed purely from a transcript
+	// file with no proxy capture (an OSS backfill path). See RFD 00007 §C.
 	Source     string     `json:"source"`
 	StartedAt  time.Time  `json:"started_at"`
 	EndedAt    *time.Time `json:"ended_at,omitempty"`
 	DurationNS int64      `json:"duration_ns"`
 	SpanCount  int        `json:"span_count"`
 	// Usage is the trace's total token/cost spend over ALL llm spans,
-	// shadow calls included; MainUsage is the conversation-spine slice
-	// (Usage − MainUsage is the harness's shadow spend on the turn).
+	// shadow calls included; MainUsage is the task slice — the main agent
+	// and its subagents (every call_kind=main span, across threads). The
+	// difference (Usage − MainUsage) is the harness's shadow spend
+	// (permission checks, title-gen, web summaries) on the turn.
 	Usage     TraceUsage `json:"usage"`
 	MainUsage MainUsage  `json:"main_usage"`
 	// Synthetic is a typed deriver signal ("post-compaction" for a
@@ -89,8 +95,10 @@ type TraceUsage struct {
 	CostUSD             float64 `json:"cost_usd"`
 }
 
-// MainUsage is the conversation-spine token slice of a trace — spine
-// calls only, no cache split or cost (those live on the total Usage).
+// MainUsage is the task token slice of a trace: the main agent and its
+// subagents (call_kind=main across every thread), no cache split or cost
+// (those live on the total Usage). Deliberately not spine-only — a
+// subagent doing the user's work is task spend, not shadow (RFD 00007 §C).
 type MainUsage struct {
 	InputTokens  int64 `json:"input_tokens"`
 	OutputTokens int64 `json:"output_tokens"`

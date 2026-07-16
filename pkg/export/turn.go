@@ -1,8 +1,11 @@
-// Package export provides the shared conversation-export primitive:
-// one turn's structured record plus a session-level JSONL writer. It is
-// used by the `tapes checkout` CLI command and by the tapes API's
-// session-export HTTP endpoints, so both surfaces render the exact same
-// grain from the same code path.
+// Package export provides the `tapes checkout` conversation-export
+// primitive: one turn's structured record plus a session-level JSONL
+// writer. NOTE: this is a leaner per-turn projection than the API's
+// session-export HTTP endpoints, which render the span-model grain via
+// BuildSessionTraces — checkout uses different token field names and omits
+// cost/links/rollup/verdicts, and skips synthetic turns. Converging the two
+// onto BuildSessionTraces is deferred (RFD 00007 §D); until then they are
+// intentionally distinct projections.
 package export
 
 import (
