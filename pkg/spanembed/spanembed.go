@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
+	"github.com/papercomputeco/tapes/pkg/merkle"
 )
 
 // Candidate is one main llm span considered for embedding, joined with
@@ -195,6 +196,14 @@ func ContentHash(text string) string {
 // by the text blocks of the output. Tool payloads, thinking, and
 // images are deliberately excluded — they are structured data, not
 // prose, and they drown the signal the search exists for.
+//
+// Harness tag spans (<system-reminder>, hook context, command framing —
+// see merkle.HarnessTags) are stripped for the same reason the chain
+// hash strips them: they are volatile harness metadata, not user
+// intent. Left in, a several-KB session-start reminder embeds every
+// first turn of every session to a near-identical vector and flattens
+// search ranking (observed as three unrelated sessions all scoring
+// within noise of each other).
 func RenderSpanText(input, output json.RawMessage) string {
 	var sb strings.Builder
 	appendBlocks(&sb, input)
@@ -203,9 +212,10 @@ func RenderSpanText(input, output json.RawMessage) string {
 }
 
 // appendBlocks appends the text blocks of one stored content-block
-// array. Undecodable payloads contribute nothing: the raw layer is the
-// source of truth and a malformed projection row will be rewritten by
-// the next derive.
+// array, harness-tag-stripped and trimmed; blocks that are pure harness
+// noise contribute nothing. Undecodable payloads also contribute
+// nothing: the raw layer is the source of truth and a malformed
+// projection row will be rewritten by the next derive.
 func appendBlocks(sb *strings.Builder, raw json.RawMessage) {
 	if len(raw) == 0 {
 		return
@@ -218,9 +228,18 @@ func appendBlocks(sb *strings.Builder, raw json.RawMessage) {
 		if b.Type != "text" || b.Text == "" {
 			continue
 		}
+		// A block that is nothing but harness noise contributes nothing.
+		// normalizeWhitespace mirrors what ProjectContent does after
+		// StripHarnessTags: collapse CRLF, trailing line-space, and
+		// consecutive blank lines so the same prose always hashes the
+		// same way regardless of whitespace drift around stripped tags.
+		text := merkle.NormalizeForEmbed(b.Text)
+		if text == "" {
+			continue
+		}
 		if sb.Len() > 0 {
 			sb.WriteString("\n")
 		}
-		sb.WriteString(b.Text)
+		sb.WriteString(text)
 	}
 }
