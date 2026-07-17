@@ -482,4 +482,13 @@ var _ = Describe("RenderSpanText", func() {
 	It("renders undecodable payloads as empty", func() {
 		Expect(spanembed.RenderSpanText(json.RawMessage(`{not json`), nil)).To(Equal(""))
 	})
+
+	It("strips harness tag spans so boilerplate cannot dominate the vector", func() {
+		input := json.RawMessage(`[
+			{"type":"text","text":"<system-reminder>\nSessionStart hook: several KB of skill instructions\n</system-reminder>Explain autovacuum tuning"},
+			{"type":"text","text":"<system-reminder>only noise</system-reminder>"}
+		]`)
+		output := textBlocks("Set scale factors low.")
+		Expect(spanembed.RenderSpanText(input, output)).To(Equal("Explain autovacuum tuning\nSet scale factors low."))
+	})
 })

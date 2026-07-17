@@ -74,7 +74,7 @@ func ProjectContent(blocks []llm.ContentBlock) []llm.ContentBlock {
 	out := make([]llm.ContentBlock, 0, len(blocks))
 	for _, b := range blocks {
 		if b.Text != "" {
-			projected := normalizeWhitespace(stripHarnessTags(b.Text))
+			projected := normalizeWhitespace(StripHarnessTags(b.Text))
 			if projected == "" {
 				continue
 			}
@@ -93,7 +93,7 @@ func ProjectContent(blocks []llm.ContentBlock) []llm.ContentBlock {
 		// otherwise hash apart and fork the chain. This was the bulk
 		// of the measured join-residual on the golden sessions.
 		if b.ToolOutput != "" {
-			b.ToolOutput = normalizeWhitespace(stripHarnessTags(b.ToolOutput))
+			b.ToolOutput = normalizeWhitespace(StripHarnessTags(b.ToolOutput))
 		}
 		out = append(out, b)
 	}
@@ -151,11 +151,25 @@ func isZeroValue(v any) bool {
 	}
 }
 
-func stripHarnessTags(text string) string {
+// StripHarnessTags removes every <tag>…</tag> span whose tag is in
+// HarnessTags from text. Exported for consumers that need the same
+// harness-noise removal outside chain-hash projection — e.g. the span
+// embedding render, where a several-KB <system-reminder> block would
+// otherwise dominate the vector and flatten semantic search ranking.
+func StripHarnessTags(text string) string {
 	for _, tag := range HarnessTags {
 		text = stripTaggedSpan(text, tag)
 	}
 	return text
+}
+
+// NormalizeForEmbed strips harness-tag spans and folds away whitespace
+// drift, producing the canonical prose used for span embedding. It
+// composes StripHarnessTags with the same whitespace normalization
+// ProjectContent applies to chain-hash text, so embed render and chain
+// hash treat harness noise and whitespace identically.
+func NormalizeForEmbed(text string) string {
+	return normalizeWhitespace(StripHarnessTags(text))
 }
 
 // stripTaggedSpan removes every <tag>…</tag> span from text. An
