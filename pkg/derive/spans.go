@@ -785,18 +785,16 @@ func (em *spanEmitter) finish() {
 	}
 	em.foldModelUsage(modelFold)
 
-	if len(kindFold) > 0 {
-		em.set.KindCounts = kindFold
-	}
-	// Task fold and chain-aware status are per-covered-session: every
-	// session with at least one trace resolves one, EMPTY folds included.
-	// Emitting an empty task array for a covered session is what lets a
-	// re-derive CLEAR a session whose last task was deleted — an omitted
-	// session is never written, so storage would otherwise keep the prior
-	// non-empty tasks JSONB forever (a rebuild-from-raw break: the raw is
-	// the sole source of truth, so a task no longer present must vanish).
-	// A tool-less session resolves via the non-nil empty slice
-	// FoldSessionTasks returns and the leaf-only DetermineStatus.
+	// Task fold, kind_counts, and chain-aware status are per-covered-session:
+	// every session with at least one trace resolves one, EMPTY folds included.
+	// Emitting an empty fold for a covered session is what lets a re-derive
+	// CLEAR a session whose last task/kind was removed — an omitted session is
+	// never written, so storage would otherwise keep the prior non-empty JSONB
+	// forever (a rebuild-from-raw break: the raw is the sole source of truth, so
+	// a value no longer present must vanish). kind_counts follows tasks here: a
+	// covered session that folds to zero classified call_kind spans writes {}
+	// rather than being skipped. A tool-less session resolves via the non-nil
+	// empty slice FoldSessionTasks returns and the leaf-only DetermineStatus.
 	sessionSet := map[SessionKey]struct{}{}
 	for _, turn := range em.set.Turns {
 		sessionSet[turn.Session] = struct{}{}
@@ -804,9 +802,15 @@ func (em *spanEmitter) finish() {
 	if len(sessionSet) > 0 {
 		em.set.Tasks = make(map[SessionKey][]Task, len(sessionSet))
 		em.set.Status = make(map[SessionKey]SessionStatus, len(sessionSet))
+		em.set.KindCounts = make(map[SessionKey]map[string]int, len(sessionSet))
 		for key := range sessionSet {
 			em.set.Tasks[key] = FoldSessionTasks(toolsBySession[key])
 			em.set.Status[key] = FoldSessionStatus(toolsBySession[key], em.terminalMainSpan(key))
+			counts := kindFold[key]
+			if counts == nil {
+				counts = map[string]int{}
+			}
+			em.set.KindCounts[key] = counts
 		}
 	}
 }
