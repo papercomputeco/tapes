@@ -101,9 +101,10 @@ func (t *Tapes) TestE2E(ctx context.Context) (string, error) {
 		WithExec([]string{"hurl", "--test", "--very-verbose", ".dagger/e2e/02-chat-nonstreaming.hurl"}).
 
 		// Brief pause for async worker pool to flush to Postgres.
-		// 03 doubles as the proxy-leg persistence check: the legacy
-		// node-layer stats fallback proves the captured chain landed
-		// (the old 04-history leg read /v1/stems, which is gone).
+		// 03 is the pre-derive checkpoint: stats read the span layer
+		// exclusively, so the proxy chat leg must leave the derived read
+		// model at its zero state until ingest (05) + derive (06) run.
+		// The retired node/stem layer no longer backs a legacy fallback.
 		WithExec([]string{"sleep", "3"}).
 		WithExec([]string{"hurl", "--test", ".dagger/e2e/03-verify-storage.hurl"}).
 
