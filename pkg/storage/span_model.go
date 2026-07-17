@@ -103,6 +103,15 @@ type RawTurnHeader struct {
 type SpanModelReader interface {
 	ListSessionSpanModel(ctx context.Context, sessionID string) ([]SpanTurnRecord, []SpanRecord, []SpanLinkRecord, error)
 	ListTraceSummaries(ctx context.Context, sessionID string) ([]TraceSummaryRecord, error)
+	// ListSessionLinks returns a session's dataflow links alone — the
+	// payload-free half of ListSessionSpanModel. It backs the per-trace
+	// streaming export, which loads the light turn headers and links whole
+	// but reads the heavy spans one trace at a time.
+	ListSessionLinks(ctx context.Context, sessionID string) ([]SpanLinkRecord, error)
+	// ListTraceSpans returns one trace's spans in presentation order — the
+	// same per-trace read GetTraceDetail performs, without the turn/link
+	// round-trips. It backs the per-trace streaming export.
+	ListTraceSpans(ctx context.Context, orgID, traceID string) ([]SpanRecord, error)
 	GetTraceDetail(ctx context.Context, orgID, traceID string) (*SpanTurnRecord, []SpanRecord, []SpanLinkRecord, error)
 	GetSpanRecord(ctx context.Context, orgID, traceID, spanID string) (*SpanRecord, error)
 	ListRawTurnHeaders(ctx context.Context, orgID, harnessID, harnessSessionID string) ([]RawTurnHeader, error)

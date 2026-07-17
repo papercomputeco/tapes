@@ -522,7 +522,7 @@ type exportSessionTraceHeaders struct {
 // only, read via ListTraceSummaries so span payloads are never loaded.
 // Both export endpoints emit these grains, so a bulk export is exactly a
 // concatenation of per-session exports.
-func exportSessionLine(ctx context.Context, reader spanModelReader, sess storage.SessionRecord, detail exportDetail, w io.Writer) error {
+func exportSessionLine(ctx context.Context, reader spanModelReader, orgID string, sess storage.SessionRecord, detail exportDetail, w io.Writer) error {
 	if detail == exportDetailTraces {
 		rows, err := reader.ListTraceSummaries(ctx, sess.ID)
 		if err != nil {
@@ -544,15 +544,148 @@ func exportSessionLine(ctx context.Context, reader spanModelReader, sess storage
 		return nil
 	}
 
-	turns, spans, links, err := reader.ListSessionSpanModel(ctx, sess.ID)
+	return streamSessionSpanExport(ctx, reader, orgID, sess, w)
+}
+
+// streamSessionSpanExport renders the spans-grain export line for one
+// session — the same nested session → traces → spans projection
+// BuildSessionTraces produces at PayloadFull — but bounds peak memory to
+// one trace's spans instead of the whole session's. The light,
+// payload-free rows (turn headers, which carry the trace order and per-
+// trace span counts, plus the session-scoped links) are loaded whole;
+// each trace's heavy spans are read, encoded, and released one trace at a
+// time. This is the fix for the bulk export OOM: a single heavy session no
+// longer has to materialize every span payload at once.
+//
+// The output is byte-for-byte identical to
+//
+//	json.NewEncoder(w).Encode(BuildSessionTraces(session, turns, spans, links, PayloadFull))
+//
+// for the same rows — the array/object framing is written by hand and each
+// element goes through the same json marshaller the composite response
+// uses, so the reused serializers (spanItemFromRecord, traceItemFromTurn,
+// spanLinkItem) fix the wire shape by construction. The golden test in
+// sessions_export_span_stream_test.go pins that equivalence.
+func streamSessionSpanExport(ctx context.Context, reader spanModelReader, orgID string, sess storage.SessionRecord, w io.Writer) error {
+	// Light, payload-free rows loaded whole: turn headers are the trace
+	// ordering authority (BuildSessionTraces emits traces in this order),
+	// links are the flat session-scoped array.
+	turns, err := reader.ListTraceSummaries(ctx, sess.ID)
 	if err != nil {
-		return fmt.Errorf("list span model for session %s: %w", sess.ID, err)
+		return fmt.Errorf("list trace summaries for session %s: %w", sess.ID, err)
 	}
-	resp := BuildSessionTraces(sessionItemFromStorage(sess, time.Now()), turns, spans, links, PayloadFull)
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
+	links, err := reader.ListSessionLinks(ctx, sess.ID)
+	if err != nil {
+		return fmt.Errorf("list session links for session %s: %w", sess.ID, err)
+	}
+
+	// {"schema":...,"session":...,"traces":[ — the SessionTracesResponse
+	// field order, written by hand so the framing matches json.Marshal of
+	// the whole struct.
+	if err := writeJSONRaw(w, `{"schema":`); err != nil {
+		return fmt.Errorf("encoding session %s: %w", sess.ID, err)
+	}
+	if err := writeJSONValue(w, ProjectionSchema); err != nil {
+		return fmt.Errorf("encoding session %s: %w", sess.ID, err)
+	}
+	if err := writeJSONRaw(w, `,"session":`); err != nil {
+		return fmt.Errorf("encoding session %s: %w", sess.ID, err)
+	}
+	if err := writeJSONValue(w, sessionItemFromStorage(sess, time.Now())); err != nil {
+		return fmt.Errorf("encoding session %s: %w", sess.ID, err)
+	}
+	if err := writeJSONRaw(w, `,"traces":[`); err != nil {
+		return fmt.Errorf("encoding session %s: %w", sess.ID, err)
+	}
+
+	for i, turn := range turns {
+		if i > 0 {
+			if err := writeJSONRaw(w, ","); err != nil {
+				return fmt.Errorf("encoding session %s: %w", sess.ID, err)
+			}
+		}
+		if err := streamTraceDetail(ctx, reader, orgID, turn.SpanTurnRecord, w); err != nil {
+			return fmt.Errorf("encoding session %s: %w", sess.ID, err)
+		}
+	}
+
+	// ],"links":[ ...session links... ]}
+	if err := writeJSONRaw(w, `],"links":[`); err != nil {
+		return fmt.Errorf("encoding session %s: %w", sess.ID, err)
+	}
+	for i, l := range links {
+		if i > 0 {
+			if err := writeJSONRaw(w, ","); err != nil {
+				return fmt.Errorf("encoding session %s: %w", sess.ID, err)
+			}
+		}
+		if err := writeJSONValue(w, spanLinkItem(l)); err != nil {
+			return fmt.Errorf("encoding session %s: %w", sess.ID, err)
+		}
+	}
+	// The trailing newline matches json.Encoder.Encode, so a streamed line
+	// terminates exactly like the materialized one.
+	if err := writeJSONRaw(w, "]}\n"); err != nil {
 		return fmt.Errorf("encoding session %s: %w", sess.ID, err)
 	}
 	return nil
+}
+
+// streamTraceDetail writes one trace's {"trace":...,"spans":[...]} object,
+// loading that trace's spans on their own so only one trace's payloads are
+// resident at a time. This mirrors the embedded TraceDetail json.Marshal
+// produces inside the composite response (Schema and Links are zero there,
+// so both omitempty fields drop out — only trace and spans remain), and
+// the span count on the header is len(spans), exactly as
+// BuildSessionTraces computes it.
+func streamTraceDetail(ctx context.Context, reader spanModelReader, orgID string, turn storage.SpanTurnRecord, w io.Writer) error {
+	spans, err := reader.ListTraceSpans(ctx, orgID, turn.TraceID)
+	if err != nil {
+		return fmt.Errorf("list spans for trace %s: %w", turn.TraceID, err)
+	}
+	if err := writeJSONRaw(w, `{"trace":`); err != nil {
+		return err
+	}
+	if err := writeJSONValue(w, traceItemFromTurn(turn, len(spans))); err != nil {
+		return err
+	}
+	if err := writeJSONRaw(w, `,"spans":[`); err != nil {
+		return err
+	}
+	for i, sp := range spans {
+		if i > 0 {
+			if err := writeJSONRaw(w, ","); err != nil {
+				return err
+			}
+		}
+		// Encode one span at a time so the marshalling buffer stays O(one
+		// span), never O(one trace) — the resident span slice is already
+		// bounded to this trace.
+		if err := writeJSONValue(w, spanItemFromRecord(sp, PayloadFull)); err != nil {
+			return err
+		}
+	}
+	return writeJSONRaw(w, "]}")
+}
+
+// writeJSONValue marshals v with the same HTML-escaping json.Marshal (and
+// thus json.Encoder.Encode) applies, and writes it out. Marshalling each
+// element separately and gluing the array/object framing by hand yields
+// bytes identical to marshalling the whole composite, since JSON encoding
+// of these payload types is context-free.
+func writeJSONValue(w io.Writer, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(b)
+	return err
+}
+
+// writeJSONRaw writes literal structural bytes (brackets, commas, keys).
+func writeJSONRaw(w io.Writer, s string) error {
+	_, err := io.WriteString(w, s)
+	return err
 }
 
 // exportFilename appends the non-default grain to an export filename so
@@ -627,7 +760,7 @@ func (s *Server) handleExportSession(c *fiber.Ctx) error {
 	// happened. (The streaming bulk endpoint can't do this; a single session
 	// can.)
 	var buf bytes.Buffer
-	if err := exportSessionLine(c.Context(), spanReader, *sess, detail, &buf); err != nil {
+	if err := exportSessionLine(c.Context(), spanReader, orgID, *sess, detail, &buf); err != nil {
 		s.logger.Error("export session", "id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to render session export"})
 	}
@@ -752,7 +885,7 @@ func (s *Server) handleExportSessions(c *fiber.Ctx) error {
 				return
 			}
 			for _, sess := range sessions {
-				if err := exportSessionLine(streamCtx, spanReader, sess, detail, w); err != nil {
+				if err := exportSessionLine(streamCtx, spanReader, orgID, sess, detail, w); err != nil {
 					s.logger.Error("export session", "id", sess.ID, "error", err)
 					return
 				}

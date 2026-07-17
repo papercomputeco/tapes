@@ -464,6 +464,60 @@ func (d *Driver) ListTraceSummaries(ctx context.Context, sessionID string) ([]st
 	return out, nil
 }
 
+// ListSessionLinks returns a session's dataflow links alone, in the same
+// deterministic key order ListSessionSpanModel serves them. It is the
+// payload-free half of that read, for the per-trace streaming export.
+// Implements storage.SpanModelReader.
+func (d *Driver) ListSessionLinks(ctx context.Context, sessionID string) ([]storage.SpanLinkRecord, error) {
+	if d == nil || d.conn == nil {
+		return nil, errors.New("postgres driver not open")
+	}
+	parsed, err := uuid.Parse(sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("parse session id: %w", err)
+	}
+	linkRows, err := d.q.ListSpanLinksBySession(ctx, pgtype.UUID{Bytes: parsed, Valid: true})
+	if err != nil {
+		return nil, fmt.Errorf("list span links: %w", err)
+	}
+	links := make([]storage.SpanLinkRecord, 0, len(linkRows))
+	for _, row := range linkRows {
+		links = append(links, storage.SpanLinkRecord{
+			FromTraceID: row.FromTraceID,
+			FromSpanID:  row.FromSpanID,
+			FromIO:      row.FromIo,
+			ToTraceID:   row.ToTraceID,
+			ToSpanID:    row.ToSpanID,
+			ToIO:        row.ToIo,
+			Kind:        row.Kind,
+		})
+	}
+	return links, nil
+}
+
+// ListTraceSpans returns one trace's spans in presentation order (seq
+// ASC, matching ListSessionSpanModel restricted to the trace) — the same
+// per-trace read GetTraceDetail performs, without the turn/link
+// round-trips. Implements storage.SpanModelReader.
+func (d *Driver) ListTraceSpans(ctx context.Context, orgID, traceID string) ([]storage.SpanRecord, error) {
+	if d == nil || d.conn == nil {
+		return nil, errors.New("postgres driver not open")
+	}
+	org, err := orgIDFromString(orgKeyForLookup(orgID))
+	if err != nil {
+		return nil, fmt.Errorf("decode org_id: %w", err)
+	}
+	spanRows, err := d.q.ListSpansByTrace(ctx, gensqlc.ListSpansByTraceParams{OrgID: org, TraceID: traceID})
+	if err != nil {
+		return nil, fmt.Errorf("list spans by trace: %w", err)
+	}
+	spans := make([]storage.SpanRecord, 0, len(spanRows))
+	for _, r := range spanRows {
+		spans = append(spans, spanRecordFromRow(r))
+	}
+	return spans, nil
+}
+
 // GetTraceDetail returns one turn with its spans and links. Implements
 // storage.SpanModelReader.
 func (d *Driver) GetTraceDetail(ctx context.Context, orgID, traceID string) (*storage.SpanTurnRecord, []storage.SpanRecord, []storage.SpanLinkRecord, error) {
