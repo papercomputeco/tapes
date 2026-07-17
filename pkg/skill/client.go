@@ -217,6 +217,7 @@ type wireSessionList struct {
 			} `json:"usage"`
 		} `json:"rollup"`
 	} `json:"items"`
+	NextCursor string `json:"next_cursor"`
 }
 
 // Sessions lists captured sessions (newest first) via GET /v1/sessions.
@@ -245,6 +246,48 @@ func (c *APIClient) Sessions(ctx context.Context) ([]SessionInfo, error) {
 			DerivedStatus: item.Rollup.Status,
 			Preview:       item.Rollup.Preview,
 		})
+	}
+	return out, nil
+}
+
+// AllSessions pages through every captured session (following next_cursor),
+// newest-first. Sessions returns only the first page; resolving a short id
+// prefix needs the full set so a session that isn't among the most recent
+// still resolves.
+func (c *APIClient) AllSessions(ctx context.Context) ([]SessionInfo, error) {
+	var out []SessionInfo
+	cursor := ""
+	for {
+		u, err := url.Parse(c.apiTarget + "/v1/sessions")
+		if err != nil {
+			return nil, fmt.Errorf("invalid api target: %w", err)
+		}
+		q := u.Query()
+		q.Set("limit", "200")
+		if cursor != "" {
+			q.Set("cursor", cursor)
+		}
+		u.RawQuery = q.Encode()
+
+		var list wireSessionList
+		if err := c.getJSON(ctx, u.String(), &list); err != nil {
+			return nil, fmt.Errorf("list sessions: %w", err)
+		}
+		for _, item := range list.Items {
+			out = append(out, SessionInfo{
+				ID:            item.ID,
+				StartedAt:     item.StartedAt,
+				TurnCount:     item.Rollup.TurnCount,
+				TotalCostUSD:  item.Rollup.Usage.CostUSD,
+				Model:         item.Rollup.Model,
+				DerivedStatus: item.Rollup.Status,
+				Preview:       item.Rollup.Preview,
+			})
+		}
+		if list.NextCursor == "" {
+			break
+		}
+		cursor = list.NextCursor
 	}
 	return out, nil
 }

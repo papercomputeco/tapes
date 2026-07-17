@@ -127,7 +127,7 @@ func resolveSessionID(ctx context.Context, client *skill.APIClient, raw string) 
 		return id, nil
 	}
 
-	sessions, err := client.Sessions(ctx)
+	sessions, err := client.AllSessions(ctx)
 	if err != nil {
 		return "", fmt.Errorf("resolving session id %q: %w", id, err)
 	}
