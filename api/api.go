@@ -93,6 +93,7 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	app.Get("/v1/traces/:trace_id", s.handleGetTrace)
 	app.Get("/v1/sessions/:id", s.handleGetSession)
 	app.Delete("/v1/sessions/:id", s.handleDeleteSession)
+	app.Patch("/v1/sessions/:id", s.handleUpdateSession)
 	app.Get("/v1/sessions/:id/skills", s.handleListSessionSkills)
 	app.Get("/v1/search/spans", s.handleSearchSpansEndpoint)
 

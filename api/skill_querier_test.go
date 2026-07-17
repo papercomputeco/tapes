@@ -43,6 +43,10 @@ func (r *querierStubReader) GetSessionRecordByHarness(context.Context, string, s
 	return nil, nil
 }
 
+func (r *querierStubReader) UpdateSessionName(context.Context, string, string, *string) (int64, error) {
+	panic("not implemented")
+}
+
 func (r *querierStubReader) ListTraceSummaries(_ context.Context, _ string) ([]storage.TraceSummaryRecord, error) {
 	r.summariesCall++
 	return r.summaries, nil

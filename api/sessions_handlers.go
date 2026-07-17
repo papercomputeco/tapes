@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -27,6 +28,12 @@ type sessionsReader interface {
 	ListSessionRecords(ctx context.Context, orgID string, opts storage.SessionListOpts) ([]storage.SessionRecord, error)
 	GetSessionRecord(ctx context.Context, orgID, id string) (*storage.SessionRecord, error)
 	GetSessionRecordByHarness(ctx context.Context, orgID string, harnessID string, harnessSessionID string) (*storage.SessionRecord, error)
+	// UpdateSessionName sets (or, when name is nil or trims empty, clears)
+	// the user-editable session title. The org_id predicate lives in the
+	// implementation's storage query (CC-2): a cross-org id must affect
+	// zero rows. Returns the number of rows affected so the handler can
+	// distinguish "updated" from "not in this org / unknown id" (404).
+	UpdateSessionName(ctx context.Context, orgID, id string, name *string) (int64, error)
 }
 
 // sessionsWriter is the capability interface for mutating sessions (DELETE
@@ -39,6 +46,11 @@ type sessionsWriter interface {
 const (
 	defaultSessionsLimit = 50
 	maxSessionsLimit     = 200
+
+	// maxSessionNameLength bounds the user-editable session title after
+	// trimming (CC-3). Chosen to comfortably fit a human-authored title
+	// while still being a hard, server-enforced ceiling.
+	maxSessionNameLength = 200
 )
 
 // SessionItem is the per-session shape: capture identity at the top
@@ -61,6 +73,10 @@ type SessionItem struct {
 	// captured at ingest; empty for rows captured before the edge began
 	// stamping it.
 	AuthSubject string `json:"auth_subject,omitempty"`
+	// Name is the user-editable display name (Console rename affordance),
+	// stored on the identity row and distinct from the deriver's folded
+	// title (rollup.title). Empty when the user has not renamed the session.
+	Name string `json:"name,omitempty"`
 	// Live is a runtime presence signal, not a projection fact: true when
 	// the session was seen within the liveness window AND the deriver has
 	// not marked it terminal. Computed at response time from last_seen_at,
@@ -152,6 +168,7 @@ func sessionItemFromStorage(s storage.SessionRecord, now time.Time) SessionItem 
 		EndedAt:          s.EndedAt,
 		HarnessMetadata:  s.HarnessMetadata,
 		AuthSubject:      s.AuthSubject,
+		Name:             s.Name,
 		Live:             now.Sub(s.LastSeenAt) < sessionLiveWindow && !terminalStatus(s.DerivedStatus),
 		Rollup: SessionRollup{
 			Status:     s.DerivedStatus,
@@ -800,4 +817,109 @@ func (s *Server) handleDeleteSession(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
 	}
 	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// sessionUpdateRequest is the PATCH /v1/sessions/:id body. Name is a pointer
+// so an absent field (nil) is distinguishable from an explicit null or an
+// empty string, both of which mean "clear back to the auto-derived title"
+// (CC-3); an absent field is a 400 (nothing to update).
+type sessionUpdateRequest struct {
+	Name *string `json:"name"`
+}
+
+// Referenced only by the swagger @Param annotation on handleUpdateSession (the
+// handler decodes into a raw map to tell an absent field from an explicit
+// null), so keep it alive for the unused linter — same pattern as the swagger
+// request types in swagger.go.
+var _ = sessionUpdateRequest{}
+
+// handleUpdateSession handles PATCH /v1/sessions/:id.
+//
+// It updates the user-editable session title only (CC-1, CC-4): the server
+// trims and bounds the name (CC-3), calls UpdateSessionName with the
+// org-scoped predicate carried in storage (CC-2), and on success re-reads
+// GetSessionRecord to return the updated session summary so the client can
+// write its cache through (CC-6/CC-7 on the frontend side).
+//
+//	@Summary		Update a session's title
+//	@Description	Updates the user-editable session name. An absent field is a 400; null or empty (after trim) clears back to the auto-derived title. Length is bounded to 200 characters.
+//	@Tags			sessions
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string					true	"Session id (UUID)"
+//	@Param			request	body		sessionUpdateRequest	true	"Update request"
+//	@Success		200		{object}	SessionDetailResponse
+//	@Failure		400		{object}	llm.ErrorResponse	"Missing/malformed id, missing name field, or name exceeds 200 characters"
+//	@Failure		404		{object}	llm.ErrorResponse	"Session not found or not in caller's org"
+//	@Failure		500		{object}	llm.ErrorResponse	"Failed to update session"
+//	@Failure		501		{object}	llm.ErrorResponse	"Sessions not supported by this backend"
+//	@Router			/v1/sessions/{id} [patch]
+func (s *Server) handleUpdateSession(c *fiber.Ctx) error {
+	reader, ok := s.driver.(sessionsReader)
+	if !ok {
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
+	}
+
+	id := c.Params("id")
+	if id == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id parameter required"})
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id must be a valid UUID"})
+	}
+
+	// Decode into raw messages first so an absent "name" key (nothing to
+	// update, 400) is distinguishable from an explicit null or empty string
+	// (both valid "clear the title" requests). A *string alone can't make
+	// that distinction — both cases unmarshal to nil.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(c.Body(), &raw); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "invalid request body"})
+	}
+	nameRaw, present := raw["name"]
+	if !present {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "name is required"})
+	}
+
+	var name *string
+	if err := json.Unmarshal(nameRaw, &name); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "name must be a string or null"})
+	}
+
+	// Normalize server-side (CC-3): trim; empty-after-trim (including an
+	// explicit null) clears back to the auto-derived title (nil); otherwise
+	// bound the length and store the trimmed value.
+	var normalized *string
+	if name != nil {
+		trimmed := strings.TrimSpace(*name)
+		if trimmed != "" {
+			if utf8.RuneCountInString(trimmed) > maxSessionNameLength {
+				return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "name must be at most 200 characters"})
+			}
+			normalized = &trimmed
+		}
+	}
+
+	orgID := orgIDFromCtx(c)
+	rowsAffected, err := reader.UpdateSessionName(c.Context(), orgID, id, normalized)
+	if err != nil {
+		s.logger.Error("update session name", "id", id, "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to update session"})
+	}
+	if rowsAffected == 0 {
+		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
+	}
+
+	sess, err := reader.GetSessionRecord(c.Context(), orgID, id)
+	if err != nil {
+		s.logger.Error("get session", "id", id, "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to update session"})
+	}
+	if sess == nil {
+		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
+	}
+
+	return c.JSON(SessionDetailResponse{
+		Session: sessionItemFromStorage(*sess, time.Now()),
+	})
 }

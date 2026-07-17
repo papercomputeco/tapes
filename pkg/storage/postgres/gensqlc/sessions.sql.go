@@ -241,6 +241,33 @@ func (q *Queries) UpdateSessionModelUsage(ctx context.Context, arg UpdateSession
 	return err
 }
 
+const updateSessionName = `-- name: UpdateSessionName :execrows
+UPDATE sessions SET name = $1
+WHERE id = $2 AND org_id = $3
+`
+
+type UpdateSessionNameParams struct {
+	Name  pgtype.Text
+	ID    pgtype.UUID
+	OrgID pgtype.UUID
+}
+
+// User-driven rename of a session's display title (Console edit affordance).
+// Unlike UpdateSessionDerivedTitle (title-gen output, Postgres-internal),
+// this sets the user-facing `name` column and is exposed on the
+// sessionsReader capability interface. Org-scoped in the WHERE clause
+// (never just by id) so a cross-org id can never be updated; :execrows
+// returns the affected-row count, which the caller uses to distinguish a
+// successful update from an unknown/foreign id (0 rows). A NULL name
+// clears back to the derived/auto title.
+func (q *Queries) UpdateSessionName(ctx context.Context, arg UpdateSessionNameParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateSessionName, arg.Name, arg.ID, arg.OrgID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateSessionStatus = `-- name: UpdateSessionStatus :exec
 UPDATE sessions
    SET has_git_activity  = $1,

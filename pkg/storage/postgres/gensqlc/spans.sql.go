@@ -73,6 +73,12 @@ type AggregateSpanStatsRow struct {
 //	                    wall-clock MAX-MIN window (idle time between
 //	                    turns no longer counts)
 //	tool_calls        = tool spans_20260615 started in the window
+//
+// completed_count joins sessions once (LEFT JOIN, so a trace whose
+// session identity is missing keeps its turn/token totals and simply
+// doesn't count as completed) rather than a correlated EXISTS per matched
+// trace — the per-row subquery is O(traces) index lookups and is the part
+// that times out on a wide (30d) window at scale.
 func (q *Queries) AggregateSpanStats(ctx context.Context, arg AggregateSpanStatsParams) (AggregateSpanStatsRow, error) {
 	row := q.db.QueryRow(ctx, aggregateSpanStats, arg.OrgID, arg.SinceFilter, arg.UntilFilter)
 	var i AggregateSpanStatsRow
