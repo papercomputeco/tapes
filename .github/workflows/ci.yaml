@@ -16,25 +16,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test-kafka-e2e:
-    name: Kafka E2E Test
-    runs-on: depot-ubuntu-24.04
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Dagger
-        uses: dagger/dagger-for-github@v8.2.0
-        with:
-          verb: version
-          version: ${{ env.DAGGER_VERSION }}
-
-      - name: Run Kafka E2E tests via Dagger
-        env:
-          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-        run: make test-kafka-e2e
-
   test-e2e:
     name: E2E Test (proxy / ingest / derive / span search)
     runs-on: depot-ubuntu-24.04
