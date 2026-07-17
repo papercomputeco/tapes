@@ -242,11 +242,18 @@ WHERE sessions.id = f.id;
 --                       wall-clock MAX-MIN window (idle time between
 --                       turns no longer counts)
 --   tool_calls        = tool spans_20260615 started in the window
+-- completed_count joins sessions once (LEFT JOIN, so a trace whose
+-- session identity is missing keeps its turn/token totals and simply
+-- doesn't count as completed) rather than a correlated EXISTS per matched
+-- trace — the per-row subquery is O(traces) index lookups and is the part
+-- that times out on a wide (30d) window at scale.
 WITH matched AS (
     SELECT t.org_id, t.trace_id, t.session_id, t.duration_ns,
            t.total_input_tokens, t.total_output_tokens,
-           t.cache_read_tokens, t.cache_creation_tokens, t.total_cost_usd
+           t.cache_read_tokens, t.cache_creation_tokens, t.total_cost_usd,
+           s.derived_status
     FROM span_turns_20260615 t
+    LEFT JOIN sessions s ON s.id = t.session_id
     WHERE t.org_id = sqlc.arg(org_id)
       AND (sqlc.narg(since_filter)::timestamptz IS NULL OR t.started_at >= sqlc.narg(since_filter)::timestamptz)
       AND (sqlc.narg(until_filter)::timestamptz IS NULL OR t.started_at < sqlc.narg(until_filter)::timestamptz)
@@ -255,10 +262,7 @@ SELECT
     COUNT(*)::bigint                                        AS turn_count,
     COUNT(DISTINCT session_id)::bigint                      AS session_count,
     COUNT(DISTINCT session_id) FILTER (
-        WHERE EXISTS (
-            SELECT 1 FROM sessions s
-            WHERE s.id = matched.session_id AND s.derived_status = 'completed'
-        )
+        WHERE matched.derived_status = 'completed'
     )::bigint                                               AS completed_count,
     COALESCE(SUM(total_input_tokens), 0)::bigint            AS input_tokens,
     COALESCE(SUM(total_output_tokens), 0)::bigint           AS output_tokens,

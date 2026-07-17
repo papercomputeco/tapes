@@ -15,8 +15,10 @@ const aggregateSpanStats = `-- name: AggregateSpanStats :one
 WITH matched AS (
     SELECT t.org_id, t.trace_id, t.session_id, t.duration_ns,
            t.total_input_tokens, t.total_output_tokens,
-           t.cache_read_tokens, t.cache_creation_tokens, t.total_cost_usd
+           t.cache_read_tokens, t.cache_creation_tokens, t.total_cost_usd,
+           s.derived_status
     FROM span_turns_20260615 t
+    LEFT JOIN sessions s ON s.id = t.session_id
     WHERE t.org_id = $1
       AND ($2::timestamptz IS NULL OR t.started_at >= $2::timestamptz)
       AND ($3::timestamptz IS NULL OR t.started_at < $3::timestamptz)
@@ -25,10 +27,7 @@ SELECT
     COUNT(*)::bigint                                        AS turn_count,
     COUNT(DISTINCT session_id)::bigint                      AS session_count,
     COUNT(DISTINCT session_id) FILTER (
-        WHERE EXISTS (
-            SELECT 1 FROM sessions s
-            WHERE s.id = matched.session_id AND s.derived_status = 'completed'
-        )
+        WHERE matched.derived_status = 'completed'
     )::bigint                                               AS completed_count,
     COALESCE(SUM(total_input_tokens), 0)::bigint            AS input_tokens,
     COALESCE(SUM(total_output_tokens), 0)::bigint           AS output_tokens,
