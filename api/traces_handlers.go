@@ -52,8 +52,12 @@ func payloadModeFromQuery(v string) PayloadMode {
 // of the old metadata grab-bag); the same seam is also recoverable from
 // the session's compaction-seam links.
 type TraceItem struct {
-	TraceID    string `json:"trace_id"`
-	UserPrompt string `json:"user_prompt,omitempty"`
+	TraceID string `json:"trace_id"`
+	// UserPrompt is served explicitly (not omitempty): a synthetic opener
+	// has an empty prompt, and dropping the key turns the empty string
+	// into `undefined` on the wire, which breaks consumers that expect a
+	// string (e.g. the console's stripHarnessTags). Empty means synthetic.
+	UserPrompt string `json:"user_prompt"`
 	// ResponsePreview is the derive-time fold of the closing
 	// conversation-spine llm call's text output — the answer line for
 	// collapsed turn cards, so summary consumers never need spans.

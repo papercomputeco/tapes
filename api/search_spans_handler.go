@@ -23,7 +23,9 @@ type SpanSearchResult struct {
 	SessionID string  `json:"session_id,omitempty"`
 	Score     float32 `json:"score"`
 	// UserPrompt is the prompt of the turn (trace) the span belongs to.
-	UserPrompt string `json:"user_prompt,omitempty"`
+	// Served explicitly (not omitempty) so a synthetic turn's empty prompt
+	// reaches consumers as "" rather than a dropped key — see TraceItem.
+	UserPrompt string `json:"user_prompt"`
 	// Snippet previews the matched span's delta-only text.
 	Snippet   string    `json:"snippet,omitempty"`
 	Model     string    `json:"model,omitempty"`
