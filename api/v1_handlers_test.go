@@ -71,7 +71,7 @@ var _ = Describe("v1 session handlers", func() {
 			Expect(body.InputTokens).To(Equal(int64(1_500_000)))
 			Expect(body.OutputTokens).To(Equal(int64(750_000)))
 			Expect(body.TotalCost).To(BeNumerically("~", 37.5, 0.0001))
-			Expect(body.TotalDurationNs).To(Equal(3 * int64(time.Second)))
+			Expect(body.TotalDurationMs).To(Equal(int64(3 * time.Second / time.Millisecond)))
 			Expect(body.ToolCalls).To(Equal(2))
 			Expect(drv.calls).To(Equal(1))
 		})
@@ -99,7 +99,7 @@ var _ = Describe("v1 session handlers", func() {
 			Expect(body.TotalCost).To(Equal(0.0))
 			Expect(body.InputTokens).To(Equal(int64(0)))
 			Expect(body.OutputTokens).To(Equal(int64(0)))
-			Expect(body.TotalDurationNs).To(Equal(int64(0)))
+			Expect(body.TotalDurationMs).To(Equal(int64(0)))
 			Expect(body.ToolCalls).To(Equal(0))
 		})
 

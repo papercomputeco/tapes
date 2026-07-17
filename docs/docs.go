@@ -1289,7 +1289,7 @@ const docTemplate = `{
                 "total_cost": {
                     "type": "number"
                 },
-                "total_duration_ns": {
+                "total_duration_ms": {
                     "type": "integer"
                 },
                 "turn_count": {

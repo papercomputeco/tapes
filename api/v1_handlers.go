@@ -18,8 +18,11 @@ import (
 //   - InputTokens / OutputTokens / TotalCost are SUMs of span_turns
 //     rollups — delta-only per-call usage, never the re-sent history
 //     (each main call re-bills the whole conversation on the wire).
-//   - TotalDurationNs is the SUM of trace durations — agent time. Idle
-//     time between turns does not count.
+//   - TotalDurationMs is the SUM of trace durations — agent time. Idle
+//     time between turns does not count. Served in milliseconds, not the
+//     nanoseconds we store: the summed ns over a wide window overflows a
+//     JSON consumer's 2^53 safe-integer range (~104 cumulative days), and
+//     sub-ms precision is meaningless for an aggregate agent-time figure.
 //   - TurnCount counts traces (user-visible turns).
 //   - CompletedCount counts distinct sessions whose denormalized
 //     derived_status is 'completed' (chain-aware, PCC-515).
@@ -30,7 +33,7 @@ type StatsResponse struct {
 	TotalCost       float64 `json:"total_cost"`
 	InputTokens     int64   `json:"input_tokens"`
 	OutputTokens    int64   `json:"output_tokens"`
-	TotalDurationNs int64   `json:"total_duration_ns"`
+	TotalDurationMs int64   `json:"total_duration_ms"`
 	ToolCalls       int     `json:"tool_calls"`
 }
 
@@ -72,7 +75,7 @@ func (s *Server) handleStats(c *fiber.Ctx) error {
 		TotalCost:       stats.TotalCostUSD,
 		InputTokens:     stats.InputTokens,
 		OutputTokens:    stats.OutputTokens,
-		TotalDurationNs: stats.TotalDurationNS,
+		TotalDurationMs: stats.TotalDurationNS / int64(time.Millisecond),
 		ToolCalls:       stats.ToolCalls,
 	})
 }
