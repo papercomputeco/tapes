@@ -49,6 +49,17 @@ func (d *Driver) IngestTurn(ctx context.Context, req storage.IngestTurnRequest) 
 	if len(req.Nodes) == 0 {
 		return storage.IngestTurnResult{}, errors.New("ingest turn: no nodes supplied")
 	}
+	// When the envelope carries no harness_session_id, the session key is
+	// derived from Nodes[0]'s hash, which must be the conversation root.
+	// Guard that invariant so a mis-ordered chain fails loudly instead of
+	// silently keying turns onto the wrong synthetic session (the old
+	// persisted-node path validated the whole chain; identity-only ingest
+	// needs only this root check, and only on the synthetic path).
+	if req.Session == nil || req.Session.HarnessSessionID == "" {
+		if ph := req.Nodes[0].ParentHash; ph != nil && *ph != "" {
+			return storage.IngestTurnResult{}, fmt.Errorf("ingest turn: nodes[0] must be the conversation root when no harness_session_id is supplied, got ParentHash=%q", *ph)
+		}
+	}
 
 	tx, err := d.conn.Begin(ctx)
 	if err != nil {
