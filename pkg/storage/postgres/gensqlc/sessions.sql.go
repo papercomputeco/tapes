@@ -286,12 +286,13 @@ type UpdateSessionStatusParams struct {
 }
 
 // Persist the recomputed chain-aware status. has_git_activity is a sticky
-// flag and tool_result_count / tool_error_count are cumulative totals, all
-// accumulated across the session's turns and stems — the caller computes the
-// new values in Go from the prior row state plus this turn's new nodes, so
-// this query just writes them. derived_status mirrors
-// pkg/sessions.DetermineStatus over those signals and the session's latest
-// leaf. Called by ingest within the session-ingest Tx.
+// flag and tool_result_count / tool_error_count are cumulative totals,
+// folded over the session's tool spans across every thread. The deriver
+// computes the values in Go via pkg/derive.FoldSessionStatus, so this query
+// just writes them. derived_status mirrors pkg/sessions.DetermineStatus over
+// those signals and the session's terminal main-spine span. Called only by
+// the deriver (writeSpanSet) during the derive pass — the ingest path no
+// longer writes status.
 func (q *Queries) UpdateSessionStatus(ctx context.Context, arg UpdateSessionStatusParams) error {
 	_, err := q.db.Exec(ctx, updateSessionStatus,
 		arg.HasGitActivity,
