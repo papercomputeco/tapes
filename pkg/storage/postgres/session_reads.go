@@ -360,6 +360,12 @@ func sessionRecordFromRow(row gensqlc.Session) storage.SessionRecord {
 		Model:             row.DerivedModel,
 		AuthSubject:       row.AuthSubject,
 	}
+	// DerivedTitle is exposed raw (never falls back to the name column) so
+	// callers that want the pure folded title — e.g. the API's
+	// rollup.title — do not inherit the identity-row name.
+	if row.DerivedTitle.Valid {
+		s.DerivedTitle = row.DerivedTitle.String
+	}
 	// A user-set name is the session's display title; the folded
 	// title-gen output (derived_title) is only the auto-generated
 	// fallback when no user name is set (EST-2, CC-4 carve-out).

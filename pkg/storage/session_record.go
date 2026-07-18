@@ -10,10 +10,20 @@ import (
 // strings or nil/zero values so API callers never have to unwrap optional
 // pgtype wrappers.
 type SessionRecord struct {
-	ID                string
-	HarnessID         string
-	HarnessSessionID  string
-	Name              string // empty when not set
+	ID               string
+	HarnessID        string
+	HarnessSessionID string
+	// Name is the session's display label with the name column taking
+	// precedence over the folded title: the value stored on the identity
+	// row (a user rename or the harness-supplied session name) when set,
+	// otherwise DerivedTitle as the fallback. Empty only when neither
+	// exists.
+	Name string
+	// DerivedTitle is the deriver's folded session title
+	// (sessions.derived_title), generated from the conversation. Empty
+	// until title generation produces one. Unlike Name it never falls back
+	// to the identity-row name, so it is the pure descriptive title.
+	DerivedTitle      string
 	Cwd               string // empty when not set
 	HarnessVersion    string // empty when not set
 	ParentSessionID   string // empty when not set

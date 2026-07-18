@@ -199,6 +199,9 @@ var _ = Describe("Driver.UpdateSessionName", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(before).NotTo(BeNil())
 		Expect(before.Name).To(Equal("auto-generated title"))
+		// DerivedTitle is exposed raw and never inherits the name fallback,
+		// so rollup.title carries the folded title even when Name equals it.
+		Expect(before.DerivedTitle).To(Equal("auto-generated title"))
 
 		rows, err := pgDriver.UpdateSessionName(ctx, orgA, id, ptr("user chosen title"))
 		Expect(err).NotTo(HaveOccurred())
@@ -209,5 +212,7 @@ var _ = Describe("Driver.UpdateSessionName", func() {
 		Expect(after).NotTo(BeNil())
 		Expect(after.Name).To(Equal("user chosen title"),
 			"a non-empty user name must win over derived_title in the display precedence")
+		Expect(after.DerivedTitle).To(Equal("auto-generated title"),
+			"DerivedTitle stays the raw folded title, independent of the user name")
 	})
 })

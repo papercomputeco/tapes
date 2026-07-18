@@ -73,9 +73,11 @@ type SessionItem struct {
 	// captured at ingest; empty for rows captured before the edge began
 	// stamping it.
 	AuthSubject string `json:"auth_subject,omitempty"`
-	// Name is the user-editable display name (Console rename affordance),
-	// stored on the identity row and distinct from the deriver's folded
-	// title (rollup.title). Empty when the user has not renamed the session.
+	// Name is the session's display label: the value on the identity row —
+	// a user rename or the harness-supplied session name — when set,
+	// otherwise the folded title (rollup.title) as a fallback. Empty only
+	// when the session has neither. It therefore equals rollup.title
+	// exactly when no identity-row name exists.
 	Name string `json:"name,omitempty"`
 	// Live is a runtime presence signal, not a projection fact: true when
 	// the session was seen within the liveness window AND the deriver has
@@ -106,7 +108,12 @@ func terminalStatus(s string) bool {
 // counts, and spend, all folded from the span layer at derive time.
 // Every field is 'unknown'/zero/empty until the session first derives.
 type SessionRollup struct {
-	Status    string `json:"status"`
+	Status string `json:"status"`
+	// Title is the deriver's folded session title (derived_title),
+	// generated from the conversation. Empty until title generation
+	// produces one. It never falls back to the identity-row name, so it is
+	// the stable descriptive title clients prefer for display; the
+	// identity-row label (harness name or rename) is SessionItem.Name.
 	Title     string `json:"title,omitempty"`
 	Preview   string `json:"preview,omitempty"`
 	TurnCount int    `json:"turn_count"`
@@ -172,7 +179,7 @@ func sessionItemFromStorage(s storage.SessionRecord, now time.Time) SessionItem 
 		Live:             now.Sub(s.LastSeenAt) < sessionLiveWindow && !terminalStatus(s.DerivedStatus),
 		Rollup: SessionRollup{
 			Status:     s.DerivedStatus,
-			Title:      s.Name,
+			Title:      s.DerivedTitle,
 			Preview:    s.Preview,
 			TurnCount:  s.TurnCount,
 			Model:      s.Model,
