@@ -13,8 +13,8 @@
 -- before the parent's, InsertSessionPlaceholder wrote the parent row
 -- carrying the *child's* auth_subject; the parent's real upsert here
 -- is authoritative and must reclaim attribution. Counters are NOT
--- touched here — UpdateSessionCounters handles that after the nodes
--- insert in the same Tx.
+-- touched here — the derive-time span fold (FoldSessionRollupsFromSpans)
+-- owns the token/turn/cost rollups.
 INSERT INTO sessions (
     id,
     org_id,
@@ -94,25 +94,15 @@ ON CONFLICT (org_id, harness_id, harness_session_id) DO UPDATE
 SET last_seen_at = sessions.last_seen_at
 RETURNING id;
 
--- name: UpdateSessionCounters :exec
--- Roll the per-turn counters into the sessions row. Called by ingest
--- after the nodes insert, inside the same Tx.
-UPDATE sessions
-   SET last_seen_at        = sqlc.arg(now),
-       turn_count          = turn_count + sqlc.arg(turn_count_delta),
-       total_input_tokens  = total_input_tokens  + sqlc.arg(input_tokens_delta),
-       total_output_tokens = total_output_tokens + sqlc.arg(output_tokens_delta),
-       total_cost_usd      = total_cost_usd      + sqlc.arg(cost_usd_delta)
- WHERE id = sqlc.arg(id);
-
 -- name: UpdateSessionStatus :exec
 -- Persist the recomputed chain-aware status. has_git_activity is a sticky
--- flag and tool_result_count / tool_error_count are cumulative totals, all
--- accumulated across the session's turns and stems — the caller computes the
--- new values in Go from the prior row state plus this turn's new nodes, so
--- this query just writes them. derived_status mirrors
--- pkg/sessions.DetermineStatus over those signals and the session's latest
--- leaf. Called by ingest in the same Tx as UpdateSessionCounters.
+-- flag and tool_result_count / tool_error_count are cumulative totals,
+-- folded over the session's tool spans across every thread. The deriver
+-- computes the values in Go via pkg/derive.FoldSessionStatus, so this query
+-- just writes them. derived_status mirrors pkg/sessions.DetermineStatus over
+-- those signals and the session's terminal main-spine span. Called only by
+-- the deriver (writeSpanSet) during the derive pass — the ingest path no
+-- longer writes status.
 UPDATE sessions
    SET has_git_activity  = sqlc.arg(has_git_activity),
        tool_result_count = sqlc.arg(tool_result_count),
@@ -127,28 +117,11 @@ WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id);
 -- name: DeleteSession :execrows
 -- Remove a session by its org-scoped id. Returns the affected row count so the
 -- handler can distinguish a real delete from a missing id. Dependent rows
--- (subagent child sessions, derived nodes, spans/span_turns/span_links) are
--- removed by the session_id ON DELETE CASCADE foreign keys, so this single
--- statement tears down the whole subtree.
+-- (subagent child sessions, spans/span_turns/span_links) are removed by the
+-- session_id ON DELETE CASCADE foreign keys, so this single statement tears
+-- down the whole subtree.
 DELETE FROM sessions
 WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id);
-
--- name: ListNodesBySession :many
--- All nodes attributed to a session, ordered by capture time (chronological).
-SELECT * FROM nodes
-WHERE session_id = sqlc.arg(session_id)
-ORDER BY created_at ASC;
-
--- name: SetNodeSessionID :exec
--- Stamp session_id onto an already-inserted nodes row. The existing
--- InsertNode query is left intact (additive ALTER added the column
--- with no NOT NULL constraint), so ingest can either use this safety
--- hatch or extend InsertNode in a follow-up. Scoped to (org_id, hash)
--- to match the composite PK introduced in this migration: a write that
--- only matched on hash would clobber rows for unrelated orgs.
-UPDATE nodes
-   SET session_id = $1
- WHERE org_id = $2 AND hash = $3;
 
 -- name: UpdateSessionDerivedTitle :exec
 -- Fold the title-gen shadow call's output onto the session. Written at
@@ -163,6 +136,17 @@ UPDATE sessions SET derived_title = sqlc.arg(derived_title) WHERE id = sqlc.arg(
 -- SQL — so the deriver writes it directly as a JSONB array. Re-derive
 -- overwrites it idempotently.
 UPDATE sessions SET model_usage = sqlc.arg(model_usage) WHERE id = sqlc.arg(id);
+
+-- name: UpdateSessionTasks :exec
+-- Fold the TaskCreate/TaskUpdate replay onto the session. Like model_usage
+-- this is a Go-side fold (it depends on regex id extraction SQL can't do),
+-- written as a JSONB array. Re-derive overwrites it idempotently.
+UPDATE sessions SET tasks = sqlc.arg(tasks) WHERE id = sqlc.arg(id);
+
+-- name: UpdateSessionKindCounts :exec
+-- Write the per-call_kind span tally onto the session as a JSONB object.
+-- Re-derive overwrites it idempotently.
+UPDATE sessions SET kind_counts = sqlc.arg(kind_counts) WHERE id = sqlc.arg(id);
 
 -- name: UpdateSessionName :execrows
 -- User-driven rename of a session's display title (Console edit affordance).

@@ -12,8 +12,6 @@ import (
 	. "github.com/onsi/gomega"
 
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
-	"github.com/papercomputeco/tapes/pkg/storage"
-	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
 // openaiTestRequest is a minimal OpenAI-format request for test fixtures.
@@ -29,10 +27,11 @@ type openaiTestMsgEntry struct {
 }
 
 // newOpenAITestProxy creates a Proxy pointed at the given upstream URL,
-// using an in-memory storage driver and the openai provider.
-func newOpenAITestProxy(upstreamURL string) (*Proxy, storage.Driver) {
+// using a capture-recording driver and the openai provider. Capture is
+// asserted off the recorded RawTurnRecords (the node DAG is retired).
+func newOpenAITestProxy(upstreamURL string) (*Proxy, *captureDriver) {
 	logger := tapeslogger.NewNoop()
-	driver := inmemory.NewDriver()
+	driver := newCaptureDriver()
 
 	p, err := New(
 		Config{
@@ -61,7 +60,7 @@ func makeOpenAIRequestBody(model string, messages []openaiTestMsgEntry, stream *
 var _ = Describe("SSE Streaming Proxy", func() {
 	var (
 		p        *Proxy
-		driver   storage.Driver
+		driver   *captureDriver
 		upstream *httptest.Server
 	)
 
@@ -140,7 +139,7 @@ var _ = Describe("SSE Streaming Proxy", func() {
 			Expect(bodyStr).To(ContainSubstring("[DONE]"))
 		})
 
-		It("accumulates content and stores the conversation after SSE streaming", func() {
+		It("accumulates content and captures the conversation after SSE streaming", func() {
 			reqBody := makeOpenAIRequestBody("gpt-4", []openaiTestMsgEntry{
 				{Role: "user", Content: "Say hello"},
 			}, boolPtr(true))
@@ -149,22 +148,15 @@ var _ = Describe("SSE Streaming Proxy", func() {
 			Expect(err).NotTo(HaveOccurred())
 			resp.Body.Close()
 
-			// Drain the worker pool to ensure async storage completes
+			// Drain the worker pool to ensure async capture completes
 			p.Close()
 			p = nil
 
-			ctx := GinkgoT().Context()
-			nodes, err := driver.List(ctx)
-			Expect(err).NotTo(HaveOccurred())
-			// 1 user message + 1 assistant response = 2 nodes
-			Expect(nodes).To(HaveLen(2))
-
-			leaves, err := driver.Leaves(ctx)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(leaves).To(HaveLen(1))
-			Expect(leaves[0].Bucket.Role).To(Equal("assistant"))
-			// The accumulated content from all SSE chunks
-			Expect(leaves[0].Bucket.ExtractText()).To(Equal("Hello world!"))
+			raws := driver.RawTurns()
+			Expect(raws).To(HaveLen(1))
+			// The accumulated content from all SSE chunks, reduced into the
+			// canonical response the deriver projects.
+			Expect(reducedText(raws[0].Response)).To(Equal("Hello world!"))
 		})
 	})
 
@@ -237,7 +229,7 @@ var _ = Describe("SSE Streaming Proxy", func() {
 			p, driver = newOpenAITestProxy(upstream.URL)
 		})
 
-		It("reconstructs the split event and lands a node with the full content", func() {
+		It("reconstructs the split event and captures the full content", func() {
 			reqBody := makeOpenAIRequestBody("gpt-4", []openaiTestMsgEntry{
 				{Role: "user", Content: "hi"},
 			}, boolPtr(true))
@@ -253,11 +245,9 @@ var _ = Describe("SSE Streaming Proxy", func() {
 			p.Close()
 			p = nil
 
-			ctx := GinkgoT().Context()
-			leaves, err := driver.Leaves(ctx)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(leaves).To(HaveLen(1))
-			Expect(leaves[0].Bucket.ExtractText()).To(Equal("Hello world"))
+			raws := driver.RawTurns()
+			Expect(raws).To(HaveLen(1))
+			Expect(reducedText(raws[0].Response)).To(Equal("Hello world"))
 		})
 	})
 

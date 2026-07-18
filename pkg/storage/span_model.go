@@ -17,9 +17,12 @@ type SpanTurnRecord struct {
 	UserPrompt string
 	// ResponsePreview is the derive-time fold of the closing spine llm
 	// call's text output — the turn card's answer line.
-	ResponsePreview   string
-	Synthetic         string
-	Status            string
+	ResponsePreview string
+	Synthetic       string
+	Status          string
+	// Source is the capture origin of the turn's raw rows ("wire" |
+	// "transcript"), promoted from raw_turns.source at derive time.
+	Source            string
 	StartedAt         time.Time
 	EndedAt           *time.Time
 	DurationNS        int64
@@ -58,6 +61,9 @@ type SpanRecord struct {
 	Usage     json.RawMessage
 	RawTurnID int64
 	NodeHash  string
+	// Verdict is the deriver-written security-monitor disposition JSON
+	// (null on non-permission-check spans). Served verbatim on the wire.
+	Verdict json.RawMessage
 }
 
 // SpanLinkRecord is a dataflow edge between spans, possibly across
@@ -97,6 +103,15 @@ type RawTurnHeader struct {
 type SpanModelReader interface {
 	ListSessionSpanModel(ctx context.Context, sessionID string) ([]SpanTurnRecord, []SpanRecord, []SpanLinkRecord, error)
 	ListTraceSummaries(ctx context.Context, sessionID string) ([]TraceSummaryRecord, error)
+	// ListSessionLinks returns a session's dataflow links alone — the
+	// payload-free half of ListSessionSpanModel. It backs the per-trace
+	// streaming export, which loads the light turn headers and links whole
+	// but reads the heavy spans one trace at a time.
+	ListSessionLinks(ctx context.Context, sessionID string) ([]SpanLinkRecord, error)
+	// ListTraceSpans returns one trace's spans in presentation order — the
+	// same per-trace read GetTraceDetail performs, without the turn/link
+	// round-trips. It backs the per-trace streaming export.
+	ListTraceSpans(ctx context.Context, orgID, traceID string) ([]SpanRecord, error)
 	GetTraceDetail(ctx context.Context, orgID, traceID string) (*SpanTurnRecord, []SpanRecord, []SpanLinkRecord, error)
 	GetSpanRecord(ctx context.Context, orgID, traceID, spanID string) (*SpanRecord, error)
 	ListRawTurnHeaders(ctx context.Context, orgID, harnessID, harnessSessionID string) ([]RawTurnHeader, error)
@@ -108,7 +123,6 @@ type SpanModelReader interface {
 // of trace durations (agent time), not a wall-clock window.
 type SpanStats struct {
 	TurnCount           int
-	RootCount           int
 	SessionCount        int
 	CompletedCount      int
 	InputTokens         int64
@@ -121,8 +135,6 @@ type SpanStats struct {
 }
 
 // SpanStatsReader is the capability interface for span-layer stats.
-// Backends without the span projection fall back to the node-layer
-// CountSessions aggregate.
 type SpanStatsReader interface {
 	AggregateSpanStats(ctx context.Context, orgID string, since, until *time.Time) (SpanStats, error)
 }

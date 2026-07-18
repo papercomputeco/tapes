@@ -44,7 +44,7 @@ func (c *listCommander) run(cmd *cobra.Command) error {
 	}
 
 	if len(skills) == 0 {
-		fmt.Fprintln(w, "No skills found. Generate one with: tapes skill generate <hash> --name <name>")
+		fmt.Fprintln(w, "No skills found. Generate one with: tapes skill generate <session-id> --name <name>")
 		return nil
 	}
 

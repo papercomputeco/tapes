@@ -292,7 +292,20 @@ var _ = Describe("POST /v1/ingest/transcript", func() {
 	})
 
 	It("returns 501 when the driver has no raw layer", func() {
-		s, _, url := newTestServer()
+		// A bare in-memory driver does not implement storage.RawTurnStore,
+		// so the transcript endpoint (which requires the raw layer) is
+		// unavailable. newTestServer's capture driver DOES host the raw
+		// layer, so build a no-raw-layer server explicitly here.
+		s, err := ingest.New(
+			ingest.Config{ListenAddr: ":0", Project: "test-project"},
+			inmemory.NewDriver(),
+			tapeslogger.NewNoop(),
+		)
+		Expect(err).NotTo(HaveOccurred())
+		ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+		Expect(err).NotTo(HaveOccurred())
+		go func() { _ = s.RunWithListener(ln) }()
+		url := "http://" + ln.Addr().String()
 		defer func() { Expect(s.Close()).To(Succeed()) }()
 
 		req, err := http.NewRequest(http.MethodPost, url+"/v1/ingest/transcript", bytes.NewReader(transcriptBody(payloadOrg, "")))

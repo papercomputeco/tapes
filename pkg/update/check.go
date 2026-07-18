@@ -8,11 +8,19 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"golang.org/x/mod/semver"
 )
+
+// devBuildRe matches the `git describe` infix that local/CI dev builds carry
+// (e.g. v0.17.0-9-gcd1de8c[-dirty]). Such a build is ahead of its base tag,
+// so semver would rank it *below* the released tag and wrongly prompt a
+// "downgrade"; skip the check for these. A real prerelease like
+// v1.0.0-rc.1 does not match and is still checked.
+var devBuildRe = regexp.MustCompile(`-[0-9]+-g[0-9a-f]+`)
 
 const (
 	// versionURL is the public URL serving the latest released semver tag.
@@ -58,6 +66,10 @@ func checkForUpdate(currentVersion, url string) string {
 func shouldSkip(v string) bool {
 	switch v {
 	case "", "dev", "nightly":
+		return true
+	}
+
+	if devBuildRe.MatchString(v) {
 		return true
 	}
 

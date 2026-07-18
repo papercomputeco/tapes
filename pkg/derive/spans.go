@@ -71,6 +71,17 @@ type SpanSet struct {
 	// main-spine model (#28).
 	ModelUsage map[SessionKey][]ModelUsage
 
+	// Tasks is the per-session TaskCreate/TaskUpdate fold, replayed in
+	// event order. KindCounts is the per-session tally of span call_kinds.
+	// Both are session-rollup facts the deriver owns; the API serves them
+	// on the composite traces response without re-folding.
+	Tasks      map[SessionKey][]Task
+	KindCounts map[SessionKey]map[string]int
+
+	// Status is the per-session chain-aware outcome + signals, folded from
+	// the spans at derive time (moved off the ingest hot path).
+	Status map[SessionKey]SessionStatus
+
 	Report SpanReport
 }
 
@@ -105,6 +116,10 @@ type SpanTurn struct {
 	// Synthetic marks traces not opened by a human prompt
 	// ("post-compaction" for compaction continuations).
 	Synthetic string
+
+	// Source is the capture source of the raw turns that produced this
+	// trace ('wire' | 'transcript'), promoted from raw_turns.source.
+	Source string
 
 	StartedAt time.Time
 	EndedAt   time.Time
@@ -162,6 +177,10 @@ type Span struct {
 
 	StopReason string
 	Usage      *llm.Usage
+
+	// Verdict is the security-monitor disposition on a permission-check
+	// span (nil elsewhere), extracted at derive time by ClassifyVerdict.
+	Verdict *Verdict
 
 	// RawTurnID is the raw row whose call produced this span (0 for
 	// tool/agent spans, which are assembled across calls).
@@ -296,7 +315,7 @@ func (em *spanEmitter) threadCall(src *SpanSource) {
 	agent := em.agentSpan[key]
 	turn := em.agentTurn[key]
 	if agent == nil {
-		taskID := threadAnchor(src)
+		taskID := toolKey(src.Session, threadAnchor(src))
 		task := em.toolSpans[taskID]
 		if task != nil {
 			turn = em.toolTurn[taskID]
@@ -351,11 +370,12 @@ func (em *spanEmitter) shadowCall(src *SpanSource) {
 	// checks share deduped prefix nodes, so a node's ParentToolUseID
 	// only carries the last writer's edge and fans every check into
 	// one tool.
-	tool := em.toolSpans[src.Anchor]
+	anchor := toolKey(src.Session, src.Anchor)
+	tool := em.toolSpans[anchor]
 	var turn *SpanTurn
 	var parent string
 	if tool != nil {
-		turn = em.toolTurn[src.Anchor]
+		turn = em.toolTurn[anchor]
 		parent = tool.SpanID
 	} else {
 		turn = em.traceAt(src)
@@ -367,7 +387,7 @@ func (em *spanEmitter) shadowCall(src *SpanSource) {
 	if tool != nil {
 		em.link(turn, &SpanLink{
 			FromTraceID: turn.TraceID, FromSpanID: span.SpanID, FromIO: "output",
-			ToTraceID: em.toolTurn[src.Anchor].TraceID, ToSpanID: tool.SpanID, ToIO: "verdict",
+			ToTraceID: em.toolTurn[anchor].TraceID, ToSpanID: tool.SpanID, ToIO: "verdict",
 			Kind: LinkVerdict,
 		})
 	}
@@ -418,7 +438,7 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 			if b.Type != blockToolResult {
 				continue
 			}
-			if ts := em.fillToolResult(&b, src.CapturedAt); ts != nil {
+			if ts := em.fillToolResult(src.Session, &b, src.CapturedAt); ts != nil {
 				feeds = append(feeds, ts)
 			}
 		}
@@ -428,7 +448,7 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 	em.addSpan(turn, span)
 	for _, ts := range feeds {
 		em.link(turn, &SpanLink{
-			FromTraceID: em.toolTurn[toolID(ts)].TraceID, FromSpanID: ts.SpanID, FromIO: "output",
+			FromTraceID: em.toolTurn[toolKey(src.Session, toolID(ts))].TraceID, FromSpanID: ts.SpanID, FromIO: "output",
 			ToTraceID: turn.TraceID, ToSpanID: span.SpanID, ToIO: "input",
 			Kind: LinkFeeds,
 		})
@@ -439,12 +459,13 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 		if (b.Type != blockToolUse && b.Type != blockServerToolUse) || b.ToolUseID == "" {
 			continue
 		}
-		if existing := em.toolSpans[b.ToolUseID]; existing != nil {
+		tk := toolKey(src.Session, b.ToolUseID)
+		if existing := em.toolSpans[tk]; existing != nil {
 			// branch siblings re-emit the same tool_use: the first
 			// emitter owns the span, later ones only link to it.
 			em.link(turn, &SpanLink{
 				FromTraceID: turn.TraceID, FromSpanID: span.SpanID, FromIO: "output",
-				ToTraceID: em.toolTurn[b.ToolUseID].TraceID, ToSpanID: existing.SpanID, ToIO: "input",
+				ToTraceID: em.toolTurn[tk].TraceID, ToSpanID: existing.SpanID, ToIO: "input",
 				Kind: LinkEmits,
 			})
 			continue
@@ -460,8 +481,8 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 			Input:        []llm.ContentBlock{b},
 		}
 		em.addSpan(turn, ts)
-		em.toolSpans[b.ToolUseID] = ts
-		em.toolTurn[b.ToolUseID] = turn
+		em.toolSpans[tk] = ts
+		em.toolTurn[tk] = turn
 		em.link(turn, &SpanLink{
 			FromTraceID: turn.TraceID, FromSpanID: span.SpanID, FromIO: "output",
 			ToTraceID: turn.TraceID, ToSpanID: ts.SpanID, ToIO: "input",
@@ -517,12 +538,12 @@ func hasShellCommandInput(input map[string]any) bool {
 
 // fillToolResult stores a tool_result block on its tool span and
 // returns the span when this result is fresh dataflow.
-func (em *spanEmitter) fillToolResult(b *llm.ContentBlock, at time.Time) *Span {
+func (em *spanEmitter) fillToolResult(session SessionKey, b *llm.ContentBlock, at time.Time) *Span {
 	id := b.ToolResultID
 	if id == "" {
 		id = b.ToolUseID
 	}
-	ts := em.toolSpans[id]
+	ts := em.toolSpans[toolKey(session, id)]
 	if ts == nil {
 		return nil
 	}
@@ -543,6 +564,7 @@ func (em *spanEmitter) openTrace(src *SpanSource, prompt *DerivedNode) *SpanTurn
 	turn := &SpanTurn{
 		TraceID:   "trc_" + callIdentity(src),
 		Session:   src.Session,
+		Source:    src.Source,
 		StartedAt: src.CapturedAt,
 		EndedAt:   src.CapturedAt,
 	}
@@ -632,6 +654,9 @@ func (em *spanEmitter) llmSpan(src *SpanSource, parentID string, input []llm.Con
 	if resp.Usage != nil {
 		span.DurationNS = resp.Usage.TotalDurationNs
 	}
+	// Permission-check spans carry the security-monitor verdict; extract
+	// it once, at derive time, so the read path never re-parses text.
+	span.Verdict = ClassifyVerdict(span.CallKind, span.Output)
 	return span
 }
 
@@ -644,8 +669,11 @@ func (em *spanEmitter) eventSpan(turn *SpanTurn, parent *Span, kind, hash string
 		Status:       "ok",
 		StartedAt:    at,
 		CallKind:     kind,
-		Output:       content,
-		NodeHash:     hash,
+		// Injected context is semantically an input to the turn (it
+		// arrives before the assistant acts), so it rides in Input, not
+		// Output — uniform with how llm/tool spans carry their stimulus.
+		Input:    content,
+		NodeHash: hash,
 	})
 }
 
@@ -680,6 +708,10 @@ func (em *spanEmitter) finish() {
 	// trace's llm spans below — subagent models included — then sorted
 	// into ModelUsage at the end.
 	modelFold := map[SessionKey]map[string]*ModelUsage{}
+	// Per-session call_kind tally and tool-span collection for the task
+	// fold, accumulated across every trace below.
+	kindFold := map[SessionKey]map[string]int{}
+	toolsBySession := map[SessionKey][]*Span{}
 	for _, turn := range em.set.Turns {
 		root := turn.Spans[0]
 		// phases append out of time order within a trace; StartedAt is
@@ -700,6 +732,17 @@ func (em *spanEmitter) finish() {
 		for _, s := range turn.Spans {
 			if end := s.StartedAt.Add(time.Duration(s.DurationNS)); end.After(turn.EndedAt) {
 				turn.EndedAt = end
+			}
+			if s.CallKind != "" {
+				byKind := kindFold[turn.Session]
+				if byKind == nil {
+					byKind = map[string]int{}
+					kindFold[turn.Session] = byKind
+				}
+				byKind[s.CallKind]++
+			}
+			if s.Kind == SpanKindTool {
+				toolsBySession[turn.Session] = append(toolsBySession[turn.Session], s)
 			}
 			if s.Kind == SpanKindLLM && s.Usage != nil {
 				turn.TotalInputTokens += int64(s.Usage.PromptTokens)
@@ -741,6 +784,52 @@ func (em *spanEmitter) finish() {
 		turn.ResponsePreview = responsePreview(turn)
 	}
 	em.foldModelUsage(modelFold)
+
+	// Task fold, kind_counts, and chain-aware status are per-covered-session:
+	// every session with at least one trace resolves one, EMPTY folds included.
+	// Emitting an empty fold for a covered session is what lets a re-derive
+	// CLEAR a session whose last task/kind was removed — an omitted session is
+	// never written, so storage would otherwise keep the prior non-empty JSONB
+	// forever (a rebuild-from-raw break: the raw is the sole source of truth, so
+	// a value no longer present must vanish). kind_counts follows tasks here: a
+	// covered session that folds to zero classified call_kind spans writes {}
+	// rather than being skipped. A tool-less session resolves via the non-nil
+	// empty slice FoldSessionTasks returns and the leaf-only DetermineStatus.
+	sessionSet := map[SessionKey]struct{}{}
+	for _, turn := range em.set.Turns {
+		sessionSet[turn.Session] = struct{}{}
+	}
+	if len(sessionSet) > 0 {
+		em.set.Tasks = make(map[SessionKey][]Task, len(sessionSet))
+		em.set.Status = make(map[SessionKey]SessionStatus, len(sessionSet))
+		em.set.KindCounts = make(map[SessionKey]map[string]int, len(sessionSet))
+		for key := range sessionSet {
+			em.set.Tasks[key] = FoldSessionTasks(toolsBySession[key])
+			em.set.Status[key] = FoldSessionStatus(toolsBySession[key], em.terminalMainSpan(key))
+			counts := kindFold[key]
+			if counts == nil {
+				counts = map[string]int{}
+			}
+			em.set.KindCounts[key] = counts
+		}
+	}
+}
+
+// terminalMainSpan returns a session's closing main-spine llm span — the
+// last (latest trace, latest span) llm span with call_kind=main on the
+// main thread. It is the status leaf: the response the session ended on.
+func (em *spanEmitter) terminalMainSpan(key SessionKey) *Span {
+	traces := em.timeline[key]
+	for i := len(traces) - 1; i >= 0; i-- {
+		spans := traces[i].Spans
+		for j := len(spans) - 1; j >= 0; j-- {
+			s := spans[j]
+			if s.Kind == SpanKindLLM && s.CallKind == KindMain && s.ThreadID == "" {
+				return s
+			}
+		}
+	}
+	return nil
 }
 
 // foldModelUsage flattens the per-session model accumulator into the
@@ -778,7 +867,7 @@ func responsePreview(turn *SpanTurn) string {
 		if s.Kind != SpanKindLLM || s.CallKind != KindMain || s.ThreadID != "" {
 			continue
 		}
-		if text := joinTextBlocks(s.Output, true); text != "" {
+		if text := joinTextBlocks(s.Output); text != "" {
 			return text
 		}
 	}
@@ -937,32 +1026,56 @@ func toolID(ts *Span) string {
 	return ts.SpanID
 }
 
+// toolKey scopes a tool_use_id to its harness session. Tool spans and
+// their turns are keyed by this: one emit pass holds every session in the
+// org, and two of them can carry the same provider-assigned tool_use_id —
+// the session prefix keeps them from colliding. Subagents share their
+// parent's SessionKey (thread_id is not part of it), so a subagent's tools
+// key under the same session as the Task span that spawned them.
+func toolKey(s SessionKey, toolUseID string) string {
+	return s.HarnessID + "|" + s.HarnessSessionID + "|" + toolUseID
+}
+
 // maxPreviewText bounds the trace header's prompt and response
 // renderings; the full content stays on the llm spans' payloads.
 const maxPreviewText = 280
 
 // promptText renders a prompt node's text blocks for the trace header,
-// truncated for display. Harnesses prepend injected context (e.g. Claude
-// Code's claudeMd) as <system-reminder> text blocks ahead of the human
-// prompt; those would eat the whole preview budget, so blocks that open
-// with the marker only render when the turn carries nothing else.
+// truncated for display. Harnesses wrap injected context (e.g. Claude
+// Code's claudeMd in <system-reminder>) and slash-command framing into the
+// user-role content; merkle.PreviewText strips that scaffolding per block
+// while UNWRAPPING the content-bearing wrappers (<command-args>, <session>,
+// …), so a turn that is nothing but harness scaffolding still previews the
+// human's words rather than the boilerplate. A block that projects to
+// nothing human is dropped — never the pre-projection raw text.
 func promptText(node *merkle.Node) string {
-	text := joinTextBlocks(node.Bucket.Content, false)
-	if text == "" {
-		text = joinTextBlocks(node.Bucket.Content, true)
-	}
-	return text
-}
-
-const systemReminderMarker = "<system-reminder>"
-
-func joinTextBlocks(blocks []llm.ContentBlock, includeInjected bool) string {
 	var sb strings.Builder
-	for _, b := range blocks {
+	for _, b := range node.Bucket.Content {
 		if b.Type != blockText || b.Text == "" {
 			continue
 		}
-		if !includeInjected && strings.HasPrefix(strings.TrimSpace(b.Text), systemReminderMarker) {
+		prose := merkle.PreviewText(b.Text)
+		if prose == "" {
+			continue
+		}
+		if sb.Len() > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString(prose)
+		if sb.Len() >= maxPreviewText {
+			break
+		}
+	}
+	return truncatePreview(sb.String())
+}
+
+// joinTextBlocks concatenates a node's text blocks verbatim for the
+// response preview — assistant output, which carries no harness
+// scaffolding — truncated for display.
+func joinTextBlocks(blocks []llm.ContentBlock) string {
+	var sb strings.Builder
+	for _, b := range blocks {
+		if b.Type != blockText || b.Text == "" {
 			continue
 		}
 		if sb.Len() > 0 {
@@ -973,16 +1086,19 @@ func joinTextBlocks(blocks []llm.ContentBlock, includeInjected bool) string {
 			break
 		}
 	}
-	text := sb.String()
-	if len(text) > maxPreviewText {
-		// Truncate on a rune boundary: a byte slice can split a
-		// multi-byte rune, and Postgres rejects the resulting invalid
-		// UTF-8 when the preview lands in span_turns (22021).
-		cut := maxPreviewText
-		for cut > 0 && !utf8.RuneStart(text[cut]) {
-			cut--
-		}
-		text = text[:cut]
+	return truncatePreview(sb.String())
+}
+
+// truncatePreview caps a preview string at maxPreviewText on a rune
+// boundary: a byte slice can split a multi-byte rune, and Postgres rejects
+// the resulting invalid UTF-8 when the preview lands in span_turns (22021).
+func truncatePreview(text string) string {
+	if len(text) <= maxPreviewText {
+		return text
 	}
-	return text
+	cut := maxPreviewText
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut]
 }

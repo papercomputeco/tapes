@@ -9,14 +9,14 @@ INSERT INTO span_turns_20260615 (
     total_input_tokens, total_output_tokens,
     main_input_tokens, main_output_tokens,
     cache_read_tokens, cache_creation_tokens,
-    total_cost_usd
+    total_cost_usd, source
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7,
     $8, $9, $10,
     $11, $12,
     $13, $14,
     $15, $16,
-    $17
+    $17, $18
 )
 ON CONFLICT (org_id, trace_id) DO UPDATE SET
     session_id            = COALESCE(span_turns_20260615.session_id, EXCLUDED.session_id),
@@ -33,17 +33,20 @@ ON CONFLICT (org_id, trace_id) DO UPDATE SET
     main_output_tokens    = EXCLUDED.main_output_tokens,
     cache_read_tokens     = EXCLUDED.cache_read_tokens,
     cache_creation_tokens = EXCLUDED.cache_creation_tokens,
-    total_cost_usd        = EXCLUDED.total_cost_usd;
+    total_cost_usd        = EXCLUDED.total_cost_usd,
+    source                = EXCLUDED.source;
 
 -- name: UpsertSpan :exec
 INSERT INTO spans_20260615 (
     org_id, trace_id, span_id, parent_span_id, session_id,
     kind, name, status, call_kind, thread_id, model, stop_reason,
-    started_at, duration_ns, seq, input, output, usage, raw_turn_id, node_hash
+    started_at, duration_ns, seq, input, output, usage, raw_turn_id, node_hash,
+    verdict
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11, $12,
-    $13, $14, $15, $16, $17, $18, $19, $20
+    $13, $14, $15, $16, $17, $18, $19, $20,
+    $21
 )
 ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     parent_span_id = EXCLUDED.parent_span_id,
@@ -62,7 +65,8 @@ ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     output         = EXCLUDED.output,
     usage          = EXCLUDED.usage,
     raw_turn_id    = EXCLUDED.raw_turn_id,
-    node_hash      = EXCLUDED.node_hash;
+    node_hash      = EXCLUDED.node_hash,
+    verdict        = EXCLUDED.verdict;
 
 -- name: UpsertSpanLink :exec
 INSERT INTO span_links_20260615 (
@@ -133,8 +137,12 @@ WHERE session_id = $1
 ORDER BY trace_id ASC, seq ASC, started_at ASC, span_id ASC;
 
 -- name: ListSpanLinksBySession :many
+-- Ordered by the unique key (org_id is constant within a session), so the
+-- session-scoped links array is deterministic across reads and re-derives
+-- — a heap-order scan otherwise shuffles the wire on every upsert.
 SELECT * FROM span_links_20260615
-WHERE session_id = $1;
+WHERE session_id = $1
+ORDER BY from_trace_id, from_span_id, to_trace_id, to_span_id, from_io, to_io;
 
 -- name: ListSpanTurns :many
 SELECT * FROM span_turns_20260615
@@ -160,7 +168,7 @@ WHERE org_id = $1 AND (from_trace_id = $2 OR to_trace_id = $2);
 -- name: ListTraceSummariesBySession :many
 -- Session detail's lazy view: turn headers only, no span payloads.
 SELECT t.org_id, t.trace_id, t.session_id, t.user_prompt, t.response_preview, t.synthetic,
-       t.status, t.started_at, t.ended_at, t.duration_ns,
+       t.status, t.source, t.started_at, t.ended_at, t.duration_ns,
        t.total_input_tokens, t.total_output_tokens,
        t.main_input_tokens, t.main_output_tokens,
        t.cache_read_tokens, t.cache_creation_tokens, t.total_cost_usd,
@@ -230,29 +238,31 @@ WHERE sessions.id = f.id;
 -- usage, which re-bills the conversation history on every call.
 --
 --   turn_count        = traces started in the window
---   root_count        = traces opened by a genuine prompt (synthetic = '')
 --   total_duration_ns = SUM of trace durations — agent time, not the
 --                       wall-clock MAX-MIN window (idle time between
 --                       turns no longer counts)
 --   tool_calls        = tool spans_20260615 started in the window
+-- completed_count joins sessions once (LEFT JOIN, so a trace whose
+-- session identity is missing keeps its turn/token totals and simply
+-- doesn't count as completed) rather than a correlated EXISTS per matched
+-- trace — the per-row subquery is O(traces) index lookups and is the part
+-- that times out on a wide (30d) window at scale.
 WITH matched AS (
-    SELECT t.org_id, t.trace_id, t.session_id, t.synthetic, t.duration_ns,
+    SELECT t.org_id, t.trace_id, t.session_id, t.duration_ns,
            t.total_input_tokens, t.total_output_tokens,
-           t.cache_read_tokens, t.cache_creation_tokens, t.total_cost_usd
+           t.cache_read_tokens, t.cache_creation_tokens, t.total_cost_usd,
+           s.derived_status
     FROM span_turns_20260615 t
+    LEFT JOIN sessions s ON s.id = t.session_id
     WHERE t.org_id = sqlc.arg(org_id)
       AND (sqlc.narg(since_filter)::timestamptz IS NULL OR t.started_at >= sqlc.narg(since_filter)::timestamptz)
       AND (sqlc.narg(until_filter)::timestamptz IS NULL OR t.started_at < sqlc.narg(until_filter)::timestamptz)
 )
 SELECT
     COUNT(*)::bigint                                        AS turn_count,
-    COUNT(*) FILTER (WHERE synthetic = '')::bigint          AS root_count,
     COUNT(DISTINCT session_id)::bigint                      AS session_count,
     COUNT(DISTINCT session_id) FILTER (
-        WHERE EXISTS (
-            SELECT 1 FROM sessions s
-            WHERE s.id = matched.session_id AND s.derived_status = 'completed'
-        )
+        WHERE matched.derived_status = 'completed'
     )::bigint                                               AS completed_count,
     COALESCE(SUM(total_input_tokens), 0)::bigint            AS input_tokens,
     COALESCE(SUM(total_output_tokens), 0)::bigint           AS output_tokens,

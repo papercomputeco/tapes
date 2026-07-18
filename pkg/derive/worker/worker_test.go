@@ -256,7 +256,7 @@ func (f *fakeStore) RederiveSession(ctx context.Context, _, org, harness, sessio
 	if report != nil {
 		return report, nil
 	}
-	return &derive.RederiveReport{RawTurns: 3, ParsedTurns: 3, Nodes: 7, Upserted: 7}, nil
+	return &derive.RederiveReport{RawTurns: 3, ParsedTurns: 3, Nodes: 7}, nil
 }
 
 var _ = Describe("Worker", func() {
@@ -545,7 +545,7 @@ var _ = Describe("Worker", func() {
 		Expect(store.lockCount()).To(BeZero(), "the advisory lock must release even on an aborted derive")
 	})
 
-	It("surfaces prune, unknown-kind, and parse-failure signals as counters", func() {
+	It("surfaces unknown-kind and parse-failure signals as counters", func() {
 		store.mark(settled("org-a", "claude-code", "sess-signals"))
 		store.report = &derive.RederiveReport{
 			// 6 raw turns: 3 parsed, 1 raw-only by design, 2 parse
@@ -556,8 +556,6 @@ var _ = Describe("Worker", func() {
 			RawOnlyTurns: 1,
 			CallKinds:    map[string]int{derive.KindMain: 2, derive.KindUnknown: 2},
 			Nodes:        7,
-			Upserted:     7,
-			Pruned:       1,
 		}
 
 		metrics := worker.NewMetrics()
@@ -571,8 +569,6 @@ var _ = Describe("Worker", func() {
 			return counterValue(reg, "tapes_derive_worker_parse_failures_total")
 		}).Should(Equal(2.0))
 		Expect(counterValue(reg, "tapes_derive_worker_unknown_call_kinds_total")).To(Equal(2.0))
-		Expect(counterValue(reg, "tapes_derive_worker_nodes_pruned_total")).To(Equal(1.0),
-			"prune>0 on unchanged raw is the projection-bug alert signal")
 	})
 
 	It("runs a backstop sweep at startup that feeds the normal path", func() {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/derive"
 	"github.com/papercomputeco/tapes/pkg/llm"
+	"github.com/papercomputeco/tapes/pkg/merkle"
 )
 
 // The span-model corpus gate — decision 7 re-pinned as span trees. The
@@ -107,8 +108,10 @@ func expectTurnPreviews(spans *derive.SpanSet) {
 			continue
 		}
 		Expect(turn.UserPrompt).NotTo(BeEmpty(), "trace %s lost its prompt", turn.TraceID)
-		Expect(strings.HasPrefix(turn.UserPrompt, "<system-reminder>")).To(BeFalse(),
-			"trace %s previews injected context, not the human prompt", turn.TraceID)
+		for _, tag := range merkle.HarnessTags {
+			Expect(strings.HasPrefix(turn.UserPrompt, "<"+tag+">")).To(BeFalse(),
+				"trace %s previews injected <%s> context, not the human prompt", turn.TraceID, tag)
+		}
 		Expect(turn.ResponsePreview).NotTo(BeEmpty(), "trace %s has no answer line", turn.TraceID)
 	}
 }

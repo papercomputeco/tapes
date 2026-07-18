@@ -53,9 +53,12 @@ const nilOrgUUID = "00000000-0000-0000-0000-000000000000"
 var ErrUnsupportedDriver = errors.New("demo seeding requires the raw-turn layer (Postgres driver)")
 
 // sessionRederiver is the driver capability the seed's synchronous
-// derive step needs; the Postgres driver implements it.
+// derive step needs; the Postgres driver implements it. The locked
+// variant holds the per-session advisory lock across the pass so a
+// concurrent derive worker (a clearing seeds with the worker running)
+// can't race the seed's derive and prune a just-written turn.
 type sessionRederiver interface {
-	RederiveSession(ctx context.Context, project, orgID, harnessID, harnessSessionID string) (*derive.RederiveReport, error)
+	RederiveSessionLocked(ctx context.Context, project, orgID, harnessID, harnessSessionID string) (*derive.RederiveReport, error)
 }
 
 // Result summarizes one seeding run.
@@ -69,9 +72,6 @@ type Result struct {
 	// (a re-seed reports everything deduped).
 	RawTurnsInserted int64 `json:"raw_turns_inserted"`
 	RawTurnsDeduped  int64 `json:"raw_turns_deduped"`
-	// NodesDerived counts derived rows upserted by the synchronous
-	// derive pass across the seeded sessions.
-	NodesDerived int `json:"nodes_derived"`
 }
 
 // sessionKey identifies one harness session within the seed org.
@@ -130,12 +130,10 @@ func Run(ctx context.Context, driver storage.Driver, logger *slog.Logger, orgID 
 	// worker running. PutRawTurn also marked these sessions derive-
 	// dirty, so a running worker would converge to the same state.
 	for _, key := range sessionKeys(wire, transcripts) {
-		rep, err := rederiver.RederiveSession(ctx, demoProject, orgID, key.harnessID, key.harnessSessionID)
-		if err != nil {
+		if _, err := rederiver.RederiveSessionLocked(ctx, demoProject, orgID, key.harnessID, key.harnessSessionID); err != nil {
 			return nil, fmt.Errorf("derive seeded session %s/%s: %w", key.harnessID, key.harnessSessionID, err)
 		}
 		report.Sessions++
-		report.NodesDerived += rep.Upserted
 	}
 
 	return report, nil

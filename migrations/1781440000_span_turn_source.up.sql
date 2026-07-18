@@ -1,0 +1,15 @@
+-- Promote the capture source onto the trace projection.
+--
+-- raw_turns.source ('wire' | 'transcript') records whether the proxy saw
+-- the call directly or it was backfilled from a harness transcript. The
+-- deriver stamps each trace with the source of the raw turns that produced
+-- it, so the read model can distinguish "the harness didn't do it" from
+-- "the capture path couldn't see it".
+--
+-- Today every trace is wire-sourced (transcripts only reconcile causal
+-- edges onto wire-derived chains; they never form traces), so this is
+-- uniformly 'wire' until a future adapter produces trace-forming rows. It
+-- is written now so the seam is honest; it is deliberately NOT yet exposed
+-- on the wire (no reader) — the wire surface lands when the value carries
+-- signal. A re-derive backfills.
+ALTER TABLE span_turns_20260615 ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'wire';

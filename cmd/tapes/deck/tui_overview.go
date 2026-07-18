@@ -395,22 +395,21 @@ func (m deckModel) renderStatusPieChart(stats deckOverviewStats, width int) []st
 		width = minWidth
 	}
 
-	// Calculate percentages
-	completedPct := float64(stats.Completed) / float64(stats.TotalSessions) * 100
+	// Calculate percentages (safeDivide guards the empty-window 0/0 case).
+	completedPct := safeDivide(float64(stats.Completed), float64(stats.TotalSessions)) * 100
 	failed := countByStatusInStats(stats, deck.StatusFailed)
 	abandoned := countByStatusInStats(stats, deck.StatusAbandoned)
-	failedPct := float64(failed) / float64(stats.TotalSessions) * 100
-	abandonedPct := float64(abandoned) / float64(stats.TotalSessions) * 100
+	failedPct := safeDivide(float64(failed), float64(stats.TotalSessions)) * 100
+	abandonedPct := safeDivide(float64(abandoned), float64(stats.TotalSessions)) * 100
 
-	// Mock efficiency data
+	// Efficiency from the window's real totals.
+	totalTokens := stats.InputTokens + stats.OutputTokens
 	efficiency := struct {
 		perSession float64
-		perMinute  float64
 		tokPerMin  int
 	}{
-		perSession: 0.038,
-		perMinute:  0.001,
-		tokPerMin:  34,
+		perSession: safeDivide(stats.TotalCost, float64(stats.TotalSessions)),
+		tokPerMin:  int(safeDivide(float64(totalTokens), stats.TotalDuration.Minutes())),
 	}
 
 	// Create box
@@ -422,15 +421,24 @@ func (m deckModel) renderStatusPieChart(stats deckOverviewStats, width int) []st
 	lines := make([]string, 0, 7)
 	lines = append(lines, topBorder)
 
+	// Sessions that aren't yet terminal (in progress / unknown status) are
+	// the remainder — render them dim instead of folding them into the
+	// abandoned (orange) segment, which made abandoned look non-zero when it
+	// wasn't.
+	inProgress := max(stats.TotalSessions-stats.Completed-failed-abandoned, 0)
+	inProgressPct := safeDivide(float64(inProgress), float64(stats.TotalSessions)) * 100
+
 	// Horizontal bar visualization
 	barWidth := width - 2 // Account for 1 space padding on each side
 	completedWidth := int(float64(barWidth) * completedPct / 100)
 	failedWidth := int(float64(barWidth) * failedPct / 100)
-	abandonedWidth := barWidth - completedWidth - failedWidth
+	abandonedWidth := int(float64(barWidth) * abandonedPct / 100)
+	inProgressWidth := max(barWidth-completedWidth-failedWidth-abandonedWidth, 0)
 
 	bar := deckStatusOKStyle.Render(strings.Repeat("█", completedWidth)) +
 		deckStatusFailStyle.Render(strings.Repeat("█", failedWidth)) +
-		deckStatusWarnStyle.Render(strings.Repeat("█", abandonedWidth))
+		deckStatusWarnStyle.Render(strings.Repeat("█", abandonedWidth)) +
+		deckDimStyle.Render(strings.Repeat("█", inProgressWidth))
 
 	lines = append(lines, deckDimStyle.Render("│")+" "+bar+" "+deckDimStyle.Render("│"))
 	lines = append(lines, deckDimStyle.Render("│"+strings.Repeat(" ", width)+"│"))
@@ -440,6 +448,10 @@ func (m deckModel) renderStatusPieChart(stats deckOverviewStats, width int) []st
 		deckStatusOKStyle.Render("●"), completedPct, stats.Completed,
 		deckStatusFailStyle.Render("●"), failedPct, failed,
 		deckStatusWarnStyle.Render("●"), abandonedPct, abandoned)
+	if inProgress > 0 {
+		legendLine += fmt.Sprintf("  %s in progress %2.0f%% (%d)",
+			deckDimStyle.Render("●"), inProgressPct, inProgress)
+	}
 
 	lines = append(lines,
 		deckDimStyle.Render("│")+legendLine+strings.Repeat(" ", max(0, width-lipgloss.Width(legendLine)))+deckDimStyle.Render("│"),

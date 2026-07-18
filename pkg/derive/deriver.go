@@ -62,6 +62,9 @@ type SpanSource struct {
 	Kind       string
 	ThreadID   string
 	Session    SessionKey
+	// Source is the capture source of the raw turn this call came from
+	// ('wire' | 'transcript') — provenance carried onto the trace.
+	Source string
 
 	// Chain holds the retained node for every chain position of this
 	// call (root → leaf; last is the response). New marks positions
@@ -75,6 +78,11 @@ type SpanSource struct {
 	// shared node holds only the last writer's edge.
 	Anchor string
 }
+
+// maxReportedMissing caps the per-report sample lists (parse failures,
+// unattached actions) so a wholly broken pass doesn't produce a
+// megabyte of strings.
+const maxReportedMissing = 20
 
 // RederiveReport summarizes one derive pass.
 type RederiveReport struct {
@@ -103,10 +111,6 @@ type RederiveReport struct {
 	// PlansAttached counts plan-name-gen calls linked to the
 	// ExitPlanMode tool_use that accepted the plan.
 	PlansAttached int `json:"plans_attached"`
-
-	// Upserted/Pruned are filled by the store after the write pass.
-	Upserted int `json:"upserted"`
-	Pruned   int `json:"pruned"`
 
 	// Reconcile reports the transcript↔wire fusion when transcript
 	// rows are present in the raw layer.
@@ -251,6 +255,7 @@ func (dv *Deriver) AddTurn(rec *storage.RawTurnRecord) {
 		Kind:       kind,
 		ThreadID:   turn.threadID,
 		Session:    key,
+		Source:     rec.Source,
 	}
 	turn.source = source
 

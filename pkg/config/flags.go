@@ -51,9 +51,6 @@ const (
 	FlagSkillModel          = "skill-model"
 	FlagAPITarget           = "api-target"
 	FlagProxyTarget         = "proxy-target"
-	FlagKafkaBrokers        = "kafka-brokers"
-	FlagKafkaTopic          = "kafka-topic"
-	FlagKafkaClientID       = "kafka-client-id"
 	FlagTelemetryDisabled   = "telemetry-disabled"
 	FlagUpdateCheckDisabled = "update-check-disabled"
 

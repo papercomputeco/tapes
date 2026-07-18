@@ -79,6 +79,7 @@ func ValidConfigKeys() []string {
 		"opencode.provider",
 		"opencode.model",
 		"telemetry.disabled",
+		"update.disabled",
 	}
 
 	// Sanity: only return keys that actually exist in the map.

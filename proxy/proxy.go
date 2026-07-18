@@ -1,4 +1,4 @@
-// Package proxy provides an LLM inference proxy that stores conversations in a Merkle DAG.
+// Package proxy provides an LLM inference proxy that captures conversations to the immutable raw_turns log.
 package proxy
 
 import (
@@ -21,6 +21,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/capture"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/llm/provider"
+	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/sse"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/proxy/header"
@@ -34,9 +35,9 @@ const (
 	providerOllama    = "ollama"
 )
 
-// Proxy is a client, LLM inference proxy that instruments storing sessions as Merkle DAGs.
+// Proxy is a client, LLM inference proxy that captures sessions to the raw_turns log.
 // The proxy is transparent: it forwards requests to the upstream LLM provider and
-// enqueues conversation turns for async storage via its worker pool.
+// enqueues conversation turns for async capture via its worker pool.
 type Proxy struct {
 	config        Config
 	driver        storage.Driver
@@ -90,10 +91,9 @@ func New(config Config, driver storage.Driver, log *slog.Logger) (*Proxy, error)
 	app.Use(compress.New())
 
 	wp, err := worker.NewPool(&worker.Config{
-		Driver:    driver,
-		Publisher: config.Publisher,
-		Project:   config.Project,
-		Logger:    log,
+		Driver:  driver,
+		Project: config.Project,
+		Logger:  log,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("could not create worker pool: %w", err)
@@ -150,7 +150,7 @@ func (p *Proxy) Close() error {
 }
 
 // handleProxy is a transparent proxy handler that forwards requests to upstream
-// and stores conversation turns in the Merkle DAG.
+// and captures conversation turns to the raw_turns log.
 func (p *Proxy) handleProxy(c *fiber.Ctx) error {
 	startTime := time.Now()
 
@@ -210,6 +210,20 @@ func (p *Proxy) handleProxy(c *fiber.Ctx) error {
 }
 
 // handleNonStreamingProxy handles non-streaming requests.
+// localCaptureSession returns the session envelope attached to every
+// locally-proxied turn. A local turn carries no harness identity (the
+// proxy reads no session-id header beyond the agent name), so the
+// envelope is intentionally empty: that drives the session-aware ingest
+// path to mint a sessions row keyed by a synthetic harness_session_id
+// derived from the turn's Merkle root — the same id the raw-turn write
+// records, so the derive worker resolves the session and attaches its
+// spans. Without a non-nil envelope the turn lands as raw capture with
+// no sessions row, and the derive attributes its spans to NULL (the
+// turn never surfaces in the deck).
+func localCaptureSession() *sessions.IngestEnvelope {
+	return &sessions.IngestEnvelope{}
+}
+
 func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL string, prov provider.Provider, agentName string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
 	// Build upstream URL
 	upstreamURL += path
@@ -271,10 +285,12 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL 
 
 			// Non-blocking enqueue for async storage
 			p.workerPool.Enqueue(worker.Job{
-				Provider:  prov.Name(),
-				AgentName: agentName,
-				Req:       parsedReq,
-				Resp:      parsedResp,
+				Provider:   prov.Name(),
+				AgentName:  agentName,
+				Req:        parsedReq,
+				Resp:       parsedResp,
+				RawRequest: body,
+				Session:    localCaptureSession(),
 			})
 		}
 	}
@@ -333,7 +349,7 @@ func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path, upstreamURL string, pro
 	// every chunk. This gives direct backpressure and true per-chunk streaming
 	// for LLM based.
 	pr, pw := io.Pipe()
-	go p.handleHTTPRespToPipeWriter(httpResp, pw, parsedReq, prov, agentName, startTime)
+	go p.handleHTTPRespToPipeWriter(httpResp, pw, parsedReq, prov, agentName, body, startTime)
 
 	// Set the pipe reader as the body stream with unknown size (-1),
 	// which triggers chunked transfer encoding in fasthttp.
@@ -342,16 +358,16 @@ func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path, upstreamURL string, pro
 	return nil
 }
 
-func (p *Proxy) handleHTTPRespToPipeWriter(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
+func (p *Proxy) handleHTTPRespToPipeWriter(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, rawRequest []byte, startTime time.Time) {
 	// Close the upstream response body once streaming is complete.
 	defer httpResp.Body.Close()
 	defer pw.Close()
 
 	switch ct := httpResp.Header.Get("Content-Type"); {
 	case strings.HasPrefix(ct, "text/event-stream"):
-		p.handleSSEStream(httpResp, pw, parsedReq, prov, agentName, startTime)
+		p.handleSSEStream(httpResp, pw, parsedReq, prov, agentName, rawRequest, startTime)
 	default:
-		p.handleNDJSONStream(httpResp, pw, parsedReq, prov, agentName, startTime)
+		p.handleNDJSONStream(httpResp, pw, parsedReq, prov, agentName, rawRequest, startTime)
 	}
 }
 
@@ -362,12 +378,12 @@ func (p *Proxy) handleHTTPRespToPipeWriter(httpResp *http.Response, pw *io.PipeW
 // Providers with a reducer in p.reducers go through capture for a canonical
 // reduction; everything else falls back to the in-proxy extraction helpers
 // until it migrates into the shared library.
-func (p *Proxy) handleSSEStream(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
+func (p *Proxy) handleSSEStream(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, rawRequest []byte, startTime time.Time) {
 	if r, ok := p.reducers[prov.Name()]; ok {
-		p.handleSSEStreamViaCapture(r, httpResp, pw, parsedReq, prov, agentName, startTime)
+		p.handleSSEStreamViaCapture(r, httpResp, pw, parsedReq, prov, agentName, rawRequest, startTime)
 		return
 	}
-	p.handleSSEStreamLegacy(httpResp, pw, parsedReq, prov, agentName, startTime)
+	p.handleSSEStreamLegacy(httpResp, pw, parsedReq, prov, agentName, rawRequest, startTime)
 }
 
 // handleSSEStreamViaCapture forwards chunks to the client while teeing the
@@ -377,7 +393,7 @@ func (p *Proxy) handleSSEStream(httpResp *http.Response, pw *io.PipeWriter, pars
 // the reducer for event parsing. We stream directly into Reduce rather
 // than materializing the full body into an intermediate []byte — on a
 // large response that would double the resident memory for no gain.
-func (p *Proxy) handleSSEStreamViaCapture(r capture.Reducer, httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
+func (p *Proxy) handleSSEStreamViaCapture(r capture.Reducer, httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, rawRequest []byte, startTime time.Time) {
 	reader := io.TeeReader(httpResp.Body, pw)
 
 	resp, err := r.Reduce(
@@ -415,16 +431,18 @@ func (p *Proxy) handleSSEStreamViaCapture(r capture.Reducer, httpResp *http.Resp
 	stampDuration(resp, startTime)
 
 	p.workerPool.Enqueue(worker.Job{
-		Provider:  prov.Name(),
-		AgentName: agentName,
-		Req:       parsedReq,
-		Resp:      resp,
+		Provider:   prov.Name(),
+		AgentName:  agentName,
+		Req:        parsedReq,
+		Resp:       resp,
+		RawRequest: rawRequest,
+		Session:    localCaptureSession(),
 	})
 }
 
 // handleSSEStreamLegacy preserves the pre-capture path for providers that
 // have not yet migrated into pkg/capture.
-func (p *Proxy) handleSSEStreamLegacy(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
+func (p *Proxy) handleSSEStreamLegacy(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, rawRequest []byte, startTime time.Time) {
 	var allChunks [][]byte
 	var fullContent strings.Builder
 	var streamUsage llm.Usage
@@ -458,13 +476,13 @@ func (p *Proxy) handleSSEStreamLegacy(httpResp *http.Response, pw *io.PipeWriter
 		p.extractUsageFromSSE([]byte(ev.Data), prov.Name(), &streamUsage, &meta)
 	}
 
-	p.enqueueStreamedResponse(allChunks, fullContent.String(), &streamUsage, &meta, parsedReq, prov, agentName, startTime)
+	p.enqueueStreamedResponse(allChunks, fullContent.String(), &streamUsage, &meta, parsedReq, prov, agentName, rawRequest, startTime)
 }
 
 // handleNDJSONStream reads a newline-delimited JSON upstream response (used by
 // Ollama), forwarding raw bytes to the pipe writer while accumulating chunks
 // for telemetry.
-func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
+func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, rawRequest []byte, startTime time.Time) {
 	var allChunks [][]byte
 	var fullContent strings.Builder
 	var streamUsage llm.Usage
@@ -508,7 +526,7 @@ func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, p
 		p.logger.Error("error reading NDJSON stream", "error", err)
 	}
 
-	p.enqueueStreamedResponse(allChunks, fullContent.String(), &streamUsage, &meta, parsedReq, prov, agentName, startTime)
+	p.enqueueStreamedResponse(allChunks, fullContent.String(), &streamUsage, &meta, parsedReq, prov, agentName, rawRequest, startTime)
 }
 
 // extractContentFromJSON performs best-effort content extraction from a JSON
@@ -589,7 +607,7 @@ func jsonInt(m map[string]any, key string) int {
 
 // enqueueStreamedResponse handles post-stream telemetry: logging and
 // enqueuing the reconstructed response for async storage.
-func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, streamUsage *llm.Usage, meta *streamMeta, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, startTime time.Time) {
+func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, streamUsage *llm.Usage, meta *streamMeta, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, rawRequest []byte, startTime time.Time) {
 	if parsedReq != nil && len(allChunks) > 0 {
 		p.logger.Debug("streaming complete",
 			"content_preview", fullContent,
@@ -605,10 +623,12 @@ func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, 
 			}
 			stampDuration(finalResp, startTime)
 			p.workerPool.Enqueue(worker.Job{
-				Provider:  prov.Name(),
-				AgentName: agentName,
-				Req:       parsedReq,
-				Resp:      finalResp,
+				Provider:   prov.Name(),
+				AgentName:  agentName,
+				Req:        parsedReq,
+				Resp:       finalResp,
+				RawRequest: rawRequest,
+				Session:    localCaptureSession(),
 			})
 		}
 	}
@@ -616,6 +636,15 @@ func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, 
 
 // reconstructStreamedResponse attempts to build a ChatResponse from accumulated stream chunks.
 func (p *Proxy) reconstructStreamedResponse(chunks [][]byte, fullContent string, streamUsage *llm.Usage, meta *streamMeta, prov provider.Provider) *llm.ChatResponse {
+	// Tool calls arrive as discrete mid-stream chunks (ollama emits
+	// {"message":{"tool_calls":[…]}} on its own NDJSON line), but the
+	// final "done" chunk parsed below carries neither text nor tool_use.
+	// Collect tool_use across every chunk up front so an agentic turn —
+	// whose entire response IS the tool call — reduces to a non-empty
+	// assistant message the deriver can project. Without this the reduced
+	// response is empty and the turn derives to zero nodes/spans.
+	toolBlocks := collectStreamedToolUse(chunks, prov)
+
 	// Try parsing the last chunk as it often contains final metadata
 	if len(chunks) > 0 {
 		lastChunk := chunks[len(chunks)-1]
@@ -625,6 +654,7 @@ func (p *Proxy) reconstructStreamedResponse(chunks [][]byte, fullContent string,
 			if resp.Message.GetText() == "" && fullContent != "" {
 				resp.Message = llm.NewTextMessage("assistant", fullContent)
 			}
+			resp.Message.Content = mergeToolUse(resp.Message.Content, toolBlocks)
 			// Prefer accumulated stream usage over last-chunk usage (which is often empty)
 			if streamUsage != nil && (streamUsage.PromptTokens > 0 || streamUsage.CompletionTokens > 0) {
 				streamUsage.TotalTokens = streamUsage.PromptTokens + streamUsage.CompletionTokens
@@ -642,15 +672,21 @@ func (p *Proxy) reconstructStreamedResponse(chunks [][]byte, fullContent string,
 		}
 	}
 
-	// Fallback: construct a minimal response from accumulated content
-	if fullContent != "" {
+	// Fallback: construct a minimal response from accumulated text and/or
+	// tool calls (a tool-only turn has no text but must still reduce).
+	if fullContent != "" || len(toolBlocks) > 0 {
 		model := ""
 		if meta != nil && meta.Model != "" {
 			model = meta.Model
 		}
+		var content []llm.ContentBlock
+		if fullContent != "" {
+			content = append(content, llm.ContentBlock{Type: "text", Text: fullContent})
+		}
+		content = append(content, toolBlocks...)
 		resp := &llm.ChatResponse{
 			Model:     model,
-			Message:   llm.NewTextMessage("assistant", fullContent),
+			Message:   llm.Message{Role: "assistant", Content: content},
 			Done:      true,
 			CreatedAt: time.Now(),
 		}
@@ -665,6 +701,55 @@ func (p *Proxy) reconstructStreamedResponse(chunks [][]byte, fullContent string,
 	}
 
 	return nil
+}
+
+// collectStreamedToolUse scans reduced-stream chunks for assistant
+// tool_use blocks, deduped by ToolUseID with first-seen order
+// preserved. Blocks carrying an empty id are always kept (some providers
+// omit ids). Chunks the provider can't parse are skipped.
+func collectStreamedToolUse(chunks [][]byte, prov provider.Provider) []llm.ContentBlock {
+	var out []llm.ContentBlock
+	seen := make(map[string]bool)
+	for _, chunk := range chunks {
+		resp, err := prov.ParseResponse(chunk)
+		if err != nil || resp == nil {
+			continue
+		}
+		for _, block := range resp.Message.Content {
+			if block.Type != "tool_use" {
+				continue
+			}
+			if block.ToolUseID != "" {
+				if seen[block.ToolUseID] {
+					continue
+				}
+				seen[block.ToolUseID] = true
+			}
+			out = append(out, block)
+		}
+	}
+	return out
+}
+
+// mergeToolUse appends tool_use blocks not already present in content
+// (matched by ToolUseID), preserving order.
+func mergeToolUse(content, tools []llm.ContentBlock) []llm.ContentBlock {
+	if len(tools) == 0 {
+		return content
+	}
+	existing := make(map[string]bool)
+	for _, b := range content {
+		if b.Type == "tool_use" && b.ToolUseID != "" {
+			existing[b.ToolUseID] = true
+		}
+	}
+	for _, t := range tools {
+		if t.ToolUseID != "" && existing[t.ToolUseID] {
+			continue
+		}
+		content = append(content, t)
+	}
+	return content
 }
 
 func (p *Proxy) resolveAgent(path, headerValue string) (string, string, string) {

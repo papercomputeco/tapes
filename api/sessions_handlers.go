@@ -53,40 +53,89 @@ const (
 	maxSessionNameLength = 200
 )
 
-// SessionItem is the per-row shape returned by GET /v1/sessions. It mirrors
-// the sessions table directly — no ancestry walk, no stem aggregation.
+// SessionItem is the per-session shape: capture identity at the top
+// level, the deriver-owned projection nested under `rollup`. The split
+// mirrors the storage rows — identity is ingest-written, rollup is
+// deriver-written — so the wire can't blur which layer owns a field.
 type SessionItem struct {
-	ID                string     `json:"id"`
-	HarnessID         string     `json:"harness_id"`
-	HarnessSessionID  string     `json:"harness_session_id"`
-	Name              string     `json:"name,omitempty"`
-	Cwd               string     `json:"cwd,omitempty"`
-	HarnessVersion    string     `json:"harness_version,omitempty"`
-	ParentSessionID   string     `json:"parent_session_id,omitempty"`
-	StartedAt         time.Time  `json:"started_at"`
-	LastSeenAt        time.Time  `json:"last_seen_at"`
-	EndedAt           *time.Time `json:"ended_at,omitempty"`
-	TurnCount         int        `json:"turn_count"`
-	TotalInputTokens  int64      `json:"total_input_tokens"`
-	TotalOutputTokens int64      `json:"total_output_tokens"`
-	TotalCostUsd      float64    `json:"total_cost_usd"`
-	DerivedStatus     string     `json:"derived_status"`
-	// Model is the dominant conversation-spine model, folded at derive
-	// time; empty until the session first derives.
-	Model string `json:"model,omitempty"`
-	// ModelUsage is the per-model spend breakdown folded at derive time
-	// across every thread (subagent models included), ordered
-	// dominant-model-first by cost. The share basis is cost, not call
-	// count, so the UI can show "dominant model + per-model %" without a
-	// cheap-subagent fan-out skewing it. Populated on the session detail;
-	// nil until the session first derives.
-	ModelUsage      []ModelUsage   `json:"model_usage,omitempty"`
-	HarnessMetadata map[string]any `json:"harness_metadata,omitempty"`
-	Preview         string         `json:"preview,omitempty"`
+	// Identity — capture-side facts, ingest-written.
+	ID               string         `json:"id"`
+	HarnessID        string         `json:"harness_id"`
+	HarnessSessionID string         `json:"harness_session_id"`
+	Cwd              string         `json:"cwd,omitempty"`
+	HarnessVersion   string         `json:"harness_version,omitempty"`
+	ParentSessionID  string         `json:"parent_session_id,omitempty"`
+	StartedAt        time.Time      `json:"started_at"`
+	LastSeenAt       time.Time      `json:"last_seen_at"`
+	EndedAt          *time.Time     `json:"ended_at,omitempty"`
+	HarnessMetadata  map[string]any `json:"harness_metadata,omitempty"`
 	// AuthSubject is the gateway-stamped JWT subject (WorkOS user id)
 	// captured at ingest; empty for rows captured before the edge began
 	// stamping it.
 	AuthSubject string `json:"auth_subject,omitempty"`
+	// Name is the session's display label: the value on the identity row —
+	// a user rename or the harness-supplied session name — when set,
+	// otherwise the folded title (rollup.title) as a fallback. Empty only
+	// when the session has neither. It therefore equals rollup.title
+	// exactly when no identity-row name exists.
+	Name string `json:"name,omitempty"`
+	// Live is a runtime presence signal, not a projection fact: true when
+	// the session was seen within the liveness window AND the deriver has
+	// not marked it terminal. Computed at response time from last_seen_at,
+	// so the console renders it directly instead of inferring "running"
+	// from recency itself (keeps the console dumb; RFD 00007 §C).
+	Live bool `json:"live"`
+	// Rollup is the deriver-owned projection over the session's spans.
+	Rollup SessionRollup `json:"rollup"`
+}
+
+// sessionLiveWindow bounds how recently a session must have been seen to
+// read as live. Server config now (mirrors the console's old 5-minute
+// client-side window) so liveness is decided in one place.
+const sessionLiveWindow = 5 * time.Minute
+
+// terminalStatus reports whether a derived status is a settled outcome, in
+// which case the session is done regardless of recency.
+func terminalStatus(s string) bool {
+	switch s {
+	case "completed", "failed", "abandoned":
+		return true
+	}
+	return false
+}
+
+// SessionRollup is the deriver-owned session projection — status, title,
+// counts, and spend, all folded from the span layer at derive time.
+// Every field is 'unknown'/zero/empty until the session first derives.
+type SessionRollup struct {
+	Status string `json:"status"`
+	// Title is the deriver's folded session title (derived_title),
+	// generated from the conversation. Empty until title generation
+	// produces one. It never falls back to the identity-row name, so it is
+	// the stable descriptive title clients prefer for display; the
+	// identity-row label (harness name or rename) is SessionItem.Name.
+	Title     string `json:"title,omitempty"`
+	Preview   string `json:"preview,omitempty"`
+	TurnCount int    `json:"turn_count"`
+	// Model is the dominant conversation-spine model; ModelUsage is the
+	// per-model spend breakdown across every thread (subagent models
+	// included), cost-ordered so the UI can show "dominant model + share"
+	// without a cheap-subagent fan-out skewing it.
+	Model      string       `json:"model,omitempty"`
+	ModelUsage []ModelUsage `json:"model_usage,omitempty"`
+	// KindCounts (spans per call_kind) and Tasks (TaskCreate/TaskUpdate
+	// folds) are pinned so the rollup shape is uniform across sessions.
+	KindCounts map[string]int `json:"kind_counts"`
+	Tasks      []TreeTask     `json:"tasks"`
+	Usage      SessionUsage   `json:"usage"`
+}
+
+// SessionUsage is the session's total token/cost spend, folded from the
+// span layer. Pinned (no omitempty) for a uniform object shape.
+type SessionUsage struct {
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	CostUSD      float64 `json:"cost_usd"`
 }
 
 // ModelUsage is one model's contribution to a session in the API: how
@@ -113,29 +162,46 @@ type SessionDetailResponse struct {
 	Session SessionItem `json:"session"`
 }
 
-func sessionItemFromStorage(s storage.SessionRecord) SessionItem {
-	return SessionItem{
-		ID:                s.ID,
-		HarnessID:         s.HarnessID,
-		HarnessSessionID:  s.HarnessSessionID,
-		Name:              s.Name,
-		Cwd:               s.Cwd,
-		HarnessVersion:    s.HarnessVersion,
-		ParentSessionID:   s.ParentSessionID,
-		StartedAt:         s.StartedAt,
-		LastSeenAt:        s.LastSeenAt,
-		EndedAt:           s.EndedAt,
-		TurnCount:         s.TurnCount,
-		TotalInputTokens:  s.TotalInputTokens,
-		TotalOutputTokens: s.TotalOutputTokens,
-		TotalCostUsd:      s.TotalCostUsd,
-		DerivedStatus:     s.DerivedStatus,
-		Model:             s.Model,
-		ModelUsage:        modelUsageFromStorage(s.ModelUsage),
-		HarnessMetadata:   s.HarnessMetadata,
-		Preview:           s.Preview,
-		AuthSubject:       s.AuthSubject,
+func sessionItemFromStorage(s storage.SessionRecord, now time.Time) SessionItem {
+	item := SessionItem{
+		ID:               s.ID,
+		HarnessID:        s.HarnessID,
+		HarnessSessionID: s.HarnessSessionID,
+		Cwd:              s.Cwd,
+		HarnessVersion:   s.HarnessVersion,
+		ParentSessionID:  s.ParentSessionID,
+		StartedAt:        s.StartedAt,
+		LastSeenAt:       s.LastSeenAt,
+		EndedAt:          s.EndedAt,
+		HarnessMetadata:  s.HarnessMetadata,
+		AuthSubject:      s.AuthSubject,
+		Name:             s.Name,
+		Live:             now.Sub(s.LastSeenAt) < sessionLiveWindow && !terminalStatus(s.DerivedStatus),
+		Rollup: SessionRollup{
+			Status:     s.DerivedStatus,
+			Title:      s.DerivedTitle,
+			Preview:    s.Preview,
+			TurnCount:  s.TurnCount,
+			Model:      s.Model,
+			ModelUsage: modelUsageFromStorage(s.ModelUsage),
+			KindCounts: map[string]int{},
+			Tasks:      []TreeTask{},
+			Usage: SessionUsage{
+				InputTokens:  s.TotalInputTokens,
+				OutputTokens: s.TotalOutputTokens,
+				CostUSD:      s.TotalCostUsd,
+			},
+		},
 	}
+	// Tasks/kind_counts are stored as raw deriver JSON; decode them into
+	// the rollup, leaving the pinned []/{} on absent or malformed values.
+	if len(s.Tasks) > 0 {
+		_ = json.Unmarshal(s.Tasks, &item.Rollup.Tasks)
+	}
+	if len(s.KindCounts) > 0 {
+		_ = json.Unmarshal(s.KindCounts, &item.Rollup.KindCounts)
+	}
+	return item
 }
 
 // modelUsageFromStorage maps the storage-layer per-model breakdown to
@@ -212,8 +278,8 @@ func decodeSessionsCursor(token string) (sessionsCursor, error) {
 //	@Param			cursor				query		string	false	"Opaque pagination cursor returned by a previous response"
 //	@Param			sort				query		string	false	"Sort column: last_active|started_at|turn_count|total_cost_usd|total_tokens|duration_ns|derived_status|auth_subject (default last_active)"
 //	@Param			direction			query		string	false	"Sort direction: asc|desc (default desc)"
-//	@Param			since				query		string	false	"Only include sessions active (last_seen_at) at or after this RFC3339 timestamp"	format(date-time)
-//	@Param			until				query		string	false	"Only include sessions active (last_seen_at) before this RFC3339 timestamp"			format(date-time)
+//	@Param			since				query		string	false	"Only include sessions with a turn started at or after this RFC3339 timestamp (activity window, matches /v1/stats)"	format(date-time)
+//	@Param			until				query		string	false	"Only include sessions with a turn started before this RFC3339 timestamp (activity window, matches /v1/stats)"			format(date-time)
 //	@Param			harness_id			query		string	false	"Filter to the single session with this harness id (exact match; requires harness_session_id, incompatible with cursor; limit is ignored when the filter is active)"
 //	@Param			harness_session_id	query		string	false	"Filter to the single session with this harness session id (exact match; requires harness_id, incompatible with cursor; limit is ignored when the filter is active)"
 //	@Param			auth_subject		query		string	false	"Filter the paged list to sessions captured for this gateway-stamped JWT subject (exact match; ignored on the harness filter path)"
@@ -325,7 +391,7 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 
 	items := make([]SessionItem, len(sessions))
 	for i, sess := range sessions {
-		items[i] = sessionItemFromStorage(sess)
+		items[i] = sessionItemFromStorage(sess, time.Now())
 	}
 
 	return c.JSON(SessionListResponse{
@@ -366,7 +432,7 @@ func (s *Server) listSessionsByHarness(c *fiber.Ctx, reader sessionsReader) erro
 	// form expresses it (never 404 — that's the :id endpoint's vocabulary).
 	items := []SessionItem{}
 	if sess != nil {
-		items = append(items, sessionItemFromStorage(*sess))
+		items = append(items, sessionItemFromStorage(*sess, time.Now()))
 	}
 	return c.JSON(SessionListResponse{Items: items})
 }
@@ -412,7 +478,7 @@ func (s *Server) handleGetSession(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(SessionDetailResponse{
-		Session: sessionItemFromStorage(*sess),
+		Session: sessionItemFromStorage(*sess, time.Now()),
 	})
 }
 
@@ -448,8 +514,10 @@ type exportTraceHeader struct {
 
 // exportSessionTraceHeaders is a detail=traces export line: the session
 // with its turn headers. tasks/kind_counts are span-derived, so they are
-// omitted along with the spans.
+// omitted along with the spans. `schema` stamps the projection generation
+// so a traces-grain export line is self-describing like the composite.
 type exportSessionTraceHeaders struct {
+	Schema  string              `json:"schema"`
 	Session SessionItem         `json:"session"`
 	Traces  []exportTraceHeader `json:"traces"`
 }
@@ -461,21 +529,20 @@ type exportSessionTraceHeaders struct {
 // only, read via ListTraceSummaries so span payloads are never loaded.
 // Both export endpoints emit these grains, so a bulk export is exactly a
 // concatenation of per-session exports.
-func exportSessionLine(ctx context.Context, reader spanModelReader, sess storage.SessionRecord, detail exportDetail, w io.Writer) error {
+func exportSessionLine(ctx context.Context, reader spanModelReader, orgID string, sess storage.SessionRecord, detail exportDetail, w io.Writer) error {
 	if detail == exportDetailTraces {
 		rows, err := reader.ListTraceSummaries(ctx, sess.ID)
 		if err != nil {
 			return fmt.Errorf("list trace summaries for session %s: %w", sess.ID, err)
 		}
-		item := sessionItemFromStorage(sess)
+		item := sessionItemFromStorage(sess, time.Now())
 		line := exportSessionTraceHeaders{
+			Schema:  ProjectionSchema,
 			Session: item,
 			Traces:  make([]exportTraceHeader, 0, len(rows)),
 		}
 		for _, row := range rows {
 			ti := traceItemFromTurn(row.SpanTurnRecord, row.SpanCount)
-			ti.HarnessID = item.HarnessID
-			ti.HarnessSessionID = item.HarnessSessionID
 			line.Traces = append(line.Traces, exportTraceHeader{Trace: ti})
 		}
 		if err := json.NewEncoder(w).Encode(line); err != nil {
@@ -484,15 +551,148 @@ func exportSessionLine(ctx context.Context, reader spanModelReader, sess storage
 		return nil
 	}
 
-	turns, spans, links, err := reader.ListSessionSpanModel(ctx, sess.ID)
+	return streamSessionSpanExport(ctx, reader, orgID, sess, w)
+}
+
+// streamSessionSpanExport renders the spans-grain export line for one
+// session — the same nested session → traces → spans projection
+// BuildSessionTraces produces at PayloadFull — but bounds peak memory to
+// one trace's spans instead of the whole session's. The light,
+// payload-free rows (turn headers, which carry the trace order and per-
+// trace span counts, plus the session-scoped links) are loaded whole;
+// each trace's heavy spans are read, encoded, and released one trace at a
+// time. This is the fix for the bulk export OOM: a single heavy session no
+// longer has to materialize every span payload at once.
+//
+// The output is byte-for-byte identical to
+//
+//	json.NewEncoder(w).Encode(BuildSessionTraces(session, turns, spans, links, PayloadFull))
+//
+// for the same rows — the array/object framing is written by hand and each
+// element goes through the same json marshaller the composite response
+// uses, so the reused serializers (spanItemFromRecord, traceItemFromTurn,
+// spanLinkItem) fix the wire shape by construction. The golden test in
+// sessions_export_span_stream_test.go pins that equivalence.
+func streamSessionSpanExport(ctx context.Context, reader spanModelReader, orgID string, sess storage.SessionRecord, w io.Writer) error {
+	// Light, payload-free rows loaded whole: turn headers are the trace
+	// ordering authority (BuildSessionTraces emits traces in this order),
+	// links are the flat session-scoped array.
+	turns, err := reader.ListTraceSummaries(ctx, sess.ID)
 	if err != nil {
-		return fmt.Errorf("list span model for session %s: %w", sess.ID, err)
+		return fmt.Errorf("list trace summaries for session %s: %w", sess.ID, err)
 	}
-	resp := BuildSessionTraces(sessionItemFromStorage(sess), turns, spans, links, PayloadFull)
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
+	links, err := reader.ListSessionLinks(ctx, sess.ID)
+	if err != nil {
+		return fmt.Errorf("list session links for session %s: %w", sess.ID, err)
+	}
+
+	// {"schema":...,"session":...,"traces":[ — the SessionTracesResponse
+	// field order, written by hand so the framing matches json.Marshal of
+	// the whole struct.
+	if err := writeJSONRaw(w, `{"schema":`); err != nil {
+		return fmt.Errorf("encoding session %s: %w", sess.ID, err)
+	}
+	if err := writeJSONValue(w, ProjectionSchema); err != nil {
+		return fmt.Errorf("encoding session %s: %w", sess.ID, err)
+	}
+	if err := writeJSONRaw(w, `,"session":`); err != nil {
+		return fmt.Errorf("encoding session %s: %w", sess.ID, err)
+	}
+	if err := writeJSONValue(w, sessionItemFromStorage(sess, time.Now())); err != nil {
+		return fmt.Errorf("encoding session %s: %w", sess.ID, err)
+	}
+	if err := writeJSONRaw(w, `,"traces":[`); err != nil {
+		return fmt.Errorf("encoding session %s: %w", sess.ID, err)
+	}
+
+	for i, turn := range turns {
+		if i > 0 {
+			if err := writeJSONRaw(w, ","); err != nil {
+				return fmt.Errorf("encoding session %s: %w", sess.ID, err)
+			}
+		}
+		if err := streamTraceDetail(ctx, reader, orgID, turn.SpanTurnRecord, w); err != nil {
+			return fmt.Errorf("encoding session %s: %w", sess.ID, err)
+		}
+	}
+
+	// ],"links":[ ...session links... ]}
+	if err := writeJSONRaw(w, `],"links":[`); err != nil {
+		return fmt.Errorf("encoding session %s: %w", sess.ID, err)
+	}
+	for i, l := range links {
+		if i > 0 {
+			if err := writeJSONRaw(w, ","); err != nil {
+				return fmt.Errorf("encoding session %s: %w", sess.ID, err)
+			}
+		}
+		if err := writeJSONValue(w, spanLinkItem(l)); err != nil {
+			return fmt.Errorf("encoding session %s: %w", sess.ID, err)
+		}
+	}
+	// The trailing newline matches json.Encoder.Encode, so a streamed line
+	// terminates exactly like the materialized one.
+	if err := writeJSONRaw(w, "]}\n"); err != nil {
 		return fmt.Errorf("encoding session %s: %w", sess.ID, err)
 	}
 	return nil
+}
+
+// streamTraceDetail writes one trace's {"trace":...,"spans":[...]} object,
+// loading that trace's spans on their own so only one trace's payloads are
+// resident at a time. This mirrors the embedded TraceDetail json.Marshal
+// produces inside the composite response (Schema and Links are zero there,
+// so both omitempty fields drop out — only trace and spans remain), and
+// the span count on the header is len(spans), exactly as
+// BuildSessionTraces computes it.
+func streamTraceDetail(ctx context.Context, reader spanModelReader, orgID string, turn storage.SpanTurnRecord, w io.Writer) error {
+	spans, err := reader.ListTraceSpans(ctx, orgID, turn.TraceID)
+	if err != nil {
+		return fmt.Errorf("list spans for trace %s: %w", turn.TraceID, err)
+	}
+	if err := writeJSONRaw(w, `{"trace":`); err != nil {
+		return err
+	}
+	if err := writeJSONValue(w, traceItemFromTurn(turn, len(spans))); err != nil {
+		return err
+	}
+	if err := writeJSONRaw(w, `,"spans":[`); err != nil {
+		return err
+	}
+	for i, sp := range spans {
+		if i > 0 {
+			if err := writeJSONRaw(w, ","); err != nil {
+				return err
+			}
+		}
+		// Encode one span at a time so the marshalling buffer stays O(one
+		// span), never O(one trace) — the resident span slice is already
+		// bounded to this trace.
+		if err := writeJSONValue(w, spanItemFromRecord(sp, PayloadFull)); err != nil {
+			return err
+		}
+	}
+	return writeJSONRaw(w, "]}")
+}
+
+// writeJSONValue marshals v with the same HTML-escaping json.Marshal (and
+// thus json.Encoder.Encode) applies, and writes it out. Marshalling each
+// element separately and gluing the array/object framing by hand yields
+// bytes identical to marshalling the whole composite, since JSON encoding
+// of these payload types is context-free.
+func writeJSONValue(w io.Writer, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(b)
+	return err
+}
+
+// writeJSONRaw writes literal structural bytes (brackets, commas, keys).
+func writeJSONRaw(w io.Writer, s string) error {
+	_, err := io.WriteString(w, s)
+	return err
 }
 
 // exportFilename appends the non-default grain to an export filename so
@@ -567,7 +767,7 @@ func (s *Server) handleExportSession(c *fiber.Ctx) error {
 	// happened. (The streaming bulk endpoint can't do this; a single session
 	// can.)
 	var buf bytes.Buffer
-	if err := exportSessionLine(c.Context(), spanReader, *sess, detail, &buf); err != nil {
+	if err := exportSessionLine(c.Context(), spanReader, orgID, *sess, detail, &buf); err != nil {
 		s.logger.Error("export session", "id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to render session export"})
 	}
@@ -597,8 +797,8 @@ const exportSessionsPageLimit = maxSessionsLimit
 //	@Description	Streams one JSON line per session in the given window, newest-first, as a downloadable attachment. Each line is the session object with its traces, each trace carrying its full spans — the same shape as GET /v1/sessions/{id}/traces with payload=full. detail=traces exports turn headers only (no spans or links). Defaults to the trailing 30 days. Not bounded by the /v1/sessions list cap — pages internally.
 //	@Tags			sessions
 //	@Produce		application/x-ndjson
-//	@Param			since	query	string	false	"Only include sessions active (last_seen_at) at or after this RFC3339 timestamp (default: now - 30 days)"	format(date-time)
-//	@Param			until	query	string	false	"Only include sessions active (last_seen_at) before this RFC3339 timestamp"								format(date-time)
+//	@Param			since	query	string	false	"Only include sessions with a turn started at or after this RFC3339 timestamp (activity window; default: now - 30 days)"	format(date-time)
+//	@Param			until	query	string	false	"Only include sessions with a turn started before this RFC3339 timestamp (activity window)"								format(date-time)
 //	@Param			detail	query	string	false	"Export granularity: spans (default, traces with full spans) or traces (turn headers only)"				Enums(spans, traces)
 //	@Success		200		{string}	string	"JSONL body, one JSON object per session with nested traces (and spans at detail=spans)"
 //	@Failure		400		{object}	llm.ErrorResponse	"Malformed since/until, or unrecognized detail"
@@ -692,7 +892,7 @@ func (s *Server) handleExportSessions(c *fiber.Ctx) error {
 				return
 			}
 			for _, sess := range sessions {
-				if err := exportSessionLine(streamCtx, spanReader, sess, detail, w); err != nil {
+				if err := exportSessionLine(streamCtx, spanReader, orgID, sess, detail, w); err != nil {
 					s.logger.Error("export session", "id", sess.ID, "error", err)
 					return
 				}
@@ -722,7 +922,7 @@ func (s *Server) handleExportSessions(c *fiber.Ctx) error {
 //
 //	@Summary		Delete a session
 //	@ID			deleteSession
-//	@Description	Permanently deletes a session and its subtree: subagent child sessions, derived nodes, and spans cascade with it. Org-scoped — any caller in the org may delete any of its sessions. The immutable raw_turns capture log is left intact.
+//	@Description	Permanently deletes a session and its subtree: subagent child sessions and their derived traces/spans cascade with it. Org-scoped — any caller in the org may delete any of its sessions. The immutable raw_turns capture log is left intact.
 //	@Tags			sessions
 //	@Param			id	path	string	true	"Session id (UUID)"
 //	@Success		204	"Session deleted"
@@ -860,6 +1060,6 @@ func (s *Server) handleUpdateSession(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(SessionDetailResponse{
-		Session: sessionItemFromStorage(*sess),
+		Session: sessionItemFromStorage(*sess, time.Now()),
 	})
 }

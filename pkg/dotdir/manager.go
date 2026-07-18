@@ -1,8 +1,5 @@
-// Package dotdir manages the .tapes/ and ~/.tapes directories.
-//
-// The checkout state represents a point in a conversation DAG that the user has
-// "checked out" for resuming chat sessions. The state is persisted as a JSON file
-// in the ~/.tapes/ directory.
+// Package dotdir manages the .tapes/ and ~/.tapes directories that hold
+// local configuration, credentials, and other tapes state.
 package dotdir
 
 import (

@@ -278,14 +278,14 @@
                     {
                         "type": "string",
                         "format": "date-time",
-                        "description": "Only include sessions active (last_seen_at) at or after this RFC3339 timestamp",
+                        "description": "Only include sessions with a turn started at or after this RFC3339 timestamp (activity window, matches /v1/stats)",
                         "name": "since",
                         "in": "query"
                     },
                     {
                         "type": "string",
                         "format": "date-time",
-                        "description": "Only include sessions active (last_seen_at) before this RFC3339 timestamp",
+                        "description": "Only include sessions with a turn started before this RFC3339 timestamp (activity window, matches /v1/stats)",
                         "name": "until",
                         "in": "query"
                     },
@@ -351,14 +351,14 @@
                     {
                         "type": "string",
                         "format": "date-time",
-                        "description": "Only include sessions active (last_seen_at) at or after this RFC3339 timestamp (default: now - 30 days)",
+                        "description": "Only include sessions with a turn started at or after this RFC3339 timestamp (activity window; default: now - 30 days)",
                         "name": "since",
                         "in": "query"
                     },
                     {
                         "type": "string",
                         "format": "date-time",
-                        "description": "Only include sessions active (last_seen_at) before this RFC3339 timestamp",
+                        "description": "Only include sessions with a turn started before this RFC3339 timestamp (activity window)",
                         "name": "until",
                         "in": "query"
                     },
@@ -455,7 +455,7 @@
                 }
             },
             "delete": {
-                "description": "Permanently deletes a session and its subtree: subagent child sessions, derived nodes, and spans cascade with it. Org-scoped — any caller in the org may delete any of its sessions. The immutable raw_turns capture log is left intact.",
+                "description": "Permanently deletes a session and its subtree: subagent child sessions and their derived traces/spans cascade with it. Org-scoped — any caller in the org may delete any of its sessions. The immutable raw_turns capture log is left intact.",
                 "tags": [
                     "sessions"
                 ],
@@ -488,6 +488,69 @@
                     },
                     "500": {
                         "description": "Failed to delete session",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Sessions not supported by this backend",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "description": "Updates the user-editable session name. An absent field is a 400; null or empty (after trim) clears back to the auto-derived title. Length is bounded to 200 characters.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Update a session's title",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session id (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Update request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.sessionUpdateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.SessionDetailResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing/malformed id, missing name field, or name exceeds 200 characters",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Session not found or not in caller's org",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to update session",
                         "schema": {
                             "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
                         }
@@ -681,7 +744,7 @@
         },
         "/v1/stats": {
             "get": {
-                "description": "Returns counts plus cost / token / duration / tool-call / completed-count totals for the window. On span-projection backends the numbers are trace-grain rollup sums (delta-only usage, agent time = sum of trace durations) so they agree with the session and trace views; turn_count counts traces and stem_count is omitted. Supplying any legacy per-node filter (project / agent_name / model / provider) forces the legacy node-layer aggregate, whose sums re-bill re-sent history and whose duration is wall-clock MAX-MIN (PCC-514).",
+                "description": "Returns counts plus cost / token / duration / tool-call / completed-count totals for the window. The numbers are span-grain trace rollup sums (delta-only usage, agent time = sum of trace durations) so they agree with the session and trace views; turn_count counts traces. Filter the window with since/until.",
                 "produces": [
                     "application/json"
                 ],
@@ -691,30 +754,6 @@
                 "summary": "Get aggregate session stats",
                 "operationId": "getStats",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Filter by project name (forces the legacy node-layer aggregate)",
-                        "name": "project",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by agent name (forces the legacy node-layer aggregate)",
-                        "name": "agent_name",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by model name (forces the legacy node-layer aggregate)",
-                        "name": "model",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by provider name (forces the legacy node-layer aggregate)",
-                        "name": "provider",
-                        "in": "query"
-                    },
                     {
                         "type": "string",
                         "format": "date-time",
@@ -911,6 +950,17 @@
         }
     },
     "definitions": {
+        "api.MainUsage": {
+            "type": "object",
+            "properties": {
+                "input_tokens": {
+                    "type": "integer"
+                },
+                "output_tokens": {
+                    "type": "integer"
+                }
+            }
+        },
         "api.ModelUsage": {
             "type": "object",
             "properties": {
@@ -941,10 +991,7 @@
                     "type": "integer"
                 },
                 "meta": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "type": "object"
                 },
                 "provider": {
                     "type": "string"
@@ -995,9 +1042,6 @@
                 "cwd": {
                     "type": "string"
                 },
-                "derived_status": {
-                    "type": "string"
-                },
                 "ended_at": {
                     "type": "string"
                 },
@@ -1015,45 +1059,33 @@
                     "type": "string"
                 },
                 "id": {
+                    "description": "Identity — capture-side facts, ingest-written.",
                     "type": "string"
                 },
                 "last_seen_at": {
                     "type": "string"
                 },
-                "model": {
-                    "description": "Model is the dominant conversation-spine model, folded at derive\ntime; empty until the session first derives.",
-                    "type": "string"
-                },
-                "model_usage": {
-                    "description": "ModelUsage is the per-model spend breakdown folded at derive time\nacross every thread (subagent models included), ordered\ndominant-model-first by cost. The share basis is cost, not call\ncount, so the UI can show \"dominant model + per-model %\" without a\ncheap-subagent fan-out skewing it. Populated on the session detail;\nnil until the session first derives.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.ModelUsage"
-                    }
+                "live": {
+                    "description": "Live is a runtime presence signal, not a projection fact: true when\nthe session was seen within the liveness window AND the deriver has\nnot marked it terminal. Computed at response time from last_seen_at,\nso the console renders it directly instead of inferring \"running\"\nfrom recency itself (keeps the console dumb; RFD 00007 §C).",
+                    "type": "boolean"
                 },
                 "name": {
+                    "description": "Name is the session's display label: the value on the identity row —\na user rename or the harness-supplied session name — when set,\notherwise the folded title (rollup.title) as a fallback. Empty only\nwhen the session has neither. It therefore equals rollup.title\nexactly when no identity-row name exists.",
                     "type": "string"
                 },
                 "parent_session_id": {
                     "type": "string"
                 },
-                "preview": {
-                    "type": "string"
+                "rollup": {
+                    "description": "Rollup is the deriver-owned projection over the session's spans.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/api.SessionRollup"
+                        }
+                    ]
                 },
                 "started_at": {
                     "type": "string"
-                },
-                "total_cost_usd": {
-                    "type": "number"
-                },
-                "total_input_tokens": {
-                    "type": "integer"
-                },
-                "total_output_tokens": {
-                    "type": "integer"
-                },
-                "turn_count": {
-                    "type": "integer"
                 }
             }
         },
@@ -1071,29 +1103,64 @@
                 }
             }
         },
-        "api.SessionTracesResponse": {
+        "api.SessionRollup": {
             "type": "object",
             "properties": {
                 "kind_counts": {
+                    "description": "KindCounts (spans per call_kind) and Tasks (TaskCreate/TaskUpdate\nfolds) are pinned so the rollup shape is uniform across sessions.",
                     "type": "object",
                     "additionalProperties": {
                         "type": "integer"
                     }
                 },
-                "links": {
+                "model": {
+                    "description": "Model is the dominant conversation-spine model; ModelUsage is the\nper-model spend breakdown across every thread (subagent models\nincluded), cost-ordered so the UI can show \"dominant model + share\"\nwithout a cheap-subagent fan-out skewing it.",
+                    "type": "string"
+                },
+                "model_usage": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/api.SpanLinkItem"
+                        "$ref": "#/definitions/api.ModelUsage"
                     }
                 },
-                "session": {
-                    "$ref": "#/definitions/api.SessionItem"
+                "preview": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
                 },
                 "tasks": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/api.TreeTask"
                     }
+                },
+                "title": {
+                    "description": "Title is the deriver's folded session title (derived_title),\ngenerated from the conversation. Empty until title generation\nproduces one. It never falls back to the identity-row name, so it is\nthe stable descriptive title clients prefer for display; the\nidentity-row label (harness name or rename) is SessionItem.Name.",
+                    "type": "string"
+                },
+                "turn_count": {
+                    "type": "integer"
+                },
+                "usage": {
+                    "$ref": "#/definitions/api.SessionUsage"
+                }
+            }
+        },
+        "api.SessionTracesResponse": {
+            "type": "object",
+            "properties": {
+                "links": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.SpanLinkItem"
+                    }
+                },
+                "schema": {
+                    "type": "string"
+                },
+                "session": {
+                    "$ref": "#/definitions/api.SessionItem"
                 },
                 "traces": {
                     "type": "array",
@@ -1103,58 +1170,68 @@
                 }
             }
         },
+        "api.SessionUsage": {
+            "type": "object",
+            "properties": {
+                "cost_usd": {
+                    "type": "number"
+                },
+                "input_tokens": {
+                    "type": "integer"
+                },
+                "output_tokens": {
+                    "type": "integer"
+                }
+            }
+        },
         "api.SpanItem": {
             "type": "object",
             "properties": {
-                "children_ids": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
+                "call_kind": {
+                    "description": "Deriver-written taxonomy, promoted from the old metadata grab-bag.",
+                    "type": "string"
                 },
                 "duration_ns": {
                     "type": "integer"
                 },
-                "id": {
-                    "type": "string"
-                },
                 "input": {
-                    "type": "object",
-                    "additionalProperties": {}
+                    "description": "Input/Output are content-block arrays (llm.ContentBlock), uniform for\nevery kind (tool spans included — no unwrapping). Pinned to [] when\nempty. swaggertype keeps the wire an array-of-object rather than the\njson.RawMessage byte array swag infers.",
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
                 },
                 "kind": {
                     "type": "string"
                 },
-                "metadata": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "metrics": {
-                    "description": "Metrics is always an object on the wire — the contract fixture\npins {} for usage-less spans (agent/tool/event), and the console\nschema requires it.",
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                "model": {
+                    "type": "string"
                 },
                 "name": {
                     "type": "string"
                 },
                 "output": {
-                    "type": "object",
-                    "additionalProperties": {}
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
                 },
                 "parent_span_id": {
                     "type": "string"
                 },
+                "payload": {
+                    "description": "Payload marks a preview-truncated span so the console drills in for\nthe full payload; absent in full mode.",
+                    "type": "string"
+                },
+                "raw_turn_id": {
+                    "type": "integer"
+                },
                 "seq": {
-                    "description": "Seq is the span's presentation ordinal within its trace; spans\narrive sorted by it. start_ns cannot order spans inside one llm\ncall (parallel tool batches share an instant).",
+                    "description": "Seq is the span's presentation ordinal within its trace; spans\narrive sorted by it (started_at ties inside one llm call — parallel\ntool batches share an instant).",
                     "type": "integer"
                 },
                 "span_id": {
                     "type": "string"
-                },
-                "start_ns": {
-                    "type": "integer"
                 },
                 "started_at": {
                     "type": "string"
@@ -1162,8 +1239,23 @@
                 "status": {
                     "type": "string"
                 },
+                "stop_reason": {
+                    "type": "string"
+                },
+                "thread_id": {
+                    "type": "string"
+                },
                 "trace_id": {
                     "type": "string"
+                },
+                "usage": {
+                    "description": "Usage (was `metrics`) is an llm.Usage object on the wire — {}-pinned\nfor usage-less spans.",
+                    "type": "object"
+                },
+                "verdict": {
+                    "description": "Verdict is the typed security-monitor disposition (null off\npermission-check spans), deriver-written. It is a Verdict object or\nnull on the wire; typed as `object` (not the json.RawMessage byte\narray swag would otherwise emit) via swaggertype.",
+                    "type": "object",
+                    "x-nullable": true
                 }
             }
         },
@@ -1179,9 +1271,8 @@
                 "from_trace_id": {
                     "type": "string"
                 },
-                "metadata": {
-                    "type": "object",
-                    "additionalProperties": {}
+                "kind": {
+                    "type": "string"
                 },
                 "to_io": {
                     "type": "string"
@@ -1237,7 +1328,7 @@
                     "type": "string"
                 },
                 "user_prompt": {
-                    "description": "UserPrompt is the prompt of the turn (trace) the span belongs to.",
+                    "description": "UserPrompt is the prompt of the turn (trace) the span belongs to.\nServed explicitly (not omitempty) so a synthetic turn's empty prompt\nreaches consumers as \"\" rather than a dropped key — see TraceItem.",
                     "type": "string"
                 }
             }
@@ -1254,14 +1345,7 @@
                 "output_tokens": {
                     "type": "integer"
                 },
-                "root_count": {
-                    "type": "integer"
-                },
                 "session_count": {
-                    "type": "integer"
-                },
-                "stem_count": {
-                    "description": "StemCount is a node-layer (Merkle leaf) concept with no span\nequivalent; it is only present on the legacy fallback path.",
                     "type": "integer"
                 },
                 "tool_calls": {
@@ -1270,7 +1354,7 @@
                 "total_cost": {
                     "type": "number"
                 },
-                "total_duration_ns": {
+                "total_duration_ms": {
                     "type": "integer"
                 },
                 "turn_count": {
@@ -1287,6 +1371,9 @@
                         "$ref": "#/definitions/api.SpanLinkItem"
                     }
                 },
+                "schema": {
+                    "type": "string"
+                },
                 "spans": {
                     "type": "array",
                     "items": {
@@ -1301,43 +1388,21 @@
         "api.TraceItem": {
             "type": "object",
             "properties": {
-                "cache_creation_tokens": {
-                    "type": "integer"
-                },
-                "cache_read_tokens": {
-                    "type": "integer"
-                },
                 "duration_ns": {
                     "type": "integer"
                 },
                 "ended_at": {
                     "type": "string"
                 },
-                "harness_id": {
-                    "type": "string"
-                },
-                "harness_session_id": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "main_input_tokens": {
-                    "description": "Main* counts conversation-spine calls only; Total − Main is the\nharness's shadow spend on the turn.",
-                    "type": "integer"
-                },
-                "main_output_tokens": {
-                    "type": "integer"
-                },
-                "metadata": {
-                    "type": "object",
-                    "additionalProperties": {}
+                "main_usage": {
+                    "$ref": "#/definitions/api.MainUsage"
                 },
                 "response_preview": {
                     "description": "ResponsePreview is the derive-time fold of the closing\nconversation-spine llm call's text output — the answer line for\ncollapsed turn cards, so summary consumers never need spans.",
                     "type": "string"
                 },
-                "session_id": {
+                "source": {
+                    "description": "Source is the capture origin of the turn's rows (\"wire\" |\n\"transcript\"), promoted from raw_turns.source. Per-trace, so a\nsession can mix live wire capture and transcript backfill. Today\nevery trace is \"wire\": transcripts only reconcile fork/parent edges\nduring derivation, they never form a trace on their own. \"transcript\"\nbecomes real when a session is reconstructed purely from a transcript\nfile with no proxy capture (an OSS backfill path). See RFD 00007 §C.",
                     "type": "string"
                 },
                 "span_count": {
@@ -1349,19 +1414,23 @@
                 "status": {
                     "type": "string"
                 },
-                "total_cost_usd": {
-                    "type": "number"
-                },
-                "total_input_tokens": {
-                    "type": "integer"
-                },
-                "total_output_tokens": {
-                    "type": "integer"
+                "synthetic": {
+                    "description": "Synthetic is a typed deriver signal (\"post-compaction\" for a\ncompaction continuation, \"shadow-opener\" for a shadow-only opener),\npromoted out of the old metadata grab-bag. Absent for genuine\nprompt-opened turns.",
+                    "type": "string"
                 },
                 "trace_id": {
                     "type": "string"
                 },
+                "usage": {
+                    "description": "Usage is the trace's total token/cost spend over ALL llm spans,\nshadow calls included; MainUsage is the task slice — the main agent\nand its subagents (every call_kind=main span, across threads). The\ndifference (Usage − MainUsage) is the harness's shadow spend\n(permission checks, title-gen, web summaries) on the turn.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/api.TraceUsage"
+                        }
+                    ]
+                },
                 "user_prompt": {
+                    "description": "UserPrompt is served explicitly (not omitempty): a synthetic opener\nhas an empty prompt, and dropping the key turns the empty string\ninto `undefined` on the wire, which breaks consumers that expect a\nstring (e.g. the console's stripHarnessTags). Empty means synthetic.",
                     "type": "string"
                 }
             }
@@ -1374,6 +1443,29 @@
                     "items": {
                         "$ref": "#/definitions/api.TraceItem"
                     }
+                },
+                "schema": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.TraceUsage": {
+            "type": "object",
+            "properties": {
+                "cache_creation_tokens": {
+                    "type": "integer"
+                },
+                "cache_read_tokens": {
+                    "type": "integer"
+                },
+                "cost_usd": {
+                    "type": "number"
+                },
+                "input_tokens": {
+                    "type": "integer"
+                },
+                "output_tokens": {
+                    "type": "integer"
                 }
             }
         },
@@ -1402,6 +1494,14 @@
             "properties": {
                 "overwrite": {
                     "type": "boolean"
+                }
+            }
+        },
+        "api.sessionUpdateRequest": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
                 }
             }
         },
@@ -1470,10 +1570,6 @@
         "github_com_papercomputeco_tapes_pkg_seed.Result": {
             "type": "object",
             "properties": {
-                "nodes_derived": {
-                    "description": "NodesDerived counts derived rows upserted by the synchronous\nderive pass across the seeded sessions.",
-                    "type": "integer"
-                },
                 "raw_turns": {
                     "description": "RawTurns is the total number of corpus rows replayed.",
                     "type": "integer"

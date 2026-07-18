@@ -40,6 +40,11 @@ var _ = Describe("CheckForUpdate", func() {
 		It("does not skip prerelease semver", func() {
 			Expect(shouldSkip("v1.0.0-rc.1")).To(BeFalse())
 		})
+
+		It("skips git-describe dev builds", func() {
+			Expect(shouldSkip("v0.17.0-9-gcd1de8c")).To(BeTrue())
+			Expect(shouldSkip("v0.17.0-9-gcd1de8c-dirty")).To(BeTrue())
+		})
 	})
 
 	Describe("checkForUpdate", func() {

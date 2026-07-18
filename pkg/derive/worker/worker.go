@@ -424,8 +424,6 @@ func (w *Worker) processEntry(ctx context.Context, e storage.DeriveQueueEntry, c
 
 	duration := time.Since(start)
 	w.metrics.Derives.WithLabelValues(resultOK).Inc()
-	w.metrics.NodesUpserted.Add(float64(report.Upserted))
-	w.metrics.NodesPruned.Add(float64(report.Pruned))
 	w.metrics.DeriveDuration.Observe(duration.Seconds())
 	w.metrics.UnknownCalls.Add(float64(report.CallKinds[derive.KindUnknown]))
 	// ParseFailures samples are capped in the report; the exact count
@@ -442,8 +440,6 @@ func (w *Worker) processEntry(ctx context.Context, e storage.DeriveQueueEntry, c
 		"session", cur.HarnessSessionID,
 		"raw_turns", report.RawTurns,
 		"nodes", report.Nodes,
-		"upserted", report.Upserted,
-		"pruned", report.Pruned,
 		"duration", duration,
 		"requeued", !cleared,
 	)

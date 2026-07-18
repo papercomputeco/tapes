@@ -3,90 +3,21 @@ package storage
 
 import (
 	"context"
-
-	"github.com/papercomputeco/tapes/pkg/llm"
-	"github.com/papercomputeco/tapes/pkg/merkle"
 )
 
-// Driver defines the interface for persisting and retrieving nodes in a storage backend.
-// The Driver is the primary interface for working with pkg/merkle - it handles
-// storage, retrieval, and traversal of nodes per the storage implementor.
+// Driver is the lifecycle handle for a storage backend.
+//
+// The persisted merkle "node" DAG has been retired: the in-memory merkle
+// chain is still built at derive time for provenance and dedup, but it is
+// no longer written to or read from the store. What remains here is the
+// open/close lifecycle. The actual read/write surfaces (raw-turn capture,
+// session ingest, the derived sessions/traces/spans projection) are
+// exposed as capability interfaces (RawTurnStore, SessionIngester, the
+// derive/read interfaces) that callers type-assert off the concrete
+// driver.
 type Driver interface {
-	// Get retrieves a node by its hash.
-	Get(ctx context.Context, hash string) (*merkle.Node, error)
-
-	// GetByParent retrieves all nodes that have the given parent hash.
-	// Pass nil to get root nodes.
-	GetByParent(ctx context.Context, parentHash *string) ([]*merkle.Node, error)
-
-	// Put stores a node. Returns true if the node was newly inserted,
-	// false if it already exists. If the node already exists, this should be
-	// a no-op. Put provides automatic deduplication via content-addressing in the dag.
-	Put(ctx context.Context, node *merkle.Node) (bool, error)
-
-	// Has checks if a node exists by its hash.
-	Has(ctx context.Context, hash string) (bool, error)
-
-	// List returns all nodes in the store.
-	List(ctx context.Context) ([]*merkle.Node, error)
-
-	// Roots returns all root nodes (nodes with no parent).
-	Roots(ctx context.Context) ([]*merkle.Node, error)
-
-	// Leaves returns all leaf nodes (nodes with no children).
-	Leaves(ctx context.Context) ([]*merkle.Node, error)
-
-	// ListSessions returns a page of leaf nodes ordered by created_at descending,
-	// optionally filtered by ListOpts. The returned Page.NextCursor is empty
-	// when there are no further pages.
-	//
-	// "Session" here is the API-layer concept: a leaf node identifies the head
-	// of a conversation chain. Filters apply to the leaf node itself, not to
-	// any ancestor in the chain.
-	ListSessions(ctx context.Context, opts ListOpts) (*Page[*merkle.Node], error)
-
-	// CountSessions returns aggregate counts for the slice of data matching
-	// the filter in opts. Pagination fields on opts (Limit, Cursor) are ignored.
-	CountSessions(ctx context.Context, opts ListOpts) (SessionStats, error)
-
-	// Ancestry returns the path from a node back to its root (node first, root last).
-	Ancestry(ctx context.Context, hash string) ([]*merkle.Node, error)
-
-	// AncestryChain is Ancestry with a marker describing how the walk
-	// terminated. When the walk stops at a parent_hash whose target is not
-	// present in this store, the returned Chain has Incomplete=true and
-	// MissingParent set to that parent_hash. The nodes in Chain.Nodes are
-	// still valid; this state is expected on stores that trim older data or
-	// merge content from foreign sources, and is not an error.
-	AncestryChain(ctx context.Context, hash string) (*Chain, error)
-
-	// AncestryChains returns a Chain for each input hash, batched per depth
-	// level so the cost scales with maximum chain depth rather than the
-	// product of starting-node count and depth. Shared ancestors across
-	// starts are fetched once.
-	//
-	// The returned map is keyed by each starting hash. Starts that are not
-	// present in the store are omitted from the map rather than surfaced as
-	// errors — callers that need a strict "every start must resolve" check
-	// should compare the map's keys against their input slice.
-	//
-	// Use this instead of looping over AncestryChain when walking many
-	// leaves (e.g. the /v1/sessions/summary handler): the per-leaf loop
-	// issues O(N_starts × depth) queries, which on a real store with tens
-	// of thousands of leaves will not complete in any reasonable time.
-	AncestryChains(ctx context.Context, hashes []string) (map[string]*Chain, error)
-
-	// LoadDag takes a node hash and returns the full graph.
-	LoadDag(ctx context.Context, hash string) (*merkle.Dag, error)
-
 	// Open initializes the backing store and makes it ready for use.
 	Open(ctx context.Context) error
-
-	// UpdateUsage updates token / duration usage metadata on an existing node.
-	UpdateUsage(ctx context.Context, hash string, usage *llm.Usage) error
-
-	// Depth returns the depth of a node (0 for roots).
-	Depth(ctx context.Context, hash string) (int, error)
 
 	// Close closes the store and releases any resources.
 	Close() error

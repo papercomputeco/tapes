@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -71,6 +72,7 @@ func writeSpanSet(
 			CacheReadTokens:     turn.CacheReadTokens,
 			CacheCreationTokens: turn.CacheCreationTokens,
 			TotalCostUsd:        costNumeric,
+			Source:              turn.Source,
 		}); err != nil {
 			return fmt.Errorf("upsert span turn %s: %w", turn.TraceID, err)
 		}
@@ -90,6 +92,12 @@ func writeSpanSet(
 			if s.Usage != nil {
 				if usage, err = json.Marshal(s.Usage); err != nil {
 					return fmt.Errorf("marshal span %s usage: %w", s.SpanID, err)
+				}
+			}
+			var verdict []byte
+			if s.Verdict != nil {
+				if verdict, err = json.Marshal(s.Verdict); err != nil {
+					return fmt.Errorf("marshal span %s verdict: %w", s.SpanID, err)
 				}
 			}
 			rawTurn := pgtype.Int8{}
@@ -117,6 +125,7 @@ func writeSpanSet(
 				Usage:        usage,
 				RawTurnID:    rawTurn,
 				NodeHash:     s.NodeHash,
+				Verdict:      verdict,
 			}); err != nil {
 				return fmt.Errorf("upsert span %s/%s: %w", turn.TraceID, s.SpanID, err)
 			}
@@ -217,7 +226,67 @@ func writeSpanSet(
 			return fmt.Errorf("update session model usage: %w", err)
 		}
 	}
+
+	// Session-scoped task fold and call_kind tally (deriver-owned, folded
+	// in Go for the same reason as model_usage). Written as JSONB so the
+	// read/export paths never re-fold.
+	for key, tasks := range spans.Tasks {
+		sid, ok := sessionIDs[key]
+		if !ok || !sid.Valid {
+			continue
+		}
+		payload, err := json.Marshal(tasks)
+		if err != nil {
+			return fmt.Errorf("marshal session tasks: %w", err)
+		}
+		if err := qtx.UpdateSessionTasks(ctx, gensqlc.UpdateSessionTasksParams{ID: sid, Tasks: payload}); err != nil {
+			return fmt.Errorf("update session tasks: %w", err)
+		}
+	}
+	for key, counts := range spans.KindCounts {
+		sid, ok := sessionIDs[key]
+		if !ok || !sid.Valid {
+			continue
+		}
+		payload, err := json.Marshal(counts)
+		if err != nil {
+			return fmt.Errorf("marshal session kind_counts: %w", err)
+		}
+		if err := qtx.UpdateSessionKindCounts(ctx, gensqlc.UpdateSessionKindCountsParams{ID: sid, KindCounts: payload}); err != nil {
+			return fmt.Errorf("update session kind_counts: %w", err)
+		}
+	}
+
+	// Chain-aware status is derived data too: the deriver folds it (moved
+	// off the ingest hot path) and is the sole writer of derived_status /
+	// has_git_activity / tool_result_count / tool_error_count.
+	for key, status := range spans.Status {
+		sid, ok := sessionIDs[key]
+		if !ok || !sid.Valid {
+			continue
+		}
+		if err := qtx.UpdateSessionStatus(ctx, gensqlc.UpdateSessionStatusParams{
+			HasGitActivity:  status.HasGitActivity,
+			ToolResultCount: int32Count(status.ToolResultCount),
+			ToolErrorCount:  int32Count(status.ToolErrorCount),
+			DerivedStatus:   status.DerivedStatus,
+			ID:              sid,
+		}); err != nil {
+			return fmt.Errorf("update session status: %w", err)
+		}
+	}
 	return nil
+}
+
+// int32Count clamps a non-negative count into an int32 column.
+func int32Count(n int) int32 {
+	if n < 0 {
+		return 0
+	}
+	if n > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(n)
 }
 
 // contentJSON marshals content blocks, keeping empty payloads as SQL
@@ -260,7 +329,7 @@ func (d *Driver) ListSessionSpanModel(ctx context.Context, sessionID string) ([]
 		rec := spanTurnRecordFromColumns(spanTurnColumns{
 			traceID: row.TraceID, userPrompt: row.UserPrompt,
 			responsePreview: row.ResponsePreview,
-			synthetic:       row.Synthetic, status: row.Status,
+			synthetic:       row.Synthetic, status: row.Status, source: row.Source,
 			sessionID: row.SessionID, startedAt: row.StartedAt,
 			endedAt: row.EndedAt, durationNs: row.DurationNs,
 			totalIn: row.TotalInputTokens, totalOut: row.TotalOutputTokens,
@@ -295,7 +364,7 @@ func (d *Driver) ListSessionSpanModel(ctx context.Context, sessionID string) ([]
 // spanTurnRecordFromRow converts a span_turns row to its flat record.
 type spanTurnColumns struct {
 	traceID, userPrompt, responsePreview      string
-	synthetic, status                         string
+	synthetic, status, source                 string
 	sessionID                                 pgtype.UUID
 	startedAt, endedAt                        pgtype.Timestamptz
 	durationNs, totalIn, totalOut             int64
@@ -310,6 +379,7 @@ func spanTurnRecordFromColumns(c spanTurnColumns) storage.SpanTurnRecord {
 		ResponsePreview:     c.responsePreview,
 		Synthetic:           c.synthetic,
 		Status:              c.status,
+		Source:              c.source,
 		StartedAt:           c.startedAt.Time,
 		DurationNS:          c.durationNs,
 		TotalInputTokens:    c.totalIn,
@@ -356,6 +426,7 @@ func spanRecordFromRow(row gensqlc.Spans20260615) storage.SpanRecord {
 		Usage:        row.Usage,
 		RawTurnID:    row.RawTurnID.Int64,
 		NodeHash:     row.NodeHash,
+		Verdict:      row.Verdict,
 	}
 }
 
@@ -379,7 +450,7 @@ func (d *Driver) ListTraceSummaries(ctx context.Context, sessionID string) ([]st
 			SpanTurnRecord: spanTurnRecordFromColumns(spanTurnColumns{
 				traceID: row.TraceID, userPrompt: row.UserPrompt,
 				responsePreview: row.ResponsePreview,
-				synthetic:       row.Synthetic, status: row.Status,
+				synthetic:       row.Synthetic, status: row.Status, source: row.Source,
 				sessionID: row.SessionID, startedAt: row.StartedAt,
 				endedAt: row.EndedAt, durationNs: row.DurationNs,
 				totalIn: row.TotalInputTokens, totalOut: row.TotalOutputTokens,
@@ -391,6 +462,60 @@ func (d *Driver) ListTraceSummaries(ctx context.Context, sessionID string) ([]st
 		})
 	}
 	return out, nil
+}
+
+// ListSessionLinks returns a session's dataflow links alone, in the same
+// deterministic key order ListSessionSpanModel serves them. It is the
+// payload-free half of that read, for the per-trace streaming export.
+// Implements storage.SpanModelReader.
+func (d *Driver) ListSessionLinks(ctx context.Context, sessionID string) ([]storage.SpanLinkRecord, error) {
+	if d == nil || d.conn == nil {
+		return nil, errors.New("postgres driver not open")
+	}
+	parsed, err := uuid.Parse(sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("parse session id: %w", err)
+	}
+	linkRows, err := d.q.ListSpanLinksBySession(ctx, pgtype.UUID{Bytes: parsed, Valid: true})
+	if err != nil {
+		return nil, fmt.Errorf("list span links: %w", err)
+	}
+	links := make([]storage.SpanLinkRecord, 0, len(linkRows))
+	for _, row := range linkRows {
+		links = append(links, storage.SpanLinkRecord{
+			FromTraceID: row.FromTraceID,
+			FromSpanID:  row.FromSpanID,
+			FromIO:      row.FromIo,
+			ToTraceID:   row.ToTraceID,
+			ToSpanID:    row.ToSpanID,
+			ToIO:        row.ToIo,
+			Kind:        row.Kind,
+		})
+	}
+	return links, nil
+}
+
+// ListTraceSpans returns one trace's spans in presentation order (seq
+// ASC, matching ListSessionSpanModel restricted to the trace) — the same
+// per-trace read GetTraceDetail performs, without the turn/link
+// round-trips. Implements storage.SpanModelReader.
+func (d *Driver) ListTraceSpans(ctx context.Context, orgID, traceID string) ([]storage.SpanRecord, error) {
+	if d == nil || d.conn == nil {
+		return nil, errors.New("postgres driver not open")
+	}
+	org, err := orgIDFromString(orgKeyForLookup(orgID))
+	if err != nil {
+		return nil, fmt.Errorf("decode org_id: %w", err)
+	}
+	spanRows, err := d.q.ListSpansByTrace(ctx, gensqlc.ListSpansByTraceParams{OrgID: org, TraceID: traceID})
+	if err != nil {
+		return nil, fmt.Errorf("list spans by trace: %w", err)
+	}
+	spans := make([]storage.SpanRecord, 0, len(spanRows))
+	for _, r := range spanRows {
+		spans = append(spans, spanRecordFromRow(r))
+	}
+	return spans, nil
 }
 
 // GetTraceDetail returns one turn with its spans and links. Implements
@@ -413,7 +538,7 @@ func (d *Driver) GetTraceDetail(ctx context.Context, orgID, traceID string) (*st
 	turn := spanTurnRecordFromColumns(spanTurnColumns{
 		traceID: row.TraceID, userPrompt: row.UserPrompt,
 		responsePreview: row.ResponsePreview,
-		synthetic:       row.Synthetic, status: row.Status,
+		synthetic:       row.Synthetic, status: row.Status, source: row.Source,
 		sessionID: row.SessionID, startedAt: row.StartedAt,
 		endedAt: row.EndedAt, durationNs: row.DurationNs,
 		totalIn: row.TotalInputTokens, totalOut: row.TotalOutputTokens,
@@ -488,7 +613,6 @@ func (d *Driver) AggregateSpanStats(ctx context.Context, orgID string, since, un
 	}
 	stats := storage.SpanStats{
 		TurnCount:           int(row.TurnCount),
-		RootCount:           int(row.RootCount),
 		SessionCount:        int(row.SessionCount),
 		CompletedCount:      int(row.CompletedCount),
 		InputTokens:         row.InputTokens,

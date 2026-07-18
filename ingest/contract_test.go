@@ -2,7 +2,6 @@ package ingest_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -12,14 +11,18 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/papercomputeco/tapes/ingest"
-	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
 type contractCase struct {
 	name       string
 	body       []byte
 	wantStatus int
-	wantRow    bool // whether an in-memory nodes row should eventually appear
+	// wantRow is whether a raw-turn row should eventually appear. The
+	// ingest server persists the immutable raw envelope BEFORE provider
+	// parsing, so a turn that fails parsing (422, well-formed envelope) is
+	// still captured for a future parser fix to re-derive — only a
+	// rejected envelope (400) skips the raw write.
+	wantRow bool
 }
 
 // mustMarshalPayload encodes the test fixture and panics on failure. The
@@ -53,7 +56,7 @@ func buildEmptyBody() []byte { return []byte{} }
 var _ = Describe("Ingest contract", func() {
 	var (
 		server  *ingest.Server
-		driver  storage.Driver
+		driver  *captureDriver
 		baseURL string
 		client  *http.Client
 	)
@@ -75,27 +78,24 @@ var _ = Describe("Ingest contract", func() {
 
 			Expect(resp.StatusCode).To(Equal(tc.wantStatus), "status for %q", tc.name)
 
-			// Give the worker pool a moment; this Eventually only has to pass
-			// if wantRow is true. If wantRow is false we'd prefer to assert
-			// *no* row appears, which we do below.
+			// On the accepted path the raw-turn row lands; on a rejected
+			// path nothing is captured. The node DAG is retired, so the
+			// post-condition is asserted against the raw layer.
 			if tc.wantRow {
-				Eventually(func() int {
-					nodes, _ := driver.List(context.Background())
-					return len(nodes)
-				}).WithTimeout(2 * time.Second).WithPolling(25 * time.Millisecond).Should(BeNumerically(">", 0))
+				Eventually(driver.CountRaw).
+					WithTimeout(2 * time.Second).WithPolling(25 * time.Millisecond).
+					Should(BeNumerically(">", 0))
 			} else {
-				Consistently(func() int {
-					nodes, _ := driver.List(context.Background())
-					return len(nodes)
-				}, 250*time.Millisecond, 50*time.Millisecond).Should(Equal(0))
+				Consistently(driver.CountRaw, 250*time.Millisecond, 50*time.Millisecond).
+					Should(Equal(0))
 			}
 		},
-		Entry("valid anthropic oneshot → 202 + row",
+		Entry("valid anthropic oneshot → 202 + raw row",
 			contractCase{name: "valid_anthropic_oneshot", body: buildValidAnthropicOneshot(), wantStatus: http.StatusAccepted, wantRow: true}),
-		Entry("unknown provider → 422 + no row",
-			contractCase{name: "unknown_provider", body: buildUnknownProvider(), wantStatus: http.StatusUnprocessableEntity, wantRow: false}),
-		Entry("missing provider field → 422 + no row",
-			contractCase{name: "missing_provider", body: buildMissingProvider(), wantStatus: http.StatusUnprocessableEntity, wantRow: false}),
+		Entry("unknown provider → 422 + raw row (captured before parse)",
+			contractCase{name: "unknown_provider", body: buildUnknownProvider(), wantStatus: http.StatusUnprocessableEntity, wantRow: true}),
+		Entry("missing provider field → 422 + raw row (captured before parse)",
+			contractCase{name: "missing_provider", body: buildMissingProvider(), wantStatus: http.StatusUnprocessableEntity, wantRow: true}),
 		Entry("malformed JSON envelope → 400 + no row",
 			contractCase{name: "malformed_envelope", body: buildMalformedEnvelope(), wantStatus: http.StatusBadRequest, wantRow: false}),
 		Entry("empty body → 400 + no row",

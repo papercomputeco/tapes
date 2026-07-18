@@ -163,6 +163,69 @@ func StripHarnessTags(text string) string {
 	return text
 }
 
+// previewWrapperTags are the harness wrappers whose INNER text is the
+// human's own words: the opener a harness side-call re-sends (<session>),
+// a re-injected plan (<conversation>), and the arguments typed to a slash
+// command (<command-args>). For a human-facing turn preview these are
+// UNWRAPPED (inner text kept) rather than stripped whole, so a turn made
+// entirely of harness scaffolding still previews what the user actually
+// wrote instead of the <system-reminder> boilerplate. Every other
+// HarnessTag is volatile per-turn noise and is stripped whole.
+var previewWrapperTags = map[string]bool{
+	"session":      true,
+	"conversation": true,
+	"command-args": true,
+}
+
+// PreviewText projects one content block's Text for a human-facing turn
+// preview: unwrap the content-bearing harness wrappers (keep their inner
+// text) and strip every other harness span whole, then normalize
+// whitespace. Unlike ProjectContent — which strips ALL harness spans for
+// content identity — this preserves the human's words carried inside a
+// wrapper, so the preview reads as prose rather than as harness framing.
+// Returns "" when nothing human survives (the caller drops the block
+// rather than falling back to the raw, un-projected text).
+//
+// Tags are processed in HarnessTags order; because stripTaggedSpan and
+// unwrapTaggedSpan each rewrite the whole string, one pass handles noise
+// nested inside a wrapper and wrappers nested inside wrappers alike.
+func PreviewText(text string) string {
+	for _, tag := range HarnessTags {
+		if previewWrapperTags[tag] {
+			text = unwrapTaggedSpan(text, tag)
+		} else {
+			text = stripTaggedSpan(text, tag)
+		}
+	}
+	return normalizeWhitespace(text)
+}
+
+// unwrapTaggedSpan replaces every <tag>…</tag> span with its inner text,
+// dropping only the tag markers. An unterminated open tag keeps the text
+// after the marker (mirroring, in reverse, stripTaggedSpan's rule that an
+// unterminated open tag swallows the rest of the string).
+func unwrapTaggedSpan(text, tag string) string {
+	openTag := "<" + tag + ">"
+	closeTag := "</" + tag + ">"
+	var out strings.Builder
+	for {
+		start := strings.Index(text, openTag)
+		if start == -1 {
+			out.WriteString(text)
+			return out.String()
+		}
+		out.WriteString(text[:start])
+		rest := text[start+len(openTag):]
+		inner, after, ok := strings.Cut(rest, closeTag)
+		if !ok {
+			out.WriteString(rest) // unterminated: keep inner, drop the open marker
+			return out.String()
+		}
+		out.WriteString(inner)
+		text = after
+	}
+}
+
 // NormalizeForEmbed strips harness-tag spans and folds away whitespace
 // drift, producing the canonical prose used for span embedding. It
 // composes StripHarnessTags with the same whitespace normalization

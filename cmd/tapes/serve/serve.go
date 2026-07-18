@@ -5,9 +5,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -20,13 +20,14 @@ import (
 	"github.com/papercomputeco/tapes/ingest"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/credentials"
+	deriveworker "github.com/papercomputeco/tapes/pkg/derive/worker"
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
+	"github.com/papercomputeco/tapes/pkg/embedworker"
 	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/spanembed"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 	"github.com/papercomputeco/tapes/pkg/telemetry"
-	"github.com/papercomputeco/tapes/pkg/vector/pgvector"
 	"github.com/papercomputeco/tapes/proxy"
 )
 
@@ -51,6 +52,7 @@ type ServeCommander struct {
 	embeddingModel      string
 	embeddingDimensions uint
 	embeddingAPIKey     string
+	embedSpans          bool
 
 	logger *slog.Logger
 }
@@ -181,6 +183,7 @@ func NewServeCmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingModel, &cmder.embeddingModel)
 	config.AddUintFlag(cmd, cmder.flags, config.FlagEmbeddingDims, &cmder.embeddingDimensions)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagPostgres, &cmder.postgresDSN)
+	cmd.Flags().BoolVar(&cmder.embedSpans, "embed-spans", true, "Embed main llm spans in the background so semantic search (tapes search) works; on by default, disable with --embed-spans=false")
 
 	cmd.AddCommand(apicmder.NewAPICmd())
 	cmd.AddCommand(deriveworkercmder.NewDeriveWorkerCmd())
@@ -207,19 +210,9 @@ func (c *ServeCommander) run() error {
 		Project:      c.project,
 	}
 
-	// The vector store and embedder serve the API's search read path
-	// only. Capture-time embedding is retired: the derive worker
-	// family is the single writer of embeddings (tapes serve
-	// derive-worker --embed-spans).
-	vectorDriver, err := pgvector.NewDriver(context.TODO(), &pgvector.Config{
-		ConnString: c.vectorStoreTarget,
-		Dimensions: c.embeddingDimensions,
-	}, c.logger)
-	if err != nil {
-		return fmt.Errorf("could not create new vector driver: %w", err)
-	}
-	defer vectorDriver.Close()
-
+	// The embedder serves the API's search read path and the in-process
+	// embed worker below. Capture-time embedding is retired: the embed
+	// worker family is the single writer of embeddings.
 	embedder, err := embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
 		ProviderType: c.embeddingProvider,
 		TargetURL:    c.embeddingTarget,
@@ -262,7 +255,6 @@ func (c *ServeCommander) run() error {
 	// Create API server
 	apiConfig := api.Config{
 		ListenAddr:   c.apiListen,
-		VectorDriver: vectorDriver,
 		Embedder:     embedder,
 		SpanSearcher: spanSearcher,
 		EnableWebUI:  c.apiWebUI,
@@ -291,8 +283,57 @@ func (c *ServeCommander) run() error {
 		"ingest_addr", c.ingestListen,
 	)
 
+	// Signal-aware context: a SIGINT/SIGTERM cancels it, which stops the
+	// in-process derive worker's run loop (the HTTP servers are torn down
+	// via their deferred Close()).
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// Local single-process convenience: run the derive worker in-process
+	// so a captured turn projects into the sessions/traces/spans surface
+	// the deck and API read — no separate `tapes serve derive-worker`
+	// dance for local use. The short debounce keeps the local
+	// capture→deck loop snappy; production runs the worker as its own
+	// process (`tapes serve derive-worker`) with the full-size default
+	// debounce and its own memory budget.
+	deriveCfg := deriveworker.Config{
+		Project:  c.project,
+		Debounce: 2 * time.Second,
+	}
+	// By default serve also embeds main llm spans, so `tapes search` works
+	// out of the box (disable with --embed-spans=false). Embedding is never a
+	// step of the derive loop — it runs as its own embed-worker loop (see
+	// pkg/embedworker) so a slow or down embedding backend cannot stall
+	// derivation. Locally that loop runs in-process on a short interval to
+	// keep the capture→search loop snappy; production runs it as its own
+	// process (`tapes serve embed-worker`) with the full-size default
+	// interval. It reuses the embedder and span store already built for the
+	// API's search read path. Embedding degrades gracefully: setup or backend
+	// failures disable search but never fail serve, and a failing pass backs
+	// off between retries instead of hammering a dead backend.
+	var embedW *embedworker.Worker
+	if c.embedSpans {
+		if err := spanSearcher.EnsureSchema(ctx); err != nil {
+			c.logger.Warn("span embedding disabled: could not prepare the embedding schema — tapes search will be unavailable", "error", err)
+		} else if pass, perr := spanembed.NewPass(spanSearcher, spanSearcher, embedder, spanembed.PassConfig{
+			Model:      c.embeddingModel,
+			Dimensions: c.embeddingDimensions,
+		}, c.logger); perr != nil {
+			c.logger.Warn("span embedding disabled: could not create the embed pass — tapes search will be unavailable", "error", perr)
+		} else {
+			embedW = embedworker.NewWorker(embedworker.Config{
+				Interval: 10 * time.Second,
+			}, pass, c.logger)
+			c.logger.Info("span embedding enabled (in-process)", "model", c.embeddingModel)
+		}
+	}
+	deriveW := deriveworker.NewWorker(deriveCfg, driver, c.logger)
+	c.logger.Info("starting derive worker (in-process)",
+		"debounce", deriveCfg.Debounce,
+	)
+
 	// Channel to capture errors from goroutines
-	errChan := make(chan error, 3)
+	errChan := make(chan error, 5)
 
 	// Start proxy in goroutine
 	go func() {
@@ -314,15 +355,26 @@ func (c *ServeCommander) run() error {
 		}
 	}()
 
-	// Wait for interrupt signal or error
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		if err := deriveW.Run(ctx); err != nil {
+			errChan <- fmt.Errorf("derive worker error: %w", err)
+		}
+	}()
 
+	if embedW != nil {
+		go func() {
+			if err := embedW.Run(ctx); err != nil {
+				errChan <- fmt.Errorf("embed worker error: %w", err)
+			}
+		}()
+	}
+
+	// Wait for interrupt signal or a fatal error from any service.
 	select {
 	case err := <-errChan:
 		return err
-	case sig := <-sigChan:
-		c.logger.Info("received signal, shutting down", "signal", sig.String())
+	case <-ctx.Done():
+		c.logger.Info("received signal, shutting down")
 		return nil
 	}
 }

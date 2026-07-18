@@ -1,0 +1,2 @@
+ALTER TABLE sessions DROP COLUMN IF EXISTS kind_counts;
+ALTER TABLE sessions DROP COLUMN IF EXISTS tasks;

@@ -51,6 +51,68 @@ func LoadCorpusFile(path string) (wire, transcripts []storage.RawTurnRecord, err
 	return wire, transcripts, nil
 }
 
+// CorpusWriter streams raw-turn rows into a gzipped-JSONL corpus dump —
+// the inverse of LoadCorpus, and the on-disk shape `tapes dev
+// dump-corpus` emits. Rows are appended one at a time so a scan of the
+// interleaved raw layer (many sessions, insertion-ordered by id) can fan
+// out to one open writer per session without buffering payloads. Each
+// row carries its own `source`, so wire + transcript rows written to the
+// same file round-trip back through LoadCorpus's source split. Close
+// flushes the gzip trailer. The writer lives beside the loader so the
+// two formats can never drift.
+type CorpusWriter struct {
+	gz  *gzip.Writer
+	enc *json.Encoder
+}
+
+// NewCorpusWriter wraps w with the gzip + JSONL encoding the corpus
+// format uses.
+func NewCorpusWriter(w io.Writer) *CorpusWriter {
+	gz := gzip.NewWriter(w)
+	return &CorpusWriter{gz: gz, enc: json.NewEncoder(gz)}
+}
+
+// Write appends one raw-turn row, verbatim.
+func (c *CorpusWriter) Write(rec *storage.RawTurnRecord) error {
+	if err := c.enc.Encode(corpusRowFromRecord(rec)); err != nil {
+		return fmt.Errorf("encode corpus row %d: %w", rec.ID, err)
+	}
+	return nil
+}
+
+// Close flushes and finalizes the gzip stream.
+func (c *CorpusWriter) Close() error {
+	if err := c.gz.Close(); err != nil {
+		return fmt.Errorf("close corpus gzip: %w", err)
+	}
+	return nil
+}
+
+// WriteCorpus encodes a slice of raw-turn rows as a corpus dump in one
+// call — the batch convenience over CorpusWriter.
+func WriteCorpus(w io.Writer, rows []storage.RawTurnRecord) error {
+	cw := NewCorpusWriter(w)
+	for i := range rows {
+		if err := cw.Write(&rows[i]); err != nil {
+			return err
+		}
+	}
+	return cw.Close()
+}
+
+// corpusRowFromRecord projects a storage record onto the corpus wire
+// shape, the inverse of the assignment in LoadCorpus.
+func corpusRowFromRecord(r *storage.RawTurnRecord) corpusRow {
+	return corpusRow{
+		ID: r.ID, OrgID: r.OrgID, Source: r.Source,
+		Provider: r.Provider, AgentName: r.AgentName,
+		HarnessID: r.HarnessID, HarnessSessionID: r.HarnessSessionID,
+		RequestID: r.RequestID, RawRequest: r.RawRequest,
+		Response: r.Response, Meta: r.Meta,
+		SessionEnvelope: r.SessionEnvelope, ReceivedAt: r.ReceivedAt,
+	}
+}
+
 // LoadCorpus reads a gzipped-JSONL corpus dump from r and returns its
 // rows split by source: wire captures and transcript pushes. The
 // io.Reader form serves embedded corpora (the demo seed bundles corpus

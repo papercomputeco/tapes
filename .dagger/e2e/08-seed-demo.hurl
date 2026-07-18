@@ -10,7 +10,6 @@ jsonpath "$.sessions" == 2
 jsonpath "$.raw_turns" == 216
 jsonpath "$.raw_turns_inserted" == 216
 jsonpath "$.raw_turns_deduped" == 0
-jsonpath "$.nodes_derived" >= 1
 
 # Re-seeding is a no-op: every replayed turn dedupes at the raw layer
 # and the derive pass is idempotent.
@@ -34,7 +33,7 @@ demo_session_id: jsonpath "$.items[0].id"
 jsonpath "$.items" count >= 3
 jsonpath "$.items[0].harness_metadata.demo" == true
 jsonpath "$.items[1].harness_metadata.demo" == true
-jsonpath "$.items[0].turn_count" >= 1
+jsonpath "$.items[0].rollup.turn_count" >= 1
 
 # The seeded sessions browse exactly like captured ones: turn
 # summaries from the span projection, with derive-time prompt and

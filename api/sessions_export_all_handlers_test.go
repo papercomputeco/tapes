@@ -371,7 +371,7 @@ var _ = Describe("GET /v1/sessions/export", func() {
 		decoded := decodeGzip(gzipped)
 		lines := nonEmptyLinesAPI(decoded)
 		Expect(lines).To(HaveLen(5))
-		Expect(decoded).To(ContainSubstring(`"session_id":"session-0000"`))
+		Expect(decoded).To(ContainSubstring(`"schema":"` + ProjectionSchema + `"`))
 
 		// Cross-check against the uncompressed path so the assertion is
 		// pinned to "identical NDJSON", not just "5 lines of something".

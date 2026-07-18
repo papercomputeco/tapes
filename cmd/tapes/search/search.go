@@ -46,8 +46,8 @@ const searchLongDesc string = `Search session data via the Tapes API.
 Searches the span projection: hits are individual main-conversation llm
 spans with their trace and turn context ("find the turn where X
 happened"). Requires a running Tapes API server with the span embeddings
-written (tapes serve derive-worker --embed-spans, or tapes dev
-embed-spans).
+written (tapes serve, tapes serve embed-worker, or the tapes dev
+embed-spans backfill).
 
 Use --quiet to output only session IDs, one per line, deduplicated in
 score order. This is useful for piping into other commands like

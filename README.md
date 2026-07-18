@@ -76,13 +76,15 @@ Postgres — plus Ollama for embeddings — is the bundled Docker bootstrap (req
 tapes local up
 ```
 
-For local embeddings, pull the default `embeddinggemma` model:
+`tapes local up` pulls the default `embeddinggemma` model and writes the
+Postgres + Ollama connection settings into your `.tapes` config, so the
+commands below need no connection flags.
 
-```bash
-ollama pull embeddinggemma
-```
-
-Then start Tapes:
+Then start Tapes. `tapes serve` runs the whole local pipeline together — the
+proxy (capture), the API, and the derive worker (which projects captured turns
+into sessions/traces/spans) — so anything you capture becomes browsable
+automatically. It also embeds spans for `tapes search` by default (disable with
+`--embed-spans=false`):
 
 ```bash
 tapes serve
@@ -101,17 +103,17 @@ You can also provide the key with `OPENAI_API_KEY` instead of `tapes auth openai
 When OpenAI is selected without a key, Tapes fails at startup with an authentication
 configuration error from the OpenAI embedder.
 
-Search across captured spans (individual main-conversation LLM spans, with
-their trace and turn context):
+Start with demo data so every command below has something to show — this path
+works end to end before you wire up a real agent:
 
 ```bash
-tapes search "What's the weather like in New York?"
+tapes seed --demo
 ```
 
-Export a captured conversation as a transcript (Markdown by default, or JSONL):
+List captured sessions and their ids:
 
 ```bash
-tapes checkout <session-id> --format md -o session.md
+tapes sessions
 ```
 
 Browse sessions and drill into a single session in the deck TUI:
@@ -119,3 +121,33 @@ Browse sessions and drill into a single session in the deck TUI:
 ```bash
 tapes deck
 ```
+
+Export a captured session as JSONL — the API's session→traces→spans projection
+verbatim. `tapes export` is a thin client of `GET /v1/sessions/{id}/export`, so
+it needs a running API (pass `--api-target`, or start one with `tapes serve`).
+The full span tree is included by default; pass `--detail traces` for turn
+headers only. Pass a full session id or its short prefix:
+
+```bash
+tapes export <session-id> --api-target http://127.0.0.1:8081 -o session.jsonl
+tapes export <session-id> --detail traces
+```
+
+Search across captured spans (individual main-conversation LLM spans, with
+their trace and turn context). `tapes serve` embeds spans by default, so this
+works out of the box:
+
+```bash
+tapes search "explain the retry logic"
+```
+
+**Ready for the real thing?** Clear the demo data and point your own agent at
+the proxy:
+
+```bash
+tapes local down --wipe && tapes local up   # recreate the DB, clearing the demo
+tapes start claude                          # or send any client at http://localhost:8080
+```
+
+`tapes start` launches the agent wired to the proxy and tags the session. See
+the [agent guides](https://tapes.dev/guides) for Claude Code, OpenCode, and more.

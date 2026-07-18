@@ -26,6 +26,7 @@ type exportStubDriver struct {
 	sessionsByOrg map[string]map[string]storage.SessionRecord // orgID -> sessionID -> record
 	summaries     map[string][]storage.TraceSummaryRecord     // sessionID -> turns
 	spans         map[string][]storage.SpanRecord             // sessionID -> spans
+	links         map[string][]storage.SpanLinkRecord         // sessionID -> links
 
 	getSessionCalls int
 	lastGetOrg      string
@@ -67,6 +68,29 @@ func (d *exportStubDriver) ListTraceSummaries(_ context.Context, sessionID strin
 
 func (d *exportStubDriver) GetTraceDetail(_ context.Context, _, _ string) (*storage.SpanTurnRecord, []storage.SpanRecord, []storage.SpanLinkRecord, error) {
 	return nil, nil, nil, nil
+}
+
+// ListSessionLinks serves the fixture links for a session (empty when the
+// fixture sets none) — the payload-free half the streaming spans export
+// loads whole.
+func (d *exportStubDriver) ListSessionLinks(_ context.Context, sessionID string) ([]storage.SpanLinkRecord, error) {
+	return d.links[sessionID], nil
+}
+
+// ListTraceSpans serves one trace's spans from the flat per-session
+// fixture, preserving slice order. A trace id belongs to exactly one
+// session, so scanning every session's spans yields that trace's spans in
+// their stored (seq) order — the same order ListSpansByTrace returns.
+func (d *exportStubDriver) ListTraceSpans(_ context.Context, _, traceID string) ([]storage.SpanRecord, error) {
+	var out []storage.SpanRecord
+	for _, spans := range d.spans {
+		for _, sp := range spans {
+			if sp.TraceID == traceID {
+				out = append(out, sp)
+			}
+		}
+	}
+	return out, nil
 }
 
 // ListSessionSpanModel serves the fixture turns/spans for a session. Like
@@ -186,13 +210,13 @@ var _ = Describe("GET /v1/sessions/:id/export", func() {
 		// with full payloads.
 		var line SessionTracesResponse
 		Expect(json.Unmarshal([]byte(lines[0]), &line)).To(Succeed())
+		Expect(line.Schema).To(Equal(ProjectionSchema))
 		Expect(line.Session.ID).To(Equal(sessionID))
 		Expect(line.Traces).To(HaveLen(2))
 		Expect(line.Traces[0].Trace.TraceID).To(Equal("t1"))
-		Expect(line.Traces[0].Trace.SessionID).To(Equal(sessionID))
 		Expect(line.Traces[0].Spans).To(HaveLen(1))
 		Expect(line.Traces[0].Spans[0].SpanID).To(Equal("s1"))
-		Expect(line.Traces[0].Spans[0].Metadata).To(HaveKeyWithValue("model", "claude-test"))
+		Expect(line.Traces[0].Spans[0].Model).To(Equal("claude-test"))
 		Expect(line.Traces[1].Trace.TraceID).To(Equal("t2"))
 		Expect(line.Traces[1].Spans).To(HaveLen(1))
 		Expect(line.Traces[1].Spans[0].SpanID).To(Equal("s2"))

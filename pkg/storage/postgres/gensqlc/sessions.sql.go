@@ -23,9 +23,9 @@ type DeleteSessionParams struct {
 
 // Remove a session by its org-scoped id. Returns the affected row count so the
 // handler can distinguish a real delete from a missing id. Dependent rows
-// (subagent child sessions, derived nodes, spans/span_turns/span_links) are
-// removed by the session_id ON DELETE CASCADE foreign keys, so this single
-// statement tears down the whole subtree.
+// (subagent child sessions, spans/span_turns/span_links) are removed by the
+// session_id ON DELETE CASCADE foreign keys, so this single statement tears
+// down the whole subtree.
 func (q *Queries) DeleteSession(ctx context.Context, arg DeleteSessionParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteSession, arg.OrgID, arg.ID)
 	if err != nil {
@@ -35,7 +35,7 @@ func (q *Queries) DeleteSession(ctx context.Context, arg DeleteSessionParams) (i
 }
 
 const getSessionByNaturalKey = `-- name: GetSessionByNaturalKey :one
-SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns FROM sessions
+SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns, tasks, kind_counts FROM sessions
 WHERE org_id = $1
   AND harness_id = $2
   AND harness_session_id = $3
@@ -81,12 +81,14 @@ func (q *Queries) GetSessionByNaturalKey(ctx context.Context, arg GetSessionByNa
 		&i.ModelUsage,
 		&i.TotalTokens,
 		&i.DurationNs,
+		&i.Tasks,
+		&i.KindCounts,
 	)
 	return i, err
 }
 
 const getSessionRecord = `-- name: GetSessionRecord :one
-SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns FROM sessions
+SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns, tasks, kind_counts FROM sessions
 WHERE org_id = $1 AND id = $2
 `
 
@@ -125,6 +127,8 @@ func (q *Queries) GetSessionRecord(ctx context.Context, arg GetSessionRecordPara
 		&i.ModelUsage,
 		&i.TotalTokens,
 		&i.DurationNs,
+		&i.Tasks,
+		&i.KindCounts,
 	)
 	return i, err
 }
@@ -185,119 +189,6 @@ func (q *Queries) InsertSessionPlaceholder(ctx context.Context, arg InsertSessio
 	return id, err
 }
 
-const listNodesBySession = `-- name: ListNodesBySession :many
-SELECT hash, bucket, type, role, content, model, provider, agent_name, stop_reason, prompt_tokens, completion_tokens, total_tokens, cache_creation_input_tokens, cache_read_input_tokens, total_duration_ns, prompt_duration_ns, project, created_at, parent_hash, session_id, org_id, request_system, request_max_tokens, request_temperature, request_stream, request_tool_count, node_kind, parent_tool_use_id, thread_id FROM nodes
-WHERE session_id = $1
-ORDER BY created_at ASC
-`
-
-// All nodes attributed to a session, ordered by capture time (chronological).
-func (q *Queries) ListNodesBySession(ctx context.Context, sessionID pgtype.UUID) ([]Node, error) {
-	rows, err := q.db.Query(ctx, listNodesBySession, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Node
-	for rows.Next() {
-		var i Node
-		if err := rows.Scan(
-			&i.Hash,
-			&i.Bucket,
-			&i.Type,
-			&i.Role,
-			&i.Content,
-			&i.Model,
-			&i.Provider,
-			&i.AgentName,
-			&i.StopReason,
-			&i.PromptTokens,
-			&i.CompletionTokens,
-			&i.TotalTokens,
-			&i.CacheCreationInputTokens,
-			&i.CacheReadInputTokens,
-			&i.TotalDurationNs,
-			&i.PromptDurationNs,
-			&i.Project,
-			&i.CreatedAt,
-			&i.ParentHash,
-			&i.SessionID,
-			&i.OrgID,
-			&i.RequestSystem,
-			&i.RequestMaxTokens,
-			&i.RequestTemperature,
-			&i.RequestStream,
-			&i.RequestToolCount,
-			&i.NodeKind,
-			&i.ParentToolUseID,
-			&i.ThreadID,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const setNodeSessionID = `-- name: SetNodeSessionID :exec
-UPDATE nodes
-   SET session_id = $1
- WHERE org_id = $2 AND hash = $3
-`
-
-type SetNodeSessionIDParams struct {
-	SessionID pgtype.UUID
-	OrgID     pgtype.UUID
-	Hash      string
-}
-
-// Stamp session_id onto an already-inserted nodes row. The existing
-// InsertNode query is left intact (additive ALTER added the column
-// with no NOT NULL constraint), so ingest can either use this safety
-// hatch or extend InsertNode in a follow-up. Scoped to (org_id, hash)
-// to match the composite PK introduced in this migration: a write that
-// only matched on hash would clobber rows for unrelated orgs.
-func (q *Queries) SetNodeSessionID(ctx context.Context, arg SetNodeSessionIDParams) error {
-	_, err := q.db.Exec(ctx, setNodeSessionID, arg.SessionID, arg.OrgID, arg.Hash)
-	return err
-}
-
-const updateSessionCounters = `-- name: UpdateSessionCounters :exec
-UPDATE sessions
-   SET last_seen_at        = $1,
-       turn_count          = turn_count + $2,
-       total_input_tokens  = total_input_tokens  + $3,
-       total_output_tokens = total_output_tokens + $4,
-       total_cost_usd      = total_cost_usd      + $5
- WHERE id = $6
-`
-
-type UpdateSessionCountersParams struct {
-	Now               pgtype.Timestamptz
-	TurnCountDelta    int32
-	InputTokensDelta  int64
-	OutputTokensDelta int64
-	CostUsdDelta      pgtype.Numeric
-	ID                pgtype.UUID
-}
-
-// Roll the per-turn counters into the sessions row. Called by ingest
-// after the nodes insert, inside the same Tx.
-func (q *Queries) UpdateSessionCounters(ctx context.Context, arg UpdateSessionCountersParams) error {
-	_, err := q.db.Exec(ctx, updateSessionCounters,
-		arg.Now,
-		arg.TurnCountDelta,
-		arg.InputTokensDelta,
-		arg.OutputTokensDelta,
-		arg.CostUsdDelta,
-		arg.ID,
-	)
-	return err
-}
-
 const updateSessionDerivedTitle = `-- name: UpdateSessionDerivedTitle :exec
 UPDATE sessions SET derived_title = $1 WHERE id = $2
 `
@@ -312,6 +203,22 @@ type UpdateSessionDerivedTitleParams struct {
 // idempotent either way.
 func (q *Queries) UpdateSessionDerivedTitle(ctx context.Context, arg UpdateSessionDerivedTitleParams) error {
 	_, err := q.db.Exec(ctx, updateSessionDerivedTitle, arg.DerivedTitle, arg.ID)
+	return err
+}
+
+const updateSessionKindCounts = `-- name: UpdateSessionKindCounts :exec
+UPDATE sessions SET kind_counts = $1 WHERE id = $2
+`
+
+type UpdateSessionKindCountsParams struct {
+	KindCounts []byte
+	ID         pgtype.UUID
+}
+
+// Write the per-call_kind span tally onto the session as a JSONB object.
+// Re-derive overwrites it idempotently.
+func (q *Queries) UpdateSessionKindCounts(ctx context.Context, arg UpdateSessionKindCountsParams) error {
+	_, err := q.db.Exec(ctx, updateSessionKindCounts, arg.KindCounts, arg.ID)
 	return err
 }
 
@@ -379,12 +286,13 @@ type UpdateSessionStatusParams struct {
 }
 
 // Persist the recomputed chain-aware status. has_git_activity is a sticky
-// flag and tool_result_count / tool_error_count are cumulative totals, all
-// accumulated across the session's turns and stems — the caller computes the
-// new values in Go from the prior row state plus this turn's new nodes, so
-// this query just writes them. derived_status mirrors
-// pkg/sessions.DetermineStatus over those signals and the session's latest
-// leaf. Called by ingest in the same Tx as UpdateSessionCounters.
+// flag and tool_result_count / tool_error_count are cumulative totals,
+// folded over the session's tool spans across every thread. The deriver
+// computes the values in Go via pkg/derive.FoldSessionStatus, so this query
+// just writes them. derived_status mirrors pkg/sessions.DetermineStatus over
+// those signals and the session's terminal main-spine span. Called only by
+// the deriver (writeSpanSet) during the derive pass — the ingest path no
+// longer writes status.
 func (q *Queries) UpdateSessionStatus(ctx context.Context, arg UpdateSessionStatusParams) error {
 	_, err := q.db.Exec(ctx, updateSessionStatus,
 		arg.HasGitActivity,
@@ -393,6 +301,23 @@ func (q *Queries) UpdateSessionStatus(ctx context.Context, arg UpdateSessionStat
 		arg.DerivedStatus,
 		arg.ID,
 	)
+	return err
+}
+
+const updateSessionTasks = `-- name: UpdateSessionTasks :exec
+UPDATE sessions SET tasks = $1 WHERE id = $2
+`
+
+type UpdateSessionTasksParams struct {
+	Tasks []byte
+	ID    pgtype.UUID
+}
+
+// Fold the TaskCreate/TaskUpdate replay onto the session. Like model_usage
+// this is a Go-side fold (it depends on regex id extraction SQL can't do),
+// written as a JSONB array. Re-derive overwrites it idempotently.
+func (q *Queries) UpdateSessionTasks(ctx context.Context, arg UpdateSessionTasksParams) error {
+	_, err := q.db.Exec(ctx, updateSessionTasks, arg.Tasks, arg.ID)
 	return err
 }
 
@@ -432,7 +357,7 @@ SET last_seen_at     = $10,
     cwd              = COALESCE($7, sessions.cwd),
     harness_version  = COALESCE($8, sessions.harness_version),
     parent_session_id = COALESCE($9, sessions.parent_session_id)
-RETURNING id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns
+RETURNING id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns, tasks, kind_counts
 `
 
 type UpsertSessionParams struct {
@@ -463,8 +388,8 @@ type UpsertSessionParams struct {
 // before the parent's, InsertSessionPlaceholder wrote the parent row
 // carrying the *child's* auth_subject; the parent's real upsert here
 // is authoritative and must reclaim attribution. Counters are NOT
-// touched here — UpdateSessionCounters handles that after the nodes
-// insert in the same Tx.
+// touched here — the derive-time span fold (FoldSessionRollupsFromSpans)
+// owns the token/turn/cost rollups.
 func (q *Queries) UpsertSession(ctx context.Context, arg UpsertSessionParams) (Session, error) {
 	row := q.db.QueryRow(ctx, upsertSession,
 		arg.ID,
@@ -507,6 +432,8 @@ func (q *Queries) UpsertSession(ctx context.Context, arg UpsertSessionParams) (S
 		&i.ModelUsage,
 		&i.TotalTokens,
 		&i.DurationNs,
+		&i.Tasks,
+		&i.KindCounts,
 	)
 	return i, err
 }

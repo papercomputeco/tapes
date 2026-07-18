@@ -52,6 +52,15 @@ func newTestOrgID() string {
 	return uuid.New().String()
 }
 
+// Driver.IngestTurn no longer persists merkle nodes and no longer bumps the
+// per-turn token/turn/cost counters — node persistence is retired (the merkle
+// chain is in-memory only) and the session rollups are owned by the
+// derive-time span fold (FoldSessionRollupsFromSpans). What IngestTurn still
+// does, and what these specs assert, is: UPSERT the sessions row keyed by the
+// envelope's natural key (or a synthetic harness_session_id from the turn's
+// Merkle root), resolve the optional fork-parent FK (placeholder-inserting the
+// parent when its own first turn hasn't landed yet), and fold derived_status
+// from the in-memory turn chain.
 var _ = Describe("Driver.IngestTurn", func() {
 	var (
 		driver   storage.Driver
@@ -69,8 +78,6 @@ var _ = Describe("Driver.IngestTurn", func() {
 
 		pgDriver, ok := driver.(*postgres.Driver)
 		Expect(ok).To(BeTrue())
-		_, err = pgDriver.DB().Exec(ctx, "TRUNCATE TABLE nodes")
-		Expect(err).NotTo(HaveOccurred())
 		_, err = pgDriver.DB().Exec(ctx, "TRUNCATE TABLE sessions CASCADE")
 		Expect(err).NotTo(HaveOccurred())
 
@@ -84,7 +91,7 @@ var _ = Describe("Driver.IngestTurn", func() {
 		}
 	})
 
-	It("creates a sessions row, inserts nodes with FK, and bumps counters on happy path", func() {
+	It("UPSERTs a sessions row keyed by the envelope's natural key", func() {
 		orgID := newTestOrgID()
 		envelope := &sessions.IngestEnvelope{
 			OrgID:            orgID,
@@ -92,135 +99,55 @@ var _ = Describe("Driver.IngestTurn", func() {
 			HarnessID:        "claude",
 			HarnessSessionID: "harness-happy",
 		}
-		nodes := sessionFixture("happy path")
 
 		res, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
-			Session:      envelope,
-			Nodes:        nodes,
-			InputTokens:  12,
-			OutputTokens: 8,
-			CostUSD:      0,
+			Session: envelope,
+			Nodes:   sessionFixture("happy path"),
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.SessionID).NotTo(BeEmpty())
-		Expect(res.NewNodes).To(HaveLen(2))
-		Expect(res.CountersUpdated).To(BeTrue())
 
-		// Sessions row exists with the resolved counters.
+		// The sessions row exists with the resolved natural key. Token/turn
+		// counters are NOT asserted here: ingest no longer maintains them
+		// (the derive-time span fold owns those rollups).
 		pgDriver := driver.(*postgres.Driver)
 		var (
-			turnCount    int32
-			inputTokens  int64
-			outputTokens int64
-			harnessID    string
+			harnessID        string
+			harnessSessionID string
 		)
 		err = pgDriver.DB().QueryRow(ctx, `
-			SELECT turn_count, total_input_tokens, total_output_tokens, harness_id
+			SELECT harness_id, harness_session_id
 			  FROM sessions
 			 WHERE org_id = $1 AND harness_id = $2 AND harness_session_id = $3`,
-			mustUUID(orgID), "claude", "harness-happy").Scan(&turnCount, &inputTokens, &outputTokens, &harnessID)
+			mustUUID(orgID), "claude", "harness-happy").Scan(&harnessID, &harnessSessionID)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(turnCount).To(Equal(int32(1)))
-		Expect(inputTokens).To(Equal(int64(12)))
-		Expect(outputTokens).To(Equal(int64(8)))
 		Expect(harnessID).To(Equal("claude"))
-
-		// Both nodes carry the session_id FK.
-		for _, n := range nodes {
-			var sid pgtype.UUID
-			err := pgDriver.DB().QueryRow(ctx, `SELECT session_id FROM nodes WHERE org_id = $2 AND hash = $1`, n.Hash, mustUUID(orgID)).Scan(&sid)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(sid.Valid).To(BeTrue())
-		}
+		Expect(harnessSessionID).To(Equal("harness-happy"))
 	})
 
-	It("derives status 'completed' for an assistant leaf with a terminal stop_reason", func() {
+	It("writes session identity only — status stays at its 'unknown' default until derive folds it", func() {
+		// Phase 1d: derived_status / has_git_activity / tool counts are
+		// deriver outputs now; ingest must not write them. A freshly
+		// ingested-but-not-yet-derived session carries the column defaults.
 		orgID := newTestOrgID()
-		env := &sessions.IngestEnvelope{OrgID: orgID, AuthSubject: "s", HarnessID: "claude", HarnessSessionID: "hs-complete"}
+		env := &sessions.IngestEnvelope{OrgID: orgID, AuthSubject: "s", HarnessID: "claude", HarnessSessionID: "hs-identity-only"}
 
 		_, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{Session: env, Nodes: sessionFixture("done")})
 		Expect(err).NotTo(HaveOccurred())
 
 		var status string
-		var toolErrors int
+		var toolResults, toolErrors int
 		var hasGit bool
 		pg := driver.(*postgres.Driver)
-		Expect(pg.DB().QueryRow(ctx, `SELECT derived_status, tool_error_count, has_git_activity FROM sessions WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
-			mustUUID(orgID), "claude", "hs-complete").Scan(&status, &toolErrors, &hasGit)).To(Succeed())
-		Expect(status).To(Equal(sessions.StatusCompleted))
+		Expect(pg.DB().QueryRow(ctx, `SELECT derived_status, tool_result_count, tool_error_count, has_git_activity FROM sessions WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
+			mustUUID(orgID), "claude", "hs-identity-only").Scan(&status, &toolResults, &toolErrors, &hasGit)).To(Succeed())
+		Expect(status).To(Equal(sessions.StatusUnknown))
+		Expect(toolResults).To(Equal(0))
 		Expect(toolErrors).To(Equal(0))
 		Expect(hasGit).To(BeFalse())
 	})
 
-	It("derives 'completed' via git activity even when the leaf is a non-terminal tool_result (PCC-515)", func() {
-		orgID := newTestOrgID()
-		env := &sessions.IngestEnvelope{OrgID: orgID, AuthSubject: "s", HarnessID: "claude", HarnessSessionID: "hs-git"}
-
-		user := merkle.NewNode(merkle.Bucket{Type: "message", Role: "user", Content: []llm.ContentBlock{{Type: "text", Text: "ship it"}}}, nil)
-		asst := merkle.NewNode(merkle.Bucket{Type: "message", Role: "assistant", Content: []llm.ContentBlock{{Type: "tool_use", ToolName: "Bash", ToolInput: map[string]any{"command": "git commit -m wip"}}}}, user, merkle.NodeOptions{StopReason: "tool_use"})
-		// Leaf is the tool_result (user role, no terminal stop_reason): the
-		// leaf-only SQL classifier would call this abandoned, while the
-		// chain-aware classifier sees the git commit and returns completed.
-		toolRes := merkle.NewNode(merkle.Bucket{Type: "message", Role: "user", Content: []llm.ContentBlock{{Type: "tool_result", ToolOutput: "ok"}}}, asst)
-
-		_, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{Session: env, Nodes: []*merkle.Node{user, asst, toolRes}})
-		Expect(err).NotTo(HaveOccurred())
-
-		var status string
-		var hasGit bool
-		pg := driver.(*postgres.Driver)
-		Expect(pg.DB().QueryRow(ctx, `SELECT derived_status, has_git_activity FROM sessions WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
-			mustUUID(orgID), "claude", "hs-git").Scan(&status, &hasGit)).To(Succeed())
-		Expect(status).To(Equal(sessions.StatusCompleted))
-		Expect(hasGit).To(BeTrue())
-	})
-
-	It("derives 'failed' when the session ends on an unrecovered tool_result error", func() {
-		orgID := newTestOrgID()
-		env := &sessions.IngestEnvelope{OrgID: orgID, AuthSubject: "s", HarnessID: "claude", HarnessSessionID: "hs-err"}
-
-		user := merkle.NewNode(merkle.Bucket{Type: "message", Role: "user", Content: []llm.ContentBlock{{Type: "text", Text: "do it"}}}, nil)
-		asst := merkle.NewNode(merkle.Bucket{Type: "message", Role: "assistant", Content: []llm.ContentBlock{{Type: "tool_use", ToolName: "Bash", ToolInput: map[string]any{"command": "ls"}}}}, user, merkle.NodeOptions{StopReason: "tool_use"})
-		toolRes := merkle.NewNode(merkle.Bucket{Type: "message", Role: "user", Content: []llm.ContentBlock{{Type: "tool_result", IsError: true, ToolOutput: "boom"}}}, asst)
-
-		_, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{Session: env, Nodes: []*merkle.Node{user, asst, toolRes}})
-		Expect(err).NotTo(HaveOccurred())
-
-		var status string
-		var toolErrors int
-		pg := driver.(*postgres.Driver)
-		Expect(pg.DB().QueryRow(ctx, `SELECT derived_status, tool_error_count FROM sessions WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
-			mustUUID(orgID), "claude", "hs-err").Scan(&status, &toolErrors)).To(Succeed())
-		Expect(status).To(Equal(sessions.StatusFailed))
-		Expect(toolErrors).To(Equal(1))
-	})
-
-	It("backfills derived_status for session rows that predate the computation", func() {
-		orgID := newTestOrgID()
-		env := &sessions.IngestEnvelope{OrgID: orgID, AuthSubject: "s", HarnessID: "claude", HarnessSessionID: "hs-backfill"}
-		_, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{Session: env, Nodes: sessionFixture("backfill me")})
-		Expect(err).NotTo(HaveOccurred())
-
-		pg := driver.(*postgres.Driver)
-		// Simulate a pre-feature row: blank out the computed status so the
-		// backfill has something to recover.
-		_, err = pg.DB().Exec(ctx, `UPDATE sessions SET derived_status='unknown', has_git_activity=false, tool_result_count=0, tool_error_count=0 WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
-			mustUUID(orgID), "claude", "hs-backfill")
-		Expect(err).NotTo(HaveOccurred())
-
-		bf, ok := driver.(storage.SessionStatusBackfiller)
-		Expect(ok).To(BeTrue(), "postgres driver must satisfy SessionStatusBackfiller")
-		res, err := bf.BackfillSessionStatus(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(res.Updated).To(BeNumerically(">=", 1))
-
-		var status string
-		Expect(pg.DB().QueryRow(ctx, `SELECT derived_status FROM sessions WHERE org_id=$1 AND harness_id=$2 AND harness_session_id=$3`,
-			mustUUID(orgID), "claude", "hs-backfill").Scan(&status)).To(Succeed())
-		Expect(status).To(Equal(sessions.StatusCompleted))
-	})
-
-	It("is idempotent across a retried envelope: one row, one set of counter increments", func() {
+	It("is idempotent across a retried envelope: one row, same session id", func() {
 		orgID := newTestOrgID()
 		envelope := &sessions.IngestEnvelope{
 			OrgID:            orgID,
@@ -231,19 +158,14 @@ var _ = Describe("Driver.IngestTurn", func() {
 		nodes := sessionFixture("retry me")
 
 		req := storage.IngestTurnRequest{
-			Session:      envelope,
-			Nodes:        nodes,
-			InputTokens:  10,
-			OutputTokens: 4,
+			Session: envelope,
+			Nodes:   nodes,
 		}
 		res1, err := ingester.IngestTurn(ctx, req)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(res1.CountersUpdated).To(BeTrue())
 
 		res2, err := ingester.IngestTurn(ctx, req)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(res2.NewNodes).To(BeEmpty(), "retry must insert no new nodes")
-		Expect(res2.CountersUpdated).To(BeFalse(), "retry must not bump counters")
 		Expect(res2.SessionID).To(Equal(res1.SessionID), "retry must resolve to the same sessions row")
 
 		pgDriver := driver.(*postgres.Driver)
@@ -251,13 +173,6 @@ var _ = Describe("Driver.IngestTurn", func() {
 		Expect(pgDriver.DB().QueryRow(ctx, `SELECT COUNT(*) FROM sessions WHERE org_id = $1 AND harness_session_id = $2`,
 			mustUUID(orgID), "harness-retry").Scan(&rowCount)).To(Succeed())
 		Expect(rowCount).To(Equal(1))
-
-		var turnCount int32
-		var inputTokens int64
-		Expect(pgDriver.DB().QueryRow(ctx, `SELECT turn_count, total_input_tokens FROM sessions WHERE org_id = $1 AND harness_session_id = $2`,
-			mustUUID(orgID), "harness-retry").Scan(&turnCount, &inputTokens)).To(Succeed())
-		Expect(turnCount).To(Equal(int32(1)))
-		Expect(inputTokens).To(Equal(int64(10)))
 	})
 
 	It("FKs to an existing parent session when ParentHarnessSessionID resolves", func() {
@@ -270,10 +185,8 @@ var _ = Describe("Driver.IngestTurn", func() {
 			HarnessSessionID: parentKey,
 		}
 		_, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
-			Session:      parentEnv,
-			Nodes:        sessionFixture("parent turn"),
-			InputTokens:  3,
-			OutputTokens: 2,
+			Session: parentEnv,
+			Nodes:   sessionFixture("parent turn"),
 		})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -285,10 +198,8 @@ var _ = Describe("Driver.IngestTurn", func() {
 			ParentHarnessSessionID: &parentKey,
 		}
 		childRes, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
-			Session:      childEnv,
-			Nodes:        sessionFixture("child turn"),
-			InputTokens:  4,
-			OutputTokens: 3,
+			Session: childEnv,
+			Nodes:   sessionFixture("child turn"),
 		})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -316,28 +227,21 @@ var _ = Describe("Driver.IngestTurn", func() {
 		}
 
 		childRes, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
-			Session:      childEnv,
-			Nodes:        sessionFixture("orphan child"),
-			InputTokens:  1,
-			OutputTokens: 1,
+			Session: childEnv,
+			Nodes:   sessionFixture("orphan child"),
 		})
 		Expect(err).NotTo(HaveOccurred())
 
 		pgDriver := driver.(*postgres.Driver)
 
-		// Parent placeholder row exists, with zero counters (no turn data yet).
-		var parentTurnCount int32
-		var parentInputTokens int64
-		err = pgDriver.DB().QueryRow(ctx, `SELECT turn_count, total_input_tokens FROM sessions WHERE org_id = $1 AND harness_session_id = $2`,
-			mustUUID(orgID), parentKey).Scan(&parentTurnCount, &parentInputTokens)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(parentTurnCount).To(Equal(int32(0)))
-		Expect(parentInputTokens).To(Equal(int64(0)))
+		// Parent placeholder row exists.
+		var parentRowID pgtype.UUID
+		Expect(pgDriver.DB().QueryRow(ctx, `SELECT id FROM sessions WHERE org_id = $1 AND harness_session_id = $2`,
+			mustUUID(orgID), parentKey).Scan(&parentRowID)).To(Succeed())
 
 		// Child FK references the placeholder's id.
-		var childParentID, parentRowID pgtype.UUID
+		var childParentID pgtype.UUID
 		Expect(pgDriver.DB().QueryRow(ctx, `SELECT parent_session_id FROM sessions WHERE id = $1`, mustUUID(childRes.SessionID)).Scan(&childParentID)).To(Succeed())
-		Expect(pgDriver.DB().QueryRow(ctx, `SELECT id FROM sessions WHERE org_id = $1 AND harness_session_id = $2`, mustUUID(orgID), parentKey).Scan(&parentRowID)).To(Succeed())
 		Expect(childParentID.Valid).To(BeTrue())
 		Expect(childParentID.Bytes).To(Equal(parentRowID.Bytes))
 	})
@@ -345,10 +249,8 @@ var _ = Describe("Driver.IngestTurn", func() {
 	It("derives a synthetic harness_session_id from the root hash when the envelope is nil", func() {
 		nodes := sessionFixture("synthetic")
 		res, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
-			Session:      nil,
-			Nodes:        nodes,
-			InputTokens:  2,
-			OutputTokens: 1,
+			Session: nil,
+			Nodes:   nodes,
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.SessionID).NotTo(BeEmpty())
@@ -384,40 +286,36 @@ var _ = Describe("Driver.IngestTurn", func() {
 			ParentHarnessSessionID: &parentKey,
 		}
 		_, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
-			Session:      childEnv,
-			Nodes:        sessionFixture("child first"),
-			InputTokens:  1,
-			OutputTokens: 1,
+			Session: childEnv,
+			Nodes:   sessionFixture("child first"),
 		})
 		Expect(err).NotTo(HaveOccurred())
 
 		pgDriver := driver.(*postgres.Driver)
 
-		// Sanity: placeholder row exists, with zero counters and the
-		// child's auth_subject (this is the state we must back-fill).
+		// Sanity: placeholder row exists with the child's auth_subject and no
+		// name/cwd/version yet (this is the state we must back-fill).
 		var (
-			placeholderAuth      string
-			placeholderName      pgtype.Text
-			placeholderCwd       pgtype.Text
-			placeholderVersion   pgtype.Text
-			placeholderTurnCount int32
+			placeholderAuth    string
+			placeholderName    pgtype.Text
+			placeholderCwd     pgtype.Text
+			placeholderVersion pgtype.Text
 		)
 		err = pgDriver.DB().QueryRow(ctx, `
-			SELECT auth_subject, name, cwd, harness_version, turn_count
+			SELECT auth_subject, name, cwd, harness_version
 			  FROM sessions
 			 WHERE org_id = $1 AND harness_session_id = $2`,
 			mustUUID(orgID), parentKey,
-		).Scan(&placeholderAuth, &placeholderName, &placeholderCwd, &placeholderVersion, &placeholderTurnCount)
+		).Scan(&placeholderAuth, &placeholderName, &placeholderCwd, &placeholderVersion)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(placeholderAuth).To(Equal(childAuthSubject), "placeholder should temporarily carry the child's auth_subject")
 		Expect(placeholderName.Valid).To(BeFalse(), "placeholder has no name yet")
 		Expect(placeholderCwd.Valid).To(BeFalse(), "placeholder has no cwd yet")
 		Expect(placeholderVersion.Valid).To(BeFalse(), "placeholder has no harness_version yet")
-		Expect(placeholderTurnCount).To(Equal(int32(0)), "placeholder carries no turn data yet")
 
-		// 2. Parent's first real turn lands. UpsertSession must
-		//    overwrite auth_subject (reclaiming attribution) and merge
-		//    the remaining mutable fields. Counters bump from 0 to 1.
+		// 2. Parent's first real turn lands. UpsertSession must overwrite
+		//    auth_subject (reclaiming attribution) and merge the remaining
+		//    mutable fields.
 		parentAuthSubject := "parent-subject"
 		parentEnv := &sessions.IngestEnvelope{
 			OrgID:            orgID,
@@ -429,34 +327,26 @@ var _ = Describe("Driver.IngestTurn", func() {
 			HarnessVersion:   "1.2.3",
 		}
 		parentRes, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
-			Session:      parentEnv,
-			Nodes:        sessionFixture("parent backfills"),
-			InputTokens:  7,
-			OutputTokens: 5,
+			Session: parentEnv,
+			Nodes:   sessionFixture("parent backfills"),
 		})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(parentRes.CountersUpdated).To(BeTrue())
 
 		// 3. Assert: same row (the placeholder's id is preserved), with
 		//    every mutable field now reflecting the parent's authoritative
-		//    values, and counters bumped to 1 turn.
+		//    values.
 		var (
-			finalAuth       string
-			finalName       pgtype.Text
-			finalCwd        pgtype.Text
-			finalVersion    pgtype.Text
-			finalTurnCount  int32
-			finalInputToks  int64
-			finalOutputToks int64
+			finalAuth    string
+			finalName    pgtype.Text
+			finalCwd     pgtype.Text
+			finalVersion pgtype.Text
 		)
 		err = pgDriver.DB().QueryRow(ctx, `
-			SELECT auth_subject, name, cwd, harness_version,
-			       turn_count, total_input_tokens, total_output_tokens
+			SELECT auth_subject, name, cwd, harness_version
 			  FROM sessions
 			 WHERE org_id = $1 AND harness_session_id = $2`,
 			mustUUID(orgID), parentKey,
-		).Scan(&finalAuth, &finalName, &finalCwd, &finalVersion,
-			&finalTurnCount, &finalInputToks, &finalOutputToks)
+		).Scan(&finalAuth, &finalName, &finalCwd, &finalVersion)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(finalAuth).To(Equal(parentAuthSubject), "parent's real upsert must overwrite the child-borrowed auth_subject")
 		Expect(finalName.Valid).To(BeTrue())
@@ -465,13 +355,10 @@ var _ = Describe("Driver.IngestTurn", func() {
 		Expect(finalCwd.String).To(Equal("/parent/cwd"))
 		Expect(finalVersion.Valid).To(BeTrue())
 		Expect(finalVersion.String).To(Equal("1.2.3"))
-		Expect(finalTurnCount).To(Equal(int32(1)))
-		Expect(finalInputToks).To(Equal(int64(7)))
-		Expect(finalOutputToks).To(Equal(int64(5)))
 
-		// 4. The sessions row id is the placeholder's id (preserved by
-		//    the ON CONFLICT path), so the child's parent_session_id FK
-		//    still resolves.
+		// 4. The sessions row id is the placeholder's id (preserved by the
+		//    ON CONFLICT path), so the child's parent_session_id FK still
+		//    resolves.
 		var parentRowID pgtype.UUID
 		Expect(pgDriver.DB().QueryRow(ctx, `SELECT id FROM sessions WHERE org_id = $1 AND harness_session_id = $2`,
 			mustUUID(orgID), parentKey).Scan(&parentRowID)).To(Succeed())
@@ -482,42 +369,6 @@ var _ = Describe("Driver.IngestTurn", func() {
 			mustUUID(orgID), "child-of-pending").Scan(&childParentID)).To(Succeed())
 		Expect(childParentID.Valid).To(BeTrue())
 		Expect(childParentID.Bytes).To(Equal(parentRowID.Bytes))
-	})
-
-	It("does NOT bump counters on a full-dup retry where every node hash already exists", func() {
-		orgID := newTestOrgID()
-		envelope := &sessions.IngestEnvelope{
-			OrgID:            orgID,
-			AuthSubject:      "subject-e",
-			HarnessID:        "claude",
-			HarnessSessionID: "harness-dup",
-		}
-		nodes := sessionFixture("dup retry")
-
-		_, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
-			Session:      envelope,
-			Nodes:        nodes,
-			InputTokens:  9,
-			OutputTokens: 6,
-		})
-		Expect(err).NotTo(HaveOccurred())
-
-		// Same envelope, same node chain again. The UPSERT will bump
-		// last_seen_at but the node-insert rowcount must stay 0 for
-		// every node so counters skip.
-		res, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
-			Session:      envelope,
-			Nodes:        nodes,
-			InputTokens:  9,
-			OutputTokens: 6,
-		})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(res.CountersUpdated).To(BeFalse())
-
-		pgDriver := driver.(*postgres.Driver)
-		var turnCount int32
-		Expect(pgDriver.DB().QueryRow(ctx, `SELECT turn_count FROM sessions WHERE id = $1`, mustUUID(res.SessionID)).Scan(&turnCount)).To(Succeed())
-		Expect(turnCount).To(Equal(int32(1)))
 	})
 })
 

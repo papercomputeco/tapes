@@ -32,8 +32,6 @@ type Metrics struct {
 	// stays queued.
 	Requeued prometheus.Counter
 
-	NodesUpserted  prometheus.Counter
-	NodesPruned    prometheus.Counter
 	DeriveDuration prometheus.Histogram
 
 	// UnknownCalls counts calls the classifier could not match to any
@@ -81,14 +79,6 @@ func NewMetrics() *Metrics {
 			Name: "tapes_derive_worker_requeued_total",
 			Help: "Derives whose session was re-dirtied mid-derive and stayed queued.",
 		}),
-		NodesUpserted: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "tapes_derive_worker_nodes_upserted_total",
-			Help: "Derived nodes upserted by the derive worker.",
-		}),
-		NodesPruned: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "tapes_derive_worker_nodes_pruned_total",
-			Help: "Stale derived nodes pruned by the derive worker (0 is the idempotence invariant).",
-		}),
 		DeriveDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "tapes_derive_worker_derive_duration_seconds",
 			Help:    "Wall time of one session derive (read + derive + persist).",
@@ -132,7 +122,7 @@ func NewMetrics() *Metrics {
 	}
 	reg.MustRegister(
 		m.Derives, m.Requeued,
-		m.NodesUpserted, m.NodesPruned, m.DeriveDuration,
+		m.DeriveDuration,
 		m.UnknownCalls, m.ParseFailures,
 		m.Sweeps, m.SweepEnqueued, m.PollErrors,
 		m.ConsecutiveFailures, m.QueueDepth, m.DeriveLag,

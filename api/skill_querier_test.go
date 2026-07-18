@@ -61,6 +61,14 @@ func (r *querierStubReader) ListSessionSpanModel(context.Context, string) ([]sto
 	return nil, nil, nil, nil
 }
 
+func (r *querierStubReader) ListSessionLinks(context.Context, string) ([]storage.SpanLinkRecord, error) {
+	return nil, nil
+}
+
+func (r *querierStubReader) ListTraceSpans(context.Context, string, string) ([]storage.SpanRecord, error) {
+	return nil, nil
+}
+
 func (r *querierStubReader) GetSpanRecord(context.Context, string, string, string) (*storage.SpanRecord, error) {
 	return nil, nil
 }

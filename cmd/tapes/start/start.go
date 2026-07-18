@@ -30,7 +30,6 @@ import (
 	"github.com/papercomputeco/tapes/pkg/spanembed"
 	"github.com/papercomputeco/tapes/pkg/start"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
-	"github.com/papercomputeco/tapes/pkg/vector/pgvector"
 	"github.com/papercomputeco/tapes/proxy"
 )
 
@@ -402,17 +401,6 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 	}
 	defer driver.Close()
 
-	pgVecDriver, err := pgvector.NewDriver(ctx, &pgvector.Config{
-		ConnString: startCfg.VectorStoreTarget,
-		Dimensions: startCfg.EmbeddingDimensions,
-	}, log)
-	if err != nil {
-		return fmt.Errorf("could not create new vector driver: %w", err)
-	}
-	if pgVecDriver != nil {
-		defer pgVecDriver.Close()
-	}
-
 	embedder, err := embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
 		ProviderType: startCfg.EmbeddingProvider,
 		TargetURL:    startCfg.EmbeddingTarget,
@@ -461,7 +449,6 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 
 	apiConfig := api.Config{
 		ListenAddr:   apiListener.Addr().String(),
-		VectorDriver: pgVecDriver,
 		Embedder:     embedder,
 		SpanSearcher: spanSearcher,
 		EnableWebUI:  startCfg.APIWebUI,

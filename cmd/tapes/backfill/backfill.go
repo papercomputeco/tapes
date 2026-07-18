@@ -1,7 +1,7 @@
 // Package backfillcmder exposes offline backfills into a running tapes
 // deployment. Today that is the paperd wire-trace replay, which fills
-// the immutable raw-turn layer (and any not-yet-captured nodes) for
-// sessions recorded before the raw layer existed.
+// the immutable raw-turn layer for sessions recorded before the raw
+// layer existed; the derive worker projects them into spans as usual.
 package backfillcmder
 
 import (
@@ -15,8 +15,8 @@ import (
 const backfillLongDesc string = `Backfill captured data into a running tapes deployment.
 
 Subcommands replay existing capture artifacts through the normal ingest
-path, so every write is idempotent: raw turns dedup on their capture id
-and nodes dedup by content hash.`
+path, so every write is idempotent: raw turns dedup on their capture id,
+and re-deriving the affected sessions reproduces the span projection.`
 
 const wireTraceLongDesc string = `Replay paperd wire-trace capture bundles through tapes-ingest.
 

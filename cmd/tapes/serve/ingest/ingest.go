@@ -3,10 +3,8 @@ package ingestcmder
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -15,8 +13,6 @@ import (
 	"github.com/papercomputeco/tapes/pkg/credentials"
 	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
-	"github.com/papercomputeco/tapes/pkg/publisher"
-	kafkapublisher "github.com/papercomputeco/tapes/pkg/publisher/kafka"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 	"github.com/papercomputeco/tapes/pkg/telemetry"
 )
@@ -37,10 +33,6 @@ type ingestCommander struct {
 	embeddingDimensions uint
 	embeddingAPIKey     string
 
-	kafkaBrokers  string
-	kafkaTopic    string
-	kafkaClientID string
-
 	logger *slog.Logger
 }
 
@@ -52,28 +44,26 @@ var ingestFlags = config.FlagSet{
 	config.FlagPostgres:               {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
 	config.FlagProject:                {Name: "project", ViperKey: "proxy.project", Description: "Project name to tag sessions (default: auto-detect from git)"},
 	config.FlagVectorStoreTgt:         {Name: "vector-store-target", ViperKey: "vector_store.target", Description: "pgvector connection string (defaults to storage.postgres_dsn when unset)"},
-	config.FlagEmbeddingProv:          {Name: "embedding-provider", ViperKey: "embedding.provider", Description: "Deprecated here; embeddings are written by the derive worker (--embed-spans)"},
-	config.FlagEmbeddingTgt:           {Name: "embedding-target", ViperKey: "embedding.target", Description: "Deprecated here; embeddings are written by the derive worker (--embed-spans)"},
-	config.FlagEmbeddingModel:         {Name: "embedding-model", ViperKey: "embedding.model", Description: "Deprecated here; embeddings are written by the derive worker (--embed-spans)"},
-	config.FlagEmbeddingDims:          {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Deprecated here; embeddings are written by the derive worker (--embed-spans)"},
-	config.FlagKafkaBrokers:           {Name: "kafka-brokers", ViperKey: "publisher.kafka.brokers", Description: "Comma separated list of broker ip:port pairs"},
-	config.FlagKafkaClientID:          {Name: "kafka-client-id", ViperKey: "publisher.kafka.client_id", Description: "Optional Kafka client.id"},
-	config.FlagKafkaTopic:             {Name: "kafka-topic", ViperKey: "publisher.kafka.topic", Description: "Name of topic to publish session events (e.g. tapes.nodes.v1)"},
+	config.FlagEmbeddingProv:          {Name: "embedding-provider", ViperKey: "embedding.provider", Description: "Deprecated here; embeddings are written by the embed worker (tapes serve embed-worker)"},
+	config.FlagEmbeddingTgt:           {Name: "embedding-target", ViperKey: "embedding.target", Description: "Deprecated here; embeddings are written by the embed worker (tapes serve embed-worker)"},
+	config.FlagEmbeddingModel:         {Name: "embedding-model", ViperKey: "embedding.model", Description: "Deprecated here; embeddings are written by the embed worker (tapes serve embed-worker)"},
+	config.FlagEmbeddingDims:          {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Deprecated here; embeddings are written by the embed worker (tapes serve embed-worker)"},
 }
 
 const ingestLongDesc string = `Run the ingest server (sidecar mode).
 
-The ingest server accepts completed LLM conversation turns via HTTP and stores
-them in the Merkle DAG. Use this when an external gateway (e.g., Envoy AI Gateway)
-handles upstream LLM traffic and tapes only needs to store, embed, and publish data.
+The ingest server accepts completed LLM conversation turns via HTTP and appends
+them to the immutable raw-turn capture log. Use this when an external gateway
+(e.g., Envoy AI Gateway) handles upstream LLM traffic and tapes only needs to
+capture the turns for the deriver.
 
 Endpoints:
   POST /v1/ingest        Accept a single conversation turn
   POST /v1/ingest/batch  Accept multiple conversation turns
 
-Embeddings are no longer written at ingest time: the derive worker family is
-the single writer (tapes serve derive-worker --embed-spans). The embedding
-flags remain accepted for deployment compatibility but have no effect here.`
+Embeddings are no longer written at ingest time: the embed worker family is
+the single writer (tapes serve embed-worker). The embedding flags remain
+accepted for deployment compatibility but have no effect here.`
 
 const ingestShortDesc string = "Run the Tapes ingest server (sidecar mode)"
 
@@ -103,9 +93,6 @@ func NewIngestCmd() *cobra.Command {
 				config.FlagEmbeddingTgt,
 				config.FlagEmbeddingModel,
 				config.FlagEmbeddingDims,
-				config.FlagKafkaBrokers,
-				config.FlagKafkaClientID,
-				config.FlagKafkaTopic,
 			})
 
 			cmder.listen = v.GetString("ingest.listen")
@@ -132,9 +119,6 @@ func NewIngestCmd() *cobra.Command {
 			if cmder.vectorStoreTarget == "" && cmder.postgresDSN != "" {
 				cmder.vectorStoreTarget = cmder.postgresDSN
 			}
-			cmder.kafkaBrokers = v.GetString("publisher.kafka.brokers")
-			cmder.kafkaClientID = v.GetString("publisher.kafka.client_id")
-			cmder.kafkaTopic = v.GetString("publisher.kafka.topic")
 
 			if cmder.project == "" {
 				cmder.project = git.RepoName(cmd.Context())
@@ -162,29 +146,12 @@ func NewIngestCmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingTgt, &cmder.embeddingTarget)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingModel, &cmder.embeddingModel)
 	config.AddUintFlag(cmd, cmder.flags, config.FlagEmbeddingDims, &cmder.embeddingDimensions)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagKafkaBrokers, &cmder.kafkaBrokers)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagKafkaClientID, &cmder.kafkaClientID)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagKafkaTopic, &cmder.kafkaTopic)
 
 	return cmd
 }
 
 func (c *ingestCommander) run() error {
 	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
-
-	if err := c.validatePublisherConfig(); err != nil {
-		return err
-	}
-
-	pub, err := c.newPublisher()
-	if err != nil {
-		return fmt.Errorf("creating publisher: %w", err)
-	}
-	defer func() {
-		if pub != nil {
-			_ = pub.Close()
-		}
-	}()
 
 	driver, err := postgres.NewDriver(context.TODO(), c.postgresDSN)
 	if err != nil {
@@ -194,18 +161,17 @@ func (c *ingestCommander) run() error {
 
 	cfg := ingest.Config{
 		ListenAddr: c.listen,
-		Publisher:  pub,
 		Project:    c.project,
 	}
 
-	// Ingest-time embedding is retired: the derive worker family is the
-	// single writer of embeddings (tapes serve derive-worker
-	// --embed-spans, or the tapes dev embed-spans backfill). The
-	// embedding flags remain accepted so existing deployments keep
-	// booting, but they no longer have any effect here.
+	// Ingest-time embedding is retired: the embed worker family is the
+	// single writer of embeddings (tapes serve embed-worker, or the
+	// tapes dev embed-spans backfill). The embedding flags remain
+	// accepted so existing deployments keep booting, but they no longer
+	// have any effect here.
 	if c.embeddingTarget != "" || c.embeddingModel != "" {
-		c.logger.Info("ingest-time embedding is retired; embeddings are written by the derive worker",
-			"see", "tapes serve derive-worker --embed-spans",
+		c.logger.Info("ingest-time embedding is retired; embeddings are written by the embed worker",
+			"see", "tapes serve embed-worker",
 		)
 	}
 
@@ -220,50 +186,4 @@ func (c *ingestCommander) run() error {
 	)
 
 	return s.Run()
-}
-
-func (c *ingestCommander) validatePublisherConfig() error {
-	kafkaBrokers := splitKafkaBrokers(c.kafkaBrokers)
-	kafkaTopic := strings.TrimSpace(c.kafkaTopic)
-
-	if len(kafkaBrokers) == 0 && kafkaTopic == "" {
-		return nil
-	}
-
-	if len(kafkaBrokers) == 0 {
-		return errors.New("kafka brokers are required when kafka topic is set")
-	}
-
-	if kafkaTopic == "" {
-		return errors.New("kafka topic is required when kafka brokers are set")
-	}
-
-	return nil
-}
-
-func splitKafkaBrokers(raw string) []string {
-	parts := strings.Split(raw, ",")
-	brokers := make([]string, 0, len(parts))
-	for _, part := range parts {
-		broker := strings.TrimSpace(part)
-		if broker != "" {
-			brokers = append(brokers, broker)
-		}
-	}
-
-	return brokers
-}
-
-func (c *ingestCommander) newPublisher() (publisher.Publisher, error) {
-	kafkaBrokers := splitKafkaBrokers(c.kafkaBrokers)
-	kafkaTopic := strings.TrimSpace(c.kafkaTopic)
-	if len(kafkaBrokers) == 0 && kafkaTopic == "" {
-		return nil, nil
-	}
-
-	return kafkapublisher.NewPublisher(kafkapublisher.Config{
-		Brokers:  kafkaBrokers,
-		Topic:    kafkaTopic,
-		ClientID: strings.TrimSpace(c.kafkaClientID),
-	})
 }

@@ -13,6 +13,7 @@ type Config struct {
 	Embedding   EmbeddingConfig   `toml:"embedding"     mapstructure:"embedding"`
 	OpenCode    OpenCodeConfig    `toml:"opencode"      mapstructure:"opencode"`
 	Telemetry   TelemetryConfig   `toml:"telemetry"     mapstructure:"telemetry"`
+	Update      UpdateConfig      `toml:"update"        mapstructure:"update"`
 }
 
 // StorageConfig holds shared storage settings used by both proxy and API.
@@ -40,7 +41,7 @@ type IngestConfig struct {
 }
 
 // ClientConfig holds settings for CLI commands that connect to the running
-// proxy and API servers (e.g. tapes search, tapes checkout).
+// proxy and API servers (e.g. tapes search, tapes export).
 // Values are full URLs (scheme + host + port).
 type ClientConfig struct {
 	ProxyTarget string `toml:"proxy_target,omitempty" mapstructure:"proxy_target"`
@@ -71,6 +72,11 @@ type TelemetryConfig struct {
 	Disabled bool `toml:"disabled,omitempty" mapstructure:"disabled"`
 }
 
+// UpdateConfig holds update-check settings.
+type UpdateConfig struct {
+	Disabled bool `toml:"disabled,omitempty" mapstructure:"disabled"`
+}
+
 // configKeySet is the authoritative set of all supported user-facing config keys.
 // Keys use dotted notation matching the TOML section structure.
 var configKeySet = map[string]bool{
@@ -95,4 +101,6 @@ var configKeySet = map[string]bool{
 	"storage.postgres_dsn": true,
 
 	"telemetry.disabled": true,
+
+	"update.disabled": true,
 }

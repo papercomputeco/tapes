@@ -43,7 +43,7 @@ type TraceSummary struct {
 	StartedAt time.Time
 	// Token counts folded by the deriver for the turn. Total* spans the
 	// whole turn (spine + harness shadow calls); Main* counts only the
-	// conversation-spine calls. Surfaced by the checkout export.
+	// conversation-spine calls. Surfaced by the session export.
 	TotalInputTokens  int64
 	TotalOutputTokens int64
 	MainInputTokens   int64
@@ -106,28 +106,43 @@ func normalizeAPITarget(apiTarget string) string {
 	return strings.TrimRight(target, "/")
 }
 
-// wireTrace mirrors api.TraceItem.
+// wireTrace mirrors api.TraceItem. Token totals live under `usage`; the
+// conversation-spine slice under `main_usage`. Synthetic is a typed
+// deriver field (was carried in the old metadata grab-bag).
 type wireTrace struct {
-	TraceID           string         `json:"trace_id"`
-	UserPrompt        string         `json:"user_prompt"`
-	ResponsePreview   string         `json:"response_preview"`
-	StartedAt         time.Time      `json:"started_at"`
-	TotalInputTokens  int64          `json:"total_input_tokens"`
-	TotalOutputTokens int64          `json:"total_output_tokens"`
-	MainInputTokens   int64          `json:"main_input_tokens"`
-	MainOutputTokens  int64          `json:"main_output_tokens"`
-	Metadata          map[string]any `json:"metadata"`
+	TraceID         string         `json:"trace_id"`
+	UserPrompt      string         `json:"user_prompt"`
+	ResponsePreview string         `json:"response_preview"`
+	Synthetic       string         `json:"synthetic"`
+	StartedAt       time.Time      `json:"started_at"`
+	Usage           wireTraceUsage `json:"usage"`
+	MainUsage       wireMainUsage  `json:"main_usage"`
 }
 
-// wireSpan mirrors the subset of api.SpanItem the builder consumes.
+// wireTraceUsage / wireMainUsage mirror api.TraceUsage / api.MainUsage —
+// the subset (input/output tokens) the transcript builder surfaces.
+type wireTraceUsage struct {
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
+}
+
+type wireMainUsage struct {
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
+}
+
+// wireSpan mirrors the subset of api.SpanItem the builder consumes. The
+// harness taxonomy (call_kind, thread_id) is typed rather than bagged in a
+// metadata map, and output is a content-block array uniform for every kind.
 type wireSpan struct {
-	SpanID       string                     `json:"span_id"`
-	ParentSpanID string                     `json:"parent_span_id"`
-	Kind         string                     `json:"kind"`
-	Name         string                     `json:"name"`
-	Seq          int64                      `json:"seq"`
-	Metadata     map[string]any             `json:"metadata"`
-	Output       map[string]json.RawMessage `json:"output"`
+	SpanID       string          `json:"span_id"`
+	ParentSpanID string          `json:"parent_span_id"`
+	Kind         string          `json:"kind"`
+	Name         string          `json:"name"`
+	Seq          int64           `json:"seq"`
+	CallKind     string          `json:"call_kind"`
+	ThreadID     string          `json:"thread_id"`
+	Output       json.RawMessage `json:"output"`
 }
 
 // wireTraceList mirrors api.TraceListResponse.
@@ -162,15 +177,136 @@ func (c *APIClient) TraceSummaries(ctx context.Context, sessionID string) ([]Tra
 			TraceID:           item.TraceID,
 			UserPrompt:        item.UserPrompt,
 			ResponsePreview:   item.ResponsePreview,
-			Synthetic:         metadataString(item.Metadata, "synthetic"),
+			Synthetic:         item.Synthetic,
 			StartedAt:         item.StartedAt,
-			TotalInputTokens:  item.TotalInputTokens,
-			TotalOutputTokens: item.TotalOutputTokens,
-			MainInputTokens:   item.MainInputTokens,
-			MainOutputTokens:  item.MainOutputTokens,
+			TotalInputTokens:  item.Usage.InputTokens,
+			TotalOutputTokens: item.Usage.OutputTokens,
+			MainInputTokens:   item.MainUsage.InputTokens,
+			MainOutputTokens:  item.MainUsage.OutputTokens,
 		})
 	}
 	return out, nil
+}
+
+// SessionInfo is the slice of a /v1/sessions item the CLI surfaces for
+// listing sessions and resolving a short id prefix.
+type SessionInfo struct {
+	ID            string
+	StartedAt     time.Time
+	TurnCount     int
+	TotalCostUSD  float64
+	Model         string
+	DerivedStatus string
+	Preview       string
+}
+
+// wireSessionList mirrors the subset of api.SessionListResponse we read:
+// capture identity at the top level, the deriver rollup (status, model,
+// preview, spend) nested under `rollup`.
+type wireSessionList struct {
+	Items []struct {
+		ID        string    `json:"id"`
+		StartedAt time.Time `json:"started_at"`
+		Rollup    struct {
+			TurnCount int    `json:"turn_count"`
+			Model     string `json:"model"`
+			Status    string `json:"status"`
+			Preview   string `json:"preview"`
+			Usage     struct {
+				CostUSD float64 `json:"cost_usd"`
+			} `json:"usage"`
+		} `json:"rollup"`
+	} `json:"items"`
+	NextCursor string `json:"next_cursor"`
+}
+
+// Sessions lists captured sessions (newest first) via GET /v1/sessions.
+func (c *APIClient) Sessions(ctx context.Context) ([]SessionInfo, error) {
+	u, err := url.Parse(c.apiTarget + "/v1/sessions")
+	if err != nil {
+		return nil, fmt.Errorf("invalid api target: %w", err)
+	}
+	q := u.Query()
+	q.Set("limit", "200")
+	u.RawQuery = q.Encode()
+
+	var list wireSessionList
+	if err := c.getJSON(ctx, u.String(), &list); err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+
+	out := make([]SessionInfo, 0, len(list.Items))
+	for _, item := range list.Items {
+		out = append(out, SessionInfo{
+			ID:            item.ID,
+			StartedAt:     item.StartedAt,
+			TurnCount:     item.Rollup.TurnCount,
+			TotalCostUSD:  item.Rollup.Usage.CostUSD,
+			Model:         item.Rollup.Model,
+			DerivedStatus: item.Rollup.Status,
+			Preview:       item.Rollup.Preview,
+		})
+	}
+	return out, nil
+}
+
+// AllSessions pages through every captured session (following next_cursor),
+// newest-first. Sessions returns only the first page; resolving a short id
+// prefix needs the full set so a session that isn't among the most recent
+// still resolves.
+func (c *APIClient) AllSessions(ctx context.Context) ([]SessionInfo, error) {
+	var out []SessionInfo
+	cursor := ""
+	for {
+		u, err := url.Parse(c.apiTarget + "/v1/sessions")
+		if err != nil {
+			return nil, fmt.Errorf("invalid api target: %w", err)
+		}
+		q := u.Query()
+		q.Set("limit", "200")
+		if cursor != "" {
+			q.Set("cursor", cursor)
+		}
+		u.RawQuery = q.Encode()
+
+		var list wireSessionList
+		if err := c.getJSON(ctx, u.String(), &list); err != nil {
+			return nil, fmt.Errorf("list sessions: %w", err)
+		}
+		for _, item := range list.Items {
+			out = append(out, SessionInfo{
+				ID:            item.ID,
+				StartedAt:     item.StartedAt,
+				TurnCount:     item.Rollup.TurnCount,
+				TotalCostUSD:  item.Rollup.Usage.CostUSD,
+				Model:         item.Rollup.Model,
+				DerivedStatus: item.Rollup.Status,
+				Preview:       item.Rollup.Preview,
+			})
+		}
+		if list.NextCursor == "" {
+			break
+		}
+		cursor = list.NextCursor
+	}
+	return out, nil
+}
+
+// CaptureStats is the slice of /v1/stats the CLI surfaces for a quick
+// health readout.
+type CaptureStats struct {
+	SessionCount int     `json:"session_count"`
+	TurnCount    int     `json:"turn_count"`
+	TotalCost    float64 `json:"total_cost"`
+}
+
+// Stats fetches aggregate capture stats via GET /v1/stats.
+func (c *APIClient) Stats(ctx context.Context) (*CaptureStats, error) {
+	var stats CaptureStats
+	if err := c.getJSON(ctx, c.apiTarget+"/v1/stats", &stats); err != nil {
+		return nil, fmt.Errorf("get stats: %w", err)
+	}
+	return &stats, nil
 }
 
 // Trace implements Querier via GET /v1/traces/{trace_id}.
@@ -189,17 +325,45 @@ func (c *APIClient) Trace(ctx context.Context, traceID string) (*Trace, error) {
 			Kind:         sp.Kind,
 			Name:         sp.Name,
 			Seq:          sp.Seq,
-			CallKind:     metadataString(sp.Metadata, "call_kind"),
-			ThreadID:     metadataString(sp.Metadata, "thread_id"),
+			CallKind:     sp.CallKind,
+			ThreadID:     sp.ThreadID,
 		}
-		if raw, ok := sp.Output["content"]; ok && len(raw) > 0 {
-			// Tool spans carry a plain string here; llm/event spans a
-			// content-block array. A failed decode just means no text.
-			_ = json.Unmarshal(raw, &span.Output)
+		if len(sp.Output) > 0 {
+			// Output is a content-block array for every kind (tool spans
+			// included). A failed decode just means no text.
+			_ = json.Unmarshal(sp.Output, &span.Output)
 		}
 		trace.Spans = append(trace.Spans, span)
 	}
 	return trace, nil
+}
+
+// ExportSession fetches GET /v1/sessions/{id}/export and returns the raw
+// JSONL body verbatim — the API's session→traces→spans projection, not
+// re-encoded. detail is "spans" (traces with full spans) or "traces" (turn
+// headers only). A single session is bounded, so the body is buffered.
+func (c *APIClient) ExportSession(ctx context.Context, id, detail string) ([]byte, error) {
+	rawURL := fmt.Sprintf("%s/v1/sessions/%s/export", c.apiTarget, url.PathEscape(id))
+	if detail != "" {
+		rawURL += "?detail=" + url.QueryEscape(detail)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errors.New("session not found")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("api returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return body, nil
 }
 
 func (c *APIClient) getJSON(ctx context.Context, rawURL string, out any) error {
@@ -223,14 +387,4 @@ func (c *APIClient) getJSON(ctx context.Context, rawURL string, out any) error {
 		return fmt.Errorf("decoding response: %w", err)
 	}
 	return nil
-}
-
-func metadataString(meta map[string]any, key string) string {
-	if meta == nil {
-		return ""
-	}
-	if v, ok := meta[key].(string); ok {
-		return v
-	}
-	return ""
 }

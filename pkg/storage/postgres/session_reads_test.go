@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -39,8 +40,6 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 		var ok bool
 		pgDriver, ok = driver.(*postgres.Driver)
 		Expect(ok).To(BeTrue())
-		_, err = pgDriver.DB().Exec(ctx, "TRUNCATE TABLE nodes")
-		Expect(err).NotTo(HaveOccurred())
 		_, err = pgDriver.DB().Exec(ctx, "TRUNCATE TABLE sessions CASCADE")
 		Expect(err).NotTo(HaveOccurred())
 
@@ -65,16 +64,14 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 				HarnessID:        harnessID,
 				HarnessSessionID: harnessSessionID,
 			},
-			Nodes:        sessionFixture(text),
-			InputTokens:  12,
-			OutputTokens: 8,
+			Nodes: sessionFixture(text),
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.SessionID).NotTo(BeEmpty())
 		return res.SessionID
 	}
 
-	It("returns the matching record with preview for an exact org-scoped natural key", func() {
+	It("returns the matching record for an exact org-scoped natural key", func() {
 		orgID := newTestOrgID()
 		sessionID := seedSession(orgID, "claude", "harness-exact", "preview text for exact match")
 
@@ -85,14 +82,18 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 		Expect(rec.ID).To(Equal(sessionID))
 		Expect(rec.HarnessID).To(Equal("claude"))
 		Expect(rec.HarnessSessionID).To(Equal("harness-exact"))
-		Expect(rec.TurnCount).To(Equal(1))
-		Expect(rec.TotalInputTokens).To(Equal(int64(12)))
-		Expect(rec.TotalOutputTokens).To(Equal(int64(8)))
-		Expect(rec.Preview).To(Equal("preview text for exact match"))
+		// Token/turn/cost counters are no longer folded by IngestTurn — they
+		// are owned by the derive-time span fold (FoldSessionRollupsFromSpans).
+		// Preview is likewise a derived-surface value (span_turns.user_prompt,
+		// covered by the derive specs). Neither is populated by a bare ingest
+		// that does not run the deriver, so they stay at their zero values.
+		Expect(rec.TurnCount).To(Equal(0))
+		Expect(rec.TotalInputTokens).To(Equal(int64(0)))
+		Expect(rec.TotalOutputTokens).To(Equal(int64(0)))
+		Expect(rec.Preview).To(BeEmpty())
 
-		// Parity with the list path: the single filtered row must
-		// carry the same field population as a ListSessionRecords row,
-		// including Preview attached via getSessionPreviews.
+		// Parity with the list path: the single filtered row carries the
+		// same field population as a ListSessionRecords row.
 		listed, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{Limit: 10})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(listed).To(HaveLen(1))
@@ -126,7 +127,6 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 		Expect(rec).NotTo(BeNil())
 		Expect(rec.ID).To(Equal(idA))
 		Expect(rec.ID).NotTo(Equal(idB), "org B's session UUID must never surface for org A")
-		Expect(rec.Preview).To(Equal("org A turn"))
 	})
 
 	It("filters the paged list by auth_subject within an org", func() {
@@ -140,9 +140,7 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 					HarnessID:        "claude",
 					HarnessSessionID: harnessSession,
 				},
-				Nodes:        sessionFixture(text),
-				InputTokens:  12,
-				OutputTokens: 8,
+				Nodes: sessionFixture(text),
 			})
 			Expect(err).NotTo(HaveOccurred())
 			return res.SessionID
@@ -163,6 +161,53 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 		all, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{Limit: 10})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(all).To(HaveLen(2))
+	})
+
+	It("windows the list on turns started in the window, matching /v1/stats", func() {
+		// The since/until window is an EXISTS over span_turns started in
+		// range — the same predicate AggregateSpanStats matches — so the
+		// list row set equals the stat strip's session set for a window.
+		// Bare ingest writes no span_turns, so the window is driven entirely
+		// by these planted turn rows.
+		orgID := newTestOrgID()
+		plantTurn := func(sessionID, traceID string, startedAt time.Time) {
+			_, err := pgDriver.DB().Exec(ctx, `
+				INSERT INTO span_turns_20260615 (org_id, trace_id, session_id, started_at)
+				VALUES ($1::uuid, $2, $3::uuid, $4::timestamptz)`,
+				orgID, traceID, sessionID, startedAt)
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		now := time.Now().UTC()
+		recent := seedSession(orgID, "claude", "sess-recent", "recent turn")
+		plantTurn(recent, "trace-recent", now.Add(-1*time.Hour)) // inside a 24h window
+		old := seedSession(orgID, "claude", "sess-old", "old turn")
+		plantTurn(old, "trace-old", now.Add(-48*time.Hour)) // before a 24h window
+		// Ingested but never derived: no span_turn, so out of every window
+		// even though the session row exists.
+		undived := seedSession(orgID, "claude", "sess-undived", "no derived turn")
+
+		// Unwindowed: every session in the org, derived or not.
+		all, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{Limit: 10})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(idsOf(all)).To(ConsistOf(recent, old, undived))
+
+		// Windowed to the last 24h: only the session whose turn started in
+		// the window; the older-turn and never-derived sessions drop out.
+		since := now.Add(-24 * time.Hour)
+		windowed, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{Limit: 10, Since: &since})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(idsOf(windowed)).To(ConsistOf(recent))
+
+		// The exclusive upper bound drops a turn that starts exactly at
+		// `until` and keeps only the strictly-earlier one.
+		until := now.Add(-30 * time.Minute)
+		earlier := now.Add(-90 * time.Minute)
+		bounded, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{
+			Limit: 10, Since: &earlier, Until: &until,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(idsOf(bounded)).To(ConsistOf(recent)) // trace-recent at -1h is in [-90m, -30m)
 	})
 
 	It("does not match case-folded, trimmed, or prefix variants of the harness ids", func() {
@@ -214,8 +259,6 @@ var _ = Describe("Driver.ListSessionRecords (dynamic sort)", func() {
 		var ok bool
 		pgDriver, ok = driver.(*postgres.Driver)
 		Expect(ok).To(BeTrue())
-		_, err = pgDriver.DB().Exec(ctx, "TRUNCATE TABLE nodes")
-		Expect(err).NotTo(HaveOccurred())
 		_, err = pgDriver.DB().Exec(ctx, "TRUNCATE TABLE sessions CASCADE")
 		Expect(err).NotTo(HaveOccurred())
 
@@ -230,7 +273,10 @@ var _ = Describe("Driver.ListSessionRecords (dynamic sort)", func() {
 	})
 
 	// seedWithCost ingests a minimal turn for the given org and harness
-	// identity with the specified cost, returning the session UUID.
+	// identity, then stamps the requested cost onto the session row.
+	// Ingest no longer folds counters (the derive-time span fold owns
+	// them), and this suite exercises the sort/pagination SQL — not the
+	// fold — so writing the rollup directly keeps the test focused.
 	seedWithCost := func(orgID, harnessSessionID string, cost float64) string {
 		res, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
 			Session: &sessions.IngestEnvelope{
@@ -239,13 +285,14 @@ var _ = Describe("Driver.ListSessionRecords (dynamic sort)", func() {
 				HarnessID:        "claude",
 				HarnessSessionID: harnessSessionID,
 			},
-			Nodes:        sessionFixture("turn for " + harnessSessionID),
-			InputTokens:  10,
-			OutputTokens: 5,
-			CostUSD:      cost,
+			Nodes: sessionFixture("turn for " + harnessSessionID),
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.SessionID).NotTo(BeEmpty())
+
+		_, err = pgDriver.DB().Exec(ctx,
+			"UPDATE sessions SET total_cost_usd = $1 WHERE id = $2::uuid", cost, res.SessionID)
+		Expect(err).NotTo(HaveOccurred())
 		return res.SessionID
 	}
 
@@ -312,10 +359,7 @@ var _ = Describe("Driver.ListSessionRecords (dynamic sort)", func() {
 				HarnessID:        "claude",
 				HarnessSessionID: harnessSessionID,
 			},
-			Nodes:        sessionFixture("turn for " + harnessSessionID),
-			InputTokens:  inTok,
-			OutputTokens: outTok,
-			CostUSD:      cost,
+			Nodes: sessionFixture("turn for " + harnessSessionID),
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.SessionID).NotTo(BeEmpty())
@@ -389,5 +433,75 @@ var _ = Describe("Driver.ListSessionRecords (dynamic sort)", func() {
 				}
 			}
 		}
+	})
+})
+
+var _ = Describe("Driver.GetSessionRecord preview", func() {
+	var (
+		driver   storage.Driver
+		pgDriver *postgres.Driver
+		ctx      context.Context
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		dsn, err := testPostgresDSN()
+		Expect(err).NotTo(HaveOccurred())
+		driver, err = postgres.NewDriver(ctx, dsn)
+		Expect(err).NotTo(HaveOccurred())
+		var ok bool
+		pgDriver, ok = driver.(*postgres.Driver)
+		Expect(ok).To(BeTrue())
+		_, err = pgDriver.DB().Exec(ctx, "TRUNCATE TABLE sessions CASCADE")
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	AfterEach(func() {
+		if driver != nil {
+			driver.Close()
+		}
+	})
+
+	insertSession := func(orgID, id, harnessSessionID string) {
+		_, err := pgDriver.DB().Exec(ctx, `
+			INSERT INTO sessions (id, org_id, auth_subject, harness_id, harness_session_id, started_at, last_seen_at)
+			VALUES ($1, $2, 'subj', 'claude', $3, NOW(), NOW())`, id, orgID, harnessSessionID)
+		Expect(err).NotTo(HaveOccurred())
+	}
+	insertTurn := func(orgID, id, traceID, prompt, synthetic string, offset time.Duration) {
+		_, err := pgDriver.DB().Exec(ctx, `
+			INSERT INTO span_turns_20260615 (org_id, trace_id, session_id, user_prompt, synthetic, started_at)
+			VALUES ($1, $2, $3, $4, $5, NOW() + $6)`, orgID, traceID, id, prompt, synthetic, offset)
+		Expect(err).NotTo(HaveOccurred())
+	}
+
+	// K + M together: the detail endpoint attaches the preview at all, and
+	// picks the first GENUINE turn rather than a shadow-only opener.
+	It("attaches the first non-synthetic, non-empty turn's prompt on the detail read", func() {
+		orgID := newTestOrgID()
+		const id = "01900000-0000-7000-8000-0000000000c1"
+		insertSession(orgID, id, "sess-preview")
+		// Earliest turn is a shadow-only opener (synthetic, empty prompt); the
+		// user's real prompt is the later, genuine turn.
+		insertTurn(orgID, id, "trc-1", "", "shadow-opener", 0)
+		insertTurn(orgID, id, "trc-2", "the real first question", "", time.Second)
+
+		rec, err := pgDriver.GetSessionRecord(ctx, orgID, id)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rec).NotTo(BeNil())
+		Expect(rec.Preview).To(Equal("the real first question"),
+			"detail must attach the preview (K) and skip the shadow opener (M)")
+	})
+
+	It("falls back to an empty preview when the session has no genuine turn", func() {
+		orgID := newTestOrgID()
+		const id = "01900000-0000-7000-8000-0000000000c2"
+		insertSession(orgID, id, "sess-empty")
+		insertTurn(orgID, id, "trc-1", "", "shadow-opener", 0)
+
+		rec, err := pgDriver.GetSessionRecord(ctx, orgID, id)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rec).NotTo(BeNil())
+		Expect(rec.Preview).To(BeEmpty())
 	})
 })

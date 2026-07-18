@@ -1,16 +1,29 @@
 package storage
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // SessionRecord is the flat sessions-table row surfaced by
 // GET /v1/sessions. Fields absent in the DB (NULL) are represented as empty
 // strings or nil/zero values so API callers never have to unwrap optional
 // pgtype wrappers.
 type SessionRecord struct {
-	ID                string
-	HarnessID         string
-	HarnessSessionID  string
-	Name              string // empty when not set
+	ID               string
+	HarnessID        string
+	HarnessSessionID string
+	// Name is the session's display label with the name column taking
+	// precedence over the folded title: the value stored on the identity
+	// row (a user rename or the harness-supplied session name) when set,
+	// otherwise DerivedTitle as the fallback. Empty only when neither
+	// exists.
+	Name string
+	// DerivedTitle is the deriver's folded session title
+	// (sessions.derived_title), generated from the conversation. Empty
+	// until title generation produces one. Unlike Name it never falls back
+	// to the identity-row name, so it is the pure descriptive title.
+	DerivedTitle      string
 	Cwd               string // empty when not set
 	HarnessVersion    string // empty when not set
 	ParentSessionID   string // empty when not set
@@ -34,6 +47,12 @@ type SessionRecord struct {
 	// share reflects spend rather than call count. Nil until the session
 	// derives; ordered dominant-model-first (by cost).
 	ModelUsage []ModelUsage
+	// Tasks is the deriver's session-scoped TaskCreate/TaskUpdate fold and
+	// KindCounts the per-call_kind span tally (sessions.tasks /
+	// sessions.kind_counts), both JSONB served verbatim on the composite
+	// traces response. Nil until the session derives.
+	Tasks      json.RawMessage
+	KindCounts json.RawMessage
 	Preview    string // first user turn text, truncated; empty when unavailable
 	// AuthSubject is the gateway-stamped JWT subject (the WorkOS user id)
 	// captured at ingest. Empty for rows captured before the edge began

@@ -1,5 +1,12 @@
 basePath: /
 definitions:
+  api.MainUsage:
+    properties:
+      input_tokens:
+        type: integer
+      output_tokens:
+        type: integer
+    type: object
   api.ModelUsage:
     properties:
       calls:
@@ -20,9 +27,7 @@ definitions:
       id:
         type: integer
       meta:
-        items:
-          type: integer
-        type: array
+        type: object
       provider:
         type: string
       received_at:
@@ -58,8 +63,6 @@ definitions:
         type: string
       cwd:
         type: string
-      derived_status:
-        type: string
       ended_at:
         type: string
       harness_id:
@@ -72,41 +75,34 @@ definitions:
       harness_version:
         type: string
       id:
+        description: Identity — capture-side facts, ingest-written.
         type: string
       last_seen_at:
         type: string
-      model:
+      live:
         description: |-
-          Model is the dominant conversation-spine model, folded at derive
-          time; empty until the session first derives.
-        type: string
-      model_usage:
-        description: |-
-          ModelUsage is the per-model spend breakdown folded at derive time
-          across every thread (subagent models included), ordered
-          dominant-model-first by cost. The share basis is cost, not call
-          count, so the UI can show "dominant model + per-model %" without a
-          cheap-subagent fan-out skewing it. Populated on the session detail;
-          nil until the session first derives.
-        items:
-          $ref: '#/definitions/api.ModelUsage'
-        type: array
+          Live is a runtime presence signal, not a projection fact: true when
+          the session was seen within the liveness window AND the deriver has
+          not marked it terminal. Computed at response time from last_seen_at,
+          so the console renders it directly instead of inferring "running"
+          from recency itself (keeps the console dumb; RFD 00007 §C).
+        type: boolean
       name:
+        description: |-
+          Name is the session's display label: the value on the identity row —
+          a user rename or the harness-supplied session name — when set,
+          otherwise the folded title (rollup.title) as a fallback. Empty only
+          when the session has neither. It therefore equals rollup.title
+          exactly when no identity-row name exists.
         type: string
       parent_session_id:
         type: string
-      preview:
-        type: string
+      rollup:
+        allOf:
+        - $ref: '#/definitions/api.SessionRollup'
+        description: Rollup is the deriver-owned projection over the session's spans.
       started_at:
         type: string
-      total_cost_usd:
-        type: number
-      total_input_tokens:
-        type: integer
-      total_output_tokens:
-        type: integer
-      turn_count:
-        type: integer
     type: object
   api.SessionListResponse:
     properties:
@@ -117,76 +113,137 @@ definitions:
       next_cursor:
         type: string
     type: object
-  api.SessionTracesResponse:
+  api.SessionRollup:
     properties:
       kind_counts:
         additionalProperties:
           type: integer
+        description: |-
+          KindCounts (spans per call_kind) and Tasks (TaskCreate/TaskUpdate
+          folds) are pinned so the rollup shape is uniform across sessions.
         type: object
-      links:
+      model:
+        description: |-
+          Model is the dominant conversation-spine model; ModelUsage is the
+          per-model spend breakdown across every thread (subagent models
+          included), cost-ordered so the UI can show "dominant model + share"
+          without a cheap-subagent fan-out skewing it.
+        type: string
+      model_usage:
         items:
-          $ref: '#/definitions/api.SpanLinkItem'
+          $ref: '#/definitions/api.ModelUsage'
         type: array
-      session:
-        $ref: '#/definitions/api.SessionItem'
+      preview:
+        type: string
+      status:
+        type: string
       tasks:
         items:
           $ref: '#/definitions/api.TreeTask'
         type: array
+      title:
+        description: |-
+          Title is the deriver's folded session title (derived_title),
+          generated from the conversation. Empty until title generation
+          produces one. It never falls back to the identity-row name, so it is
+          the stable descriptive title clients prefer for display; the
+          identity-row label (harness name or rename) is SessionItem.Name.
+        type: string
+      turn_count:
+        type: integer
+      usage:
+        $ref: '#/definitions/api.SessionUsage'
+    type: object
+  api.SessionTracesResponse:
+    properties:
+      links:
+        items:
+          $ref: '#/definitions/api.SpanLinkItem'
+        type: array
+      schema:
+        type: string
+      session:
+        $ref: '#/definitions/api.SessionItem'
       traces:
         items:
           $ref: '#/definitions/api.TraceDetail'
         type: array
     type: object
+  api.SessionUsage:
+    properties:
+      cost_usd:
+        type: number
+      input_tokens:
+        type: integer
+      output_tokens:
+        type: integer
+    type: object
   api.SpanItem:
     properties:
-      children_ids:
-        items:
-          type: string
-        type: array
+      call_kind:
+        description: Deriver-written taxonomy, promoted from the old metadata grab-bag.
+        type: string
       duration_ns:
         type: integer
-      id:
-        type: string
       input:
-        additionalProperties: {}
-        type: object
+        description: |-
+          Input/Output are content-block arrays (llm.ContentBlock), uniform for
+          every kind (tool spans included — no unwrapping). Pinned to [] when
+          empty. swaggertype keeps the wire an array-of-object rather than the
+          json.RawMessage byte array swag infers.
+        items:
+          type: object
+        type: array
       kind:
         type: string
-      metadata:
-        additionalProperties: {}
-        type: object
-      metrics:
-        description: |-
-          Metrics is always an object on the wire — the contract fixture
-          pins {} for usage-less spans (agent/tool/event), and the console
-          schema requires it.
-        items:
-          type: integer
-        type: array
+      model:
+        type: string
       name:
         type: string
       output:
-        additionalProperties: {}
-        type: object
+        items:
+          type: object
+        type: array
       parent_span_id:
         type: string
+      payload:
+        description: |-
+          Payload marks a preview-truncated span so the console drills in for
+          the full payload; absent in full mode.
+        type: string
+      raw_turn_id:
+        type: integer
       seq:
         description: |-
           Seq is the span's presentation ordinal within its trace; spans
-          arrive sorted by it. start_ns cannot order spans inside one llm
-          call (parallel tool batches share an instant).
+          arrive sorted by it (started_at ties inside one llm call — parallel
+          tool batches share an instant).
         type: integer
       span_id:
         type: string
-      start_ns:
-        type: integer
       started_at:
         type: string
       status:
         type: string
+      stop_reason:
+        type: string
+      thread_id:
+        type: string
       trace_id:
         type: string
+      usage:
+        description: |-
+          Usage (was `metrics`) is an llm.Usage object on the wire — {}-pinned
+          for usage-less spans.
+        type: object
+      verdict:
+        description: |-
+          Verdict is the typed security-monitor disposition (null off
+          permission-check spans), deriver-written. It is a Verdict object or
+          null on the wire; typed as `object` (not the json.RawMessage byte
+          array swag would otherwise emit) via swaggertype.
+        type: object
+        x-nullable: true
     type: object
   api.SpanLinkItem:
     properties:
@@ -196,9 +253,8 @@ definitions:
         type: string
       from_trace_id:
         type: string
-      metadata:
-        additionalProperties: {}
-        type: object
+      kind:
+        type: string
       to_io:
         type: string
       to_span_id:
@@ -235,8 +291,10 @@ definitions:
       trace_id:
         type: string
       user_prompt:
-        description: UserPrompt is the prompt of the turn (trace) the span belongs
-          to.
+        description: |-
+          UserPrompt is the prompt of the turn (trace) the span belongs to.
+          Served explicitly (not omitempty) so a synthetic turn's empty prompt
+          reaches consumers as "" rather than a dropped key — see TraceItem.
         type: string
     type: object
   api.StatsResponse:
@@ -247,20 +305,13 @@ definitions:
         type: integer
       output_tokens:
         type: integer
-      root_count:
-        type: integer
       session_count:
-        type: integer
-      stem_count:
-        description: |-
-          StemCount is a node-layer (Merkle leaf) concept with no span
-          equivalent; it is only present on the legacy fallback path.
         type: integer
       tool_calls:
         type: integer
       total_cost:
         type: number
-      total_duration_ns:
+      total_duration_ms:
         type: integer
       turn_count:
         type: integer
@@ -271,6 +322,8 @@ definitions:
         items:
           $ref: '#/definitions/api.SpanLinkItem'
         type: array
+      schema:
+        type: string
       spans:
         items:
           $ref: '#/definitions/api.SpanItem'
@@ -280,37 +333,27 @@ definitions:
     type: object
   api.TraceItem:
     properties:
-      cache_creation_tokens:
-        type: integer
-      cache_read_tokens:
-        type: integer
       duration_ns:
         type: integer
       ended_at:
         type: string
-      harness_id:
-        type: string
-      harness_session_id:
-        type: string
-      id:
-        type: string
-      main_input_tokens:
-        description: |-
-          Main* counts conversation-spine calls only; Total − Main is the
-          harness's shadow spend on the turn.
-        type: integer
-      main_output_tokens:
-        type: integer
-      metadata:
-        additionalProperties: {}
-        type: object
+      main_usage:
+        $ref: '#/definitions/api.MainUsage'
       response_preview:
         description: |-
           ResponsePreview is the derive-time fold of the closing
           conversation-spine llm call's text output — the answer line for
           collapsed turn cards, so summary consumers never need spans.
         type: string
-      session_id:
+      source:
+        description: |-
+          Source is the capture origin of the turn's rows ("wire" |
+          "transcript"), promoted from raw_turns.source. Per-trace, so a
+          session can mix live wire capture and transcript backfill. Today
+          every trace is "wire": transcripts only reconcile fork/parent edges
+          during derivation, they never form a trace on their own. "transcript"
+          becomes real when a session is reconstructed purely from a transcript
+          file with no proxy capture (an OSS backfill path). See RFD 00007 §C.
         type: string
       span_count:
         type: integer
@@ -318,15 +361,30 @@ definitions:
         type: string
       status:
         type: string
-      total_cost_usd:
-        type: number
-      total_input_tokens:
-        type: integer
-      total_output_tokens:
-        type: integer
+      synthetic:
+        description: |-
+          Synthetic is a typed deriver signal ("post-compaction" for a
+          compaction continuation, "shadow-opener" for a shadow-only opener),
+          promoted out of the old metadata grab-bag. Absent for genuine
+          prompt-opened turns.
+        type: string
       trace_id:
         type: string
+      usage:
+        allOf:
+        - $ref: '#/definitions/api.TraceUsage'
+        description: |-
+          Usage is the trace's total token/cost spend over ALL llm spans,
+          shadow calls included; MainUsage is the task slice — the main agent
+          and its subagents (every call_kind=main span, across threads). The
+          difference (Usage − MainUsage) is the harness's shadow spend
+          (permission checks, title-gen, web summaries) on the turn.
       user_prompt:
+        description: |-
+          UserPrompt is served explicitly (not omitempty): a synthetic opener
+          has an empty prompt, and dropping the key turns the empty string
+          into `undefined` on the wire, which breaks consumers that expect a
+          string (e.g. the console's stripHarnessTags). Empty means synthetic.
         type: string
     type: object
   api.TraceListResponse:
@@ -335,6 +393,21 @@ definitions:
         items:
           $ref: '#/definitions/api.TraceItem'
         type: array
+      schema:
+        type: string
+    type: object
+  api.TraceUsage:
+    properties:
+      cache_creation_tokens:
+        type: integer
+      cache_read_tokens:
+        type: integer
+      cost_usd:
+        type: number
+      input_tokens:
+        type: integer
+      output_tokens:
+        type: integer
     type: object
   api.TreeTask:
     properties:
@@ -353,6 +426,11 @@ definitions:
     properties:
       overwrite:
         type: boolean
+    type: object
+  api.sessionUpdateRequest:
+    properties:
+      name:
+        type: string
     type: object
   api.swaggerMCPError:
     properties:
@@ -399,11 +477,6 @@ definitions:
     type: object
   github_com_papercomputeco_tapes_pkg_seed.Result:
     properties:
-      nodes_derived:
-        description: |-
-          NodesDerived counts derived rows upserted by the synchronous
-          derive pass across the seeded sessions.
-        type: integer
       raw_turns:
         description: RawTurns is the total number of corpus rows replayed.
         type: integer
@@ -614,14 +687,14 @@ paths:
         in: query
         name: direction
         type: string
-      - description: Only include sessions active (last_seen_at) at or after this
-          RFC3339 timestamp
+      - description: Only include sessions with a turn started at or after this RFC3339
+          timestamp (activity window, matches /v1/stats)
         format: date-time
         in: query
         name: since
         type: string
-      - description: Only include sessions active (last_seen_at) before this RFC3339
-          timestamp
+      - description: Only include sessions with a turn started before this RFC3339
+          timestamp (activity window, matches /v1/stats)
         format: date-time
         in: query
         name: until
@@ -669,9 +742,9 @@ paths:
   /v1/sessions/{id}:
     delete:
       description: 'Permanently deletes a session and its subtree: subagent child
-        sessions, derived nodes, and spans cascade with it. Org-scoped — any caller
-        in the org may delete any of its sessions. The immutable raw_turns capture
-        log is left intact.'
+        sessions and their derived traces/spans cascade with it. Org-scoped — any
+        caller in the org may delete any of its sessions. The immutable raw_turns
+        capture log is left intact.'
       operationId: deleteSession
       parameters:
       - description: Session id (UUID)
@@ -735,6 +808,51 @@ paths:
           schema:
             $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
       summary: Get a session
+      tags:
+      - sessions
+    patch:
+      consumes:
+      - application/json
+      description: Updates the user-editable session name. An absent field is a 400;
+        null or empty (after trim) clears back to the auto-derived title. Length is
+        bounded to 200 characters.
+      parameters:
+      - description: Session id (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Update request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.sessionUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SessionDetailResponse'
+        "400":
+          description: Missing/malformed id, missing name field, or name exceeds 200
+            characters
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "404":
+          description: Session not found or not in caller's org
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Failed to update session
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Sessions not supported by this backend
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Update a session's title
       tags:
       - sessions
   /v1/sessions/{id}/export:
@@ -876,14 +994,14 @@ paths:
         — pages internally.
       operationId: exportSessions
       parameters:
-      - description: 'Only include sessions active (last_seen_at) at or after this
-          RFC3339 timestamp (default: now - 30 days)'
+      - description: 'Only include sessions with a turn started at or after this RFC3339
+          timestamp (activity window; default: now - 30 days)'
         format: date-time
         in: query
         name: since
         type: string
-      - description: Only include sessions active (last_seen_at) before this RFC3339
-          timestamp
+      - description: Only include sessions with a turn started before this RFC3339
+          timestamp (activity window)
         format: date-time
         in: query
         name: until
@@ -922,30 +1040,11 @@ paths:
   /v1/stats:
     get:
       description: Returns counts plus cost / token / duration / tool-call / completed-count
-        totals for the window. On span-projection backends the numbers are trace-grain
-        rollup sums (delta-only usage, agent time = sum of trace durations) so they
-        agree with the session and trace views; turn_count counts traces and stem_count
-        is omitted. Supplying any legacy per-node filter (project / agent_name / model
-        / provider) forces the legacy node-layer aggregate, whose sums re-bill re-sent
-        history and whose duration is wall-clock MAX-MIN (PCC-514).
+        totals for the window. The numbers are span-grain trace rollup sums (delta-only
+        usage, agent time = sum of trace durations) so they agree with the session
+        and trace views; turn_count counts traces. Filter the window with since/until.
       operationId: getStats
       parameters:
-      - description: Filter by project name (forces the legacy node-layer aggregate)
-        in: query
-        name: project
-        type: string
-      - description: Filter by agent name (forces the legacy node-layer aggregate)
-        in: query
-        name: agent_name
-        type: string
-      - description: Filter by model name (forces the legacy node-layer aggregate)
-        in: query
-        name: model
-        type: string
-      - description: Filter by provider name (forces the legacy node-layer aggregate)
-        in: query
-        name: provider
-        type: string
       - description: Only include records at or after this RFC3339 timestamp
         format: date-time
         in: query

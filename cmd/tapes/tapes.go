@@ -8,20 +8,19 @@ import (
 
 	authcmder "github.com/papercomputeco/tapes/cmd/tapes/auth"
 	backfillcmder "github.com/papercomputeco/tapes/cmd/tapes/backfill"
-	checkoutcmder "github.com/papercomputeco/tapes/cmd/tapes/checkout"
 	configcmder "github.com/papercomputeco/tapes/cmd/tapes/config"
 	deckcmder "github.com/papercomputeco/tapes/cmd/tapes/deck"
 	devcmder "github.com/papercomputeco/tapes/cmd/tapes/dev"
+	exportcmd "github.com/papercomputeco/tapes/cmd/tapes/export"
 	initcmder "github.com/papercomputeco/tapes/cmd/tapes/init"
 	localcmder "github.com/papercomputeco/tapes/cmd/tapes/local"
 	searchcmder "github.com/papercomputeco/tapes/cmd/tapes/search"
 	seedcmder "github.com/papercomputeco/tapes/cmd/tapes/seed"
 	servecmder "github.com/papercomputeco/tapes/cmd/tapes/serve"
+	sessionscmder "github.com/papercomputeco/tapes/cmd/tapes/sessions"
 	skillcmder "github.com/papercomputeco/tapes/cmd/tapes/skill"
 	startcmder "github.com/papercomputeco/tapes/cmd/tapes/start"
 	statuscmder "github.com/papercomputeco/tapes/cmd/tapes/status"
-	synccmder "github.com/papercomputeco/tapes/cmd/tapes/sync"
-	validatecmder "github.com/papercomputeco/tapes/cmd/tapes/validate"
 	versioncmder "github.com/papercomputeco/tapes/cmd/tapes/version"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/logger"
@@ -32,26 +31,28 @@ import (
 
 const tapesLongDesc string = `Tapes is automatic telemetry for your agents.
 
+Tapes captures LLM calls into an immutable raw-turn log and derives them into a
+browsable model of sessions -> traces -> spans.
+
 Run services using:
   tapes start          Start proxy + API (auto ports)
   tapes start <agent>  Start proxy + API and launch an agent
-  tapes serve api      Run the API server
-  tapes serve proxy    Run the proxy server
-  tapes serve          Run both servers together
+  tapes serve          Run the full local stack: proxy, API, and derive worker
+  tapes serve api      Run just the API server
+  tapes serve proxy    Run just the proxy server
+  tapes serve derive-worker  Project captured raw turns into sessions/traces/spans
 
-Experimental: Inspect conversation state:
-  tapes checkout <hash>    Checkout a conversation point
-  tapes checkout           Clear checkout state, start fresh
-  tapes status             Show current checkout state
+Initialize:
   tapes init                         Initialize a local .tapes directory
   tapes init --preset <preset|url>   Initialize with a provider preset or remote config
 
-Search sessions:
-  tapes search         Search sessions using semantic similarity
+Browse and search:
+  tapes deck           ROI dashboard over sessions, traces, and spans
+  tapes search         Search main-conversation spans by semantic similarity
+  tapes seed --demo    Seed demo sessions to explore the deck
 
-Deck sessions:
-  tapes deck           ROI dashboard for sessions
-  tapes seed           Seed demo sessions
+Export a conversation:
+  tapes export <session-id>     Export a session as JSONL (the API projection)
 
 Configuration:
   tapes config set <key> <value>    Set a configuration value
@@ -91,8 +92,7 @@ func NewTapesCmd() *cobra.Command {
 	_ = cmd.PersistentFlags().MarkHidden("disable-update-check")
 
 	// Add subcommands
-	cmd.AddCommand(synccmder.NewSyncCmd())
-	cmd.AddCommand(checkoutcmder.NewCheckoutCmd())
+	cmd.AddCommand(exportcmd.NewExportCmd())
 	cmd.AddCommand(configcmder.NewConfigCmd())
 	cmd.AddCommand(deckcmder.NewDeckCmd())
 	cmd.AddCommand(devcmder.NewDevCmd())
@@ -102,11 +102,11 @@ func NewTapesCmd() *cobra.Command {
 	cmd.AddCommand(localcmder.NewLocalCmd())
 	cmd.AddCommand(searchcmder.NewSearchCmd())
 	cmd.AddCommand(seedcmder.NewSeedCmd())
+	cmd.AddCommand(sessionscmder.NewSessionsCmd())
 	cmd.AddCommand(servecmder.NewServeCmd())
 	cmd.AddCommand(skillcmder.NewSkillCmd())
 	cmd.AddCommand(startcmder.NewStartCmd())
 	cmd.AddCommand(statuscmder.NewStatusCmd())
-	cmd.AddCommand(validatecmder.NewValidateCmd())
 	cmd.AddCommand(versioncmder.NewVersionCmd())
 
 	return cmd

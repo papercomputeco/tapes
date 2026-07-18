@@ -56,7 +56,10 @@ build-local: ## Builds local artifacts with local toolchain
 .PHONY: install
 install: build-local ## Builds local artifacts and installs to configured $GOPATH
 	$(call print-target)
-	cp ./build/tapes $(shell go env GOBIN)
+	# install (not cp) writes a temp file and renames it into place: a fresh
+	# inode each time. Overwriting the binary in place invalidates the running
+	# Mach-O's code signature on macOS, which SIGKILLs the next invocation.
+	install -m 0755 ./build/tapes $(shell go env GOBIN)/tapes
 
 .PHONY: build
 build: ## Builds all cross-platform artifacts - Warning! MacOS may fail cross compiling toolchain dependency
@@ -157,11 +160,6 @@ test: ## Runs tests via "go test" in the Dagger services environment
 e2e-test: ## Runs end-to-end tests with Postgres and Ollama via Dagger
 	$(call print-target)
 	dagger call test-e-2-e
-
-.PHONY: test-kafka-e2e
-test-kafka-e2e: ## Runs Kafka e2e proxy publish test
-	$(call print-target)
-	dagger call test-kafka-e-2-e
 
 .PHONY: help
 .DEFAULT_GOAL := help

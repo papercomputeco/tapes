@@ -15,9 +15,13 @@ import (
 // summaries; spans arrive per trace on expand; full payloads per span
 // on demand. Initial paint is O(turns), not O(session).
 
-// TraceListResponse is the summaries list for one session.
+// TraceListResponse is the summaries list for one session. `schema`
+// stamps the projection generation the rows were derived against — the
+// same stamp the composite carries — so every trace-grain response is
+// self-describing, not just the composite.
 type TraceListResponse struct {
-	Items []TraceItem `json:"items"`
+	Schema string      `json:"schema"`
+	Items  []TraceItem `json:"items"`
 }
 
 // RawTurnHeaderItem is one wire-log row: what crossed the wire (or
@@ -30,7 +34,7 @@ type RawTurnHeaderItem struct {
 	AgentName     string          `json:"agent_name,omitempty"`
 	RequestID     string          `json:"request_id,omitempty"`
 	ReceivedAt    time.Time       `json:"received_at"`
-	Meta          json.RawMessage `json:"meta,omitempty"`
+	Meta          json.RawMessage `json:"meta,omitempty" swaggertype:"object"`
 	RequestBytes  int64           `json:"request_bytes"`
 	ResponseBytes int64           `json:"response_bytes"`
 }
@@ -41,29 +45,28 @@ type RawTurnListResponse struct {
 }
 
 func traceItemFromTurn(turn storage.SpanTurnRecord, spanCount int) TraceItem {
-	meta := map[string]any{}
-	if turn.Synthetic != "" {
-		meta["synthetic"] = turn.Synthetic
-	}
 	return TraceItem{
-		ID:                  turn.TraceID,
-		TraceID:             turn.TraceID,
-		SessionID:           turn.SessionID,
-		UserPrompt:          turn.UserPrompt,
-		ResponsePreview:     turn.ResponsePreview,
-		Status:              turn.Status,
-		StartedAt:           turn.StartedAt,
-		EndedAt:             turn.EndedAt,
-		DurationNS:          turn.DurationNS,
-		TotalInputTokens:    turn.TotalInputTokens,
-		TotalOutputTokens:   turn.TotalOutputTokens,
-		MainInputTokens:     turn.MainInputTokens,
-		MainOutputTokens:    turn.MainOutputTokens,
-		CacheReadTokens:     turn.CacheReadTokens,
-		CacheCreationTokens: turn.CacheCreationTokens,
-		TotalCostUSD:        turn.TotalCostUSD,
-		SpanCount:           spanCount,
-		Metadata:            meta,
+		TraceID:         turn.TraceID,
+		UserPrompt:      turn.UserPrompt,
+		ResponsePreview: turn.ResponsePreview,
+		Status:          turn.Status,
+		Source:          turn.Source,
+		StartedAt:       turn.StartedAt,
+		EndedAt:         turn.EndedAt,
+		DurationNS:      turn.DurationNS,
+		SpanCount:       spanCount,
+		Usage: TraceUsage{
+			InputTokens:         turn.TotalInputTokens,
+			OutputTokens:        turn.TotalOutputTokens,
+			CacheReadTokens:     turn.CacheReadTokens,
+			CacheCreationTokens: turn.CacheCreationTokens,
+			CostUSD:             turn.TotalCostUSD,
+		},
+		MainUsage: MainUsage{
+			InputTokens:  turn.MainInputTokens,
+			OutputTokens: turn.MainOutputTokens,
+		},
+		Synthetic: turn.Synthetic,
 	}
 }
 
@@ -121,7 +124,7 @@ func BuildTraceList(rows []storage.TraceSummaryRecord) TraceListResponse {
 	for _, row := range rows {
 		items = append(items, traceItemFromTurn(row.SpanTurnRecord, row.SpanCount))
 	}
-	return TraceListResponse{Items: items}
+	return TraceListResponse{Schema: ProjectionSchema, Items: items}
 }
 
 // handleGetTrace handles GET /v1/traces/:trace_id.
@@ -159,26 +162,17 @@ func (s *Server) handleGetTrace(c *fiber.Ctx) error {
 // so `tapes dev trace-fixtures` emits byte-identical JSON to the
 // handler.
 func BuildTraceDetail(turn storage.SpanTurnRecord, spans []storage.SpanRecord, links []storage.SpanLinkRecord, mode PayloadMode) TraceDetail {
-	children := map[string][]string{}
-	for _, sp := range spans {
-		if sp.ParentSpanID != "" {
-			children[sp.ParentSpanID] = append(children[sp.ParentSpanID], sp.SpanID)
-		}
-	}
 	detail := TraceDetail{
-		Trace: traceItemFromTurn(turn, len(spans)),
-		Spans: make([]SpanItem, 0, len(spans)),
-		Links: make([]SpanLinkItem, 0, len(links)),
+		Schema: ProjectionSchema,
+		Trace:  traceItemFromTurn(turn, len(spans)),
+		Spans:  make([]SpanItem, 0, len(spans)),
+		Links:  make([]SpanLinkItem, 0, len(links)),
 	}
 	for _, sp := range spans {
-		detail.Spans = append(detail.Spans, spanItemFromRecord(sp, children[sp.SpanID], mode))
+		detail.Spans = append(detail.Spans, spanItemFromRecord(sp, mode))
 	}
 	for _, l := range links {
-		detail.Links = append(detail.Links, SpanLinkItem{
-			FromTraceID: l.FromTraceID, FromSpanID: l.FromSpanID, FromIO: l.FromIO,
-			ToTraceID: l.ToTraceID, ToSpanID: l.ToSpanID, ToIO: l.ToIO,
-			Metadata: map[string]any{"kind": l.Kind},
-		})
+		detail.Links = append(detail.Links, spanLinkItem(l))
 	}
 	return detail
 }
@@ -211,7 +205,7 @@ func (s *Server) handleGetSpan(c *fiber.Ctx) error {
 	if rec == nil {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "span not found"})
 	}
-	item := spanItemFromRecord(*rec, nil, PayloadFull)
+	item := spanItemFromRecord(*rec, PayloadFull)
 	return c.JSON(item)
 }
 

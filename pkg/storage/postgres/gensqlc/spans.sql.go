@@ -13,23 +13,21 @@ import (
 
 const aggregateSpanStats = `-- name: AggregateSpanStats :one
 WITH matched AS (
-    SELECT t.org_id, t.trace_id, t.session_id, t.synthetic, t.duration_ns,
+    SELECT t.org_id, t.trace_id, t.session_id, t.duration_ns,
            t.total_input_tokens, t.total_output_tokens,
-           t.cache_read_tokens, t.cache_creation_tokens, t.total_cost_usd
+           t.cache_read_tokens, t.cache_creation_tokens, t.total_cost_usd,
+           s.derived_status
     FROM span_turns_20260615 t
+    LEFT JOIN sessions s ON s.id = t.session_id
     WHERE t.org_id = $1
       AND ($2::timestamptz IS NULL OR t.started_at >= $2::timestamptz)
       AND ($3::timestamptz IS NULL OR t.started_at < $3::timestamptz)
 )
 SELECT
     COUNT(*)::bigint                                        AS turn_count,
-    COUNT(*) FILTER (WHERE synthetic = '')::bigint          AS root_count,
     COUNT(DISTINCT session_id)::bigint                      AS session_count,
     COUNT(DISTINCT session_id) FILTER (
-        WHERE EXISTS (
-            SELECT 1 FROM sessions s
-            WHERE s.id = matched.session_id AND s.derived_status = 'completed'
-        )
+        WHERE matched.derived_status = 'completed'
     )::bigint                                               AS completed_count,
     COALESCE(SUM(total_input_tokens), 0)::bigint            AS input_tokens,
     COALESCE(SUM(total_output_tokens), 0)::bigint           AS output_tokens,
@@ -54,7 +52,6 @@ type AggregateSpanStatsParams struct {
 
 type AggregateSpanStatsRow struct {
 	TurnCount           int64
-	RootCount           int64
 	SessionCount        int64
 	CompletedCount      int64
 	InputTokens         int64
@@ -72,17 +69,21 @@ type AggregateSpanStatsRow struct {
 // usage, which re-bills the conversation history on every call.
 //
 //	turn_count        = traces started in the window
-//	root_count        = traces opened by a genuine prompt (synthetic = '')
 //	total_duration_ns = SUM of trace durations — agent time, not the
 //	                    wall-clock MAX-MIN window (idle time between
 //	                    turns no longer counts)
 //	tool_calls        = tool spans_20260615 started in the window
+//
+// completed_count joins sessions once (LEFT JOIN, so a trace whose
+// session identity is missing keeps its turn/token totals and simply
+// doesn't count as completed) rather than a correlated EXISTS per matched
+// trace — the per-row subquery is O(traces) index lookups and is the part
+// that times out on a wide (30d) window at scale.
 func (q *Queries) AggregateSpanStats(ctx context.Context, arg AggregateSpanStatsParams) (AggregateSpanStatsRow, error) {
 	row := q.db.QueryRow(ctx, aggregateSpanStats, arg.OrgID, arg.SinceFilter, arg.UntilFilter)
 	var i AggregateSpanStatsRow
 	err := row.Scan(
 		&i.TurnCount,
-		&i.RootCount,
 		&i.SessionCount,
 		&i.CompletedCount,
 		&i.InputTokens,
@@ -151,7 +152,7 @@ func (q *Queries) FoldSessionRollupsFromSpans(ctx context.Context, sessionIds []
 }
 
 const getSpan = `-- name: GetSpan :one
-SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq FROM spans_20260615
+SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq, verdict FROM spans_20260615
 WHERE org_id = $1 AND trace_id = $2 AND span_id = $3
 `
 
@@ -185,12 +186,13 @@ func (q *Queries) GetSpan(ctx context.Context, arg GetSpanParams) (Spans20260615
 		&i.RawTurnID,
 		&i.NodeHash,
 		&i.Seq,
+		&i.Verdict,
 	)
 	return i, err
 }
 
 const getSpanTurn = `-- name: GetSpanTurn :one
-SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview FROM span_turns_20260615
+SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview, source FROM span_turns_20260615
 WHERE org_id = $1 AND trace_id = $2
 `
 
@@ -220,6 +222,7 @@ func (q *Queries) GetSpanTurn(ctx context.Context, arg GetSpanTurnParams) (SpanT
 		&i.CacheReadTokens,
 		&i.CacheCreationTokens,
 		&i.ResponsePreview,
+		&i.Source,
 	)
 	return i, err
 }
@@ -227,8 +230,12 @@ func (q *Queries) GetSpanTurn(ctx context.Context, arg GetSpanTurnParams) (SpanT
 const listSpanLinksBySession = `-- name: ListSpanLinksBySession :many
 SELECT org_id, from_trace_id, from_span_id, from_io, to_trace_id, to_span_id, to_io, kind, session_id FROM span_links_20260615
 WHERE session_id = $1
+ORDER BY from_trace_id, from_span_id, to_trace_id, to_span_id, from_io, to_io
 `
 
+// Ordered by the unique key (org_id is constant within a session), so the
+// session-scoped links array is deterministic across reads and re-derives
+// — a heap-order scan otherwise shuffles the wire on every upsert.
 func (q *Queries) ListSpanLinksBySession(ctx context.Context, sessionID pgtype.UUID) ([]SpanLinks20260615, error) {
 	rows, err := q.db.Query(ctx, listSpanLinksBySession, sessionID)
 	if err != nil {
@@ -300,7 +307,7 @@ func (q *Queries) ListSpanLinksByTrace(ctx context.Context, arg ListSpanLinksByT
 }
 
 const listSpanTurns = `-- name: ListSpanTurns :many
-SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview FROM span_turns_20260615
+SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview, source FROM span_turns_20260615
 WHERE org_id = $1
   AND ($3::timestamptz IS NULL
        OR (started_at, trace_id) < ($3::timestamptz, $4::text))
@@ -347,6 +354,7 @@ func (q *Queries) ListSpanTurns(ctx context.Context, arg ListSpanTurnsParams) ([
 			&i.CacheReadTokens,
 			&i.CacheCreationTokens,
 			&i.ResponsePreview,
+			&i.Source,
 		); err != nil {
 			return nil, err
 		}
@@ -360,7 +368,7 @@ func (q *Queries) ListSpanTurns(ctx context.Context, arg ListSpanTurnsParams) ([
 
 const listSpanTurnsBySession = `-- name: ListSpanTurnsBySession :many
 
-SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview FROM span_turns_20260615
+SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview, source FROM span_turns_20260615
 WHERE session_id = $1
 ORDER BY started_at ASC, trace_id ASC
 `
@@ -393,6 +401,7 @@ func (q *Queries) ListSpanTurnsBySession(ctx context.Context, sessionID pgtype.U
 			&i.CacheReadTokens,
 			&i.CacheCreationTokens,
 			&i.ResponsePreview,
+			&i.Source,
 		); err != nil {
 			return nil, err
 		}
@@ -405,7 +414,7 @@ func (q *Queries) ListSpanTurnsBySession(ctx context.Context, sessionID pgtype.U
 }
 
 const listSpansBySession = `-- name: ListSpansBySession :many
-SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq FROM spans_20260615
+SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq, verdict FROM spans_20260615
 WHERE session_id = $1
 ORDER BY trace_id ASC, seq ASC, started_at ASC, span_id ASC
 `
@@ -442,6 +451,7 @@ func (q *Queries) ListSpansBySession(ctx context.Context, sessionID pgtype.UUID)
 			&i.RawTurnID,
 			&i.NodeHash,
 			&i.Seq,
+			&i.Verdict,
 		); err != nil {
 			return nil, err
 		}
@@ -454,7 +464,7 @@ func (q *Queries) ListSpansBySession(ctx context.Context, sessionID pgtype.UUID)
 }
 
 const listSpansByTrace = `-- name: ListSpansByTrace :many
-SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq FROM spans_20260615
+SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq, verdict FROM spans_20260615
 WHERE org_id = $1 AND trace_id = $2
 ORDER BY seq ASC, started_at ASC, span_id ASC
 `
@@ -494,6 +504,7 @@ func (q *Queries) ListSpansByTrace(ctx context.Context, arg ListSpansByTracePara
 			&i.RawTurnID,
 			&i.NodeHash,
 			&i.Seq,
+			&i.Verdict,
 		); err != nil {
 			return nil, err
 		}
@@ -507,7 +518,7 @@ func (q *Queries) ListSpansByTrace(ctx context.Context, arg ListSpansByTracePara
 
 const listTraceSummariesBySession = `-- name: ListTraceSummariesBySession :many
 SELECT t.org_id, t.trace_id, t.session_id, t.user_prompt, t.response_preview, t.synthetic,
-       t.status, t.started_at, t.ended_at, t.duration_ns,
+       t.status, t.source, t.started_at, t.ended_at, t.duration_ns,
        t.total_input_tokens, t.total_output_tokens,
        t.main_input_tokens, t.main_output_tokens,
        t.cache_read_tokens, t.cache_creation_tokens, t.total_cost_usd,
@@ -527,6 +538,7 @@ type ListTraceSummariesBySessionRow struct {
 	ResponsePreview     string
 	Synthetic           string
 	Status              string
+	Source              string
 	StartedAt           pgtype.Timestamptz
 	EndedAt             pgtype.Timestamptz
 	DurationNs          int64
@@ -558,6 +570,7 @@ func (q *Queries) ListTraceSummariesBySession(ctx context.Context, sessionID pgt
 			&i.ResponsePreview,
 			&i.Synthetic,
 			&i.Status,
+			&i.Source,
 			&i.StartedAt,
 			&i.EndedAt,
 			&i.DurationNs,
@@ -690,11 +703,13 @@ const upsertSpan = `-- name: UpsertSpan :exec
 INSERT INTO spans_20260615 (
     org_id, trace_id, span_id, parent_span_id, session_id,
     kind, name, status, call_kind, thread_id, model, stop_reason,
-    started_at, duration_ns, seq, input, output, usage, raw_turn_id, node_hash
+    started_at, duration_ns, seq, input, output, usage, raw_turn_id, node_hash,
+    verdict
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11, $12,
-    $13, $14, $15, $16, $17, $18, $19, $20
+    $13, $14, $15, $16, $17, $18, $19, $20,
+    $21
 )
 ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     parent_span_id = EXCLUDED.parent_span_id,
@@ -713,7 +728,8 @@ ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     output         = EXCLUDED.output,
     usage          = EXCLUDED.usage,
     raw_turn_id    = EXCLUDED.raw_turn_id,
-    node_hash      = EXCLUDED.node_hash
+    node_hash      = EXCLUDED.node_hash,
+    verdict        = EXCLUDED.verdict
 `
 
 type UpsertSpanParams struct {
@@ -737,6 +753,7 @@ type UpsertSpanParams struct {
 	Usage        []byte
 	RawTurnID    pgtype.Int8
 	NodeHash     string
+	Verdict      []byte
 }
 
 func (q *Queries) UpsertSpan(ctx context.Context, arg UpsertSpanParams) error {
@@ -761,6 +778,7 @@ func (q *Queries) UpsertSpan(ctx context.Context, arg UpsertSpanParams) error {
 		arg.Usage,
 		arg.RawTurnID,
 		arg.NodeHash,
+		arg.Verdict,
 	)
 	return err
 }
@@ -814,14 +832,14 @@ INSERT INTO span_turns_20260615 (
     total_input_tokens, total_output_tokens,
     main_input_tokens, main_output_tokens,
     cache_read_tokens, cache_creation_tokens,
-    total_cost_usd
+    total_cost_usd, source
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7,
     $8, $9, $10,
     $11, $12,
     $13, $14,
     $15, $16,
-    $17
+    $17, $18
 )
 ON CONFLICT (org_id, trace_id) DO UPDATE SET
     session_id            = COALESCE(span_turns_20260615.session_id, EXCLUDED.session_id),
@@ -838,7 +856,8 @@ ON CONFLICT (org_id, trace_id) DO UPDATE SET
     main_output_tokens    = EXCLUDED.main_output_tokens,
     cache_read_tokens     = EXCLUDED.cache_read_tokens,
     cache_creation_tokens = EXCLUDED.cache_creation_tokens,
-    total_cost_usd        = EXCLUDED.total_cost_usd
+    total_cost_usd        = EXCLUDED.total_cost_usd,
+    source                = EXCLUDED.source
 `
 
 type UpsertSpanTurnParams struct {
@@ -859,6 +878,7 @@ type UpsertSpanTurnParams struct {
 	CacheReadTokens     int64
 	CacheCreationTokens int64
 	TotalCostUsd        pgtype.Numeric
+	Source              string
 }
 
 // Span model writes. Span identity is deterministic (minted from wire
@@ -883,6 +903,7 @@ func (q *Queries) UpsertSpanTurn(ctx context.Context, arg UpsertSpanTurnParams) 
 		arg.CacheReadTokens,
 		arg.CacheCreationTokens,
 		arg.TotalCostUsd,
+		arg.Source,
 	)
 	return err
 }

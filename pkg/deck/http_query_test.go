@@ -90,18 +90,18 @@ var _ = Describe("summaryFromSessionItem", func() {
 
 	It("maps a sessions row onto the summary shape", func() {
 		summary := summaryFromSessionItem(httpSessionItem{
-			ID:                "9f0d8a4e-0000-0000-0000-000000000001",
-			HarnessID:         "claude-code",
-			Name:              "port deck to traces",
-			Cwd:               "/Users/dev/workspace/tapes",
-			StartedAt:         started,
-			LastSeenAt:        lastSeen,
-			TurnCount:         12,
-			TotalInputTokens:  1000,
-			TotalOutputTokens: 250,
-			TotalCostUsd:      1.25,
-			DerivedStatus:     StatusCompleted,
-			Model:             "claude-opus-4.6",
+			ID:         "9f0d8a4e-0000-0000-0000-000000000001",
+			HarnessID:  "claude-code",
+			Cwd:        "/Users/dev/workspace/tapes",
+			StartedAt:  started,
+			LastSeenAt: lastSeen,
+			Rollup: httpSessionRollup{
+				Title:     "port deck to traces",
+				Status:    StatusCompleted,
+				Model:     "claude-opus-4.6",
+				TurnCount: 12,
+				Usage:     httpSessionUsage{InputTokens: 1000, OutputTokens: 250, CostUSD: 1.25},
+			},
 		})
 
 		Expect(summary.Label).To(Equal("port deck to traces"))
@@ -130,8 +130,8 @@ var _ = Describe("summaryFromSessionItem", func() {
 
 	It("falls back to the preview, then the id, for the label", func() {
 		Expect(summaryFromSessionItem(httpSessionItem{
-			ID:      "9f0d8a4e-0000-0000-0000-000000000001",
-			Preview: "\nfix the flaky proxy test\nplease",
+			ID:     "9f0d8a4e-0000-0000-0000-000000000001",
+			Rollup: httpSessionRollup{Preview: "\nfix the flaky proxy test\nplease"},
 		}).Label).To(Equal("fix the flaky proxy test"))
 
 		Expect(summaryFromSessionItem(httpSessionItem{

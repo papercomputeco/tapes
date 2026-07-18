@@ -150,7 +150,7 @@ type rawBatchEnvelope struct {
 }
 
 // Server is an HTTP server that accepts completed LLM conversation turns
-// for async storage in the Merkle DAG.
+// for async capture to the raw_turns log.
 type Server struct {
 	config     Config
 	driver     storage.Driver
@@ -182,10 +182,9 @@ func New(config Config, driver storage.Driver, log *slog.Logger) (*Server, error
 	})
 
 	wp, err := worker.NewPool(&worker.Config{
-		Driver:    driver,
-		Publisher: config.Publisher,
-		Project:   config.Project,
-		Logger:    log,
+		Driver:  driver,
+		Project: config.Project,
+		Logger:  log,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("could not create worker pool: %w", err)
@@ -209,7 +208,6 @@ func New(config Config, driver storage.Driver, log *slog.Logger) (*Server, error
 	app.Post("/v1/ingest", s.handleIngest)
 	app.Post("/v1/ingest/batch", s.handleBatchIngest)
 	app.Post("/v1/ingest/transcript", s.handleTranscriptIngest)
-	app.Get("/v1/ingest/nodes", s.handleListNodesByAgent)
 
 	return s, nil
 }
@@ -242,63 +240,6 @@ func (s *Server) Close() error {
 
 func (s *Server) handlePing(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"status": "ok"})
-}
-
-// NodeSummary is the per-item shape returned by GET /v1/ingest/nodes.
-// Intentionally minimal — operators and canaries only need to confirm a row
-// landed for a given agent; rich querying is served by the tapes-api.
-type NodeSummary struct {
-	Hash      string `json:"hash"`
-	Role      string `json:"role"`
-	Provider  string `json:"provider"`
-	Model     string `json:"model"`
-	AgentName string `json:"agent_name,omitempty"`
-}
-
-// NodeListResponse wraps a slice of NodeSummary in a count+items envelope so
-// the shape is consistent with the rest of the tapes query surface.
-type NodeListResponse struct {
-	Count int           `json:"count"`
-	Nodes []NodeSummary `json:"nodes"`
-}
-
-// handleListNodesByAgent returns nodes whose Bucket.AgentName matches the
-// ?agent= query parameter. Intended for e2e verification and the staging
-// canary — not a general-purpose query surface. Without a filter, returns
-// the full list to aid debugging.
-//
-// The implementation walks the full node list and filters in memory; this is
-// O(N) and appropriate for e2e verification (handfuls of nodes) but should
-// not be relied on for production queries against a real store.
-func (s *Server) handleListNodesByAgent(c *fiber.Ctx) error {
-	agent := c.Query("agent")
-
-	nodes, err := s.driver.List(c.Context())
-	if err != nil {
-		s.logger.Error("ingest list nodes failed", "error", err)
-		return c.Status(fiber.StatusBadGateway).JSON(llm.ErrorResponse{
-			Error: fmt.Sprintf("%s: %v", ErrDownstream, err),
-		})
-	}
-
-	out := NodeListResponse{Nodes: []NodeSummary{}}
-	for _, n := range nodes {
-		if n == nil {
-			continue
-		}
-		if agent != "" && n.Bucket.AgentName != agent {
-			continue
-		}
-		out.Nodes = append(out.Nodes, NodeSummary{
-			Hash:      n.Hash,
-			Role:      n.Bucket.Role,
-			Provider:  n.Bucket.Provider,
-			Model:     n.Bucket.Model,
-			AgentName: n.Bucket.AgentName,
-		})
-	}
-	out.Count = len(out.Nodes)
-	return c.JSON(out)
 }
 
 func (s *Server) handleIngest(c *fiber.Ctx) error {
@@ -659,11 +600,17 @@ func (s *Server) writeProcessTurnError(c *fiber.Ctx, err error) error {
 		reason = "downstream"
 	}
 
-	s.logger.Warn("ingest rejected",
-		"reason", reason,
-		"status", status,
-		"error", err,
-	)
+	// An unprocessable turn is still captured in the raw layer (persisted
+	// before parsing), so a parser/deriver fix re-derives it later — it's
+	// recoverable, not operator-actionable, and common when replaying a
+	// demo corpus. Log it at debug to keep the happy path quiet; metrics
+	// still count it. Envelope/downstream failures are genuine — keep warn.
+	logArgs := []any{"reason", reason, "status", status, "error", err}
+	if reason == "unprocessable" {
+		s.logger.Debug("ingest rejected", logArgs...)
+	} else {
+		s.logger.Warn("ingest rejected", logArgs...)
+	}
 	return c.Status(status).JSON(llm.ErrorResponse{Error: err.Error()})
 }
 

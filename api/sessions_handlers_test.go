@@ -435,7 +435,7 @@ var _ = Describe("harness natural-key filter on GET /v1/sessions", func() {
 		Expect(filtered.NextCursor).To(BeEmpty(), "a point lookup has no next page")
 		Expect(filtered.Items).To(HaveLen(1))
 		Expect(filtered.Items[0]).To(Equal(listBody.Items[0]))
-		Expect(filtered.Items[0].Preview).To(Equal(record.Preview), "the filtered row must carry preview like a list row")
+		Expect(filtered.Items[0].Rollup.Preview).To(Equal(record.Preview), "the filtered row must carry preview like a list row")
 	})
 
 	It("returns 501 when the driver does not implement sessionsReader regardless of filter params", func() {
