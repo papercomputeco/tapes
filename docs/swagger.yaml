@@ -87,6 +87,14 @@ definitions:
           so the console renders it directly instead of inferring "running"
           from recency itself (keeps the console dumb; RFD 00007 §C).
         type: boolean
+      name:
+        description: |-
+          Name is the session's display label: the value on the identity row —
+          a user rename or the harness-supplied session name — when set,
+          otherwise the folded title (rollup.title) as a fallback. Empty only
+          when the session has neither. It therefore equals rollup.title
+          exactly when no identity-row name exists.
+        type: string
       parent_session_id:
         type: string
       rollup:
@@ -134,6 +142,12 @@ definitions:
           $ref: '#/definitions/api.TreeTask'
         type: array
       title:
+        description: |-
+          Title is the deriver's folded session title (derived_title),
+          generated from the conversation. Empty until title generation
+          produces one. It never falls back to the identity-row name, so it is
+          the stable descriptive title clients prefer for display; the
+          identity-row label (harness name or rename) is SessionItem.Name.
         type: string
       turn_count:
         type: integer
@@ -277,8 +291,10 @@ definitions:
       trace_id:
         type: string
       user_prompt:
-        description: UserPrompt is the prompt of the turn (trace) the span belongs
-          to.
+        description: |-
+          UserPrompt is the prompt of the turn (trace) the span belongs to.
+          Served explicitly (not omitempty) so a synthetic turn's empty prompt
+          reaches consumers as "" rather than a dropped key — see TraceItem.
         type: string
     type: object
   api.StatsResponse:
@@ -364,6 +380,11 @@ definitions:
           difference (Usage − MainUsage) is the harness's shadow spend
           (permission checks, title-gen, web summaries) on the turn.
       user_prompt:
+        description: |-
+          UserPrompt is served explicitly (not omitempty): a synthetic opener
+          has an empty prompt, and dropping the key turns the empty string
+          into `undefined` on the wire, which breaks consumers that expect a
+          string (e.g. the console's stripHarnessTags). Empty means synthetic.
         type: string
     type: object
   api.TraceListResponse:
@@ -405,6 +426,11 @@ definitions:
     properties:
       overwrite:
         type: boolean
+    type: object
+  api.sessionUpdateRequest:
+    properties:
+      name:
+        type: string
     type: object
   api.swaggerMCPError:
     properties:
@@ -451,11 +477,6 @@ definitions:
     type: object
   github_com_papercomputeco_tapes_pkg_seed.Result:
     properties:
-      nodes_derived:
-        description: |-
-          NodesDerived counts derived rows upserted by the synchronous
-          derive pass across the seeded sessions.
-        type: integer
       raw_turns:
         description: RawTurns is the total number of corpus rows replayed.
         type: integer
@@ -787,6 +808,51 @@ paths:
           schema:
             $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
       summary: Get a session
+      tags:
+      - sessions
+    patch:
+      consumes:
+      - application/json
+      description: Updates the user-editable session name. An absent field is a 400;
+        null or empty (after trim) clears back to the auto-derived title. Length is
+        bounded to 200 characters.
+      parameters:
+      - description: Session id (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Update request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.sessionUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SessionDetailResponse'
+        "400":
+          description: Missing/malformed id, missing name field, or name exceeds 200
+            characters
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "404":
+          description: Session not found or not in caller's org
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Failed to update session
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Sessions not supported by this backend
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Update a session's title
       tags:
       - sessions
   /v1/sessions/{id}/export:

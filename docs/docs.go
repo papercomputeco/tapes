@@ -502,6 +502,69 @@ const docTemplate = `{
                         }
                     }
                 }
+            },
+            "patch": {
+                "description": "Updates the user-editable session name. An absent field is a 400; null or empty (after trim) clears back to the auto-derived title. Length is bounded to 200 characters.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Update a session's title",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session id (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Update request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.sessionUpdateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.SessionDetailResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing/malformed id, missing name field, or name exceeds 200 characters",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Session not found or not in caller's org",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to update session",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Sessions not supported by this backend",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
             }
         },
         "/v1/sessions/{id}/export": {
@@ -1009,6 +1072,10 @@ const docTemplate = `{
                     "description": "Live is a runtime presence signal, not a projection fact: true when\nthe session was seen within the liveness window AND the deriver has\nnot marked it terminal. Computed at response time from last_seen_at,\nso the console renders it directly instead of inferring \"running\"\nfrom recency itself (keeps the console dumb; RFD 00007 §C).",
                     "type": "boolean"
                 },
+                "name": {
+                    "description": "Name is the session's display label: the value on the identity row —\na user rename or the harness-supplied session name — when set,\notherwise the folded title (rollup.title) as a fallback. Empty only\nwhen the session has neither. It therefore equals rollup.title\nexactly when no identity-row name exists.",
+                    "type": "string"
+                },
                 "parent_session_id": {
                     "type": "string"
                 },
@@ -1072,6 +1139,7 @@ const docTemplate = `{
                     }
                 },
                 "title": {
+                    "description": "Title is the deriver's folded session title (derived_title),\ngenerated from the conversation. Empty until title generation\nproduces one. It never falls back to the identity-row name, so it is\nthe stable descriptive title clients prefer for display; the\nidentity-row label (harness name or rename) is SessionItem.Name.",
                     "type": "string"
                 },
                 "turn_count": {
@@ -1263,7 +1331,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "user_prompt": {
-                    "description": "UserPrompt is the prompt of the turn (trace) the span belongs to.",
+                    "description": "UserPrompt is the prompt of the turn (trace) the span belongs to.\nServed explicitly (not omitempty) so a synthetic turn's empty prompt\nreaches consumers as \"\" rather than a dropped key — see TraceItem.",
                     "type": "string"
                 }
             }
@@ -1365,6 +1433,7 @@ const docTemplate = `{
                     ]
                 },
                 "user_prompt": {
+                    "description": "UserPrompt is served explicitly (not omitempty): a synthetic opener\nhas an empty prompt, and dropping the key turns the empty string\ninto ` + "`" + `undefined` + "`" + ` on the wire, which breaks consumers that expect a\nstring (e.g. the console's stripHarnessTags). Empty means synthetic.",
                     "type": "string"
                 }
             }
@@ -1428,6 +1497,14 @@ const docTemplate = `{
             "properties": {
                 "overwrite": {
                     "type": "boolean"
+                }
+            }
+        },
+        "api.sessionUpdateRequest": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
                 }
             }
         },
@@ -1496,10 +1573,6 @@ const docTemplate = `{
         "github_com_papercomputeco_tapes_pkg_seed.Result": {
             "type": "object",
             "properties": {
-                "nodes_derived": {
-                    "description": "NodesDerived counts derived rows upserted by the synchronous\nderive pass across the seeded sessions.",
-                    "type": "integer"
-                },
                 "raw_turns": {
                     "description": "RawTurns is the total number of corpus rows replayed.",
                     "type": "integer"
