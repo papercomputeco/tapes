@@ -112,10 +112,6 @@ type RederiveReport struct {
 	// ExitPlanMode tool_use that accepted the plan.
 	PlansAttached int `json:"plans_attached"`
 
-	// Upserted/Pruned are filled by the store after the write pass.
-	Upserted int `json:"upserted"`
-	Pruned   int `json:"pruned"`
-
 	// Reconcile reports the transcript↔wire fusion when transcript
 	// rows are present in the raw layer.
 	Reconcile *ReconcileStats `json:"reconcile,omitempty"`

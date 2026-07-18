@@ -72,9 +72,6 @@ type Result struct {
 	// (a re-seed reports everything deduped).
 	RawTurnsInserted int64 `json:"raw_turns_inserted"`
 	RawTurnsDeduped  int64 `json:"raw_turns_deduped"`
-	// NodesDerived counts derived rows upserted by the synchronous
-	// derive pass across the seeded sessions.
-	NodesDerived int `json:"nodes_derived"`
 }
 
 // sessionKey identifies one harness session within the seed org.
@@ -133,12 +130,10 @@ func Run(ctx context.Context, driver storage.Driver, logger *slog.Logger, orgID 
 	// worker running. PutRawTurn also marked these sessions derive-
 	// dirty, so a running worker would converge to the same state.
 	for _, key := range sessionKeys(wire, transcripts) {
-		rep, err := rederiver.RederiveSessionLocked(ctx, demoProject, orgID, key.harnessID, key.harnessSessionID)
-		if err != nil {
+		if _, err := rederiver.RederiveSessionLocked(ctx, demoProject, orgID, key.harnessID, key.harnessSessionID); err != nil {
 			return nil, fmt.Errorf("derive seeded session %s/%s: %w", key.harnessID, key.harnessSessionID, err)
 		}
 		report.Sessions++
-		report.NodesDerived += rep.Upserted
 	}
 
 	return report, nil

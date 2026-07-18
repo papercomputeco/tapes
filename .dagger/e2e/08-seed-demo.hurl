@@ -10,7 +10,6 @@ jsonpath "$.sessions" == 2
 jsonpath "$.raw_turns" == 216
 jsonpath "$.raw_turns_inserted" == 216
 jsonpath "$.raw_turns_deduped" == 0
-jsonpath "$.nodes_derived" >= 1
 
 # Re-seeding is a no-op: every replayed turn dedupes at the raw layer
 # and the derive pass is idempotent.
