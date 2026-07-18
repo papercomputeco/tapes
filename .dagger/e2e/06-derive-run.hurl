@@ -22,10 +22,10 @@ HTTP 200
 session_id: jsonpath "$.items[0].id"
 [Asserts]
 jsonpath "$.items" count >= 1
-jsonpath "$.items[0].total_input_tokens" == 25
-jsonpath "$.items[0].total_output_tokens" == 30
-jsonpath "$.items[0].turn_count" == 1
-jsonpath "$.items[0].model" == "claude-sonnet-4-5"
+jsonpath "$.items[0].rollup.usage.input_tokens" == 25
+jsonpath "$.items[0].rollup.usage.output_tokens" == 30
+jsonpath "$.items[0].rollup.turn_count" == 1
+jsonpath "$.items[0].rollup.model" == "claude-sonnet-4-5"
 
 # Span-layer stats are live post-derive: trace-grain sums, agent time =
 # sum of trace durations, stem_count absent on this path.
