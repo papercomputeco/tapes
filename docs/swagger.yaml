@@ -1043,6 +1043,9 @@ paths:
         totals for the window. The numbers are span-grain trace rollup sums (delta-only
         usage, agent time = sum of trace durations) so they agree with the session
         and trace views; turn_count counts traces. Filter the window with since/until.
+        The window is snapped outward to whole-minute boundaries (since floors, until
+        ceils) and the aggregate is served from a per-org cache for up to 60 seconds,
+        so repeated requests for the same logical window do not recompute.
       operationId: getStats
       parameters:
       - description: Only include records at or after this RFC3339 timestamp

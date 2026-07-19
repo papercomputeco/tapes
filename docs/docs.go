@@ -747,7 +747,7 @@ const docTemplate = `{
         },
         "/v1/stats": {
             "get": {
-                "description": "Returns counts plus cost / token / duration / tool-call / completed-count totals for the window. The numbers are span-grain trace rollup sums (delta-only usage, agent time = sum of trace durations) so they agree with the session and trace views; turn_count counts traces. Filter the window with since/until.",
+                "description": "Returns counts plus cost / token / duration / tool-call / completed-count totals for the window. The numbers are span-grain trace rollup sums (delta-only usage, agent time = sum of trace durations) so they agree with the session and trace views; turn_count counts traces. Filter the window with since/until. The window is snapped outward to whole-minute boundaries (since floors, until ceils) and the aggregate is served from a per-org cache for up to 60 seconds, so repeated requests for the same logical window do not recompute.",
                 "produces": [
                     "application/json"
                 ],

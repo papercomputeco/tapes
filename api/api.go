@@ -16,12 +16,13 @@ import (
 
 // Server is the API server for managing and querying the Tapes system
 type Server struct {
-	config    Config
-	driver    storage.Driver
-	logger    *slog.Logger
-	app       *fiber.App
-	metrics   *Metrics
-	mcpServer *mcp.Server
+	config     Config
+	driver     storage.Driver
+	logger     *slog.Logger
+	app        *fiber.App
+	metrics    *Metrics
+	mcpServer  *mcp.Server
+	statsCache *statsCache
 }
 
 // NewServer creates a new API server.
@@ -34,11 +35,12 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	})
 
 	s := &Server{
-		config:  config,
-		driver:  driver,
-		logger:  log,
-		app:     app,
-		metrics: NewMetrics(),
+		config:     config,
+		driver:     driver,
+		logger:     log,
+		app:        app,
+		metrics:    NewMetrics(),
+		statsCache: newStatsCache(),
 	}
 
 	// RED metrics is registered first so it sits as the outermost wrapper.

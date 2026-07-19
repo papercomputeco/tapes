@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"time"
@@ -87,6 +88,63 @@ var _ = Describe("v1 session handlers", func() {
 			Expect(drv.lastUntil).NotTo(BeNil())
 			Expect(drv.lastSince.UTC()).To(Equal(time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)))
 			Expect(drv.lastUntil.UTC()).To(Equal(time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC)))
+		})
+
+		It("serves a repeated window from cache without re-aggregating", func() {
+			drv := &statsStubDriver{
+				Driver: inmemory.NewDriver(),
+				stats:  storage.SpanStats{SessionCount: 7, TotalCostUSD: 12.5},
+			}
+			server := newStatsServer(drv)
+
+			first := decodeStats(server, "/v1/stats?since=2026-04-01T00:00:00Z")
+			second := decodeStats(server, "/v1/stats?since=2026-04-01T00:00:00Z")
+
+			Expect(drv.calls).To(Equal(1))
+			Expect(second).To(Equal(first))
+		})
+
+		It("collapses millisecond-unique since values into one snapped window", func() {
+			// Dashboard clients anchor since on their own clock, so two
+			// requests for the same logical window differ by milliseconds.
+			drv := &statsStubDriver{Driver: inmemory.NewDriver()}
+			server := newStatsServer(drv)
+
+			_ = decodeStats(server, "/v1/stats?since=2026-04-01T00:00:00.123Z")
+			_ = decodeStats(server, "/v1/stats?since=2026-04-01T00:00:59.987Z")
+
+			Expect(drv.calls).To(Equal(1))
+			Expect(drv.lastSince).NotTo(BeNil())
+			Expect(drv.lastSince.UTC()).To(Equal(time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)))
+		})
+
+		It("caches distinct windows separately", func() {
+			drv := &statsStubDriver{Driver: inmemory.NewDriver()}
+			server := newStatsServer(drv)
+
+			_ = decodeStats(server, "/v1/stats?since=2026-04-01T00:00:00Z")
+			_ = decodeStats(server, "/v1/stats?since=2026-04-01T00:01:00Z")
+
+			Expect(drv.calls).To(Equal(2))
+		})
+
+		It("does not cache aggregate failures", func() {
+			drv := &statsStubDriver{
+				Driver:   inmemory.NewDriver(),
+				statsErr: errors.New("boom"),
+			}
+			server := newStatsServer(drv)
+
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/stats?since=2026-04-01T00:00:00Z", nil)
+			Expect(err).NotTo(HaveOccurred())
+			resp, err := server.app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+			Expect(resp.StatusCode).To(Equal(fiber.StatusInternalServerError))
+
+			drv.statsErr = nil
+			_ = decodeStats(server, "/v1/stats?since=2026-04-01T00:00:00Z")
+			Expect(drv.calls).To(Equal(2))
 		})
 
 		It("returns zeros across every field for an empty aggregate", func() {

@@ -41,7 +41,7 @@ type StatsResponse struct {
 //
 //	@Summary		Get aggregate session stats
 //	@ID			getStats
-//	@Description	Returns counts plus cost / token / duration / tool-call / completed-count totals for the window. The numbers are span-grain trace rollup sums (delta-only usage, agent time = sum of trace durations) so they agree with the session and trace views; turn_count counts traces. Filter the window with since/until.
+//	@Description	Returns counts plus cost / token / duration / tool-call / completed-count totals for the window. The numbers are span-grain trace rollup sums (delta-only usage, agent time = sum of trace durations) so they agree with the session and trace views; turn_count counts traces. Filter the window with since/until. The window is snapped outward to whole-minute boundaries (since floors, until ceils) and the aggregate is served from a per-org cache for up to 60 seconds, so repeated requests for the same logical window do not recompute.
 //	@Tags			sessions
 //	@Produce		json
 //	@Param			since		query		string	false	"Only include records at or after this RFC3339 timestamp"	format(date-time)
@@ -56,6 +56,16 @@ func (s *Server) handleStats(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
 	}
 
+	// Snap the window to whole minutes so requests for the same logical
+	// window ("last 30d", anchored on the caller's clock) share one cache
+	// entry instead of recomputing the aggregate per millisecond-unique
+	// `since`. See snapStatsWindow for the containment guarantee.
+	since, until = snapStatsWindow(since, until)
+	cacheKey := statsCacheKey(orgIDFromCtx(c), since, until)
+	if cached, ok := s.statsCache.get(cacheKey); ok {
+		return c.JSON(cached)
+	}
+
 	// Span-layer trace-grain rollups are the only accounting: the deriver
 	// is the single writer of session/trace totals.
 	reader, ok := s.driver.(storage.SpanStatsReader)
@@ -68,7 +78,7 @@ func (s *Server) handleStats(c *fiber.Ctx) error {
 		s.logger.Error("aggregate span stats", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to compute stats"})
 	}
-	return c.JSON(StatsResponse{
+	resp := StatsResponse{
 		SessionCount:    stats.SessionCount,
 		TurnCount:       stats.TurnCount,
 		CompletedCount:  stats.CompletedCount,
@@ -77,7 +87,9 @@ func (s *Server) handleStats(c *fiber.Ctx) error {
 		OutputTokens:    stats.OutputTokens,
 		TotalDurationMs: stats.TotalDurationNS / int64(time.Millisecond),
 		ToolCalls:       stats.ToolCalls,
-	})
+	}
+	s.statsCache.set(cacheKey, resp)
+	return c.JSON(resp)
 }
 
 // parseStatsWindow reads the optional since/until time window from query
