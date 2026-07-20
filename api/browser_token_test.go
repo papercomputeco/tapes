@@ -123,6 +123,45 @@ var _ = Describe("browser tokens", func() {
 			Expect(resp.StatusCode).To(Equal(fiber.StatusNotImplemented))
 		})
 
+		It("refuses to mint without a tenant on the request", func() {
+			server := newTokenServer(Config{BrowserTokenSecret: testTokenSecret})
+
+			for _, org := range []string{"", "not-a-uuid"} {
+				req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/browser-tokens", nil)
+				Expect(err).NotTo(HaveOccurred())
+				if org != "" {
+					req.Header.Set(orgIDHeader, org)
+				}
+				resp, err := server.app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				resp.Body.Close()
+				Expect(resp.StatusCode).To(Equal(fiber.StatusBadRequest), "org header %q", org)
+			}
+		})
+
+		It("mints a unique token per issuance for identical claims", func() {
+			server := newTokenServer(Config{BrowserTokenSecret: testTokenSecret})
+
+			mint := func() string {
+				req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/browser-tokens", nil)
+				Expect(err).NotTo(HaveOccurred())
+				req.Header.Set(orgIDHeader, testTokenOrg)
+				resp, err := server.app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				defer resp.Body.Close()
+				Expect(resp.StatusCode).To(Equal(fiber.StatusOK))
+				var body BrowserTokenResponse
+				raw, err := io.ReadAll(resp.Body)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(json.Unmarshal(raw, &body)).To(Succeed())
+				return body.Token
+			}
+
+			// The nonce makes back-to-back mints distinct even when org,
+			// subject, and expiry second all match.
+			Expect(mint()).NotTo(Equal(mint()))
+		})
+
 		It("mints a verifiable token bound to the request's org and subject", func() {
 			server := newTokenServer(Config{BrowserTokenSecret: testTokenSecret})
 
@@ -156,6 +195,7 @@ var _ = Describe("browser tokens", func() {
 
 			req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/browser-tokens", nil)
 			Expect(err).NotTo(HaveOccurred())
+			req.Header.Set(orgIDHeader, testTokenOrg)
 			resp, err := server.app.Test(req)
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
@@ -281,7 +321,9 @@ var _ = Describe("browser tokens", func() {
 
 			Expect(resp.Header.Get("Access-Control-Allow-Origin")).To(Equal(testOrigin))
 			Expect(resp.Header.Get("Access-Control-Allow-Methods")).NotTo(ContainSubstring("DELETE"))
-			Expect(resp.Header.Get("Access-Control-Allow-Headers")).To(ContainSubstring(paperAuthHeader))
+			// X-Paper-Auth and nothing else — the read surface sends no
+			// bodies, so Content-Type stays off the allowlist.
+			Expect(resp.Header.Get("Access-Control-Allow-Headers")).To(Equal(paperAuthHeader))
 		})
 
 		It("does not allow an unlisted origin", func() {

@@ -584,6 +584,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/BrowserTokenResponse'
           description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: No tenant on the request
         "501":
           content:
             application/json:

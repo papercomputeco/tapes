@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -44,11 +45,15 @@ type browserTokenClaims struct {
 	OrgID     string `json:"org_id"`
 	Subject   string `json:"subject,omitempty"`
 	ExpiresAt int64  `json:"exp"`
+	// Nonce makes every issuance unique even for identical claims, so a
+	// future revocation denylist could target one token without catching
+	// every concurrently-minted sibling.
+	Nonce string `json:"nti,omitempty"`
 }
 
-// mintBrowserToken signs claims into the compact token format. The claims
-// JSON is deterministic (struct field order), so the token is reproducible
-// for identical claims — nothing random is embedded.
+// mintBrowserToken signs claims into the compact token format. The signer
+// itself is deterministic; issuance uniqueness comes from the Nonce the
+// mint handler stamps into the claims.
 func mintBrowserToken(secret []byte, claims browserTokenClaims) (string, error) {
 	payload, err := json.Marshal(claims)
 	if err != nil {
@@ -139,11 +144,26 @@ type BrowserTokenResponse struct {
 //	@Tags			auth
 //	@Produce		json
 //	@Success		200	{object}	BrowserTokenResponse
+//	@Failure		400	{object}	llm.ErrorResponse	"No tenant on the request"
 //	@Failure		501	{object}	llm.ErrorResponse	"Browser tokens not configured"
 //	@Router			/v1/browser-tokens [post]
 func (s *Server) handleMintBrowserToken(c *fiber.Ctx) error {
 	if s.config.BrowserTokenSecret == "" {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "browser tokens not configured"})
+	}
+	// A mint with no tenant context can only be a misconfiguration (a
+	// gateway that stopped stamping the org header). Reads fall back to
+	// the nil-org bucket by design, but silently signing a credential
+	// scoped to the wrong tenant bucket is worse than failing loud here —
+	// the console degrades to its server-fn path on any mint failure.
+	orgID := orgIDFromCtx(c)
+	if orgID == nilOrgID {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "browser tokens require a tenant: no org on the request"})
+	}
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		s.logger.Error("mint browser token nonce", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to mint browser token"})
 	}
 	ttl := s.config.BrowserTokenTTL
 	if ttl <= 0 {
@@ -151,9 +171,10 @@ func (s *Server) handleMintBrowserToken(c *fiber.Ctx) error {
 	}
 	expiresAt := time.Now().Add(ttl)
 	token, err := mintBrowserToken([]byte(s.config.BrowserTokenSecret), browserTokenClaims{
-		OrgID:     orgIDFromCtx(c),
+		OrgID:     orgID,
 		Subject:   authSubjectFromCtx(c),
 		ExpiresAt: expiresAt.Unix(),
+		Nonce:     base64.RawURLEncoding.EncodeToString(nonce),
 	})
 	if err != nil {
 		s.logger.Error("mint browser token", "error", err)
@@ -162,6 +183,6 @@ func (s *Server) handleMintBrowserToken(c *fiber.Ctx) error {
 	return c.JSON(BrowserTokenResponse{
 		Token:     token,
 		ExpiresAt: expiresAt.UTC().Format(time.RFC3339),
-		OrgID:     orgIDFromCtx(c),
+		OrgID:     orgID,
 	})
 }

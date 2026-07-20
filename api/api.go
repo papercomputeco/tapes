@@ -67,7 +67,9 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 		app.Use(cors.New(cors.Config{
 			AllowOrigins: config.CORSAllowedOrigins,
 			AllowMethods: "GET,HEAD,OPTIONS",
-			AllowHeaders: paperAuthHeader + ", Content-Type",
+			// X-Paper-Auth only: the read surface sends no bodies, so
+			// browsers never need Content-Type cross-origin.
+			AllowHeaders: paperAuthHeader,
 			MaxAge:       3600,
 		}))
 	}

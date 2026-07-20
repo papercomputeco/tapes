@@ -103,6 +103,12 @@
                             "$ref": "#/definitions/api.BrowserTokenResponse"
                         }
                     },
+                    "400": {
+                        "description": "No tenant on the request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
                     "501": {
                         "description": "Browser tokens not configured",
                         "schema": {
