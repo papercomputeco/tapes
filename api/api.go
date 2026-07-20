@@ -8,6 +8,7 @@ import (
 	"github.com/gofiber/adaptor/v2"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 
 	"github.com/papercomputeco/tapes/api/mcp"
@@ -57,12 +58,34 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	// on the read surface.
 	app.Use(compress.New())
 
+	// Direct browser reads (PCC-945): CORS is opt-in via config and covers
+	// read methods only — every browser call carries X-Paper-Auth, a
+	// non-safelisted header, so everything preflights and non-GET methods
+	// fail the preflight. Server-to-server callers are unaffected (no
+	// Origin header, middleware passes through).
+	if config.CORSAllowedOrigins != "" {
+		app.Use(cors.New(cors.Config{
+			AllowOrigins: config.CORSAllowedOrigins,
+			AllowMethods: "GET,HEAD,OPTIONS",
+			// X-Paper-Auth only: the read surface sends no bodies, so
+			// browsers never need Content-Type cross-origin.
+			AllowHeaders: paperAuthHeader,
+			MaxAge:       3600,
+		}))
+	}
+
 	// Tenant context: canonicalise the client-asserted org_id header onto
 	// Locals so the read handlers can scope lookups to a single tenant.
 	// Registered after recover (a malformed header can't escape panic
 	// translation) and before the routes; it only sets a Local, so it is a
 	// no-op for /metrics and /ping.
 	app.Use(s.withOrgContext)
+
+	// Browser-token verification (PCC-945): rebinds tenant + subject to a
+	// signed short-lived token when one is presented on X-Paper-Auth.
+	// Registered after withOrgContext so the verified org claim overrides
+	// the blind-trusted header for browser callers.
+	app.Use(s.withBrowserToken)
 
 	// /metrics is intentionally outside any auth group — Alloy scrapes
 	// in-cluster and there is no caller identity to verify.
@@ -96,6 +119,12 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	app.Patch("/v1/sessions/:id", s.handleUpdateSession)
 	app.Get("/v1/sessions/:id/skills", s.handleListSessionSkills)
 	app.Get("/v1/search/spans", s.handleSearchSpansEndpoint)
+
+	// Browser read tokens (PCC-945): minted by a trusted server-side caller
+	// (the console's server functions) over the same edge-stamped path as
+	// every other request, then presented by the browser on X-Paper-Auth
+	// for direct data-plane reads.
+	app.Post("/v1/browser-tokens", s.handleMintBrowserToken)
 
 	// Skills: generate from sessions, persist, edit, version, duplicate, and
 	// render a drop-in SKILL.md. Skills are keyed on an opaque id (the route

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -26,6 +27,13 @@ type apiCommander struct {
 	postgresDSN string
 	webUI       bool
 
+	// Direct browser reads (PCC-945). The token secret and TTL have no
+	// CLI flag: the secret is a deployment secret (TAPES_API_BROWSER_TOKEN_SECRET)
+	// and the TTL rarely needs tuning (TAPES_API_BROWSER_TOKEN_TTL).
+	corsOrigins        string
+	browserTokenSecret string
+	browserTokenTTL    time.Duration
+
 	vectorStoreTarget string
 
 	embeddingProvider   string
@@ -46,6 +54,7 @@ type apiCommander struct {
 var apiFlags = config.FlagSet{
 	config.FlagAPIListenStandalone: {Name: "listen", Shorthand: "l", ViperKey: "api.listen", Description: "Address for API server to listen on"},
 	config.FlagAPIWebUI:            {Name: "web-ui", ViperKey: "api.web_ui", Description: "Enable the minimal browser UI at /"},
+	config.FlagAPICORSOrigins:      {Name: "cors-origins", ViperKey: "api.cors_origins", Description: "Comma-separated browser origins allowed to call the read endpoints directly (empty disables CORS)"},
 	config.FlagPostgres:            {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
 	config.FlagVectorStoreTgt:      {Name: "vector-store-target", ViperKey: "vector_store.target", Description: "pgvector connection string (defaults to storage.postgres_dsn when unset)"},
 	config.FlagEmbeddingProv:       {Name: "embedding-provider", ViperKey: "embedding.provider", Description: "Embedding provider type (e.g., ollama, openai)"},
@@ -78,6 +87,7 @@ func NewAPICmd() *cobra.Command {
 			config.BindRegisteredFlags(v, cmd, cmder.flags, []string{
 				config.FlagAPIListenStandalone,
 				config.FlagAPIWebUI,
+				config.FlagAPICORSOrigins,
 				config.FlagPostgres,
 				config.FlagVectorStoreTgt,
 				config.FlagEmbeddingProv,
@@ -89,6 +99,9 @@ func NewAPICmd() *cobra.Command {
 
 			cmder.listen = v.GetString("api.listen")
 			cmder.webUI = v.GetBool("api.web_ui")
+			cmder.corsOrigins = v.GetString("api.cors_origins")
+			cmder.browserTokenSecret = v.GetString("api.browser_token_secret")
+			cmder.browserTokenTTL = v.GetDuration("api.browser_token_ttl")
 			cmder.skillModel = v.GetString("skill.model")
 			cmder.postgresDSN = v.GetString("storage.postgres_dsn")
 			cmder.vectorStoreTarget = v.GetString("vector_store.target")
@@ -128,6 +141,7 @@ func NewAPICmd() *cobra.Command {
 
 	config.AddStringFlag(cmd, cmder.flags, config.FlagAPIListenStandalone, &cmder.listen)
 	config.AddBoolFlag(cmd, cmder.flags, config.FlagAPIWebUI, &cmder.webUI)
+	config.AddStringFlag(cmd, cmder.flags, config.FlagAPICORSOrigins, &cmder.corsOrigins)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagPostgres, &cmder.postgresDSN)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagVectorStoreTgt, &cmder.vectorStoreTarget)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingProv, &cmder.embeddingProvider)
@@ -149,8 +163,11 @@ func (c *apiCommander) run() error {
 	defer driver.Close()
 
 	apiConfig := api.Config{
-		ListenAddr:  c.listen,
-		EnableWebUI: c.webUI,
+		ListenAddr:         c.listen,
+		EnableWebUI:        c.webUI,
+		CORSAllowedOrigins: c.corsOrigins,
+		BrowserTokenSecret: c.browserTokenSecret,
+		BrowserTokenTTL:    c.browserTokenTTL,
 		// Skill generation reuses the search/embedding credential — the same
 		// shared key resolved above for the embedder. The model is a separate
 		// knob (--skill-model / TAPES_SKILL_MODEL): the embedding model is not

@@ -33,6 +33,18 @@ type ProxyConfig struct {
 type APIConfig struct {
 	Listen string `toml:"listen,omitempty" mapstructure:"listen"`
 	WebUI  bool   `toml:"web_ui,omitempty" mapstructure:"web_ui"`
+
+	// CORSOrigins is a comma-separated list of browser origins allowed to
+	// call the read surface directly (PCC-945). Empty disables CORS.
+	CORSOrigins string `toml:"cors_origins,omitempty" mapstructure:"cors_origins"`
+
+	// BrowserTokenSecret signs short-lived browser read tokens. Usually
+	// supplied via TAPES_API_BROWSER_TOKEN_SECRET rather than config.toml.
+	BrowserTokenSecret string `toml:"browser_token_secret,omitempty" mapstructure:"browser_token_secret"`
+
+	// BrowserTokenTTL is the minted token lifetime as a Go duration
+	// string (e.g. "10m").
+	BrowserTokenTTL string `toml:"browser_token_ttl,omitempty" mapstructure:"browser_token_ttl"`
 }
 
 // IngestConfig holds ingest server settings for sidecar mode.
@@ -86,17 +98,21 @@ var configKeySet = map[string]bool{
 	"proxy.project":         true,
 	"api.listen":            true,
 	"api.web_ui":            true,
-	"ingest.listen":         true,
-	"client.proxy_target":   true,
-	"client.api_target":     true,
-	"vector_store.provider": true,
-	"vector_store.target":   true,
-	"embedding.provider":    true,
-	"embedding.target":      true,
-	"embedding.model":       true,
-	"embedding.dimensions":  true,
-	"opencode.provider":     true,
-	"opencode.model":        true,
+	"api.cors_origins":      true,
+	"api.browser_token_ttl": true,
+
+	"api.browser_token_secret": true,
+	"ingest.listen":            true,
+	"client.proxy_target":      true,
+	"client.api_target":        true,
+	"vector_store.provider":    true,
+	"vector_store.target":      true,
+	"embedding.provider":       true,
+	"embedding.target":         true,
+	"embedding.model":          true,
+	"embedding.dimensions":     true,
+	"opencode.provider":        true,
+	"opencode.model":           true,
 
 	"storage.postgres_dsn": true,
 

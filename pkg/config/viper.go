@@ -74,6 +74,9 @@ func setViperDefaults(v *viper.Viper) {
 	// API
 	v.SetDefault("api.listen", d.API.Listen)
 	v.SetDefault("api.web_ui", d.API.WebUI)
+	v.SetDefault("api.cors_origins", d.API.CORSOrigins)
+	v.SetDefault("api.browser_token_secret", d.API.BrowserTokenSecret)
+	v.SetDefault("api.browser_token_ttl", d.API.BrowserTokenTTL)
 
 	// Ingest
 	v.SetDefault("ingest.listen", d.Ingest.Listen)

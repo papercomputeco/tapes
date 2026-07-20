@@ -39,6 +39,7 @@ const (
 	FlagProxyListen         = "proxy-listen"
 	FlagAPIListen           = "api-listen"
 	FlagAPIWebUI            = "api-web-ui"
+	FlagAPICORSOrigins      = "api-cors-origins"
 	FlagUpstream            = "upstream"
 	FlagProvider            = "provider"
 	FlagPostgres            = "postgres"
