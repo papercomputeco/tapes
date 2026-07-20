@@ -1,5 +1,14 @@
 basePath: /
 definitions:
+  api.BrowserTokenResponse:
+    properties:
+      expires_at:
+        type: string
+      org_id:
+        type: string
+      token:
+        type: string
+    type: object
   api.MainUsage:
     properties:
       input_tokens:
@@ -552,6 +561,28 @@ paths:
       summary: Seed demo sessions (operator)
       tags:
       - admin
+  /v1/browser-tokens:
+    post:
+      description: Mints a short-lived token bound to the request's tenant and subject,
+        suitable for a browser to present on X-Paper-Auth when calling the read endpoints
+        directly (PCC-945). Minting is meant for trusted server-side callers on the
+        same edge-stamped path as every other request; the token only re-asserts an
+        identity that path already carries.
+      operationId: mintBrowserToken
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.BrowserTokenResponse'
+        "501":
+          description: Browser tokens not configured
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Mint a short-lived browser read token
+      tags:
+      - auth
   /v1/mcp:
     delete:
       description: Requests termination of a streamable MCP session when a client
