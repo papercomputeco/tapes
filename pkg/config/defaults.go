@@ -28,9 +28,6 @@ func NewDefaultConfig() *Config {
 		API: APIConfig{
 			Listen: defaultAPIListen,
 			WebUI:  false,
-			// CORSOrigins, BrowserTokenSecret, and BrowserTokenTTL default
-			// empty: direct browser reads (PCC-945) are opt-in, and the api
-			// package applies its own TTL fallback when unset.
 		},
 		Ingest: IngestConfig{
 			Listen: defaultIngestListen,

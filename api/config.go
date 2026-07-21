@@ -4,7 +4,6 @@ package api
 
 import (
 	"context"
-	"time"
 
 	"github.com/papercomputeco/tapes/pkg/embeddings"
 	"github.com/papercomputeco/tapes/pkg/sessions"
@@ -37,22 +36,6 @@ type Config struct {
 	// so API-only servers do not expose a human-facing development UI unless
 	// explicitly requested.
 	EnableWebUI bool
-
-	// CORSAllowedOrigins is a comma-separated list of origins allowed to
-	// call the read surface directly from a browser (PCC-945), e.g.
-	// "https://console.papercompute.com". Empty keeps CORS disabled — the
-	// server stays server-to-server only, exactly as before.
-	CORSAllowedOrigins string
-
-	// BrowserTokenSecret signs the short-lived browser read tokens minted
-	// by POST /v1/browser-tokens and verified on X-Paper-Auth. Empty
-	// disables both minting (501) and verification (401 on any
-	// tapes-format token).
-	BrowserTokenSecret string
-
-	// BrowserTokenTTL bounds the lifetime of minted browser tokens.
-	// Zero or negative falls back to defaultBrowserTokenTTL.
-	BrowserTokenTTL time.Duration
 
 	// SkillLLM* configure the LLM used by POST /v1/skills/generate. They are
 	// populated from the search/embedding credential so skill extraction

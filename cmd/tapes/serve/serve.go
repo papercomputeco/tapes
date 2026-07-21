@@ -34,20 +34,14 @@ import (
 type ServeCommander struct {
 	flags config.FlagSet
 
-	proxyListen string
-	apiListen   string
-	apiWebUI    bool
-
-	// Direct browser reads (PCC-945). Secret + TTL are env-only
-	// (TAPES_API_BROWSER_TOKEN_SECRET / TAPES_API_BROWSER_TOKEN_TTL).
-	apiCORSOrigins        string
-	apiBrowserTokenSecret string
-	apiBrowserTokenTTL    time.Duration
-	ingestListen          string
-	upstream              string
-	debug                 bool
-	postgresDSN           string
-	project               string
+	proxyListen  string
+	apiListen    string
+	apiWebUI     bool
+	ingestListen string
+	upstream     string
+	debug        bool
+	postgresDSN  string
+	project      string
 
 	providerType string
 
@@ -68,7 +62,6 @@ var ServeFlags = config.FlagSet{
 	config.FlagProxyListen:    {Name: "proxy-listen", Shorthand: "p", ViperKey: "proxy.listen", Description: "Address for proxy to listen on"},
 	config.FlagAPIListen:      {Name: "api-listen", Shorthand: "a", ViperKey: "api.listen", Description: "Address for API server to listen on"},
 	config.FlagAPIWebUI:       {Name: "api-web-ui", ViperKey: "api.web_ui", Description: "Enable the minimal browser UI at /"},
-	config.FlagAPICORSOrigins: {Name: "api-cors-origins", ViperKey: "api.cors_origins", Description: "Comma-separated browser origins allowed to call the read endpoints directly (empty disables CORS)"},
 	config.FlagIngestListen:   {Name: "ingest-listen", Shorthand: "i", ViperKey: "ingest.listen", Description: "Address for ingest server to listen on (sidecar mode)"},
 	config.FlagUpstream:       {Name: "upstream", Shorthand: "u", ViperKey: "proxy.upstream", Description: "Upstream LLM provider URL"},
 	config.FlagProvider:       {Name: "provider", ViperKey: "proxy.provider", Description: "LLM provider type (anthropic, openai, ollama)"},
@@ -116,7 +109,6 @@ func NewServeCmd() *cobra.Command {
 				config.FlagProxyListen,
 				config.FlagAPIListen,
 				config.FlagAPIWebUI,
-				config.FlagAPICORSOrigins,
 				config.FlagIngestListen,
 				config.FlagUpstream,
 				config.FlagProvider,
@@ -138,9 +130,6 @@ func NewServeCmd() *cobra.Command {
 			cmder.proxyListen = v.GetString("proxy.listen")
 			cmder.apiListen = v.GetString("api.listen")
 			cmder.apiWebUI = v.GetBool("api.web_ui")
-			cmder.apiCORSOrigins = v.GetString("api.cors_origins")
-			cmder.apiBrowserTokenSecret = v.GetString("api.browser_token_secret")
-			cmder.apiBrowserTokenTTL = v.GetDuration("api.browser_token_ttl")
 			cmder.ingestListen = v.GetString("ingest.listen")
 			cmder.upstream = v.GetString("proxy.upstream")
 			cmder.providerType = v.GetString("proxy.provider")
@@ -184,7 +173,6 @@ func NewServeCmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagProxyListen, &cmder.proxyListen)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagAPIListen, &cmder.apiListen)
 	config.AddBoolFlag(cmd, cmder.flags, config.FlagAPIWebUI, &cmder.apiWebUI)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagAPICORSOrigins, &cmder.apiCORSOrigins)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagIngestListen, &cmder.ingestListen)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagUpstream, &cmder.upstream)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagProvider, &cmder.providerType)
@@ -266,13 +254,10 @@ func (c *ServeCommander) run() error {
 
 	// Create API server
 	apiConfig := api.Config{
-		ListenAddr:         c.apiListen,
-		CORSAllowedOrigins: c.apiCORSOrigins,
-		BrowserTokenSecret: c.apiBrowserTokenSecret,
-		BrowserTokenTTL:    c.apiBrowserTokenTTL,
-		Embedder:           embedder,
-		SpanSearcher:       spanSearcher,
-		EnableWebUI:        c.apiWebUI,
+		ListenAddr:   c.apiListen,
+		Embedder:     embedder,
+		SpanSearcher: spanSearcher,
+		EnableWebUI:  c.apiWebUI,
 	}
 	apiServer, err := api.NewServer(apiConfig, driver, c.logger)
 	if err != nil {
