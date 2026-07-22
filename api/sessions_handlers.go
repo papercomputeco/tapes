@@ -28,12 +28,14 @@ type sessionsReader interface {
 	ListSessionRecords(ctx context.Context, orgID string, opts storage.SessionListOpts) ([]storage.SessionRecord, error)
 	GetSessionRecord(ctx context.Context, orgID, id string) (*storage.SessionRecord, error)
 	GetSessionRecordByHarness(ctx context.Context, orgID string, harnessID string, harnessSessionID string) (*storage.SessionRecord, error)
-	// UpdateSessionName sets (or, when name is nil or trims empty, clears)
-	// the user-editable session title. The org_id predicate lives in the
+	// UpdateSessionDisplayName sets (or, when name is nil or trims empty,
+	// clears) the user-editable session title. It writes the dedicated
+	// display_name column, not name, so a rename survives ingest re-sending
+	// the harness slug (PCC-970). The org_id predicate lives in the
 	// implementation's storage query (CC-2): a cross-org id must affect
 	// zero rows. Returns the number of rows affected so the handler can
 	// distinguish "updated" from "not in this org / unknown id" (404).
-	UpdateSessionName(ctx context.Context, orgID, id string, name *string) (int64, error)
+	UpdateSessionDisplayName(ctx context.Context, orgID, id string, name *string) (int64, error)
 }
 
 // sessionsWriter is the capability interface for mutating sessions (DELETE
@@ -73,12 +75,25 @@ type SessionItem struct {
 	// captured at ingest; empty for rows captured before the edge began
 	// stamping it.
 	AuthSubject string `json:"auth_subject,omitempty"`
-	// Name is the session's display label: the value on the identity row —
-	// a user rename or the harness-supplied session name — when set,
-	// otherwise the folded title (rollup.title) as a fallback. Empty only
-	// when the session has neither. It therefore equals rollup.title
-	// exactly when no identity-row name exists.
+	// Name is the harness identity-row label — the harness-supplied session
+	// name (a plan slug), or the folded title (rollup.title) as a fallback
+	// when no name was captured. This is capture/deriver provenance, NOT a
+	// user title: ingest re-sends it every turn. Clients should render
+	// DisplayTitle, not Name (PCC-970).
 	Name string `json:"name,omitempty"`
+	// DisplayName is the user's Console rename (sessions.display_name),
+	// empty unless a user set one. Written only by PATCH /v1/sessions/:id,
+	// never by ingest, so it survives a live session. It is the top of the
+	// DisplayTitle resolution; exposed raw so the edit affordance can seed
+	// its input from the user's own title (not the resolved fallback).
+	DisplayName string `json:"display_name,omitempty"`
+	// DisplayTitle is the server-resolved label clients should render:
+	// DisplayName -> rollup.title (generated) -> preview -> Name -> id
+	// slice. Resolving once on the server keeps every client (Console,
+	// paper CLI) from re-deriving — and diverging on — the precedence
+	// (PCC-970). Never empty: it falls back to a short harness id slice, then
+	// the session id (the primary key, always set for a stored row).
+	DisplayTitle string `json:"display_title"`
 	// Live is a runtime presence signal, not a projection fact: true when
 	// the session was seen within the liveness window AND the deriver has
 	// not marked it terminal. Computed at response time from last_seen_at,
@@ -162,6 +177,59 @@ type SessionDetailResponse struct {
 	Session SessionItem `json:"session"`
 }
 
+// resolveSessionDisplayTitle picks the label clients render, resolving the
+// provenance tiers in ONE place so every client (Console, paper CLI) agrees
+// instead of re-deriving — and diverging on — the precedence (PCC-970):
+//
+//	DisplayName (user Console rename) — explicit, always wins
+//	-> DerivedTitle (generated title-gen output)
+//	-> Preview (first user prompt)    — skipped if it's a JSON tool-result blob
+//	-> Name (harness slug / coalesced) — last human-ish label
+//	-> a short harness_session_id slice, then the session id — never empty
+//
+// Preview is already scaffolding-stripped by the deriver; the JSON guard
+// mirrors the Console's prior client-side rule for attribution-gap sessions
+// whose first captured node is a tool_result rather than prose.
+func resolveSessionDisplayTitle(s storage.SessionRecord) string {
+	if t := strings.TrimSpace(s.DisplayName); t != "" {
+		return t
+	}
+	if t := strings.TrimSpace(s.DerivedTitle); t != "" {
+		return t
+	}
+	if t := strings.TrimSpace(s.Preview); t != "" && !looksLikeJSONPreview(t) {
+		return t
+	}
+	if t := strings.TrimSpace(s.Name); t != "" {
+		return t
+	}
+	// Ultimate fallback: the harness id slice, or — if a row somehow carries
+	// no harness_session_id — the session's own primary key, which is always
+	// set for a stored row. Guarantees the never-empty contract (DisplayTitle
+	// has no omitempty) even for a degenerate record.
+	if slug := shortHarnessSessionID(s.HarnessSessionID); slug != "" {
+		return slug
+	}
+	return s.ID
+}
+
+// looksLikeJSONPreview is a cheap guard for previews that are really
+// tool-result payloads rather than user prose (a leading { or [).
+func looksLikeJSONPreview(s string) bool {
+	t := strings.TrimLeft(s, " \t\r\n")
+	return strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[")
+}
+
+// shortHarnessSessionID is the last-resort label: a 12-char slice of the
+// harness session id, matching the Console's historical id fallback.
+func shortHarnessSessionID(id string) string {
+	const n = 12
+	if len(id) <= n {
+		return id
+	}
+	return id[:n]
+}
+
 func sessionItemFromStorage(s storage.SessionRecord, now time.Time) SessionItem {
 	item := SessionItem{
 		ID:               s.ID,
@@ -176,6 +244,8 @@ func sessionItemFromStorage(s storage.SessionRecord, now time.Time) SessionItem 
 		HarnessMetadata:  s.HarnessMetadata,
 		AuthSubject:      s.AuthSubject,
 		Name:             s.Name,
+		DisplayName:      s.DisplayName,
+		DisplayTitle:     resolveSessionDisplayTitle(s),
 		Live:             now.Sub(s.LastSeenAt) < sessionLiveWindow && !terminalStatus(s.DerivedStatus),
 		Rollup: SessionRollup{
 			Status:     s.DerivedStatus,
@@ -959,12 +1029,14 @@ func (s *Server) handleDeleteSession(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
-// sessionUpdateRequest is the PATCH /v1/sessions/:id body. Name is a pointer
-// so an absent field (nil) is distinguishable from an explicit null or an
-// empty string, both of which mean "clear back to the auto-derived title"
-// (CC-3); an absent field is a 400 (nothing to update).
+// sessionUpdateRequest is the PATCH /v1/sessions/:id body. DisplayName is a
+// pointer so an absent field (nil) is distinguishable from an explicit null
+// or an empty string, both of which mean "clear back to the auto-derived
+// title" (CC-3); an absent field is a 400 (nothing to update). The field is
+// display_name (not name) so the request matches the display_name it sets on
+// the response — and never the harness identity `name` (PCC-970).
 type sessionUpdateRequest struct {
-	Name *string `json:"name"`
+	DisplayName *string `json:"display_name"`
 }
 
 // Referenced only by the swagger @Param annotation on handleUpdateSession (the
@@ -975,21 +1047,21 @@ var _ = sessionUpdateRequest{}
 
 // handleUpdateSession handles PATCH /v1/sessions/:id.
 //
-// It updates the user-editable session title only (CC-1, CC-4): the server
-// trims and bounds the name (CC-3), calls UpdateSessionName with the
+// It updates the user-editable display title only (CC-1, CC-4): the server
+// trims and bounds the value (CC-3), calls UpdateSessionDisplayName with the
 // org-scoped predicate carried in storage (CC-2), and on success re-reads
 // GetSessionRecord to return the updated session summary so the client can
 // write its cache through (CC-6/CC-7 on the frontend side).
 //
 //	@Summary		Update a session's title
-//	@Description	Updates the user-editable session name. An absent field is a 400; null or empty (after trim) clears back to the auto-derived title. Length is bounded to 200 characters.
+//	@Description	Updates the user-editable display_name. An absent field is a 400; null or empty (after trim) clears back to the auto-derived title. Length is bounded to 200 characters.
 //	@Tags			sessions
 //	@Accept			json
 //	@Produce		json
 //	@Param			id		path		string					true	"Session id (UUID)"
 //	@Param			request	body		sessionUpdateRequest	true	"Update request"
 //	@Success		200		{object}	SessionDetailResponse
-//	@Failure		400		{object}	llm.ErrorResponse	"Missing/malformed id, missing name field, or name exceeds 200 characters"
+//	@Failure		400		{object}	llm.ErrorResponse	"Missing/malformed id, missing display_name field, or display_name exceeds 200 characters"
 //	@Failure		404		{object}	llm.ErrorResponse	"Session not found or not in caller's org"
 //	@Failure		500		{object}	llm.ErrorResponse	"Failed to update session"
 //	@Failure		501		{object}	llm.ErrorResponse	"Sessions not supported by this backend"
@@ -1008,22 +1080,22 @@ func (s *Server) handleUpdateSession(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id must be a valid UUID"})
 	}
 
-	// Decode into raw messages first so an absent "name" key (nothing to
-	// update, 400) is distinguishable from an explicit null or empty string
+	// Decode into raw messages first so an absent "display_name" key (nothing
+	// to update, 400) is distinguishable from an explicit null or empty string
 	// (both valid "clear the title" requests). A *string alone can't make
 	// that distinction — both cases unmarshal to nil.
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(c.Body(), &raw); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "invalid request body"})
 	}
-	nameRaw, present := raw["name"]
+	nameRaw, present := raw["display_name"]
 	if !present {
-		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "name is required"})
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "display_name is required"})
 	}
 
 	var name *string
 	if err := json.Unmarshal(nameRaw, &name); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "name must be a string or null"})
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "display_name must be a string or null"})
 	}
 
 	// Normalize server-side (CC-3): trim; empty-after-trim (including an
@@ -1034,16 +1106,16 @@ func (s *Server) handleUpdateSession(c *fiber.Ctx) error {
 		trimmed := strings.TrimSpace(*name)
 		if trimmed != "" {
 			if utf8.RuneCountInString(trimmed) > maxSessionNameLength {
-				return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "name must be at most 200 characters"})
+				return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "display_name must be at most 200 characters"})
 			}
 			normalized = &trimmed
 		}
 	}
 
 	orgID := orgIDFromCtx(c)
-	rowsAffected, err := reader.UpdateSessionName(c.Context(), orgID, id, normalized)
+	rowsAffected, err := reader.UpdateSessionDisplayName(c.Context(), orgID, id, normalized)
 	if err != nil {
-		s.logger.Error("update session name", "id", id, "error", err)
+		s.logger.Error("update session display name", "id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to update session"})
 	}
 	if rowsAffected == 0 {

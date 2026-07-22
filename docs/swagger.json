@@ -501,7 +501,7 @@
                 }
             },
             "patch": {
-                "description": "Updates the user-editable session name. An absent field is a 400; null or empty (after trim) clears back to the auto-derived title. Length is bounded to 200 characters.",
+                "description": "Updates the user-editable display_name. An absent field is a 400; null or empty (after trim) clears back to the auto-derived title. Length is bounded to 200 characters.",
                 "consumes": [
                     "application/json"
                 ],
@@ -538,7 +538,7 @@
                         }
                     },
                     "400": {
-                        "description": "Missing/malformed id, missing name field, or name exceeds 200 characters",
+                        "description": "Missing/malformed id, missing display_name field, or display_name exceeds 200 characters",
                         "schema": {
                             "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
                         }
@@ -1042,6 +1042,14 @@
                 "cwd": {
                     "type": "string"
                 },
+                "display_name": {
+                    "description": "DisplayName is the user's Console rename (sessions.display_name),\nempty unless a user set one. Written only by PATCH /v1/sessions/:id,\nnever by ingest, so it survives a live session. It is the top of the\nDisplayTitle resolution; exposed raw so the edit affordance can seed\nits input from the user's own title (not the resolved fallback).",
+                    "type": "string"
+                },
+                "display_title": {
+                    "description": "DisplayTitle is the server-resolved label clients should render:\nDisplayName -\u003e rollup.title (generated) -\u003e preview -\u003e Name -\u003e id\nslice. Resolving once on the server keeps every client (Console,\npaper CLI) from re-deriving — and diverging on — the precedence\n(PCC-970). Never empty: it falls back to a short harness id slice, then\nthe session id (the primary key, always set for a stored row).",
+                    "type": "string"
+                },
                 "ended_at": {
                     "type": "string"
                 },
@@ -1070,7 +1078,7 @@
                     "type": "boolean"
                 },
                 "name": {
-                    "description": "Name is the session's display label: the value on the identity row —\na user rename or the harness-supplied session name — when set,\notherwise the folded title (rollup.title) as a fallback. Empty only\nwhen the session has neither. It therefore equals rollup.title\nexactly when no identity-row name exists.",
+                    "description": "Name is the harness identity-row label — the harness-supplied session\nname (a plan slug), or the folded title (rollup.title) as a fallback\nwhen no name was captured. This is capture/deriver provenance, NOT a\nuser title: ingest re-sends it every turn. Clients should render\nDisplayTitle, not Name (PCC-970).",
                     "type": "string"
                 },
                 "parent_session_id": {
@@ -1500,7 +1508,7 @@
         "api.sessionUpdateRequest": {
             "type": "object",
             "properties": {
-                "name": {
+                "display_name": {
                     "type": "string"
                 }
             }

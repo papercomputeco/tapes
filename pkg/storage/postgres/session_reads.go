@@ -71,7 +71,7 @@ func (d *Driver) ListSessionRecords(
 		`harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, ` +
 		`total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, ` +
 		`has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, ` +
-		`tasks, kind_counts`
+		`tasks, kind_counts, display_name`
 
 	// Values bind as pgx named args (@name). The dynamic ORDER BY forces a
 	// hand-built query, but every caller value is still a named, bound parameter
@@ -142,7 +142,7 @@ func (d *Driver) ListSessionRecords(
 			&g.HarnessVersion, &g.ParentSessionID, &g.StartedAt, &g.LastSeenAt, &g.EndedAt, &g.HarnessMetadata,
 			&g.TotalInputTokens, &g.TotalOutputTokens, &g.TotalCostUsd, &g.TurnCount, &g.DerivedStatus,
 			&g.HasGitActivity, &g.ToolResultCount, &g.ToolErrorCount, &g.DerivedTitle, &g.DerivedModel, &g.ModelUsage,
-			&g.Tasks, &g.KindCounts,
+			&g.Tasks, &g.KindCounts, &g.DisplayName,
 			&sortVal,
 		); err != nil {
 			return nil, fmt.Errorf("list session records: scan: %w", err)
@@ -282,21 +282,23 @@ func (d *Driver) DeleteSession(ctx context.Context, orgID, id string) (bool, err
 	return n > 0, nil
 }
 
-// UpdateSessionName sets (or clears, when name is nil) the user-facing
-// `name` column for a single session, scoped to the caller's org. The
-// org_id predicate lives in the SQL (UpdateSessionName query), never just
-// checked beforehand, so a cross-org id can never be updated. Returns the
-// number of rows affected: 0 means no row matched (unknown id, or an id
-// that exists but belongs to a different org), which the caller (the
-// sessions handler) maps to a 404 rather than treating as success.
-func (d *Driver) UpdateSessionName(ctx context.Context, orgID, id string, name *string) (int64, error) {
+// UpdateSessionDisplayName sets (or clears, when name is nil) the
+// user-facing `display_name` column for a single session, scoped to the
+// caller's org. It targets display_name — not name — so a Console rename
+// survives ingest re-sending the harness slug every turn (PCC-970). The
+// org_id predicate lives in the SQL (UpdateSessionDisplayName query),
+// never just checked beforehand, so a cross-org id can never be updated.
+// Returns the number of rows affected: 0 means no row matched (unknown id,
+// or an id that exists but belongs to a different org), which the caller
+// (the sessions handler) maps to a 404 rather than treating as success.
+func (d *Driver) UpdateSessionDisplayName(ctx context.Context, orgID, id string, name *string) (int64, error) {
 	oid, err := orgIDFromString(orgID)
 	if err != nil {
-		return 0, fmt.Errorf("update session name: %w", err)
+		return 0, fmt.Errorf("update session display name: %w", err)
 	}
 	parsed, err := uuid.Parse(id)
 	if err != nil {
-		return 0, fmt.Errorf("update session name: invalid id %q: %w", id, err)
+		return 0, fmt.Errorf("update session display name: invalid id %q: %w", id, err)
 	}
 
 	var namePg pgtype.Text
@@ -304,13 +306,13 @@ func (d *Driver) UpdateSessionName(ctx context.Context, orgID, id string, name *
 		namePg = pgtype.Text{String: *name, Valid: true}
 	}
 
-	rows, err := d.q.UpdateSessionName(ctx, gensqlc.UpdateSessionNameParams{
-		Name:  namePg,
-		ID:    pgtype.UUID{Bytes: parsed, Valid: true},
-		OrgID: oid,
+	rows, err := d.q.UpdateSessionDisplayName(ctx, gensqlc.UpdateSessionDisplayNameParams{
+		DisplayName: namePg,
+		ID:          pgtype.UUID{Bytes: parsed, Valid: true},
+		OrgID:       oid,
 	})
 	if err != nil {
-		return 0, fmt.Errorf("update session name: %w", err)
+		return 0, fmt.Errorf("update session display name: %w", err)
 	}
 	return rows, nil
 }
@@ -360,6 +362,12 @@ func sessionRecordFromRow(row gensqlc.Session) storage.SessionRecord {
 		Model:             row.DerivedModel,
 		AuthSubject:       row.AuthSubject,
 	}
+	// DisplayName (the user's Console rename) is exposed raw. It is the
+	// top of the display-title resolution the API performs; empty means
+	// "no user title" (PCC-970).
+	if row.DisplayName.Valid {
+		s.DisplayName = row.DisplayName.String
+	}
 	// DerivedTitle is exposed raw (never falls back to the name column) so
 	// callers that want the pure folded title — e.g. the API's
 	// rollup.title — do not inherit the identity-row name.
@@ -368,7 +376,11 @@ func sessionRecordFromRow(row gensqlc.Session) storage.SessionRecord {
 	}
 	// A user-set name is the session's display title; the folded
 	// title-gen output (derived_title) is only the auto-generated
-	// fallback when no user name is set (EST-2, CC-4 carve-out).
+	// fallback when no user name is set (EST-2, CC-4 carve-out). Left as-is
+	// so `name` on the wire is unchanged for existing consumers (paper CLI,
+	// deck); the Console now resolves via display_title (PCC-970), and the
+	// resolver's `name` fallback tier is only reached when derived_title is
+	// empty — where this coalesce yields the raw name anyway.
 	if row.Name.Valid && row.Name.String != "" {
 		s.Name = row.Name.String
 	} else if row.DerivedTitle.Valid && row.DerivedTitle.String != "" {

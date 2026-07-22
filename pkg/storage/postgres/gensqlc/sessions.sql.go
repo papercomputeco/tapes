@@ -35,7 +35,7 @@ func (q *Queries) DeleteSession(ctx context.Context, arg DeleteSessionParams) (i
 }
 
 const getSessionByNaturalKey = `-- name: GetSessionByNaturalKey :one
-SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns, tasks, kind_counts FROM sessions
+SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns, tasks, kind_counts, display_name FROM sessions
 WHERE org_id = $1
   AND harness_id = $2
   AND harness_session_id = $3
@@ -83,12 +83,13 @@ func (q *Queries) GetSessionByNaturalKey(ctx context.Context, arg GetSessionByNa
 		&i.DurationNs,
 		&i.Tasks,
 		&i.KindCounts,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getSessionRecord = `-- name: GetSessionRecord :one
-SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns, tasks, kind_counts FROM sessions
+SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns, tasks, kind_counts, display_name FROM sessions
 WHERE org_id = $1 AND id = $2
 `
 
@@ -129,6 +130,7 @@ func (q *Queries) GetSessionRecord(ctx context.Context, arg GetSessionRecordPara
 		&i.DurationNs,
 		&i.Tasks,
 		&i.KindCounts,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -206,6 +208,36 @@ func (q *Queries) UpdateSessionDerivedTitle(ctx context.Context, arg UpdateSessi
 	return err
 }
 
+const updateSessionDisplayName = `-- name: UpdateSessionDisplayName :execrows
+UPDATE sessions SET display_name = $1
+WHERE id = $2 AND org_id = $3
+`
+
+type UpdateSessionDisplayNameParams struct {
+	DisplayName pgtype.Text
+	ID          pgtype.UUID
+	OrgID       pgtype.UUID
+}
+
+// User-driven rename of a session's display title (Console edit affordance).
+// Writes the dedicated `display_name` column — NOT `name`. `name` carries
+// the harness-supplied session slug, which ingest re-sends on every turn
+// (UpsertSession COALESCEs it back in), so a rename written there is
+// clobbered on the next turn of a live session and also masks the derived
+// title (PCC-970). display_name is touched only here, never by ingest, so
+// a user's title is durable. Org-scoped in the WHERE clause (never just by
+// id) so a cross-org id can never be updated; :execrows returns the
+// affected-row count, which the caller uses to distinguish a successful
+// update from an unknown/foreign id (0 rows). A NULL clears back to the
+// derived/auto title (the read layer resolves the fallback).
+func (q *Queries) UpdateSessionDisplayName(ctx context.Context, arg UpdateSessionDisplayNameParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateSessionDisplayName, arg.DisplayName, arg.ID, arg.OrgID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateSessionKindCounts = `-- name: UpdateSessionKindCounts :exec
 UPDATE sessions SET kind_counts = $1 WHERE id = $2
 `
@@ -239,33 +271,6 @@ type UpdateSessionModelUsageParams struct {
 func (q *Queries) UpdateSessionModelUsage(ctx context.Context, arg UpdateSessionModelUsageParams) error {
 	_, err := q.db.Exec(ctx, updateSessionModelUsage, arg.ModelUsage, arg.ID)
 	return err
-}
-
-const updateSessionName = `-- name: UpdateSessionName :execrows
-UPDATE sessions SET name = $1
-WHERE id = $2 AND org_id = $3
-`
-
-type UpdateSessionNameParams struct {
-	Name  pgtype.Text
-	ID    pgtype.UUID
-	OrgID pgtype.UUID
-}
-
-// User-driven rename of a session's display title (Console edit affordance).
-// Unlike UpdateSessionDerivedTitle (title-gen output, Postgres-internal),
-// this sets the user-facing `name` column and is exposed on the
-// sessionsReader capability interface. Org-scoped in the WHERE clause
-// (never just by id) so a cross-org id can never be updated; :execrows
-// returns the affected-row count, which the caller uses to distinguish a
-// successful update from an unknown/foreign id (0 rows). A NULL name
-// clears back to the derived/auto title.
-func (q *Queries) UpdateSessionName(ctx context.Context, arg UpdateSessionNameParams) (int64, error) {
-	result, err := q.db.Exec(ctx, updateSessionName, arg.Name, arg.ID, arg.OrgID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
 }
 
 const updateSessionStatus = `-- name: UpdateSessionStatus :exec
@@ -357,7 +362,7 @@ SET last_seen_at     = $10,
     cwd              = COALESCE($7, sessions.cwd),
     harness_version  = COALESCE($8, sessions.harness_version),
     parent_session_id = COALESCE($9, sessions.parent_session_id)
-RETURNING id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns, tasks, kind_counts
+RETURNING id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns, tasks, kind_counts, display_name
 `
 
 type UpsertSessionParams struct {
@@ -434,6 +439,7 @@ func (q *Queries) UpsertSession(ctx context.Context, arg UpsertSessionParams) (S
 		&i.DurationNs,
 		&i.Tasks,
 		&i.KindCounts,
+		&i.DisplayName,
 	)
 	return i, err
 }

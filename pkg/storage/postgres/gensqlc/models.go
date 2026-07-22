@@ -69,6 +69,7 @@ type Session struct {
 	DurationNs        pgtype.Int8
 	Tasks             []byte
 	KindCounts        []byte
+	DisplayName       pgtype.Text
 }
 
 type Skill struct {

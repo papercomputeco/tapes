@@ -63,6 +63,23 @@ definitions:
         type: string
       cwd:
         type: string
+      display_name:
+        description: |-
+          DisplayName is the user's Console rename (sessions.display_name),
+          empty unless a user set one. Written only by PATCH /v1/sessions/:id,
+          never by ingest, so it survives a live session. It is the top of the
+          DisplayTitle resolution; exposed raw so the edit affordance can seed
+          its input from the user's own title (not the resolved fallback).
+        type: string
+      display_title:
+        description: |-
+          DisplayTitle is the server-resolved label clients should render:
+          DisplayName -> rollup.title (generated) -> preview -> Name -> id
+          slice. Resolving once on the server keeps every client (Console,
+          paper CLI) from re-deriving — and diverging on — the precedence
+          (PCC-970). Never empty: it falls back to a short harness id slice, then
+          the session id (the primary key, always set for a stored row).
+        type: string
       ended_at:
         type: string
       harness_id:
@@ -89,11 +106,11 @@ definitions:
         type: boolean
       name:
         description: |-
-          Name is the session's display label: the value on the identity row —
-          a user rename or the harness-supplied session name — when set,
-          otherwise the folded title (rollup.title) as a fallback. Empty only
-          when the session has neither. It therefore equals rollup.title
-          exactly when no identity-row name exists.
+          Name is the harness identity-row label — the harness-supplied session
+          name (a plan slug), or the folded title (rollup.title) as a fallback
+          when no name was captured. This is capture/deriver provenance, NOT a
+          user title: ingest re-sends it every turn. Clients should render
+          DisplayTitle, not Name (PCC-970).
         type: string
       parent_session_id:
         type: string
@@ -429,7 +446,7 @@ definitions:
     type: object
   api.sessionUpdateRequest:
     properties:
-      name:
+      display_name:
         type: string
     type: object
   api.swaggerMCPError:
@@ -813,7 +830,7 @@ paths:
     patch:
       consumes:
       - application/json
-      description: Updates the user-editable session name. An absent field is a 400;
+      description: Updates the user-editable display_name. An absent field is a 400;
         null or empty (after trim) clears back to the auto-derived title. Length is
         bounded to 200 characters.
       parameters:
@@ -836,8 +853,8 @@ paths:
           schema:
             $ref: '#/definitions/api.SessionDetailResponse'
         "400":
-          description: Missing/malformed id, missing name field, or name exceeds 200
-            characters
+          description: Missing/malformed id, missing display_name field, or display_name
+            exceeds 200 characters
           schema:
             $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
         "404":
