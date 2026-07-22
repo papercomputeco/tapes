@@ -124,7 +124,7 @@ func (d *sessionsStubDriver) GetSessionRecordByHarness(_ context.Context, orgID,
 // rowsAffected/err, mirroring the real driver's contract: the handler must
 // treat rowsAffected==0 as "not in this org / unknown id" (CC-2) rather than
 // inspecting the name it sent.
-func (d *sessionsStubDriver) UpdateSessionName(_ context.Context, orgID, id string, name *string) (int64, error) {
+func (d *sessionsStubDriver) UpdateSessionDisplayName(_ context.Context, orgID, id string, name *string) (int64, error) {
 	d.updateCalls++
 	d.lastUpdateOrgID = orgID
 	d.lastUpdateID = id

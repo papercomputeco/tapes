@@ -3,7 +3,7 @@ package api
 // Specs for PATCH /v1/sessions/:id (handleUpdateSession) land here in the
 // tester phase, driven against sessionsStubDriver (see
 // sessions_handlers_test.go) — no Postgres required. Covers: whitespace
-// trimming, the rune-counted length>200->400 bound, missing name field->400,
+// trimming, the rune-counted length>200->400 bound, missing display_name field->400,
 // 200 + updated summary via GetSessionRecord, and cross-org/unknown id->404
 // via rowsAffected==0 (CC-2, CC-3, CC-4). The empty/null clear-to-NULL and the
 // 501-when-unsupported paths are exercised at the storage layer, not here.
@@ -99,7 +99,7 @@ var _ = Describe("PATCH /v1/sessions/:id (handleUpdateSession)", func() {
 		server := newSessionsServer(drv)
 
 		// When the client PATCHes a valid name
-		_, _, status := patchSession(server, "/v1/sessions/"+sessionID, org, `{"name":"My corrected title"}`)
+		_, _, status := patchSession(server, "/v1/sessions/"+sessionID, org, `{"display_name":"My corrected title"}`)
 
 		// Then the request succeeds and the driver saw the trimmed name
 		// plus the org id threaded from context
@@ -122,7 +122,7 @@ var _ = Describe("PATCH /v1/sessions/:id (handleUpdateSession)", func() {
 
 		// When the client PATCHes a name padded with leading/trailing
 		// whitespace
-		_, _, status := patchSession(server, "/v1/sessions/"+sessionID, org, `{"name":"   spaced title   "}`)
+		_, _, status := patchSession(server, "/v1/sessions/"+sessionID, org, `{"display_name":"   spaced title   "}`)
 
 		// Then the server trims before calling the driver (CC-3)
 		Expect(status).To(Equal(fiber.StatusOK))
@@ -143,7 +143,7 @@ var _ = Describe("PATCH /v1/sessions/:id (handleUpdateSession)", func() {
 		// When the client PATCHes a name over 200 characters after
 		// trimming
 		overLong := "  " + strings.Repeat("a", 201) + "  "
-		_, errBody, status := patchSession(server, "/v1/sessions/"+sessionID, org, `{"name":"`+overLong+`"}`)
+		_, errBody, status := patchSession(server, "/v1/sessions/"+sessionID, org, `{"display_name":"`+overLong+`"}`)
 
 		// Then the server rejects it before ever calling the driver
 		// (CC-3, EST-9/10)
@@ -164,7 +164,7 @@ var _ = Describe("PATCH /v1/sessions/:id (handleUpdateSession)", func() {
 		// When the client PATCHes a title of exactly maxSessionNameLength
 		// multi-byte runes (200 emoji = 800 UTF-8 bytes)
 		title := strings.Repeat("🚀", maxSessionNameLength)
-		_, _, status := patchSession(server, "/v1/sessions/"+sessionID, org, `{"name":"`+title+`"}`)
+		_, _, status := patchSession(server, "/v1/sessions/"+sessionID, org, `{"display_name":"`+title+`"}`)
 
 		// Then the length bound counts runes, not bytes (CC-3): a title at
 		// the character ceiling is accepted even though its byte length is
@@ -199,7 +199,7 @@ var _ = Describe("PATCH /v1/sessions/:id (handleUpdateSession)", func() {
 		// Given a driver that reports success and, on the post-write
 		// re-read, returns the record reflecting the new name
 		updated := record
-		updated.Name = "My corrected title"
+		updated.DisplayName = "My corrected title"
 		drv := &sessionsStubDriver{
 			Driver:             inmemory.NewDriver(),
 			updateRowsAffected: 1,
@@ -208,7 +208,7 @@ var _ = Describe("PATCH /v1/sessions/:id (handleUpdateSession)", func() {
 		server := newSessionsServer(drv)
 
 		// When the client PATCHes the name
-		body, _, status := patchSession(server, "/v1/sessions/"+sessionID, org, `{"name":"My corrected title"}`)
+		body, _, status := patchSession(server, "/v1/sessions/"+sessionID, org, `{"display_name":"My corrected title"}`)
 
 		// Then the handler re-reads via GetSessionRecord and returns the
 		// updated session summary shape (EST-2)
@@ -217,7 +217,9 @@ var _ = Describe("PATCH /v1/sessions/:id (handleUpdateSession)", func() {
 		Expect(drv.lastGetOrgID).To(Equal(org))
 		Expect(drv.lastGetID).To(Equal(sessionID))
 		Expect(body.Session.ID).To(Equal(sessionID))
-		Expect(body.Session.Name).To(Equal("My corrected title"))
+		Expect(body.Session.DisplayName).To(Equal("My corrected title"))
+		Expect(body.Session.DisplayTitle).To(Equal("My corrected title"),
+			"a user rename resolves as the display title")
 	})
 
 	It("test_update_session_name_cross_org_404", func() {
@@ -231,7 +233,7 @@ var _ = Describe("PATCH /v1/sessions/:id (handleUpdateSession)", func() {
 		server := newSessionsServer(drv)
 
 		// When the client PATCHes a valid name
-		_, errBody, status := patchSession(server, "/v1/sessions/"+sessionID, org, `{"name":"My corrected title"}`)
+		_, errBody, status := patchSession(server, "/v1/sessions/"+sessionID, org, `{"display_name":"My corrected title"}`)
 
 		// Then the handler reports not-found rather than a false success
 		// (CC-2, EST-7), and never falls through to the re-read

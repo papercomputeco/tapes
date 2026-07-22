@@ -43,7 +43,7 @@ func (r *querierStubReader) GetSessionRecordByHarness(context.Context, string, s
 	return nil, nil
 }
 
-func (r *querierStubReader) UpdateSessionName(context.Context, string, string, *string) (int64, error) {
+func (r *querierStubReader) UpdateSessionDisplayName(context.Context, string, string, *string) (int64, error) {
 	panic("not implemented")
 }
 

@@ -19,6 +19,13 @@ type SessionRecord struct {
 	// otherwise DerivedTitle as the fallback. Empty only when neither
 	// exists.
 	Name string
+	// DisplayName is the user-set display title (sessions.display_name),
+	// written only by the Console rename PATCH and never by ingest, so it
+	// survives an active session (unlike Name, which the envelope re-sends
+	// every turn). Empty means "no user title"; the API resolves the
+	// display title as DisplayName -> DerivedTitle -> Preview -> Name
+	// (PCC-970).
+	DisplayName string
 	// DerivedTitle is the deriver's folded session title
 	// (sessions.derived_title), generated from the conversation. Empty
 	// until title generation produces one. Unlike Name it never falls back

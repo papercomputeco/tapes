@@ -148,14 +148,17 @@ UPDATE sessions SET tasks = sqlc.arg(tasks) WHERE id = sqlc.arg(id);
 -- Re-derive overwrites it idempotently.
 UPDATE sessions SET kind_counts = sqlc.arg(kind_counts) WHERE id = sqlc.arg(id);
 
--- name: UpdateSessionName :execrows
+-- name: UpdateSessionDisplayName :execrows
 -- User-driven rename of a session's display title (Console edit affordance).
--- Unlike UpdateSessionDerivedTitle (title-gen output, Postgres-internal),
--- this sets the user-facing `name` column and is exposed on the
--- sessionsReader capability interface. Org-scoped in the WHERE clause
--- (never just by id) so a cross-org id can never be updated; :execrows
--- returns the affected-row count, which the caller uses to distinguish a
--- successful update from an unknown/foreign id (0 rows). A NULL name
--- clears back to the derived/auto title.
-UPDATE sessions SET name = sqlc.narg(name)
+-- Writes the dedicated `display_name` column — NOT `name`. `name` carries
+-- the harness-supplied session slug, which ingest re-sends on every turn
+-- (UpsertSession COALESCEs it back in), so a rename written there is
+-- clobbered on the next turn of a live session and also masks the derived
+-- title (PCC-970). display_name is touched only here, never by ingest, so
+-- a user's title is durable. Org-scoped in the WHERE clause (never just by
+-- id) so a cross-org id can never be updated; :execrows returns the
+-- affected-row count, which the caller uses to distinguish a successful
+-- update from an unknown/foreign id (0 rows). A NULL clears back to the
+-- derived/auto title (the read layer resolves the fallback).
+UPDATE sessions SET display_name = sqlc.narg(display_name)
 WHERE id = sqlc.arg(id) AND org_id = sqlc.arg(org_id);
