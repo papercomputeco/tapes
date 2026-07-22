@@ -46,6 +46,13 @@ var HarnessTags = []string{
 	"tool-use-id",
 	"output-file",
 	"task-id",
+	// Codex's opening environment-framing wrapper. A Codex session
+	// prepends a text block wrapping its cwd/shell/current_date/timezone/
+	// filesystem framing in <environment_context>…</environment_context>.
+	// Those values (clock, timezone, cwd) drift between turns; stripping
+	// the outer tag removes the whole nested block so they cannot ride
+	// into the chain hash or the embedding render.
+	"environment_context",
 }
 
 // ProjectContent returns the projection of content blocks used when
