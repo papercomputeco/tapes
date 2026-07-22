@@ -1047,7 +1047,7 @@
                     "type": "string"
                 },
                 "display_title": {
-                    "description": "DisplayTitle is the server-resolved label clients should render:\nDisplayName -\u003e rollup.title (generated) -\u003e preview -\u003e Name -\u003e id\nslice. Resolving once on the server keeps every client (Console,\npaper CLI) from re-deriving — and diverging on — the precedence\n(PCC-970). Never empty: it falls back to a short id slice.",
+                    "description": "DisplayTitle is the server-resolved label clients should render:\nDisplayName -\u003e rollup.title (generated) -\u003e preview -\u003e Name -\u003e id\nslice. Resolving once on the server keeps every client (Console,\npaper CLI) from re-deriving — and diverging on — the precedence\n(PCC-970). Never empty: it falls back to a short harness id slice, then\nthe session id (the primary key, always set for a stored row).",
                     "type": "string"
                 },
                 "ended_at": {

@@ -83,7 +83,8 @@ components:
             DisplayName -> rollup.title (generated) -> preview -> Name -> id
             slice. Resolving once on the server keeps every client (Console,
             paper CLI) from re-deriving — and diverging on — the precedence
-            (PCC-970). Never empty: it falls back to a short id slice.
+            (PCC-970). Never empty: it falls back to a short harness id slice, then
+            the session id (the primary key, always set for a stored row).
           type: string
         ended_at:
           type: string

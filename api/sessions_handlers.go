@@ -91,7 +91,8 @@ type SessionItem struct {
 	// DisplayName -> rollup.title (generated) -> preview -> Name -> id
 	// slice. Resolving once on the server keeps every client (Console,
 	// paper CLI) from re-deriving — and diverging on — the precedence
-	// (PCC-970). Never empty: it falls back to a short id slice.
+	// (PCC-970). Never empty: it falls back to a short harness id slice, then
+	// the session id (the primary key, always set for a stored row).
 	DisplayTitle string `json:"display_title"`
 	// Live is a runtime presence signal, not a projection fact: true when
 	// the session was seen within the liveness window AND the deriver has
@@ -184,7 +185,7 @@ type SessionDetailResponse struct {
 //	-> DerivedTitle (generated title-gen output)
 //	-> Preview (first user prompt)    — skipped if it's a JSON tool-result blob
 //	-> Name (harness slug / coalesced) — last human-ish label
-//	-> a short harness_session_id slice — never empty
+//	-> a short harness_session_id slice, then the session id — never empty
 //
 // Preview is already scaffolding-stripped by the deriver; the JSON guard
 // mirrors the Console's prior client-side rule for attribution-gap sessions
@@ -202,7 +203,14 @@ func resolveSessionDisplayTitle(s storage.SessionRecord) string {
 	if t := strings.TrimSpace(s.Name); t != "" {
 		return t
 	}
-	return shortHarnessSessionID(s.HarnessSessionID)
+	// Ultimate fallback: the harness id slice, or — if a row somehow carries
+	// no harness_session_id — the session's own primary key, which is always
+	// set for a stored row. Guarantees the never-empty contract (DisplayTitle
+	// has no omitempty) even for a degenerate record.
+	if slug := shortHarnessSessionID(s.HarnessSessionID); slug != "" {
+		return slug
+	}
+	return s.ID
 }
 
 // looksLikeJSONPreview is a cheap guard for previews that are really
