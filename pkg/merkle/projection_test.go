@@ -51,14 +51,12 @@ var _ = Describe("ProjectContent", func() {
 	})
 
 	It("strips every harness tag the spec lists", func() {
-		// Each tag wraps a marker so we can prove the strip happened.
-		tags := []string{
-			"system-reminder",
-			"command-name", "command-message", "command-args",
-			"local-command-stdout", "local-command-stderr", "local-command-caveat",
-		}
+		// Iterate merkle.HarnessTags directly so this stays a canonical
+		// "every catalogued tag gets stripped" guard: new entries (the
+		// Phase-2 wrappers, environment_context, anything added later) are
+		// covered automatically instead of drifting from a hardcoded subset.
 		var body strings.Builder
-		for _, t := range tags {
+		for _, t := range merkle.HarnessTags {
 			body.WriteString("<" + t + ">drop-" + t + "</" + t + ">\n")
 		}
 		body.WriteString("keep")
@@ -67,6 +65,40 @@ var _ = Describe("ProjectContent", func() {
 
 		Expect(projected).To(HaveLen(1))
 		Expect(projected[0].Text).To(Equal("keep"))
+	})
+
+	It("strips Codex's <environment_context> wrapper with its nested volatile children", func() {
+		// A Codex session prepends an environment-framing block whose
+		// values (current_date, timezone, cwd) drift between turns. The
+		// outer strip must swallow the whole nested block so none of it
+		// reaches the projection.
+		env := strings.Join([]string{
+			"<environment_context>",
+			"  <cwd>/home/fedora/git/paper-forest/groves</cwd>",
+			"  <shell>zsh</shell>",
+			"  <current_date>2026-07-22</current_date>",
+			"  <timezone>UTC</timezone>",
+			"  <filesystem><workspace_roots><root>/home/x</root></workspace_roots>" +
+				"<permission_profile type=\"managed\">full</permission_profile></filesystem>",
+			"</environment_context>",
+			"",
+			"Hey Codex!",
+		}, "\n")
+
+		projected := merkle.ProjectContent([]llm.ContentBlock{{Type: "text", Text: env}})
+
+		Expect(projected).To(HaveLen(1))
+		Expect(projected[0].Text).To(Equal("Hey Codex!"))
+	})
+
+	It("hashes two Codex turns identically when only the environment_context values drift", func() {
+		day1 := "<environment_context><current_date>2026-07-22</current_date>" +
+			"<timezone>UTC</timezone></environment_context>\n\nsame ask"
+		day2 := "<environment_context><current_date>2026-07-23</current_date>" +
+			"<timezone>PST</timezone></environment_context>\n\nsame ask"
+
+		Expect(merkle.ProjectContent([]llm.ContentBlock{{Type: "text", Text: day1}})).
+			To(Equal(merkle.ProjectContent([]llm.ContentBlock{{Type: "text", Text: day2}})))
 	})
 
 	It("collapses a blank line inserted between paragraphs (PCC-562 57a58 case)", func() {
