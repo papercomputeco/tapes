@@ -11,6 +11,53 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteEmptyUnreferencedSession = `-- name: DeleteEmptyUnreferencedSession :execrows
+DELETE FROM sessions s
+WHERE s.org_id = $1
+  AND s.harness_id = $2
+  AND s.harness_session_id = $3
+  AND NOT EXISTS (
+      SELECT 1
+      FROM raw_turns r
+      WHERE r.org_id = s.org_id
+        AND COALESCE((
+            SELECT c.harness_id
+            FROM raw_turn_attribution_corrections c
+            WHERE c.org_id = r.org_id AND c.raw_turn_id = r.id
+            ORDER BY c.id DESC LIMIT 1
+        ), r.harness_id) = s.harness_id
+        AND COALESCE((
+            SELECT c.harness_session_id
+            FROM raw_turn_attribution_corrections c
+            WHERE c.org_id = r.org_id AND c.raw_turn_id = r.id
+            ORDER BY c.id DESC LIMIT 1
+        ), r.harness_session_id) = s.harness_session_id
+  )
+  AND NOT EXISTS (
+      SELECT 1
+      FROM sessions child
+      WHERE child.parent_session_id = s.id
+  )
+`
+
+type DeleteEmptyUnreferencedSessionParams struct {
+	OrgID            pgtype.UUID
+	HarnessID        string
+	HarnessSessionID string
+}
+
+// Remove only the ghost identity left after attribution repair moves away its
+// final effective raw turn. A zero-turn session that still anchors child
+// lineage is a legitimate placeholder and must remain. This is deliberately
+// narrower than the public subtree-cascading DeleteSession operation.
+func (q *Queries) DeleteEmptyUnreferencedSession(ctx context.Context, arg DeleteEmptyUnreferencedSessionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteEmptyUnreferencedSession, arg.OrgID, arg.HarnessID, arg.HarnessSessionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteSession = `-- name: DeleteSession :execrows
 DELETE FROM sessions
 WHERE org_id = $1 AND id = $2
@@ -189,6 +236,23 @@ func (q *Queries) InsertSessionPlaceholder(ctx context.Context, arg InsertSessio
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const setSessionParent = `-- name: SetSessionParent :exec
+UPDATE sessions
+SET parent_session_id = $1
+WHERE id = $2
+`
+
+type SetSessionParentParams struct {
+	ParentSessionID pgtype.UUID
+	ID              pgtype.UUID
+}
+
+// Repair supplies complete effective lineage and may deliberately clear it.
+func (q *Queries) SetSessionParent(ctx context.Context, arg SetSessionParentParams) error {
+	_, err := q.db.Exec(ctx, setSessionParent, arg.ParentSessionID, arg.ID)
+	return err
 }
 
 const updateSessionDerivedTitle = `-- name: UpdateSessionDerivedTitle :exec
@@ -407,6 +471,97 @@ func (q *Queries) UpsertSession(ctx context.Context, arg UpsertSessionParams) (S
 		arg.HarnessVersion,
 		arg.ParentSessionID,
 		arg.Now,
+		arg.HarnessMetadata,
+	)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.AuthSubject,
+		&i.HarnessID,
+		&i.HarnessSessionID,
+		&i.Name,
+		&i.Cwd,
+		&i.HarnessVersion,
+		&i.ParentSessionID,
+		&i.StartedAt,
+		&i.LastSeenAt,
+		&i.EndedAt,
+		&i.HarnessMetadata,
+		&i.TotalInputTokens,
+		&i.TotalOutputTokens,
+		&i.TotalCostUsd,
+		&i.TurnCount,
+		&i.DerivedStatus,
+		&i.HasGitActivity,
+		&i.ToolResultCount,
+		&i.ToolErrorCount,
+		&i.DerivedTitle,
+		&i.DerivedModel,
+		&i.ModelUsage,
+		&i.TotalTokens,
+		&i.DurationNs,
+		&i.Tasks,
+		&i.KindCounts,
+		&i.DisplayName,
+	)
+	return i, err
+}
+
+const upsertSessionForAttributionRepair = `-- name: UpsertSessionForAttributionRepair :one
+INSERT INTO sessions (
+    id, org_id, auth_subject, harness_id, harness_session_id,
+    name, cwd, harness_version, parent_session_id,
+    started_at, last_seen_at, harness_metadata
+) VALUES (
+    $1, $2, $3,
+    $4, $5,
+    $6, $7, $8,
+    $9, $10,
+    $10, $11
+)
+ON CONFLICT (org_id, harness_id, harness_session_id) DO UPDATE
+SET auth_subject      = COALESCE(NULLIF(EXCLUDED.auth_subject, ''), sessions.auth_subject),
+    started_at        = LEAST(sessions.started_at, EXCLUDED.started_at),
+    last_seen_at      = GREATEST(sessions.last_seen_at, EXCLUDED.last_seen_at),
+    harness_metadata  = sessions.harness_metadata || $11,
+    name              = COALESCE($6, sessions.name),
+    cwd               = COALESCE($7, sessions.cwd),
+    harness_version   = COALESCE($8, sessions.harness_version),
+    parent_session_id = COALESCE($9, sessions.parent_session_id)
+RETURNING id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns, tasks, kind_counts, display_name
+`
+
+type UpsertSessionForAttributionRepairParams struct {
+	ID               pgtype.UUID
+	OrgID            pgtype.UUID
+	AuthSubject      string
+	HarnessID        string
+	HarnessSessionID string
+	Name             pgtype.Text
+	Cwd              pgtype.Text
+	HarnessVersion   pgtype.Text
+	ParentSessionID  pgtype.UUID
+	CapturedAt       pgtype.Timestamptz
+	HarnessMetadata  []byte
+}
+
+// Materialize the corrected session identity and expand its liveness range
+// from the repaired raw turn. LEAST/GREATEST make retries and out-of-order
+// repairs idempotent. A missing repair subject must not erase a subject already
+// attached to the target session.
+func (q *Queries) UpsertSessionForAttributionRepair(ctx context.Context, arg UpsertSessionForAttributionRepairParams) (Session, error) {
+	row := q.db.QueryRow(ctx, upsertSessionForAttributionRepair,
+		arg.ID,
+		arg.OrgID,
+		arg.AuthSubject,
+		arg.HarnessID,
+		arg.HarnessSessionID,
+		arg.Name,
+		arg.Cwd,
+		arg.HarnessVersion,
+		arg.ParentSessionID,
+		arg.CapturedAt,
 		arg.HarnessMetadata,
 	)
 	var i Session

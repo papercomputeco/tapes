@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -16,8 +17,8 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage/postgres/gensqlc"
 )
 
-// rederivePageSize bounds the raw-turn scan batches.
-const rederivePageSize = 200
+// rederiveDiagnosticLimit matches the deriver's bound for sampled failures.
+const rederiveDiagnosticLimit = 20
 
 // rawTurnIndexEntry is the lightweight ordering record for one raw row.
 type rawTurnIndexEntry struct {
@@ -25,130 +26,83 @@ type rawTurnIndexEntry struct {
 	capturedAt time.Time
 }
 
-// RederiveFromRaw rebuilds the derived node layer from the immutable
-// raw-turn store: every raw turn is re-parsed, re-classified, and
-// re-chained with the CURRENT projection, then written back in one
-// transaction per org — upserting nodes (refreshing derived columns on
-// rows that already exist) and pruning rows in covered sessions whose
-// hashes the current derivation no longer produces (e.g. chains built
-// under a superseded projection).
+// RederiveFromRaw rebuilds every persisted session from its effective raw
+// turns. Sessions are enumerated from the read model rather than from current
+// raw attribution so a repair source that has become empty is still covered
+// and pruned.
 //
-// Memory discipline: the pass first scans a payload-free index (id +
-// capture time), sorts per org chronologically, then streams full rows
-// ONE AT A TIME through the deriver. Each turn's chain re-contains the
-// whole conversation history, so holding all turns at once is O(N²) in
-// content and OOMs a modestly-sized container; the deriver retains
-// only the deduplicated (unique-content) node set.
-//
-// The pass is idempotent: re-running against an unchanged raw layer
-// upserts the same set and prunes nothing. Raw rows are never written.
-//
-// CONCURRENCY (PCC-687 G, partial): unlike RederiveSessionLocked, this
-// whole-org pass does NOT hold the per-session derive lock, so running it
-// while the derive worker is live can still race — this pass reads the
-// whole org's raw UP FRONT, and a turn the worker writes after that read
-// but before this pass's prune is deleted as "not in my set". A write-only
-// lock does not fix this: the stale READ is the defect, so a correct fix
-// must read-and-write each session under its lock — i.e. reimplement this
-// as a loop of RederiveSessionLocked calls, trading the org-wide single
-// deriver (and its cross-session dedup + one-tx-per-org atomicity) for the
-// worker's per-session model. That trade is a design decision left for a
-// human; the session-scoped race (seed, ad-hoc re-derive) is closed by
-// RederiveSessionLocked in the meantime.
+// Each session's full read-derive-write pass runs under the same advisory lock
+// used by the derive worker and attribution repair. Holding one lock at a time
+// avoids both stale-read races and lock cycles with repair's ordered two-lock
+// acquisition. The pass is atomic per session, not per org; reports retain the
+// existing per-org shape by aggregating session reports.
 func (d *Driver) RederiveFromRaw(ctx context.Context, project string) (map[string]*derive.RederiveReport, error) {
 	if d == nil || d.conn == nil {
 		return nil, errors.New("postgres driver not open")
 	}
-
-	// Index scan: identity + timing only. Wire rows feed the chain
-	// deriver in capture order; transcript rows are routed to the
-	// reconciler, keeping only the LATEST version per (session, agent)
-	// — transcript ingest appends a new row each time a file grows.
-	byOrg := map[string][]rawTurnIndexEntry{}
-	transcriptRows := map[string]map[string]int64{} // org → fileKey → latest raw id
-	var afterID int64
-	for {
-		page, err := d.q.ListRawTurnIndex(ctx, gensqlc.ListRawTurnIndexParams{
-			AfterID:  afterID,
-			PageSize: rederivePageSize,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("list raw turn index: %w", err)
-		}
-		if len(page) == 0 {
-			break
-		}
-		for _, row := range page {
-			afterID = row.ID
-			org := uuidString(row.OrgID)
-			if row.Source == storage.RawTurnSourceTranscript {
-				if transcriptRows[org] == nil {
-					transcriptRows[org] = map[string]int64{}
-				}
-				fileKey := row.HarnessSessionID + "/" + transcriptAgentKey(row.Meta)
-				if row.ID > transcriptRows[org][fileKey] {
-					transcriptRows[org][fileKey] = row.ID
-				}
-				continue
-			}
-			rec := storage.RawTurnRecord{ID: row.ID, Meta: row.Meta, ReceivedAt: row.ReceivedAt.Time}
-			byOrg[org] = append(byOrg[org], rawTurnIndexEntry{
-				id:         row.ID,
-				capturedAt: derive.CapturedAt(&rec),
-			})
-		}
+	keys, err := d.q.ListSessionsForRederive(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list sessions for rederive: %w", err)
 	}
-
-	reports := make(map[string]*derive.RederiveReport, len(byOrg))
-	for orgKey, index := range byOrg {
-		sort.SliceStable(index, func(i, j int) bool { return index[i].capturedAt.Before(index[j].capturedAt) })
-
-		dv, err := derive.NewDeriver(project)
+	reports := make(map[string]*derive.RederiveReport)
+	for _, key := range keys {
+		orgID := uuidString(key.OrgID)
+		report, err := d.RederiveSessionLocked(ctx, project, orgID, key.HarnessID, key.HarnessSessionID)
 		if err != nil {
-			return nil, fmt.Errorf("create deriver: %w", err)
+			return nil, fmt.Errorf("rederive session %s/%s/%s: %w", orgID, key.HarnessID, key.HarnessSessionID, err)
 		}
-		for _, entry := range index {
-			row, err := d.q.GetRawTurn(ctx, entry.id)
-			if err != nil {
-				return nil, fmt.Errorf("fetch raw turn %d: %w", entry.id, err)
-			}
-			rec := rawTurnRecordFromRow(rawTurnFromDeriveRow(row))
-			recoverReduction(ctx, d.reducers, d.logger, &rec)
-			dv.AddTurn(&rec)
+		displayOrg := orgDisplayKey(orgID)
+		if reports[displayOrg] == nil {
+			reports[displayOrg] = newRederiveReport()
 		}
-		set := dv.Finish()
-
-		// Fuse the causal/fork skeleton from any transcript rows. The
-		// rows come out of a map, so sort by raw id first: on no-thread-id
-		// chains the reconciler's overlap tie-break is first-wins, and a
-		// nondeterministic file order would flip which parent_tool_use_id
-		// is stamped across re-derives.
-		transcriptIDs := make([]int64, 0, len(transcriptRows[orgKey]))
-		for _, id := range transcriptRows[orgKey] {
-			transcriptIDs = append(transcriptIDs, id)
-		}
-		sort.SliceStable(transcriptIDs, func(i, j int) bool { return transcriptIDs[i] < transcriptIDs[j] })
-		var files []*derive.TranscriptFile
-		for _, id := range transcriptIDs {
-			row, err := d.q.GetRawTurn(ctx, id)
-			if err != nil {
-				return nil, fmt.Errorf("fetch transcript row %d: %w", id, err)
-			}
-			rec := rawTurnRecordFromRow(rawTurnFromDeriveRow(row))
-			file, err := derive.ParseTranscriptFile(&rec)
-			if err != nil {
-				return nil, fmt.Errorf("parse transcript row %d: %w", id, err)
-			}
-			files = append(files, file)
-		}
-		set.Report.Reconcile = derive.ReconcileTranscripts(set, files)
-
-		if err := d.writeDerivedSet(ctx, orgKey, set); err != nil {
-			return nil, fmt.Errorf("write derived set for org %s: %w", orgKey, err)
-		}
-		reports[orgDisplayKey(orgKey)] = &set.Report
+		mergeRederiveReport(reports[displayOrg], report)
 	}
 	return reports, nil
+}
+
+func newRederiveReport() *derive.RederiveReport {
+	return &derive.RederiveReport{CallKinds: map[string]int{}, NodeKinds: map[string]int{}}
+}
+
+func mergeRederiveReport(dst, src *derive.RederiveReport) {
+	dst.RawTurns += src.RawTurns
+	dst.ParsedTurns += src.ParsedTurns
+	dst.RawOnlyTurns += src.RawOnlyTurns
+	dst.Nodes += src.Nodes
+	dst.JudgedActions += src.JudgedActions
+	dst.AttachedVerdicts += src.AttachedVerdicts
+	dst.WebSummaryAttached += src.WebSummaryAttached
+	dst.PlansAttached += src.PlansAttached
+	dst.ParseFailures = appendBounded(dst.ParseFailures, src.ParseFailures, rederiveDiagnosticLimit)
+	dst.UnattachedActions = appendBounded(dst.UnattachedActions, src.UnattachedActions, rederiveDiagnosticLimit)
+	for kind, count := range src.CallKinds {
+		dst.CallKinds[kind] += count
+	}
+	for kind, count := range src.NodeKinds {
+		dst.NodeKinds[kind] += count
+	}
+	if src.Reconcile != nil {
+		if dst.Reconcile == nil {
+			dst.Reconcile = &derive.ReconcileStats{}
+		}
+		dst.Reconcile.TranscriptFiles += src.Reconcile.TranscriptFiles
+		dst.Reconcile.SubagentForks += src.Reconcile.SubagentForks
+		dst.Reconcile.ForkedChains += src.Reconcile.ForkedChains
+		dst.Reconcile.MainChainsJoined += src.Reconcile.MainChainsJoined
+		dst.Reconcile.ConversationJoined += src.Reconcile.ConversationJoined
+		dst.Reconcile.ConversationTotal += src.Reconcile.ConversationTotal
+	}
+}
+
+func appendBounded(dst, src []string, limit int) []string {
+	remaining := limit - len(dst)
+	if remaining <= 0 {
+		return dst
+	}
+	if len(src) > remaining {
+		src = src[:remaining]
+	}
+	return append(dst, src...)
 }
 
 // RederiveSession is the session-scoped sibling of RederiveFromRaw:
@@ -205,11 +159,16 @@ func (d *Driver) RederiveSession(ctx context.Context, project, orgID, harnessID,
 		if err != nil {
 			return nil, fmt.Errorf("fetch raw turn %d: %w", entry.id, err)
 		}
-		rec := rawTurnRecordFromRow(rawTurnFromDeriveRow(row))
+		rec := rawTurnRecordFromEffectiveRow(row)
 		recoverReduction(ctx, d.reducers, d.logger, &rec)
 		dv.AddTurn(&rec)
 	}
 	set := dv.Finish()
+	requestedKey := derive.SessionKey{HarnessID: harnessID, HarnessSessionID: harnessSessionID}
+	covered := slices.Contains(set.Sessions, requestedKey)
+	if !covered {
+		set.Sessions = append(set.Sessions, requestedKey)
+	}
 
 	// Fuse the causal/fork skeleton from the session's transcript rows.
 	// The rows come out of a map, so sort by raw id first: on no-thread-id
@@ -227,7 +186,7 @@ func (d *Driver) RederiveSession(ctx context.Context, project, orgID, harnessID,
 		if err != nil {
 			return nil, fmt.Errorf("fetch transcript row %d: %w", id, err)
 		}
-		rec := rawTurnRecordFromRow(rawTurnFromDeriveRow(row))
+		rec := rawTurnRecordFromEffectiveRow(row)
 		file, err := derive.ParseTranscriptFile(&rec)
 		if err != nil {
 			return nil, fmt.Errorf("parse transcript row %d: %w", id, err)

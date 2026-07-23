@@ -140,6 +140,7 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 
 	app.Post("/v1/admin/seed/demo", s.handleSeedDemo)
 	app.Post("/v1/admin/derive/run", s.handleDeriveRun)
+	app.Post("/v1/admin/raw-turns/attribution-repair", s.handleRawTurnAttributionRepair)
 
 	// API reference UI. Always mounted — the viewer JS comes from a CDN
 	// at view time, so the binary cost is negligible.

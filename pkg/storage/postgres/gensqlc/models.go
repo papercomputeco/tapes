@@ -43,6 +43,18 @@ type RawTurn struct {
 	RawResponseDropped  bool
 }
 
+type RawTurnAttributionCorrection struct {
+	ID                     int64
+	OrgID                  pgtype.UUID
+	RawTurnID              int64
+	HarnessID              string
+	HarnessSessionID       string
+	ThreadID               string
+	ParentHarnessSessionID pgtype.Text
+	Reason                 string
+	CreatedAt              pgtype.Timestamptz
+}
+
 type Session struct {
 	ID                pgtype.UUID
 	OrgID             pgtype.UUID
