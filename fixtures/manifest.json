@@ -1,0 +1,125 @@
+{
+  "schema": "tapes.fixtures.manifest/v1",
+  "cut": {
+    "id": "unversioned-working-tree",
+    "authored": "2026-07-23",
+    "description": "First per-cut manifest for the tapes fixture corpus. An unversioned working-tree cut, not yet a tagged release."
+  },
+  "projection_schema_version": "2026-06-15",
+  "projection_schema_source": "api/traces_handlers.go const ProjectionSchema",
+  "harness_matrix": ["claude", "codex", "pi", "unknown"],
+  "provenance_bar": "A fixture is admissible when it is synthetic-by-construction: either hand-authored, or a session recorded in a clean-room environment, credential-redacted, and reviewed. No customer content and no live production data.",
+  "notes": [
+    "This manifest is the index for every tapes fixture family. It is deliberately the point of consolidation rather than a single physical directory: the derive corpora (~26 MB) are embedded (go:embed) by the demo seed, and a go:embed directive cannot reference a path above its own package. Homing them next to the seed keeps that 26 MB out of every binary that would import a shared top-level fixtures package. Each family records its physical `location`.",
+    "The four-layer pyramid (see README.md): L0 envelope -> L1 wire recordings -> L2 corpus -> L3 rendered API fixtures. Everything is generated downhill from one recording."
+  ],
+  "families": [
+    {
+      "name": "envelope",
+      "layer": "L0",
+      "kind": "synthetic-cases",
+      "location": "fixtures/envelope/",
+      "count": 19,
+      "harnesses": ["claude", "codex", "pi", "unknown"],
+      "description": "Header set -> expected parsed session envelope. Pins the X-Tapes-* header contract that any producer (a proxy injecting the headers) and any consumer (ingest, or another parser) must agree on.",
+      "provenance": {
+        "type": "synthetic",
+        "notes": "Hand-authored; no captured content. Header values are produced by a faithful port of the envelope encoding rules and self-checked against their pinned outputs."
+      },
+      "scrub_attestation": "synthetic-by-construction",
+      "consumers": ["envelope producers and parsers, via table tests over cases/*.json (vendor this directory to keep one copy)"]
+    },
+    {
+      "name": "recordings",
+      "layer": "L1",
+      "kind": "wire-recordings",
+      "location": "fixtures/recordings/",
+      "status": "placeholder",
+      "description": "Verbatim transport bytes for a turn, replayable across every ingest transport for parity checks.",
+      "provenance": {
+        "type": "fixture-grade recording (planned)",
+        "format": "turn-<ns:020>-<seq:08>/{request.json, response.sse, meta.json}"
+      },
+      "scrub_attestation": "n/a — no bundles committed yet",
+      "consumers": ["wire-capture fidelity / replay tests (skipped until bundles land)"]
+    },
+    {
+      "name": "derive-corpus",
+      "layer": "L2",
+      "kind": "corpus",
+      "location": "pkg/seed/corpus/",
+      "files": [
+        "corpus-cb9a87e5.jsonl.gz",
+        "corpus-9fec0da7.jsonl.gz",
+        "corpus-0440f43d.jsonl.gz"
+      ],
+      "goldens_location": "pkg/derive/testdata/",
+      "goldens": [
+        "golden-derive-cb9a87e5.txt.gz",
+        "golden-derive-9fec0da7.txt.gz",
+        "golden-derive-0440f43d.txt.gz"
+      ],
+      "harnesses": ["claude"],
+      "seed_set": ["corpus-cb9a87e5.jsonl.gz", "corpus-9fec0da7.jsonl.gz"],
+      "description": "Gzipped raw_turns dumps of whole sessions. The deriver is a pure function of these rows, so the reconciliation pipeline regression-tests against them with no database.",
+      "provenance": {
+        "type": "fixture-grade recording",
+        "captured": "2026-06-10",
+        "notes": "Full live Claude sessions captured through a gateway in a clean-room exercise: the wire envelopes as dispatched by the capture path plus each session's transcript files (main + subagents)."
+      },
+      "scrub_attestation": "credential-redacted, clean-room; no customer content",
+      "generators": {
+        "corpus": "tapes dev dump-corpus (pkg/derive/corpusfile.go CorpusWriter)",
+        "goldens": "UPDATE_DERIVE_GOLDEN=1 go test ./pkg/derive/ (clone_equivalence_test.go)"
+      },
+      "gates": [
+        "pkg/derive/corpus_test.go — pinned reconciliation numbers",
+        "pkg/derive/spans_corpus_test.go — span projection gate",
+        "pkg/derive/clone_equivalence_test.go — byte-golden",
+        "pkg/derive/corpusfile_roundtrip_test.go — dump/load inverse",
+        "cmd/tapes/dev/tracefixtures_idempotency_test.go — render determinism"
+      ],
+      "consumers": [
+        "pkg/derive tests + cmd/tapes/dev tests (read from ../seed/corpus)",
+        "pkg/seed — demo seed (embeds the two-corpus seed_set only)",
+        "downstream client/UI test suites, via tapes dev trace-fixtures"
+      ],
+      "embed_note": "Physically homed under pkg/seed so the demo seed can go:embed the seed_set (embed can't cross '..'), keeping the 26 MB out of non-seed binaries. corpus-0440f43d is co-located and used by the derive gates and the fixture generator, but deliberately NOT in the seed_set: it is a much larger, many-session capture, and seeding it would triple the embedded payload and change the demo session count."
+    },
+    {
+      "name": "capture-reducer",
+      "layer": "L2-adjacent",
+      "kind": "wire-fixtures",
+      "location": "pkg/capture/fixtures/",
+      "harnesses": ["claude", "codex"],
+      "providers": ["anthropic", "openai-responses"],
+      "description": "Provider wire (streaming SSE and one-shot JSON) that drives the reducer tests, including oneshot<->stream pairs that must reduce to the same content hash.",
+      "provenance": {
+        "type": "mixed",
+        "anthropic": "hand-crafted against the Anthropic Messages streaming spec (not recorded traffic); stable placeholder ids (msg_FIXTURE..., toolu_FIXTURE...).",
+        "openai_responses": "real Responses wire recorded through a gateway, including the Codex chatgpt stream."
+      },
+      "scrub_attestation": "synthetic (anthropic) / recorded-and-redacted (openai); no credentials in-body",
+      "exported_as": "Go embed.FS package github.com/papercomputeco/tapes/pkg/capture/fixtures (fixtures.FS / fixtures.ReadFile)",
+      "consumers": [
+        "pkg/capture tests (Anthropic + OpenAI-Responses reducers, canonical-equivalence)",
+        "any external service that embeds the same reducers"
+      ]
+    },
+    {
+      "name": "rendered-api",
+      "layer": "L3",
+      "kind": "rendered-json",
+      "location": "consuming client/UI repositories (generated, not stored here)",
+      "harnesses": ["claude"],
+      "description": "The session -> traces -> spans projection rendered exactly as the API serves it, for client/UI test suites that want to stay language-independent of the deriver.",
+      "provenance": {
+        "type": "generated",
+        "notes": "tapes dev trace-fixtures replays the derive corpora through the real deriver and the real API renderers with deterministic session ids.",
+        "generator": "cmd/tapes/dev/tracefixtures.go"
+      },
+      "scrub_attestation": "derived from the derive-corpus family; no independent capture",
+      "freshness": "Matches projection_schema_version 2026-06-15; regenerate when the deriver or renderers change."
+    }
+  ]
+}
