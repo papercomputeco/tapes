@@ -3,14 +3,13 @@ package capture_test
 import (
 	"bytes"
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/papercomputeco/tapes/pkg/capture"
+	"github.com/papercomputeco/tapes/pkg/capture/fixtures"
 )
 
 // The oneshot.json and stream.sse fixtures are real api.openai.com Responses
@@ -25,7 +24,7 @@ var _ = Describe("OpenAI Responses reducer", func() {
 	})
 
 	readFixture := func(name string) []byte {
-		data, err := os.ReadFile(filepath.Join("testdata", "openai_responses", name))
+		data, err := fixtures.ReadFile("openai_responses/" + name)
 		Expect(err).NotTo(HaveOccurred())
 		return data
 	}

@@ -3,7 +3,6 @@ package capture_test
 import (
 	"bytes"
 	"context"
-	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -52,8 +51,8 @@ var _ = Describe("Canonical equivalence", func() {
 	// DAG actually cares about holds.
 	DescribeTable("stream and oneshot reduce to the same merkle hash",
 		func(p pair) {
-			oneshotRaw := readFixture(filepath.Join("canonical_equivalence", p.oneshotFile))
-			streamRaw := readFixture(filepath.Join("canonical_equivalence", p.streamFile))
+			oneshotRaw := readFixture("canonical_equivalence/" + p.oneshotFile)
+			streamRaw := readFixture("canonical_equivalence/" + p.streamFile)
 
 			prov := anthropic.New()
 			parsedOneshot, err := prov.ParseResponse(oneshotRaw)
