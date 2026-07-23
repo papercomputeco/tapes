@@ -91,6 +91,66 @@ components:
         output_tokens:
           type: integer
       type: object
+    RawTurnAttribution:
+      properties:
+        harness_id:
+          type: string
+        harness_session_id:
+          type: string
+        parent_harness_session_id:
+          type: string
+        raw_turn_id:
+          type: integer
+        thread_id:
+          type: string
+      type: object
+    RawTurnAttributionRepairRequest:
+      properties:
+        harness_id:
+          type: string
+        harness_session_id:
+          type: string
+        paper_proxy_request_id:
+          type: string
+        parent_harness_session_id:
+          type: string
+        raw_turn_id:
+          type: integer
+        reason:
+          type: string
+        thread_id:
+          type: string
+      type: object
+    RawTurnAttributionRepairResult:
+      properties:
+        effective:
+          $ref: '#/components/schemas/RawTurnAttribution'
+        previous:
+          $ref: '#/components/schemas/RawTurnAttribution'
+        projections_pending:
+          description: |-
+            ProjectionsPending lists the sessions whose synchronous rebuild failed
+            after the correction committed. Empty on full success. When set, the
+            correction is effective at read time and the listed projections
+            converge via the derive queue (marked dirty in the correction
+            transaction); the call returns ErrRepairProjectionsPending alongside
+            this result.
+          items:
+            $ref: '#/components/schemas/RepairPendingSession'
+          type: array
+        recorded:
+          type: boolean
+        source_cleanup_pending:
+          description: |-
+            SourceCleanupPending reports that the best-effort removal of the
+            emptied previous-session row failed after the correction and both
+            projection rebuilds applied. The leftover row is cosmetic — it anchors
+            no effective turns — and nothing retries the deletion automatically:
+            the flag makes the response honest about the leftover, it is not a
+            promise of later cleanup. On its own it never accompanies an error;
+            when ProjectionsPending is empty too, the repair succeeded.
+          type: boolean
+      type: object
     RawTurnHeaderItem:
       properties:
         agent_name:
@@ -201,6 +261,13 @@ components:
           description: |-
             Subject names what was rejected: the configured OpenAPI URL, with any
             credential redacted.
+          type: string
+      type: object
+    RepairPendingSession:
+      properties:
+        harness_id:
+          type: string
+        harness_session_id:
           type: string
       type: object
     SessionDetailResponse:
@@ -887,6 +954,68 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
           description: Driver does not host the raw-turn layer
       summary: Re-derive the span projection (operator)
+      tags:
+      - admin
+  /v1/admin/raw-turns/attribution-repair:
+    post:
+      description: Records an audited correction without modifying raw_turns, then
+        re-derives the previous and effective sessions. Select exactly one row by
+        raw_turn_id or paper_proxy_request_id.
+      operationId: repairRawTurnAttribution
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RawTurnAttributionRepairRequest'
+        description: Attribution repair
+        required: true
+        x-originalParamName: request
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RawTurnAttributionRepairResult'
+          description: Repair applied; source_cleanup_pending discloses a cosmetic
+            leftover source session row that nothing retries automatically
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RawTurnAttributionRepairResult'
+          description: Correction recorded; projections_pending lists sessions the
+            derive worker will converge
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Invalid payload or replacement attribution
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Raw turn not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Correlation selector is ambiguous
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Repair failed
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Driver does not support attribution repair
+      summary: Repair raw-turn attribution (operator)
       tags:
       - admin
   /v1/admin/seed/demo:

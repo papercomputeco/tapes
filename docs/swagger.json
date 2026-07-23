@@ -66,6 +66,77 @@
                 }
             }
         },
+        "/v1/admin/raw-turns/attribution-repair": {
+            "post": {
+                "description": "Records an audited correction without modifying raw_turns, then re-derives the previous and effective sessions. Select exactly one row by raw_turn_id or paper_proxy_request_id.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Repair raw-turn attribution (operator)",
+                "operationId": "repairRawTurnAttribution",
+                "parameters": [
+                    {
+                        "description": "Attribution repair",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_storage.RawTurnAttributionRepairRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Repair applied; source_cleanup_pending discloses a cosmetic leftover source session row that nothing retries automatically",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_storage.RawTurnAttributionRepairResult"
+                        }
+                    },
+                    "202": {
+                        "description": "Correction recorded; projections_pending lists sessions the derive worker will converge",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_storage.RawTurnAttributionRepairResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload or replacement attribution",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Raw turn not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Correlation selector is ambiguous",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Repair failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Driver does not support attribution repair",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/admin/seed/demo": {
             "post": {
                 "description": "Replays the bundled demo capture corpora through the ingest write path into the caller's org, then derives the seeded sessions. Idempotent: raw-turn dedup makes repeat seeds no-ops.",
@@ -2700,6 +2771,88 @@
                 "sessions": {
                     "description": "Sessions is the number of demo sessions the corpora replay into.",
                     "type": "integer"
+                }
+            }
+        },
+        "github_com_papercomputeco_tapes_pkg_storage.RawTurnAttribution": {
+            "type": "object",
+            "properties": {
+                "harness_id": {
+                    "type": "string"
+                },
+                "harness_session_id": {
+                    "type": "string"
+                },
+                "parent_harness_session_id": {
+                    "type": "string"
+                },
+                "raw_turn_id": {
+                    "type": "integer"
+                },
+                "thread_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_papercomputeco_tapes_pkg_storage.RawTurnAttributionRepairRequest": {
+            "type": "object",
+            "properties": {
+                "harness_id": {
+                    "type": "string"
+                },
+                "harness_session_id": {
+                    "type": "string"
+                },
+                "paper_proxy_request_id": {
+                    "type": "string"
+                },
+                "parent_harness_session_id": {
+                    "type": "string"
+                },
+                "raw_turn_id": {
+                    "type": "integer"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "thread_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_papercomputeco_tapes_pkg_storage.RawTurnAttributionRepairResult": {
+            "type": "object",
+            "properties": {
+                "effective": {
+                    "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_storage.RawTurnAttribution"
+                },
+                "previous": {
+                    "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_storage.RawTurnAttribution"
+                },
+                "projections_pending": {
+                    "description": "ProjectionsPending lists the sessions whose synchronous rebuild failed\nafter the correction committed. Empty on full success. When set, the\ncorrection is effective at read time and the listed projections\nconverge via the derive queue (marked dirty in the correction\ntransaction); the call returns ErrRepairProjectionsPending alongside\nthis result.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_storage.RepairPendingSession"
+                    }
+                },
+                "recorded": {
+                    "type": "boolean"
+                },
+                "source_cleanup_pending": {
+                    "description": "SourceCleanupPending reports that the best-effort removal of the\nemptied previous-session row failed after the correction and both\nprojection rebuilds applied. The leftover row is cosmetic — it anchors\nno effective turns — and nothing retries the deletion automatically:\nthe flag makes the response honest about the leftover, it is not a\npromise of later cleanup. On its own it never accompanies an error;\nwhen ProjectionsPending is empty too, the repair succeeded.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "github_com_papercomputeco_tapes_pkg_storage.RepairPendingSession": {
+            "type": "object",
+            "properties": {
+                "harness_id": {
+                    "type": "string"
+                },
+                "harness_session_id": {
+                    "type": "string"
                 }
             }
         }

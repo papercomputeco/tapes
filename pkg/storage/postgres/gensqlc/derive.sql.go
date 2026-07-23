@@ -12,18 +12,42 @@ import (
 )
 
 const getRawTurn = `-- name: GetRawTurn :one
-SELECT id, org_id, source, provider, agent_name,
-       harness_id, harness_session_id, request_id,
-       raw_request, response, meta, session_envelope, received_at,
+SELECT r.id, r.org_id, r.source, r.provider, r.agent_name,
+       COALESCE(c.harness_id, r.harness_id) AS harness_id,
+       COALESCE(c.harness_session_id, r.harness_session_id) AS harness_session_id,
+       r.request_id, r.raw_request, r.response,
+       (CASE WHEN c.id IS NULL THEN r.meta
+             ELSE jsonb_set(r.meta, '{thread_id}', to_jsonb(c.thread_id), true)
+        END)::jsonb AS meta,
+       (CASE WHEN c.id IS NULL THEN r.session_envelope
+             WHEN c.parent_harness_session_id IS NULL THEN
+                  (COALESCE(r.session_envelope, '{}'::jsonb) - 'parent_harness_session_id') ||
+                  jsonb_build_object(
+                      'harness_id', c.harness_id,
+                      'harness_session_id', c.harness_session_id
+                  )
+             ELSE COALESCE(r.session_envelope, '{}'::jsonb) || jsonb_build_object(
+                      'harness_id', c.harness_id,
+                      'harness_session_id', c.harness_session_id,
+                      'parent_harness_session_id', c.parent_harness_session_id
+                  )
+        END)::jsonb AS session_envelope,
+       r.received_at,
        CASE
-           WHEN jsonb_typeof(response -> 'message' -> 'content') = 'array'
-                AND jsonb_array_length(response -> 'message' -> 'content') > 0
+           WHEN jsonb_typeof(r.response -> 'message' -> 'content') = 'array'
+                AND jsonb_array_length(r.response -> 'message' -> 'content') > 0
            THEN NULL
-           ELSE raw_response
+           ELSE r.raw_response
        END::bytea AS raw_response,
-       raw_response_encoding
-FROM raw_turns
-WHERE id = $1
+       r.raw_response_encoding
+FROM raw_turns r
+LEFT JOIN LATERAL (
+    SELECT id, harness_id, harness_session_id, thread_id, parent_harness_session_id
+    FROM raw_turn_attribution_corrections
+    WHERE org_id = r.org_id AND raw_turn_id = r.id
+    ORDER BY id DESC LIMIT 1
+) c ON TRUE
+WHERE r.id = $1
 `
 
 type GetRawTurnRow struct {
@@ -44,8 +68,12 @@ type GetRawTurnRow struct {
 	RawResponseEncoding string
 }
 
-// The derive read. raw_response is selected ONLY for turns whose reduction is
-// missing its content blocks — the shape the deriver skips.
+// The derive read, through the attribution-correction overlay: identity
+// columns COALESCE to the latest correction, meta's thread_id is overridden
+// when corrected, and the session envelope is rewritten to match.
+//
+// raw_response is selected ONLY for turns whose reduction is missing its
+// content blocks — the shape the deriver skips.
 //
 // The column runs to the ingest cap, so selecting it unconditionally would pull
 // megabytes through every derive read to be discarded. Selecting it never is
@@ -82,10 +110,19 @@ func (q *Queries) GetRawTurn(ctx context.Context, id int64) (GetRawTurnRow, erro
 }
 
 const listRawTurnIndex = `-- name: ListRawTurnIndex :many
-SELECT id, org_id, source, harness_id, harness_session_id, received_at, meta
-FROM raw_turns
-WHERE id > $1
-ORDER BY id
+SELECT r.id, r.org_id, r.source,
+       COALESCE(c.harness_id, r.harness_id) AS harness_id,
+       COALESCE(c.harness_session_id, r.harness_session_id) AS harness_session_id,
+       r.received_at, r.meta
+FROM raw_turns r
+LEFT JOIN LATERAL (
+    SELECT harness_id, harness_session_id
+    FROM raw_turn_attribution_corrections
+    WHERE org_id = r.org_id AND raw_turn_id = r.id
+    ORDER BY id DESC LIMIT 1
+) c ON TRUE
+WHERE r.id > $1
+ORDER BY r.id
 LIMIT $2
 `
 
@@ -125,6 +162,41 @@ func (q *Queries) ListRawTurnIndex(ctx context.Context, arg ListRawTurnIndexPara
 			&i.ReceivedAt,
 			&i.Meta,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSessionsForRederive = `-- name: ListSessionsForRederive :many
+SELECT org_id, harness_id, harness_session_id
+FROM sessions
+ORDER BY org_id, harness_id, harness_session_id
+`
+
+type ListSessionsForRederiveRow struct {
+	OrgID            pgtype.UUID
+	HarnessID        string
+	HarnessSessionID string
+}
+
+// Whole-store rederive enumerates persisted identities, including sessions
+// whose last effective raw turn was repaired away, so their stale projection
+// is still covered and pruned.
+func (q *Queries) ListSessionsForRederive(ctx context.Context) ([]ListSessionsForRederiveRow, error) {
+	rows, err := q.db.Query(ctx, listSessionsForRederive)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSessionsForRederiveRow
+	for rows.Next() {
+		var i ListSessionsForRederiveRow
+		if err := rows.Scan(&i.OrgID, &i.HarnessID, &i.HarnessSessionID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

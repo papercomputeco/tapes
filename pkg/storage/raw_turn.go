@@ -116,3 +116,68 @@ type RawTurnStore interface {
 	// CountRawTurns reports the total number of raw rows.
 	CountRawTurns(ctx context.Context) (int64, error)
 }
+
+// RawTurnAttribution is the effective, repairable attribution projected over
+// an immutable raw turn. Raw payload and envelope bytes remain untouched.
+type RawTurnAttribution struct {
+	RawTurnID              int64   `json:"raw_turn_id"`
+	HarnessID              string  `json:"harness_id"`
+	HarnessSessionID       string  `json:"harness_session_id"`
+	ThreadID               string  `json:"thread_id"`
+	ParentHarnessSessionID *string `json:"parent_harness_session_id,omitempty"`
+}
+
+// RawTurnAttributionRepairRequest selects exactly one raw row and supplies a
+// complete replacement attribution. OrgID is supplied by the trusted caller
+// context, never by an HTTP request body.
+type RawTurnAttributionRepairRequest struct {
+	OrgID                  string  `json:"-"`
+	RawTurnID              int64   `json:"raw_turn_id,omitempty"`
+	PaperProxyRequestID    string  `json:"paper_proxy_request_id,omitempty"`
+	HarnessID              string  `json:"harness_id"`
+	HarnessSessionID       string  `json:"harness_session_id"`
+	ThreadID               string  `json:"thread_id"`
+	ParentHarnessSessionID *string `json:"parent_harness_session_id,omitempty"`
+	Reason                 string  `json:"reason"`
+}
+
+// RepairPendingSession names one harness session whose projection rebuild
+// did not complete synchronously during a repair. The session is already
+// queued for the derive worker, which converges it.
+type RepairPendingSession struct {
+	HarnessID        string `json:"harness_id"`
+	HarnessSessionID string `json:"harness_session_id"`
+}
+
+type RawTurnAttributionRepairResult struct {
+	Recorded  bool               `json:"recorded"`
+	Previous  RawTurnAttribution `json:"previous"`
+	Effective RawTurnAttribution `json:"effective"`
+
+	// ProjectionsPending lists the sessions whose synchronous rebuild failed
+	// after the correction committed. Empty on full success. When set, the
+	// correction is effective at read time and the listed projections
+	// converge via the derive queue (marked dirty in the correction
+	// transaction); the call returns ErrRepairProjectionsPending alongside
+	// this result.
+	ProjectionsPending []RepairPendingSession `json:"projections_pending,omitempty"`
+
+	// SourceCleanupPending reports that the best-effort removal of the
+	// emptied previous-session row failed after the correction and both
+	// projection rebuilds applied. The leftover row is cosmetic — it anchors
+	// no effective turns — and nothing retries the deletion automatically:
+	// the flag makes the response honest about the leftover, it is not a
+	// promise of later cleanup. On its own it never accompanies an error;
+	// when ProjectionsPending is empty too, the repair succeeded.
+	SourceCleanupPending bool `json:"source_cleanup_pending,omitempty"`
+}
+
+// RawTurnAttributionRepairer is an optional storage capability for audited,
+// append-only corrections to raw-turn attribution.
+//
+// When the returned error matches ErrRepairProjectionsPending the result is
+// still meaningful: the correction committed, and ProjectionsPending names
+// the sessions the derive worker will converge.
+type RawTurnAttributionRepairer interface {
+	RepairRawTurnAttribution(context.Context, string, RawTurnAttributionRepairRequest) (RawTurnAttributionRepairResult, error)
+}
