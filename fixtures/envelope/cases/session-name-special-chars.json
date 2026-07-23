@@ -1,0 +1,22 @@
+{
+  "name": "session-name-special-chars",
+  "category": "percent-encoding",
+  "harness": "claude",
+  "description": "Session name with spaces, quotes and a non-ASCII codepoint: space/quote/backslash escaped, é as %C3%A9.",
+  "direction": "roundtrip",
+  "headers": {
+    "x-tapes-harness-id": "claude",
+    "x-paper-auth-org-id": "0b9a4c1e-2f3d-4a5b-8c7d-6e5f4a3b2c1d",
+    "x-paper-auth-subject": "user_01JQ5ZK7WORKOSSUBJECT01",
+    "x-tapes-harness-session-id": "eae77e15-c7d2-4883-b82e-251161f8eeb3",
+    "x-tapes-session-name": "name%20with%20space%20%22quotes%22%20caf%C3%A9"
+  },
+  "envelope": {
+    "org_id": "0b9a4c1e-2f3d-4a5b-8c7d-6e5f4a3b2c1d",
+    "auth_subject": "user_01JQ5ZK7WORKOSSUBJECT01",
+    "harness_id": "claude",
+    "harness_session_id": "eae77e15-c7d2-4883-b82e-251161f8eeb3",
+    "name": "name with space \"quotes\" café"
+  },
+  "grounding": "Space, quote, backslash, and non-ASCII in the session name are percent-encoded to pure ASCII."
+}

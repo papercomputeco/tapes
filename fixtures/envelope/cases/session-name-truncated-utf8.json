@@ -1,0 +1,29 @@
+{
+  "name": "session-name-truncated-utf8",
+  "category": "budget",
+  "harness": "claude",
+  "description": "A 300-byte name (100 x the 3-byte Thai codepoint ก) is truncated to 255 raw bytes (85 codepoints) at a UTF-8 boundary before encoding. Lossy: encode_from is the pre-truncation input.",
+  "direction": "roundtrip",
+  "headers": {
+    "x-tapes-harness-id": "claude",
+    "x-paper-auth-org-id": "0b9a4c1e-2f3d-4a5b-8c7d-6e5f4a3b2c1d",
+    "x-paper-auth-subject": "user_01JQ5ZK7WORKOSSUBJECT01",
+    "x-tapes-harness-session-id": "eae77e15-c7d2-4883-b82e-251161f8eeb3",
+    "x-tapes-session-name": "%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81%E0%B8%81"
+  },
+  "envelope": {
+    "org_id": "0b9a4c1e-2f3d-4a5b-8c7d-6e5f4a3b2c1d",
+    "auth_subject": "user_01JQ5ZK7WORKOSSUBJECT01",
+    "harness_id": "claude",
+    "harness_session_id": "eae77e15-c7d2-4883-b82e-251161f8eeb3",
+    "name": "กกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกก"
+  },
+  "encode_from": {
+    "org_id": "0b9a4c1e-2f3d-4a5b-8c7d-6e5f4a3b2c1d",
+    "auth_subject": "user_01JQ5ZK7WORKOSSUBJECT01",
+    "harness_id": "claude",
+    "harness_session_id": "eae77e15-c7d2-4883-b82e-251161f8eeb3",
+    "name": "กกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกก"
+  },
+  "grounding": "A session name over the 256-byte cap is truncated at a UTF-8 codepoint boundary before encoding."
+}

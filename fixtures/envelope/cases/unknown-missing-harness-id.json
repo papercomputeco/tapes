@@ -1,0 +1,18 @@
+{
+  "name": "unknown-missing-harness-id",
+  "category": "unknown",
+  "harness": "unknown",
+  "description": "Reader normalization: no x-tapes-harness-id header at all decodes to harness_id 'unknown'.",
+  "direction": "decode",
+  "headers": {
+    "x-paper-auth-org-id": "0b9a4c1e-2f3d-4a5b-8c7d-6e5f4a3b2c1d",
+    "x-paper-auth-subject": "user_01JQ5ZK7WORKOSSUBJECT01"
+  },
+  "envelope": {
+    "org_id": "0b9a4c1e-2f3d-4a5b-8c7d-6e5f4a3b2c1d",
+    "auth_subject": "user_01JQ5ZK7WORKOSSUBJECT01",
+    "harness_id": "unknown"
+  },
+  "grounding": "A missing harness-id header parses as harness_id=unknown.",
+  "notes": "harness_id normalizes to 'unknown'. Downstream, ingest derives a synthetic harness_session_id from the turn's content hash — outside the header-parse scope, so none is asserted here."
+}

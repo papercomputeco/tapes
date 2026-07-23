@@ -1,0 +1,27 @@
+{
+  "name": "error-parent-empty",
+  "category": "error",
+  "harness": "claude",
+  "description": "An empty parent_harness_session_id is ambiguous (absent vs. no-parent) and is rejected; callers must omit the field. A well-behaved producer never emits an empty parent header, so this only arises from a malformed one.",
+  "direction": "decode",
+  "headers": {
+    "x-tapes-harness-id": "claude",
+    "x-tapes-harness-session-id": "eae77e15-c7d2-4883-b82e-251161f8eeb3",
+    "x-tapes-parent-harness-session-id": "",
+    "x-paper-auth-org-id": "0b9a4c1e-2f3d-4a5b-8c7d-6e5f4a3b2c1d",
+    "x-paper-auth-subject": "user_01JQ5ZK7WORKOSSUBJECT01"
+  },
+  "envelope": {
+    "org_id": "0b9a4c1e-2f3d-4a5b-8c7d-6e5f4a3b2c1d",
+    "auth_subject": "user_01JQ5ZK7WORKOSSUBJECT01",
+    "harness_id": "claude",
+    "harness_session_id": "eae77e15-c7d2-4883-b82e-251161f8eeb3",
+    "parent_harness_session_id": ""
+  },
+  "error": {
+    "field": "parent_harness_session_id",
+    "rule": "omit the field instead of sending empty",
+    "disposition": "reject-400"
+  },
+  "grounding": "An empty parent-session-id is ambiguous (absent vs. no-parent) and is rejected; omit the field instead."
+}

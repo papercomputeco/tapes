@@ -1,0 +1,18 @@
+{
+  "name": "codex-bare",
+  "category": "valid",
+  "harness": "codex",
+  "description": "Codex traffic that can be attributed to the harness but not to a session: harness id only.",
+  "direction": "roundtrip",
+  "headers": {
+    "x-tapes-harness-id": "codex",
+    "x-paper-auth-org-id": "0b9a4c1e-2f3d-4a5b-8c7d-6e5f4a3b2c1d",
+    "x-paper-auth-subject": "user_01JQ5ZK7WORKOSSUBJECT01"
+  },
+  "envelope": {
+    "org_id": "0b9a4c1e-2f3d-4a5b-8c7d-6e5f4a3b2c1d",
+    "auth_subject": "user_01JQ5ZK7WORKOSSUBJECT01",
+    "harness_id": "codex"
+  },
+  "grounding": "Attributable traffic without a session emits the harness id alone."
+}

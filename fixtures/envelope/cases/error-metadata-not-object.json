@@ -1,0 +1,27 @@
+{
+  "name": "error-metadata-not-object",
+  "category": "error",
+  "harness": "claude",
+  "description": "Metadata that base64url-decodes to valid JSON but not an object (here a JSON array) is not a valid harness_metadata: the header reader drops it as a non-fatal malformed field, and the ingest boundary rejects it if it reaches the body.",
+  "direction": "decode",
+  "headers": {
+    "x-tapes-harness-id": "claude",
+    "x-tapes-harness-session-id": "eae77e15-c7d2-4883-b82e-251161f8eeb3",
+    "x-tapes-harness-metadata": "WzEsMiwzXQ",
+    "x-paper-auth-org-id": "0b9a4c1e-2f3d-4a5b-8c7d-6e5f4a3b2c1d",
+    "x-paper-auth-subject": "user_01JQ5ZK7WORKOSSUBJECT01"
+  },
+  "envelope": {
+    "org_id": "0b9a4c1e-2f3d-4a5b-8c7d-6e5f4a3b2c1d",
+    "auth_subject": "user_01JQ5ZK7WORKOSSUBJECT01",
+    "harness_id": "claude",
+    "harness_session_id": "eae77e15-c7d2-4883-b82e-251161f8eeb3"
+  },
+  "error": {
+    "field": "harness_metadata",
+    "rule": "must decode to a JSON object",
+    "disposition": "drop-field"
+  },
+  "grounding": "Metadata that decodes to valid JSON but not an object is invalid: the parser drops the field, and the ingest boundary rejects it if it reaches the body.",
+  "notes": "x-tapes-harness-metadata here is base64url(no-pad) of the JSON array [1,2,3]. The parser drops the field (non-fatal) so the rest of the envelope still ingests."
+}
