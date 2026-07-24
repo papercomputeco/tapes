@@ -59,7 +59,6 @@ capture the turns for the deriver.
 
 Endpoints:
   POST /v1/ingest        Accept a single conversation turn
-  POST /v1/ingest/batch  Accept multiple conversation turns
 
 Embeddings are no longer written at ingest time: the embed worker family is
 the single writer (tapes serve embed-worker). The embedding flags remain

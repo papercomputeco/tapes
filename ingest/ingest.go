@@ -94,18 +94,6 @@ type TurnPayload struct {
 	Session *sessions.IngestEnvelope `json:"session,omitempty"`
 }
 
-// BatchPayload is the ingest request body for multiple conversation turns.
-type BatchPayload struct {
-	Turns []TurnPayload `json:"turns"`
-}
-
-// BatchResult reports the outcome of a batch ingest.
-type BatchResult struct {
-	Accepted int      `json:"accepted"`
-	Rejected int      `json:"rejected"`
-	Errors   []string `json:"errors,omitempty"`
-}
-
 // TurnMeta mirrors the capture adapter's meta block (tapes-extproc
 // TurnMeta). Every field is optional; adapters that predate a field
 // simply omit it. Ingest only reads RequestID directly (raw-turn
@@ -142,11 +130,6 @@ type rawEnvelope struct {
 	Response json.RawMessage `json:"response"`
 	Meta     json.RawMessage `json:"meta"`
 	Session  json.RawMessage `json:"session"`
-}
-
-// rawBatchEnvelope is the batch-shaped shadow decode.
-type rawBatchEnvelope struct {
-	Turns []rawEnvelope `json:"turns"`
 }
 
 // Server is an HTTP server that accepts completed LLM conversation turns
@@ -206,7 +189,6 @@ func New(config Config, driver storage.Driver, log *slog.Logger) (*Server, error
 	app.Get("/ping", s.handlePing)
 	app.Get("/metrics", adaptor.HTTPHandler(s.metrics.Handler()))
 	app.Post("/v1/ingest", s.handleIngest)
-	app.Post("/v1/ingest/batch", s.handleBatchIngest)
 	app.Post("/v1/ingest/transcript", s.handleTranscriptIngest)
 
 	return s, nil
@@ -496,7 +478,8 @@ func (s *Server) persistRawTurn(ctx context.Context, turn *TurnPayload, raw rawE
 
 // recordProcessTurnError maps an internal error to the matching metric label
 // without affecting the HTTP response flow. Kept separate from
-// writeProcessTurnError so batch-ingest can reuse the metric call site.
+// writeProcessTurnError so a caller can record the metric without also
+// owning the HTTP reply.
 func (s *Server) recordProcessTurnError(provider string, err error, bodyBytes int) {
 	result := ResultRejectParse
 	switch {
@@ -512,77 +495,6 @@ func (s *Server) recordProcessTurnError(provider string, err error, bodyBytes in
 		}
 	}
 	s.metrics.ObserveWrite(provider, result, bodyBytes)
-}
-
-func (s *Server) handleBatchIngest(c *fiber.Ctx) error {
-	bodySize := len(c.Body())
-
-	var payload BatchPayload
-	if err := c.BodyParser(&payload); err != nil {
-		s.logger.Warn("ingest batch envelope rejected",
-			"reason", "envelope",
-			"error", err,
-			"bytes", bodySize,
-		)
-		s.metrics.ObserveWrite("", ResultRejectEnv, bodySize)
-		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{
-			Error: fmt.Sprintf("%s: %s", ErrEnvelope, err),
-		})
-	}
-
-	if len(payload.Turns) == 0 {
-		s.metrics.ObserveWrite("", ResultRejectEnv, bodySize)
-		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{
-			Error: fmt.Sprintf("%s: empty batch", ErrEnvelope),
-		})
-	}
-
-	// Shadow-decode the batch for the raw layer; index-aligned with
-	// payload.Turns by construction (same JSON array).
-	var rawBatch rawBatchEnvelope
-	if s.rawStore != nil {
-		_ = json.Unmarshal(c.Body(), &rawBatch)
-	}
-
-	result := BatchResult{}
-	for i := range payload.Turns {
-		t := &payload.Turns[i]
-		// Per-turn bytes approximate the cost of a single turn within the batch
-		// envelope. Sum of raw request + response is a close lower bound; the
-		// JSON envelope overhead (provider, agent_name) is small and omitted to
-		// avoid re-marshaling.
-		turnBytes := len(t.RawRequest) + reducedResponseSize(t.Response)
-
-		if err := t.Session.Validate(); err != nil {
-			s.logger.Warn("ingest batch turn rejected",
-				"reason", "session",
-				"error", err,
-				"turn", i,
-				"bytes", turnBytes,
-			)
-			s.metrics.ObserveWrite(t.Provider, ResultRejectEnv, turnBytes)
-			result.Rejected++
-			result.Errors = append(result.Errors, fmt.Sprintf("turn[%d]: %s: %s", i, ErrEnvelope, err))
-			continue
-		}
-
-		if s.rawStore != nil && i < len(rawBatch.Turns) {
-			s.persistRawTurn(c.Context(), t, rawBatch.Turns[i])
-		}
-
-		start := time.Now()
-		if err := s.processTurn(t); err != nil {
-			s.recordProcessTurnError(t.Provider, err, turnBytes)
-			result.Rejected++
-			result.Errors = append(result.Errors, fmt.Sprintf("turn[%d]: %s", i, err.Error()))
-			continue
-		}
-		s.metrics.ObserveDAGLatency(t.Provider, time.Since(start).Seconds())
-		s.metrics.ObserveWrite(t.Provider, ResultAccepted, turnBytes)
-		result.Accepted++
-	}
-
-	return c.Status(fiber.StatusAccepted).JSON(result)
 }
 
 // writeProcessTurnError maps an error returned by processTurn to the matching
