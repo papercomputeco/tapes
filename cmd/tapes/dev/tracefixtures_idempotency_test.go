@@ -22,12 +22,14 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-// corpusDir resolves the shared corpus testdata directory relative to
-// this test file, so the gate is independent of the test's working dir.
+// corpusDir resolves the shared corpus directory relative to this test
+// file, so the gate is independent of the test's working dir. The corpora
+// live in one place, pkg/seed/corpus (embedded by the demo seed), rather
+// than being duplicated under pkg/derive/testdata.
 func corpusDir() string {
 	_, file, _, ok := runtime.Caller(0)
 	Expect(ok).To(BeTrue(), "runtime.Caller failed")
-	return filepath.Join(filepath.Dir(file), "..", "..", "..", "pkg", "derive", "testdata")
+	return filepath.Join(filepath.Dir(file), "..", "..", "..", "pkg", "seed", "corpus")
 }
 
 var _ = Describe("trace-fixtures re-derive determinism (Tier 1)", func() {

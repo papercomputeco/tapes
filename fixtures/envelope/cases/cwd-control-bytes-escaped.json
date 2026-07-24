@@ -1,0 +1,30 @@
+{
+  "name": "cwd-control-bytes-escaped",
+  "category": "percent-encoding",
+  "harness": "claude",
+  "description": "Header-injection defense: the producer percent-encodes control bytes in cwd (newline -> %0A) so no second header can be smuggled. The reader stores x-tapes-cwd verbatim, so the encoded, injection-safe form is what is persisted.",
+  "direction": "encode",
+  "headers": {
+    "x-tapes-harness-id": "claude",
+    "x-paper-auth-org-id": "00000000-0000-4000-8000-000000000001",
+    "x-paper-auth-subject": "user_synthetic_fixture_subject",
+    "x-tapes-harness-session-id": "11111111-1111-4111-8111-111111111111",
+    "x-tapes-cwd": "/Users/matt%0Awith-injection:%20yes"
+  },
+  "envelope": {
+    "org_id": "00000000-0000-4000-8000-000000000001",
+    "auth_subject": "user_synthetic_fixture_subject",
+    "harness_id": "claude",
+    "harness_session_id": "11111111-1111-4111-8111-111111111111",
+    "cwd": "/Users/matt%0Awith-injection:%20yes"
+  },
+  "grounding": "Producer escapes control bytes when encoding cwd; the reader keeps the escaped value verbatim, so no raw CR/LF ever reaches the envelope.",
+  "encode_from": {
+    "org_id": "00000000-0000-4000-8000-000000000001",
+    "auth_subject": "user_synthetic_fixture_subject",
+    "harness_id": "claude",
+    "harness_session_id": "11111111-1111-4111-8111-111111111111",
+    "cwd": "/Users/matt\nwith-injection: yes"
+  },
+  "notes": "The percent-encoding happens on the producer side; the reader does not decode cwd, so the stored value stays escaped (this is what makes the injection defense hold end to end)."
+}

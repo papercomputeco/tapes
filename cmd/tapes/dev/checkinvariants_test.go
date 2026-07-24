@@ -19,7 +19,7 @@ import (
 func compositeFixtureBytes(corpus string) []byte {
 	_, file, _, ok := runtime.Caller(0)
 	Expect(ok).To(BeTrue())
-	path := filepath.Join(filepath.Dir(file), "..", "..", "..", "pkg", "derive", "testdata", corpus)
+	path := filepath.Join(filepath.Dir(file), "..", "..", "..", "pkg", "seed", "corpus", corpus)
 
 	arts, _, err := buildFixtureArtifacts(path)
 	Expect(err).NotTo(HaveOccurred())

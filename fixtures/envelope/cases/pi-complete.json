@@ -1,0 +1,20 @@
+{
+  "name": "pi-complete",
+  "category": "valid",
+  "harness": "pi",
+  "description": "A non-Claude caller supplies its own complete inbound envelope (harness id + session id), which is preserved as-is.",
+  "direction": "roundtrip",
+  "headers": {
+    "x-tapes-harness-id": "pi",
+    "x-paper-auth-org-id": "00000000-0000-4000-8000-000000000001",
+    "x-paper-auth-subject": "user_synthetic_fixture_subject",
+    "x-tapes-harness-session-id": "paper-pi-test-session"
+  },
+  "envelope": {
+    "org_id": "00000000-0000-4000-8000-000000000001",
+    "auth_subject": "user_synthetic_fixture_subject",
+    "harness_id": "pi",
+    "harness_session_id": "paper-pi-test-session"
+  },
+  "grounding": "A caller that supplies its own complete envelope (harness id + session id) is preserved as-is."
+}

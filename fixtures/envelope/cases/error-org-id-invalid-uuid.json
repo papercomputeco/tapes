@@ -1,0 +1,25 @@
+{
+  "name": "error-org-id-invalid-uuid",
+  "category": "error",
+  "harness": "claude",
+  "description": "A non-empty org_id that is not a UUID is rejected at the ingest boundary (400-equivalent). Empty org_id is allowed; malformed is not.",
+  "direction": "decode",
+  "headers": {
+    "x-tapes-harness-id": "claude",
+    "x-tapes-harness-session-id": "11111111-1111-4111-8111-111111111111",
+    "x-paper-auth-org-id": "not-a-uuid",
+    "x-paper-auth-subject": "user_synthetic_fixture_subject"
+  },
+  "envelope": {
+    "org_id": "not-a-uuid",
+    "auth_subject": "user_synthetic_fixture_subject",
+    "harness_id": "claude",
+    "harness_session_id": "11111111-1111-4111-8111-111111111111"
+  },
+  "error": {
+    "field": "org_id",
+    "rule": "must be a UUID when non-empty",
+    "disposition": "reject-400"
+  },
+  "grounding": "A non-empty org_id that is not a UUID is rejected at the ingest boundary; empty org_id is allowed."
+}

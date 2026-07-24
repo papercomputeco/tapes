@@ -34,7 +34,7 @@ const (
 // llm/provider/anthropic.ParseResponse's output on the non-streaming form
 // of the same turn so the content-addressed DAG dedups streamed and
 // non-streamed captures. canonical_equivalence_test verifies the property
-// across the fixture pairs in testdata/anthropic/canonical_equivalence.
+// across the fixture pairs in fixtures/anthropic/canonical_equivalence.
 //
 // Memory note: per-block text / thinking / tool_input buffers grow with the
 // upstream's output and are NOT bounded here. Anthropic's current hard

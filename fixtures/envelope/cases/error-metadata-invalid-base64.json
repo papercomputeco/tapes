@@ -1,0 +1,26 @@
+{
+  "name": "error-metadata-invalid-base64",
+  "category": "error",
+  "harness": "claude",
+  "description": "Metadata that is not valid base64url is dropped as a non-fatal malformed field; the rest of the envelope parses.",
+  "direction": "decode",
+  "headers": {
+    "x-tapes-harness-id": "claude",
+    "x-tapes-harness-session-id": "11111111-1111-4111-8111-111111111111",
+    "x-tapes-harness-metadata": "!!! not base64url !!!",
+    "x-paper-auth-org-id": "00000000-0000-4000-8000-000000000001",
+    "x-paper-auth-subject": "user_synthetic_fixture_subject"
+  },
+  "envelope": {
+    "org_id": "00000000-0000-4000-8000-000000000001",
+    "auth_subject": "user_synthetic_fixture_subject",
+    "harness_id": "claude",
+    "harness_session_id": "11111111-1111-4111-8111-111111111111"
+  },
+  "error": {
+    "field": "harness_metadata",
+    "rule": "must be valid base64url(no-pad)",
+    "disposition": "drop-field"
+  },
+  "grounding": "Metadata that is not valid base64url is dropped as a non-fatal malformed field; the rest of the envelope parses."
+}

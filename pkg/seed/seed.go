@@ -37,7 +37,20 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
-//go:embed corpus/*.jsonl.gz
+// corpus/ is the single home for the gzipped raw_turns corpora — the same
+// files the derive regression gates load (from ../derive via a relative path)
+// and the trace-fixture generator replays. They used to be byte-duplicated
+// under pkg/derive/testdata; that copy is gone, this is the only one.
+//
+// The seed embeds an explicit subset: corpus-cb9a87e5 and corpus-9fec0da7 are
+// the two demo sessions baked into the binary. corpus-0440f43d also lives in
+// this directory (it's a first-class derive/trace-fixture corpus) but is
+// deliberately NOT embedded here — it is the "19 sessions, scale" capture, and
+// seeding it would ~triple the embedded payload and change the demo/e2e session
+// count. Keep this list explicit (not a `corpus/*.jsonl.gz` glob) so co-located
+// corpora don't silently join the seed set.
+//
+//go:embed corpus/corpus-cb9a87e5.jsonl.gz corpus/corpus-9fec0da7.jsonl.gz
 var corpusFS embed.FS
 
 // demoProject tags replayed nodes so operators can spot seeded data in

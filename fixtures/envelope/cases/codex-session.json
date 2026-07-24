@@ -1,0 +1,28 @@
+{
+  "name": "codex-session",
+  "category": "valid",
+  "harness": "codex",
+  "description": "Codex envelope with a session, cli version, cwd and an originator metadata field.",
+  "direction": "roundtrip",
+  "headers": {
+    "x-tapes-harness-id": "codex",
+    "x-paper-auth-org-id": "00000000-0000-4000-8000-000000000001",
+    "x-paper-auth-subject": "user_synthetic_fixture_subject",
+    "x-tapes-harness-session-id": "22222222-2222-4222-8222-222222222222",
+    "x-tapes-harness-version": "0.139.0",
+    "x-tapes-cwd": "/Users/matt/code",
+    "x-tapes-harness-metadata": "eyJvcmlnaW5hdG9yIjoiY29kZXgtdHVpIn0"
+  },
+  "envelope": {
+    "org_id": "00000000-0000-4000-8000-000000000001",
+    "auth_subject": "user_synthetic_fixture_subject",
+    "harness_id": "codex",
+    "harness_session_id": "22222222-2222-4222-8222-222222222222",
+    "harness_version": "0.139.0",
+    "cwd": "/Users/matt/code",
+    "harness_metadata": {
+      "originator": "codex-tui"
+    }
+  },
+  "grounding": "A codex session carries session id, version, cwd, and a metadata object."
+}

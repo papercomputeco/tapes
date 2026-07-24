@@ -1,0 +1,32 @@
+{
+  "name": "error-metadata-not-object",
+  "category": "error",
+  "harness": "claude",
+  "description": "Metadata that base64url-decodes to valid JSON but not an object (here an array) is RETAINED by the header parser (it only checks base64 + JSON validity), then rejected by envelope validation (400).",
+  "direction": "decode",
+  "headers": {
+    "x-tapes-harness-id": "claude",
+    "x-tapes-harness-session-id": "11111111-1111-4111-8111-111111111111",
+    "x-tapes-harness-metadata": "WzEsMiwzXQ",
+    "x-paper-auth-org-id": "00000000-0000-4000-8000-000000000001",
+    "x-paper-auth-subject": "user_synthetic_fixture_subject"
+  },
+  "envelope": {
+    "org_id": "00000000-0000-4000-8000-000000000001",
+    "auth_subject": "user_synthetic_fixture_subject",
+    "harness_id": "claude",
+    "harness_session_id": "11111111-1111-4111-8111-111111111111",
+    "harness_metadata": [
+      1,
+      2,
+      3
+    ]
+  },
+  "error": {
+    "field": "harness_metadata",
+    "rule": "must decode to a JSON object",
+    "disposition": "reject-400"
+  },
+  "grounding": "The reader stores any valid-JSON metadata (arrays included); object-ness is enforced by envelope validation, which rejects the whole envelope.",
+  "notes": "x-tapes-harness-metadata is base64url(no-pad) of the JSON array [1,2,3]. The parser sets harness_metadata to [1,2,3]; Validate then fails because it is not a JSON object."
+}

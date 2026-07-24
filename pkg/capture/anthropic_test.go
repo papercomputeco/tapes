@@ -3,18 +3,20 @@ package capture_test
 import (
 	"bytes"
 	"context"
-	"os"
-	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/papercomputeco/tapes/pkg/capture"
+	"github.com/papercomputeco/tapes/pkg/capture/fixtures"
 )
 
-func readFixture(path string) []byte {
-	b, err := os.ReadFile(filepath.Join("testdata", "anthropic", path))
-	Expect(err).NotTo(HaveOccurred(), "missing fixture: %s", path)
+// readFixture returns an Anthropic fixture by its path under anthropic/
+// (e.g. "messages_oneshot.json" or "canonical_equivalence/turn_01_stream.sse").
+// Shared with canonical_equivalence_test.go (same test package).
+func readFixture(name string) []byte {
+	b, err := fixtures.ReadFile("anthropic/" + name)
+	Expect(err).NotTo(HaveOccurred(), "missing fixture: %s", name)
 	return b
 }
 

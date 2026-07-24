@@ -61,8 +61,8 @@ var _ = Describe("corpus writer round-trip (dump-corpus)", func() {
 			setB, spansB := deriveFrom(wire2, transcripts2)
 			Expect(canonicalProjection(setB, spansB)).To(Equal(canonicalProjection(setA, spansA)))
 		},
-		Entry("cb9a87e5 — plan mode, 2 subagents", "testdata/corpus-cb9a87e5.jsonl.gz"),
-		Entry("9fec0da7 — compaction, multi-model", "testdata/corpus-9fec0da7.jsonl.gz"),
-		Entry("0440f43d — 19 sessions, scale", "testdata/corpus-0440f43d.jsonl.gz"),
+		Entry("cb9a87e5 — plan mode, 2 subagents", corpusPath("corpus-cb9a87e5.jsonl.gz")),
+		Entry("9fec0da7 — compaction, multi-model", corpusPath("corpus-9fec0da7.jsonl.gz")),
+		Entry("0440f43d — 19 sessions, scale", corpusPath("corpus-0440f43d.jsonl.gz")),
 	)
 })

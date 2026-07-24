@@ -1,0 +1,18 @@
+{
+  "name": "unknown-bare",
+  "category": "unknown",
+  "harness": "unknown",
+  "description": "Cold-race or non-Claude caller: the capture path attaches only x-tapes-harness-id: unknown, nothing else.",
+  "direction": "roundtrip",
+  "headers": {
+    "x-tapes-harness-id": "unknown",
+    "x-paper-auth-org-id": "00000000-0000-4000-8000-000000000001",
+    "x-paper-auth-subject": "user_synthetic_fixture_subject"
+  },
+  "envelope": {
+    "org_id": "00000000-0000-4000-8000-000000000001",
+    "auth_subject": "user_synthetic_fixture_subject",
+    "harness_id": "unknown"
+  },
+  "grounding": "A cold-race or unattributable caller emits only harness-id=unknown, nothing else."
+}

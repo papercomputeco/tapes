@@ -1,0 +1,24 @@
+{
+  "name": "claude-with-parent",
+  "category": "valid",
+  "harness": "claude",
+  "description": "Claude fork: parent_harness_session_id carries the fork parent's session id (same harness namespace).",
+  "direction": "roundtrip",
+  "headers": {
+    "x-tapes-harness-id": "claude",
+    "x-paper-auth-org-id": "00000000-0000-4000-8000-000000000001",
+    "x-paper-auth-subject": "user_synthetic_fixture_subject",
+    "x-tapes-harness-session-id": "33333333-3333-4333-8333-333333333333",
+    "x-tapes-cwd": "/Users/matt/code",
+    "x-tapes-parent-harness-session-id": "44444444-4444-4444-8444-444444444444"
+  },
+  "envelope": {
+    "org_id": "00000000-0000-4000-8000-000000000001",
+    "auth_subject": "user_synthetic_fixture_subject",
+    "harness_id": "claude",
+    "harness_session_id": "33333333-3333-4333-8333-333333333333",
+    "cwd": "/Users/matt/code",
+    "parent_harness_session_id": "44444444-4444-4444-8444-444444444444"
+  },
+  "grounding": "A fork carries the parent's session id in the same harness namespace."
+}

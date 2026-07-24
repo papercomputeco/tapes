@@ -1,12 +1,23 @@
 package derive_test
 
 import (
+	"path/filepath"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/papercomputeco/tapes/pkg/derive"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
+
+// corpusHome is the single on-disk home for the gzipped raw_turns corpora.
+// They live under pkg/seed/corpus (embedded by the demo seed) rather than
+// being duplicated here; these derive tests read the same files from disk.
+// The derive goldens (golden-derive-*.txt.gz) still live in ./testdata next
+// to this file — see clone_equivalence_test.go.
+const corpusHome = "../seed/corpus"
+
+func corpusPath(name string) string { return filepath.Join(corpusHome, name) }
 
 // The corpus is full sessions captured LIVE through a gateway
 // (2026-06-10, exercise-claude-harness skills driven by a human): wire
@@ -50,15 +61,15 @@ func deriveCorpus(path string, wantWire, wantTranscripts int) (*derive.DerivedSe
 }
 
 func deriveAdvanced() (*derive.DerivedSet, *derive.ReconcileStats) {
-	return deriveCorpus("testdata/corpus-cb9a87e5.jsonl.gz", 87, 3)
+	return deriveCorpus(corpusPath("corpus-cb9a87e5.jsonl.gz"), 87, 3)
 }
 
 func deriveSuperAdvanced() (*derive.DerivedSet, *derive.ReconcileStats) {
-	return deriveCorpus("testdata/corpus-9fec0da7.jsonl.gz", 121, 5)
+	return deriveCorpus(corpusPath("corpus-9fec0da7.jsonl.gz"), 121, 5)
 }
 
 func deriveResume() (*derive.DerivedSet, *derive.ReconcileStats) {
-	return deriveCorpus("testdata/corpus-0440f43d.jsonl.gz", 108, 19)
+	return deriveCorpus(corpusPath("corpus-0440f43d.jsonl.gz"), 108, 19)
 }
 
 var _ = Describe("live-capture corpus (cb9a87e5)", func() {
