@@ -95,10 +95,13 @@ type SessionItem struct {
 	// the session id (the primary key, always set for a stored row).
 	DisplayTitle string `json:"display_title"`
 	// Live is a runtime presence signal, not a projection fact: true when
-	// the session was seen within the liveness window AND the deriver has
-	// not marked it terminal. Computed at response time from last_seen_at,
-	// so the console renders it directly instead of inferring "running"
-	// from recency itself (keeps the console dumb; RFD 00007 §C).
+	// the session has no recorded end and was seen within the liveness
+	// window. Keyed on ended_at + last_seen_at recency (both ingest-fresh),
+	// never on the derived status: an interactive session folds to a
+	// terminal status (an end_turn assistant reply reads as "completed")
+	// after every turn while still open, so status cannot gate liveness.
+	// Computed at response time so the console renders it directly instead
+	// of inferring "running" itself (RFD 00007 §C).
 	Live bool `json:"live"`
 	// Rollup is the deriver-owned projection over the session's spans.
 	Rollup SessionRollup `json:"rollup"`
@@ -108,16 +111,6 @@ type SessionItem struct {
 // read as live. Server config now (mirrors the console's old 5-minute
 // client-side window) so liveness is decided in one place.
 const sessionLiveWindow = 5 * time.Minute
-
-// terminalStatus reports whether a derived status is a settled outcome, in
-// which case the session is done regardless of recency.
-func terminalStatus(s string) bool {
-	switch s {
-	case "completed", "failed", "abandoned":
-		return true
-	}
-	return false
-}
 
 // SessionRollup is the deriver-owned session projection — status, title,
 // counts, and spend, all folded from the span layer at derive time.
@@ -246,7 +239,7 @@ func sessionItemFromStorage(s storage.SessionRecord, now time.Time) SessionItem 
 		Name:             s.Name,
 		DisplayName:      s.DisplayName,
 		DisplayTitle:     resolveSessionDisplayTitle(s),
-		Live:             now.Sub(s.LastSeenAt) < sessionLiveWindow && !terminalStatus(s.DerivedStatus),
+		Live:             s.EndedAt == nil && now.Sub(s.LastSeenAt) < sessionLiveWindow,
 		Rollup: SessionRollup{
 			Status:     s.DerivedStatus,
 			Title:      s.DerivedTitle,
