@@ -107,6 +107,8 @@ var _ = Describe("NormalizeModel", func() {
 		}
 		pricing := sessions.DefaultPricing()
 		for _, p := range []pin{
+			{"claude-opus-5", 5.00, 25.00},
+			{"claude-opus-5[1m]", 5.00, 25.00},
 			{"claude-fable-5", 10.00, 50.00},
 			{"claude-fable-5[1m]", 10.00, 50.00},
 			{"claude-sonnet-5", 3.00, 15.00},
