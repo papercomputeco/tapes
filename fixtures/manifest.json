@@ -27,7 +27,10 @@
         "notes": "Hand-authored; no captured content. Header values are produced by a faithful port of the envelope encoding rules and self-checked against their pinned outputs."
       },
       "scrub_attestation": "synthetic-by-construction",
-      "consumers": ["envelope producers and parsers, via table tests over cases/*.json (vendor this directory to keep one copy)"]
+      "consumers": [
+        "tapes reader oracle: pkg/backfill/envelope_fixtures_test.go runs every case through sessionEnvelopeFromHeaders + Validate",
+        "other envelope producers/parsers, via table tests over cases/*.json (vendor this directory to keep one copy)"
+      ]
     },
     {
       "name": "recordings",

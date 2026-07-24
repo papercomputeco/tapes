@@ -2,8 +2,8 @@
   "name": "cwd-unicode",
   "category": "percent-encoding",
   "harness": "claude",
-  "description": "Non-ASCII working directory: each UTF-8 byte percent-encoded; ASCII path segments survive verbatim.",
-  "direction": "roundtrip",
+  "description": "Non-ASCII working directory. The producer percent-encodes each UTF-8 byte; the reader stores x-tapes-cwd VERBATIM, so the decoded path is not recovered.",
+  "direction": "encode",
   "headers": {
     "x-tapes-harness-id": "claude",
     "x-paper-auth-org-id": "0b9a4c1e-2f3d-4a5b-8c7d-6e5f4a3b2c1d",
@@ -16,7 +16,15 @@
     "auth_subject": "user_01JQ5ZK7WORKOSSUBJECT01",
     "harness_id": "claude",
     "harness_session_id": "eae77e15-c7d2-4883-b82e-251161f8eeb3",
+    "cwd": "/Users/%E6%9D%BE%E6%9C%AC/code"
+  },
+  "grounding": "cwd is copied verbatim from x-tapes-cwd (the reader does not percent-decode it, unlike session-name).",
+  "encode_from": {
+    "org_id": "0b9a4c1e-2f3d-4a5b-8c7d-6e5f4a3b2c1d",
+    "auth_subject": "user_01JQ5ZK7WORKOSSUBJECT01",
+    "harness_id": "claude",
+    "harness_session_id": "eae77e15-c7d2-4883-b82e-251161f8eeb3",
     "cwd": "/Users/松本/code"
   },
-  "grounding": "Non-ASCII cwd is percent-encoded per UTF-8 byte; ASCII path segments pass through verbatim."
+  "notes": "Reader asymmetry: session-name is percent-decoded but cwd is stored as-is. The round-trip is therefore lossy for non-ASCII cwd. Encode side is authoritative; decode yields the encoded string."
 }

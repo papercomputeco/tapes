@@ -57,10 +57,10 @@ Each `cases/*.json` file is one object:
 | `x-tapes-harness-id`                   | `harness_id`                | verbatim; missing/empty → `"unknown"` |
 | `x-tapes-harness-session-id`           | `harness_session_id`        | verbatim |
 | `x-tapes-harness-version`              | `harness_version`           | verbatim |
-| `x-tapes-cwd`                          | `cwd`                       | **percent-encoded UTF-8** |
-| `x-tapes-session-name`                 | `name`                      | **percent-encoded UTF-8**, capped 256 raw bytes |
-| `x-tapes-parent-harness-session-id`    | `parent_harness_session_id` | verbatim; empty is invalid (omit instead) |
-| `x-tapes-harness-metadata`             | `harness_metadata` (object) | **base64url(no-pad) of the JSON object**, raw JSON ≤ 4 KiB |
+| `x-tapes-cwd`                          | `cwd`                       | producer percent-encodes UTF-8; **reader stores it verbatim (does NOT decode)** |
+| `x-tapes-session-name`                 | `name`                      | producer percent-encodes UTF-8 (capped 256 raw bytes); **reader percent-decodes** |
+| `x-tapes-parent-harness-session-id`    | `parent_harness_session_id` | verbatim; **an empty header is dropped by the reader** (omit it) |
+| `x-tapes-harness-metadata`             | `harness_metadata`          | **base64url(no-pad) of a JSON value**, raw ≤ 4 KiB; reader retains any valid JSON, validation requires an **object** |
 | `x-paper-auth-org-id`                  | `org_id`                    | server-trusted (set from a validated JWT claim); UUID or empty |
 | `x-paper-auth-subject`                 | `auth_subject`              | server-trusted (set from a validated JWT claim) |
 
@@ -81,6 +81,24 @@ The header values are byte-exact and auditable — reproduce them from these rul
 - **Total budget**: 8 KiB across all `X-Tapes-*` headers; the metadata header is
   dropped first when exceeded.
 
+## Reader behavior the cases pin
+
+The `envelope` in each case is exactly what the reader produces from `headers` — not an
+idealized inverse of the producer. Two spots are deliberately asymmetric and easy to get
+wrong:
+
+- **`cwd` is stored verbatim** (still percent-encoded), while **`name` is percent-decoded**.
+  So the non-ASCII / control-byte `cwd` cases are `direction: encode` with a lossy
+  round-trip: `encode_from` holds the logical path, but decoding the header yields the
+  encoded string. (That the reader decodes `name` but not `cwd` is a standing asymmetry
+  worth revisiting in the reader, not in these fixtures.)
+- **Non-object metadata is retained, then rejected.** The reader accepts any valid-JSON
+  metadata (arrays included); object-ness is enforced by envelope validation, so
+  `error-metadata-not-object` is `reject-400`, not a silent drop. Metadata that isn't
+  valid base64url *is* dropped (`error-metadata-invalid-base64`). An empty parent header
+  is dropped by the reader (`error-parent-empty` → `drop-field`); the reject-empty rule
+  only guards an explicit empty in a JSON ingest body.
+
 ## Consuming
 
 Both sides table-test over `cases/*.json`:
@@ -90,5 +108,8 @@ Both sides table-test over `cases/*.json`:
 - **Producer**: for each `roundtrip`/`encode` case, encode `encode_from`/`envelope` and
   assert the emitted header set equals `headers`.
 
-Vendor this directory into each side (a small sync script keeps one copy authoritative)
-so producer and parser test against identical bytes.
+The tapes reader already does this: `pkg/backfill/envelope_fixtures_test.go` runs every
+case through `sessionEnvelopeFromHeaders` + `Validate` and asserts the declared `envelope`
+/ `error`. Keep it green — it is what stops these fixtures from silently drifting from the
+parser. Vendor this directory into other consumers (a small sync script keeps one copy
+authoritative) so every side tests against identical bytes.
