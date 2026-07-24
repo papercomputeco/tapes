@@ -1,19 +1,24 @@
 package ingest
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/gofiber/adaptor/v2"
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/papercomputeco/tapes/pkg/capture"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/llm/provider"
 	"github.com/papercomputeco/tapes/pkg/sessions"
@@ -73,6 +78,24 @@ type TurnPayload struct {
 
 	// Response is the already reduced, provider-agnostic response for the turn.
 	Response llm.ChatResponse `json:"response"`
+
+	// RawResponse is the upstream response body exactly as it arrived on the
+	// wire, base64-encoded in the JSON envelope. Optional and independent of
+	// Response: an adapter may send both (reduction plus the bytes it reduced
+	// from), only the reduction (the historical shape), or only the bytes.
+	//
+	// Raw-only is the interesting case. Reduction is lossy and adapter-
+	// specific, so an adapter that ships only the bytes lets ingest perform
+	// the reduction with the shared pkg/capture reducers — which is what makes
+	// two capture paths produce identical rows for identical upstream traffic
+	// instead of two subtly different ones.
+	RawResponse []byte `json:"raw_response,omitempty"`
+
+	// RawResponseEncoding is the Content-Encoding of RawResponse ("identity",
+	// "gzip", …). Empty means identity. The bytes are stored under this
+	// encoding rather than decompressed, so the stored column stays literally
+	// what the upstream sent.
+	RawResponseEncoding string `json:"raw_response_encoding,omitempty"`
 
 	// Meta is the capture adapter's metadata block. Parsed for the
 	// fields ingest promotes (request_id for raw-turn dedup); the
@@ -143,6 +166,14 @@ type Server struct {
 	providers  map[string]provider.Provider
 	metrics    *Metrics
 
+	// reducers turn verbatim upstream bytes into a canonical response for
+	// raw-only payloads. Constructed explicitly and dispatched by provider
+	// name, the same way proxy.New does it — pkg/capture deliberately keeps
+	// no global registry so import order and init() stay out of the call
+	// graph. A provider with no entry simply never gets a server-side
+	// reduction; its adapter is expected to send one.
+	reducers map[string]capture.Reducer
+
 	// rawStore is the optional immutable raw-capture layer. Non-nil
 	// only when the configured driver hosts it (Postgres). When nil,
 	// ingest behaves exactly as before the raw layer existed.
@@ -162,6 +193,7 @@ func New(config Config, driver storage.Driver, log *slog.Logger) (*Server, error
 
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
+		BodyLimit:             MaxIngestBodyBytes,
 	})
 
 	wp, err := worker.NewPool(&worker.Config{
@@ -181,6 +213,10 @@ func New(config Config, driver storage.Driver, log *slog.Logger) (*Server, error
 		server:     app,
 		providers:  providers,
 		metrics:    NewMetrics(),
+		reducers: map[string]capture.Reducer{
+			capture.ProviderAnthropic: capture.NewAnthropicReducer(),
+			capture.ProviderOpenAI:    capture.NewOpenAIResponsesReducer(),
+		},
 	}
 	if rawStore, ok := driver.(storage.RawTurnStore); ok {
 		s.rawStore = rawStore
@@ -252,12 +288,22 @@ func (s *Server) handleIngest(c *fiber.Ctx) error {
 		})
 	}
 
+	// A raw-only payload carries the verbatim upstream bytes and no reduction.
+	// Reduce it here with the shared reducers so the stored row does not depend
+	// on which capture path produced it. This runs before the raw-layer write
+	// so the reduction lands on the same row as the bytes it came from, and
+	// before processTurn so the derived path sees a populated response.
+	reduced := s.reduceRawOnly(c.Context(), &payload)
+
 	// Persist the immutable raw envelope BEFORE parsing: a turn that
 	// fails provider parsing (422) is still captured, so a future
 	// parser fix re-derives it instead of needing a re-capture.
 	if s.rawStore != nil {
 		var raw rawEnvelope
 		if err := json.Unmarshal(c.Body(), &raw); err == nil {
+			if len(reduced) > 0 {
+				raw.Response = reduced
+			}
 			s.persistRawTurn(c.Context(), &payload, raw)
 		}
 	}
@@ -451,7 +497,150 @@ func resolveGatewayIdentity(c *fiber.Ctx, session *sessions.IngestEnvelope) {
 // Failures are logged, never propagated: the raw layer must not take
 // down the node-ingest path, and a Postgres-level outage will surface
 // through processTurn anyway.
+// reduceRawOnly reduces a raw-only payload in place and returns the reduced
+// response as JSON for the raw layer, or nil when nothing was reduced.
+//
+// It is a no-op unless the payload carried verbatim bytes AND no reduced
+// response. An adapter that already reduced keeps its reduction: it consumed
+// the live stream and may have seen framing the stored bytes no longer show,
+// so re-reducing here could only lose information, never add it.
+//
+// A failure to reduce is not a failure to ingest. The raw bytes still land, so
+// a fixed reducer recovers the turn on a later re-derive — which is the whole
+// reason for storing them.
+func (s *Server) reduceRawOnly(ctx context.Context, turn *TurnPayload) json.RawMessage {
+	if len(turn.RawResponse) == 0 {
+		return nil
+	}
+	if !reducedResponseAbsent(turn.Response) {
+		return nil
+	}
+
+	reducer, ok := s.reducers[turn.Provider]
+	if !ok {
+		s.logger.Warn("raw-only turn not reduced: no reducer for provider",
+			"provider", turn.Provider,
+			"request_id", turn.Meta.RequestID,
+		)
+		return nil
+	}
+
+	body, err := decodeContentEncoding(turn.RawResponse, turn.RawResponseEncoding)
+	if err != nil {
+		s.logger.Warn("raw-only turn not reduced: decode failed",
+			"provider", turn.Provider,
+			"request_id", turn.Meta.RequestID,
+			"encoding", turn.RawResponseEncoding,
+			"error", err,
+		)
+		return nil
+	}
+
+	resp, err := reducer.Reduce(ctx,
+		bytes.NewReader(turn.RawRequest),
+		bytes.NewReader(body),
+		turn.Meta.ContentType,
+	)
+	if err != nil || resp == nil {
+		s.logger.Warn("raw-only turn not reduced: reducer failed",
+			"provider", turn.Provider,
+			"request_id", turn.Meta.RequestID,
+			"content_type", turn.Meta.ContentType,
+			"error", err,
+		)
+		return nil
+	}
+
+	out, err := json.Marshal(resp)
+	if err != nil {
+		return nil
+	}
+	turn.Response = *resp
+	return out
+}
+
+// reducedResponseAbsent reports whether a payload carried no reduced response.
+//
+// It has to be decided on the parsed value, not on the envelope JSON: Response
+// is a struct rather than a pointer and has no omitempty, so a client that
+// marshals TurnPayload always emits a `response` key. Its presence in the
+// bytes therefore says nothing about whether an adapter actually reduced
+// anything — the zero value and a deliberate empty reduction are the same JSON.
+//
+// Every field is checked rather than just the message, so an adapter that
+// reduced a turn to an error envelope (stop_reason and usage, no content)
+// still counts as having reduced, and keeps its result.
+func reducedResponseAbsent(r llm.ChatResponse) bool {
+	return r.Model == "" &&
+		r.Message.Role == "" &&
+		len(r.Message.Content) == 0 &&
+		!r.Done &&
+		r.StopReason == "" &&
+		r.Usage == nil
+}
+
+// decodeContentEncoding returns body decoded per encoding, for handing to a
+// reducer. The stored column keeps the ENCODED bytes; only the reduction sees
+// the decoded form.
+//
+// An unrecognized encoding is an error rather than a pass-through: handing
+// compressed bytes to a reducer that expects text yields a confusing parse
+// failure well away from the actual cause.
+func decodeContentEncoding(body []byte, encoding string) ([]byte, error) {
+	switch strings.ToLower(strings.TrimSpace(encoding)) {
+	case "", "identity":
+		return body, nil
+	case "gzip", "x-gzip":
+		zr, err := gzip.NewReader(bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("gzip reader: %w", err)
+		}
+		defer zr.Close()
+		out, err := io.ReadAll(zr)
+		if err != nil {
+			return nil, fmt.Errorf("gzip decode: %w", err)
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("unsupported content-encoding %q", encoding)
+	}
+}
+
+// MaxRawResponseBytes caps the verbatim response bytes ingest will store on a
+// single turn. Beyond it the bytes are dropped and the row is marked
+// (raw_response_dropped), rather than the write being refused: the reduced
+// response, the raw request, and the session attribution are all still worth
+// keeping, and a turn that vanishes entirely is a worse outcome than one whose
+// verbatim bytes are known to be missing.
+//
+// 8 MiB is well above a normal turn — it is a backstop against a pathological
+// response, not a working limit. Reduction happens before the cap is applied,
+// so an oversize turn still lands with a usable reduced response.
+const MaxRawResponseBytes = 8 << 20
+
+// MaxIngestBodyBytes is the request body limit, derived from
+// MaxRawResponseBytes rather than chosen independently: raw_response travels
+// base64-encoded (4/3 expansion), alongside the raw request, the reduced
+// response, and the meta block. Fiber's 4 MiB default would reject a body
+// carrying a raw response well under the cap, which would make the cap
+// unreachable and its drop-and-mark path dead code — the limit that actually
+// bit would be an unrelated framework default, and turns would fail at the
+// transport with no fidelity marker recorded anywhere.
+const MaxIngestBodyBytes = MaxRawResponseBytes*4/3 + 4<<20
+
 func (s *Server) persistRawTurn(ctx context.Context, turn *TurnPayload, raw rawEnvelope) {
+	rawResponse := turn.RawResponse
+	dropped := false
+	if len(rawResponse) > MaxRawResponseBytes {
+		s.logger.Warn("raw response dropped: over cap",
+			"provider", turn.Provider,
+			"request_id", turn.Meta.RequestID,
+			"bytes", len(rawResponse),
+			"cap", MaxRawResponseBytes,
+		)
+		rawResponse, dropped = nil, true
+	}
+
 	rec := storage.RawTurnRecord{
 		Source:          storage.RawTurnSourceWire,
 		Provider:        turn.Provider,
@@ -461,6 +650,10 @@ func (s *Server) persistRawTurn(ctx context.Context, turn *TurnPayload, raw rawE
 		Response:        raw.Response,
 		Meta:            raw.Meta,
 		SessionEnvelope: raw.Session,
+
+		RawResponse:         rawResponse,
+		RawResponseEncoding: turn.RawResponseEncoding,
+		RawResponseDropped:  dropped,
 	}
 	if turn.Session != nil {
 		rec.OrgID = turn.Session.OrgID
@@ -524,15 +717,6 @@ func (s *Server) writeProcessTurnError(c *fiber.Ctx, err error) error {
 		s.logger.Warn("ingest rejected", logArgs...)
 	}
 	return c.Status(status).JSON(llm.ErrorResponse{Error: err.Error()})
-}
-
-// reducedResponseSize provides the json marshaled size of the chat response
-func reducedResponseSize(resp llm.ChatResponse) int {
-	b, err := json.Marshal(resp)
-	if err != nil {
-		return 0
-	}
-	return len(b)
 }
 
 // validateReducedResponse is a sanity check ontop of a provided llm.ChatResponse

@@ -19,9 +19,25 @@ FROM raw_turns
 WHERE id = $1
 `
 
-func (q *Queries) GetRawTurn(ctx context.Context, id int64) (RawTurn, error) {
+type GetRawTurnRow struct {
+	ID               int64
+	OrgID            pgtype.UUID
+	Source           string
+	Provider         string
+	AgentName        string
+	HarnessID        string
+	HarnessSessionID string
+	RequestID        string
+	RawRequest       []byte
+	Response         []byte
+	Meta             []byte
+	SessionEnvelope  []byte
+	ReceivedAt       pgtype.Timestamptz
+}
+
+func (q *Queries) GetRawTurn(ctx context.Context, id int64) (GetRawTurnRow, error) {
 	row := q.db.QueryRow(ctx, getRawTurn, id)
-	var i RawTurn
+	var i GetRawTurnRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,

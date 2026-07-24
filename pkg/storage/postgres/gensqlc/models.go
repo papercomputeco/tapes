@@ -25,19 +25,22 @@ type DerivedProjectionSchema struct {
 }
 
 type RawTurn struct {
-	ID               int64
-	OrgID            pgtype.UUID
-	Source           string
-	Provider         string
-	AgentName        string
-	HarnessID        string
-	HarnessSessionID string
-	RequestID        string
-	RawRequest       []byte
-	Response         []byte
-	Meta             []byte
-	SessionEnvelope  []byte
-	ReceivedAt       pgtype.Timestamptz
+	ID                  int64
+	OrgID               pgtype.UUID
+	Source              string
+	Provider            string
+	AgentName           string
+	HarnessID           string
+	HarnessSessionID    string
+	RequestID           string
+	RawRequest          []byte
+	Response            []byte
+	Meta                []byte
+	SessionEnvelope     []byte
+	ReceivedAt          pgtype.Timestamptz
+	RawResponse         []byte
+	RawResponseEncoding string
+	RawResponseDropped  bool
 }
 
 type Session struct {

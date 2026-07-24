@@ -62,6 +62,14 @@ func (d *Driver) PutRawTurn(ctx context.Context, rec storage.RawTurnRecord) (boo
 		Response:         sanitizeJSONB(rec.Response),
 		Meta:             sanitizeJSONB(metaOrEmptyObject(rec.Meta)),
 		SessionEnvelope:  sanitizeJSONB(rec.SessionEnvelope),
+
+		// Not scrubbed. sanitizeJSONB exists because Postgres rejects certain
+		// escapes and NUL bytes inside JSONB; BYTEA has no such constraint and
+		// stores any byte string as-is. Scrubbing here would corrupt the one
+		// column whose entire purpose is to be byte-faithful.
+		RawResponse:         rec.RawResponse,
+		RawResponseEncoding: rec.RawResponseEncoding,
+		RawResponseDropped:  rec.RawResponseDropped,
 	})
 	if err != nil {
 		// Classify so a content-level rejection that slips past the scrubber
@@ -128,6 +136,37 @@ func rawTurnRecordFromRow(row gensqlc.RawTurn) storage.RawTurnRecord {
 		Meta:             row.Meta,
 		SessionEnvelope:  row.SessionEnvelope,
 		ReceivedAt:       row.ReceivedAt.Time,
+
+		RawResponse:         row.RawResponse,
+		RawResponseEncoding: row.RawResponseEncoding,
+		RawResponseDropped:  row.RawResponseDropped,
+	}
+}
+
+// rawTurnFromDeriveRow widens the narrow GetRawTurn projection to the full row
+// shape so both paths share one converter.
+//
+// GetRawTurn deliberately does NOT select raw_response. The deriver reads the
+// reduced `response` column and has no use for the verbatim bytes, which run
+// to the ingest cap — selecting them would pull megabytes per turn through
+// every derive read to be discarded. The columns are zero here because the
+// query didn't ask for them, which is not the same as the row not having
+// them; anything that needs the raw bytes reads through the raw-turn store.
+func rawTurnFromDeriveRow(row gensqlc.GetRawTurnRow) gensqlc.RawTurn {
+	return gensqlc.RawTurn{
+		ID:               row.ID,
+		OrgID:            row.OrgID,
+		Source:           row.Source,
+		Provider:         row.Provider,
+		AgentName:        row.AgentName,
+		HarnessID:        row.HarnessID,
+		HarnessSessionID: row.HarnessSessionID,
+		RequestID:        row.RequestID,
+		RawRequest:       row.RawRequest,
+		Response:         row.Response,
+		Meta:             row.Meta,
+		SessionEnvelope:  row.SessionEnvelope,
+		ReceivedAt:       row.ReceivedAt,
 	}
 }
 
