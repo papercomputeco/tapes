@@ -22,6 +22,11 @@ fixtures/envelope/
   cases/*.json       ← one case per file; consumers glob this directory
 ```
 
+**Identity values are synthetic placeholders**, not real credentials: `org_id`s are
+placeholder UUIDs (`00000000-…`), `auth_subject`s are obviously-fake strings
+(`user_synthetic_fixture_subject`), and session ids are repeated-digit UUIDs. No real
+WorkOS user/org ids or customer session ids appear anywhere in this corpus.
+
 ## Case schema
 
 Each `cases/*.json` file is one object:

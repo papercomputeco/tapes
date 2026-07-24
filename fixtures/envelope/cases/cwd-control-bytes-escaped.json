@@ -6,24 +6,24 @@
   "direction": "encode",
   "headers": {
     "x-tapes-harness-id": "claude",
-    "x-paper-auth-org-id": "0b9a4c1e-2f3d-4a5b-8c7d-6e5f4a3b2c1d",
-    "x-paper-auth-subject": "user_01JQ5ZK7WORKOSSUBJECT01",
-    "x-tapes-harness-session-id": "eae77e15-c7d2-4883-b82e-251161f8eeb3",
+    "x-paper-auth-org-id": "00000000-0000-4000-8000-000000000001",
+    "x-paper-auth-subject": "user_synthetic_fixture_subject",
+    "x-tapes-harness-session-id": "11111111-1111-4111-8111-111111111111",
     "x-tapes-cwd": "/Users/matt%0Awith-injection:%20yes"
   },
   "envelope": {
-    "org_id": "0b9a4c1e-2f3d-4a5b-8c7d-6e5f4a3b2c1d",
-    "auth_subject": "user_01JQ5ZK7WORKOSSUBJECT01",
+    "org_id": "00000000-0000-4000-8000-000000000001",
+    "auth_subject": "user_synthetic_fixture_subject",
     "harness_id": "claude",
-    "harness_session_id": "eae77e15-c7d2-4883-b82e-251161f8eeb3",
+    "harness_session_id": "11111111-1111-4111-8111-111111111111",
     "cwd": "/Users/matt%0Awith-injection:%20yes"
   },
   "grounding": "Producer escapes control bytes when encoding cwd; the reader keeps the escaped value verbatim, so no raw CR/LF ever reaches the envelope.",
   "encode_from": {
-    "org_id": "0b9a4c1e-2f3d-4a5b-8c7d-6e5f4a3b2c1d",
-    "auth_subject": "user_01JQ5ZK7WORKOSSUBJECT01",
+    "org_id": "00000000-0000-4000-8000-000000000001",
+    "auth_subject": "user_synthetic_fixture_subject",
     "harness_id": "claude",
-    "harness_session_id": "eae77e15-c7d2-4883-b82e-251161f8eeb3",
+    "harness_session_id": "11111111-1111-4111-8111-111111111111",
     "cwd": "/Users/matt\nwith-injection: yes"
   },
   "notes": "The percent-encoding happens on the producer side; the reader does not decode cwd, so the stored value stays escaped (this is what makes the injection defense hold end to end)."
