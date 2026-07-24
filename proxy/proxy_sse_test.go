@@ -158,6 +158,32 @@ var _ = Describe("SSE Streaming Proxy", func() {
 			// canonical response the deriver projects.
 			Expect(reducedText(raws[0].Response)).To(Equal("Hello world!"))
 		})
+
+		// This provider has no registered reducer, so it takes the legacy
+		// accumulate-then-enqueue path — a third enqueue site, distinct from
+		// the two the Anthropic capture specs cover. Thread attribution has to
+		// be resolved at capture time on all of them, or a subagent turn is
+		// silently attributed to the main conversation depending only on which
+		// provider it went to.
+		It("records the harness sub-thread id on the legacy streaming path", func() {
+			reqBody := makeOpenAIRequestBody("gpt-4", []openaiTestMsgEntry{
+				{Role: "user", Content: "Say hello"},
+			}, boolPtr(true))
+
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody)))
+			req.Header.Set("X-Claude-Code-Agent-Id", "agent_sub_legacy")
+
+			resp, err := p.server.Test(req, -1)
+			Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+
+			p.Close()
+			p = nil
+
+			raws := driver.RawTurns()
+			Expect(raws).To(HaveLen(1))
+			Expect(string(raws[0].Meta)).To(ContainSubstring(`"thread_id":"agent_sub_legacy"`))
+		})
 	})
 
 	Context("when upstream returns an Anthropic-style SSE response with event types", func() {

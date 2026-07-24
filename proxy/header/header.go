@@ -26,6 +26,42 @@ func NewHandler() *Handler {
 // AgentNameHeader is the optional header used to tag agent requests.
 const AgentNameHeader = "X-Tapes-Agent-Name"
 
+// ThreadIDHeaders maps each harness's native sub-thread header onto the
+// capture-side thread id. A harness that runs subagents fires their API calls
+// with a per-thread identifier — Claude Code stamps x-claude-code-agent-id on
+// every call made from a subagent context (including its security-monitor
+// checks) and omits it on the main thread. Capturing it makes thread
+// attribution deterministic at capture time instead of recovered by content
+// joins downstream.
+//
+// The list is ordered; first present header wins. Add other harnesses'
+// equivalents here as they are identified — the rest of the pipeline is
+// harness-neutral and only sees the resolved thread id.
+//
+// This must stay in step with tapes-extproc's harnessThreadIDHeaders: the two
+// are independent capture paths for the same traffic, and a header one records
+// and the other doesn't is a fidelity gap that only shows up as subagent turns
+// mis-attributed to the main thread.
+//
+// These headers are NOT stripped on the way upstream. They are the harness's
+// own, addressed to the model provider; tapes only observes them.
+var ThreadIDHeaders = []string{
+	"x-claude-code-agent-id",
+}
+
+// ThreadID resolves the harness-native sub-thread id for this request, or ""
+// for a main-thread call (or a harness with no known mapping). Fiber's Get is
+// case-insensitive, so the constants are written in the lowercase HTTP/2 form
+// that matches a packet capture.
+func ThreadID(c *fiber.Ctx) string {
+	for _, name := range ThreadIDHeaders {
+		if v := strings.TrimSpace(c.Get(name)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // skipRequest is the set of request headers (client --> proxy --> upstream)
 // that are not forwarded to the upstream LLM provider.
 var skipRequest = map[string]struct{}{
