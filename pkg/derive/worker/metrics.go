@@ -80,9 +80,15 @@ func NewMetrics() *Metrics {
 			Help: "Derives whose session was re-dirtied mid-derive and stayed queued.",
 		}),
 		DeriveDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
-			Name:    "tapes_derive_worker_derive_duration_seconds",
-			Help:    "Wall time of one session derive (read + derive + persist).",
-			Buckets: prometheus.DefBuckets,
+			Name: "tapes_derive_worker_derive_duration_seconds",
+			Help: "Wall time of one session derive (read + derive + persist).",
+			// A full re-derivation is O(all turns), so large sessions run
+			// well past DefBuckets' 10s ceiling (some tenants average >20s).
+			// Extend the tail to 120s so p95/p99 reflect the real slow
+			// derivations instead of pegging at the top bucket.
+			Buckets: []float64{
+				.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 20, 30, 60, 120,
+			},
 		}),
 		UnknownCalls: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "tapes_derive_worker_unknown_call_kinds_total",

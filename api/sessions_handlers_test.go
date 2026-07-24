@@ -656,3 +656,43 @@ var _ = Describe("sort and direction params on GET /v1/sessions", func() {
 		Expect(next.Val).To(Equal(first.SortVal))
 	})
 })
+
+var _ = Describe("sessionItemFromStorage liveness", func() {
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	recent := now.Add(-30 * time.Second) // inside the 5m window
+	stale := now.Add(-10 * time.Minute)  // outside the 5m window
+	ended := now.Add(-1 * time.Minute)   // an explicit close, recently
+
+	liveOf := func(s storage.SessionRecord) bool {
+		return sessionItemFromStorage(s, now).Live
+	}
+
+	It("stays live between turns even though the last turn folded to a terminal status", func() {
+		// The regression this guards: an interactive session reads
+		// derived_status=completed after every end_turn while still open.
+		// Liveness must key on recency + ended_at, never on that status.
+		Expect(liveOf(storage.SessionRecord{
+			ID: "s1", LastSeenAt: recent, EndedAt: nil, DerivedStatus: "completed",
+		})).To(BeTrue())
+	})
+
+	It("ignores every terminal status value for a recent, unended session", func() {
+		for _, status := range []string{"completed", "failed", "abandoned", "unknown", ""} {
+			Expect(liveOf(storage.SessionRecord{
+				ID: "s", LastSeenAt: recent, EndedAt: nil, DerivedStatus: status,
+			})).To(BeTrue(), "status %q should not gate liveness", status)
+		}
+	})
+
+	It("is not live once seen outside the liveness window", func() {
+		Expect(liveOf(storage.SessionRecord{
+			ID: "s2", LastSeenAt: stale, EndedAt: nil, DerivedStatus: "completed",
+		})).To(BeFalse())
+	})
+
+	It("is not live once the session has a recorded end, even if recently seen", func() {
+		Expect(liveOf(storage.SessionRecord{
+			ID: "s3", LastSeenAt: recent, EndedAt: &ended, DerivedStatus: "completed",
+		})).To(BeFalse())
+	})
+})
