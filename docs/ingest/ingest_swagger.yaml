@@ -1,0 +1,420 @@
+basePath: /
+definitions:
+  github_com_papercomputeco_tapes_pkg_llm.ChatResponse:
+    properties:
+      created_at:
+        description: Response timestamp
+        type: string
+      done:
+        description: Whether generation is complete (for streaming)
+        type: boolean
+      extra:
+        additionalProperties: {}
+        description: Provider-specific fields that don't map to common parameters
+        type: object
+      message:
+        allOf:
+        - $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.Message'
+        description: The assistant's response message
+      model:
+        description: Model that generated the response
+        type: string
+      raw_response:
+        description: |-
+          RawResponse preserves the original response payload for cases where
+          parsing is incomplete or for debugging.
+        items:
+          type: integer
+        type: array
+      stop_reason:
+        description: Stop reason (e.g., "stop", "length", "tool_use", "end_turn")
+        type: string
+      usage:
+        allOf:
+        - $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.Usage'
+        description: Token usage and timing metrics
+    type: object
+  github_com_papercomputeco_tapes_pkg_llm.ContentBlock:
+    properties:
+      content:
+        description: |-
+          Content (type="web_search_tool_result" and other server-tool results) -
+          the raw result payload Anthropic returns inline on the block, captured
+          verbatim as JSON so the variable result-object shapes survive without
+          imposing a schema. ToolResultID links it to the paired server_tool_use.
+        items:
+          type: integer
+        type: array
+      image_base64:
+        description: Base64-encoded image data
+        type: string
+      image_url:
+        description: Image content (type="image")
+        type: string
+      is_error:
+        type: boolean
+      media_type:
+        description: MIME type (e.g., "image/png")
+        type: string
+      text:
+        description: Text content (type="text")
+        type: string
+      thinking:
+        description: |-
+          Thinking (type="thinking") - Anthropic extended-thinking blocks.
+          Anthropic emits thinking as content_block_delta frames with type
+          "thinking_delta" followed by a "signature_delta" that authenticates the
+          block. Consumers treat Thinking as opaque text; the signature is persisted
+          so downstream tooling can verify integrity.
+        type: string
+      thinking_signature:
+        type: string
+      tool_input:
+        additionalProperties: {}
+        type: object
+      tool_name:
+        type: string
+      tool_output:
+        type: string
+      tool_result_id:
+        description: Tool result (type="tool_result") - result from tool execution
+        type: string
+      tool_use_id:
+        description: Tool use (type="tool_use") - assistant requesting tool execution
+        type: string
+      type:
+        description: '"text", "image", "tool_use", "tool_result", "thinking"'
+        type: string
+    type: object
+  github_com_papercomputeco_tapes_pkg_llm.ErrorResponse:
+    properties:
+      error:
+        type: string
+    type: object
+  github_com_papercomputeco_tapes_pkg_llm.Message:
+    properties:
+      content:
+        description: Array of content blocks
+        items:
+          $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ContentBlock'
+        type: array
+      role:
+        description: '"system", "user", "assistant", "tool"'
+        type: string
+    type: object
+  github_com_papercomputeco_tapes_pkg_llm.Usage:
+    properties:
+      cache_creation_input_tokens:
+        description: Cache token counts (Anthropic prompt caching)
+        type: integer
+      cache_read_input_tokens:
+        type: integer
+      completion_tokens:
+        type: integer
+      prompt_duration_ns:
+        description: |-
+          PromptDurationNs is provider-reported prompt-evaluation time, in
+          nanoseconds. Populated by providers that surface it (currently Ollama
+          only); left at zero otherwise.
+        type: integer
+      prompt_tokens:
+        description: Token counts
+        type: integer
+      total_duration_ns:
+        description: |-
+          TotalDurationNs is the proxy-measured wall-clock time, in nanoseconds,
+          from when the proxy received the client request to when the upstream
+          response was fully assembled. Set uniformly by the proxy across providers
+          — Anthropic and OpenAI don't surface a duration field on the wire, and
+          Ollama's server-internal `total_duration` is intentionally overwritten so
+          aggregate stats compare apples to apples.
+        type: integer
+      total_tokens:
+        type: integer
+    type: object
+  github_com_papercomputeco_tapes_pkg_sessions.IngestEnvelope:
+    properties:
+      auth_subject:
+        type: string
+      cwd:
+        type: string
+      harness_id:
+        type: string
+      harness_metadata:
+        items:
+          type: integer
+        type: array
+      harness_session_id:
+        type: string
+      harness_version:
+        type: string
+      name:
+        type: string
+      org_id:
+        type: string
+      parent_harness_session_id:
+        type: string
+    type: object
+  ingest.TranscriptPayload:
+    properties:
+      agent_id:
+        description: |-
+          AgentID is empty for the main transcript, or the subagent id for
+          subagents/agent-<id>.jsonl files.
+        type: string
+      agent_type:
+        description: |-
+          AgentType / Description / ToolUseID mirror the harness's
+          subagent meta.json: ToolUseID is the Task tool_use that forked
+          this agent — the causal fork edge the deriver attaches.
+        type: string
+      description:
+        type: string
+      records:
+        description: |-
+          Records is the transcript's JSONL content as a JSON array,
+          verbatim.
+        items:
+          type: integer
+        type: array
+      session:
+        allOf:
+        - $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_sessions.IngestEnvelope'
+        description: Session identifies the harness session the transcript belongs
+          to.
+      tool_use_id:
+        type: string
+    type: object
+  ingest.TurnMeta:
+    properties:
+      content_encoding:
+        type: string
+      content_type:
+        type: string
+      elapsed_seconds:
+        type: number
+      endpoint:
+        type: string
+      method:
+        type: string
+      model:
+        type: string
+      model_family:
+        type: string
+      path:
+        type: string
+      request_bytes:
+        type: integer
+      request_id:
+        type: string
+      response_bytes:
+        type: integer
+      stream:
+        type: string
+      thread_id:
+        description: |-
+          ThreadID is the harness sub-thread id resolved by the capture
+          adapter (extproc headers.ThreadID); "" for main-thread calls.
+        type: string
+      upstream_status:
+        type: integer
+      upstream_status_class:
+        type: string
+    type: object
+  ingest.TurnPayload:
+    properties:
+      agent_name:
+        description: AgentName optionally tags the turn (same as X-Tapes-Agent-Name
+          header)
+        type: string
+      meta:
+        allOf:
+        - $ref: '#/definitions/ingest.TurnMeta'
+        description: |-
+          Meta is the capture adapter's metadata block. Parsed for the
+          fields ingest promotes (request_id for raw-turn dedup); the
+          verbatim JSON is persisted alongside the raw turn so fields
+          unknown to this build survive.
+      provider:
+        description: 'Provider type: "openai", "anthropic", "ollama"'
+        type: string
+      raw_response:
+        description: |-
+          RawResponse is the upstream response body exactly as it arrived on the
+          wire, base64-encoded in the JSON envelope. Optional and independent of
+          Response: an adapter may send both (reduction plus the bytes it reduced
+          from), only the reduction (the historical shape), or only the bytes.
+
+          Raw-only is the interesting case. Reduction is lossy and adapter-
+          specific, so an adapter that ships only the bytes lets ingest perform
+          the reduction with the shared pkg/capture reducers — which is what makes
+          two capture paths produce identical rows for identical upstream traffic
+          instead of two subtly different ones.
+        items:
+          type: integer
+        type: array
+      raw_response_encoding:
+        description: |-
+          RawResponseEncoding is the Content-Encoding of RawResponse ("identity",
+          "gzip", …). Empty means identity. The bytes are stored under this
+          encoding rather than decompressed, so the stored column stays literally
+          what the upstream sent.
+        type: string
+      request:
+        description: RawRequest is the original request body sent to the LLM provider.
+        items:
+          type: integer
+        type: array
+      response:
+        allOf:
+        - $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ChatResponse'
+        description: Response is the already reduced, provider-agnostic response for
+          the turn.
+      session:
+        allOf:
+        - $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_sessions.IngestEnvelope'
+        description: |-
+          Session is the optional session-tracking envelope. When present,
+          ingest UPSERTs a `sessions` row keyed by
+          (org_id, harness_id, harness_session_id), resolves the
+          parent_session_id FK (placeholder-inserting when needed), and
+          rolls up turn counters — all in the same transaction as the
+          nodes insert. When absent, ingest treats the turn as
+          harness_id="unknown" and derives a synthetic harness_session_id
+          from the captured turn's Merkle root prefix.
+
+          The type lives in pkg/sessions to avoid an import cycle
+          (proxy/worker depends on it too).
+    type: object
+  ingest.ingestAcceptedResponse:
+    properties:
+      status:
+        example: accepted
+        type: string
+    type: object
+  ingest.pingResponse:
+    properties:
+      status:
+        example: ok
+        type: string
+    type: object
+  ingest.transcriptAcceptedResponse:
+    properties:
+      agent_id:
+        type: string
+      deduped:
+        type: boolean
+      records:
+        type: integer
+      status:
+        example: accepted
+        type: string
+    type: object
+info:
+  contact: {}
+  description: |-
+    Write surface for captured LLM turns and harness transcripts.
+
+    Capture adapters (tapes-extproc, tapesctl, paperd) POST completed turns here; the server appends them to the immutable raw-turn log and the deriver projects them into sessions, traces, and spans.
+
+    **Not internet-facing.** These endpoints trust the org identity in the request envelope, so the only legitimate caller is an in-cluster capture adapter. Exposing them through an edge gateway would let any JWT holder write turns under an arbitrary org.
+  title: Tapes Ingest API
+  version: "1.0"
+paths:
+  /ping:
+    get:
+      description: Reports that the ingest server is up. Does not check the database
+        — a 200 here means the process is serving, not that a write would succeed.
+      operationId: ingestPing
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/ingest.pingResponse'
+      summary: Liveness probe
+      tags:
+      - health
+  /v1/ingest:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Appends one completed LLM turn to the immutable raw-turn log. The raw envelope is persisted BEFORE parsing, so a turn that fails provider parsing is still captured and a later parser fix re-derives it rather than needing a re-capture.
+
+        Idempotent when the adapter supplies meta.request_id: a retried POST of the same captured turn dedupes at the raw layer instead of appending twice.
+
+        The response may carry a reduced response, the verbatim upstream bytes (raw_response), or both. Raw-only is reduced server-side with the shared reducers, which is what lets two capture paths produce identical rows for identical traffic.
+      operationId: ingestTurn
+      parameters:
+      - description: Captured turn
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/ingest.TurnPayload'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Captured and queued for derivation
+          schema:
+            $ref: '#/definitions/ingest.ingestAcceptedResponse'
+        "400":
+          description: Malformed envelope or invalid session block
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "422":
+          description: Well-formed but unprocessable (e.g. unknown provider)
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "502":
+          description: A downstream dependency failed
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Ingest one captured turn
+      tags:
+      - ingest
+  /v1/ingest/transcript:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Appends one harness transcript — the main session file or a single subagent's — to the raw layer verbatim. The deriver reconciles the records against the wire capture to recover the causal and fork skeleton; no node-path processing happens here.
+
+        Idempotent per content version: the dedup key includes a content hash, so re-uploading an unchanged file is a no-op (deduped=true) while a transcript that has grown appends a new version. The deriver reads the latest version per session and agent.
+      operationId: ingestTranscript
+      parameters:
+      - description: Transcript file and its harness metadata
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/ingest.TranscriptPayload'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Stored, or already present as this content version
+          schema:
+            $ref: '#/definitions/ingest.transcriptAcceptedResponse'
+        "400":
+          description: Malformed body, invalid session block, or records not a JSON
+            array
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Persisting the transcript failed
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Driver does not host the raw-turn layer
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Ingest one harness transcript file
+      tags:
+      - ingest
+schemes:
+- http
+swagger: "2.0"

@@ -256,10 +256,33 @@ func (s *Server) Close() error {
 	return s.server.Shutdown()
 }
 
+// @Summary		Liveness probe
+// @ID			ingestPing
+// @Description	Reports that the ingest server is up. Does not check the database — a 200 here means the process is serving, not that a write would succeed.
+// @Tags			health
+// @Produce		json
+// @Success		200	{object}	pingResponse
+// @Router			/ping [get]
 func (s *Server) handlePing(c *fiber.Ctx) error {
-	return c.JSON(fiber.Map{"status": "ok"})
+	return c.JSON(pingResponse{Status: "ok"})
 }
 
+// @Summary		Ingest one captured turn
+// @ID			ingestTurn
+// @Description	Appends one completed LLM turn to the immutable raw-turn log. The raw envelope is persisted BEFORE parsing, so a turn that fails provider parsing is still captured and a later parser fix re-derives it rather than needing a re-capture.
+// @Description
+// @Description	Idempotent when the adapter supplies meta.request_id: a retried POST of the same captured turn dedupes at the raw layer instead of appending twice.
+// @Description
+// @Description	The response may carry a reduced response, the verbatim upstream bytes (raw_response), or both. Raw-only is reduced server-side with the shared reducers, which is what lets two capture paths produce identical rows for identical traffic.
+// @Tags			ingest
+// @Accept			json
+// @Produce		json
+// @Param			request	body		TurnPayload	true	"Captured turn"
+// @Success		202		{object}	ingestAcceptedResponse	"Captured and queued for derivation"
+// @Failure		400		{object}	llm.ErrorResponse		"Malformed envelope or invalid session block"
+// @Failure		422		{object}	llm.ErrorResponse		"Well-formed but unprocessable (e.g. unknown provider)"
+// @Failure		502		{object}	llm.ErrorResponse		"A downstream dependency failed"
+// @Router			/v1/ingest [post]
 func (s *Server) handleIngest(c *fiber.Ctx) error {
 	bodySize := len(c.Body())
 
@@ -316,7 +339,7 @@ func (s *Server) handleIngest(c *fiber.Ctx) error {
 	s.metrics.ObserveDAGLatency(payload.Provider, time.Since(start).Seconds())
 	s.metrics.ObserveWrite(payload.Provider, ResultAccepted, bodySize)
 
-	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{"status": "accepted"})
+	return c.Status(fiber.StatusAccepted).JSON(ingestAcceptedResponse{Status: "accepted"})
 }
 
 // TranscriptPayload is the ingest body for one harness transcript file
@@ -370,6 +393,21 @@ const transcriptWriteProvider = "transcript"
 // transcript (session continued) appends a new version — append-only,
 // like everything in the raw layer. The deriver reads the latest
 // version per (session, agent).
+//
+//	@Summary		Ingest one harness transcript file
+//	@ID			ingestTranscript
+//	@Description	Appends one harness transcript — the main session file or a single subagent's — to the raw layer verbatim. The deriver reconciles the records against the wire capture to recover the causal and fork skeleton; no node-path processing happens here.
+//	@Description
+//	@Description	Idempotent per content version: the dedup key includes a content hash, so re-uploading an unchanged file is a no-op (deduped=true) while a transcript that has grown appends a new version. The deriver reads the latest version per session and agent.
+//	@Tags			ingest
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		TranscriptPayload	true	"Transcript file and its harness metadata"
+//	@Success		202		{object}	transcriptAcceptedResponse	"Stored, or already present as this content version"
+//	@Failure		400		{object}	llm.ErrorResponse			"Malformed body, invalid session block, or records not a JSON array"
+//	@Failure		500		{object}	llm.ErrorResponse			"Persisting the transcript failed"
+//	@Failure		501		{object}	llm.ErrorResponse			"Driver does not host the raw-turn layer"
+//	@Router			/v1/ingest/transcript [post]
 func (s *Server) handleTranscriptIngest(c *fiber.Ctx) error {
 	if s.rawStore == nil {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{
@@ -462,11 +500,11 @@ func (s *Server) handleTranscriptIngest(c *fiber.Ctx) error {
 		})
 	}
 	s.metrics.ObserveWrite(transcriptWriteProvider, ResultAccepted, bodySize)
-	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
-		"status":   "accepted",
-		"deduped":  !inserted,
-		"records":  len(records),
-		"agent_id": payload.AgentID,
+	return c.Status(fiber.StatusAccepted).JSON(transcriptAcceptedResponse{
+		Status:  "accepted",
+		Deduped: !inserted,
+		Records: len(records),
+		AgentID: payload.AgentID,
 	})
 }
 

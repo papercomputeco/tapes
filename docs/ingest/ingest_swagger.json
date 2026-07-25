@@ -1,0 +1,518 @@
+{
+    "schemes": [
+        "http"
+    ],
+    "swagger": "2.0",
+    "info": {
+        "description": "Write surface for captured LLM turns and harness transcripts.\n\nCapture adapters (tapes-extproc, tapesctl, paperd) POST completed turns here; the server appends them to the immutable raw-turn log and the deriver projects them into sessions, traces, and spans.\n\n**Not internet-facing.** These endpoints trust the org identity in the request envelope, so the only legitimate caller is an in-cluster capture adapter. Exposing them through an edge gateway would let any JWT holder write turns under an arbitrary org.",
+        "title": "Tapes Ingest API",
+        "contact": {},
+        "version": "1.0"
+    },
+    "basePath": "/",
+    "paths": {
+        "/ping": {
+            "get": {
+                "description": "Reports that the ingest server is up. Does not check the database — a 200 here means the process is serving, not that a write would succeed.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "health"
+                ],
+                "summary": "Liveness probe",
+                "operationId": "ingestPing",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ingest.pingResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/ingest": {
+            "post": {
+                "description": "Appends one completed LLM turn to the immutable raw-turn log. The raw envelope is persisted BEFORE parsing, so a turn that fails provider parsing is still captured and a later parser fix re-derives it rather than needing a re-capture.\n\nIdempotent when the adapter supplies meta.request_id: a retried POST of the same captured turn dedupes at the raw layer instead of appending twice.\n\nThe response may carry a reduced response, the verbatim upstream bytes (raw_response), or both. Raw-only is reduced server-side with the shared reducers, which is what lets two capture paths produce identical rows for identical traffic.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ingest"
+                ],
+                "summary": "Ingest one captured turn",
+                "operationId": "ingestTurn",
+                "parameters": [
+                    {
+                        "description": "Captured turn",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/ingest.TurnPayload"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Captured and queued for derivation",
+                        "schema": {
+                            "$ref": "#/definitions/ingest.ingestAcceptedResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed envelope or invalid session block",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Well-formed but unprocessable (e.g. unknown provider)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "A downstream dependency failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/ingest/transcript": {
+            "post": {
+                "description": "Appends one harness transcript — the main session file or a single subagent's — to the raw layer verbatim. The deriver reconciles the records against the wire capture to recover the causal and fork skeleton; no node-path processing happens here.\n\nIdempotent per content version: the dedup key includes a content hash, so re-uploading an unchanged file is a no-op (deduped=true) while a transcript that has grown appends a new version. The deriver reads the latest version per session and agent.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ingest"
+                ],
+                "summary": "Ingest one harness transcript file",
+                "operationId": "ingestTranscript",
+                "parameters": [
+                    {
+                        "description": "Transcript file and its harness metadata",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/ingest.TranscriptPayload"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Stored, or already present as this content version",
+                        "schema": {
+                            "$ref": "#/definitions/ingest.transcriptAcceptedResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed body, invalid session block, or records not a JSON array",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Persisting the transcript failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Driver does not host the raw-turn layer",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "github_com_papercomputeco_tapes_pkg_llm.ChatResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "description": "Response timestamp",
+                    "type": "string"
+                },
+                "done": {
+                    "description": "Whether generation is complete (for streaming)",
+                    "type": "boolean"
+                },
+                "extra": {
+                    "description": "Provider-specific fields that don't map to common parameters",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "message": {
+                    "description": "The assistant's response message",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.Message"
+                        }
+                    ]
+                },
+                "model": {
+                    "description": "Model that generated the response",
+                    "type": "string"
+                },
+                "raw_response": {
+                    "description": "RawResponse preserves the original response payload for cases where\nparsing is incomplete or for debugging.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "stop_reason": {
+                    "description": "Stop reason (e.g., \"stop\", \"length\", \"tool_use\", \"end_turn\")",
+                    "type": "string"
+                },
+                "usage": {
+                    "description": "Token usage and timing metrics",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.Usage"
+                        }
+                    ]
+                }
+            }
+        },
+        "github_com_papercomputeco_tapes_pkg_llm.ContentBlock": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "description": "Content (type=\"web_search_tool_result\" and other server-tool results) -\nthe raw result payload Anthropic returns inline on the block, captured\nverbatim as JSON so the variable result-object shapes survive without\nimposing a schema. ToolResultID links it to the paired server_tool_use.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "image_base64": {
+                    "description": "Base64-encoded image data",
+                    "type": "string"
+                },
+                "image_url": {
+                    "description": "Image content (type=\"image\")",
+                    "type": "string"
+                },
+                "is_error": {
+                    "type": "boolean"
+                },
+                "media_type": {
+                    "description": "MIME type (e.g., \"image/png\")",
+                    "type": "string"
+                },
+                "text": {
+                    "description": "Text content (type=\"text\")",
+                    "type": "string"
+                },
+                "thinking": {
+                    "description": "Thinking (type=\"thinking\") - Anthropic extended-thinking blocks.\nAnthropic emits thinking as content_block_delta frames with type\n\"thinking_delta\" followed by a \"signature_delta\" that authenticates the\nblock. Consumers treat Thinking as opaque text; the signature is persisted\nso downstream tooling can verify integrity.",
+                    "type": "string"
+                },
+                "thinking_signature": {
+                    "type": "string"
+                },
+                "tool_input": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "tool_name": {
+                    "type": "string"
+                },
+                "tool_output": {
+                    "type": "string"
+                },
+                "tool_result_id": {
+                    "description": "Tool result (type=\"tool_result\") - result from tool execution",
+                    "type": "string"
+                },
+                "tool_use_id": {
+                    "description": "Tool use (type=\"tool_use\") - assistant requesting tool execution",
+                    "type": "string"
+                },
+                "type": {
+                    "description": "\"text\", \"image\", \"tool_use\", \"tool_result\", \"thinking\"",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_papercomputeco_tapes_pkg_llm.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_papercomputeco_tapes_pkg_llm.Message": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "description": "Array of content blocks",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ContentBlock"
+                    }
+                },
+                "role": {
+                    "description": "\"system\", \"user\", \"assistant\", \"tool\"",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_papercomputeco_tapes_pkg_llm.Usage": {
+            "type": "object",
+            "properties": {
+                "cache_creation_input_tokens": {
+                    "description": "Cache token counts (Anthropic prompt caching)",
+                    "type": "integer"
+                },
+                "cache_read_input_tokens": {
+                    "type": "integer"
+                },
+                "completion_tokens": {
+                    "type": "integer"
+                },
+                "prompt_duration_ns": {
+                    "description": "PromptDurationNs is provider-reported prompt-evaluation time, in\nnanoseconds. Populated by providers that surface it (currently Ollama\nonly); left at zero otherwise.",
+                    "type": "integer"
+                },
+                "prompt_tokens": {
+                    "description": "Token counts",
+                    "type": "integer"
+                },
+                "total_duration_ns": {
+                    "description": "TotalDurationNs is the proxy-measured wall-clock time, in nanoseconds,\nfrom when the proxy received the client request to when the upstream\nresponse was fully assembled. Set uniformly by the proxy across providers\n— Anthropic and OpenAI don't surface a duration field on the wire, and\nOllama's server-internal `total_duration` is intentionally overwritten so\naggregate stats compare apples to apples.",
+                    "type": "integer"
+                },
+                "total_tokens": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_papercomputeco_tapes_pkg_sessions.IngestEnvelope": {
+            "type": "object",
+            "properties": {
+                "auth_subject": {
+                    "type": "string"
+                },
+                "cwd": {
+                    "type": "string"
+                },
+                "harness_id": {
+                    "type": "string"
+                },
+                "harness_metadata": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "harness_session_id": {
+                    "type": "string"
+                },
+                "harness_version": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "org_id": {
+                    "type": "string"
+                },
+                "parent_harness_session_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "ingest.TranscriptPayload": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "description": "AgentID is empty for the main transcript, or the subagent id for\nsubagents/agent-\u003cid\u003e.jsonl files.",
+                    "type": "string"
+                },
+                "agent_type": {
+                    "description": "AgentType / Description / ToolUseID mirror the harness's\nsubagent meta.json: ToolUseID is the Task tool_use that forked\nthis agent — the causal fork edge the deriver attaches.",
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "records": {
+                    "description": "Records is the transcript's JSONL content as a JSON array,\nverbatim.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "session": {
+                    "description": "Session identifies the harness session the transcript belongs to.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_sessions.IngestEnvelope"
+                        }
+                    ]
+                },
+                "tool_use_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "ingest.TurnMeta": {
+            "type": "object",
+            "properties": {
+                "content_encoding": {
+                    "type": "string"
+                },
+                "content_type": {
+                    "type": "string"
+                },
+                "elapsed_seconds": {
+                    "type": "number"
+                },
+                "endpoint": {
+                    "type": "string"
+                },
+                "method": {
+                    "type": "string"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "model_family": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "request_bytes": {
+                    "type": "integer"
+                },
+                "request_id": {
+                    "type": "string"
+                },
+                "response_bytes": {
+                    "type": "integer"
+                },
+                "stream": {
+                    "type": "string"
+                },
+                "thread_id": {
+                    "description": "ThreadID is the harness sub-thread id resolved by the capture\nadapter (extproc headers.ThreadID); \"\" for main-thread calls.",
+                    "type": "string"
+                },
+                "upstream_status": {
+                    "type": "integer"
+                },
+                "upstream_status_class": {
+                    "type": "string"
+                }
+            }
+        },
+        "ingest.TurnPayload": {
+            "type": "object",
+            "properties": {
+                "agent_name": {
+                    "description": "AgentName optionally tags the turn (same as X-Tapes-Agent-Name header)",
+                    "type": "string"
+                },
+                "meta": {
+                    "description": "Meta is the capture adapter's metadata block. Parsed for the\nfields ingest promotes (request_id for raw-turn dedup); the\nverbatim JSON is persisted alongside the raw turn so fields\nunknown to this build survive.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/ingest.TurnMeta"
+                        }
+                    ]
+                },
+                "provider": {
+                    "description": "Provider type: \"openai\", \"anthropic\", \"ollama\"",
+                    "type": "string"
+                },
+                "raw_response": {
+                    "description": "RawResponse is the upstream response body exactly as it arrived on the\nwire, base64-encoded in the JSON envelope. Optional and independent of\nResponse: an adapter may send both (reduction plus the bytes it reduced\nfrom), only the reduction (the historical shape), or only the bytes.\n\nRaw-only is the interesting case. Reduction is lossy and adapter-\nspecific, so an adapter that ships only the bytes lets ingest perform\nthe reduction with the shared pkg/capture reducers — which is what makes\ntwo capture paths produce identical rows for identical upstream traffic\ninstead of two subtly different ones.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "raw_response_encoding": {
+                    "description": "RawResponseEncoding is the Content-Encoding of RawResponse (\"identity\",\n\"gzip\", …). Empty means identity. The bytes are stored under this\nencoding rather than decompressed, so the stored column stays literally\nwhat the upstream sent.",
+                    "type": "string"
+                },
+                "request": {
+                    "description": "RawRequest is the original request body sent to the LLM provider.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "response": {
+                    "description": "Response is the already reduced, provider-agnostic response for the turn.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ChatResponse"
+                        }
+                    ]
+                },
+                "session": {
+                    "description": "Session is the optional session-tracking envelope. When present,\ningest UPSERTs a `sessions` row keyed by\n(org_id, harness_id, harness_session_id), resolves the\nparent_session_id FK (placeholder-inserting when needed), and\nrolls up turn counters — all in the same transaction as the\nnodes insert. When absent, ingest treats the turn as\nharness_id=\"unknown\" and derives a synthetic harness_session_id\nfrom the captured turn's Merkle root prefix.\n\nThe type lives in pkg/sessions to avoid an import cycle\n(proxy/worker depends on it too).",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_sessions.IngestEnvelope"
+                        }
+                    ]
+                }
+            }
+        },
+        "ingest.ingestAcceptedResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "example": "accepted"
+                }
+            }
+        },
+        "ingest.pingResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "ingest.transcriptAcceptedResponse": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string"
+                },
+                "deduped": {
+                    "type": "boolean"
+                },
+                "records": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "accepted"
+                }
+            }
+        }
+    }
+}

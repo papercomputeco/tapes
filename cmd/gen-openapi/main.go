@@ -22,6 +22,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -36,20 +37,28 @@ import (
 )
 
 const (
-	swaggerInputPath  = "docs/swagger.json"
-	openapiOutputPath = "api/openapi.yaml"
-	openapiVersion    = "3.0.3"
-	schemaRefPrefix   = "#/components/schemas/"
+	defaultSwaggerInputPath  = "docs/swagger.json"
+	defaultOpenAPIOutputPath = "api/openapi.yaml"
+	openapiVersion           = "3.0.3"
+	schemaRefPrefix          = "#/components/schemas/"
 )
 
 func main() {
-	if err := run(); err != nil {
+	// Parameterized because tapes publishes more than one contract: the read
+	// API and the ingest write surface are separate servers with separate
+	// specs. Defaults preserve the read-API invocation so `make openapi` and
+	// any muscle memory keep working.
+	in := flag.String("in", defaultSwaggerInputPath, "swaggo-generated Swagger 2.0 input")
+	out := flag.String("out", defaultOpenAPIOutputPath, "OpenAPI 3.0.3 output path")
+	flag.Parse()
+
+	if err := run(*in, *out); err != nil {
 		fmt.Fprintf(os.Stderr, "gen-openapi: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(swaggerInputPath, openapiOutputPath string) error {
 	raw, err := os.ReadFile(swaggerInputPath)
 	if err != nil {
 		return fmt.Errorf("read %s (did you run `make swag`?): %w", swaggerInputPath, err)

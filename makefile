@@ -27,21 +27,36 @@ format: ## Runs golangci-lint linters and formatters with auto-fixes applied.
 	$(call print-target)
 	dagger call fix-lint export --path .
 
+# tapes publishes TWO contracts, because the read API and the ingest write
+# surface are different servers with different trust models — see the header of
+# ingest/swagger.go. swag scans the whole module for annotations regardless of
+# which general-info file -g names, so each invocation excludes the other's
+# handlers; without that, one document would absorb both surfaces and imply the
+# ingest endpoints are reachable from wherever the read API is.
 .PHONY: swag
 swag: ## Runs the swaggo/swag utility for generating the swagger yaml
 	swag init \
 		--parseDependency \
 		--parseInternal \
+		--exclude ingest \
 		-g api/swagger.go \
 		-o docs
+	swag init \
+		--parseDependency \
+		--parseInternal \
+		--exclude api \
+		--instanceName ingest \
+		-g ingest/swagger.go \
+		-o docs/ingest
 
 .PHONY: swagfmt
 swagfmt: ## Runs swaggo/swag for formatting swag godoc comments
 	swag fmt
 
 .PHONY: openapi
-openapi: swag ## Regenerates the OpenAPI 3.0.3 contract (api/openapi.yaml) from the swag docs
+openapi: swag ## Regenerates both OpenAPI 3.0.3 contracts (api/ and ingest/) from the swag docs
 	go run ./cmd/gen-openapi
+	go run ./cmd/gen-openapi -in docs/ingest/ingest_swagger.json -out ingest/openapi.yaml
 
 .PHONY: generate
 generate: ## Regenerates sqlc queries
