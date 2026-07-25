@@ -9,14 +9,16 @@ INSERT INTO span_turns_20260615 (
     total_input_tokens, total_output_tokens,
     main_input_tokens, main_output_tokens,
     cache_read_tokens, cache_creation_tokens,
-    total_cost_usd, source
+    total_cost_usd, source,
+    content_hash, derive_seq, fidelity
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7,
     $8, $9, $10,
     $11, $12,
     $13, $14,
     $15, $16,
-    $17, $18
+    $17, $18,
+    $19, $20, $21
 )
 ON CONFLICT (org_id, trace_id) DO UPDATE SET
     session_id            = COALESCE(span_turns_20260615.session_id, EXCLUDED.session_id),
@@ -34,19 +36,31 @@ ON CONFLICT (org_id, trace_id) DO UPDATE SET
     cache_read_tokens     = EXCLUDED.cache_read_tokens,
     cache_creation_tokens = EXCLUDED.cache_creation_tokens,
     total_cost_usd        = EXCLUDED.total_cost_usd,
-    source                = EXCLUDED.source;
+    source                = EXCLUDED.source,
+    content_hash          = EXCLUDED.content_hash,
+    fidelity              = EXCLUDED.fidelity,
+    -- Advance the cursor ONLY when the content actually changed. A derive
+    -- pass rewrites every row of a covered session in place; bumping the
+    -- sequence unconditionally would make every consumer re-read the whole
+    -- session after every pass, which is the problem the column exists to
+    -- solve. IS DISTINCT FROM so a NULL-vs-value transition still counts.
+    derive_seq            = CASE
+                                WHEN span_turns_20260615.content_hash IS DISTINCT FROM EXCLUDED.content_hash
+                                THEN EXCLUDED.derive_seq
+                                ELSE span_turns_20260615.derive_seq
+                            END;
 
 -- name: UpsertSpan :exec
 INSERT INTO spans_20260615 (
     org_id, trace_id, span_id, parent_span_id, session_id,
     kind, name, status, call_kind, thread_id, model, stop_reason,
     started_at, duration_ns, seq, input, output, usage, raw_turn_id, node_hash,
-    verdict
+    verdict, content_hash, derive_seq, fidelity
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11, $12,
     $13, $14, $15, $16, $17, $18, $19, $20,
-    $21
+    $21, $22, $23, $24
 )
 ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     parent_span_id = EXCLUDED.parent_span_id,
@@ -66,7 +80,17 @@ ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     usage          = EXCLUDED.usage,
     raw_turn_id    = EXCLUDED.raw_turn_id,
     node_hash      = EXCLUDED.node_hash,
-    verdict        = EXCLUDED.verdict;
+    verdict        = EXCLUDED.verdict,
+    content_hash   = EXCLUDED.content_hash,
+    fidelity       = EXCLUDED.fidelity,
+    -- See UpsertSpanTurn: the cursor advances only on a real content change,
+    -- so a consumer polling derive_seq sees changes rather than every row a
+    -- re-derive happened to touch.
+    derive_seq     = CASE
+                         WHEN spans_20260615.content_hash IS DISTINCT FROM EXCLUDED.content_hash
+                         THEN EXCLUDED.derive_seq
+                         ELSE spans_20260615.derive_seq
+                     END;
 
 -- name: UpsertSpanLink :exec
 INSERT INTO span_links_20260615 (

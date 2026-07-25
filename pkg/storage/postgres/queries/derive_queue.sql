@@ -81,3 +81,9 @@ WHERE org_id = $1
   AND harness_id = $2
   AND harness_session_id = $3
 ORDER BY id;
+
+-- name: NextDeriveSeq :one
+-- One cursor value per derive pass. Every row a pass changes is stamped with
+-- the same value, so a consumer that has seen sequence N has seen a whole
+-- pass, never half of one.
+SELECT nextval('derive_seq_counter')::bigint;

@@ -259,3 +259,47 @@ func (q *Queries) ListRawTurnsBySession(ctx context.Context, arg ListRawTurnsByS
 	}
 	return items, nil
 }
+
+const rawTurnFidelityByIDs = `-- name: RawTurnFidelityByIDs :many
+SELECT id,
+       COALESCE(octet_length(raw_response) > 0, false)::boolean AS has_raw_response,
+       raw_response_dropped
+FROM raw_turns
+WHERE id = ANY($1::bigint[])
+`
+
+type RawTurnFidelityByIDsRow struct {
+	ID                 int64
+	HasRawResponse     bool
+	RawResponseDropped bool
+}
+
+// Provenance tier for a set of raw turns, for stamping the span projection.
+//
+// The projection needs to know whether each row can be re-derived from stored
+// bytes, which is a fact about how the turn was captured — not something the
+// deriver can know, since it is a pure function of the rows it is handed and
+// must not read storage state. Resolving it here keeps that separation while
+// still letting the write stamp it.
+// COALESCE so the column types as a plain bool rather than a nullable one:
+// the predicate cannot actually be NULL, and a three-valued result would push
+// an "unknown" case into the caller that has no meaning here.
+func (q *Queries) RawTurnFidelityByIDs(ctx context.Context, ids []int64) ([]RawTurnFidelityByIDsRow, error) {
+	rows, err := q.db.Query(ctx, rawTurnFidelityByIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RawTurnFidelityByIDsRow
+	for rows.Next() {
+		var i RawTurnFidelityByIDsRow
+		if err := rows.Scan(&i.ID, &i.HasRawResponse, &i.RawResponseDropped); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

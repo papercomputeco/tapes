@@ -221,6 +221,20 @@ func (q *Queries) MarkDeriveDirty(ctx context.Context, arg MarkDeriveDirtyParams
 	return err
 }
 
+const nextDeriveSeq = `-- name: NextDeriveSeq :one
+SELECT nextval('derive_seq_counter')::bigint
+`
+
+// One cursor value per derive pass. Every row a pass changes is stamped with
+// the same value, so a consumer that has seen sequence N has seen a whole
+// pass, never half of one.
+func (q *Queries) NextDeriveSeq(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, nextDeriveSeq)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const sweepDeriveDirty = `-- name: SweepDeriveDirty :execrows
 INSERT INTO derive_queue (org_id, harness_id, harness_session_id)
 SELECT DISTINCT org_id, harness_id, harness_session_id

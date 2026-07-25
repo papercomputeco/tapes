@@ -152,7 +152,7 @@ func (q *Queries) FoldSessionRollupsFromSpans(ctx context.Context, sessionIds []
 }
 
 const getSpan = `-- name: GetSpan :one
-SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq, verdict FROM spans_20260615
+SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq, verdict, content_hash, derive_seq, fidelity FROM spans_20260615
 WHERE org_id = $1 AND trace_id = $2 AND span_id = $3
 `
 
@@ -187,12 +187,15 @@ func (q *Queries) GetSpan(ctx context.Context, arg GetSpanParams) (Spans20260615
 		&i.NodeHash,
 		&i.Seq,
 		&i.Verdict,
+		&i.ContentHash,
+		&i.DeriveSeq,
+		&i.Fidelity,
 	)
 	return i, err
 }
 
 const getSpanTurn = `-- name: GetSpanTurn :one
-SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview, source FROM span_turns_20260615
+SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview, source, content_hash, derive_seq, fidelity FROM span_turns_20260615
 WHERE org_id = $1 AND trace_id = $2
 `
 
@@ -223,6 +226,9 @@ func (q *Queries) GetSpanTurn(ctx context.Context, arg GetSpanTurnParams) (SpanT
 		&i.CacheCreationTokens,
 		&i.ResponsePreview,
 		&i.Source,
+		&i.ContentHash,
+		&i.DeriveSeq,
+		&i.Fidelity,
 	)
 	return i, err
 }
@@ -307,7 +313,7 @@ func (q *Queries) ListSpanLinksByTrace(ctx context.Context, arg ListSpanLinksByT
 }
 
 const listSpanTurns = `-- name: ListSpanTurns :many
-SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview, source FROM span_turns_20260615
+SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview, source, content_hash, derive_seq, fidelity FROM span_turns_20260615
 WHERE org_id = $1
   AND ($3::timestamptz IS NULL
        OR (started_at, trace_id) < ($3::timestamptz, $4::text))
@@ -355,6 +361,9 @@ func (q *Queries) ListSpanTurns(ctx context.Context, arg ListSpanTurnsParams) ([
 			&i.CacheCreationTokens,
 			&i.ResponsePreview,
 			&i.Source,
+			&i.ContentHash,
+			&i.DeriveSeq,
+			&i.Fidelity,
 		); err != nil {
 			return nil, err
 		}
@@ -368,7 +377,7 @@ func (q *Queries) ListSpanTurns(ctx context.Context, arg ListSpanTurnsParams) ([
 
 const listSpanTurnsBySession = `-- name: ListSpanTurnsBySession :many
 
-SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview, source FROM span_turns_20260615
+SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview, source, content_hash, derive_seq, fidelity FROM span_turns_20260615
 WHERE session_id = $1
 ORDER BY started_at ASC, trace_id ASC
 `
@@ -402,6 +411,9 @@ func (q *Queries) ListSpanTurnsBySession(ctx context.Context, sessionID pgtype.U
 			&i.CacheCreationTokens,
 			&i.ResponsePreview,
 			&i.Source,
+			&i.ContentHash,
+			&i.DeriveSeq,
+			&i.Fidelity,
 		); err != nil {
 			return nil, err
 		}
@@ -414,7 +426,7 @@ func (q *Queries) ListSpanTurnsBySession(ctx context.Context, sessionID pgtype.U
 }
 
 const listSpansBySession = `-- name: ListSpansBySession :many
-SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq, verdict FROM spans_20260615
+SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq, verdict, content_hash, derive_seq, fidelity FROM spans_20260615
 WHERE session_id = $1
 ORDER BY trace_id ASC, seq ASC, started_at ASC, span_id ASC
 `
@@ -452,6 +464,9 @@ func (q *Queries) ListSpansBySession(ctx context.Context, sessionID pgtype.UUID)
 			&i.NodeHash,
 			&i.Seq,
 			&i.Verdict,
+			&i.ContentHash,
+			&i.DeriveSeq,
+			&i.Fidelity,
 		); err != nil {
 			return nil, err
 		}
@@ -464,7 +479,7 @@ func (q *Queries) ListSpansBySession(ctx context.Context, sessionID pgtype.UUID)
 }
 
 const listSpansByTrace = `-- name: ListSpansByTrace :many
-SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq, verdict FROM spans_20260615
+SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq, verdict, content_hash, derive_seq, fidelity FROM spans_20260615
 WHERE org_id = $1 AND trace_id = $2
 ORDER BY seq ASC, started_at ASC, span_id ASC
 `
@@ -505,6 +520,9 @@ func (q *Queries) ListSpansByTrace(ctx context.Context, arg ListSpansByTracePara
 			&i.NodeHash,
 			&i.Seq,
 			&i.Verdict,
+			&i.ContentHash,
+			&i.DeriveSeq,
+			&i.Fidelity,
 		); err != nil {
 			return nil, err
 		}
@@ -704,12 +722,12 @@ INSERT INTO spans_20260615 (
     org_id, trace_id, span_id, parent_span_id, session_id,
     kind, name, status, call_kind, thread_id, model, stop_reason,
     started_at, duration_ns, seq, input, output, usage, raw_turn_id, node_hash,
-    verdict
+    verdict, content_hash, derive_seq, fidelity
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11, $12,
     $13, $14, $15, $16, $17, $18, $19, $20,
-    $21
+    $21, $22, $23, $24
 )
 ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     parent_span_id = EXCLUDED.parent_span_id,
@@ -729,7 +747,17 @@ ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     usage          = EXCLUDED.usage,
     raw_turn_id    = EXCLUDED.raw_turn_id,
     node_hash      = EXCLUDED.node_hash,
-    verdict        = EXCLUDED.verdict
+    verdict        = EXCLUDED.verdict,
+    content_hash   = EXCLUDED.content_hash,
+    fidelity       = EXCLUDED.fidelity,
+    -- See UpsertSpanTurn: the cursor advances only on a real content change,
+    -- so a consumer polling derive_seq sees changes rather than every row a
+    -- re-derive happened to touch.
+    derive_seq     = CASE
+                         WHEN spans_20260615.content_hash IS DISTINCT FROM EXCLUDED.content_hash
+                         THEN EXCLUDED.derive_seq
+                         ELSE spans_20260615.derive_seq
+                     END
 `
 
 type UpsertSpanParams struct {
@@ -754,6 +782,9 @@ type UpsertSpanParams struct {
 	RawTurnID    pgtype.Int8
 	NodeHash     string
 	Verdict      []byte
+	ContentHash  string
+	DeriveSeq    int64
+	Fidelity     string
 }
 
 func (q *Queries) UpsertSpan(ctx context.Context, arg UpsertSpanParams) error {
@@ -779,6 +810,9 @@ func (q *Queries) UpsertSpan(ctx context.Context, arg UpsertSpanParams) error {
 		arg.RawTurnID,
 		arg.NodeHash,
 		arg.Verdict,
+		arg.ContentHash,
+		arg.DeriveSeq,
+		arg.Fidelity,
 	)
 	return err
 }
@@ -832,14 +866,16 @@ INSERT INTO span_turns_20260615 (
     total_input_tokens, total_output_tokens,
     main_input_tokens, main_output_tokens,
     cache_read_tokens, cache_creation_tokens,
-    total_cost_usd, source
+    total_cost_usd, source,
+    content_hash, derive_seq, fidelity
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7,
     $8, $9, $10,
     $11, $12,
     $13, $14,
     $15, $16,
-    $17, $18
+    $17, $18,
+    $19, $20, $21
 )
 ON CONFLICT (org_id, trace_id) DO UPDATE SET
     session_id            = COALESCE(span_turns_20260615.session_id, EXCLUDED.session_id),
@@ -857,7 +893,19 @@ ON CONFLICT (org_id, trace_id) DO UPDATE SET
     cache_read_tokens     = EXCLUDED.cache_read_tokens,
     cache_creation_tokens = EXCLUDED.cache_creation_tokens,
     total_cost_usd        = EXCLUDED.total_cost_usd,
-    source                = EXCLUDED.source
+    source                = EXCLUDED.source,
+    content_hash          = EXCLUDED.content_hash,
+    fidelity              = EXCLUDED.fidelity,
+    -- Advance the cursor ONLY when the content actually changed. A derive
+    -- pass rewrites every row of a covered session in place; bumping the
+    -- sequence unconditionally would make every consumer re-read the whole
+    -- session after every pass, which is the problem the column exists to
+    -- solve. IS DISTINCT FROM so a NULL-vs-value transition still counts.
+    derive_seq            = CASE
+                                WHEN span_turns_20260615.content_hash IS DISTINCT FROM EXCLUDED.content_hash
+                                THEN EXCLUDED.derive_seq
+                                ELSE span_turns_20260615.derive_seq
+                            END
 `
 
 type UpsertSpanTurnParams struct {
@@ -879,6 +927,9 @@ type UpsertSpanTurnParams struct {
 	CacheCreationTokens int64
 	TotalCostUsd        pgtype.Numeric
 	Source              string
+	ContentHash         string
+	DeriveSeq           int64
+	Fidelity            string
 }
 
 // Span model writes. Span identity is deterministic (minted from wire
@@ -904,6 +955,9 @@ func (q *Queries) UpsertSpanTurn(ctx context.Context, arg UpsertSpanTurnParams) 
 		arg.CacheCreationTokens,
 		arg.TotalCostUsd,
 		arg.Source,
+		arg.ContentHash,
+		arg.DeriveSeq,
+		arg.Fidelity,
 	)
 	return err
 }
