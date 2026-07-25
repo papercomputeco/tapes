@@ -2,10 +2,10 @@
 
 ## Quick start (recommended)
 
-The Nix flake dev shell is the recommended way to develop tapes. It pins
-Go 1.25, GCC, Dagger, and configures all required environment variables
-(`CGO_ENABLED`, `GOEXPERIMENT`). This avoids toolchain drift and CGO build
-warnings on macOS by using Nix-provided GCC instead of Xcode's system clang.
+The Nix flake dev shell is the recommended way to develop tapes. It pins the
+toolchain (Go 1.25, Dagger, `sqlc`, `swag`, `hurl`) and exports the environment
+the build and tests need — `GOEXPERIMENT=jsonv2` and `TEST_POSTGRES_DSN` — so
+you don't have to set either by hand.
 
 ```bash
 nix develop          # enter the dev shell
@@ -27,12 +27,24 @@ make build-local
 
 0. _BEFORE_ you create a PR, search for existing issues. If no issue exists,
    create an issue and signal that you'd like to work on it.
-1. When submitting a pull request, _ALL_ titles must be labeled with one of:
-  * `⚠️ breaking:`- `:warning: feat:` - adds a breaking change. Triggers a major version bump (i.e., `1.0.0` --> `2.0.0`).
+1. When submitting a pull request, _ALL_ titles must start with one of the
+   following. CI rejects anything else, and because merges are squashed the PR
+   title becomes the commit message on `main`.
   * `✨ feat:` - `:sparkles: feat:` - adds a new feature. Triggers a minor version bump (i.e., `0.1.0` --> `0.2.0`).
   * `🔧 fix:` - `:wrench: fix:` - fixes a bug. Triggers a patch bump (i.e., `0.0.1` --> `0.0.2`).
-  * `🧹 chore:` - `:broom: chore` - non-feature, non-bug code changes (i.e., CICD, tests, etc.). Does _NOT_ trigger a version change.
-  * `📚 docs:` - `:books: docs:` - documentation only changes. Does _NOT_ trigger a version change.
+  * `🧹 chore:` - `:broom: chore:` - non-feature, non-bug code changes (i.e., CICD, tests, etc.). Patch bump.
+  * `♻️ refactor:` - `:recycle: refactor:` - behaviour-preserving restructuring. Patch bump.
+  * `🎨 design:` - `:art: design:` - design and presentation changes.
+  * `📚 docs:` - `:books: docs:` - documentation only changes.
+  * `✏️ RFD:` - `:pencil2: RFD:` - a request for discussion.
+
+An optional scope goes in parentheses (`✨ feat(ingest): ...`). Mark a breaking
+change with `!` before the colon — `✨ feat!:` or `🔧 fix(api)!:` — which
+triggers a major version bump.
+
+The validator is `ghcontrib` in the `papercomputeco/daggerverse` module (see
+`.github/workflows/pr.yaml`); its `validPRTitleSpecs` is the authoritative list
+if this one ever falls behind.
 
 ## Local demo data
 
@@ -48,8 +60,12 @@ To reset demo data, use a fresh database behind the API server.
 ## Prerequisites checklist
 
 - Go 1.25+
-- Docker (required for `make format`, `make check`, `make test` via Dagger)
-- PostgreSQL with pgvector + pg_duckdb for local runtime work
+- Docker (required for `make format`, `make check`, `make test` via Dagger, and
+  for the local test database)
+- PostgreSQL with pgvector + pg_duckdb for local runtime work. `make test-db-up`
+  starts one pinned to the image CI uses; don't substitute a stock postgres,
+  which is missing those extensions and fails `pkg/spanembed` in a way that
+  reads as a code bug.
 - Optional: Ollama for embeddings when running `tapes serve`
 
 ## Common issues
@@ -75,7 +91,11 @@ make build-local
 ./build/tapes seed --demo --api-target http://localhost:8081
 ./build/tapes deck --api-target http://localhost:8081
 
-# Run tests
+# Run tests locally (starts the Postgres the DB-backed suites need)
+make test-local
+make test-db-down          # when you're done with it
+
+# Run tests the way CI does, through Dagger
 make test
 
 # Format code

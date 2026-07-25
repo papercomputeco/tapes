@@ -29,8 +29,11 @@
       "scrub_attestation": "synthetic-by-construction",
       "consumers": [
         "tapes reader oracle: pkg/backfill/envelope_fixtures_test.go runs every case through sessionEnvelopeFromHeaders + Validate",
-        "other envelope producers/parsers, via table tests over cases/*.json (vendor this directory to keep one copy)"
-      ]
+        "paper (producer/encode side): crates/paper-daemon/src/proxy/headers_envelope_fixtures.rs, over a copy vendored at crates/paper-daemon/vendor/tapes-envelope-fixtures/",
+        "tapes-extproc (parser/decode side): internal/headers/envelope_fixtures_test.go, over a copy vendored at internal/headers/testdata/envelope/",
+        "any further producer/parser, via table tests over cases/*.json (vendor this directory to keep one copy authoritative)"
+      ],
+      "consumer_note": "The vendored copies are refreshed by each consumer's scripts/sync-envelope-fixtures.sh, which also detects drift (--check). A change to cases/*.json or README.md here is not live for those consumers until it is synced, and all copies should be refreshed from the same commit."
     },
     {
       "name": "recordings",

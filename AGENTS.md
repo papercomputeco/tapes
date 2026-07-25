@@ -76,6 +76,7 @@ CLI surface notes for agents:
   in various CLIs
 - `pkg/` - Go packages. Use the `go doc` command to get the documentation on the
   packages public API. Ex: `go doc pkg/llm`
+- `internal/` - Packages private to this module (not importable by consumers).
 - `proxy/` - The `tapes` telemetry collector proxy
 - `.dagger/` - Dagger CI/CD builds and utilities. Used through `make` targets.
 - `.github/` - GitHub metadata and action workflows.

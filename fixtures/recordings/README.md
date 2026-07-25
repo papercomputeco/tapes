@@ -17,8 +17,14 @@ turn-<ns:020>-<seq:08>/
 ```
 
 Because a corpus row can carry the raw response bytes, one L2 corpus row is a superset
-of an L1 recording — so once raw-response capture is in place, a single artifact can
-regenerate every layer and recording<->corpus conversion is a trivial transform.
+of an L1 recording: a single artifact can regenerate every layer, and
+recording<->corpus conversion becomes a trivial transform.
+
+That only holds once rows actually carry those bytes. The storage side exists —
+`raw_turns.raw_response` plus its encoding and drop marker, and ingest will reduce a
+raw-only payload server-side — but **no capture adapter populates it yet**, so today's
+corpus rows carry only the reduced response. Until an adapter sends the raw bytes, an
+L1 recording still holds strictly more than the L2 row derived from it.
 
 ## Why it's empty
 
