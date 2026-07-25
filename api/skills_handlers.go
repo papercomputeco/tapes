@@ -166,12 +166,44 @@ type skillCountsResp struct {
 	Team int64 `json:"team"`
 }
 
+// sessionSkillsResponse is the envelope for the skills attributed to one
+// session. Unpaginated: a session's skill count is bounded by what was
+// generated from it.
+type sessionSkillsResponse struct {
+	Items []skillResponse `json:"items"`
+}
+
+// skillVersionsResponse is the full version history for one skill, newest
+// first. TotalCount is the length of Versions — the history is returned whole
+// rather than paged, so the two never disagree.
+type skillVersionsResponse struct {
+	Versions   []skillVersionResponse `json:"versions"`
+	TotalCount int                    `json:"totalCount"`
+}
+
 // handleGenerateSkill runs the pkg/skill LLM generator over the requested
 // sessions, persists the result, and returns it as a SkillDraft.
 //
 // The generator reads session transcripts through an in-process, org-scoped
 // querier (skillTraceQuerier) bound to the inbound org, so generation only
 // ever sees sessions in the caller's tenant and needs no loopback HTTP hop.
+//
+//	@Summary		Generate a skill from sessions
+//	@ID			generateSkill
+//	@Description	Runs the LLM skill generator over the nominated sessions and persists the result. The client nominates sources and optional hints; the server is authoritative on the skill body.
+//	@Description
+//	@Description	Source sessions are read through an org-scoped in-process querier, so generation only ever sees sessions in the caller's tenant.
+//	@Tags			skills
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		generateSkillRequest	true	"Source sessions and optional hints"
+//	@Success		201		{object}	skillResponse
+//	@Failure		400		{object}	llm.ErrorResponse	"Invalid body, or sessionIds missing/empty"
+//	@Failure		404		{object}	llm.ErrorResponse	"One or more source sessions were not found"
+//	@Failure		422		{object}	llm.ErrorResponse	"Sources carried nothing the generator could use"
+//	@Failure		500		{object}	llm.ErrorResponse	"Generation or persistence failed, or no LLM provider is configured"
+//	@Failure		501		{object}	llm.ErrorResponse	"Backend does not support skills"
+//	@Router			/v1/skills/generate [post]
 func (s *Server) handleGenerateSkill(c *fiber.Ctx) error {
 	store, ok := s.skillStoreOr501(c)
 	if !ok {
@@ -287,6 +319,18 @@ func (s *Server) handleGenerateSkill(c *fiber.Ctx) error {
 }
 
 // handleGetSkill returns a persisted skill by its org-scoped id.
+//
+//	@Summary		Get a skill
+//	@ID			getSkill
+//	@Description	Returns one skill by its opaque id. The id is the route key; slug is a cosmetic display label and is not addressable.
+//	@Tags			skills
+//	@Produce		json
+//	@Param			id	path		string	true	"Skill id"
+//	@Success		200	{object}	skillResponse
+//	@Failure		404	{object}	llm.ErrorResponse	"Skill not found"
+//	@Failure		500	{object}	llm.ErrorResponse	"Lookup failed"
+//	@Failure		501	{object}	llm.ErrorResponse	"Backend does not support skills"
+//	@Router			/v1/skills/{id} [get]
 func (s *Server) handleGetSkill(c *fiber.Ctx) error {
 	store, ok := s.skillStoreOr501(c)
 	if !ok {
@@ -309,6 +353,24 @@ func (s *Server) handleGetSkill(c *fiber.Ctx) error {
 // /v1/sessions: limit, cursor (opaque), q (name/description/tag search), scope
 // (all|mine|team). The cursor and counts make search/filter correct across the
 // whole set rather than just the loaded page.
+//
+//	@Summary		List skills
+//	@ID			listSkills
+//	@Description	One keyset page of the org's skills, newest-edited first, plus per-tab counts for the active search. Pagination mirrors /v1/sessions: pass the returned next_cursor to continue; its absence means the last page.
+//	@Description
+//	@Description	The counts are computed over the whole matching set rather than the loaded page, so a filtered tab shows a true total.
+//	@Tags			skills
+//	@Produce		json
+//	@Param			limit	query		int		false	"Page size (default 24, max 100)"
+//	@Param			cursor	query		string	false	"Opaque keyset cursor from a previous next_cursor. Reset it when changing sort."
+//	@Param			q		query		string	false	"Search over name, description, and tags"
+//	@Param			scope	query		string	false	"Which slice to return"	Enums(all, mine, team)
+//	@Param			sort	query		string	false	"Ordering; defaults to most recently updated"	Enums(downloads)
+//	@Success		200		{object}	skillsListResponse
+//	@Failure		400		{object}	llm.ErrorResponse	"Malformed cursor"
+//	@Failure		500		{object}	llm.ErrorResponse	"Listing failed"
+//	@Failure		501		{object}	llm.ErrorResponse	"Backend does not support skills"
+//	@Router			/v1/skills [get]
 func (s *Server) handleListSkills(c *fiber.Ctx) error {
 	store, ok := s.skillStoreOr501(c)
 	if !ok {
@@ -394,6 +456,17 @@ func (s *Server) handleListSkills(c *fiber.Ctx) error {
 // handleListSessionSkills returns the skills generated from a given session
 // (reverse lookup over provenance). Small result set, so it's unpaginated —
 // the "Skills from this session" panel renders them directly.
+//
+//	@Summary		List a session's skills
+//	@ID			listSessionSkills
+//	@Description	Every skill generated from the given session. Unpaginated — the count is bounded by what was generated from that one session.
+//	@Tags			skills
+//	@Produce		json
+//	@Param			id	path		string	true	"Session id"
+//	@Success		200	{object}	sessionSkillsResponse
+//	@Failure		500	{object}	llm.ErrorResponse	"Listing failed"
+//	@Failure		501	{object}	llm.ErrorResponse	"Backend does not support skills"
+//	@Router			/v1/sessions/{id}/skills [get]
 func (s *Server) handleListSessionSkills(c *fiber.Ctx) error {
 	store, ok := s.skillStoreOr501(c)
 	if !ok {
@@ -408,7 +481,7 @@ func (s *Server) handleListSessionSkills(c *fiber.Ctx) error {
 	for i, r := range recs {
 		items[i] = skillFromRecord(r)
 	}
-	return c.JSON(fiber.Map{"items": items})
+	return c.JSON(sessionSkillsResponse{Items: items})
 }
 
 // updateSkillRequest is the PUT /v1/skills/:slug body — all fields optional;
@@ -425,6 +498,21 @@ type updateSkillRequest struct {
 // handleUpdateSkill saves edits to a skill's working content/metadata. The
 // upsert preserves created_at and author_subject (original creator stays
 // authoritative).
+//
+//	@Summary		Update a skill
+//	@ID			updateSkill
+//	@Description	Partial update of the skill head. Every field is optional; omitted fields are left as they are. Editing the head does not publish — use the versions endpoint to snapshot.
+//	@Tags			skills
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string				true	"Skill id"
+//	@Param			request	body		updateSkillRequest	true	"Fields to change"
+//	@Success		200		{object}	skillResponse
+//	@Failure		400		{object}	llm.ErrorResponse	"Invalid body or unknown type"
+//	@Failure		404		{object}	llm.ErrorResponse	"Skill not found"
+//	@Failure		500		{object}	llm.ErrorResponse	"Save failed"
+//	@Failure		501		{object}	llm.ErrorResponse	"Backend does not support skills"
+//	@Router			/v1/skills/{id} [put]
 func (s *Server) handleUpdateSkill(c *fiber.Ctx) error {
 	store, ok := s.skillStoreOr501(c)
 	if !ok {
@@ -485,6 +573,19 @@ func (s *Server) handleUpdateSkill(c *fiber.Ctx) error {
 // handleDeleteSkill removes a skill and its version history. Owner-gated: only
 // the recorded author may delete (unattributed skills are deletable by anyone,
 // matching the edit affordance).
+//
+//	@Summary		Delete a skill
+//	@ID			deleteSkill
+//	@Description	Deletes the skill and its version history. Only the creator may delete; another member of the same org gets 403 rather than 404, so the skill's existence is not hidden from someone who can already list it.
+//	@Tags			skills
+//	@Produce		json
+//	@Param			id	path	string	true	"Skill id"
+//	@Success		204	"Deleted"
+//	@Failure		403	{object}	llm.ErrorResponse	"Only the creator can delete this skill"
+//	@Failure		404	{object}	llm.ErrorResponse	"Skill not found"
+//	@Failure		500	{object}	llm.ErrorResponse	"Delete failed"
+//	@Failure		501	{object}	llm.ErrorResponse	"Backend does not support skills"
+//	@Router			/v1/skills/{id} [delete]
 func (s *Server) handleDeleteSkill(c *fiber.Ctx) error {
 	store, ok := s.skillStoreOr501(c)
 	if !ok {
@@ -528,6 +629,19 @@ type createSkillRequest struct {
 // attributed to the caller. Generate is the AI path; this is the
 // create-from-scratch path. The id is minted here; slug is a cosmetic label
 // derived from the name (no longer unique).
+//
+//	@Summary		Create a skill
+//	@ID			createSkill
+//	@Description	Creates a skill authored by hand, as opposed to the generator. The caller supplies the content; nothing is inferred.
+//	@Tags			skills
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		createSkillRequest	true	"Skill to create"
+//	@Success		201		{object}	skillResponse
+//	@Failure		400		{object}	llm.ErrorResponse	"Invalid body or unknown type"
+//	@Failure		500		{object}	llm.ErrorResponse	"Create failed"
+//	@Failure		501		{object}	llm.ErrorResponse	"Backend does not support skills"
+//	@Router			/v1/skills [post]
 func (s *Server) handleCreateSkill(c *fiber.Ctx) error {
 	store, ok := s.skillStoreOr501(c)
 	if !ok {
@@ -594,6 +708,20 @@ const maxPublishAttempts = 4
 
 // handlePublishSkill snapshots the skill's content into an immutable version
 // and bumps the skill's current semver (first publish 0.1.0, then patch).
+//
+//	@Summary		Publish a skill version
+//	@ID			publishSkill
+//	@Description	Snapshots the skill's current content as an immutable version and advances the skill's semver. Versions are history: the head content stays on the skill row, so reading a skill never needs its versions.
+//	@Tags			skills
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string				true	"Skill id"
+//	@Param			request	body		publishSkillRequest	true	"Version metadata"
+//	@Success		201		{object}	skillVersionResponse
+//	@Failure		404		{object}	llm.ErrorResponse	"Skill not found"
+//	@Failure		500		{object}	llm.ErrorResponse	"Publish failed, or the version landed but the head could not be advanced"
+//	@Failure		501		{object}	llm.ErrorResponse	"Backend does not support skills"
+//	@Router			/v1/skills/{id}/versions [post]
 func (s *Server) handlePublishSkill(c *fiber.Ctx) error {
 	store, ok := s.skillStoreOr501(c)
 	if !ok {
@@ -675,6 +803,17 @@ func (s *Server) handlePublishSkill(c *fiber.Ctx) error {
 }
 
 // handleListSkillVersions returns a skill's published version history.
+//
+//	@Summary		List a skill's versions
+//	@ID			listSkillVersions
+//	@Description	Full published history for one skill, newest first. Returned whole rather than paged, so totalCount is always the length of versions.
+//	@Tags			skills
+//	@Produce		json
+//	@Param			id	path		string	true	"Skill id"
+//	@Success		200	{object}	skillVersionsResponse
+//	@Failure		500	{object}	llm.ErrorResponse	"Listing failed"
+//	@Failure		501	{object}	llm.ErrorResponse	"Backend does not support skills"
+//	@Router			/v1/skills/{id}/versions [get]
 func (s *Server) handleListSkillVersions(c *fiber.Ctx) error {
 	store, ok := s.skillStoreOr501(c)
 	if !ok {
@@ -689,12 +828,24 @@ func (s *Server) handleListSkillVersions(c *fiber.Ctx) error {
 	for i, v := range vers {
 		items[i] = skillVersionFromRecord(v)
 	}
-	return c.JSON(fiber.Map{"versions": items, "totalCount": len(items)})
+	return c.JSON(skillVersionsResponse{Versions: items, TotalCount: len(items)})
 }
 
 // handleDuplicateSkill copies a skill under a fresh id, attributed to the
 // duplicating user. Because slug is no longer an identity it can be shared with
 // the parent freely — no "-copy" suffix is needed to stay distinct.
+//
+//	@Summary		Duplicate a skill
+//	@ID			duplicateSkill
+//	@Description	Forks a skill into a new one owned by the caller, with parentId set to the source. The copy starts its own version history; the source is untouched.
+//	@Tags			skills
+//	@Produce		json
+//	@Param			id	path		string	true	"Skill id to duplicate"
+//	@Success		201	{object}	skillResponse
+//	@Failure		404	{object}	llm.ErrorResponse	"Skill not found"
+//	@Failure		500	{object}	llm.ErrorResponse	"Duplicate failed"
+//	@Failure		501	{object}	llm.ErrorResponse	"Backend does not support skills"
+//	@Router			/v1/skills/{id}/duplicate [post]
 func (s *Server) handleDuplicateSkill(c *fiber.Ctx) error {
 	store, ok := s.skillStoreOr501(c)
 	if !ok {
@@ -732,6 +883,20 @@ func (s *Server) handleDuplicateSkill(c *fiber.Ctx) error {
 
 // handleSkillMarkdown renders a drop-in SKILL.md (frontmatter + body) for the
 // "Use this skill" download, via the same renderer the CLI uses.
+//
+//	@Summary		Download a skill as SKILL.md
+//	@ID			getSkillMarkdown
+//	@Description	Renders the skill as an on-disk SKILL.md, served as an attachment. The frontmatter name is the kebab slug, which is what a harness matches to the skill's directory — not the human display name.
+//	@Description
+//	@Description	Serving this counts a download, best-effort: a failed counter write never fails the download.
+//	@Tags			skills
+//	@Produce		text/markdown
+//	@Param			id	path		string	true	"Skill id"
+//	@Success		200	{string}	string	"SKILL.md document"
+//	@Failure		404	{object}	llm.ErrorResponse	"Skill not found"
+//	@Failure		500	{object}	llm.ErrorResponse	"Lookup failed"
+//	@Failure		501	{object}	llm.ErrorResponse	"Backend does not support skills"
+//	@Router			/v1/skills/{id}/skill.md [get]
 func (s *Server) handleSkillMarkdown(c *fiber.Ctx) error {
 	store, ok := s.skillStoreOr501(c)
 	if !ok {

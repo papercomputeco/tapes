@@ -5,7 +5,7 @@
     ],
     "swagger": "2.0",
     "info": {
-        "description": "HTTP API for inspecting, querying, and searching stored Tapes sessions.\n\nThe REST surface exposes health checks, session listing and retrieval, derived session summaries, aggregate stats, semantic search, and a streamable MCP endpoint.",
+        "description": "HTTP API for inspecting, querying, and searching stored Tapes sessions.\n\nThe REST surface exposes health checks, session listing and retrieval, derived session summaries, aggregate stats, semantic search, skill authoring and publishing, operator maintenance endpoints, and a streamable MCP endpoint.\n\nNot covered here: the ingest write surface, which is a separate server with its own contract (see ingest/openapi.yaml).",
         "title": "Tapes API",
         "contact": {},
         "version": "1.0"
@@ -28,6 +28,39 @@
                         "description": "pong",
                         "schema": {
                             "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/admin/derive/run": {
+            "post": {
+                "description": "Rebuilds traces, spans, links, and session rollups for every org from the immutable raw-turn store. Idempotent: re-running reproduces the same projection and prunes rows the current derive no longer emits.\n\nThis is how a projection or classifier change reaches already-captured data — it re-derives rather than re-captures. Cost scales with the raw layer, so it is an operator lever, not a request-path call.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Re-derive the span projection (operator)",
+                "operationId": "runDerive",
+                "responses": {
+                    "200": {
+                        "description": "Per-org derive reports",
+                        "schema": {
+                            "$ref": "#/definitions/api.deriveRunResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Derive failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Driver does not host the raw-turn layer",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
                         }
                     }
                 }
@@ -682,6 +715,48 @@
                 }
             }
         },
+        "/v1/sessions/{id}/skills": {
+            "get": {
+                "description": "Every skill generated from the given session. Unpaginated — the count is bounded by what was generated from that one session.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "List a session's skills",
+                "operationId": "listSessionSkills",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.sessionSkillsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Listing failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Backend does not support skills",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/sessions/{id}/traces": {
             "get": {
                 "description": "Returns the session's user-visible turns as traces with nested spans (llm calls, tools, subagents, shadow calls, injected context) and dataflow links. Cross-trace links (compaction seams) are at the response top level.",
@@ -735,6 +810,558 @@
                     },
                     "501": {
                         "description": "Span traces not supported by this backend",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/skills": {
+            "get": {
+                "description": "One keyset page of the org's skills, newest-edited first, plus per-tab counts for the active search. Pagination mirrors /v1/sessions: pass the returned next_cursor to continue; its absence means the last page.\n\nThe counts are computed over the whole matching set rather than the loaded page, so a filtered tab shows a true total.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "List skills",
+                "operationId": "listSkills",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Page size (default 24, max 100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Opaque keyset cursor from a previous next_cursor. Reset it when changing sort.",
+                        "name": "cursor",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Search over name, description, and tags",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "all",
+                            "mine",
+                            "team"
+                        ],
+                        "type": "string",
+                        "description": "Which slice to return",
+                        "name": "scope",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "downloads"
+                        ],
+                        "type": "string",
+                        "description": "Ordering; defaults to most recently updated",
+                        "name": "sort",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.skillsListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed cursor",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Listing failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Backend does not support skills",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Creates a skill authored by hand, as opposed to the generator. The caller supplies the content; nothing is inferred.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Create a skill",
+                "operationId": "createSkill",
+                "parameters": [
+                    {
+                        "description": "Skill to create",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.createSkillRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/api.skillResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid body or unknown type",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Create failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Backend does not support skills",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/skills/generate": {
+            "post": {
+                "description": "Runs the LLM skill generator over the nominated sessions and persists the result. The client nominates sources and optional hints; the server is authoritative on the skill body.\n\nSource sessions are read through an org-scoped in-process querier, so generation only ever sees sessions in the caller's tenant.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Generate a skill from sessions",
+                "operationId": "generateSkill",
+                "parameters": [
+                    {
+                        "description": "Source sessions and optional hints",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.generateSkillRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/api.skillResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid body, or sessionIds missing/empty",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "One or more source sessions were not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Sources carried nothing the generator could use",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Generation or persistence failed, or no LLM provider is configured",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Backend does not support skills",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/skills/{id}": {
+            "get": {
+                "description": "Returns one skill by its opaque id. The id is the route key; slug is a cosmetic display label and is not addressable.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Get a skill",
+                "operationId": "getSkill",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Skill id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.skillResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Skill not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Lookup failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Backend does not support skills",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "description": "Partial update of the skill head. Every field is optional; omitted fields are left as they are. Editing the head does not publish — use the versions endpoint to snapshot.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Update a skill",
+                "operationId": "updateSkill",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Skill id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to change",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.updateSkillRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.skillResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid body or unknown type",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Skill not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Save failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Backend does not support skills",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Deletes the skill and its version history. Only the creator may delete; another member of the same org gets 403 rather than 404, so the skill's existence is not hidden from someone who can already list it.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Delete a skill",
+                "operationId": "deleteSkill",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Skill id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Deleted"
+                    },
+                    "403": {
+                        "description": "Only the creator can delete this skill",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Skill not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Delete failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Backend does not support skills",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/skills/{id}/duplicate": {
+            "post": {
+                "description": "Forks a skill into a new one owned by the caller, with parentId set to the source. The copy starts its own version history; the source is untouched.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Duplicate a skill",
+                "operationId": "duplicateSkill",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Skill id to duplicate",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/api.skillResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Skill not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Duplicate failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Backend does not support skills",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/skills/{id}/skill.md": {
+            "get": {
+                "description": "Renders the skill as an on-disk SKILL.md, served as an attachment. The frontmatter name is the kebab slug, which is what a harness matches to the skill's directory — not the human display name.\n\nServing this counts a download, best-effort: a failed counter write never fails the download.",
+                "produces": [
+                    "text/markdown"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Download a skill as SKILL.md",
+                "operationId": "getSkillMarkdown",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Skill id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "SKILL.md document",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Skill not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Lookup failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Backend does not support skills",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/skills/{id}/versions": {
+            "get": {
+                "description": "Full published history for one skill, newest first. Returned whole rather than paged, so totalCount is always the length of versions.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "List a skill's versions",
+                "operationId": "listSkillVersions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Skill id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.skillVersionsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Listing failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Backend does not support skills",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Snapshots the skill's current content as an immutable version and advances the skill's semver. Versions are history: the head content stays on the skill row, so reading a skill never needs its versions.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "skills"
+                ],
+                "summary": "Publish a skill version",
+                "operationId": "publishSkill",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Skill id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Version metadata",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.publishSkillRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/api.skillVersionResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Skill not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Publish failed, or the version landed but the head could not be advanced",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Backend does not support skills",
                         "schema": {
                             "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse"
                         }
@@ -1074,7 +1701,7 @@
                     "type": "string"
                 },
                 "live": {
-                    "description": "Live is a runtime presence signal, not a projection fact: true when\nthe session was seen within the liveness window AND the deriver has\nnot marked it terminal. Computed at response time from last_seen_at,\nso the console renders it directly instead of inferring \"running\"\nfrom recency itself (keeps the console dumb; RFD 00007 §C).",
+                    "description": "Live is a runtime presence signal, not a projection fact: true when\nthe session has no recorded end and was seen within the liveness\nwindow. Keyed on ended_at + last_seen_at recency (both ingest-fresh),\nnever on the derived status: an interactive session folds to a\nterminal status (an end_turn assistant reply reads as \"completed\")\nafter every turn while still open, so status cannot gate liveness.\nComputed at response time so the console renders it directly instead\nof inferring \"running\" itself (RFD 00007 §C).",
                     "type": "boolean"
                 },
                 "name": {
@@ -1497,6 +2124,82 @@
                 }
             }
         },
+        "api.createSkillRequest": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.deriveRunResponse": {
+            "type": "object",
+            "properties": {
+                "orgs": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_derive.RederiveReport"
+                    }
+                }
+            }
+        },
+        "api.generateSkillRequest": {
+            "type": "object",
+            "properties": {
+                "hint": {
+                    "type": "object",
+                    "properties": {
+                        "description": {
+                            "type": "string"
+                        },
+                        "name": {
+                            "type": "string"
+                        },
+                        "tags": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "type": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "sessionIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "api.publishSkillRequest": {
+            "type": "object",
+            "properties": {
+                "changelog": {
+                    "type": "string"
+                },
+                "content": {
+                    "type": "string"
+                }
+            }
+        },
         "api.seedDemoRequest": {
             "type": "object",
             "properties": {
@@ -1505,10 +2208,154 @@
                 }
             }
         },
+        "api.sessionSkillsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.skillResponse"
+                    }
+                }
+            }
+        },
         "api.sessionUpdateRequest": {
             "type": "object",
             "properties": {
                 "display_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.skillCountsResp": {
+            "type": "object",
+            "properties": {
+                "all": {
+                    "type": "integer"
+                },
+                "mine": {
+                    "type": "integer"
+                },
+                "team": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.skillResponse": {
+            "type": "object",
+            "properties": {
+                "authorId": {
+                    "type": "string"
+                },
+                "content": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "downloadCount": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "isAiGenerated": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "originatingSessionIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "parentId": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "type": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                },
+                "visibility": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.skillVersionResponse": {
+            "type": "object",
+            "properties": {
+                "authorId": {
+                    "type": "string"
+                },
+                "changelog": {
+                    "type": "string"
+                },
+                "content": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "publishedAt": {
+                    "type": "string"
+                },
+                "semver": {
+                    "type": "string"
+                },
+                "skillId": {
+                    "type": "string"
+                },
+                "versionNumber": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.skillVersionsResponse": {
+            "type": "object",
+            "properties": {
+                "totalCount": {
+                    "type": "integer"
+                },
+                "versions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.skillVersionResponse"
+                    }
+                }
+            }
+        },
+        "api.skillsListResponse": {
+            "type": "object",
+            "properties": {
+                "counts": {
+                    "$ref": "#/definitions/api.skillCountsResp"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.skillResponse"
+                    }
+                },
+                "next_cursor": {
                     "type": "string"
                 }
             }
@@ -1564,6 +2411,121 @@
                 "result": {
                     "type": "object",
                     "additionalProperties": {}
+                }
+            }
+        },
+        "api.updateSkillRequest": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "type": {
+                    "type": "string"
+                },
+                "visibility": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_papercomputeco_tapes_pkg_derive.ReconcileStats": {
+            "type": "object",
+            "properties": {
+                "conversation_joined": {
+                    "description": "ConversationJoined / ConversationTotal measure how many\nconversation-spine nodes' content appears in a transcript — the\nGo-native version of the prototype's join-rate oracle.",
+                    "type": "integer"
+                },
+                "conversation_total": {
+                    "type": "integer"
+                },
+                "forked_chains": {
+                    "type": "integer"
+                },
+                "main_chains_joined": {
+                    "type": "integer"
+                },
+                "subagent_forks": {
+                    "type": "integer"
+                },
+                "transcript_files": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_papercomputeco_tapes_pkg_derive.RederiveReport": {
+            "type": "object",
+            "properties": {
+                "attached_verdicts": {
+                    "type": "integer"
+                },
+                "call_kinds": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "judged_actions": {
+                    "description": "Verdict attach: judged actions grouped across stages, and how\nmany attached one-to-one to a captured tool_use.",
+                    "type": "integer"
+                },
+                "node_kinds": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "nodes": {
+                    "type": "integer"
+                },
+                "parse_failures": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "parsed_turns": {
+                    "type": "integer"
+                },
+                "plans_attached": {
+                    "description": "PlansAttached counts plan-name-gen calls linked to the\nExitPlanMode tool_use that accepted the plan.",
+                    "type": "integer"
+                },
+                "raw_only_turns": {
+                    "type": "integer"
+                },
+                "raw_turns": {
+                    "type": "integer"
+                },
+                "reconcile": {
+                    "description": "Reconcile reports the transcript↔wire fusion when transcript\nrows are present in the raw layer.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_derive.ReconcileStats"
+                        }
+                    ]
+                },
+                "unattached_actions": {
+                    "description": "UnattachedActions samples judged actions that found no matching\ntool_use (capped) — expected for non-tool events like subagent\nhandbacks; anything else is matcher signal worth reading.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "web_summary_attached": {
+                    "description": "WebSummaryAttached counts web-summary calls linked back to their\nWebFetch/WebSearch tool_use.",
+                    "type": "integer"
                 }
             }
         },

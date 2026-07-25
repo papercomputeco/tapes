@@ -66,6 +66,16 @@ type deriveRunner interface {
 	RederiveFromRaw(ctx context.Context, project string) (map[string]*derive.RederiveReport, error)
 }
 
+// deriveRunResponse is the derive-run result, keyed by org.
+//
+// Declared as a type rather than assembled inline so the published schema is
+// generated from the shape the handler actually returns; a fiber.Map would
+// leave swag with nothing to describe and the endpoint documented as an opaque
+// object.
+type deriveRunResponse struct {
+	Orgs map[string]*derive.RederiveReport `json:"orgs"`
+}
+
 // handleDeriveRun rebuilds the derived span projection (traces, spans,
 // links, and the session rollups) from the immutable raw-turn store. The
 // persisted node layer is retired; the merkle DAG lives only in memory at
@@ -73,6 +83,18 @@ type deriveRunner interface {
 // data-model iteration cheap — a classifier or projection change
 // redeploys, re-runs, and every captured session reclassifies without
 // re-capture.
+//
+//	@Summary		Re-derive the span projection (operator)
+//	@ID			runDerive
+//	@Description	Rebuilds traces, spans, links, and session rollups for every org from the immutable raw-turn store. Idempotent: re-running reproduces the same projection and prunes rows the current derive no longer emits.
+//	@Description
+//	@Description	This is how a projection or classifier change reaches already-captured data — it re-derives rather than re-captures. Cost scales with the raw layer, so it is an operator lever, not a request-path call.
+//	@Tags			admin
+//	@Produce		json
+//	@Success		200	{object}	deriveRunResponse	"Per-org derive reports"
+//	@Failure		500	{object}	llm.ErrorResponse	"Derive failed"
+//	@Failure		501	{object}	llm.ErrorResponse	"Driver does not host the raw-turn layer"
+//	@Router			/v1/admin/derive/run [post]
 func (s *Server) handleDeriveRun(c *fiber.Ctx) error {
 	runner, ok := s.driver.(deriveRunner)
 	if !ok {
@@ -85,5 +107,5 @@ func (s *Server) handleDeriveRun(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: err.Error()})
 	}
 
-	return c.JSON(fiber.Map{"orgs": reports})
+	return c.JSON(deriveRunResponse{Orgs: reports})
 }
