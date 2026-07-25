@@ -12,6 +12,14 @@
   changing it changes everything for the internal merkle/dedup layer.
 - Always use `make` operations for development: use `make help` to understand
   the various operations available.
+- Run DB-backed tests with `make test-local`, not bare `go test ./...`. The
+  Postgres-backed suites read `TEST_POSTGRES_DSN` and fail without it, so a
+  bare run reports a wall of `BeforeEach` failures that look like broken code.
+  `make test-local` starts the same image the Dagger pipeline uses and leaves
+  it running for fast re-runs (`make test-db-down` to stop it). Do not
+  substitute a stock postgres image: the CI one carries pgvector and
+  pg_duckdb, and without them `pkg/spanembed` fails on a missing extension —
+  a failure that reads as a code bug.
 - Run `make format` to format and organize imports using `goimports` and `golangci-lint`
 - Follow idiomatic Go and prefer using the `func NewExampleStruct() *ExampleStruct`
   paradigm seen throughout.
