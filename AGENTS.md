@@ -12,14 +12,15 @@
   changing it changes everything for the internal merkle/dedup layer.
 - Always use `make` operations for development: use `make help` to understand
   the various operations available.
-- Run DB-backed tests with `make test-local`, not bare `go test ./...`. The
-  Postgres-backed suites read `TEST_POSTGRES_DSN` and fail without it, so a
-  bare run reports a wall of `BeforeEach` failures that look like broken code.
-  `make test-local` starts the same image the Dagger pipeline uses and leaves
-  it running for fast re-runs (`make test-db-down` to stop it). Do not
-  substitute a stock postgres image: the CI one carries pgvector and
-  pg_duckdb, and without them `pkg/spanembed` fails on a missing extension —
-  a failure that reads as a code bug.
+- DB-backed tests need a running Postgres. Start it once with `make test-db-up`
+  and then `go test ./...` works normally — the dev shell exports
+  `TEST_POSTGRES_DSN` for you (see `flake.nix`). `make test-local` does both in
+  one step; `make test-db-down` stops it. If the database is down the suites
+  fail with the command to run, so you should not have to remember this.
+  Do not start a postgres container by hand: the image is pinned to the one CI
+  uses because it carries pgvector and pg_duckdb, and a stock postgres fails
+  `pkg/spanembed` on a missing extension — an environment gap that reads as a
+  code bug. `make test-db-up` verifies that pin still matches CI.
 - Run `make format` to format and organize imports using `goimports` and `golangci-lint`
 - Follow idiomatic Go and prefer using the `func NewExampleStruct() *ExampleStruct`
   paradigm seen throughout.

@@ -163,74 +163,69 @@ e2e-test: ## Runs end-to-end tests with Postgres and Ollama via Dagger
 
 # --- Local DB-backed tests -------------------------------------------------
 #
-# The DB-backed suites read TEST_POSTGRES_DSN and fail without it, so `go test
-# ./...` on a bare workstation reports a wall of BeforeEach failures that look
-# like broken code. These targets stand up the SAME Postgres the Dagger
-# pipeline uses, so a local run and a CI run agree.
+# The DB-backed suites read TEST_POSTGRES_DSN. In the nix dev shell that is
+# exported for you (flake.nix) pointing at the docker-compose postgres service,
+# so once that service is up a plain `go test ./...` works. These targets bring
+# it up and down; `make test-local` does both in one step.
 #
-# "the same" is load-bearing: the CI image ships pgvector and pg_duckdb, and a
-# stock postgres image passes most of the suite while failing pkg/spanembed on
-# a missing extension — a mystery failure that reads as a code bug. Matching
-# the image is the difference between a local run you can trust and one that
-# lies to you in a specific, hard-to-diagnose way.
-#
-# The image and credentials are derived from .dagger/postgres.go rather than
-# restated here: that file is what CI actually runs, so it stays the single
-# source of truth and this can't drift from it.
-DAGGER_PG_SRC := .dagger/postgres.go
-pg_const = $(shell sed -n 's/^[[:space:]]*$(1)[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' $(DAGGER_PG_SRC))
-
-TEST_PG_IMAGE := $(call pg_const,postgresImage)
-TEST_PG_USER  := $(call pg_const,testPgUser)
-TEST_PG_PASS  := $(call pg_const,testPgPass)
-TEST_PG_DB    := $(call pg_const,testPgDB)
-
-TEST_PG_CONTAINER ?= tapes-test-postgres
-TEST_PG_HOST_PORT ?= 55432
-TEST_POSTGRES_DSN ?= postgres://$(TEST_PG_USER):$(TEST_PG_PASS)@127.0.0.1:$(TEST_PG_HOST_PORT)/$(TEST_PG_DB)?sslmode=disable
+# The service is reused rather than a purpose-built container, because
+# docker-compose.yaml already pins the same image the Dagger pipeline binds.
+# That agreement is load-bearing: the image carries pgvector and pg_duckdb, and
+# a stock postgres passes most of the suite while failing pkg/spanembed on a
+# missing extension — an environment gap that reads as a code bug in a package
+# you probably did not touch. test-db-up asserts the two pins still match
+# rather than trusting that they do.
+DAGGER_PG_SRC  := .dagger/postgres.go
+COMPOSE_PG_SRC := docker-compose.yaml
 PKG ?= ./...
 
-.PHONY: test-db-up
-test-db-up: ## Starts a local Postgres matching the Dagger CI service (idempotent)
-	$(call print-target)
-	@if [ -z "$(TEST_PG_IMAGE)" ]; then \
-		echo "could not read postgresImage from $(DAGGER_PG_SRC)."; \
-		echo "The constant moved or was renamed — update pg_const in the makefile"; \
-		echo "rather than hardcoding an image here, or local and CI will diverge."; \
+.PHONY: test-db-check
+test-db-check: ## Verifies docker-compose and the Dagger CI service pin the same Postgres image
+	@dagger_img=$$(sed -n 's/^[[:space:]]*postgresImage[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' $(DAGGER_PG_SRC)); \
+	compose_img=$$(sed -n 's/^[[:space:]]*image:[[:space:]]*\(.*postgres[^[:space:]]*\).*/\1/p' $(COMPOSE_PG_SRC) | head -1); \
+	if [ -z "$$dagger_img" ] || [ -z "$$compose_img" ]; then \
+		echo "could not read the postgres image from $(DAGGER_PG_SRC) and/or $(COMPOSE_PG_SRC)."; \
+		echo "One of them moved. Fix the extraction here rather than hardcoding an image,"; \
+		echo "or the local database will quietly stop matching CI."; \
 		exit 1; \
-	fi
-	@if [ -n "$$(docker ps -q -f name='^$(TEST_PG_CONTAINER)$$')" ]; then \
-		echo "$(TEST_PG_CONTAINER) already running"; \
-	else \
-		docker rm -f $(TEST_PG_CONTAINER) >/dev/null 2>&1 || true; \
-		echo "starting $(TEST_PG_IMAGE)"; \
-		docker run -d --name $(TEST_PG_CONTAINER) \
-			-e POSTGRES_USER=$(TEST_PG_USER) \
-			-e POSTGRES_PASSWORD=$(TEST_PG_PASS) \
-			-e POSTGRES_DB=$(TEST_PG_DB) \
-			-p $(TEST_PG_HOST_PORT):5432 \
-			$(TEST_PG_IMAGE) >/dev/null; \
-	fi
+	fi; \
+	if [ "$$dagger_img" != "$$compose_img" ]; then \
+		echo "postgres image mismatch — local tests would not match CI:"; \
+		echo "  $(DAGGER_PG_SRC):  $$dagger_img"; \
+		echo "  $(COMPOSE_PG_SRC): $$compose_img"; \
+		echo "Pin both to the same tag."; \
+		exit 1; \
+	fi; \
+	echo "postgres image matches CI: $$dagger_img"
+
+.PHONY: test-db-up
+test-db-up: test-db-check ## Starts the docker-compose Postgres used by the DB-backed tests (idempotent)
+	$(call print-target)
+	@docker compose up -d postgres
 	@printf 'waiting for postgres'; \
 	for i in $$(seq 1 60); do \
-		if docker exec $(TEST_PG_CONTAINER) pg_isready -U $(TEST_PG_USER) >/dev/null 2>&1; then \
+		if docker compose exec -T postgres pg_isready -U tapes >/dev/null 2>&1; then \
 			printf ' ready\n'; exit 0; \
 		fi; \
 		printf '.'; sleep 1; \
 	done; \
-	printf '\n'; echo "postgres did not become ready; see: docker logs $(TEST_PG_CONTAINER)"; exit 1
+	printf '\n'; echo "postgres did not become ready; see: docker compose logs postgres"; exit 1
 
 .PHONY: test-db-down
-test-db-down: ## Stops and removes the local test Postgres
+test-db-down: ## Stops and removes the local test Postgres (keeps its data volume)
 	$(call print-target)
-	@docker rm -f $(TEST_PG_CONTAINER) >/dev/null 2>&1 && echo "removed $(TEST_PG_CONTAINER)" || echo "$(TEST_PG_CONTAINER) not running"
+	@docker compose rm -sf postgres
+	@echo "the postgres-data volume is kept; 'docker compose down -v' also drops it"
 
 # GOEXPERIMENT is set explicitly below, as in build-local: the flake's dev
 # shell provides it, but a bare shell does not, and pkg/derive|merkle|storage
 # then fail to build with errors pointing at encoding/json/v2 rather than at
-# the missing experiment.
+# the missing experiment. TEST_POSTGRES_DSN is likewise defaulted here so the
+# target works outside the dev shell, while deferring to an existing value.
+TEST_POSTGRES_DSN ?= postgres://tapes:tapes@127.0.0.1:5432/tapes?sslmode=disable
+
 .PHONY: test-local
-test-local: test-db-up ## Runs the full suite locally against the CI Postgres (PKG=./pkg/... to scope)
+test-local: test-db-up ## Runs the suite locally against the CI Postgres (PKG=./pkg/... to scope)
 	$(call print-target)
 	@echo "TEST_POSTGRES_DSN=$(TEST_POSTGRES_DSN)"
 	GOEXPERIMENT=jsonv2 TEST_POSTGRES_DSN="$(TEST_POSTGRES_DSN)" go test $(PKG)
