@@ -37,6 +37,9 @@
 -- deriver would make the deriver's output depend on storage state it must not
 -- read (RFD 00007 §C).
 
+-- No index is created here, deliberately. See the note at the bottom of this
+-- file before adding one.
+
 CREATE SEQUENCE IF NOT EXISTS derive_seq_counter AS BIGINT START 1;
 
 ALTER TABLE span_turns_20260615
@@ -49,10 +52,47 @@ ALTER TABLE spans_20260615
     ADD COLUMN IF NOT EXISTS derive_seq   BIGINT NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS fidelity     TEXT   NOT NULL DEFAULT '';
 
--- The feed's only access pattern: "everything after my cursor", newest last.
--- Scoped by org because every consumer is.
-CREATE INDEX IF NOT EXISTS span_turns_20260615_org_derive_seq_idx
-    ON span_turns_20260615 (org_id, derive_seq);
-
-CREATE INDEX IF NOT EXISTS spans_20260615_org_derive_seq_idx
-    ON spans_20260615 (org_id, derive_seq);
+-- ---------------------------------------------------------------------------
+-- The cursor index is NOT created here, and that is the whole point of this
+-- note.
+--
+-- The feed's access pattern is "everything after my cursor" — an index on
+-- (org_id, derive_seq) per projection table. Creating it in a migration is the
+-- obvious move and the wrong one, because of how migrations run here:
+-- postgres.NewDriver calls migrateUp, and every serve path opens a driver. So
+-- migrations execute at process start, serialised across pods by a
+-- pg_advisory_lock that waits indefinitely.
+--
+-- On a large span table that makes either index build an outage:
+--
+--   * a plain CREATE INDEX takes ACCESS EXCLUSIVE, blocking reads and writes
+--     to the table for the whole build;
+--   * CREATE INDEX CONCURRENTLY avoids that lock but scans the table twice and
+--     takes LONGER, and every starting pod still blocks on the advisory lock
+--     until it finishes. Writes survive; the deployment does not.
+--
+-- The statements above are all metadata-only on PostgreSQL 11+ (ADD COLUMN
+-- with a constant default writes no rows), so this migration stays fast on a
+-- table of any size. An index would be the only slow thing in it.
+--
+-- Nothing needs the index yet: no change-feed consumer exists, and the feed is
+-- correct without it — only the cursor query is slower. Build it when a
+-- consumer does exist, as a deliberate operator step:
+--
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS spans_20260615_org_derive_seq_idx
+--       ON spans_20260615 (org_id, derive_seq);
+--
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS span_turns_20260615_org_derive_seq_idx
+--       ON span_turns_20260615 (org_id, derive_seq);
+--
+-- Run each on its own, outside any transaction — CONCURRENTLY is rejected
+-- inside one, and a multi-statement string gets an implicit transaction. If a
+-- concurrent build fails it leaves an INVALID index behind; drop it (also
+-- CONCURRENTLY) and retry rather than leaving it to be silently ignored by the
+-- planner:
+--
+--   SELECT c.relname FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
+--    WHERE NOT i.indisvalid;
+--
+-- If it is ever added as a migration instead, it must be the only statement in
+-- its file, and the deploy has to tolerate a startup stall for the duration.
