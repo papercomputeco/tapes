@@ -41,6 +41,12 @@ func writeSpanSet(
 	// sequence N has seen a complete derive rather than half of one. It is
 	// stamped on every row written below but only *takes* on rows whose
 	// content actually changed — the upserts guard that.
+	//
+	// Allocated here, inside the transaction, so it orders writes and not
+	// commits: a pass that takes a lower value can commit after one that took
+	// a higher value. Consumers must account for that rather than assuming a
+	// plain `derive_seq > cursor` poll is complete — see the 1781470000
+	// migration for the safe read patterns.
 	deriveSeq, err := qtx.NextDeriveSeq(ctx)
 	if err != nil {
 		return fmt.Errorf("next derive seq: %w", err)

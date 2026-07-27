@@ -13,9 +13,36 @@
 --
 -- derive_seq is the cursor. It is stamped from a single global sequence, one
 -- value per derive pass, and — critically — is only advanced on a row whose
--- content_hash actually changed. A consumer polls `derive_seq > cursor` and
--- sees genuinely-changed rows, not the whole session. Bumping it on every
--- write would make the column monotonic but useless.
+-- content_hash actually changed, so a consumer sees genuinely-changed rows
+-- rather than the whole session. Bumping it on every write would make the
+-- column monotonic but useless.
+--
+-- IT IS NOT COMMIT-ORDERED, and a consumer that treats it as such loses data.
+-- The value comes from nextval() called inside the derive transaction, so it
+-- is assigned at write time, not at commit time. Two derive passes running
+-- concurrently can take 5 and 6 and commit in the other order: a consumer
+-- polling `derive_seq > cursor` sees 6, checkpoints 6, and never sees 5 when
+-- it lands. Sequences also do not roll back, so an aborted pass burns a value
+-- and leaves a permanent hole — harmless on its own, but it means gaps carry
+-- no information and cannot be used to detect the reordering above.
+--
+-- A consumer must therefore not advance its cursor past rows whose writing
+-- transaction may still be in flight. The direct way is to bound the read by
+-- the oldest transaction still running:
+--
+--   SELECT ... FROM spans_20260615
+--    WHERE org_id = $1
+--      AND derive_seq > $2
+--      AND xmin::text::bigint < pg_snapshot_xmin(pg_current_snapshot())
+--    ORDER BY derive_seq;
+--
+-- which holds back rows written by uncommitted transactions until they commit
+-- (mind xid wraparound on a long-lived cursor). A consumer that can tolerate
+-- reprocessing can instead re-read a lag window behind its cursor and dedupe
+-- on content_hash, which is idempotent by construction.
+--
+-- No consumer exists yet. This note is here so the first one is not written
+-- against the naive poll.
 --
 -- fidelity records raw-bytes provenance: whether the row can be re-derived
 -- faithfully from stored bytes, or only from a reduction somebody already
