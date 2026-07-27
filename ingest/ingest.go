@@ -543,9 +543,23 @@ func resolveGatewayIdentity(c *fiber.Ctx, session *sessions.IngestEnvelope) {
 // the live stream and may have seen framing the stored bytes no longer show,
 // so re-reducing here could only lose information, never add it.
 //
-// A failure to reduce is not a failure to ingest. The raw bytes still land, so
-// a fixed reducer recovers the turn on a later re-derive — which is the whole
-// reason for storing them.
+// A failure to reduce is not a failure to ingest: the raw bytes still land, so
+// the information needed to recover the turn is kept rather than discarded.
+//
+// Recovery is NOT automatic, and nothing in the current tree performs it. The
+// derive read path (GetRawTurn) deliberately does not select raw_response —
+// the deriver reads the reduced `response` column, and pulling the verbatim
+// bytes on every derive read would move megabytes per turn to be discarded.
+// So a turn whose reduction failed here persists with an empty reduction, and
+// re-deriving it reads that same empty reduction: fixing the reducer does not
+// on its own bring the turn back.
+//
+// Closing that gap means reducing from raw at read time for exactly the turns
+// whose reduction is absent — a conditional select plus a reducer on the
+// storage read path, keeping pkg/derive a pure function of the rows it is
+// handed (RFD 00007 §C). Until that exists, treat the stored bytes as
+// recoverable in principle and not in practice, and expect a repair pass
+// rather than a plain re-derive.
 func (s *Server) reduceRawOnly(ctx context.Context, turn *TurnPayload) json.RawMessage {
 	if len(turn.RawResponse) == 0 {
 		return nil

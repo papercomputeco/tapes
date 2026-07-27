@@ -152,6 +152,13 @@ func rawTurnRecordFromRow(row gensqlc.RawTurn) storage.RawTurnRecord {
 // every derive read to be discarded. The columns are zero here because the
 // query didn't ask for them, which is not the same as the row not having
 // them; anything that needs the raw bytes reads through the raw-turn store.
+//
+// One case this cost model does not cover: a turn whose reduction failed at
+// ingest persists with verbatim bytes and an EMPTY reduction, and this path
+// hands the deriver that empty reduction. Such a turn cannot be recovered by
+// re-deriving, only by a pass that reduces from raw — see reduceRawOnly in
+// ingest/ingest.go. Fetching raw_response only for turns whose reduction is
+// absent would close it without paying the bytes on every read.
 func rawTurnFromDeriveRow(row gensqlc.GetRawTurnRow) gensqlc.RawTurn {
 	return gensqlc.RawTurn{
 		ID:               row.ID,
