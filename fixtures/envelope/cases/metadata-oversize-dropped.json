@@ -3,7 +3,7 @@
   "category": "budget",
   "harness": "claude",
   "description": "Metadata whose raw JSON exceeds the 4 KiB cap is dropped whole; the rest of the envelope survives. Lossy: encode_from carries the oversize blob.",
-  "direction": "roundtrip",
+  "direction": "encode",
   "headers": {
     "x-tapes-harness-id": "claude",
     "x-paper-auth-org-id": "00000000-0000-4000-8000-000000000001",
