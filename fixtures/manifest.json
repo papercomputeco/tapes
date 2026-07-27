@@ -116,6 +116,7 @@
       "gates": [
         "pkg/derive/corpus_test.go — pinned reconciliation numbers",
         "pkg/derive/spans_corpus_test.go — span projection gate",
+        "pkg/derive/codex_corpus_test.go — Codex subagent-nesting span gate (corpus-codex-*)",
         "pkg/derive/clone_equivalence_test.go — byte-golden",
         "pkg/derive/corpusfile_roundtrip_test.go — dump/load inverse",
         "cmd/tapes/dev/tracefixtures_idempotency_test.go — render determinism"
