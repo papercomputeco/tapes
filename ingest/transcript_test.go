@@ -16,6 +16,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/papercomputeco/tapes/ingest"
+	"github.com/papercomputeco/tapes/pkg/derive"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
@@ -227,6 +228,75 @@ var _ = Describe("POST /v1/ingest/transcript", func() {
 		Expect(json.Unmarshal(driver.lastRecord().SessionEnvelope, &envelope)).To(Succeed())
 		Expect(envelope.OrgID).To(Equal(gatewayOrg))
 		Expect(envelope.AuthSubject).To(Equal("user_payload"))
+	})
+
+	It("mints the Codex spawn-anchor row from the paperd uploader payload (PCC-1021)", func() {
+		// The Codex subagent spawn-anchor contract (pkg/derive/codex.go):
+		// paperd uploads one transcript payload per spawned child, keyed
+		// to the ROOT Codex session, carrying the child thread id as
+		// agent_id, the spawn_agent call_id as tool_use_id, and the
+		// verbatim kind:"started" rollout line as the single record. The
+		// endpoint must accept it unchanged and mint the row the derive
+		// identity join reads.
+		const (
+			rootSession = "019f8d46-beb1-7f50-9df4-0cd39ed38d13"
+			childThread = "019f8d46-e663-74e1-940c-f82e34c07618"
+			spawnCallID = "call_J7B6r7ZdtqkECtSJV8YDQaL7"
+		)
+		startedLine := json.RawMessage(`{"timestamp":"2026-07-23T04:41:01.858Z","type":"event_msg","payload":{"type":"sub_agent_activity","event_id":"` +
+			spawnCallID + `","occurred_at_ms":1784781661858,"agent_thread_id":"` + childThread +
+			`","agent_path":"/root/depth2_cli_child","kind":"started"}}`)
+		payload := ingest.TranscriptPayload{
+			Session: &sessions.IngestEnvelope{
+				OrgID:            payloadOrg,
+				HarnessID:        "codex",
+				HarnessSessionID: rootSession,
+				HarnessVersion:   "0.145.0-alpha.30",
+				Cwd:              "/work",
+			},
+			AgentID:     childThread,
+			AgentType:   "depth2_cli_child",
+			Description: "/root/depth2_cli_child",
+			ToolUseID:   spawnCallID,
+			Records:     mustJSON([]json.RawMessage{startedLine}),
+		}
+		body, err := json.Marshal(payload)
+		Expect(err).NotTo(HaveOccurred())
+
+		resp := post(body, nil)
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
+
+		rec := driver.lastRecord()
+		Expect(rec.Source).To(Equal(storage.RawTurnSourceTranscript))
+		Expect(rec.HarnessID).To(Equal("codex"))
+		Expect(rec.HarnessSessionID).To(Equal(rootSession), "anchors key to the ROOT session, never the child thread")
+		Expect(rec.RequestID).To(HavePrefix("transcript:" + rootSession + ":" + childThread + ":"))
+
+		var meta struct {
+			Transcript  bool   `json:"transcript"`
+			AgentID     string `json:"agent_id"`
+			AgentType   string `json:"agent_type"`
+			Description string `json:"description"`
+			ToolUseID   string `json:"tool_use_id"`
+			Records     int    `json:"records"`
+		}
+		Expect(json.Unmarshal(rec.Meta, &meta)).To(Succeed())
+		Expect(meta.Transcript).To(BeTrue())
+		Expect(meta.AgentID).To(Equal(childThread))
+		Expect(meta.AgentType).To(Equal("depth2_cli_child"))
+		Expect(meta.Description).To(Equal("/root/depth2_cli_child"))
+		Expect(meta.ToolUseID).To(Equal(spawnCallID))
+		Expect(meta.Records).To(Equal(1))
+
+		// The row round-trips through the derive-side parser: the
+		// identity join reads agent_id/tool_use_id even though the
+		// record is a Codex rollout line, not Claude transcript JSONL.
+		file, err := derive.ParseTranscriptFile(&rec)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(file.AgentID).To(Equal(childThread))
+		Expect(file.ToolUseID).To(Equal(spawnCallID))
+		Expect(file.Session).To(Equal(derive.SessionKey{HarnessID: "codex", HarnessSessionID: rootSession}))
 	})
 
 	It("dedups an unchanged re-push and segregates the dedup key by org", func() {
