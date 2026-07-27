@@ -51,6 +51,9 @@ Browse and search:
   tapes search         Search main-conversation spans by semantic similarity
   tapes seed --demo    Seed demo sessions to explore the deck
 
+Serve cassettes:
+  Set cassettes = ["http://host/openapi"] or pass --cassettes, then run tapes serve
+
 Export a conversation:
   tapes export <session-id>     Export a session as JSONL (the API projection)
 

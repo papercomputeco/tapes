@@ -2,59 +2,31 @@
 package servecmder
 
 import (
-	"context"
 	"fmt"
-	"log/slog"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/papercomputeco/tapes/api"
 	apicmder "github.com/papercomputeco/tapes/cmd/tapes/serve/api"
 	deriveworkercmder "github.com/papercomputeco/tapes/cmd/tapes/serve/deriveworker"
 	embedworkercmder "github.com/papercomputeco/tapes/cmd/tapes/serve/embedworker"
 	ingestcmder "github.com/papercomputeco/tapes/cmd/tapes/serve/ingest"
 	proxycmder "github.com/papercomputeco/tapes/cmd/tapes/serve/proxy"
-	"github.com/papercomputeco/tapes/ingest"
 	"github.com/papercomputeco/tapes/pkg/config"
-	"github.com/papercomputeco/tapes/pkg/credentials"
-	deriveworker "github.com/papercomputeco/tapes/pkg/derive/worker"
-	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
-	"github.com/papercomputeco/tapes/pkg/embedworker"
-	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
-	"github.com/papercomputeco/tapes/pkg/spanembed"
-	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 	"github.com/papercomputeco/tapes/pkg/telemetry"
-	"github.com/papercomputeco/tapes/proxy"
 )
 
+// ServeCommander runs core's process set and optionally publishes a registry
+// of externally managed cassettes.
 type ServeCommander struct {
 	flags config.FlagSet
+	stack Stack
+	debug bool
 
-	proxyListen  string
-	apiListen    string
-	apiWebUI     bool
-	ingestListen string
-	upstream     string
-	debug        bool
-	postgresDSN  string
-	project      string
-
-	providerType string
-
-	vectorStoreTarget string
-
-	embeddingProvider   string
-	embeddingTarget     string
-	embeddingModel      string
-	embeddingDimensions uint
-	embeddingAPIKey     string
-	embedSpans          bool
-
-	logger *slog.Logger
+	refresh time.Duration
 }
 
 // ServeFlags defines the flags for the parent "tapes serve" command.
@@ -72,6 +44,7 @@ var ServeFlags = config.FlagSet{
 	config.FlagEmbeddingTgt:   {Name: "embedding-target", ViperKey: "embedding.target", Description: "Embedding provider URL"},
 	config.FlagEmbeddingModel: {Name: "embedding-model", ViperKey: "embedding.model", Description: "Embedding model name (e.g., embeddinggemma, text-embedding-3-large)"},
 	config.FlagEmbeddingDims:  {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Embedding dimensionality"},
+	config.FlagCassettes:      {Name: "cassettes", ViperKey: "cassettes", Description: "Full cassette OpenAPI URLs (comma-separated or repeated)"},
 }
 
 const serveLongDesc string = `Run Tapes services.
@@ -83,6 +56,11 @@ Use subcommands to run individual services or all services together:
   tapes serve ingest     Run just the ingest server (sidecar mode)
   tapes serve derive-worker  Run the derive worker (raw → derived layer)
   tapes serve embed-worker   Run the embed worker (derived spans → search vectors)
+
+Configure cassettes = ["http://host/openapi"] in config.toml, set a CSV list
+in TAPES_CASSETTES, or pass --cassettes to publish already-running cassette
+services. Process lifecycle,
+credentials, and grants remain the operator's responsibility.
 
 Optionally configure vector storage and embeddings of text content for "tapes search"
 agentic functionality.`
@@ -99,65 +77,7 @@ func NewServeCmd() *cobra.Command {
 		Short: serveShortDesc,
 		Long:  serveLongDesc,
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
-			configDir, _ := cmd.Flags().GetString("config-dir")
-			v, err := config.InitViper(configDir)
-			if err != nil {
-				return fmt.Errorf("loading config: %w", err)
-			}
-
-			config.BindRegisteredFlags(v, cmd, cmder.flags, []string{
-				config.FlagProxyListen,
-				config.FlagAPIListen,
-				config.FlagAPIWebUI,
-				config.FlagIngestListen,
-				config.FlagUpstream,
-				config.FlagProvider,
-				config.FlagPostgres,
-				config.FlagProject,
-				config.FlagVectorStoreTgt,
-				config.FlagEmbeddingProv,
-				config.FlagEmbeddingTgt,
-				config.FlagEmbeddingModel,
-				config.FlagEmbeddingDims,
-			})
-
-			// Default pgvector to the primary Postgres DSN.
-			if v.GetString("vector_store.target") == "" && v.GetString("storage.postgres_dsn") != "" {
-				v.Set("vector_store.target", v.GetString("storage.postgres_dsn"))
-			}
-
-			cmder.postgresDSN = v.GetString("storage.postgres_dsn")
-			cmder.proxyListen = v.GetString("proxy.listen")
-			cmder.apiListen = v.GetString("api.listen")
-			cmder.apiWebUI = v.GetBool("api.web_ui")
-			cmder.ingestListen = v.GetString("ingest.listen")
-			cmder.upstream = v.GetString("proxy.upstream")
-			cmder.providerType = v.GetString("proxy.provider")
-			cmder.vectorStoreTarget = v.GetString("vector_store.target")
-			embedding := config.ResolveEmbeddingConfigWithOptions(
-				v.GetString("embedding.provider"),
-				v.GetString("embedding.target"),
-				v.GetString("embedding.model"),
-				v.GetUint("embedding.dimensions"),
-				config.ResolveEmbeddingConfigOptions{
-					DimensionsSet: config.IsRegisteredFlagExplicitlySet(v, cmd, cmder.flags, config.FlagEmbeddingDims),
-				},
-			)
-			cmder.embeddingProvider = embedding.Provider
-			cmder.embeddingTarget = embedding.Target
-			cmder.embeddingModel = embedding.Model
-			cmder.embeddingDimensions = embedding.Dimensions
-			cmder.embeddingAPIKey, err = credentials.APIKeyForProvider(embedding.Provider, configDir)
-			if err != nil {
-				return fmt.Errorf("could not load embedding credentials: %w", err)
-			}
-			cmder.project = v.GetString("proxy.project")
-
-			if cmder.project == "" {
-				cmder.project = git.RepoName(cmd.Context())
-			}
-
-			return nil
+			return cmder.stack.Resolve(cmd, cmder.flags)
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			var err error
@@ -166,24 +86,13 @@ func NewServeCmd() *cobra.Command {
 				return fmt.Errorf("could not get debug flag: %w", err)
 			}
 			telemetry.FromContext(cmd.Context()).CaptureServerStarted("both")
-			return cmder.run()
+
+			return cmder.run(cmd)
 		},
 	}
 
-	config.AddStringFlag(cmd, cmder.flags, config.FlagProxyListen, &cmder.proxyListen)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagAPIListen, &cmder.apiListen)
-	config.AddBoolFlag(cmd, cmder.flags, config.FlagAPIWebUI, &cmder.apiWebUI)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagIngestListen, &cmder.ingestListen)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagUpstream, &cmder.upstream)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagProvider, &cmder.providerType)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagProject, &cmder.project)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagVectorStoreTgt, &cmder.vectorStoreTarget)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingProv, &cmder.embeddingProvider)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingTgt, &cmder.embeddingTarget)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingModel, &cmder.embeddingModel)
-	config.AddUintFlag(cmd, cmder.flags, config.FlagEmbeddingDims, &cmder.embeddingDimensions)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagPostgres, &cmder.postgresDSN)
-	cmd.Flags().BoolVar(&cmder.embedSpans, "embed-spans", true, "Embed main llm spans in the background so semantic search (tapes search) works; on by default, disable with --embed-spans=false")
+	cmder.stack.AddFlags(cmd, cmder.flags)
+	cmd.Flags().DurationVar(&cmder.refresh, "cassette-refresh", 30*time.Second, "How often to refresh cassette OpenAPI documents")
 
 	cmd.AddCommand(apicmder.NewAPICmd())
 	cmd.AddCommand(deriveworkercmder.NewDeriveWorkerCmd())
@@ -194,187 +103,15 @@ func NewServeCmd() *cobra.Command {
 	return cmd
 }
 
-func (c *ServeCommander) run() error {
-	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
-
-	driver, err := postgres.NewDriver(context.TODO(), c.postgresDSN)
-	if err != nil {
-		return err
-	}
-	defer driver.Close()
-
-	proxyConfig := proxy.Config{
-		ListenAddr:   c.proxyListen,
-		UpstreamURL:  c.upstream,
-		ProviderType: c.providerType,
-		Project:      c.project,
-	}
-
-	// The embedder serves the API's search read path and the in-process
-	// embed worker below. Capture-time embedding is retired: the embed
-	// worker family is the single writer of embeddings.
-	embedder, err := embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
-		ProviderType: c.embeddingProvider,
-		TargetURL:    c.embeddingTarget,
-		Model:        c.embeddingModel,
-		Dimensions:   c.embeddingDimensions,
-		APIKey:       c.embeddingAPIKey,
-	})
-	if err != nil {
-		return fmt.Errorf("creating embedder: %w", err)
-	}
-	defer embedder.Close()
-
-	spanSearcher, err := spanembed.NewStore(driver.DB(), spanembed.StoreConfig{
-		Dimensions: c.embeddingDimensions,
-	}, c.logger)
-	if err != nil {
-		return fmt.Errorf("could not create span embedding store: %w", err)
-	}
-
-	c.logger.Info("vector search enabled",
-		"vector_store_target", config.RedactDSN(c.vectorStoreTarget),
-		"embedding_provider", c.embeddingProvider,
-		"embedding_target", c.embeddingTarget,
-		"embedding_model", c.embeddingModel,
-	)
-
-	// Create proxy
-	p, err := proxy.New(proxyConfig, driver, c.logger)
-	if err != nil {
-		return fmt.Errorf("creating proxy: %w", err)
-	}
-	defer p.Close()
-
-	c.logger.Info("starting proxy",
-		"proxy_addr", c.proxyListen,
-		"upstream", c.upstream,
-		"provider", c.providerType,
-	)
-
-	// Create API server
-	apiConfig := api.Config{
-		ListenAddr:   c.apiListen,
-		Embedder:     embedder,
-		SpanSearcher: spanSearcher,
-		EnableWebUI:  c.apiWebUI,
-	}
-	apiServer, err := api.NewServer(apiConfig, driver, c.logger)
-	if err != nil {
-		return fmt.Errorf("could not build new api server: %w", err)
-	}
-
-	c.logger.Info("starting api server",
-		"api_addr", c.apiListen,
-	)
-
-	// Optionally create ingest server for sidecar mode
-	ingestConfig := ingest.Config{
-		ListenAddr: c.ingestListen,
-		Project:    c.project,
-	}
-	ingestServer, err := ingest.New(ingestConfig, driver, c.logger)
-	if err != nil {
-		return fmt.Errorf("creating ingest server: %w", err)
-	}
-	defer ingestServer.Close()
-
-	c.logger.Info("starting ingest server",
-		"ingest_addr", c.ingestListen,
-	)
+func (c *ServeCommander) run(cmd *cobra.Command) error {
+	c.stack.Logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
+	c.configureCassettes(cmd)
 
 	// Signal-aware context: a SIGINT/SIGTERM cancels it, which stops the
-	// in-process derive worker's run loop (the HTTP servers are torn down
-	// via their deferred Close()).
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	// in-process workers' run loops (the HTTP servers are torn down via their
+	// deferred Close()).
+	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Local single-process convenience: run the derive worker in-process
-	// so a captured turn projects into the sessions/traces/spans surface
-	// the deck and API read — no separate `tapes serve derive-worker`
-	// dance for local use. The short debounce keeps the local
-	// capture→deck loop snappy; production runs the worker as its own
-	// process (`tapes serve derive-worker`) with the full-size default
-	// debounce and its own memory budget.
-	deriveCfg := deriveworker.Config{
-		Project:  c.project,
-		Debounce: 2 * time.Second,
-	}
-	// By default serve also embeds main llm spans, so `tapes search` works
-	// out of the box (disable with --embed-spans=false). Embedding is never a
-	// step of the derive loop — it runs as its own embed-worker loop (see
-	// pkg/embedworker) so a slow or down embedding backend cannot stall
-	// derivation. Locally that loop runs in-process on a short interval to
-	// keep the capture→search loop snappy; production runs it as its own
-	// process (`tapes serve embed-worker`) with the full-size default
-	// interval. It reuses the embedder and span store already built for the
-	// API's search read path. Embedding degrades gracefully: setup or backend
-	// failures disable search but never fail serve, and a failing pass backs
-	// off between retries instead of hammering a dead backend.
-	var embedW *embedworker.Worker
-	if c.embedSpans {
-		if err := spanSearcher.EnsureSchema(ctx); err != nil {
-			c.logger.Warn("span embedding disabled: could not prepare the embedding schema — tapes search will be unavailable", "error", err)
-		} else if pass, perr := spanembed.NewPass(spanSearcher, spanSearcher, embedder, spanembed.PassConfig{
-			Model:      c.embeddingModel,
-			Dimensions: c.embeddingDimensions,
-		}, c.logger); perr != nil {
-			c.logger.Warn("span embedding disabled: could not create the embed pass — tapes search will be unavailable", "error", perr)
-		} else {
-			embedW = embedworker.NewWorker(embedworker.Config{
-				Interval: 10 * time.Second,
-			}, pass, c.logger)
-			c.logger.Info("span embedding enabled (in-process)", "model", c.embeddingModel)
-		}
-	}
-	deriveW := deriveworker.NewWorker(deriveCfg, driver, c.logger)
-	c.logger.Info("starting derive worker (in-process)",
-		"debounce", deriveCfg.Debounce,
-	)
-
-	// Channel to capture errors from goroutines
-	errChan := make(chan error, 5)
-
-	// Start proxy in goroutine
-	go func() {
-		if err := p.Run(); err != nil {
-			errChan <- fmt.Errorf("proxy error: %w", err)
-		}
-	}()
-
-	// Start API server in goroutine
-	go func() {
-		if err := apiServer.Run(); err != nil {
-			errChan <- fmt.Errorf("API server error: %w", err)
-		}
-	}()
-
-	go func() {
-		if err := ingestServer.Run(); err != nil {
-			errChan <- fmt.Errorf("ingest server error: %w", err)
-		}
-	}()
-
-	go func() {
-		if err := deriveW.Run(ctx); err != nil {
-			errChan <- fmt.Errorf("derive worker error: %w", err)
-		}
-	}()
-
-	if embedW != nil {
-		go func() {
-			if err := embedW.Run(ctx); err != nil {
-				errChan <- fmt.Errorf("embed worker error: %w", err)
-			}
-		}()
-	}
-
-	// Wait for interrupt signal or a fatal error from any service.
-	select {
-	case err := <-errChan:
-		return err
-	case <-ctx.Done():
-		c.logger.Info("received signal, shutting down")
-		return nil
-	}
+	return c.stack.Run(ctx)
 }

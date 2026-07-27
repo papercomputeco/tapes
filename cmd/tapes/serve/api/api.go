@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -34,6 +35,9 @@ type apiCommander struct {
 	embeddingDimensions uint
 	embeddingAPIKey     string
 
+	cassetteSources []string
+	cassetteRefresh time.Duration
+
 	// skillModel overrides the chat model POST /v1/skills/generate uses.
 	// Empty keeps the generator's per-provider default (the embedding
 	// model is not a chat model, so the search config can't supply it).
@@ -53,6 +57,7 @@ var apiFlags = config.FlagSet{
 	config.FlagEmbeddingModel:      {Name: "embedding-model", ViperKey: "embedding.model", Description: "Embedding model name (e.g., text-embedding-3-large)"},
 	config.FlagEmbeddingDims:       {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Embedding dimensionality"},
 	config.FlagSkillModel:          {Name: "skill-model", ViperKey: "skill.model", Description: "Chat model for skill generation (defaults to the provider's chat model)"},
+	config.FlagCassettes:           {Name: "cassettes", ViperKey: "cassettes", Description: "Full cassette OpenAPI URLs (comma-separated or repeated)"},
 }
 
 const apiLongDesc string = `Run the Tapes API server for inspecting, managing, and query agent sessions.`
@@ -60,8 +65,12 @@ const apiLongDesc string = `Run the Tapes API server for inspecting, managing, a
 const apiShortDesc string = "Run the Tapes API server"
 
 func NewAPICmd() *cobra.Command {
-	cmder := &apiCommander{
-		flags: apiFlags,
+	return newAPICmd(&apiCommander{flags: apiFlags})
+}
+
+func newAPICmd(cmder *apiCommander) *cobra.Command {
+	if cmder.flags == nil {
+		cmder.flags = apiFlags
 	}
 
 	cmd := &cobra.Command{
@@ -85,7 +94,12 @@ func NewAPICmd() *cobra.Command {
 				config.FlagEmbeddingModel,
 				config.FlagEmbeddingDims,
 				config.FlagSkillModel,
+				config.FlagCassettes,
 			})
+			cmder.cassetteSources, err = config.GetRegisteredStringSlice(v, cmd, cmder.flags, config.FlagCassettes)
+			if err != nil {
+				return fmt.Errorf("loading cassette sources: %w", err)
+			}
 
 			cmder.listen = v.GetString("api.listen")
 			cmder.webUI = v.GetBool("api.web_ui")
@@ -122,7 +136,7 @@ func NewAPICmd() *cobra.Command {
 			}
 
 			telemetry.FromContext(cmd.Context()).CaptureServerStarted("api")
-			return cmder.run()
+			return cmder.run(cmd.Context())
 		},
 	}
 
@@ -135,14 +149,17 @@ func NewAPICmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingModel, &cmder.embeddingModel)
 	config.AddUintFlag(cmd, cmder.flags, config.FlagEmbeddingDims, &cmder.embeddingDimensions)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagSkillModel, &cmder.skillModel)
+	config.AddStringSliceFlag(cmd, cmder.flags, config.FlagCassettes, &cmder.cassetteSources)
+	cmd.Flags().DurationVar(&cmder.cassetteRefresh, "cassette-refresh", 30*time.Second,
+		"How often to refresh cassette OpenAPI documents")
 
 	return cmd
 }
 
-func (c *apiCommander) run() error {
+func (c *apiCommander) run(ctx context.Context) error {
 	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
 
-	driver, err := postgres.NewDriver(context.Background(), c.postgresDSN)
+	driver, err := postgres.NewDriver(ctx, c.postgresDSN)
 	if err != nil {
 		return err
 	}
@@ -198,6 +215,10 @@ func (c *apiCommander) run() error {
 	server, err := api.NewServer(apiConfig, driver, c.logger)
 	if err != nil {
 		return fmt.Errorf("could not build new api server: %w", err)
+	}
+	server.SetCassetteSources(c.cassetteSources)
+	if len(c.cassetteSources) > 0 {
+		server.StartCassetteSpecRefresh(ctx, c.cassetteRefresh)
 	}
 
 	c.logger.Info("starting API server",
