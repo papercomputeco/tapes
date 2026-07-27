@@ -11,7 +11,7 @@ Everything is generated downhill from one recording:
 
 ```
 L0  Envelope fixtures      fixtures/envelope/     header set -> expected parsed envelope (+ errors)
-L1  Wire recordings        fixtures/recordings/   turn-*/ bundles — verbatim transport bytes (placeholder)
+L1  Wire recordings        fixtures/recordings/   turn-*/ bundles — verbatim transport bytes
 L2  Corpus (.jsonl.gz)     pkg/seed/corpus/       raw_turns rows — derive gates, seed
 L3  Rendered API fixtures  (generated downstream)  via `tapes dev trace-fixtures`
 ```
@@ -50,8 +50,10 @@ fixtures/
   envelope/          ← L0 synthetic header<->envelope cases
     README.md
     cases/*.json
-  recordings/        ← L1 placeholder
+  recordings/        ← L1 wire recordings, one directory per capture set
     README.md
+    claude-20260727-019fa57e/
+      turn-*/{request.json, response.sse, meta.json}
 ```
 
 ## Versioned cuts (future)

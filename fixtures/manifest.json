@@ -40,14 +40,46 @@
       "layer": "L1",
       "kind": "wire-recordings",
       "location": "fixtures/recordings/",
-      "status": "placeholder",
-      "description": "Verbatim transport bytes for a turn, replayable across every ingest transport for parity checks.",
+      "status": "populated",
+      "sets": ["claude-20260727-019fa57e"],
+      "count": 17,
+      "harnesses": ["claude"],
+      "providers": ["anthropic"],
+      "description": "Transport bytes for a turn, replayable across every ingest transport for parity checks. Each bundle is one request/response pair as the wire-trace recorder saw it: request headers plus base64 body, the verbatim (gzip) response stream, and the status/encoding/timing metadata.",
       "provenance": {
-        "type": "fixture-grade recording (planned)",
-        "format": "turn-<ns:020>-<seq:08>/{request.json, response.sse, meta.json}"
+        "type": "fixture-grade recording",
+        "format": "turn-<ns:020>-<seq:08>/{request.json, response.sse, meta.json}",
+        "captured": "2026-07-27",
+        "harness_version": "claude-cli/2.1.219 (sdk-cli)",
+        "model": "claude-sonnet-4-6",
+        "generator": "skills/generate-claude-fixture — a fixed-order, clean-room Claude Code session driven through a local clearing (kind-backed data plane, isolated paperd, PAPER_WIRE_TRACE_DIR).",
+        "clean_room": "Launched from an empty /tmp directory that is not a git repository, with --strict-mcp-config (no MCP servers), --setting-sources project (no user-level skills or settings), and CLAUDE_CODE_DISABLE_AUTO_MEMORY=1. Every file the session touched was created by the session itself under a scratch directory and deleted at the end. No repo reads, no git, no web, no MCP.",
+        "notes": "All 17 bundles are POST /v1/messages. A single HEAD /api/hello health probe emitted by the harness in the same capture window was excluded: null content-type, zero-byte response, not a reducer input."
       },
-      "scrub_attestation": "n/a — no bundles committed yet",
-      "consumers": ["wire-capture fidelity / replay tests (skipped until bundles land)"]
+      "scrub_attestation": "credential-redacted, clean-room, reviewed — see scrub_detail",
+      "scrub_detail": {
+        "headers": "The recorder redacts CREDENTIAL headers to <redacted:<len>>. Verified across all bundles: authorization and x-paper-auth are redacted in every request; no unredacted credential header appears. x-api-key, anthropic-api-key and proxy-authorization are in the recorder's redact list but never appear on this capture path (the harness authenticates with an OAuth bearer in authorization), so they are untested here rather than confirmed. Note the scope: the recorder redacts credentials, NOT identifiers, and it does not touch response metadata at all — the provider-side identifiers in meta.json were left entirely to review, which is where they were initially missed. See substitution.",
+        "bodies": "Request bodies are NOT redacted by the recorder; the clean room is what keeps them clean. Reviewed in full: no home or workspace paths, no repository content, no git output (no gitStatus block is injected because the working directory is not a repository), no keys or tokens, no MCP tool definitions.",
+        "substitution": "Identifying values were replaced with synthetic stand-ins. In request BODIES the replacements are same-length, so content-length and body_peek_len stay valid and each bundle remains internally consistent: the operator address from the harness-injected `userEmail` system-reminder (22 bytes, once in each of 16 bundles); and the `device_id` (a stable 64-hex fingerprint of the capturing machine) and `account_uuid` inside the `metadata.user_id` blob Claude Code sends on every request. In response METADATA — meta.json's parsed response_headers, which are not wire bytes and carry no length constraint — `anthropic-organization-id`, `request-id`, `traceresponse` and `cf-ray` were replaced with synthetic values of the same shape. Response streams are untouched.",
+        "substitution_rationale": "None of these can be suppressed at capture time. CLAUDE_CODE_USER_EMAIL is only honored when no OAuth account is stored and an empty CLAUDE_CONFIG_DIR fails to authenticate; device_id, account_uuid and the provider-side response headers are emitted unconditionally. They are identifiers rather than credentials — they authenticate nothing — but they identify the operator, their machine, and the tenant, and they let a reader correlate the corpus with provider telemetry, which is not acceptable in a corpus intended to be redistributable. Session ids are deliberately NOT substituted: they identify only this synthetic session and the envelope and sub-thread attribution the corpus exercises are keyed on them.",
+        "enforcement": "pkg/backfill/recordings_scrub_test.go is an executable gate over every committed bundle. It matches identifier FORMS — account/org UUIDs, device fingerprints, provider request ids, e-mail addresses, home paths, bearer/API credentials — rather than known values, so it fails on the next capture's leak rather than merely re-asserting that this one is clean. Synthetic stand-ins and the corpus's own session ids are allow-listed explicitly. The scrub bar is this test, not a reviewer's attention: the first pass of human review over these same bundles missed every identifier listed above.",
+        "responses": "Response streams were reviewed decompressed (they are gzip) and are clean on every pattern checked, including e-mail addresses, home paths and secrets.",
+        "residual": "noreply@anthropic.com and the string PCC-1003 remain in request bodies. Both are inert: the former is Claude Code's own commit-message boilerplate in the system prompt, the latter comes from the generator skill's own description. One /nix/store/<hash>-bash-5.3p9 path appears in a tool result — a public nixpkgs store path, not operator-identifying."
+      },
+      "mcp_coverage": "Deliberately absent. The session ran with no MCP servers configured, so no MCP tool definitions appear in any request and no MCP tool results are echoed into later turns. That is the trade this corpus makes: MCP tool-definition coverage is given up to keep bodies free of workspace data (real team, channel and issue names would otherwise be spread across many turns). Any test that needs MCP request shapes must use a separate, purpose-built fixture.",
+      "wire_shapes": {
+        "sse_events": "content_block_delta 580, content_block_start 41, content_block_stop 41, message_start 17, ping 17, message_delta 17, message_stop 17",
+        "delta_types": "input_json_delta 484, text_delta 89, thinking_delta 4, signature_delta 3",
+        "content_blocks": "tool_use 25, text 13, thinking 3",
+        "threading": "2 bundles carry x-claude-code-agent-id (a single Explore subagent), so the sub-thread attribution path is exercised.",
+        "errors": "Four tool-error results: command-not-found (exit 127), file-not-found (twice, once inside a parallel batch and once alone), invalid regex, and a failed Edit (string not found).",
+        "absent": "Sibling cancellation is NOT present. The generating skill's step 7 assumes the harness cancels the remaining tool calls in a batch when the first errors; in this harness and mode all three ran to completion and returned errors independently. Do not expect a cancellation shape from this set."
+      },
+      "verification": "Every bundle was replayed through capture.NewAnthropicReducer() via tapes-extproc's TestWireCaptureReducerFidelity: all 17 report EMPTY_CONTENT on the raw bytes and HEALTHY after the content-encoding decode (stop_reason tool_use x14, end_turn x3). That raw-empty/decoded-healthy contrast is a property of the set and is what the un-skipped test asserts.",
+      "consumers": [
+        "tapes-extproc: TestWireCaptureReducerFidelity and TestWireCaptureProcessorFidelity (see that repo's testdata sync)",
+        "cross-transport parity checks over the ingest surfaces"
+      ]
     },
     {
       "name": "derive-corpus",

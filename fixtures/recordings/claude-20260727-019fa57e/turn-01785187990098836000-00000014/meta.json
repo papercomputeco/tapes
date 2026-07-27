@@ -1,0 +1,121 @@
+{
+  "status": 200,
+  "content_type": "text/event-stream; charset=utf-8",
+  "content_encoding": "gzip",
+  "response_bytes": 2264,
+  "response_headers": [
+    [
+      "date",
+      "Mon, 27 Jul 2026 21:33:13 GMT"
+    ],
+    [
+      "content-type",
+      "text/event-stream; charset=utf-8"
+    ],
+    [
+      "cache-control",
+      "no-cache"
+    ],
+    [
+      "anthropic-ratelimit-unified-status",
+      "allowed"
+    ],
+    [
+      "anthropic-ratelimit-unified-5h-status",
+      "allowed"
+    ],
+    [
+      "anthropic-ratelimit-unified-5h-reset",
+      "1785205800"
+    ],
+    [
+      "anthropic-ratelimit-unified-5h-utilization",
+      "0.0"
+    ],
+    [
+      "anthropic-ratelimit-unified-7d-status",
+      "allowed"
+    ],
+    [
+      "anthropic-ratelimit-unified-7d-reset",
+      "1785466800"
+    ],
+    [
+      "anthropic-ratelimit-unified-7d-utilization",
+      "0.11"
+    ],
+    [
+      "anthropic-ratelimit-unified-representative-claim",
+      "five_hour"
+    ],
+    [
+      "anthropic-ratelimit-unified-fallback-percentage",
+      "0.5"
+    ],
+    [
+      "anthropic-ratelimit-unified-reset",
+      "1785205800"
+    ],
+    [
+      "anthropic-ratelimit-unified-overage-disabled-reason",
+      "org_level_disabled"
+    ],
+    [
+      "anthropic-ratelimit-unified-overage-status",
+      "rejected"
+    ],
+    [
+      "request-id",
+      "req_FIXTURE0BE2F9BB83C572E28"
+    ],
+    [
+      "strict-transport-security",
+      "max-age=31536000; includeSubDomains; preload"
+    ],
+    [
+      "anthropic-organization-id",
+      "00000000-0000-4000-8000-000000000000"
+    ],
+    [
+      "traceresponse",
+      "00-73684a635e8684afcf0ff499c79a5478-d256b0bd973c8e64-01"
+    ],
+    [
+      "server",
+      "cloudflare"
+    ],
+    [
+      "content-encoding",
+      "gzip"
+    ],
+    [
+      "vary",
+      "Accept-Encoding"
+    ],
+    [
+      "cf-cache-status",
+      "DYNAMIC"
+    ],
+    [
+      "x-robots-tag",
+      "none"
+    ],
+    [
+      "content-security-policy",
+      "default-src 'none'; frame-ancestors 'none'"
+    ],
+    [
+      "cf-ray",
+      "161ca6dc829f14d4-DEV"
+    ],
+    [
+      "transfer-encoding",
+      "chunked"
+    ]
+  ],
+  "duration_ms": 6294,
+  "ts_request": "2026-07-27T21:33:10.103242Z",
+  "ts_response_headers": "2026-07-27T21:33:13.2225Z",
+  "ts_complete": "2026-07-27T21:33:16.393498Z",
+  "finalized_by": "stream_complete"
+}
