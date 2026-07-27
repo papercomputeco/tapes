@@ -49,6 +49,16 @@ type DerivedSet struct {
 	// scalar call identity — never payload copies.
 	SpanSources []*SpanSource
 
+	// CodexThreads is the per-(session, thread) Codex spawn metadata
+	// captured from child raw turns' session envelopes — the agent_path
+	// fallback join key and the console-facing nickname (codex.go).
+	CodexThreads map[SessionKey]map[string]CodexThreadMeta
+
+	// SpawnLabels carries console-facing subagent labels per spawn
+	// tool_use (keyed by toolKey), resolved by reconcileCodexSpawns and
+	// folded into the spawning tool span's tool_input by EmitSpans.
+	SpawnLabels map[string]SpawnLabel
+
 	Report RederiveReport
 }
 
@@ -248,6 +258,22 @@ func (dv *Deriver) AddTurn(rec *storage.RawTurnRecord) {
 	}
 
 	turn := &attachTurn{kind: kind, index: len(dv.turns), threadID: threadIDFromMeta(rec.Meta)}
+	if rec.HarnessID == harnessCodex && turn.threadID != "" {
+		if meta := codexThreadMetaFromEnvelope(rec.SessionEnvelope); meta != nil {
+			if dv.set.CodexThreads == nil {
+				dv.set.CodexThreads = map[SessionKey]map[string]CodexThreadMeta{}
+			}
+			byThread := dv.set.CodexThreads[key]
+			if byThread == nil {
+				byThread = map[string]CodexThreadMeta{}
+				dv.set.CodexThreads[key] = byThread
+			}
+			// first capture wins, matching node dedup semantics
+			if _, ok := byThread[turn.threadID]; !ok {
+				byThread[turn.threadID] = *meta
+			}
+		}
+	}
 	source := &SpanSource{
 		RawTurnID:  rec.ID,
 		RequestID:  rec.RequestID,

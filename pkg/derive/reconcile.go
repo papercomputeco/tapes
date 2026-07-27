@@ -22,6 +22,12 @@ type ReconcileStats struct {
 	// Go-native version of the prototype's join-rate oracle.
 	ConversationJoined int `json:"conversation_joined"`
 	ConversationTotal  int `json:"conversation_total"`
+
+	// Codex thread-spawn anchoring (see codex.go). Unanchored threads
+	// degrade to trace-root placement — a non-zero count is the visible
+	// signal that spawn-anchor rows are missing or ambiguous.
+	CodexThreadsAnchored   int `json:"codex_threads_anchored,omitempty"`
+	CodexThreadsUnanchored int `json:"codex_threads_unanchored,omitempty"`
 }
 
 // ReconcileTranscripts assigns each wire-derived conversation chain to
@@ -31,8 +37,19 @@ type ReconcileStats struct {
 // re-runnable like everything else in the deriver.
 func ReconcileTranscripts(set *DerivedSet, files []*TranscriptFile) *ReconcileStats {
 	stats := &ReconcileStats{TranscriptFiles: len(files)}
+	reconcileTranscriptChains(set, files, stats)
+	// Codex thread spawns anchor per CALL, not per chain root, and the
+	// agent_path fallback needs no transcript rows at all — so this
+	// stage runs unconditionally (see codex.go).
+	reconcileCodexSpawns(set, files, stats)
+	return stats
+}
+
+// reconcileTranscriptChains is the chain-root content/identity join —
+// the original ReconcileTranscripts body, unchanged.
+func reconcileTranscriptChains(set *DerivedSet, files []*TranscriptFile, stats *ReconcileStats) {
 	if len(files) == 0 || len(set.Nodes) == 0 {
-		return stats
+		return
 	}
 
 	// Group transcript files per session.
@@ -151,5 +168,4 @@ func ReconcileTranscripts(set *DerivedSet, files []*TranscriptFile) *ReconcileSt
 		}
 	}
 	stats.SubagentForks = len(subagents)
-	return stats
 }

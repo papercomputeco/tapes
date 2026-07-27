@@ -2,6 +2,7 @@ package derive
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"time"
@@ -225,6 +226,10 @@ type spanEmitter struct {
 	agentSpan map[string]*Span // session|thread -> subagent agent span
 	agentTurn map[string]*SpanTurn
 	seam      map[SessionKey]*seamSource
+
+	// spawnLabels is the reconciler's per-spawn console labeling
+	// (DerivedSet.SpawnLabels), folded into spawn tool spans' inputs.
+	spawnLabels map[string]SpawnLabel
 }
 
 type seamSource struct {
@@ -250,13 +255,14 @@ func EmitSpans(set *DerivedSet) *SpanSet {
 			CallKinds: map[string]int{},
 			LinkKinds: map[string]int{},
 		}},
-		curTrace:  map[SessionKey]*SpanTurn{},
-		timeline:  map[SessionKey][]*SpanTurn{},
-		toolSpans: map[string]*Span{},
-		toolTurn:  map[string]*SpanTurn{},
-		agentSpan: map[string]*Span{},
-		agentTurn: map[string]*SpanTurn{},
-		seam:      map[SessionKey]*seamSource{},
+		curTrace:    map[SessionKey]*SpanTurn{},
+		timeline:    map[SessionKey][]*SpanTurn{},
+		toolSpans:   map[string]*Span{},
+		toolTurn:    map[string]*SpanTurn{},
+		agentSpan:   map[string]*Span{},
+		agentTurn:   map[string]*SpanTurn{},
+		seam:        map[SessionKey]*seamSource{},
+		spawnLabels: set.SpawnLabels,
 	}
 	var threadCalls, shadowCalls []*SpanSource
 	for _, src := range set.SpanSources {
@@ -285,14 +291,51 @@ func EmitSpans(set *DerivedSet) *SpanSet {
 			shadowCalls = append(shadowCalls, src)
 		}
 	}
-	for _, src := range threadCalls {
-		em.threadCall(src)
-	}
+	em.threadCalls(threadCalls)
 	for _, src := range shadowCalls {
 		em.shadowCall(src)
 	}
 	em.finish()
 	return em.set
+}
+
+// threadCalls runs the thread phase to a fixed point. Capture order is
+// not anchor order for nested threads: a depth-2 grandchild's spawning
+// tool span is emitted by its LAUNCHER's thread calls, so a grandchild
+// turn captured (or fed) ahead of the launcher's spawn call would find
+// no anchor and fall to the trace root. Each pass processes, in capture
+// order, every call whose thread already has its agent span or whose
+// anchor tool span now exists; calls it unblocks are picked up by the
+// next pass. Threads whose anchor never materializes (missing or
+// ambiguous spawn evidence) run last, still in capture order, and take
+// the visible trace-root degrade in threadCall.
+func (em *spanEmitter) threadCalls(pending []*SpanSource) {
+	for len(pending) > 0 {
+		progressed := false
+		blocked := pending[:0:0]
+		for _, src := range pending {
+			key := src.Session.HarnessID + "|" + src.Session.HarnessSessionID + "|" + src.ThreadID
+			ready := em.agentSpan[key] != nil
+			if !ready {
+				if anchor := threadAnchor(src); anchor != "" {
+					ready = em.toolSpans[toolKey(src.Session, anchor)] != nil
+				}
+			}
+			if ready {
+				em.threadCall(src)
+				progressed = true
+			} else {
+				blocked = append(blocked, src)
+			}
+		}
+		if !progressed {
+			break
+		}
+		pending = blocked
+	}
+	for _, src := range pending {
+		em.threadCall(src)
+	}
 }
 
 // mainCall handles one conversation-spine API call: open a trace when
@@ -478,7 +521,7 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 			Status:       "ok",
 			StartedAt:    src.CapturedAt,
 			ThreadID:     src.ThreadID,
-			Input:        []llm.ContentBlock{b},
+			Input:        []llm.ContentBlock{em.spawnToolInput(src.Session, b)},
 		}
 		em.addSpan(turn, ts)
 		em.toolSpans[tk] = ts
@@ -489,6 +532,40 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 			Kind: LinkEmits,
 		})
 	}
+}
+
+// spawnToolInput normalizes a spawn_agent tool_use block for its tool
+// span's input so the console's subagent panel can label the run: the
+// panel reads args.subagent_type and args.description from the spawning
+// tool call's input (the same keys Claude's Task tool carries natively),
+// but Codex spawn_agent arguments are {task_name, fork_turns, message:
+// <encrypted blob>}. The reconciler's per-spawn labels (nickname /
+// agent_path from spawn-anchor rows and wire envelopes) fill the keys;
+// task_name is the degrade when no richer label resolved. Same precedent
+// as displayToolName below: normalize the span-facing rendering at derive
+// time, keep the console harness-agnostic. The block is copied — the
+// original (a merkle node's content) is never mutated.
+func (em *spanEmitter) spawnToolInput(session SessionKey, b llm.ContentBlock) llm.ContentBlock {
+	if b.ToolName != toolSpawnAgent {
+		return b
+	}
+	label := em.spawnLabels[toolKey(session, b.ToolUseID)]
+	taskName, _ := b.ToolInput["task_name"].(string)
+	if label.SubagentType == "" {
+		label.SubagentType = taskName
+	}
+	if label.Description == "" {
+		label.Description = taskName
+	}
+	if label == (SpawnLabel{}) {
+		return b
+	}
+	input := make(map[string]any, len(b.ToolInput)+2)
+	maps.Copy(input, b.ToolInput)
+	input["subagent_type"] = label.SubagentType
+	input["description"] = label.Description
+	b.ToolInput = input
+	return b
 }
 
 // displayToolName returns the user-facing tool name for a span. Some
@@ -1010,9 +1087,15 @@ func freshInput(src *SpanSource) []llm.ContentBlock {
 	return out
 }
 
-// threadAnchor resolves the Task tool_use a thread forked from: the
-// reconciler stamps it on the thread's root node.
+// threadAnchor resolves the spawning tool_use a thread forked from. The
+// per-call anchor wins when a reconcile pass stamped one (Codex thread
+// spawns — their chains often share deduped roots with the main spine
+// or with sibling threads, so a node stamp would miss or collide);
+// otherwise the Claude transcript reconciler's chain-root stamp applies.
 func threadAnchor(src *SpanSource) string {
+	if src.Anchor != "" {
+		return src.Anchor
+	}
 	for _, dn := range src.Chain {
 		if dn.Node.ParentHash == nil && dn.Node.ParentToolUseID != "" {
 			return dn.Node.ParentToolUseID
