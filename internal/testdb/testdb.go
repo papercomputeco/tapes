@@ -32,8 +32,57 @@ const EnvVar = "TEST_POSTGRES_DSN"
 // timeout elapse once per package.
 const connectTimeout = 5 * time.Second
 
+// suiteLockID is a process-independent advisory lock key ("tapes_db" in hex).
+// Every package-level suite that mutates the shared test database holds this
+// lock for its full run, while non-database packages remain free to run in
+// parallel.
+const suiteLockID int64 = 0x74617065735f6462
+
 // ErrNotConfigured is returned when the DSN is absent from the environment.
 var ErrNotConfigured = errors.New(EnvVar + " is not set")
+
+// SuiteLock serializes package-level suites that mutate the shared test
+// database. Go runs test packages concurrently, but several storage specs use
+// whole-table TRUNCATE statements that cannot be isolated by per-spec IDs.
+type SuiteLock struct {
+	conn *pgx.Conn
+}
+
+// AcquireSuiteLock waits for exclusive use of the shared test database.
+// PostgreSQL releases the advisory lock automatically if the test process
+// exits before Close runs.
+func AcquireSuiteLock(ctx context.Context) (*SuiteLock, error) {
+	dsn, err := configuredDSN()
+	if err != nil {
+		return nil, err
+	}
+
+	connectCtx, cancel := context.WithTimeout(ctx, connectTimeout)
+	conn, err := pgx.Connect(connectCtx, dsn)
+	cancel()
+	if err != nil {
+		return nil, fmt.Errorf("cannot reach the test postgres at %s=%q for suite lock: %w.\n%s", EnvVar, dsn, err, hint())
+	}
+
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1::bigint)", suiteLockID); err != nil {
+		_ = conn.Close(ctx)
+		return nil, fmt.Errorf("acquire test database suite lock: %w", err)
+	}
+
+	return &SuiteLock{conn: conn}, nil
+}
+
+// Close releases the suite lock and closes its dedicated connection.
+func (l *SuiteLock) Close(ctx context.Context) error {
+	if l == nil || l.conn == nil {
+		return nil
+	}
+
+	_, unlockErr := l.conn.Exec(ctx, "SELECT pg_advisory_unlock($1::bigint)", suiteLockID)
+	closeErr := l.conn.Close(ctx)
+	l.conn = nil
+	return errors.Join(unlockErr, closeErr)
+}
 
 // DSN returns a verified connection string for the test database.
 //
@@ -46,9 +95,9 @@ var ErrNotConfigured = errors.New(EnvVar + " is not set")
 // go green having exercised none of the storage layer the moment its service
 // binding broke.
 func DSN() (string, error) {
-	dsn := os.Getenv(EnvVar)
-	if dsn == "" {
-		return "", fmt.Errorf("%w.\n%s", ErrNotConfigured, hint())
+	dsn, err := configuredDSN()
+	if err != nil {
+		return "", err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
@@ -64,6 +113,14 @@ func DSN() (string, error) {
 		return "", fmt.Errorf("cannot ping the test postgres at %s=%q: %w.\n%s", EnvVar, dsn, err, hint())
 	}
 
+	return dsn, nil
+}
+
+func configuredDSN() (string, error) {
+	dsn := os.Getenv(EnvVar)
+	if dsn == "" {
+		return "", fmt.Errorf("%w.\n%s", ErrNotConfigured, hint())
+	}
 	return dsn, nil
 }
 

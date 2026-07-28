@@ -65,14 +65,21 @@ func (t *Tapes) CheckGenerate(ctx context.Context) (string, error) {
 // Postgres service that can be used by the tests via the "TEST_POSTGRES_DSN" env var.
 //
 // +check
-func (t *Tapes) Test(ctx context.Context) (string, error) {
+func (t *Tapes) Test(
+	ctx context.Context,
+
+	// Inert identifier that callers can vary to bypass Dagger's exec cache.
+	// +optional
+	runID string,
+) (string, error) {
 	postgresSvc := t.PostgresService()
 	dsn := newPostgresDSN()
 
 	ctr := t.goContainer().
 		WithServiceBinding("postgres", postgresSvc).
 		WithEnvVariable("TEST_POSTGRES_DSN", dsn).
-		WithExec([]string{"go", "test", "-v", "./..."})
+		WithEnvVariable("TEST_RUN_ID", runID).
+		WithExec([]string{"go", "test", "-count=1", "-v", "./..."})
 
 	return ctr.Stdout(ctx)
 }

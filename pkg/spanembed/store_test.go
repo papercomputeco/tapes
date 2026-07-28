@@ -19,10 +19,9 @@ import (
 func testPostgresDSN() (string, error) { return testdb.DSN() }
 
 // Store integration specs run against the Dagger Postgres service.
-// They use their own embedding table and a unique org per run, insert
-// span rows with NULL session_id (so concurrent suites' TRUNCATE
-// sessions CASCADE cannot reap them), and clean up everything they
-// created.
+// They use their own embedding table and a unique org per run, insert span
+// rows with NULL session_id, and clean up everything they created. The suite
+// lock serializes them with packages whose cleanup truncates shared span tables.
 var _ = Describe("Store", func() {
 	const tableName = "span_embeddings_store_test"
 
