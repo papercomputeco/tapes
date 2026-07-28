@@ -156,6 +156,10 @@ func (p *Proxy) handleProxy(c *fiber.Ctx) error {
 
 	// Get the request path and method
 	agentName, providerName, path := p.resolveAgent(c.Path(), c.Get(header.AgentNameHeader))
+	// Resolved here, at the one place that still holds the inbound request, and
+	// carried down the handler chain alongside agentName: the enqueue sites are
+	// reached from goroutines that outlive the fiber context.
+	threadID := header.ThreadID(c)
 	prov, upstreamURL := p.resolveProvider(agentName, providerName, path)
 	method := c.Method()
 
@@ -203,10 +207,10 @@ func (p *Proxy) handleProxy(c *fiber.Ctx) error {
 	}
 
 	if streaming && isChatRequest {
-		return p.handleStreamingProxy(c, path, upstreamURL, prov, agentName, body, parsedReq, startTime)
+		return p.handleStreamingProxy(c, path, upstreamURL, prov, agentName, threadID, body, parsedReq, startTime)
 	}
 
-	return p.handleNonStreamingProxy(c, path, method, upstreamURL, prov, agentName, body, parsedReq, startTime)
+	return p.handleNonStreamingProxy(c, path, method, upstreamURL, prov, agentName, threadID, body, parsedReq, startTime)
 }
 
 // handleNonStreamingProxy handles non-streaming requests.
@@ -224,7 +228,7 @@ func localCaptureSession() *sessions.IngestEnvelope {
 	return &sessions.IngestEnvelope{}
 }
 
-func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL string, prov provider.Provider, agentName string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
+func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL string, prov provider.Provider, agentName, threadID string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
 	// Build upstream URL
 	upstreamURL += path
 
@@ -287,6 +291,7 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL 
 			p.workerPool.Enqueue(worker.Job{
 				Provider:   prov.Name(),
 				AgentName:  agentName,
+				ThreadID:   threadID,
 				Req:        parsedReq,
 				Resp:       parsedResp,
 				RawRequest: body,
@@ -300,7 +305,7 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL 
 }
 
 // handleStreamingProxy handles streaming requests.
-func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path, upstreamURL string, prov provider.Provider, agentName string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
+func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path, upstreamURL string, prov provider.Provider, agentName, threadID string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
 	// Build upstream URL
 	upstreamURL += path
 
@@ -349,7 +354,7 @@ func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path, upstreamURL string, pro
 	// every chunk. This gives direct backpressure and true per-chunk streaming
 	// for LLM based.
 	pr, pw := io.Pipe()
-	go p.handleHTTPRespToPipeWriter(httpResp, pw, parsedReq, prov, agentName, body, startTime)
+	go p.handleHTTPRespToPipeWriter(httpResp, pw, parsedReq, prov, agentName, threadID, body, startTime)
 
 	// Set the pipe reader as the body stream with unknown size (-1),
 	// which triggers chunked transfer encoding in fasthttp.
@@ -358,16 +363,16 @@ func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path, upstreamURL string, pro
 	return nil
 }
 
-func (p *Proxy) handleHTTPRespToPipeWriter(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, rawRequest []byte, startTime time.Time) {
+func (p *Proxy) handleHTTPRespToPipeWriter(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName, threadID string, rawRequest []byte, startTime time.Time) {
 	// Close the upstream response body once streaming is complete.
 	defer httpResp.Body.Close()
 	defer pw.Close()
 
 	switch ct := httpResp.Header.Get("Content-Type"); {
 	case strings.HasPrefix(ct, "text/event-stream"):
-		p.handleSSEStream(httpResp, pw, parsedReq, prov, agentName, rawRequest, startTime)
+		p.handleSSEStream(httpResp, pw, parsedReq, prov, agentName, threadID, rawRequest, startTime)
 	default:
-		p.handleNDJSONStream(httpResp, pw, parsedReq, prov, agentName, rawRequest, startTime)
+		p.handleNDJSONStream(httpResp, pw, parsedReq, prov, agentName, threadID, rawRequest, startTime)
 	}
 }
 
@@ -378,12 +383,12 @@ func (p *Proxy) handleHTTPRespToPipeWriter(httpResp *http.Response, pw *io.PipeW
 // Providers with a reducer in p.reducers go through capture for a canonical
 // reduction; everything else falls back to the in-proxy extraction helpers
 // until it migrates into the shared library.
-func (p *Proxy) handleSSEStream(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, rawRequest []byte, startTime time.Time) {
+func (p *Proxy) handleSSEStream(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName, threadID string, rawRequest []byte, startTime time.Time) {
 	if r, ok := p.reducers[prov.Name()]; ok {
-		p.handleSSEStreamViaCapture(r, httpResp, pw, parsedReq, prov, agentName, rawRequest, startTime)
+		p.handleSSEStreamViaCapture(r, httpResp, pw, parsedReq, prov, agentName, threadID, rawRequest, startTime)
 		return
 	}
-	p.handleSSEStreamLegacy(httpResp, pw, parsedReq, prov, agentName, rawRequest, startTime)
+	p.handleSSEStreamLegacy(httpResp, pw, parsedReq, prov, agentName, threadID, rawRequest, startTime)
 }
 
 // handleSSEStreamViaCapture forwards chunks to the client while teeing the
@@ -393,7 +398,7 @@ func (p *Proxy) handleSSEStream(httpResp *http.Response, pw *io.PipeWriter, pars
 // the reducer for event parsing. We stream directly into Reduce rather
 // than materializing the full body into an intermediate []byte — on a
 // large response that would double the resident memory for no gain.
-func (p *Proxy) handleSSEStreamViaCapture(r capture.Reducer, httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, rawRequest []byte, startTime time.Time) {
+func (p *Proxy) handleSSEStreamViaCapture(r capture.Reducer, httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName, threadID string, rawRequest []byte, startTime time.Time) {
 	reader := io.TeeReader(httpResp.Body, pw)
 
 	resp, err := r.Reduce(
@@ -433,6 +438,7 @@ func (p *Proxy) handleSSEStreamViaCapture(r capture.Reducer, httpResp *http.Resp
 	p.workerPool.Enqueue(worker.Job{
 		Provider:   prov.Name(),
 		AgentName:  agentName,
+		ThreadID:   threadID,
 		Req:        parsedReq,
 		Resp:       resp,
 		RawRequest: rawRequest,
@@ -442,7 +448,7 @@ func (p *Proxy) handleSSEStreamViaCapture(r capture.Reducer, httpResp *http.Resp
 
 // handleSSEStreamLegacy preserves the pre-capture path for providers that
 // have not yet migrated into pkg/capture.
-func (p *Proxy) handleSSEStreamLegacy(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, rawRequest []byte, startTime time.Time) {
+func (p *Proxy) handleSSEStreamLegacy(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName, threadID string, rawRequest []byte, startTime time.Time) {
 	var allChunks [][]byte
 	var fullContent strings.Builder
 	var streamUsage llm.Usage
@@ -476,13 +482,13 @@ func (p *Proxy) handleSSEStreamLegacy(httpResp *http.Response, pw *io.PipeWriter
 		p.extractUsageFromSSE([]byte(ev.Data), prov.Name(), &streamUsage, &meta)
 	}
 
-	p.enqueueStreamedResponse(allChunks, fullContent.String(), &streamUsage, &meta, parsedReq, prov, agentName, rawRequest, startTime)
+	p.enqueueStreamedResponse(allChunks, fullContent.String(), &streamUsage, &meta, parsedReq, prov, agentName, threadID, rawRequest, startTime)
 }
 
 // handleNDJSONStream reads a newline-delimited JSON upstream response (used by
 // Ollama), forwarding raw bytes to the pipe writer while accumulating chunks
 // for telemetry.
-func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, rawRequest []byte, startTime time.Time) {
+func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName, threadID string, rawRequest []byte, startTime time.Time) {
 	var allChunks [][]byte
 	var fullContent strings.Builder
 	var streamUsage llm.Usage
@@ -526,7 +532,7 @@ func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, p
 		p.logger.Error("error reading NDJSON stream", "error", err)
 	}
 
-	p.enqueueStreamedResponse(allChunks, fullContent.String(), &streamUsage, &meta, parsedReq, prov, agentName, rawRequest, startTime)
+	p.enqueueStreamedResponse(allChunks, fullContent.String(), &streamUsage, &meta, parsedReq, prov, agentName, threadID, rawRequest, startTime)
 }
 
 // extractContentFromJSON performs best-effort content extraction from a JSON
@@ -607,7 +613,7 @@ func jsonInt(m map[string]any, key string) int {
 
 // enqueueStreamedResponse handles post-stream telemetry: logging and
 // enqueuing the reconstructed response for async storage.
-func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, streamUsage *llm.Usage, meta *streamMeta, parsedReq *llm.ChatRequest, prov provider.Provider, agentName string, rawRequest []byte, startTime time.Time) {
+func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, streamUsage *llm.Usage, meta *streamMeta, parsedReq *llm.ChatRequest, prov provider.Provider, agentName, threadID string, rawRequest []byte, startTime time.Time) {
 	if parsedReq != nil && len(allChunks) > 0 {
 		p.logger.Debug("streaming complete",
 			"content_preview", fullContent,
@@ -625,6 +631,7 @@ func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, 
 			p.workerPool.Enqueue(worker.Job{
 				Provider:   prov.Name(),
 				AgentName:  agentName,
+				ThreadID:   threadID,
 				Req:        parsedReq,
 				Resp:       finalResp,
 				RawRequest: rawRequest,

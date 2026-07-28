@@ -3,7 +3,7 @@ package devcmder
 // check-openapi regression: a real derived composite conforms to the
 // published SessionTracesResponse schema, and a typed field corrupted to
 // the wrong JSON type is caught — so the contract checker can't silently
-// pass on the json.RawMessage-as-byte-array drift RFD 00007 Goal 2 warns
+// pass on the json.RawMessage-as-byte-array drift the contract gate warns
 // about.
 
 import (

@@ -4,7 +4,9 @@ package api
 //	@version		1.0
 //	@description	HTTP API for inspecting, querying, and searching stored Tapes sessions.
 //	@description
-//	@description	The REST surface exposes health checks, session listing and retrieval, derived session summaries, aggregate stats, semantic search, and a streamable MCP endpoint.
+//	@description	The REST surface exposes health checks, session listing and retrieval, derived session summaries, aggregate stats, semantic search, skill authoring and publishing, operator maintenance endpoints, and a streamable MCP endpoint.
+//	@description
+//	@description	Not covered here: the ingest write surface, which is a separate server with its own contract (see ingest/openapi.yaml).
 //	@BasePath		/
 //	@schemes		http https
 

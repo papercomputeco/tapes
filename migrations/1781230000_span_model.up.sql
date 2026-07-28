@@ -1,4 +1,4 @@
--- Span model (RFD 00007): traces, spans, span links as a derived
+-- Span model: traces, spans, span links as a derived
 -- projection of the immutable raw layer. The deriver emits these rows
 -- (pkg/derive EmitSpans) with deterministic ids minted from wire
 -- identity, so re-derivation is idempotent and prune-stable.

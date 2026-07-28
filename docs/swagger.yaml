@@ -99,10 +99,13 @@ definitions:
       live:
         description: |-
           Live is a runtime presence signal, not a projection fact: true when
-          the session was seen within the liveness window AND the deriver has
-          not marked it terminal. Computed at response time from last_seen_at,
-          so the console renders it directly instead of inferring "running"
-          from recency itself (keeps the console dumb; RFD 00007 §C).
+          the session has no recorded end and was seen within the liveness
+          window. Keyed on ended_at + last_seen_at recency (both ingest-fresh),
+          never on the derived status: an interactive session folds to a
+          terminal status (an end_turn assistant reply reads as "completed")
+          after every turn while still open, so status cannot gate liveness.
+          Computed at response time so the console renders it directly instead
+          of inferring "running" itself.
         type: boolean
       name:
         description: |-
@@ -370,7 +373,7 @@ definitions:
           every trace is "wire": transcripts only reconcile fork/parent edges
           during derivation, they never form a trace on their own. "transcript"
           becomes real when a session is reconstructed purely from a transcript
-          file with no proxy capture (an OSS backfill path). See RFD 00007 §C.
+          file with no proxy capture (an OSS backfill path).
         type: string
       span_count:
         type: integer
@@ -439,14 +442,157 @@ definitions:
       updates:
         type: integer
     type: object
+  api.createSkillRequest:
+    properties:
+      content:
+        type: string
+      description:
+        type: string
+      name:
+        type: string
+      tags:
+        items:
+          type: string
+        type: array
+      type:
+        type: string
+    type: object
+  api.deriveRunResponse:
+    properties:
+      orgs:
+        additionalProperties:
+          $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_derive.RederiveReport'
+        type: object
+    type: object
+  api.generateSkillRequest:
+    properties:
+      hint:
+        properties:
+          description:
+            type: string
+          name:
+            type: string
+          tags:
+            items:
+              type: string
+            type: array
+          type:
+            type: string
+        type: object
+      sessionIds:
+        items:
+          type: string
+        type: array
+    type: object
+  api.publishSkillRequest:
+    properties:
+      changelog:
+        type: string
+      content:
+        type: string
+    type: object
   api.seedDemoRequest:
     properties:
       overwrite:
         type: boolean
     type: object
+  api.sessionSkillsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/api.skillResponse'
+        type: array
+    type: object
   api.sessionUpdateRequest:
     properties:
       display_name:
+        type: string
+    type: object
+  api.skillCountsResp:
+    properties:
+      all:
+        type: integer
+      mine:
+        type: integer
+      team:
+        type: integer
+    type: object
+  api.skillResponse:
+    properties:
+      authorId:
+        type: string
+      content:
+        type: string
+      createdAt:
+        type: string
+      description:
+        type: string
+      downloadCount:
+        type: integer
+      id:
+        type: string
+      isAiGenerated:
+        type: boolean
+      name:
+        type: string
+      originatingSessionIds:
+        items:
+          type: string
+        type: array
+      parentId:
+        type: string
+      slug:
+        type: string
+      tags:
+        items:
+          type: string
+        type: array
+      type:
+        type: string
+      updatedAt:
+        type: string
+      version:
+        type: string
+      visibility:
+        type: string
+    type: object
+  api.skillVersionResponse:
+    properties:
+      authorId:
+        type: string
+      changelog:
+        type: string
+      content:
+        type: string
+      id:
+        type: string
+      publishedAt:
+        type: string
+      semver:
+        type: string
+      skillId:
+        type: string
+      versionNumber:
+        type: integer
+    type: object
+  api.skillVersionsResponse:
+    properties:
+      totalCount:
+        type: integer
+      versions:
+        items:
+          $ref: '#/definitions/api.skillVersionResponse'
+        type: array
+    type: object
+  api.skillsListResponse:
+    properties:
+      counts:
+        $ref: '#/definitions/api.skillCountsResp'
+      items:
+        items:
+          $ref: '#/definitions/api.skillResponse'
+        type: array
+      next_cursor:
         type: string
     type: object
   api.swaggerMCPError:
@@ -487,6 +633,96 @@ definitions:
         additionalProperties: {}
         type: object
     type: object
+  api.updateSkillRequest:
+    properties:
+      content:
+        type: string
+      description:
+        type: string
+      name:
+        type: string
+      tags:
+        items:
+          type: string
+        type: array
+      type:
+        type: string
+      visibility:
+        type: string
+    type: object
+  github_com_papercomputeco_tapes_pkg_derive.ReconcileStats:
+    properties:
+      conversation_joined:
+        description: |-
+          ConversationJoined / ConversationTotal measure how many
+          conversation-spine nodes' content appears in a transcript — the
+          Go-native version of the prototype's join-rate oracle.
+        type: integer
+      conversation_total:
+        type: integer
+      forked_chains:
+        type: integer
+      main_chains_joined:
+        type: integer
+      subagent_forks:
+        type: integer
+      transcript_files:
+        type: integer
+    type: object
+  github_com_papercomputeco_tapes_pkg_derive.RederiveReport:
+    properties:
+      attached_verdicts:
+        type: integer
+      call_kinds:
+        additionalProperties:
+          type: integer
+        type: object
+      judged_actions:
+        description: |-
+          Verdict attach: judged actions grouped across stages, and how
+          many attached one-to-one to a captured tool_use.
+        type: integer
+      node_kinds:
+        additionalProperties:
+          type: integer
+        type: object
+      nodes:
+        type: integer
+      parse_failures:
+        items:
+          type: string
+        type: array
+      parsed_turns:
+        type: integer
+      plans_attached:
+        description: |-
+          PlansAttached counts plan-name-gen calls linked to the
+          ExitPlanMode tool_use that accepted the plan.
+        type: integer
+      raw_only_turns:
+        type: integer
+      raw_turns:
+        type: integer
+      reconcile:
+        allOf:
+        - $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_derive.ReconcileStats'
+        description: |-
+          Reconcile reports the transcript↔wire fusion when transcript
+          rows are present in the raw layer.
+      unattached_actions:
+        description: |-
+          UnattachedActions samples judged actions that found no matching
+          tool_use (capped) — expected for non-tool events like subagent
+          handbacks; anything else is matcher signal worth reading.
+        items:
+          type: string
+        type: array
+      web_summary_attached:
+        description: |-
+          WebSummaryAttached counts web-summary calls linked back to their
+          WebFetch/WebSearch tool_use.
+        type: integer
+    type: object
   github_com_papercomputeco_tapes_pkg_llm.ErrorResponse:
     properties:
       error:
@@ -514,7 +750,9 @@ info:
   description: |-
     HTTP API for inspecting, querying, and searching stored Tapes sessions.
 
-    The REST surface exposes health checks, session listing and retrieval, derived session summaries, aggregate stats, semantic search, and a streamable MCP endpoint.
+    The REST surface exposes health checks, session listing and retrieval, derived session summaries, aggregate stats, semantic search, skill authoring and publishing, operator maintenance endpoints, and a streamable MCP endpoint.
+
+    Not covered here: the ingest write surface, which is a separate server with its own contract (see ingest/openapi.yaml).
   title: Tapes API
   version: "1.0"
 paths:
@@ -533,6 +771,31 @@ paths:
       summary: Health check
       tags:
       - health
+  /v1/admin/derive/run:
+    post:
+      description: |-
+        Rebuilds traces, spans, links, and session rollups for every org from the immutable raw-turn store. Idempotent: re-running reproduces the same projection and prunes rows the current derive no longer emits.
+
+        This is how a projection or classifier change reaches already-captured data — it re-derives rather than re-captures. Cost scales with the raw layer, so it is an operator lever, not a request-path call.
+      operationId: runDerive
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Per-org derive reports
+          schema:
+            $ref: '#/definitions/api.deriveRunResponse'
+        "500":
+          description: Derive failed
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Driver does not host the raw-turn layer
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Re-derive the span projection (operator)
+      tags:
+      - admin
   /v1/admin/seed/demo:
     post:
       consumes:
@@ -958,6 +1221,35 @@ paths:
       summary: List a session's raw capture log (operator)
       tags:
       - sessions
+  /v1/sessions/{id}/skills:
+    get:
+      description: Every skill generated from the given session. Unpaginated — the
+        count is bounded by what was generated from that one session.
+      operationId: listSessionSkills
+      parameters:
+      - description: Session id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.sessionSkillsResponse'
+        "500":
+          description: Listing failed
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Backend does not support skills
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: List a session's skills
+      tags:
+      - skills
   /v1/sessions/{id}/traces:
     get:
       description: Returns the session's user-visible turns as traces with nested
@@ -1054,6 +1346,397 @@ paths:
       summary: Export sessions in a time window as JSONL
       tags:
       - sessions
+  /v1/skills:
+    get:
+      description: |-
+        One keyset page of the org's skills, newest-edited first, plus per-tab counts for the active search. Pagination mirrors /v1/sessions: pass the returned next_cursor to continue; its absence means the last page.
+
+        The counts are computed over the whole matching set rather than the loaded page, so a filtered tab shows a true total.
+      operationId: listSkills
+      parameters:
+      - description: Page size (default 24, max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Opaque keyset cursor from a previous next_cursor. Reset it when
+          changing sort.
+        in: query
+        name: cursor
+        type: string
+      - description: Search over name, description, and tags
+        in: query
+        name: q
+        type: string
+      - description: Which slice to return
+        enum:
+        - all
+        - mine
+        - team
+        in: query
+        name: scope
+        type: string
+      - description: Ordering; defaults to most recently updated
+        enum:
+        - downloads
+        in: query
+        name: sort
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.skillsListResponse'
+        "400":
+          description: Malformed cursor
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Listing failed
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Backend does not support skills
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: List skills
+      tags:
+      - skills
+    post:
+      consumes:
+      - application/json
+      description: Creates a skill authored by hand, as opposed to the generator.
+        The caller supplies the content; nothing is inferred.
+      operationId: createSkill
+      parameters:
+      - description: Skill to create
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.createSkillRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/api.skillResponse'
+        "400":
+          description: Invalid body or unknown type
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Create failed
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Backend does not support skills
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Create a skill
+      tags:
+      - skills
+  /v1/skills/{id}:
+    delete:
+      description: Deletes the skill and its version history. Only the creator may
+        delete; another member of the same org gets 403 rather than 404, so the skill's
+        existence is not hidden from someone who can already list it.
+      operationId: deleteSkill
+      parameters:
+      - description: Skill id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Deleted
+        "403":
+          description: Only the creator can delete this skill
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "404":
+          description: Skill not found
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Delete failed
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Backend does not support skills
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Delete a skill
+      tags:
+      - skills
+    get:
+      description: Returns one skill by its opaque id. The id is the route key; slug
+        is a cosmetic display label and is not addressable.
+      operationId: getSkill
+      parameters:
+      - description: Skill id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.skillResponse'
+        "404":
+          description: Skill not found
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Lookup failed
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Backend does not support skills
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Get a skill
+      tags:
+      - skills
+    put:
+      consumes:
+      - application/json
+      description: Partial update of the skill head. Every field is optional; omitted
+        fields are left as they are. Editing the head does not publish — use the versions
+        endpoint to snapshot.
+      operationId: updateSkill
+      parameters:
+      - description: Skill id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to change
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.updateSkillRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.skillResponse'
+        "400":
+          description: Invalid body or unknown type
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "404":
+          description: Skill not found
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Save failed
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Backend does not support skills
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Update a skill
+      tags:
+      - skills
+  /v1/skills/{id}/duplicate:
+    post:
+      description: Forks a skill into a new one owned by the caller, with parentId
+        set to the source. The copy starts its own version history; the source is
+        untouched.
+      operationId: duplicateSkill
+      parameters:
+      - description: Skill id to duplicate
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/api.skillResponse'
+        "404":
+          description: Skill not found
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Duplicate failed
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Backend does not support skills
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Duplicate a skill
+      tags:
+      - skills
+  /v1/skills/{id}/skill.md:
+    get:
+      description: |-
+        Renders the skill as an on-disk SKILL.md, served as an attachment. The frontmatter name is the kebab slug, which is what a harness matches to the skill's directory — not the human display name.
+
+        Serving this counts a download, best-effort: a failed counter write never fails the download.
+      operationId: getSkillMarkdown
+      parameters:
+      - description: Skill id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - text/markdown
+      responses:
+        "200":
+          description: SKILL.md document
+          schema:
+            type: string
+        "404":
+          description: Skill not found
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Lookup failed
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Backend does not support skills
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Download a skill as SKILL.md
+      tags:
+      - skills
+  /v1/skills/{id}/versions:
+    get:
+      description: Full published history for one skill, newest first. Returned whole
+        rather than paged, so totalCount is always the length of versions.
+      operationId: listSkillVersions
+      parameters:
+      - description: Skill id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.skillVersionsResponse'
+        "500":
+          description: Listing failed
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Backend does not support skills
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: List a skill's versions
+      tags:
+      - skills
+    post:
+      consumes:
+      - application/json
+      description: 'Snapshots the skill''s current content as an immutable version
+        and advances the skill''s semver. Versions are history: the head content stays
+        on the skill row, so reading a skill never needs its versions.'
+      operationId: publishSkill
+      parameters:
+      - description: Skill id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Version metadata
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.publishSkillRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/api.skillVersionResponse'
+        "404":
+          description: Skill not found
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Publish failed, or the version landed but the head could not
+            be advanced
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Backend does not support skills
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Publish a skill version
+      tags:
+      - skills
+  /v1/skills/generate:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Runs the LLM skill generator over the nominated sessions and persists the result. The client nominates sources and optional hints; the server is authoritative on the skill body.
+
+        Source sessions are read through an org-scoped in-process querier, so generation only ever sees sessions in the caller's tenant.
+      operationId: generateSkill
+      parameters:
+      - description: Source sessions and optional hints
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.generateSkillRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/api.skillResponse'
+        "400":
+          description: Invalid body, or sessionIds missing/empty
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "404":
+          description: One or more source sessions were not found
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "422":
+          description: Sources carried nothing the generator could use
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "500":
+          description: Generation or persistence failed, or no LLM provider is configured
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+        "501":
+          description: Backend does not support skills
+          schema:
+            $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_llm.ErrorResponse'
+      summary: Generate a skill from sessions
+      tags:
+      - skills
   /v1/stats:
     get:
       description: Returns counts plus cost / token / duration / tool-call / completed-count

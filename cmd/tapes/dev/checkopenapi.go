@@ -25,11 +25,10 @@ live API) and validates each document against the ` + tracesResponseSchema + `
 schema embedded in api/openapi.yaml — the same contract paper vendors to
 generate its Rust client.
 
-This closes the loop RFD 00007 Goal 2 asks for ("the published OpenAPI
-contract matches what is served"): check-invariants gates the structural
+This closes the loop the projection model asks for — the published OpenAPI
+contract must match what is served: check-invariants gates the structural
 properties; check-openapi gates that the served field *types* match the
-codegen-able spec, catching the json.RawMessage-as-byte-array drift the
-RFD calls out. It validates the types of the fields that are present; it
+codegen-able spec, catching json.RawMessage-as-byte-array drift. It validates the types of the fields that are present; it
 is a contract type check, not a structural completeness check (that is
 check-invariants' job).
 

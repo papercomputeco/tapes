@@ -102,4 +102,101 @@ var _ = Describe("Anthropic streaming proxy (capture-backed)", func() {
 		Expect(reduced.Message.Role).To(Equal("assistant"))
 		Expect(reduced.Message.GetText()).To(Equal("Hello world"))
 	})
+
+	// Thread attribution has to be resolved at capture time: the header is on
+	// the inbound request and nothing downstream can recover which sub-thread
+	// fired a call once it is gone. A subagent turn captured without it is
+	// silently attributed to the main conversation.
+	It("records the harness sub-thread id on a streamed turn", func() {
+		reqBody := `{"model":"claude-3-5-sonnet-20241022","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
+
+		req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(reqBody))
+		req.Header.Set("X-Claude-Code-Agent-Id", "agent_sub_7")
+
+		resp, err := p.server.Test(req, -1)
+		Expect(err).NotTo(HaveOccurred())
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		_, err = io.ReadAll(resp.Body)
+		Expect(err).NotTo(HaveOccurred())
+
+		p.Close()
+		p = nil
+
+		raws := driver.RawTurns()
+		Expect(raws).To(HaveLen(1))
+		Expect(string(raws[0].Meta)).To(ContainSubstring(`"thread_id":"agent_sub_7"`))
+	})
+
+	// The main conversation sends no sub-thread header. Absent must stay
+	// distinguishable from present-but-empty, so the field is omitted rather
+	// than written as "".
+	It("omits the thread id for a main-thread turn", func() {
+		reqBody := `{"model":"claude-3-5-sonnet-20241022","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
+
+		resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(reqBody)), -1)
+		Expect(err).NotTo(HaveOccurred())
+		defer resp.Body.Close()
+		_, err = io.ReadAll(resp.Body)
+		Expect(err).NotTo(HaveOccurred())
+
+		p.Close()
+		p = nil
+
+		raws := driver.RawTurns()
+		Expect(raws).To(HaveLen(1))
+		Expect(string(raws[0].Meta)).NotTo(ContainSubstring("thread_id"))
+	})
+})
+
+// The non-streaming handler is a separate enqueue site from the streaming one,
+// and a field threaded to only one of them is exactly the kind of half-wired
+// capture this is meant to prevent.
+var _ = Describe("Anthropic non-streaming proxy (capture-backed)", func() {
+	var (
+		p        *Proxy
+		driver   *captureDriver
+		upstream *httptest.Server
+	)
+
+	AfterEach(func() {
+		if p != nil {
+			p.Close()
+		}
+		if upstream != nil {
+			upstream.Close()
+		}
+	})
+
+	BeforeEach(func() {
+		upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"id":"msg_x","type":"message","role":"assistant",`+
+				`"content":[{"type":"text","text":"Hello world"}],`+
+				`"model":"claude-3-5-sonnet-20241022","stop_reason":"end_turn","stop_sequence":null,`+
+				`"usage":{"input_tokens":7,"output_tokens":2}}`)
+		}))
+		p, driver = newAnthropicTestProxy(upstream.URL)
+	})
+
+	It("records the harness sub-thread id on a non-streamed turn", func() {
+		reqBody := `{"model":"claude-3-5-sonnet-20241022","max_tokens":64,"stream":false,"messages":[{"role":"user","content":"hi"}]}`
+
+		req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(reqBody))
+		req.Header.Set("X-Claude-Code-Agent-Id", "agent_sub_9")
+
+		resp, err := p.server.Test(req, -1)
+		Expect(err).NotTo(HaveOccurred())
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		_, err = io.ReadAll(resp.Body)
+		Expect(err).NotTo(HaveOccurred())
+
+		p.Close()
+		p = nil
+
+		raws := driver.RawTurns()
+		Expect(raws).To(HaveLen(1))
+		Expect(string(raws[0].Meta)).To(ContainSubstring(`"thread_id":"agent_sub_9"`))
+	})
 })

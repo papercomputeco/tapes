@@ -1,0 +1,128 @@
+-- Change-feed and provenance columns on the span projection.
+--
+-- Re-derivation rewrites every row of a covered session in place, whether or
+-- not anything about it changed. That makes the projection unusable as a
+-- change feed: a downstream consumer (search indexer, embedder, an external
+-- subscriber) has no way to ask "what is actually different since I last
+-- looked" and must re-read everything after every derive pass.
+--
+-- content_hash is the row's identity by content: a digest over exactly the
+-- columns a consumer cares about, excluding these three. Two derive passes
+-- over unchanged raw produce the same hash, which is what lets the writer
+-- tell a real change from an idempotent rewrite.
+--
+-- derive_seq is the cursor: the id of the transaction that ran the derive
+-- pass, one value per pass, and — critically — only advanced on a row whose
+-- content_hash actually changed, so a consumer sees genuinely-changed rows
+-- rather than the whole session. Bumping it on every write would make the
+-- column monotonic but useless.
+--
+-- It holds a transaction id rather than a sequence value, and that is the
+-- whole design. Any cursor allocated inside a transaction is assigned at
+-- write time, not commit time, so two passes can take 5 and 6 and commit in
+-- the other order — a consumer polling `derive_seq > cursor` sees 6,
+-- checkpoints it, and never sees 5 when it lands. That hazard is inherent to
+-- polling a cursor by value and is not fixed by choosing a different counter.
+--
+-- What fixes it is being able to ask which writers are still in flight.
+-- Postgres answers that for transactions and not for sequences: every
+-- transaction id below pg_snapshot_xmin(pg_current_snapshot()) has committed,
+-- by definition. So a reader bounded by that watermark can never be overtaken
+-- by a late commit:
+--
+--   SELECT ... FROM spans_20260615
+--    WHERE org_id = $1
+--      AND derive_seq > $2
+--      AND derive_seq < pg_snapshot_xmin(pg_current_snapshot())::text::bigint
+--    ORDER BY derive_seq;
+--
+-- The cost is latency, not correctness: rows from a pass that is still open
+-- are withheld until it commits, and then delivered in cursor order. That is
+-- the trade a change feed has to make, and it is why the cursor is an xid8
+-- (64-bit, no wraparound) rather than a sequence.
+--
+-- ListChangedSpanTurns / ListChangedSpans in queries/spans.sql implement this.
+-- Use them rather than re-deriving the bound; a consumer that writes the naive
+-- poll by hand gets the silent data loss above.
+--
+-- A consumer that can tolerate reprocessing may instead re-read a lag window
+-- behind its cursor and dedupe on content_hash, which is idempotent by
+-- construction.
+--
+-- fidelity records raw-bytes provenance: whether the row can be re-derived
+-- faithfully from stored bytes, or only from a reduction somebody already
+-- performed. It is the projection-side view of raw_turns.raw_response:
+--
+--   ''         no raw turn backs this row (synthetic, transcript-derived)
+--   'raw'      the backing raw turn has verbatim response bytes
+--   'reduced'  the backing raw turn has only an adapter's reduction
+--   'degraded' verbatim bytes arrived but exceeded the cap and were dropped
+--
+-- 'reduced' and 'degraded' are deliberately distinct. Both mean the bytes are
+-- gone, but 'reduced' is a capture path that never sent them and 'degraded' is
+-- one that did and hit a limit — the first is a deployment fact, the second is
+-- a tuning signal, and collapsing them hides which one you are looking at.
+--
+-- All three are computed in the storage layer at write time. pkg/derive stays
+-- a pure function of the raw rows: provenance is a property of how the bytes
+-- were captured and stored, not of the projection, and computing it inside the
+-- deriver would make the deriver's output depend on storage state it must not
+-- read.
+
+-- No index is created here, deliberately. See the note at the bottom of this
+-- file before adding one.
+
+ALTER TABLE span_turns_20260615
+    ADD COLUMN IF NOT EXISTS content_hash TEXT   NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS derive_seq   BIGINT NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS fidelity     TEXT   NOT NULL DEFAULT '';
+
+ALTER TABLE spans_20260615
+    ADD COLUMN IF NOT EXISTS content_hash TEXT   NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS derive_seq   BIGINT NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS fidelity     TEXT   NOT NULL DEFAULT '';
+
+-- ---------------------------------------------------------------------------
+-- The cursor index is NOT created here, and that is the whole point of this
+-- note.
+--
+-- The feed's access pattern is "everything after my cursor" — an index on
+-- (org_id, derive_seq) per projection table. Creating it in a migration is the
+-- obvious move and the wrong one, because of how migrations run here:
+-- postgres.NewDriver calls migrateUp, and every serve path opens a driver. So
+-- migrations execute at process start, serialised across pods by a
+-- pg_advisory_lock that waits indefinitely.
+--
+-- On a large span table that makes either index build an outage:
+--
+--   * a plain CREATE INDEX takes ACCESS EXCLUSIVE, blocking reads and writes
+--     to the table for the whole build;
+--   * CREATE INDEX CONCURRENTLY avoids that lock but scans the table twice and
+--     takes LONGER, and every starting pod still blocks on the advisory lock
+--     until it finishes. Writes survive; the deployment does not.
+--
+-- The statements above are all metadata-only on PostgreSQL 11+ (ADD COLUMN
+-- with a constant default writes no rows), so this migration stays fast on a
+-- table of any size. An index would be the only slow thing in it.
+--
+-- Nothing needs the index yet: no change-feed consumer exists, and the feed is
+-- correct without it — only the cursor query is slower. Build it when a
+-- consumer does exist, as a deliberate operator step:
+--
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS spans_20260615_org_derive_seq_idx
+--       ON spans_20260615 (org_id, derive_seq);
+--
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS span_turns_20260615_org_derive_seq_idx
+--       ON span_turns_20260615 (org_id, derive_seq);
+--
+-- Run each on its own, outside any transaction — CONCURRENTLY is rejected
+-- inside one, and a multi-statement string gets an implicit transaction. If a
+-- concurrent build fails it leaves an INVALID index behind; drop it (also
+-- CONCURRENTLY) and retry rather than leaving it to be silently ignored by the
+-- planner:
+--
+--   SELECT c.relname FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
+--    WHERE NOT i.indisvalid;
+--
+-- If it is ever added as a migration instead, it must be the only statement in
+-- its file, and the deploy has to tolerate a startup stall for the duration.

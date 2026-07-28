@@ -81,3 +81,22 @@ WHERE org_id = $1
   AND harness_id = $2
   AND harness_session_id = $3
 ORDER BY id;
+
+-- name: NextDeriveSeq :one
+-- One cursor value per derive pass: the derive transaction's own id. Every row
+-- the pass changes is stamped with it, so a consumer that has seen value N has
+-- seen a whole pass, never half of one.
+--
+-- It is a transaction id rather than a sequence value on purpose. Any cursor
+-- allocated inside a transaction is assigned at write time, not commit time,
+-- so concurrent passes can commit out of cursor order — which makes a plain
+-- `> cursor` poll lossy no matter what the cursor is drawn from. The
+-- difference is that Postgres will tell you which *transactions* are still in
+-- flight and will not tell you that about a sequence: everything below
+-- pg_snapshot_xmin(pg_current_snapshot()) is committed by definition, so a
+-- reader bounded by it can never be overtaken. That bound is only expressible
+-- if the cursor is the transaction id, which is why this is not nextval().
+--
+-- Read through ListChangedSpanTurns / ListChangedSpans rather than rolling the
+-- bound by hand. See the 1781470000 migration for the full argument.
+SELECT pg_current_xact_id()::text::bigint;

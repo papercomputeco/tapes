@@ -25,19 +25,22 @@ type DerivedProjectionSchema struct {
 }
 
 type RawTurn struct {
-	ID               int64
-	OrgID            pgtype.UUID
-	Source           string
-	Provider         string
-	AgentName        string
-	HarnessID        string
-	HarnessSessionID string
-	RequestID        string
-	RawRequest       []byte
-	Response         []byte
-	Meta             []byte
-	SessionEnvelope  []byte
-	ReceivedAt       pgtype.Timestamptz
+	ID                  int64
+	OrgID               pgtype.UUID
+	Source              string
+	Provider            string
+	AgentName           string
+	HarnessID           string
+	HarnessSessionID    string
+	RequestID           string
+	RawRequest          []byte
+	Response            []byte
+	Meta                []byte
+	SessionEnvelope     []byte
+	ReceivedAt          pgtype.Timestamptz
+	RawResponse         []byte
+	RawResponseEncoding string
+	RawResponseDropped  bool
 }
 
 type Session struct {
@@ -136,6 +139,9 @@ type SpanTurns20260615 struct {
 	CacheCreationTokens int64
 	ResponsePreview     string
 	Source              string
+	ContentHash         string
+	DeriveSeq           int64
+	Fidelity            string
 }
 
 // Derived span projection schema version 2026-06-15.
@@ -161,4 +167,7 @@ type Spans20260615 struct {
 	NodeHash     string
 	Seq          int64
 	Verdict      []byte
+	ContentHash  string
+	DeriveSeq    int64
+	Fidelity     string
 }

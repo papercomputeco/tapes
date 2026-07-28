@@ -112,7 +112,8 @@ func (d *Driver) RederiveFromRaw(ctx context.Context, project string) (map[strin
 			if err != nil {
 				return nil, fmt.Errorf("fetch raw turn %d: %w", entry.id, err)
 			}
-			rec := rawTurnRecordFromRow(row)
+			rec := rawTurnRecordFromRow(rawTurnFromDeriveRow(row))
+			recoverReduction(ctx, d.reducers, d.logger, &rec)
 			dv.AddTurn(&rec)
 		}
 		set := dv.Finish()
@@ -133,7 +134,7 @@ func (d *Driver) RederiveFromRaw(ctx context.Context, project string) (map[strin
 			if err != nil {
 				return nil, fmt.Errorf("fetch transcript row %d: %w", id, err)
 			}
-			rec := rawTurnRecordFromRow(row)
+			rec := rawTurnRecordFromRow(rawTurnFromDeriveRow(row))
 			file, err := derive.ParseTranscriptFile(&rec)
 			if err != nil {
 				return nil, fmt.Errorf("parse transcript row %d: %w", id, err)
@@ -204,7 +205,8 @@ func (d *Driver) RederiveSession(ctx context.Context, project, orgID, harnessID,
 		if err != nil {
 			return nil, fmt.Errorf("fetch raw turn %d: %w", entry.id, err)
 		}
-		rec := rawTurnRecordFromRow(row)
+		rec := rawTurnRecordFromRow(rawTurnFromDeriveRow(row))
+		recoverReduction(ctx, d.reducers, d.logger, &rec)
 		dv.AddTurn(&rec)
 	}
 	set := dv.Finish()
@@ -225,7 +227,7 @@ func (d *Driver) RederiveSession(ctx context.Context, project, orgID, harnessID,
 		if err != nil {
 			return nil, fmt.Errorf("fetch transcript row %d: %w", id, err)
 		}
-		rec := rawTurnRecordFromRow(row)
+		rec := rawTurnRecordFromRow(rawTurnFromDeriveRow(row))
 		file, err := derive.ParseTranscriptFile(&rec)
 		if err != nil {
 			return nil, fmt.Errorf("parse transcript row %d: %w", id, err)

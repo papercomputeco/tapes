@@ -8,11 +8,13 @@
 INSERT INTO raw_turns (
     org_id, source, provider, agent_name,
     harness_id, harness_session_id, request_id,
-    raw_request, response, meta, session_envelope
+    raw_request, response, meta, session_envelope,
+    raw_response, raw_response_encoding, raw_response_dropped
 ) VALUES (
     $1, $2, $3, $4,
     $5, $6, $7,
-    $8, $9, $10, $11
+    $8, $9, $10, $11,
+    $12, $13, $14
 )
 ON CONFLICT (org_id, request_id) WHERE request_id <> '' DO NOTHING;
 
@@ -21,7 +23,8 @@ ON CONFLICT (org_id, request_id) WHERE request_id <> '' DO NOTHING;
 -- Pass after_id = 0 to start from the beginning.
 SELECT id, org_id, source, provider, agent_name,
        harness_id, harness_session_id, request_id,
-       raw_request, response, meta, session_envelope, received_at
+       raw_request, response, meta, session_envelope, received_at,
+       raw_response, raw_response_encoding, raw_response_dropped
 FROM raw_turns
 WHERE id > sqlc.arg(after_id)
 ORDER BY id
@@ -31,7 +34,8 @@ LIMIT sqlc.arg(page_size);
 -- Every raw turn captured for one harness session, in insertion order.
 SELECT id, org_id, source, provider, agent_name,
        harness_id, harness_session_id, request_id,
-       raw_request, response, meta, session_envelope, received_at
+       raw_request, response, meta, session_envelope, received_at,
+       raw_response, raw_response_encoding, raw_response_dropped
 FROM raw_turns
 WHERE org_id = $1
   AND harness_session_id = $2
@@ -46,7 +50,26 @@ SELECT COUNT(*) FROM raw_turns;
 SELECT id, org_id, source, provider, agent_name, request_id,
        received_at, meta,
        COALESCE(length(raw_request::text), 0)::bigint AS request_bytes,
-       COALESCE(length(response::text), 0)::bigint AS response_bytes
+       COALESCE(length(response::text), 0)::bigint AS response_bytes,
+       COALESCE(octet_length(raw_response), 0)::bigint AS raw_response_bytes,
+       raw_response_dropped
 FROM raw_turns
 WHERE org_id = $1 AND harness_id = $2 AND harness_session_id = $3
 ORDER BY id ASC;
+
+-- name: RawTurnFidelityByIDs :many
+-- Provenance tier for a set of raw turns, for stamping the span projection.
+--
+-- The projection needs to know whether each row can be re-derived from stored
+-- bytes, which is a fact about how the turn was captured — not something the
+-- deriver can know, since it is a pure function of the rows it is handed and
+-- must not read storage state. Resolving it here keeps that separation while
+-- still letting the write stamp it.
+-- COALESCE so the column types as a plain bool rather than a nullable one:
+-- the predicate cannot actually be NULL, and a three-valued result would push
+-- an "unknown" case into the caller that has no meaning here.
+SELECT id,
+       COALESCE(octet_length(raw_response) > 0, false)::boolean AS has_raw_response,
+       raw_response_dropped
+FROM raw_turns
+WHERE id = ANY(sqlc.arg(ids)::bigint[]);

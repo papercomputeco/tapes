@@ -26,27 +26,32 @@ const insertRawTurn = `-- name: InsertRawTurn :execrows
 INSERT INTO raw_turns (
     org_id, source, provider, agent_name,
     harness_id, harness_session_id, request_id,
-    raw_request, response, meta, session_envelope
+    raw_request, response, meta, session_envelope,
+    raw_response, raw_response_encoding, raw_response_dropped
 ) VALUES (
     $1, $2, $3, $4,
     $5, $6, $7,
-    $8, $9, $10, $11
+    $8, $9, $10, $11,
+    $12, $13, $14
 )
 ON CONFLICT (org_id, request_id) WHERE request_id <> '' DO NOTHING
 `
 
 type InsertRawTurnParams struct {
-	OrgID            pgtype.UUID
-	Source           string
-	Provider         string
-	AgentName        string
-	HarnessID        string
-	HarnessSessionID string
-	RequestID        string
-	RawRequest       []byte
-	Response         []byte
-	Meta             []byte
-	SessionEnvelope  []byte
+	OrgID               pgtype.UUID
+	Source              string
+	Provider            string
+	AgentName           string
+	HarnessID           string
+	HarnessSessionID    string
+	RequestID           string
+	RawRequest          []byte
+	Response            []byte
+	Meta                []byte
+	SessionEnvelope     []byte
+	RawResponse         []byte
+	RawResponseEncoding string
+	RawResponseDropped  bool
 }
 
 // raw_turns is append-only and immutable: INSERT is the only write this
@@ -68,6 +73,9 @@ func (q *Queries) InsertRawTurn(ctx context.Context, arg InsertRawTurnParams) (i
 		arg.Response,
 		arg.Meta,
 		arg.SessionEnvelope,
+		arg.RawResponse,
+		arg.RawResponseEncoding,
+		arg.RawResponseDropped,
 	)
 	if err != nil {
 		return 0, err
@@ -79,7 +87,9 @@ const listRawTurnHeadersBySession = `-- name: ListRawTurnHeadersBySession :many
 SELECT id, org_id, source, provider, agent_name, request_id,
        received_at, meta,
        COALESCE(length(raw_request::text), 0)::bigint AS request_bytes,
-       COALESCE(length(response::text), 0)::bigint AS response_bytes
+       COALESCE(length(response::text), 0)::bigint AS response_bytes,
+       COALESCE(octet_length(raw_response), 0)::bigint AS raw_response_bytes,
+       raw_response_dropped
 FROM raw_turns
 WHERE org_id = $1 AND harness_id = $2 AND harness_session_id = $3
 ORDER BY id ASC
@@ -92,16 +102,18 @@ type ListRawTurnHeadersBySessionParams struct {
 }
 
 type ListRawTurnHeadersBySessionRow struct {
-	ID            int64
-	OrgID         pgtype.UUID
-	Source        string
-	Provider      string
-	AgentName     string
-	RequestID     string
-	ReceivedAt    pgtype.Timestamptz
-	Meta          []byte
-	RequestBytes  int64
-	ResponseBytes int64
+	ID                 int64
+	OrgID              pgtype.UUID
+	Source             string
+	Provider           string
+	AgentName          string
+	RequestID          string
+	ReceivedAt         pgtype.Timestamptz
+	Meta               []byte
+	RequestBytes       int64
+	ResponseBytes      int64
+	RawResponseBytes   int64
+	RawResponseDropped bool
 }
 
 // Operator wire log: identity + sizes, no payloads. The raw layer is
@@ -126,6 +138,8 @@ func (q *Queries) ListRawTurnHeadersBySession(ctx context.Context, arg ListRawTu
 			&i.Meta,
 			&i.RequestBytes,
 			&i.ResponseBytes,
+			&i.RawResponseBytes,
+			&i.RawResponseDropped,
 		); err != nil {
 			return nil, err
 		}
@@ -140,7 +154,8 @@ func (q *Queries) ListRawTurnHeadersBySession(ctx context.Context, arg ListRawTu
 const listRawTurns = `-- name: ListRawTurns :many
 SELECT id, org_id, source, provider, agent_name,
        harness_id, harness_session_id, request_id,
-       raw_request, response, meta, session_envelope, received_at
+       raw_request, response, meta, session_envelope, received_at,
+       raw_response, raw_response_encoding, raw_response_dropped
 FROM raw_turns
 WHERE id > $1
 ORDER BY id
@@ -177,6 +192,9 @@ func (q *Queries) ListRawTurns(ctx context.Context, arg ListRawTurnsParams) ([]R
 			&i.Meta,
 			&i.SessionEnvelope,
 			&i.ReceivedAt,
+			&i.RawResponse,
+			&i.RawResponseEncoding,
+			&i.RawResponseDropped,
 		); err != nil {
 			return nil, err
 		}
@@ -191,7 +209,8 @@ func (q *Queries) ListRawTurns(ctx context.Context, arg ListRawTurnsParams) ([]R
 const listRawTurnsBySession = `-- name: ListRawTurnsBySession :many
 SELECT id, org_id, source, provider, agent_name,
        harness_id, harness_session_id, request_id,
-       raw_request, response, meta, session_envelope, received_at
+       raw_request, response, meta, session_envelope, received_at,
+       raw_response, raw_response_encoding, raw_response_dropped
 FROM raw_turns
 WHERE org_id = $1
   AND harness_session_id = $2
@@ -227,7 +246,54 @@ func (q *Queries) ListRawTurnsBySession(ctx context.Context, arg ListRawTurnsByS
 			&i.Meta,
 			&i.SessionEnvelope,
 			&i.ReceivedAt,
+			&i.RawResponse,
+			&i.RawResponseEncoding,
+			&i.RawResponseDropped,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const rawTurnFidelityByIDs = `-- name: RawTurnFidelityByIDs :many
+SELECT id,
+       COALESCE(octet_length(raw_response) > 0, false)::boolean AS has_raw_response,
+       raw_response_dropped
+FROM raw_turns
+WHERE id = ANY($1::bigint[])
+`
+
+type RawTurnFidelityByIDsRow struct {
+	ID                 int64
+	HasRawResponse     bool
+	RawResponseDropped bool
+}
+
+// Provenance tier for a set of raw turns, for stamping the span projection.
+//
+// The projection needs to know whether each row can be re-derived from stored
+// bytes, which is a fact about how the turn was captured — not something the
+// deriver can know, since it is a pure function of the rows it is handed and
+// must not read storage state. Resolving it here keeps that separation while
+// still letting the write stamp it.
+// COALESCE so the column types as a plain bool rather than a nullable one:
+// the predicate cannot actually be NULL, and a three-valued result would push
+// an "unknown" case into the caller that has no meaning here.
+func (q *Queries) RawTurnFidelityByIDs(ctx context.Context, ids []int64) ([]RawTurnFidelityByIDsRow, error) {
+	rows, err := q.db.Query(ctx, rawTurnFidelityByIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RawTurnFidelityByIDsRow
+	for rows.Next() {
+		var i RawTurnFidelityByIDsRow
+		if err := rows.Scan(&i.ID, &i.HasRawResponse, &i.RawResponseDropped); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

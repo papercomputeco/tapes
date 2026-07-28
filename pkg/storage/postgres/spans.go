@@ -37,6 +37,29 @@ func writeSpanSet(
 	var keepSpanTraceIDs, keepSpanIDs []string
 	var keepLinkFromTrace, keepLinkFromSpan, keepLinkToTrace, keepLinkToSpan, keepLinkFromIO, keepLinkToIO []string
 
+	// One cursor value for the whole pass, so a consumer that has seen
+	// sequence N has seen a complete derive rather than half of one. It is
+	// stamped on every row written below but only *takes* on rows whose
+	// content actually changed — the upserts guard that.
+	//
+	// Allocated here, inside the transaction, so it orders writes and not
+	// commits: a pass that takes a lower value can commit after one that took
+	// a higher value. Consumers must account for that rather than assuming a
+	// plain `derive_seq > cursor` poll is complete — see the 1781470000
+	// migration for the safe read patterns.
+	deriveSeq, err := qtx.NextDeriveSeq(ctx)
+	if err != nil {
+		return fmt.Errorf("next derive seq: %w", err)
+	}
+
+	// Provenance for every raw turn this set references, resolved in one round
+	// trip. The deriver could not have supplied it: it is a fact about how the
+	// bytes were stored, not about the rows it projected.
+	fidelityTiers, err := resolveFidelity(ctx, qtx, spans)
+	if err != nil {
+		return err
+	}
+
 	turnSession := map[string]pgtype.UUID{}
 	for _, turn := range spans.Turns {
 		sid, ok := sessionIDs[turn.Session]
@@ -54,7 +77,14 @@ func writeSpanSet(
 		if err != nil {
 			return fmt.Errorf("encode trace cost %s: %w", turn.TraceID, err)
 		}
-		if err := qtx.UpsertSpanTurn(ctx, gensqlc.UpsertSpanTurnParams{
+		// The trace's tier rolls up its spans', so resolve them before the
+		// trace row is written.
+		spanTiers := make([]string, 0, len(turn.Spans))
+		for _, s := range turn.Spans {
+			spanTiers = append(spanTiers, spanFidelity(fidelityTiers, s.RawTurnID))
+		}
+
+		turnParams := gensqlc.UpsertSpanTurnParams{
 			OrgID:               orgID,
 			TraceID:             turn.TraceID,
 			SessionID:           sid,
@@ -73,11 +103,15 @@ func writeSpanSet(
 			CacheCreationTokens: turn.CacheCreationTokens,
 			TotalCostUsd:        costNumeric,
 			Source:              turn.Source,
-		}); err != nil {
+			DeriveSeq:           deriveSeq,
+			Fidelity:            rollupFidelity(spanTiers),
+		}
+		turnParams.ContentHash = spanTurnContentHash(turnParams)
+		if err := qtx.UpsertSpanTurn(ctx, turnParams); err != nil {
 			return fmt.Errorf("upsert span turn %s: %w", turn.TraceID, err)
 		}
 
-		for _, s := range turn.Spans {
+		for i, s := range turn.Spans {
 			keepSpanTraceIDs = append(keepSpanTraceIDs, turn.TraceID)
 			keepSpanIDs = append(keepSpanIDs, s.SpanID)
 			input, err := contentJSON(s.Input)
@@ -104,7 +138,7 @@ func writeSpanSet(
 			if s.RawTurnID != 0 {
 				rawTurn = pgtype.Int8{Int64: s.RawTurnID, Valid: true}
 			}
-			if err := qtx.UpsertSpan(ctx, gensqlc.UpsertSpanParams{
+			spanParams := gensqlc.UpsertSpanParams{
 				OrgID:        orgID,
 				TraceID:      turn.TraceID,
 				SpanID:       s.SpanID,
@@ -126,7 +160,11 @@ func writeSpanSet(
 				RawTurnID:    rawTurn,
 				NodeHash:     s.NodeHash,
 				Verdict:      verdict,
-			}); err != nil {
+				DeriveSeq:    deriveSeq,
+				Fidelity:     spanTiers[i],
+			}
+			spanParams.ContentHash = spanContentHash(spanParams)
+			if err := qtx.UpsertSpan(ctx, spanParams); err != nil {
 				return fmt.Errorf("upsert span %s/%s: %w", turn.TraceID, s.SpanID, err)
 			}
 		}

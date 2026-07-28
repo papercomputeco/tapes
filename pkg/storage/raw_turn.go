@@ -56,6 +56,31 @@ type RawTurnRecord struct {
 	// envelope.
 	Response json.RawMessage
 
+	// RawResponse is the upstream response body exactly as it arrived on
+	// the wire, before any reduction. Response is derived from these bytes
+	// and is lossy — a field the reducing adapter didn't model is gone from
+	// it, and the raw layer's promise that any future data-model change is
+	// a re-derive rather than a re-capture only holds while the source
+	// bytes survive.
+	//
+	// Nil when the capture adapter sent no raw response, or when one
+	// arrived and exceeded the ingest cap; RawResponseDropped separates
+	// those two cases.
+	RawResponse []byte
+
+	// RawResponseEncoding is the Content-Encoding RawResponse is stored
+	// under ("identity", "gzip", …), empty when unknown or absent. The
+	// bytes are kept as received rather than decompressed, because
+	// re-compression is not guaranteed byte-identical and "verbatim" has to
+	// mean verbatim for the column to be worth having.
+	RawResponseEncoding string
+
+	// RawResponseDropped marks a turn whose raw response arrived but was
+	// too large to store. It is the difference between "this turn never had
+	// verbatim bytes" and "it did, and we chose not to keep them" — without
+	// it a fidelity gap is indistinguishable from an absence.
+	RawResponseDropped bool
+
 	// Meta is the capture adapter's metadata block (model, stream,
 	// upstream status, byte counts, elapsed seconds, …), verbatim.
 	Meta json.RawMessage
