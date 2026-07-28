@@ -11,4 +11,3 @@ ALTER TABLE span_turns_20260615
     DROP COLUMN IF EXISTS derive_seq,
     DROP COLUMN IF EXISTS fidelity;
 
-DROP SEQUENCE IF EXISTS derive_seq_counter;

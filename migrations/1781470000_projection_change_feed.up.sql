@@ -11,38 +11,43 @@
 -- over unchanged raw produce the same hash, which is what lets the writer
 -- tell a real change from an idempotent rewrite.
 --
--- derive_seq is the cursor. It is stamped from a single global sequence, one
--- value per derive pass, and — critically — is only advanced on a row whose
+-- derive_seq is the cursor: the id of the transaction that ran the derive
+-- pass, one value per pass, and — critically — only advanced on a row whose
 -- content_hash actually changed, so a consumer sees genuinely-changed rows
 -- rather than the whole session. Bumping it on every write would make the
 -- column monotonic but useless.
 --
--- IT IS NOT COMMIT-ORDERED, and a consumer that treats it as such loses data.
--- The value comes from nextval() called inside the derive transaction, so it
--- is assigned at write time, not at commit time. Two derive passes running
--- concurrently can take 5 and 6 and commit in the other order: a consumer
--- polling `derive_seq > cursor` sees 6, checkpoints 6, and never sees 5 when
--- it lands. Sequences also do not roll back, so an aborted pass burns a value
--- and leaves a permanent hole — harmless on its own, but it means gaps carry
--- no information and cannot be used to detect the reordering above.
+-- It holds a transaction id rather than a sequence value, and that is the
+-- whole design. Any cursor allocated inside a transaction is assigned at
+-- write time, not commit time, so two passes can take 5 and 6 and commit in
+-- the other order — a consumer polling `derive_seq > cursor` sees 6,
+-- checkpoints it, and never sees 5 when it lands. That hazard is inherent to
+-- polling a cursor by value and is not fixed by choosing a different counter.
 --
--- A consumer must therefore not advance its cursor past rows whose writing
--- transaction may still be in flight. The direct way is to bound the read by
--- the oldest transaction still running:
+-- What fixes it is being able to ask which writers are still in flight.
+-- Postgres answers that for transactions and not for sequences: every
+-- transaction id below pg_snapshot_xmin(pg_current_snapshot()) has committed,
+-- by definition. So a reader bounded by that watermark can never be overtaken
+-- by a late commit:
 --
 --   SELECT ... FROM spans_20260615
 --    WHERE org_id = $1
 --      AND derive_seq > $2
---      AND xmin::text::bigint < pg_snapshot_xmin(pg_current_snapshot())
+--      AND derive_seq < pg_snapshot_xmin(pg_current_snapshot())::text::bigint
 --    ORDER BY derive_seq;
 --
--- which holds back rows written by uncommitted transactions until they commit
--- (mind xid wraparound on a long-lived cursor). A consumer that can tolerate
--- reprocessing can instead re-read a lag window behind its cursor and dedupe
--- on content_hash, which is idempotent by construction.
+-- The cost is latency, not correctness: rows from a pass that is still open
+-- are withheld until it commits, and then delivered in cursor order. That is
+-- the trade a change feed has to make, and it is why the cursor is an xid8
+-- (64-bit, no wraparound) rather than a sequence.
 --
--- No consumer exists yet. This note is here so the first one is not written
--- against the naive poll.
+-- ListChangedSpanTurns / ListChangedSpans in queries/spans.sql implement this.
+-- Use them rather than re-deriving the bound; a consumer that writes the naive
+-- poll by hand gets the silent data loss above.
+--
+-- A consumer that can tolerate reprocessing may instead re-read a lag window
+-- behind its cursor and dedupe on content_hash, which is idempotent by
+-- construction.
 --
 -- fidelity records raw-bytes provenance: whether the row can be re-derived
 -- faithfully from stored bytes, or only from a reduction somebody already
@@ -66,8 +71,6 @@
 
 -- No index is created here, deliberately. See the note at the bottom of this
 -- file before adding one.
-
-CREATE SEQUENCE IF NOT EXISTS derive_seq_counter AS BIGINT START 1;
 
 ALTER TABLE span_turns_20260615
     ADD COLUMN IF NOT EXISTS content_hash TEXT   NOT NULL DEFAULT '',

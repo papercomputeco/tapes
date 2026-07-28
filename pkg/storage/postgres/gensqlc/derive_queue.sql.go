@@ -222,19 +222,25 @@ func (q *Queries) MarkDeriveDirty(ctx context.Context, arg MarkDeriveDirtyParams
 }
 
 const nextDeriveSeq = `-- name: NextDeriveSeq :one
-SELECT nextval('derive_seq_counter')::bigint
+SELECT pg_current_xact_id()::text::bigint
 `
 
-// One cursor value per derive pass. Every row a pass changes is stamped with
-// the same value, so a consumer that has seen sequence N has seen a whole
-// pass, never half of one.
+// One cursor value per derive pass: the derive transaction's own id. Every row
+// the pass changes is stamped with it, so a consumer that has seen value N has
+// seen a whole pass, never half of one.
 //
-// That is an atomicity guarantee, not an ordering one. nextval() is called
-// inside the derive transaction, so values are assigned at write time and
-// concurrent passes can commit out of sequence order — a consumer polling
-// `derive_seq > cursor` can checkpoint a higher value and permanently skip a
-// lower one that commits later. See the 1781470000 migration for the read
-// patterns that are safe.
+// It is a transaction id rather than a sequence value on purpose. Any cursor
+// allocated inside a transaction is assigned at write time, not commit time,
+// so concurrent passes can commit out of cursor order — which makes a plain
+// `> cursor` poll lossy no matter what the cursor is drawn from. The
+// difference is that Postgres will tell you which *transactions* are still in
+// flight and will not tell you that about a sequence: everything below
+// pg_snapshot_xmin(pg_current_snapshot()) is committed by definition, so a
+// reader bounded by it can never be overtaken. That bound is only expressible
+// if the cursor is the transaction id, which is why this is not nextval().
+//
+// Read through ListChangedSpanTurns / ListChangedSpans rather than rolling the
+// bound by hand. See the 1781470000 migration for the full argument.
 func (q *Queries) NextDeriveSeq(ctx context.Context) (int64, error) {
 	row := q.db.QueryRow(ctx, nextDeriveSeq)
 	var column_1 int64

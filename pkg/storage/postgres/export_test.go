@@ -54,3 +54,13 @@ var (
 	SpanContentHashForTest     = spanContentHash
 	SpanTurnContentHashForTest = spanTurnContentHash
 )
+
+// ListChangedSpanTurnsForTest runs the real change-feed read so a test
+// exercises the bound that ships, not a copy of it that could drift.
+func (d *Driver) ListChangedSpanTurnsForTest(ctx context.Context, orgID pgtype.UUID, afterCursor int64, pageSize int32) ([]gensqlc.ListChangedSpanTurnsRow, error) {
+	return d.q.ListChangedSpanTurns(ctx, gensqlc.ListChangedSpanTurnsParams{
+		OrgID:       orgID,
+		AfterCursor: afterCursor,
+		PageSize:    pageSize,
+	})
+}

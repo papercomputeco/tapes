@@ -301,3 +301,38 @@ SELECT
        AND (sqlc.narg(until_filter)::timestamptz IS NULL OR sp.started_at < sqlc.narg(until_filter)::timestamptz)
     )::bigint                                               AS tool_calls
 FROM matched;
+
+-- name: ListChangedSpanTurns :many
+-- Change feed over the turn projection: rows whose content changed after
+-- `after_cursor`, in cursor order.
+--
+-- The upper bound is the correctness of this query, not an optimisation.
+-- derive_seq holds the writing transaction's id, and everything below
+-- pg_snapshot_xmin(pg_current_snapshot()) has committed by definition — so
+-- excluding the rest means a pass that is still open cannot commit "behind"
+-- a cursor the consumer has already advanced past. Drop the bound and a
+-- concurrent derive that commits late is skipped permanently.
+--
+-- Consumers checkpoint on the largest derive_seq they have processed and pass
+-- it back as after_cursor. Rows from an in-flight pass are withheld until it
+-- commits, then delivered in order: latency, not loss.
+SELECT org_id, trace_id, session_id, content_hash, derive_seq, fidelity
+FROM span_turns_20260615
+WHERE org_id = $1
+  AND derive_seq > sqlc.arg(after_cursor)
+  AND derive_seq < pg_snapshot_xmin(pg_current_snapshot())::text::bigint
+ORDER BY derive_seq, trace_id
+LIMIT sqlc.arg(page_size);
+
+-- name: ListChangedSpans :many
+-- Change feed over the span projection. Same contract and the same bound as
+-- ListChangedSpanTurns — see that query for why the upper bound is not
+-- optional.
+SELECT org_id, trace_id, span_id, parent_span_id, kind, name,
+       content_hash, derive_seq, fidelity
+FROM spans_20260615
+WHERE org_id = $1
+  AND derive_seq > sqlc.arg(after_cursor)
+  AND derive_seq < pg_snapshot_xmin(pg_current_snapshot())::text::bigint
+ORDER BY derive_seq, trace_id, span_id
+LIMIT sqlc.arg(page_size);
