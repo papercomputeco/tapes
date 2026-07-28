@@ -69,7 +69,7 @@ type TraceItem struct {
 	// every trace is "wire": transcripts only reconcile fork/parent edges
 	// during derivation, they never form a trace on their own. "transcript"
 	// becomes real when a session is reconstructed purely from a transcript
-	// file with no proxy capture (an OSS backfill path). See RFD 00007 §C.
+	// file with no proxy capture (an OSS backfill path).
 	Source     string     `json:"source"`
 	StartedAt  time.Time  `json:"started_at"`
 	EndedAt    *time.Time `json:"ended_at,omitempty"`
@@ -102,7 +102,7 @@ type TraceUsage struct {
 // MainUsage is the task token slice of a trace: the main agent and its
 // subagents (call_kind=main across every thread), no cache split or cost
 // (those live on the total Usage). Deliberately not spine-only — a
-// subagent doing the user's work is task spend, not shadow (RFD 00007 §C).
+// subagent doing the user's work is task spend, not shadow.
 type MainUsage struct {
 	InputTokens  int64 `json:"input_tokens"`
 	OutputTokens int64 `json:"output_tokens"`

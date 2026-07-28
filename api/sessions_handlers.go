@@ -101,7 +101,7 @@ type SessionItem struct {
 	// terminal status (an end_turn assistant reply reads as "completed")
 	// after every turn while still open, so status cannot gate liveness.
 	// Computed at response time so the console renders it directly instead
-	// of inferring "running" itself (RFD 00007 §C).
+	// of inferring "running" itself.
 	Live bool `json:"live"`
 	// Rollup is the deriver-owned projection over the session's spans.
 	Rollup SessionRollup `json:"rollup"`

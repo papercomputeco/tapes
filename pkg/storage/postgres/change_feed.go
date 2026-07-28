@@ -10,7 +10,7 @@ package postgres
 // All three are computed here, in the storage layer, and never in pkg/derive.
 // The deriver is a pure function of the raw rows it is handed; provenance is a
 // property of how those bytes were captured and stored, which the deriver
-// cannot see and must not read (RFD 00007 §C). Computing it at write time is
+// cannot see and must not read. Computing it at write time is
 // what keeps that boundary intact while still getting the fact onto the row.
 
 import (

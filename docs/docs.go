@@ -1704,7 +1704,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "live": {
-                    "description": "Live is a runtime presence signal, not a projection fact: true when\nthe session has no recorded end and was seen within the liveness\nwindow. Keyed on ended_at + last_seen_at recency (both ingest-fresh),\nnever on the derived status: an interactive session folds to a\nterminal status (an end_turn assistant reply reads as \"completed\")\nafter every turn while still open, so status cannot gate liveness.\nComputed at response time so the console renders it directly instead\nof inferring \"running\" itself (RFD 00007 §C).",
+                    "description": "Live is a runtime presence signal, not a projection fact: true when\nthe session has no recorded end and was seen within the liveness\nwindow. Keyed on ended_at + last_seen_at recency (both ingest-fresh),\nnever on the derived status: an interactive session folds to a\nterminal status (an end_turn assistant reply reads as \"completed\")\nafter every turn while still open, so status cannot gate liveness.\nComputed at response time so the console renders it directly instead\nof inferring \"running\" itself.",
                     "type": "boolean"
                 },
                 "name": {
@@ -2040,7 +2040,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "source": {
-                    "description": "Source is the capture origin of the turn's rows (\"wire\" |\n\"transcript\"), promoted from raw_turns.source. Per-trace, so a\nsession can mix live wire capture and transcript backfill. Today\nevery trace is \"wire\": transcripts only reconcile fork/parent edges\nduring derivation, they never form a trace on their own. \"transcript\"\nbecomes real when a session is reconstructed purely from a transcript\nfile with no proxy capture (an OSS backfill path). See RFD 00007 §C.",
+                    "description": "Source is the capture origin of the turn's rows (\"wire\" |\n\"transcript\"), promoted from raw_turns.source. Per-trace, so a\nsession can mix live wire capture and transcript backfill. Today\nevery trace is \"wire\": transcripts only reconcile fork/parent edges\nduring derivation, they never form a trace on their own. \"transcript\"\nbecomes real when a session is reconstructed purely from a transcript\nfile with no proxy capture (an OSS backfill path).",
                     "type": "string"
                 },
                 "span_count": {

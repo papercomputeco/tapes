@@ -12,7 +12,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/sessions"
 )
 
-// Span emit — the RFD 00007 projection. EmitSpans re-walks the capture
+// Span emit — the derived projection. EmitSpans re-walks the capture
 // (via DerivedSet.SpanSources) and re-expresses it as traces, spans,
 // and span links. Like everything in this package it is a pure,
 // re-runnable function of the raw layer: every id minted here is a
@@ -25,7 +25,7 @@ import (
 // transcript reconciler stamps fork anchors (ParentToolUseID on thread
 // roots), and span placement follows those stamps.
 
-// Span kinds — the RFD 00007 vocabulary (step is reserved, unused).
+// Span kinds — the projection vocabulary (step is reserved, unused).
 const (
 	SpanKindAgent = "agent"
 	SpanKindLLM   = "llm"

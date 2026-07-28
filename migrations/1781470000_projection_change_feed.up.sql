@@ -67,7 +67,7 @@
 -- a pure function of the raw rows: provenance is a property of how the bytes
 -- were captured and stored, not of the projection, and computing it inside the
 -- deriver would make the deriver's output depend on storage state it must not
--- read (RFD 00007 §C).
+-- read.
 
 -- No index is created here, deliberately. See the note at the bottom of this
 -- file before adding one.

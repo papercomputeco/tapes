@@ -184,7 +184,7 @@ components:
             terminal status (an end_turn assistant reply reads as "completed")
             after every turn while still open, so status cannot gate liveness.
             Computed at response time so the console renders it directly instead
-            of inferring "running" itself (RFD 00007 §C).
+            of inferring "running" itself.
           type: boolean
         name:
           description: |-
@@ -452,7 +452,7 @@ components:
             every trace is "wire": transcripts only reconcile fork/parent edges
             during derivation, they never form a trace on their own. "transcript"
             becomes real when a session is reconstructed purely from a transcript
-            file with no proxy capture (an OSS backfill path). See RFD 00007 §C.
+            file with no proxy capture (an OSS backfill path).
           type: string
         span_count:
           type: integer
