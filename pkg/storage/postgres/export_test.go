@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres/gensqlc"
 )
 
@@ -63,4 +64,41 @@ func (d *Driver) ListChangedSpanTurnsForTest(ctx context.Context, orgID pgtype.U
 		AfterCursor: afterCursor,
 		PageSize:    pageSize,
 	})
+}
+
+// RawTurnsForDeriveForTest reads rows back exactly the way the derive path
+// does — the real GetRawTurn, the real column mapping, the real recovery step —
+// so a test asserts on what the deriver would be handed rather than on a
+// reimplementation of it.
+func (d *Driver) RawTurnsForDeriveForTest(ctx context.Context, orgID pgtype.UUID) ([]storage.RawTurnRecord, error) {
+	ids, err := d.conn.Query(ctx,
+		`SELECT id FROM raw_turns WHERE org_id = $1 ORDER BY id`, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer ids.Close()
+
+	var out []int64
+	for ids.Next() {
+		var id int64
+		if err := ids.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	if err := ids.Err(); err != nil {
+		return nil, err
+	}
+
+	recs := make([]storage.RawTurnRecord, 0, len(out))
+	for _, id := range out {
+		row, err := d.q.GetRawTurn(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		rec := rawTurnRecordFromRow(rawTurnFromDeriveRow(row))
+		recoverReduction(ctx, d.reducers, d.logger, &rec)
+		recs = append(recs, rec)
+	}
+	return recs, nil
 }

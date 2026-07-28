@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/url"
 	"sort"
@@ -22,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	tapesmigrations "github.com/papercomputeco/tapes/migrations"
+	"github.com/papercomputeco/tapes/pkg/capture"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres/gensqlc"
 )
 
@@ -30,6 +32,12 @@ type Driver struct {
 	poolOpts []PoolOption
 	conn     *pgxpool.Pool
 	q        *gensqlc.Queries
+
+	// reducers recover a turn whose reduction failed at ingest, from the
+	// verbatim bytes stored alongside it. See recover_reduction.go for why
+	// this lives in the storage layer and not in pkg/derive.
+	reducers map[string]capture.Reducer
+	logger   *slog.Logger
 }
 
 // PoolOption tunes the pgx pool configuration built from the DSN.
@@ -52,7 +60,12 @@ func WithConnectTimeout(d time.Duration) PoolOption {
 }
 
 func NewDriver(ctx context.Context, connStr string, opts ...PoolOption) (*Driver, error) {
-	d := &Driver{dsn: connStr, poolOpts: opts}
+	d := &Driver{
+		dsn:      connStr,
+		poolOpts: opts,
+		reducers: newRecoveryReducers(),
+		logger:   slog.Default(),
+	}
 	if err := d.Open(ctx); err != nil {
 		return nil, err
 	}

@@ -6,11 +6,15 @@ package postgres_test
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/papercomputeco/tapes/pkg/capture/fixtures"
+	"github.com/papercomputeco/tapes/pkg/llm"
+	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 )
 
@@ -310,3 +314,108 @@ var _ = Describe("change feed under concurrent derives [postgres]", func() {
 			"both passes must be delivered, oldest cursor first")
 	})
 })
+
+var _ = Describe("recovering a failed reduction [postgres]", func() {
+	var (
+		ctx    context.Context
+		driver *postgres.Driver
+		orgID  pgtype.UUID
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		dsn, err := testPostgresDSN()
+		Expect(err).NotTo(HaveOccurred())
+
+		driver, err = postgres.NewDriver(ctx, dsn)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(driver.Close)
+
+		_, err = driver.DB().Exec(ctx, "TRUNCATE TABLE raw_turns CASCADE")
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(orgID.Scan(recoveryOrgID)).To(Succeed())
+	})
+
+	// The shape ingest produces when it cannot reduce a raw-only payload: the
+	// verbatim bytes land, the reduced column does not. Before the read-side
+	// recovery this row was permanently unprojectable — the deriver skips a
+	// response with no content blocks, and the bytes that would fix it were
+	// never fetched.
+	It("reduces from the stored bytes when the reduction is unusable", func() {
+		sse, err := fixtures.ReadFile("anthropic/messages_stream.sse")
+		Expect(err).NotTo(HaveOccurred())
+
+		store, ok := any(driver).(storage.RawTurnStore)
+		Expect(ok).To(BeTrue(), "postgres driver must host the raw layer")
+
+		_, err = store.PutRawTurn(ctx, storage.RawTurnRecord{
+			OrgID:               recoveryOrgID,
+			Source:              storage.RawTurnSourceWire,
+			Provider:            "anthropic",
+			HarnessID:           "claude",
+			HarnessSessionID:    "sess-recover",
+			RequestID:           "req-recover-1",
+			RawRequest:          json.RawMessage(`{"model":"claude-sonnet-4-6","messages":[]}`),
+			Response:            json.RawMessage(`{}`),
+			RawResponse:         sse,
+			RawResponseEncoding: "identity",
+			Meta:                json.RawMessage(`{"content_type":"text/event-stream"}`),
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		// Read it back through the derive path, which is where recovery runs.
+		rows, err := driver.RawTurnsForDeriveForTest(ctx, orgID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rows).To(HaveLen(1))
+
+		var resp llm.ChatResponse
+		Expect(json.Unmarshal(rows[0].Response, &resp)).To(Succeed())
+		Expect(resp.Message.Role).NotTo(BeEmpty(),
+			"a role is what the deriver gates on; without it the turn is skipped")
+		Expect(resp.Message.Content).NotTo(BeEmpty(),
+			"content blocks recovered from the stored bytes")
+	})
+
+	// A healthy turn must not pay for this. The query returns no raw bytes when
+	// the reduction has content, so recovery cannot fire and cannot rewrite a
+	// reduction the adapter already produced — an adapter saw the live stream
+	// and may have observed framing the stored bytes no longer show.
+	It("leaves a healthy reduction untouched", func() {
+		reduced := `{"model":"m","message":{"role":"assistant","content":[{"type":"text","text":"kept"}]},"done":true}`
+
+		store, ok := any(driver).(storage.RawTurnStore)
+		Expect(ok).To(BeTrue())
+
+		sse, err := fixtures.ReadFile("anthropic/messages_stream.sse")
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = store.PutRawTurn(ctx, storage.RawTurnRecord{
+			OrgID:               recoveryOrgID,
+			Source:              storage.RawTurnSourceWire,
+			Provider:            "anthropic",
+			HarnessID:           "claude",
+			HarnessSessionID:    "sess-healthy",
+			RequestID:           "req-healthy-1",
+			RawRequest:          json.RawMessage(`{"model":"m","messages":[]}`),
+			Response:            json.RawMessage(reduced),
+			RawResponse:         sse,
+			RawResponseEncoding: "identity",
+			Meta:                json.RawMessage(`{"content_type":"text/event-stream"}`),
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		rows, err := driver.RawTurnsForDeriveForTest(ctx, orgID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rows).To(HaveLen(1))
+
+		var resp llm.ChatResponse
+		Expect(json.Unmarshal(rows[0].Response, &resp)).To(Succeed())
+		Expect(resp.Message.Content).To(HaveLen(1))
+		Expect(resp.Message.Content[0].Text).To(Equal("kept"),
+			"the adapter's own reduction must survive untouched")
+	})
+})
+
+// recoveryOrgID is a fixed, valid UUID for the recovery specs.
+const recoveryOrgID = "00000000-0000-4000-8000-0000000000ec"

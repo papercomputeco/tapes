@@ -146,19 +146,15 @@ func rawTurnRecordFromRow(row gensqlc.RawTurn) storage.RawTurnRecord {
 // rawTurnFromDeriveRow widens the narrow GetRawTurn projection to the full row
 // shape so both paths share one converter.
 //
-// GetRawTurn deliberately does NOT select raw_response. The deriver reads the
-// reduced `response` column and has no use for the verbatim bytes, which run
-// to the ingest cap — selecting them would pull megabytes per turn through
-// every derive read to be discarded. The columns are zero here because the
-// query didn't ask for them, which is not the same as the row not having
-// them; anything that needs the raw bytes reads through the raw-turn store.
+// GetRawTurn selects raw_response only for turns whose reduction is missing
+// its content blocks (see the query). The deriver reads the reduced `response`
+// column and has no use for the verbatim bytes on a healthy turn, and those
+// bytes run to the ingest cap — pulling them through every derive read would
+// move megabytes per turn to be discarded.
 //
-// One case this cost model does not cover: a turn whose reduction failed at
-// ingest persists with verbatim bytes and an EMPTY reduction, and this path
-// hands the deriver that empty reduction. Such a turn cannot be recovered by
-// re-deriving, only by a pass that reduces from raw — see reduceRawOnly in
-// ingest/ingest.go. Fetching raw_response only for turns whose reduction is
-// absent would close it without paying the bytes on every read.
+// RawResponseDropped is not selected at all: it is a fidelity marker for the
+// projection, not an input to derivation, and it is zero here because the
+// query didn't ask — which is not the same as the row not having it.
 func rawTurnFromDeriveRow(row gensqlc.GetRawTurnRow) gensqlc.RawTurn {
 	return gensqlc.RawTurn{
 		ID:               row.ID,
@@ -174,6 +170,9 @@ func rawTurnFromDeriveRow(row gensqlc.GetRawTurnRow) gensqlc.RawTurn {
 		Meta:             row.Meta,
 		SessionEnvelope:  row.SessionEnvelope,
 		ReceivedAt:       row.ReceivedAt,
+
+		RawResponse:         row.RawResponse,
+		RawResponseEncoding: row.RawResponseEncoding,
 	}
 }
 
