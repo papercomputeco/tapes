@@ -43,9 +43,6 @@ type ollamaTestResponse struct {
 	TotalDuration   int64             `json:"total_duration,omitempty"`
 }
 
-// boolPtr returns a pointer to a bool value.
-func boolPtr(b bool) *bool { return &b }
-
 // decodeReducedResponse unmarshals a captured raw turn's verbatim reduced
 // response (the marshaled worker.Job.Resp) back into a canonical
 // llm.ChatResponse so capture specs can assert on the assistant text and
@@ -142,7 +139,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 		It("forwards the request and returns the upstream response", func() {
 			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 				{Role: "user", Content: "What is 2+2?"},
-			}, boolPtr(false))
+			}, new(false))
 
 			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
 			Expect(err).NotTo(HaveOccurred())
@@ -158,7 +155,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 		It("copies upstream response headers to the client", func() {
 			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 				{Role: "user", Content: "What is 2+2?"},
-			}, boolPtr(false))
+			}, new(false))
 
 			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
 			Expect(err).NotTo(HaveOccurred())
@@ -171,7 +168,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 		It("captures the conversation turn into the raw-turn layer", func() {
 			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 				{Role: "user", Content: "What is 2+2?"},
-			}, boolPtr(false))
+			}, new(false))
 
 			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
 			Expect(err).NotTo(HaveOccurred())
@@ -200,7 +197,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 				{Role: "system", Content: "You are helpful."},
 				{Role: "user", Content: "What is 2+2?"},
-			}, boolPtr(false))
+			}, new(false))
 
 			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
 			Expect(err).NotTo(HaveOccurred())
@@ -232,7 +229,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 		It("returns the upstream error status to the client", func() {
 			reqBody := makeOllamaRequestBody("nonexistent", []ollamaTestMessage{
 				{Role: "user", Content: "hello"},
-			}, boolPtr(false))
+			}, new(false))
 
 			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
 			Expect(err).NotTo(HaveOccurred())
@@ -248,7 +245,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 		It("does not capture anything on an upstream error", func() {
 			reqBody := makeOllamaRequestBody("nonexistent", []ollamaTestMessage{
 				{Role: "user", Content: "hello"},
-			}, boolPtr(false))
+			}, new(false))
 
 			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
 			Expect(err).NotTo(HaveOccurred())
@@ -307,7 +304,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 		It("forwards custom request headers to upstream", func() {
 			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 				{Role: "user", Content: "hello"},
-			}, boolPtr(false))
+			}, new(false))
 
 			req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody)))
 			req.Header.Set("X-Api-Key", "secret-token")
@@ -326,7 +323,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 			receivedHeaders = make(http.Header)
 			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 				{Role: "user", Content: "hello"},
-			}, boolPtr(false))
+			}, new(false))
 
 			req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody)))
 			req.Header.Set("Accept-Encoding", "gzip, deflate, br")
@@ -349,7 +346,7 @@ var _ = Describe("Non-Streaming Proxy", func() {
 		It("filters the agent header from upstream", func() {
 			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 				{Role: "user", Content: "hello"},
-			}, boolPtr(false))
+			}, new(false))
 
 			req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody)))
 			req.Header.Set(header.AgentNameHeader, "claude")
@@ -404,7 +401,7 @@ var _ = Describe("Streaming Proxy", func() {
 		It("streams all chunks to the client", func() {
 			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 				{Role: "user", Content: "What is 2+2?"},
-			}, boolPtr(true))
+			}, new(true))
 
 			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), -1)
 			Expect(err).NotTo(HaveOccurred())
@@ -426,7 +423,7 @@ var _ = Describe("Streaming Proxy", func() {
 		It("captures the reconstructed conversation after streaming completes", func() {
 			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 				{Role: "user", Content: "What is 2+2?"},
-			}, boolPtr(true))
+			}, new(true))
 
 			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), -1)
 			Expect(err).NotTo(HaveOccurred())
@@ -467,7 +464,7 @@ var _ = Describe("Streaming Proxy", func() {
 		It("returns the error to the client without storing", func() {
 			reqBody := makeOllamaRequestBody("bad-model", []ollamaTestMessage{
 				{Role: "user", Content: "hello"},
-			}, boolPtr(true))
+			}, new(true))
 
 			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), -1)
 			Expect(err).NotTo(HaveOccurred())
@@ -511,7 +508,7 @@ var _ = Describe("Streaming Proxy", func() {
 			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 				{Role: "system", Content: "You are helpful."},
 				{Role: "user", Content: "What is 2+2?"},
-			}, boolPtr(true))
+			}, new(true))
 
 			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), -1)
 			Expect(err).NotTo(HaveOccurred())
@@ -579,7 +576,7 @@ var _ = Describe("Streaming Detection", func() {
 		It("routes to streaming when stream=true is set explicitly", func() {
 			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 				{Role: "user", Content: "hello"},
-			}, boolPtr(true))
+			}, new(true))
 
 			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), -1)
 			Expect(err).NotTo(HaveOccurred())
@@ -600,7 +597,7 @@ var _ = Describe("Streaming Detection", func() {
 		It("routes to non-streaming when stream=false is set explicitly", func() {
 			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 				{Role: "user", Content: "hello"},
-			}, boolPtr(false))
+			}, new(false))
 
 			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
 			Expect(err).NotTo(HaveOccurred())
@@ -775,7 +772,7 @@ var _ = Describe("End-to-End Multi-Turn Proxy", func() {
 		reqBody1 := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 			{Role: "system", Content: "You are helpful."},
 			{Role: "user", Content: "What is 2+2?"},
-		}, boolPtr(false))
+		}, new(false))
 
 		resp1, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody1))))
 		Expect(err).NotTo(HaveOccurred())
@@ -787,7 +784,7 @@ var _ = Describe("End-to-End Multi-Turn Proxy", func() {
 			{Role: "user", Content: "What is 2+2?"},
 			{Role: "assistant", Content: "2+2 equals 4."},
 			{Role: "user", Content: "And what is 3+3?"},
-		}, boolPtr(false))
+		}, new(false))
 
 		resp2, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody2))))
 		Expect(err).NotTo(HaveOccurred())
@@ -836,7 +833,7 @@ var _ = Describe("Capture Provider Metadata", func() {
 	It("records the provider on the raw turn", func() {
 		reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 			{Role: "user", Content: "hi"},
-		}, boolPtr(false))
+		}, new(false))
 
 		resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
 		Expect(err).NotTo(HaveOccurred())
@@ -853,7 +850,7 @@ var _ = Describe("Capture Provider Metadata", func() {
 	It("records the model on the reduced response", func() {
 		reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 			{Role: "user", Content: "hi"},
-		}, boolPtr(false))
+		}, new(false))
 
 		resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
 		Expect(err).NotTo(HaveOccurred())
@@ -870,7 +867,7 @@ var _ = Describe("Capture Provider Metadata", func() {
 	It("records the agent name on the raw turn", func() {
 		reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 			{Role: "user", Content: "hi"},
-		}, boolPtr(false))
+		}, new(false))
 
 		req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody)))
 		req.Header.Set(header.AgentNameHeader, "claude")
@@ -889,7 +886,7 @@ var _ = Describe("Capture Provider Metadata", func() {
 	It("records usage metadata on the reduced response", func() {
 		reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 			{Role: "user", Content: "hi"},
-		}, boolPtr(false))
+		}, new(false))
 
 		resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
 		Expect(err).NotTo(HaveOccurred())
@@ -1038,7 +1035,7 @@ var _ = Describe("Proxy-measured total duration", func() {
 		It("stamps Usage.TotalDurationNs with proxy wall-clock time", func() {
 			reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
 				{Role: "user", Content: "hi"},
-			}, boolPtr(false))
+			}, new(false))
 
 			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
 			Expect(err).NotTo(HaveOccurred())

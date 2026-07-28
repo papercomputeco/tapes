@@ -3,7 +3,7 @@
 ## Quick start (recommended)
 
 The Nix flake dev shell is the recommended way to develop tapes. It pins the
-toolchain (Go 1.25, Dagger, `sqlc`, `swag`, `hurl`) and exports the environment
+toolchain (Go 1.26, Dagger, `sqlc`, `swag`, `hurl`) and exports the environment
 the build and tests need — `GOEXPERIMENT=jsonv2` and `TEST_POSTGRES_DSN` — so
 you don't have to set either by hand.
 
@@ -59,7 +59,7 @@ To reset demo data, use a fresh database behind the API server.
 
 ## Prerequisites checklist
 
-- Go 1.25+
+- Go 1.26+
 - Docker (required for `make format`, `make check`, `make test` via Dagger, and
   for the local test database)
 - PostgreSQL with pgvector + pg_duckdb for local runtime work. `make test-db-up`

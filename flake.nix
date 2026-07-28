@@ -20,7 +20,7 @@
         devShells.default = pkgs.mkShell {
           buildInputs = [
             # Go toolchain
-            pkgs.go_1_25
+            pkgs.go_1_26
             pkgs.gotools
             pkgs.go-swag
             pkgs.sqlc
