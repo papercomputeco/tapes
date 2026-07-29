@@ -103,6 +103,19 @@ const harnessCodex = "codex"
 // toolSpawnAgent is Codex's subagent-spawning collaboration tool.
 const toolSpawnAgent = "spawn_agent"
 
+// sub_agent_activity lifecycle kinds, as carried in anchor-row meta
+// (and in the verbatim record itself). Only started records are spawn
+// evidence. Interacted records — send_message / followup_task
+// re-entries, uploaded by paperd for durability, whose target may be
+// the sender's parent or the ROOT — MUST stay inert in derivation: an
+// interacted row never anchors a thread, never overrides a started
+// anchor, and a thread whose only rows are interacted degrades exactly
+// as if it had no anchor at all (PCC-1021 decision C).
+const (
+	subAgentKindStarted    = "started"
+	subAgentKindInteracted = "interacted"
+)
+
 // CodexThreadMeta is the per-thread spawn metadata a Codex child raw
 // turn carries in its session envelope's harness_metadata — the
 // agent_path fallback join key plus the console-facing nickname.
@@ -191,10 +204,17 @@ func lastPathSegment(path string) string {
 // above. Runs inside ReconcileTranscripts, after the Claude chain join;
 // pure and re-runnable — stamping is idempotent.
 func reconcileCodexSpawns(set *DerivedSet, files []*TranscriptFile, stats *ReconcileStats) {
-	// Identity map from the spawn-anchor rows.
+	// Identity map from the spawn-anchor rows. Kind-filtered: only
+	// started (or legacy unmarked) rows are spawn evidence — an
+	// interacted row joined here would re-anchor its TARGET thread to
+	// the send/followup call, or clobber the real started anchor.
 	fileByThread := map[SessionKey]map[string]*TranscriptFile{}
 	for _, f := range files {
 		if f.Session.HarnessID != harnessCodex || f.AgentID == "" || f.ToolUseID == "" {
+			continue
+		}
+		if !f.SpawnEvidence() {
+			stats.CodexInteractedRows++
 			continue
 		}
 		byThread := fileByThread[f.Session]

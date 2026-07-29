@@ -2,6 +2,7 @@ package derive_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"sort"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -503,5 +504,113 @@ var _ = Describe("codex corpus (parallel children)", func() {
 			Expect(agent).NotTo(BeNil())
 			Expect(agent.ParentSpanID).To(Equal(turnOf[agent.SpanID].Spans[0].SpanID))
 		}
+	})
+})
+
+var _ = Describe("codex interacted anchor rows (PCC-1021 decision C)", func() {
+	// paperd banks kind:"interacted" sub_agent_activity records
+	// (send_message / followup_task re-entries) as anchor rows for
+	// future rendering. Their meta is shaped EXACTLY like spawn
+	// evidence — agent_id (the TARGET thread, possibly the sender's
+	// parent or the root) plus tool_use_id (the triggering call) — so
+	// this gate proves derivation treats them as inert ballast: the
+	// projection stays byte-identical and only the explicit
+	// CodexInteractedRows counter moves.
+	load := func() ([]storage.RawTurnRecord, []storage.RawTurnRecord) {
+		return loadCodexCorpus(corpusPath("corpus-codex-delta.jsonl.gz"), 13, 2)
+	}
+
+	// interactedRow mints an anchor row the way POST /v1/ingest/transcript
+	// does from the paperd interacted payload. metaKind=false reproduces a
+	// row minted by an ingest build predating the meta kind field (version
+	// skew): the kind then survives only inside the verbatim record, and
+	// the derive parser must recover it from there.
+	interactedRow := func(target, callID string, metaKind bool) storage.RawTurnRecord {
+		record := `{"timestamp":"2026-07-23T04:41:18.008Z","type":"event_msg","payload":{"type":"sub_agent_activity","event_id":"` +
+			callID + `","occurred_at_ms":1784781678008,"agent_thread_id":"` + target +
+			`","agent_path":"/root/depth2_cli_child","kind":"interacted"}}`
+		kindField := `"kind":"interacted",`
+		if !metaKind {
+			kindField = ""
+		}
+		meta := `{"transcript":true,"agent_id":"` + target +
+			`","agent_type":"depth2_cli_child","description":"/root/depth2_cli_child","tool_use_id":"` +
+			callID + `",` + kindField + `"records":1}`
+		return storage.RawTurnRecord{
+			Source:           storage.RawTurnSourceTranscript,
+			HarnessID:        "codex",
+			HarnessSessionID: codexDeltaRoot,
+			RequestID:        "transcript:" + codexDeltaRoot + ":" + target + ":deadbeef",
+			RawRequest:       json.RawMessage("[" + record + "]"),
+			Meta:             json.RawMessage(meta),
+		}
+	}
+
+	It("recovers the kind from record content when meta predates the kind field", func() {
+		skew := interactedRow(codexDeltaGrand, "call_followup_gc", false)
+		file, err := derive.ParseTranscriptFile(&skew)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(file.Kind).To(Equal("interacted"),
+			"an old-ingest row must not masquerade as spawn evidence")
+	})
+
+	It("leaves the derived projection and every join stat byte-unchanged", func() {
+		wire, anchors := load()
+		baseSet, baseStats, baseSpans := deriveCodexRows(wire, anchors)
+
+		// Adversarial file order on purpose: one interacted row BEFORE
+		// the real started anchors (identity joins pick the first
+		// match), duplicating a child that already has a started anchor
+		// — via the REAL upward send captured in the July-22 clearing —
+		// then, AFTER them (map writes: last wins), one targeting the
+		// ROOT thread itself and one version-skew row for the
+		// grandchild whose kind lives only in the record.
+		injected := make([]storage.RawTurnRecord, 0, len(anchors)+3)
+		injected = append(injected,
+			interactedRow(codexDeltaChild, "call_cqusEjhomv5zKjZ7vodiY7Og", true))
+		injected = append(injected, anchors...)
+		injected = append(injected,
+			interactedRow(codexDeltaRoot, "call_up_to_root", true),
+			interactedRow(codexDeltaGrand, "call_followup_gc", false),
+		)
+
+		set, stats, spans := deriveCodexRows(wire, injected)
+		Expect(canonicalProjection(set, spans)).To(Equal(canonicalProjection(baseSet, baseSpans)),
+			"interacted anchor rows must not perturb the derived projection")
+
+		// The ONLY stat movement is the explicit counters: three more
+		// transcript rows arrived, three were ignored as interacted.
+		Expect(stats.CodexInteractedRows).To(Equal(3))
+		Expect(stats.TranscriptFiles).To(Equal(baseStats.TranscriptFiles + 3))
+		adjusted := *stats
+		adjusted.CodexInteractedRows = baseStats.CodexInteractedRows
+		adjusted.TranscriptFiles = baseStats.TranscriptFiles
+		Expect(adjusted).To(Equal(*baseStats))
+	})
+
+	It("degrades a thread whose only anchor rows are interacted exactly as if unanchored", func() {
+		wire, _ := load()
+
+		// Strip the wire envelopes so the agent_path fallback cannot
+		// anchor either: the interacted rows are then the ONLY spawn
+		// evidence candidates, and they must not act as any.
+		stripped := make([]storage.RawTurnRecord, len(wire))
+		copy(stripped, wire)
+		for i := range stripped {
+			stripped[i].SessionEnvelope = nil
+		}
+		baseSet, baseStats, baseSpans := deriveCodexRows(stripped, nil)
+		Expect(baseStats.CodexThreadsUnanchored).To(Equal(2))
+
+		onlyInteracted := []storage.RawTurnRecord{
+			interactedRow(codexDeltaChild, "call_cqusEjhomv5zKjZ7vodiY7Og", true),
+			interactedRow(codexDeltaGrand, "call_followup_gc", true),
+		}
+		set, stats, spans := deriveCodexRows(stripped, onlyInteracted)
+		Expect(canonicalProjection(set, spans)).To(Equal(canonicalProjection(baseSet, baseSpans)))
+		Expect(stats.CodexThreadsAnchored).To(BeZero())
+		Expect(stats.CodexThreadsUnanchored).To(Equal(2),
+			"the visible no-anchor degrade signal must fire despite the interacted rows")
+		Expect(stats.CodexInteractedRows).To(Equal(2))
 	})
 })
