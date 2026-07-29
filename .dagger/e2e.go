@@ -27,7 +27,7 @@ func (t *Tapes) TestE2E(ctx context.Context) (string, error) {
 
 	// Base container for running tapes services (needs the binary + service bindings).
 	tapesBase := dag.Container().
-		From("golang:1.25-bookworm").
+		From("golang:1.26-bookworm").
 		WithFile("/usr/local/bin/tapes", tapesBin).
 		WithServiceBinding("postgres", postgresSvc).
 		WithServiceBinding("ollama", ollamaSvc)

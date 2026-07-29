@@ -65,7 +65,7 @@ CLI surface notes for agents:
   their trace/turn context.
 - `tapes deck` is built on the traces/span model (not the old stems/merkle TUI).
 
-**Language:** Go 1.25+
+**Language:** Go 1.26+
 **Go Module:** `github.com/papercomputeco/tapes`
 
 ### Project Structure

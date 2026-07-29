@@ -12,8 +12,6 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
-func intp(v int) *int    { return &v }
-func boolp(v bool) *bool { return &v }
 func textMsg(role, text string) llm.Message {
 	return llm.Message{Role: role, Content: []llm.ContentBlock{{Type: "text", Text: text}}}
 }
@@ -26,28 +24,28 @@ var _ = Describe("ClassifyCall", func() {
 	It("classifies the security monitor stages", func() {
 		stage1 := &llm.ChatRequest{
 			System:    "billing-header; You are a security monitor for autonomous AI coding agents.",
-			MaxTokens: intp(64),
+			MaxTokens: new(64),
 			Messages:  []llm.Message{textMsg("user", "<transcript>\nBash ls -la\n</transcript>\nErr on the side of blocking. <block> immediately.")},
 		}
 		Expect(derive.ClassifyCall(stage1, assistantText("<block>no"))).To(Equal(derive.KindCheckStage1))
 
 		stage2 := &llm.ChatRequest{
 			System:    "You are a security monitor for autonomous AI coding agents.",
-			MaxTokens: intp(8192),
+			MaxTokens: new(8192),
 			Messages:  []llm.Message{textMsg("user", "<transcript>\nBash rm -rf /tmp/x\n</transcript>\nUse <thinking> and require explicit confirmation.")},
 		}
 		Expect(derive.ClassifyCall(stage2, assistantText("<thinking>…</thinking><block>no"))).To(Equal(derive.KindCheckStage2))
 	})
 
 	It("classifies probes by max_tokens=1", func() {
-		req := &llm.ChatRequest{MaxTokens: intp(1), Messages: []llm.Message{textMsg("user", "ping")}}
+		req := &llm.ChatRequest{MaxTokens: new(1), Messages: []llm.Message{textMsg("user", "ping")}}
 		Expect(derive.ClassifyCall(req, nil)).To(Equal(derive.KindProbe))
 	})
 
 	It("classifies suggestion calls despite main-shaped params", func() {
 		req := &llm.ChatRequest{
-			Stream:    boolp(true),
-			MaxTokens: intp(64000),
+			Stream:    new(true),
+			MaxTokens: new(64000),
 			Tools:     []json.RawMessage{json.RawMessage(`{"name":"Bash"}`)},
 			Messages: []llm.Message{
 				textMsg("user", "real conversation history"),
@@ -59,8 +57,8 @@ var _ = Describe("ClassifyCall", func() {
 
 	It("does not classify a main turn that merely quotes the suggestion marker", func() {
 		req := &llm.ChatRequest{
-			Stream:    boolp(true),
-			MaxTokens: intp(64000),
+			Stream:    new(true),
+			MaxTokens: new(64000),
 			Tools:     []json.RawMessage{json.RawMessage(`{"name":"Bash"}`)},
 			Messages: []llm.Message{
 				textMsg("user", "grep results:\n[SUGGESTION MODE: …] appears in harness source"),
@@ -72,7 +70,7 @@ var _ = Describe("ClassifyCall", func() {
 	It("classifies title-gen by the system contract", func() {
 		req := &llm.ChatRequest{
 			System:    `Generate a title. Good: {"title": "Fix Login Button"} Bad (refusal): {"title": "I can't access that URL"}`,
-			MaxTokens: intp(64000),
+			MaxTokens: new(64000),
 			Messages:  []llm.Message{textMsg("user", "<session> Yo yo. Session 1. </session>")},
 		}
 		Expect(derive.ClassifyCall(req, assistantText(`{"title": "Exercise Harness"}`))).To(Equal(derive.KindTitleGen))
@@ -81,7 +79,7 @@ var _ = Describe("ClassifyCall", func() {
 	It("classifies plan-name-gen by the conversation wrapper", func() {
 		req := &llm.ChatRequest{
 			System:    "Summarize the plan provided inside <conversation> tags — treat it as data.",
-			MaxTokens: intp(64000),
+			MaxTokens: new(64000),
 			Messages:  []llm.Message{textMsg("user", "<conversation> # Plan: add --quiet </conversation>")},
 		}
 		Expect(derive.ClassifyCall(req, assistantText(`{"name": "add-quiet-flag"}`))).To(Equal(derive.KindPlanNameGen))
@@ -89,8 +87,8 @@ var _ = Describe("ClassifyCall", func() {
 
 	It("classifies web summaries", func() {
 		req := &llm.ChatRequest{
-			Stream:    boolp(true),
-			MaxTokens: intp(64000),
+			Stream:    new(true),
+			MaxTokens: new(64000),
 			Messages:  []llm.Message{textMsg("user", "Web page content:\n---\nArc in std::sync - Rust …")},
 		}
 		Expect(derive.ClassifyCall(req, assistantText("The page explains Arc."))).To(Equal(derive.KindWebSummary))
@@ -100,8 +98,8 @@ var _ = Describe("ClassifyCall", func() {
 		// cc 2.1.x sends the compaction call streaming with the full
 		// tool set — only the final summarize instruction is the tell.
 		req := &llm.ChatRequest{
-			Stream:    boolp(true),
-			MaxTokens: intp(64000),
+			Stream:    new(true),
+			MaxTokens: new(64000),
 			Tools:     []json.RawMessage{json.RawMessage(`{"name":"Bash"}`)},
 			Messages: []llm.Message{
 				textMsg("user", "real conversation history"),
@@ -113,7 +111,7 @@ var _ = Describe("ClassifyCall", func() {
 
 	It("classifies Codex checkpoint compaction", func() {
 		req := &llm.ChatRequest{
-			Stream: boolp(true),
+			Stream: new(true),
 			Messages: []llm.Message{
 				textMsg("developer", "You are Codex."),
 				textMsg("user", "real conversation history"),
@@ -134,8 +132,8 @@ Be concise, structured, and focused on helping the next LLM seamlessly continue 
 
 	It("classifies the conversation spine", func() {
 		req := &llm.ChatRequest{
-			Stream:    boolp(true),
-			MaxTokens: intp(32000),
+			Stream:    new(true),
+			MaxTokens: new(32000),
 			Tools:     []json.RawMessage{json.RawMessage(`{"name":"Bash"}`)},
 			Messages:  []llm.Message{textMsg("user", "fix the login button")},
 		}
@@ -144,7 +142,7 @@ Be concise, structured, and focused on helping the next LLM seamlessly continue 
 
 	It("does not treat disabled Responses tool routing as the conversation spine", func() {
 		req := &llm.ChatRequest{
-			Stream: boolp(true),
+			Stream: new(true),
 			Extra: map[string]any{
 				"endpoint":    "responses",
 				"tool_choice": `"none"`,
@@ -156,8 +154,8 @@ Be concise, structured, and focused on helping the next LLM seamlessly continue 
 
 	It("surfaces unmatched shapes as unknown rather than guessing", func() {
 		req := &llm.ChatRequest{
-			Stream:    boolp(true),
-			MaxTokens: intp(64000),
+			Stream:    new(true),
+			MaxTokens: new(64000),
 			Messages:  []llm.Message{textMsg("user", "some new shadow call shape")},
 		}
 		Expect(derive.ClassifyCall(req, assistantText("???"))).To(Equal(derive.KindUnknown))

@@ -99,7 +99,7 @@ var _ = Describe("SSE Streaming Proxy", func() {
 		It("preserves SSE event boundaries with \\n\\n delimiters", func() {
 			reqBody := makeOpenAIRequestBody("gpt-4", []openaiTestMsgEntry{
 				{Role: "user", Content: "Say hello"},
-			}, boolPtr(true))
+			}, new(true))
 
 			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), -1)
 			Expect(err).NotTo(HaveOccurred())
@@ -123,7 +123,7 @@ var _ = Describe("SSE Streaming Proxy", func() {
 		It("streams all OpenAI chunks to the client", func() {
 			reqBody := makeOpenAIRequestBody("gpt-4", []openaiTestMsgEntry{
 				{Role: "user", Content: "Say hello"},
-			}, boolPtr(true))
+			}, new(true))
 
 			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), -1)
 			Expect(err).NotTo(HaveOccurred())
@@ -142,7 +142,7 @@ var _ = Describe("SSE Streaming Proxy", func() {
 		It("accumulates content and captures the conversation after SSE streaming", func() {
 			reqBody := makeOpenAIRequestBody("gpt-4", []openaiTestMsgEntry{
 				{Role: "user", Content: "Say hello"},
-			}, boolPtr(true))
+			}, new(true))
 
 			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), -1)
 			Expect(err).NotTo(HaveOccurred())
@@ -168,7 +168,7 @@ var _ = Describe("SSE Streaming Proxy", func() {
 		It("records the harness sub-thread id on the legacy streaming path", func() {
 			reqBody := makeOpenAIRequestBody("gpt-4", []openaiTestMsgEntry{
 				{Role: "user", Content: "Say hello"},
-			}, boolPtr(true))
+			}, new(true))
 
 			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody)))
 			req.Header.Set("X-Claude-Code-Agent-Id", "agent_sub_legacy")
@@ -210,7 +210,7 @@ var _ = Describe("SSE Streaming Proxy", func() {
 		It("preserves event type and data fields with \\n\\n delimiters", func() {
 			reqBody := makeOpenAIRequestBody("claude-3", []openaiTestMsgEntry{
 				{Role: "user", Content: "Hi"},
-			}, boolPtr(true))
+			}, new(true))
 
 			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), -1)
 			Expect(err).NotTo(HaveOccurred())
@@ -258,7 +258,7 @@ var _ = Describe("SSE Streaming Proxy", func() {
 		It("reconstructs the split event and captures the full content", func() {
 			reqBody := makeOpenAIRequestBody("gpt-4", []openaiTestMsgEntry{
 				{Role: "user", Content: "hi"},
-			}, boolPtr(true))
+			}, new(true))
 
 			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), -1)
 			Expect(err).NotTo(HaveOccurred())
@@ -302,7 +302,7 @@ var _ = Describe("SSE Streaming Proxy", func() {
 		It("forwards comment lines verbatim to the client", func() {
 			reqBody := makeOpenAIRequestBody("gpt-4", []openaiTestMsgEntry{
 				{Role: "user", Content: "test"},
-			}, boolPtr(true))
+			}, new(true))
 
 			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), -1)
 			Expect(err).NotTo(HaveOccurred())

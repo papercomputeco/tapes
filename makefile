@@ -171,6 +171,11 @@ test: ## Runs tests via "go test" in the Dagger services environment
 	$(call print-target)
 	dagger call test
 
+.PHONY: test-run-id
+test-run-id: ## Runs tests via "go test" in the Dagger services environment
+	$(call print-target)
+	dagger call test --run-id="$$(date +%s)"
+
 .PHONY: e2e-test
 e2e-test: ## Runs end-to-end tests with Postgres and Ollama via Dagger
 	$(call print-target)
@@ -238,12 +243,13 @@ test-db-down: ## Stops and removes the local test Postgres (keeps its data volum
 # the missing experiment. TEST_POSTGRES_DSN is likewise defaulted here so the
 # target works outside the dev shell, while deferring to an existing value.
 TEST_POSTGRES_DSN ?= postgres://tapes:tapes@127.0.0.1:5432/tapes?sslmode=disable
+GO_TEST_FLAGS ?= -count=1
 
 .PHONY: test-local
 test-local: test-db-up ## Runs the suite locally against the CI Postgres (PKG=./pkg/... to scope)
 	$(call print-target)
 	@echo "TEST_POSTGRES_DSN=$(TEST_POSTGRES_DSN)"
-	GOEXPERIMENT=jsonv2 TEST_POSTGRES_DSN="$(TEST_POSTGRES_DSN)" go test $(PKG)
+	GOEXPERIMENT=jsonv2 TEST_POSTGRES_DSN="$(TEST_POSTGRES_DSN)" go test $(GO_TEST_FLAGS) $(PKG)
 	@echo "postgres left running for fast re-runs; 'make test-db-down' to stop it"
 
 .PHONY: help

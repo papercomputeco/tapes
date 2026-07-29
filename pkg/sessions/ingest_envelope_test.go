@@ -9,9 +9,6 @@ import (
 	"github.com/papercomputeco/tapes/pkg/sessions"
 )
 
-// stringPtr is a tiny helper for building *string fields inline.
-func stringPtr(s string) *string { return &s }
-
 var _ = Describe("IngestEnvelope.Validate", func() {
 	It("accepts a nil receiver as 'no envelope'", func() {
 		var e *sessions.IngestEnvelope
@@ -29,7 +26,7 @@ var _ = Describe("IngestEnvelope.Validate", func() {
 			AuthSubject:            "subject",
 			HarnessID:              "claude",
 			HarnessSessionID:       "hs-1",
-			ParentHarnessSessionID: stringPtr("parent-1"),
+			ParentHarnessSessionID: new("parent-1"),
 			HarnessMetadata:        json.RawMessage(`{"ai_title":"hello"}`),
 		}
 		Expect(e.Validate()).To(Succeed())
