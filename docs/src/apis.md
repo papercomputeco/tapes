@@ -9,8 +9,8 @@ The default read API listens on `:8081`. It serves health, derived data, search,
 | Area | Routes |
 | --- | --- |
 | Health and contract | `GET /ping`, `/swagger`, `/swagger/openapi.yaml` |
-| Sessions | `/v1/sessions`, `/v1/sessions/{id}`, `/traces`, `/raw_turns`, `/export` |
-| Traces and spans | `/v1/traces`, `/v1/traces/{trace_id}`, `/spans/{span_id}` |
+| Sessions | `/v1/sessions`, `/v1/sessions/{id}`, `/v1/sessions/{id}/traces`, `/v1/sessions/{id}/raw_turns`, `/v1/sessions/{id}/export` |
+| Traces and spans | `/v1/traces`, `/v1/traces/{trace_id}`, `/v1/traces/{trace_id}/spans/{span_id}` |
 | Search and aggregates | `GET /v1/search/spans`, `GET /v1/stats` |
 | Skills | `/v1/skills` and session skill routes |
 | MCP | `/v1/mcp` |

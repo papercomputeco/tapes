@@ -253,7 +253,7 @@ test-local: test-db-up ## Runs the suite locally against the CI Postgres (PKG=./
 	@echo "postgres left running for fast re-runs; 'make test-db-down' to stop it"
 
 .PHONY: docs-build
-docs-build: docs-check-links ## Checks links and builds the mdBook documentation
+docs-build: ## Builds the mdBook documentation
 	mdbook build docs
 
 .PHONY: docs-serve

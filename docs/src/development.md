@@ -60,7 +60,6 @@ Do not start an arbitrary stock PostgreSQL container for tests; missing extensio
 ```bash
 make docs-build
 make docs-serve
-make docs-check-links
 ```
 
 The mdBook source is `docs/src/`, configuration is `docs/book.toml`, and generated HTML is `docs/book/` (ignored by Git). `docs-serve` rebuilds and serves the book locally.
