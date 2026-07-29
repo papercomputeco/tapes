@@ -382,6 +382,13 @@ type TranscriptPayload struct {
 	Description string `json:"description,omitempty"`
 	ToolUseID   string `json:"tool_use_id,omitempty"`
 
+	// Kind qualifies Codex sub_agent_activity anchor rows:
+	// "interacted" marks a re-entry record (send_message /
+	// followup_task, targeting AgentID with ToolUseID = the triggering
+	// call), banked for future rendering and ignored by derivation.
+	// Absent/empty means spawn evidence — the legacy default.
+	Kind string `json:"kind,omitempty"`
+
 	// Records is the transcript's JSONL content as a JSON array,
 	// verbatim.
 	Records json.RawMessage `json:"records"`
@@ -396,6 +403,7 @@ type transcriptMeta struct {
 	AgentType   string `json:"agent_type,omitempty"`
 	Description string `json:"description,omitempty"`
 	ToolUseID   string `json:"tool_use_id,omitempty"`
+	Kind        string `json:"kind,omitempty"`
 	Records     int    `json:"records"`
 }
 
@@ -412,7 +420,9 @@ const transcriptWriteProvider = "transcript"
 // hash, so re-uploading an unchanged file is a no-op while a grown
 // transcript (session continued) appends a new version — append-only,
 // like everything in the raw layer. The deriver reads the latest
-// version per (session, agent).
+// version per (session, agent, lifecycle kind): an interacted re-entry
+// row shares its target agent's id, so it versions separately from the
+// started spawn anchor instead of superseding it.
 func (s *Server) handleTranscriptIngest(c *fiber.Ctx) error {
 	if s.rawStore == nil {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{
@@ -464,6 +474,7 @@ func (s *Server) handleTranscriptIngest(c *fiber.Ctx) error {
 		AgentType:   payload.AgentType,
 		Description: payload.Description,
 		ToolUseID:   payload.ToolUseID,
+		Kind:        payload.Kind,
 		Records:     len(records),
 	})
 	if err != nil {

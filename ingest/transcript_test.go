@@ -299,6 +299,62 @@ var _ = Describe("POST /v1/ingest/transcript", func() {
 		Expect(file.Session).To(Equal(derive.SessionKey{HarnessID: "codex", HarnessSessionID: rootSession}))
 	})
 
+	It("stores the interacted-anchor kind in row meta (PCC-1021 decision C)", func() {
+		// paperd also uploads kind:"interacted" sub_agent_activity
+		// records (send_message / followup_task re-entries; agent_id is
+		// the TARGET thread, tool_use_id the triggering call). The
+		// payload's kind marker must land in row meta so consumers can
+		// filter without parsing records — and the derive parser must
+		// surface it, which is what keeps these rows inert in
+		// derivation.
+		const (
+			rootSession = "019f8d46-beb1-7f50-9df4-0cd39ed38d13"
+			targetChild = "019f8d46-e663-74e1-940c-f82e34c07618"
+			sendCallID  = "call_cqusEjhomv5zKjZ7vodiY7Og"
+		)
+		interactedLine := json.RawMessage(`{"timestamp":"2026-07-23T04:41:18.008Z","type":"event_msg","payload":{"type":"sub_agent_activity","event_id":"` +
+			sendCallID + `","occurred_at_ms":1784781678008,"agent_thread_id":"` + targetChild +
+			`","agent_path":"/root/depth2_cli_child","kind":"interacted"}}`)
+		payload := ingest.TranscriptPayload{
+			Session: &sessions.IngestEnvelope{
+				OrgID:            payloadOrg,
+				HarnessID:        "codex",
+				HarnessSessionID: rootSession,
+			},
+			AgentID:     targetChild,
+			AgentType:   "depth2_cli_child",
+			Description: "/root/depth2_cli_child",
+			ToolUseID:   sendCallID,
+			Kind:        "interacted",
+			Records:     mustJSON([]json.RawMessage{interactedLine}),
+		}
+		body, err := json.Marshal(payload)
+		Expect(err).NotTo(HaveOccurred())
+
+		resp := post(body, nil)
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
+
+		rec := driver.lastRecord()
+		Expect(rec.HarnessSessionID).To(Equal(rootSession))
+
+		var meta struct {
+			Transcript bool   `json:"transcript"`
+			AgentID    string `json:"agent_id"`
+			ToolUseID  string `json:"tool_use_id"`
+			Kind       string `json:"kind"`
+		}
+		Expect(json.Unmarshal(rec.Meta, &meta)).To(Succeed())
+		Expect(meta.Transcript).To(BeTrue())
+		Expect(meta.AgentID).To(Equal(targetChild))
+		Expect(meta.ToolUseID).To(Equal(sendCallID))
+		Expect(meta.Kind).To(Equal("interacted"))
+
+		file, err := derive.ParseTranscriptFile(&rec)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(file.Kind).To(Equal("interacted"))
+	})
+
 	It("dedups an unchanged re-push and segregates the dedup key by org", func() {
 		// Same content, same org → deduped. Same content, different org
 		// (header-resolved) → its own row: org is part of the raw-layer
