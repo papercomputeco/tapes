@@ -8,9 +8,6 @@ on:
 permissions:
   contents: read
 
-env:
-  DAGGER_VERSION: "0.20.8"
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -24,11 +21,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Dagger
-        uses: dagger/dagger-for-github@v8.2.0
-        with:
-          verb: version
-          version: ${{ env.DAGGER_VERSION }}
+      - name: Setup Dagger
+        uses: ./.github/actions/setup-dagger
 
       - name: Run E2E tests via Dagger
         env:
@@ -43,14 +37,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup Dagger
+        uses: ./.github/actions/setup-dagger
+
       - name: Build binaries via Dagger
-        uses: dagger/dagger-for-github@v8.2.0
         env:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-        with:
-          verb: call
-          args: build export --path=./build
-          version: ${{ env.DAGGER_VERSION }}
+        run: dagger call build export --path=./build
 
       - name: Upload darwin arm64 binaries
         uses: actions/upload-artifact@v4

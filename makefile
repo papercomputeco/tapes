@@ -252,6 +252,31 @@ test-local: test-db-up ## Runs the suite locally against the CI Postgres (PKG=./
 	GOEXPERIMENT=jsonv2 TEST_POSTGRES_DSN="$(TEST_POSTGRES_DSN)" go test $(GO_TEST_FLAGS) $(PKG)
 	@echo "postgres left running for fast re-runs; 'make test-db-down' to stop it"
 
+# Dagger's installed CLI selects the engine. dagger.json selects the module API
+# compatibility level. We intentionally keep them equal so local commands and
+# CI do not silently rely on backwards compatibility.
+.PHONY: dagger-version-check
+dagger-version-check: ## Verifies the Dagger CLI and module versions are aligned
+	@cli_version=$$(dagger version | awk 'NR == 1 { print $$2 }' | sed 's/^v//'); \
+	module_version=$$(sed -n 's/^[[:space:]]*"engineVersion":[[:space:]]*"v\{0,1\}\([^"]*\)".*/\1/p' dagger.json); \
+	if [ -z "$$cli_version" ] || [ -z "$$module_version" ]; then \
+		echo "could not determine the Dagger versions from the CLI and/or dagger.json"; \
+		exit 1; \
+	fi; \
+	if [ "$$cli_version" != "$$module_version" ]; then \
+		echo "Dagger version mismatch:"; \
+		echo "  CLI:         $$cli_version"; \
+		echo "  dagger.json: $$module_version"; \
+		echo "Enter the locked dev shell with 'nix develop' or use the dagger-update skill."; \
+		exit 1; \
+	fi; \
+	echo "Dagger CLI and module versions match: $$cli_version"
+
+# Guard every Make target that invokes Dagger, including release-only paths.
+DAGGER_TARGETS := check format build nightly upload-install-script release \
+	build-local-image build-tapes-image build-push-tapes-images test test-run-id e2e-test
+$(DAGGER_TARGETS): dagger-version-check
+
 .PHONY: help
 .DEFAULT_GOAL := help
 help: ## Prints this help message

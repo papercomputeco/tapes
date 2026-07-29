@@ -4,9 +4,6 @@ on:
   release:
     types: [published]
 
-env:
-  DAGGER_VERSION: "0.20.8"
-
 jobs:
   release:
     runs-on: depot-ubuntu-24.04
@@ -18,10 +15,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Dagger
-        uses: dagger/dagger-for-github@v8.2.0
-        with:
-          version: ${{ env.DAGGER_VERSION }}
+      - name: Setup Dagger
+        uses: ./.github/actions/setup-dagger
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
