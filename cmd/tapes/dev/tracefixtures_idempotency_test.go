@@ -64,6 +64,8 @@ var _ = Describe("trace-fixtures re-derive determinism (Tier 1)", func() {
 		Entry("cb9a87e5 — plan mode, 2 subagents", "corpus-cb9a87e5.jsonl.gz"),
 		Entry("9fec0da7 — compaction, multi-model", "corpus-9fec0da7.jsonl.gz"),
 		Entry("0440f43d — 19 sessions, scale", "corpus-0440f43d.jsonl.gz"),
+		Entry("codex-delta — depth-2 thread spawns", "corpus-codex-delta.jsonl.gz"),
+		Entry("codex-parallel — interleaved thread spawns", "corpus-codex-parallel.jsonl.gz"),
 	)
 })
 
