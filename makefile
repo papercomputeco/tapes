@@ -252,6 +252,14 @@ test-local: test-db-up ## Runs the suite locally against the CI Postgres (PKG=./
 	GOEXPERIMENT=jsonv2 TEST_POSTGRES_DSN="$(TEST_POSTGRES_DSN)" go test $(GO_TEST_FLAGS) $(PKG)
 	@echo "postgres left running for fast re-runs; 'make test-db-down' to stop it"
 
+.PHONY: docs-build
+docs-build: ## Builds the mdBook documentation
+	mdbook build docs
+
+.PHONY: docs-serve
+docs-serve: ## Serves the mdBook documentation with live reload
+	mdbook serve docs
+
 .PHONY: help
 .DEFAULT_GOAL := help
 help: ## Prints this help message
