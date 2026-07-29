@@ -13,7 +13,9 @@ type Config struct {
 	Embedding   EmbeddingConfig   `toml:"embedding"     mapstructure:"embedding"`
 	OpenCode    OpenCodeConfig    `toml:"opencode"      mapstructure:"opencode"`
 	Telemetry   TelemetryConfig   `toml:"telemetry"     mapstructure:"telemetry"`
-	Update      UpdateConfig      `toml:"update"        mapstructure:"update"`
+	Update      UpdateConfig      `toml:"update" mapstructure:"update"`
+	// Cassettes contains exact OpenAPI document URLs for externally managed cassettes.
+	Cassettes []string `toml:"cassettes" mapstructure:"cassettes"`
 }
 
 // StorageConfig holds shared storage settings used by both proxy and API.

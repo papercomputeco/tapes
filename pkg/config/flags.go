@@ -1,6 +1,8 @@
 package config
 
 import (
+	"encoding/csv"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -53,6 +55,7 @@ const (
 	FlagProxyTarget         = "proxy-target"
 	FlagTelemetryDisabled   = "telemetry-disabled"
 	FlagUpdateCheckDisabled = "update-check-disabled"
+	FlagCassettes           = "cassettes"
 
 	FlagIngestListen = "ingest-listen"
 
@@ -94,6 +97,19 @@ func AddStringFlag(cmd *cobra.Command, fs FlagSet, key string, target *string) {
 		cmd.Flags().StringVarP(target, def.Name, def.Shorthand, defaultVal, def.Description)
 	} else {
 		cmd.Flags().StringVar(target, def.Name, defaultVal, def.Description)
+	}
+}
+
+// AddStringSliceFlag registers a comma-separated, repeatable string-list flag.
+func AddStringSliceFlag(cmd *cobra.Command, fs FlagSet, key string, target *[]string) {
+	def, ok := fs[key]
+	if !ok {
+		return
+	}
+	if def.Shorthand != "" {
+		cmd.Flags().StringSliceVarP(target, def.Name, def.Shorthand, nil, def.Description)
+	} else {
+		cmd.Flags().StringSliceVar(target, def.Name, nil, def.Description)
 	}
 }
 
@@ -159,6 +175,35 @@ func BindRegisteredFlags(v *viper.Viper, cmd *cobra.Command, fs FlagSet, registr
 
 		_ = v.BindPFlag(def.ViperKey, f)
 	}
+}
+
+// GetRegisteredStringSlice resolves a string-list flag using the normal
+// precedence chain. Environment values use CSV so they have the same concise
+// list form as a StringSlice flag while still allowing quoted commas.
+func GetRegisteredStringSlice(v *viper.Viper, cmd *cobra.Command, fs FlagSet, registryKey string) ([]string, error) {
+	definition, ok := fs[registryKey]
+	if !ok {
+		return nil, fmt.Errorf("unknown registered flag %q", registryKey)
+	}
+	if flag := cmd.Flags().Lookup(definition.Name); flag != nil && flag.Changed {
+		return v.GetStringSlice(definition.ViperKey), nil
+	}
+
+	environmentKey := "TAPES_" + strings.ToUpper(strings.ReplaceAll(definition.ViperKey, ".", "_"))
+	if value, exists := os.LookupEnv(environmentKey); exists {
+		reader := csv.NewReader(strings.NewReader(value))
+		reader.TrimLeadingSpace = true
+		values, err := reader.Read()
+		if err != nil {
+			return nil, fmt.Errorf("parsing %s as CSV: %w", environmentKey, err)
+		}
+		for index := range values {
+			values[index] = strings.TrimSpace(values[index])
+		}
+		return values, nil
+	}
+
+	return v.GetStringSlice(definition.ViperKey), nil
 }
 
 // IsRegisteredFlagExplicitlySet reports whether a registered flag's value came

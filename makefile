@@ -25,7 +25,7 @@ check: ## Runs all dagger checks. Auto-fixes are not automatically applied.
 .PHONY: format
 format: ## Runs golangci-lint linters and formatters with auto-fixes applied.
 	$(call print-target)
-	dagger call fix-lint export --path .
+	dagger call fix-lint export --path . --quiet
 
 # tapes publishes TWO contracts, because the read API and the ingest write
 # surface are different servers with different trust models — see the header of

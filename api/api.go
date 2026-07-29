@@ -10,7 +10,9 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/compress"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 
+	"github.com/papercomputeco/tapes/api/cassetterunner"
 	"github.com/papercomputeco/tapes/api/mcp"
+	"github.com/papercomputeco/tapes/pkg/cassette"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
@@ -22,6 +24,18 @@ type Server struct {
 	app       *fiber.App
 	metrics   *Metrics
 	mcpServer *mcp.Server
+
+	// cassettes is the fleet this server publishes, and cassetteSpecs is the
+	// cache of the documents it publishes for them. They are separate fields
+	// because handler tests state a spec surface directly while still using a
+	// real registry; in production both are the same *cassetterunner.Runner.
+	cassettes     *cassetterunner.Registry
+	cassetteSpecs cassetterunner.SpecCache
+
+	// contracts is the resolved set of tapes contracts this server serves. It
+	// is fixed at construction so cassette admission and the discovery
+	// document are answering from the same set.
+	contracts []cassette.ContractVersion
 }
 
 // NewServer creates a new API server.
@@ -33,12 +47,24 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 		DisableStartupMessage: true,
 	})
 
+	contracts := resolveContractVersions(config.ContractVersions)
+	runner := cassetterunner.NewRunner(cassetterunner.Config{
+		Contracts: contracts,
+		Title:     "tapes",
+		// The aggregate document is versioned with the contract discovery
+		// advertises, so /openapi and /v1/cassettes cannot disagree about
+		// which surface a client is looking at.
+		Version: string(currentContractVersion(contracts)),
+	})
 	s := &Server{
-		config:  config,
-		driver:  driver,
-		logger:  log,
-		app:     app,
-		metrics: NewMetrics(),
+		config:        config,
+		driver:        driver,
+		logger:        log,
+		app:           app,
+		metrics:       NewMetrics(),
+		cassettes:     runner.Registry(),
+		cassetteSpecs: runner,
+		contracts:     contracts,
 	}
 
 	// RED metrics is registered first so it sits as the outermost wrapper.
@@ -147,6 +173,10 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	// Mount MCP handler using the fiber adaptor for net/http Handlers
 	// which is what the modelcontextprotocol/go-sdk uses under the hood
 	app.All("/v1/mcp", adaptor.HTTPHandler(s.mcpServer.Handler()))
+
+	// The cassette surface is always present. An install with no cassettes
+	// publishes an empty discovery document rather than changing the API shape.
+	s.mountCassettes(app)
 
 	return s, nil
 }

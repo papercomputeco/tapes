@@ -1,5 +1,70 @@
 basePath: /
 definitions:
+  api.Discovery:
+    properties:
+      cassettes:
+        items:
+          $ref: '#/definitions/api.DiscoveryEntry'
+        type: array
+      contract_version:
+        type: string
+      problems:
+        items:
+          $ref: '#/definitions/github_com_papercomputeco_tapes_api_cassetterunner.Rejection'
+        type: array
+    type: object
+  api.DiscoveryDepends:
+    properties:
+      core:
+        type: string
+      views:
+        items:
+          type: string
+        type: array
+    type: object
+  api.DiscoveryEntry:
+    properties:
+      config:
+        items:
+          $ref: '#/definitions/api.DiscoverySetting'
+        type: array
+      depends:
+        $ref: '#/definitions/api.DiscoveryDepends'
+      description:
+        type: string
+      display_name:
+        type: string
+      manifest_digest:
+        type: string
+      name:
+        type: string
+      openapi_path:
+        type: string
+      openapi_status:
+        $ref: '#/definitions/github_com_papercomputeco_tapes_pkg_openapi.Status'
+      route_prefix:
+        type: string
+      tables:
+        items:
+          type: string
+        type: array
+      version:
+        type: string
+    type: object
+  api.DiscoverySetting:
+    properties:
+      default: {}
+      description:
+        type: string
+      key:
+        type: string
+      required:
+        type: boolean
+      secret:
+        type: boolean
+      type:
+        type: string
+    type: object
   api.MainUsage:
     properties:
       input_tokens:
@@ -650,6 +715,17 @@ definitions:
       visibility:
         type: string
     type: object
+  github_com_papercomputeco_tapes_api_cassetterunner.Rejection:
+    properties:
+      reason:
+        description: Reason is the human-facing explanation. It is never parsed.
+        type: string
+      subject:
+        description: |-
+          Subject names what was rejected: the configured OpenAPI URL, with any
+          credential redacted.
+        type: string
+    type: object
   github_com_papercomputeco_tapes_pkg_derive.ReconcileStats:
     properties:
       conversation_joined:
@@ -728,6 +804,16 @@ definitions:
       error:
         type: string
     type: object
+  github_com_papercomputeco_tapes_pkg_openapi.Status:
+    enum:
+    - fresh
+    - stale
+    - missing
+    type: string
+    x-enum-varnames:
+    - Fresh
+    - Stale
+    - Missing
   github_com_papercomputeco_tapes_pkg_seed.Result:
     properties:
       raw_turns:
@@ -832,6 +918,21 @@ paths:
       summary: Seed demo sessions (operator)
       tags:
       - admin
+  /v1/cassettes:
+    get:
+      description: Lists the cassettes served by this API, their public route and
+        OpenAPI paths, and any configured cassette sources that could not be loaded.
+      operationId: listCassettes
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Discovery'
+      summary: Discover installed cassettes
+      tags:
+      - cassettes
   /v1/mcp:
     delete:
       description: Requests termination of a streamable MCP session when a client

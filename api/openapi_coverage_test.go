@@ -15,11 +15,15 @@ import (
 
 var apiExemptions = openapicheck.Exemptions{
 	Undocumented: map[string]string{
-		"/":                     "optional web UI; HTML, not an API surface",
-		"/metrics":              "Prometheus exposition — scraped by convention, not called by clients",
-		"/swagger":              "the spec viewer itself",
-		"/swagger/doc.json":     "serves the spec; describing it in the spec is circular",
-		"/swagger/openapi.yaml": "serves the spec; describing it in the spec is circular",
+		"/":                                 "optional web UI; HTML, not an API surface",
+		"/metrics":                          "Prometheus exposition — scraped by convention, not called by clients",
+		"/openapi":                          "serves the dynamically merged spec; describing it in the static spec is circular",
+		"/swagger":                          "the spec viewer itself",
+		"/swagger/doc.json":                 "serves the spec; describing it in the spec is circular",
+		"/swagger/openapi.yaml":             "serves the spec; describing it in the spec is circular",
+		"/v1/cassettes/{name}":              "reverse-proxy mount; concrete cassette operations are published in the merged spec",
+		"/v1/cassettes/{name}/*":            "reverse-proxy mount; concrete cassette operations are published in the merged spec",
+		"/v1/cassettes/{name}/openapi.json": "serves a cassette spec; describing it in the static spec is circular",
 	},
 	AllMounted: map[string]string{
 		"/v1/mcp": "app.All mount; the MCP transport implements GET, POST, and DELETE",

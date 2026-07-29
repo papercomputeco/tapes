@@ -121,6 +121,27 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/cassettes": {
+            "get": {
+                "description": "Lists the cassettes served by this API, their public route and OpenAPI paths, and any configured cassette sources that could not be loaded.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "cassettes"
+                ],
+                "summary": "Discover installed cassettes",
+                "operationId": "listCassettes",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.Discovery"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/mcp": {
             "get": {
                 "description": "Opens the streamable MCP endpoint for server-sent events. Stateless clients can use this to receive streamed MCP messages.",
@@ -1580,6 +1601,105 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "api.Discovery": {
+            "type": "object",
+            "properties": {
+                "cassettes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.DiscoveryEntry"
+                    }
+                },
+                "contract_version": {
+                    "type": "string"
+                },
+                "problems": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_papercomputeco_tapes_api_cassetterunner.Rejection"
+                    }
+                }
+            }
+        },
+        "api.DiscoveryDepends": {
+            "type": "object",
+            "properties": {
+                "core": {
+                    "type": "string"
+                },
+                "views": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "api.DiscoveryEntry": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.DiscoverySetting"
+                    }
+                },
+                "depends": {
+                    "$ref": "#/definitions/api.DiscoveryDepends"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "manifest_digest": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "openapi_path": {
+                    "type": "string"
+                },
+                "openapi_status": {
+                    "$ref": "#/definitions/github_com_papercomputeco_tapes_pkg_openapi.Status"
+                },
+                "route_prefix": {
+                    "type": "string"
+                },
+                "tables": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.DiscoverySetting": {
+            "type": "object",
+            "properties": {
+                "default": {},
+                "description": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "required": {
+                    "type": "boolean"
+                },
+                "secret": {
+                    "type": "boolean"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
         "api.MainUsage": {
             "type": "object",
             "properties": {
@@ -2443,6 +2563,19 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_papercomputeco_tapes_api_cassetterunner.Rejection": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "description": "Reason is the human-facing explanation. It is never parsed.",
+                    "type": "string"
+                },
+                "subject": {
+                    "description": "Subject names what was rejected: the configured OpenAPI URL, with any\ncredential redacted.",
+                    "type": "string"
+                }
+            }
+        },
         "github_com_papercomputeco_tapes_pkg_derive.ReconcileStats": {
             "type": "object",
             "properties": {
@@ -2539,6 +2672,19 @@ const docTemplate = `{
                     "type": "string"
                 }
             }
+        },
+        "github_com_papercomputeco_tapes_pkg_openapi.Status": {
+            "type": "string",
+            "enum": [
+                "fresh",
+                "stale",
+                "missing"
+            ],
+            "x-enum-varnames": [
+                "Fresh",
+                "Stale",
+                "Missing"
+            ]
         },
         "github_com_papercomputeco_tapes_pkg_seed.Result": {
             "type": "object",

@@ -1,0 +1,90 @@
+# A whole tapes deployment with one cassette in it: Postgres, the tapes API,
+# and hello-world beside it.
+#
+# The point of running all three is that a cassette is only observable through
+# core. Started alone, hello-world is an HTTP server with an OpenAPI document
+# and nothing to fetch it; started here, tapes admits it, republishes its paths
+# under /v1/cassettes/hello-world, and answers for it in discovery. This file is
+# what makes that testable in one command.
+#
+#   docker compose up --build -d
+#   curl localhost:8081/v1/cassettes
+#
+# Only the tapes API is run, not `tapes serve`: the proxy needs an LLM upstream
+# to point at, and none of the cassette surface goes through it.
+name: tapes-hello-world
+
+services:
+  postgres:
+    image: public.ecr.aws/g4e5l3z3/papercomputeco/postgres:17.7-pgduckdb-1.1.1
+    environment:
+      POSTGRES_DB: tapes
+      POSTGRES_USER: tapes
+      POSTGRES_PASSWORD: tapes
+    # There is no `ports:` here on purpose. Both things that talk to this
+    # database are on the compose network, and 5432 on the host is the port a
+    # tapes stack someone is already running has taken.
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Creates the cassette's role. Postgres runs this once, when the data
+      # directory is first initialized — `docker compose down -v` to re-run it.
+      - ./provision.sql:/docker-entrypoint-initdb.d/10-cassette-role.sql:ro
+    healthcheck:
+      # Both dependents run migrations at startup against a database that takes
+      # a moment to accept connections, and neither retries a refused one.
+      #
+      # -h forces TCP, and that is the whole point of it. While initdb runs the
+      # provisioning script above, Postgres has a temporary server up that
+      # listens on the unix socket only — so a bare `pg_isready` reports healthy
+      # some seconds before anything can connect over the network, and both
+      # dependents start and immediately die on a refused connection.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U tapes -d tapes"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  hello-world:
+    build: .
+    ports:
+      - "127.0.0.1:9999:9999"
+    environment:
+      CASSETTE_NAME: hello-world
+      CASSETTE_LISTEN: 0.0.0.0:9999
+      CASSETTE_GREETING: ${CASSETTE_GREETING:-Hello}
+      # The credential the deployment provisioned in provision.sql, under the
+      # role name the manifest derives. Tapes neither creates this role nor
+      # injects this value: the cassette declares what it needs and the thing
+      # that starts it supplies it. Override it to point at a database you
+      # provisioned yourself, or set it empty to watch the same cassette fall
+      # back to its in-memory store and say so in every response.
+      TAPES_DATABASE_URL: ${HELLO_WORLD_DATABASE_URL:-postgres://cassette_hello-world:cassette@postgres:5432/tapes?sslmode=disable}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  tapes:
+    # The repository root, four levels up: tapes is built from its own tree, and
+    # the cassette from this directory. That they are separate build contexts is
+    # the same fact as the cassette having its own go.mod.
+    build:
+      context: ../../../..
+      dockerfile: Dockerfile
+    command: >-
+      serve api
+      --listen 0.0.0.0:8081
+      --postgres postgres://tapes:tapes@postgres:5432/tapes?sslmode=disable
+      --cassettes http://hello-world:9999/openapi
+      --cassette-refresh 10s
+    ports:
+      - "127.0.0.1:8081:8081"
+    # Only Postgres is required to start. hello-world is deliberately absent:
+    # core retries an unresolved source through startup and then on every
+    # refresh, so a cassette that is slow, restarting, or briefly broken is an
+    # ordinary state rather than a boot failure. Adding it here would order the
+    # startup so that behavior never gets exercised.
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
