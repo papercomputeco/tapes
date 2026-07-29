@@ -1,0 +1,52 @@
+# HTTP APIs
+
+Tapes publishes two separate contracts because reading derived telemetry and ingesting trusted captures have different trust models.
+
+## Read API
+
+The default read API listens on `:8081`. It serves health, derived data, search, skills, operator maintenance, MCP, and its own OpenAPI contract.
+
+| Area | Routes |
+| --- | --- |
+| Health and contract | `GET /ping`, `/swagger`, `/swagger/openapi.yaml` |
+| Sessions | `/v1/sessions`, `/v1/sessions/{id}`, `/traces`, `/raw_turns`, `/export` |
+| Traces and spans | `/v1/traces`, `/v1/traces/{trace_id}`, `/spans/{span_id}` |
+| Search and aggregates | `GET /v1/search/spans`, `GET /v1/stats` |
+| Skills | `/v1/skills` and session skill routes |
+| MCP | `/v1/mcp` |
+| Operator actions | `/v1/admin/derive/run`, `/v1/admin/seed/demo` |
+| Cassettes | `GET /v1/cassettes` |
+
+The authoritative parameters, schemas, and methods are in `api/openapi.yaml` and the running `/swagger/openapi.yaml`. Notable current behavior:
+
+- session listing is cursor-paginated;
+- session and trace/span paths use UUID IDs;
+- session content is read through traces and spans;
+- semantic search exists only at `/v1/search/spans`;
+- raw turns remain available at `/v1/sessions/{id}/raw_turns`.
+
+There is no `/v1/search`, `/v1/sessions/summary`, or hash-based session route.
+
+## Private ingest API
+
+The private ingest API defaults to `:8082` and publishes a separate contract in `ingest/openapi.yaml`. The all-in-one `tapes serve` stack starts it alongside the proxy and read API; `tapes serve ingest` runs it as a standalone sidecar. Its write routes are:
+
+- `POST /v1/ingest` — append one completed conversation turn;
+- `POST /v1/ingest/transcript` — append transcript capture data;
+- `GET /ping` — health.
+
+Run the standalone form only for sidecar/gateway capture:
+
+```bash
+tapes serve ingest --postgres "$TAPES_STORAGE_POSTGRES_DSN"
+```
+
+The ingest server appends to immutable `raw_turns`; it does not provide the read API. Treat it as a private trusted write surface, not as a public application endpoint. Authentication, network policy, and gateway grants are deployment responsibilities.
+
+## Provider proxy
+
+The capture proxy defaults to `:8080`. It exposes provider-compatible request paths, not the Tapes read contract. Clients send LLM traffic to the proxy; they send inspection/search requests to `:8081`.
+
+## CORS and exposure
+
+Do not infer a production security boundary from local listen defaults or generated OpenAPI. Choose network exposure, TLS, authentication, tenant headers, and access control for the deployment environment. Tapes documentation intentionally does not prescribe a hosting redirect or public deployment topology.
