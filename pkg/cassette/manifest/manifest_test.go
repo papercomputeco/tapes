@@ -9,7 +9,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/cassette"
 	"github.com/papercomputeco/tapes/pkg/cassette/manifest"
 	"github.com/papercomputeco/tapes/pkg/cassette/v1alpha1"
-	"github.com/papercomputeco/tapes/pkg/openapi"
+	"github.com/papercomputeco/tapes/pkg/tapesoapi"
 )
 
 func TestManifest(t *testing.T) {
@@ -24,12 +24,12 @@ const metadata = `{
   "api": {"health": "/ping", "openapi": "/openapi", "prefix_path": "api"}
 }`
 
-func document(extension string) *openapi.Document {
+func document(extension string) *tapesoapi.Document {
 	body := `{"openapi": "3.1.0", "paths": {}}`
 	if extension != "" {
 		body = `{"openapi": "3.1.0", "paths": {}, "x-tapes-cassette": ` + extension + `}`
 	}
-	parsed, err := openapi.Parse([]byte(body))
+	parsed, err := tapesoapi.Parse([]byte(body))
 	Expect(err).NotTo(HaveOccurred())
 
 	return parsed

@@ -1,0 +1,37 @@
+# Vendor extensions at every level a document can carry one, including a `$ref`
+# buried inside one.
+#
+# This package does not model extensions; it carries them through as an opaque
+# tree. "Does not model" is not "does not contain references", though, and a
+# namespacing pass that skips extensions leaves a dangling ref in the one part
+# of the document nothing else was checking.
+openapi: 3.0.3
+info:
+  title: Vendor extensions
+  version: 1.0.0
+  x-info-level: kept
+x-root-level: kept
+paths:
+  /things:
+    x-path-level: kept
+    get:
+      operationId: listThings
+      x-operation-level: kept
+      responses:
+        "200":
+          description: the things
+          x-response-level: kept
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Thing"
+components:
+  schemas:
+    Thing:
+      type: object
+      x-schema-level: kept
+      x-vendor-ref:
+        $ref: "#/components/schemas/Thing"
+      properties:
+        name:
+          type: string

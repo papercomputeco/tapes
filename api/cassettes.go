@@ -14,6 +14,7 @@ import (
 
 	"github.com/papercomputeco/tapes/api/cassetterunner"
 	"github.com/papercomputeco/tapes/pkg/cassette"
+	"github.com/papercomputeco/tapes/pkg/tapesoapi/oasfiber"
 )
 
 // mountCassettes registers the cassette surface on the API server.
@@ -27,11 +28,28 @@ import (
 // Registration order is load-bearing. Core's own endpoints inside the
 // cassette namespace are registered before the proxy wildcards, because Fiber
 // matches in order and core owns /v1/cassettes/<name>/openapi.json.
-func (s *Server) mountCassettes(app *fiber.App) {
-	app.Get("/openapi", s.handleCassetteAggregate)
+func (s *Server) mountCassettes(router *oasfiber.Router) {
+	app := router.App()
 
-	app.Get("/v1/cassettes", s.handleCassetteDiscovery)
+	// /openapi serves the merged description; describing it inside that
+	// description would be circular. Same for a single cassette's cached
+	// document.
+	app.Get("/openapi", s.handleCassetteAggregate)
 	app.Get("/v1/cassettes/:name/openapi.json", s.handleCassetteSpec)
+
+	router.Get("/v1/cassettes", s.handleCassetteDiscovery,
+		oasfiber.Doc("listCassettes").
+			Summary("Discover installed cassettes").
+			Description("Lists the cassettes served by this API, their public route and OpenAPI "+
+				"paths, and any configured cassette sources that could not be loaded.").
+			Tag("cassettes").
+			JSONResponse(200, "What is installed here, and what failed", s.schema(Discovery{})))
+
+	// The proxy mounts are not published as operations. They are a namespace,
+	// not an endpoint: what is reachable through them is whatever the installed
+	// cassettes declare, and those operations appear in the merged document at
+	// /openapi under their real paths. Publishing the mount itself would hand a
+	// generated client a wildcard it cannot call.
 	app.All("/v1/cassettes/:name", s.handleCassetteProxy)
 	app.All("/v1/cassettes/:name/*", s.handleCassetteProxy)
 }
@@ -97,14 +115,6 @@ func (s *Server) runCassetteSpecRefresh(ctx context.Context, interval time.Durat
 }
 
 // handleCassetteDiscovery publishes what is installed here, and what failed.
-//
-//	@Summary		Discover installed cassettes
-//	@ID			listCassettes
-//	@Description	Lists the cassettes served by this API, their public route and OpenAPI paths, and any configured cassette sources that could not be loaded.
-//	@Tags			cassettes
-//	@Produce		json
-//	@Success		200	{object}	Discovery
-//	@Router			/v1/cassettes [get]
 func (s *Server) handleCassetteDiscovery(c *fiber.Ctx) error {
 	return c.JSON(buildCassetteDiscovery(
 		s.cassettes, string(currentContractVersion(s.contracts)), s.cassetteSpecs.Status))
@@ -146,9 +156,19 @@ func (s *Server) handleCassetteSpec(c *fiber.Ctx) error {
 	return c.Send(document)
 }
 
-// handleCassetteAggregate returns every cassette's spec, merged.
+// handleCassetteAggregate returns one description of this whole origin: core's
+// own API surface plus every installed cassette's, merged.
+//
+// The core half comes from the live parser every route registered itself into,
+// which is the only description of core that cannot be stale: it is the
+// registrations themselves, not a file someone regenerates after changing them.
+//
+// Compiled per request because the cassette half changes per request — a
+// cassette mounted a second ago belongs in the answer. Compile does no I/O and
+// is deterministic, so the cost is CPU over a tree already in memory, and two
+// requests a millisecond apart return byte-identical documents.
 func (s *Server) handleCassetteAggregate(c *fiber.Ctx) error {
-	document, err := s.cassetteSpecs.Document()
+	document, err := s.cassetteSpecs.Document(c.UserContext(), s.openapi)
 	if err != nil {
 		return cassetteProblem(c, fiber.StatusInternalServerError, "aggregate_failed", err.Error())
 	}

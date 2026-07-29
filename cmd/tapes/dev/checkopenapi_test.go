@@ -7,6 +7,7 @@ package devcmder
 // about.
 
 import (
+	"context"
 	"encoding/json"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -16,17 +17,21 @@ import (
 var _ = Describe("check-openapi", func() {
 	const corpus = "corpus-cb9a87e5.jsonl.gz"
 
-	It("loads the SessionTracesResponse schema from the embedded spec", func() {
-		schema, err := loadTracesResponseSchema()
+	It("finds the SessionTracesResponse schema in the compiled contract", func() {
+		contract, err := publishedContract(context.Background())
 		Expect(err).NotTo(HaveOccurred())
+		Expect(contract).NotTo(BeNil())
+
+		schema, ok := contract.ComponentSchema(tracesResponseSchema)
+		Expect(ok).To(BeTrue())
 		Expect(schema).NotTo(BeNil())
 	})
 
 	It("passes on a real derived composite", func() {
-		schema, err := loadTracesResponseSchema()
+		contract, err := publishedContract(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 
-		v, err := validateSchemaBytes(schema, compositeFixtureBytes(corpus))
+		v, err := validateSchemaBytes(contract, compositeFixtureBytes(corpus))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(v).To(BeEmpty(), "real composite should conform to the OpenAPI schema: %v", v)
 	})
@@ -35,7 +40,7 @@ var _ = Describe("check-openapi", func() {
 	// check must reject it.
 	DescribeTable("catches a wrong-typed field",
 		func(mutate func(map[string]any)) {
-			schema, err := loadTracesResponseSchema()
+			contract, err := publishedContract(context.Background())
 			Expect(err).NotTo(HaveOccurred())
 
 			var doc map[string]any
@@ -44,7 +49,7 @@ var _ = Describe("check-openapi", func() {
 			raw, err := json.Marshal(doc)
 			Expect(err).NotTo(HaveOccurred())
 
-			v, err := validateSchemaBytes(schema, raw)
+			v, err := validateSchemaBytes(contract, raw)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(v).NotTo(BeEmpty(), "schema check should reject the wrong-typed field")
 		},

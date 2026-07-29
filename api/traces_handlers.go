@@ -134,18 +134,17 @@ type SpanItem struct {
 	RawTurnID  int64  `json:"raw_turn_id,omitempty"`
 	// Verdict is the typed security-monitor disposition (null off
 	// permission-check spans), deriver-written. It is a Verdict object or
-	// null on the wire; typed as `object` (not the json.RawMessage byte
-	// array swag would otherwise emit) via swaggertype.
-	Verdict json.RawMessage `json:"verdict" swaggertype:"object" extensions:"x-nullable"`
+	// null on the wire; the oas tag states that, because a json.RawMessage
+	// carries no shape a reflector could recover.
+	Verdict json.RawMessage `json:"verdict" oas:"type=object,nullable"`
 	// Input/Output are content-block arrays (llm.ContentBlock), uniform for
 	// every kind (tool spans included — no unwrapping). Pinned to [] when
-	// empty. swaggertype keeps the wire an array-of-object rather than the
-	// json.RawMessage byte array swag infers.
-	Input  json.RawMessage `json:"input" swaggertype:"array,object"`
-	Output json.RawMessage `json:"output" swaggertype:"array,object"`
+	// empty.
+	Input  json.RawMessage `json:"input" oas:"type=array:object"`
+	Output json.RawMessage `json:"output" oas:"type=array:object"`
 	// Usage (was `metrics`) is an llm.Usage object on the wire — {}-pinned
 	// for usage-less spans.
-	Usage json.RawMessage `json:"usage" swaggertype:"object"`
+	Usage json.RawMessage `json:"usage" oas:"type=object"`
 	// Payload marks a preview-truncated span so the console drills in for
 	// the full payload; absent in full mode.
 	Payload string `json:"payload,omitempty"`
@@ -207,20 +206,6 @@ type SessionTracesResponse struct {
 const ProjectionSchema = "2026-06-15"
 
 // handleGetSessionTraces handles GET /v1/sessions/:id/traces.
-//
-//	@Summary		Get a session's trace/span projection
-//	@ID			getSessionTraces
-//	@Description	Returns the session's user-visible turns as traces with nested spans (llm calls, tools, subagents, shadow calls, injected context) and dataflow links. Cross-trace links (compaction seams) are at the response top level.
-//	@Tags			sessions
-//	@Produce		json
-//	@Param			id		path		string	true	"Session id (UUID)"
-//	@Param			payload	query		string	false	"Span payload mode: full (default) or preview (strings truncated; fetch the span endpoint for full payloads)"
-//	@Success		200		{object}	SessionTracesResponse
-//	@Failure		400		{object}	llm.ErrorResponse	"Missing or malformed id"
-//	@Failure		404		{object}	llm.ErrorResponse	"Session not found"
-//	@Failure		500		{object}	llm.ErrorResponse	"Failed to load session"
-//	@Failure		501		{object}	llm.ErrorResponse	"Span traces not supported by this backend"
-//	@Router			/v1/sessions/{id}/traces [get]
 func (s *Server) handleGetSessionTraces(c *fiber.Ctx) error {
 	sessions, ok := s.driver.(sessionsReader)
 	if !ok {

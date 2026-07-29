@@ -1,0 +1,54 @@
+# The 3.1 twin of ../../v3.0/fixtures/nullable-and-bounds.yaml.
+#
+# Same API, same meaning, different spelling: nullability is a member of the
+# type union rather than a sibling flag, and an exclusive bound is a number in
+# its own keyword rather than a boolean modifying another one. Decoding both
+# fixtures must produce the same IR — that is what "version-neutral core,
+# versioned rendering" means in practice, and it is checked directly.
+openapi: 3.1.0
+info:
+  title: Nullability and bounds
+  version: 1.0.0
+paths:
+  /values:
+    get:
+      operationId: getValues
+      responses:
+        "200":
+          description: the values
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Values"
+components:
+  schemas:
+    Values:
+      type: object
+      properties:
+        nullableString:
+          type: [string, "null"]
+        exclusiveLower:
+          type: number
+          exclusiveMinimum: 0
+        exclusiveUpper:
+          type: integer
+          exclusiveMaximum: 100
+        inclusiveBoth:
+          type: number
+          minimum: 1
+          maximum: 10
+        boundedString:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z-]+$"
+        enumerated:
+          type: string
+          enum: [red, green, blue]
+        freeFormObject:
+          type: object
+          additionalProperties: true
+        stringMap:
+          type: object
+          additionalProperties:
+            type: string

@@ -1,7 +1,7 @@
-# Generated trees: sqlc output (make generate) and swaggo/swag output
-# (make swag). Marked linguist-generated so review tooling collapses
-# them by default and language stats skip them.
+# Generated trees: sqlc output (make generate). Marked linguist-generated so
+# review tooling collapses them by default and language stats skip them.
+#
+# The OpenAPI contracts used to be listed here. They are no longer generated —
+# each server compiles its own from its route registrations and serves it at
+# GET /openapi — so there is no file to collapse.
 pkg/storage/postgres/gensqlc/** linguist-generated=true
-docs/docs.go linguist-generated=true
-docs/swagger.json linguist-generated=true
-docs/swagger.yaml linguist-generated=true

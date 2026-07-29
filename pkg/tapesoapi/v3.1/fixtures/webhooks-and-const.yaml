@@ -1,0 +1,47 @@
+# The 3.1-only constructs a 3.0 target cannot express.
+#
+# `webhooks` has no 3.0 equivalent at all, and `const` has only an
+# approximation (a single-member enum). Compiling this to 3.0 must fail and name
+# what it would lose, rather than quietly dropping half the document — which is
+# the failure mode that makes a "supports both versions" claim worthless.
+openapi: 3.1.0
+info:
+  title: Webhooks and const
+  version: 1.0.0
+  license:
+    name: MIT
+    identifier: MIT
+paths:
+  /orders:
+    post:
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Order"
+      responses:
+        "201":
+          description: created
+webhooks:
+  orderShipped:
+    post:
+      operationId: onOrderShipped
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Order"
+      responses:
+        "200":
+          description: acknowledged
+components:
+  schemas:
+    Order:
+      type: object
+      properties:
+        kind:
+          const: order
+        id:
+          type: [string, "null"]

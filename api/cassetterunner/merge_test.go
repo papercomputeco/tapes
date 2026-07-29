@@ -16,7 +16,7 @@ import (
 
 	"github.com/papercomputeco/tapes/api/cassetterunner"
 	"github.com/papercomputeco/tapes/pkg/cassette"
-	"github.com/papercomputeco/tapes/pkg/openapi"
+	"github.com/papercomputeco/tapes/pkg/tapesoapi"
 )
 
 // spec is a cassette's OpenAPI document, parameterised by the paths it claims
@@ -139,7 +139,7 @@ var _ = Describe("Aggregator", func() {
 		Expect(document).To(MatchJSON(spec("summary", "/v1/cassettes/summary/reports")),
 			"a client generating from this document has to be able to call what it describes")
 		Expect(string(digest)).To(HavePrefix("sha256:"))
-		Expect(aggregator.Status("summary")).To(Equal(openapi.Fresh))
+		Expect(aggregator.Status("summary")).To(Equal(tapesoapi.Fresh))
 	})
 
 	It("digests the republished bytes, so moving the public surface moves the ETag", func() {
@@ -191,12 +191,12 @@ var _ = Describe("Aggregator", func() {
 	It("reports a cassette it has never reached as missing, and says why on the source", func() {
 		_, _, ok := aggregator.Spec("summary")
 		Expect(ok).To(BeFalse())
-		Expect(aggregator.Status("summary")).To(Equal(openapi.Missing))
+		Expect(aggregator.Status("summary")).To(Equal(tapesoapi.Missing))
 
 		server.status.Store(http.StatusInternalServerError)
 		Expect(aggregator.Refresh(ctx)).To(HaveLen(1))
 
-		Expect(aggregator.Status("summary")).To(Equal(openapi.Missing))
+		Expect(aggregator.Status("summary")).To(Equal(tapesoapi.Missing))
 		rejections := aggregator.Registry().Rejections()
 		Expect(rejections).To(HaveLen(1))
 		Expect(rejections[0].Reason).To(ContainSubstring("500"),
@@ -212,7 +212,7 @@ var _ = Describe("Aggregator", func() {
 		document, _, ok := aggregator.Spec("summary")
 		Expect(ok).To(BeTrue(), "erasing a client's surface because a container restarted is the worse outcome")
 		Expect(document).To(MatchJSON(spec("summary", "/v1/cassettes/summary/reports")))
-		Expect(aggregator.Status("summary")).To(Equal(openapi.Stale))
+		Expect(aggregator.Status("summary")).To(Equal(tapesoapi.Stale))
 		Expect(aggregator.Problem("summary")).NotTo(BeEmpty())
 	})
 
@@ -229,7 +229,7 @@ var _ = Describe("Aggregator", func() {
 		_, second, ok := aggregator.Spec("summary")
 		Expect(ok).To(BeTrue())
 		Expect(second).To(Equal(first), "a 304 must not disturb the cached digest clients are keyed on")
-		Expect(aggregator.Status("summary")).To(Equal(openapi.Fresh))
+		Expect(aggregator.Status("summary")).To(Equal(tapesoapi.Fresh))
 	})
 
 	It("recovers to fresh after the cassette comes back", func() {
@@ -237,11 +237,11 @@ var _ = Describe("Aggregator", func() {
 
 		server.status.Store(http.StatusBadGateway)
 		Expect(aggregator.Refresh(ctx)).To(HaveLen(1))
-		Expect(aggregator.Status("summary")).To(Equal(openapi.Stale))
+		Expect(aggregator.Status("summary")).To(Equal(tapesoapi.Stale))
 
 		server.status.Store(http.StatusOK)
 		Expect(aggregator.Refresh(ctx)).To(BeEmpty())
-		Expect(aggregator.Status("summary")).To(Equal(openapi.Fresh))
+		Expect(aggregator.Status("summary")).To(Equal(tapesoapi.Fresh))
 		Expect(aggregator.Problem("summary")).To(BeEmpty())
 	})
 
@@ -286,9 +286,77 @@ var _ = Describe("Aggregator", func() {
 		})
 	})
 
+	// Core publishes /openapi as a contract, so a document that cannot be
+	// compiled has to be caught where it entered — at the one source that served
+	// it — rather than at the endpoint every cassette shares.
+	Describe("publishability", func() {
+		DescribeTable("refuses a document core could not publish as a contract",
+			func(ctx SpecContext, paths, because string) {
+				document := bareSpec("summary", "api", ", "+paths)
+				server.document.Store(&document)
+
+				errs := aggregator.Refresh(ctx)
+				Expect(errs).To(HaveLen(1))
+				Expect(errs[0]).To(MatchError(ContainSubstring(because)))
+				Expect(errs[0]).To(MatchError(ContainSubstring("the whole document is refused")))
+
+				_, _, ok := aggregator.Spec("summary")
+				Expect(ok).To(BeFalse(), "a document core cannot describe is not one it can serve either")
+			},
+			Entry("an id it uses twice, which prefixing cannot separate",
+				`"paths": {
+                   "/api/summary/reports": {"get": {"operationId": "read", "responses": {"200": {"description": "ok"}}}},
+                   "/api/summary/daily": {"get": {"operationId": "read", "responses": {"200": {"description": "ok"}}}}
+                 }`,
+				`operationId "read" is used by`),
+			Entry("an operation with no outcome a client could handle",
+				`"paths": {"/api/summary/reports": {"get": {"operationId": "read"}}}`,
+				"documents no responses"),
+			Entry("a path parameter the operation never describes",
+				`"paths": {"/api/summary/reports/{id}": {"get": {
+                   "operationId": "read", "responses": {"200": {"description": "ok"}}}}}`,
+				"does not describe path parameter {id}"),
+			Entry("a schema no instance could satisfy",
+				`"paths": {"/api/summary/reports": {"get": {"operationId": "read", "responses": {
+                   "200": {"description": "ok", "content": {"application/json": {
+                     "schema": {"type": "string", "minLength": 9, "maxLength": 2}}}}}}}}`,
+				"minLength 9 above maxLength 2"),
+		)
+
+		It("names the refused document by cassette, not by URL", func(ctx SpecContext) {
+			document := bareSpec("summary", "api", `, "paths": {"/api/summary/reports": {"get": {}}}`)
+			server.document.Store(&document)
+
+			errs := aggregator.Refresh(ctx)
+			Expect(errs).To(HaveLen(1))
+			// A source URL says which container answered; the cassette name and
+			// the operation say what to go fix, and the fix is in the cassette's
+			// own repository.
+			Expect(errs[0]).To(MatchError(ContainSubstring(`cassette "summary"`)))
+			Expect(errs[0]).To(MatchError(ContainSubstring("GET /v1/cassettes/summary/reports")))
+		})
+
+		It("keeps publishing the cassettes that are fine", func(ctx SpecContext) {
+			broken := bareSpec("broken", "api", `, "paths": {"/api/broken/rows": {"get": {}}}`)
+			second := newCassetteServer(broken)
+			DeferCleanup(second.Close)
+
+			aggregator.SetSources([]string{server.URL + "/openapi", second.URL + "/openapi"})
+			Expect(aggregator.Refresh(ctx)).To(HaveLen(1))
+
+			encoded, err := aggregator.Document(ctx, nil)
+			Expect(err).NotTo(HaveOccurred(),
+				"one cassette core cannot describe must not cost every other cassette its surface")
+
+			paths := decode(encoded)["paths"].(map[string]any)
+			Expect(paths).To(HaveKey("/v1/cassettes/summary/reports"))
+			Expect(paths).NotTo(HaveKey("/v1/cassettes/broken/rows"))
+		})
+	})
+
 	Describe("Document", func() {
 		mergeOf := func(runner *cassetterunner.Runner) map[string]any {
-			encoded, err := runner.Document()
+			encoded, err := runner.Document(context.Background(), nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			return decode(encoded)
@@ -296,7 +364,10 @@ var _ = Describe("Aggregator", func() {
 
 		It("describes an install with no cassettes without failing", func() {
 			merged := mergeOf(cassetterunner.NewRunner(cassetterunner.Config{Contracts: servedContracts()}))
-			Expect(merged["openapi"]).To(Equal("3.1.0"))
+			Expect(merged["openapi"]).To(Equal("3.0.3"),
+				"the aggregate declares the version it renders, not the version its inputs "+
+					"happened to be written in — a cassette may publish 3.1 and its 3.1-only "+
+					"constructs are approximated on the way down")
 			Expect(merged["paths"]).To(BeEmpty())
 			Expect(merged).NotTo(HaveKey("components"))
 		})
@@ -324,8 +395,49 @@ var _ = Describe("Aggregator", func() {
 			reference := operation["responses"].(map[string]any)["200"].(map[string]any)["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)["$ref"]
 			Expect(reference).To(Equal("#/components/schemas/summary_Row"))
 
-			Expect(operation["operationId"]).To(Equal("read"),
-				"an operationId is a billing label and part of the contract, so a merge step must not rename it")
+			// Both cassettes named this operation `read`, and an operationId has
+			// to be unique across the document it appears in — so the merge
+			// namespaces ids exactly as it namespaces components.
+			//
+			// Renaming is a real edit to a cassette's contract, and it is confined
+			// to the aggregate, where the original ids could not have coexisted.
+			// The cassette's own document is served verbatim from
+			// /v1/cassettes/{name}/openapi.json, so a client generated against one
+			// cassette still calls it `read`.
+			Expect(operation["operationId"]).To(Equal("summary_read"))
+			daily := paths["/v1/cassettes/reports/daily"].(map[string]any)["get"].(map[string]any)
+			Expect(daily["operationId"]).To(Equal("reports_read"))
+		})
+
+		It("names an operation the cassette left anonymous", func(ctx SpecContext) {
+			document := bareSpec("summary", "api",
+				`, "paths": {"/api/summary/reports": {"get": {"responses": {"200": {"description": "ok"}}}}}`)
+			server.document.Store(&document)
+			Expect(aggregator.Refresh(ctx)).To(BeEmpty())
+
+			// A prefix alone would leave this operation anonymous, which fails the
+			// same generator that a duplicate id fails, so an operation without an
+			// id is named rather than skipped.
+			//
+			// The name comes from the public path, because this package republishes
+			// paths before the document is ingested: the id a client generates is
+			// the path it calls.
+			operation := mergeOf(aggregator)["paths"].(map[string]any)["/v1/cassettes/summary/reports"].(map[string]any)["get"].(map[string]any)
+			Expect(operation["operationId"]).To(Equal("summary_getV1CassettesSummaryReports"))
+		})
+
+		It("publishes a document a generator can consume, or reports why not", func(ctx SpecContext) {
+			Expect(aggregator.Refresh(ctx)).To(BeEmpty())
+
+			// The aggregate is compiled as a contract, not as a best-effort
+			// catalogue: this is the document a client points a code generator at
+			// to reach core and everything behind it. Nothing here asserts a
+			// specific rule — the point is that a compile which validates and
+			// lints succeeds on a real merge, so the endpoint is not quietly
+			// relying on those checks being off.
+			encoded, err := aggregator.Document(ctx, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(decode(encoded)["paths"]).To(HaveKey("/v1/cassettes/summary/reports"))
 		})
 
 		It("rewrites refs anywhere in the tree, including fields it has never heard of", func() {
@@ -364,11 +476,77 @@ var _ = Describe("Aggregator", func() {
 			Expect(mergeOf(aggregator)["paths"]).To(BeEmpty())
 		})
 	})
+
+	// The base parser is core's own surface, and merging it is what makes
+	// /openapi answer "what can I call on this origin?" instead of the narrower
+	// "what do the cassettes serve?".
+	Describe("Document with core's own surface", func() {
+		var base *tapesoapi.Parser
+
+		BeforeEach(func() {
+			base = tapesoapi.NewParser()
+			Expect(base.AddOperation(http.MethodGet, "/v1/sessions", &tapesoapi.Operation{
+				OperationID: "listSessions",
+				Responses: map[string]*tapesoapi.Response{
+					"200": {Description: "the sessions", Content: tapesoapi.JSON(base.Schema(coreRow{}))},
+				},
+			}, tapesoapi.Provenance{})).To(Succeed())
+		})
+
+		It("carries the component schemas core's operations reference", func(ctx SpecContext) {
+			// The schema is not in any fragment: a route declares it by handing a
+			// Go value to the parser, which claims the component name in its
+			// reflector's registry. Merging the fragments alone would carry the
+			// $ref into a document that defines nothing it points at, and the
+			// compile would refuse it — which is what this asserts by succeeding.
+			encoded, err := cassetterunner.NewRunner(
+				cassetterunner.Config{Contracts: servedContracts()}).Document(ctx, base)
+			Expect(err).NotTo(HaveOccurred())
+
+			merged := decode(encoded)
+			Expect(merged["paths"]).To(HaveKey("/v1/sessions"))
+			Expect(merged["components"].(map[string]any)["schemas"]).To(HaveKey("coreRow"))
+		})
+
+		It("publishes core and a cassette in one document", func(ctx SpecContext) {
+			Expect(aggregator.Refresh(ctx)).To(BeEmpty())
+
+			encoded, err := aggregator.Document(ctx, base)
+			Expect(err).NotTo(HaveOccurred())
+
+			paths := decode(encoded)["paths"].(map[string]any)
+			Expect(paths).To(HaveKey("/v1/sessions"))
+			Expect(paths).To(HaveKey("/v1/cassettes/summary/reports"))
+		})
+
+		It("leaves the live parser untouched", func(ctx SpecContext) {
+			Expect(aggregator.Refresh(ctx)).To(BeEmpty())
+			before := len(base.Fragments())
+
+			_, err := aggregator.Document(ctx, base)
+			Expect(err).NotTo(HaveOccurred())
+
+			// The aggregate is built per request and core's parser outlives all of
+			// them, so a merge that appended to it would grow the served contract
+			// by one cassette's worth of paths on every /openapi request.
+			Expect(base.Fragments()).To(HaveLen(before))
+
+			core, err := base.Compile(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(core.Paths()).To(ConsistOf("/v1/sessions"))
+		})
+	})
 })
+
+// coreRow stands in for a core response type: a named struct a route hands to
+// the parser, which registers it as a component and refers to it by name.
+type coreRow struct {
+	Hello string `json:"hello"`
+}
 
 var _ = Describe("Status", func() {
 	It("reports a name it has never seen as missing", func() {
 		runner := cassetterunner.NewRunner(cassetterunner.Config{Contracts: servedContracts()})
-		Expect(runner.Status(cassette.Name("absent"))).To(Equal(openapi.Missing))
+		Expect(runner.Status(cassette.Name("absent"))).To(Equal(tapesoapi.Missing))
 	})
 })

@@ -22,6 +22,17 @@
   `pkg/spanembed` on a missing extension — an environment gap that reads as a
   code bug. `make test-db-up` verifies that pin still matches CI.
 - Run `make format` to format and organize imports using `goimports` and `golangci-lint`
+- OpenAPI lives in `pkg/tapesoapi` (there is no swaggo and no annotation
+  comments). A route is registered and described in the same call, through the
+  `oasfiber` wrapper — see `api/openapi_routes.go` and `ingest/openapi.go`.
+  There is **nothing to regenerate**: each server compiles its contract from
+  those registrations and serves it at `GET /openapi`. No contract file is
+  checked in, so changing a route or a payload changes the published document
+  immediately and no document can be stale. Field prose comes from ordinary Go
+  doc comments — do not put descriptions in struct tags. A running binary has no
+  source tree, so the served document carries route and operation prose but not
+  per-field prose; `tapes dev openapi [api|ingest]` compiles the fully
+  documented version from a checkout when a consumer wants it.
 - Follow idiomatic Go and prefer using the `func NewExampleStruct() *ExampleStruct`
   paradigm seen throughout.
 

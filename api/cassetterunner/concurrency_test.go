@@ -46,7 +46,7 @@ var _ = Describe("concurrent access", func() {
 			func() { runner.Status("summary") },
 			func() { runner.Spec("summary") },
 			func() { runner.Problem("summary") },
-			func() { _, _ = runner.Document() },
+			func() { _, _ = runner.Document(context.Background(), nil) },
 			func() { runner.Registry().Instances() },
 			func() { runner.Registry().Rejections() },
 			func() { runner.Registry().Lookup("/v1/cassettes/summary/results") },
