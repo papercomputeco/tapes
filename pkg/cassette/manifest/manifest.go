@@ -13,7 +13,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/cassette"
 	"github.com/papercomputeco/tapes/pkg/cassette/v1alpha1"
-	"github.com/papercomputeco/tapes/pkg/openapi"
+	"github.com/papercomputeco/tapes/pkg/tapesoapi"
 )
 
 // Extension is the OpenAPI root extension a cassette embeds its manifest in.
@@ -56,7 +56,7 @@ func Parse(data []byte) (cassette.Manifest, error) {
 // present reports whether the document carried the extension at all, which is
 // what lets a caller tell "this is not a cassette spec" apart from "this is a
 // cassette spec that does not parse" — two situations with different answers.
-func FromDocument(document *openapi.Document) (cassette.Manifest, bool, error) {
+func FromDocument(document *tapesoapi.Document) (cassette.Manifest, bool, error) {
 	if document == nil {
 		return nil, false, errors.New("no OpenAPI document")
 	}

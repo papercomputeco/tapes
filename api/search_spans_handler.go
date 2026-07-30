@@ -40,20 +40,6 @@ type SpanSearchOutput struct {
 }
 
 // handleSearchSpansEndpoint handles GET /v1/search/spans requests.
-//
-//	@Summary		Semantic search over span embeddings
-//	@ID			searchSpans
-//	@Description	Embeds the query text and runs vector similarity over the embedded span projection (main llm spans, delta-only content). Each hit carries span, trace, and turn context.
-//	@Tags			search
-//	@Produce		json
-//	@Param			query			query		string	true	"Search query"
-//	@Param			top_k			query		int		false	"Maximum number of results to return"	default(5)	minimum(1)
-//	@Param			X-Tapes-Org-Id	header		string	false	"Tenant org UUID (defaults to the nil org)"
-//	@Success		200				{object}	SpanSearchOutput
-//	@Failure		400				{object}	llm.ErrorResponse	"Missing or invalid query parameters"
-//	@Failure		503				{object}	llm.ErrorResponse	"Span search is not configured or not yet initialized"
-//	@Failure		500				{object}	llm.ErrorResponse	"Search execution failed"
-//	@Router			/v1/search/spans [get]
 func (s *Server) handleSearchSpansEndpoint(c *fiber.Ctx) error {
 	if s.config.SpanSearcher == nil || s.config.Embedder == nil {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(llm.ErrorResponse{

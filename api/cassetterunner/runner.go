@@ -21,7 +21,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/cassette"
 	"github.com/papercomputeco/tapes/pkg/cassette/manifest"
-	"github.com/papercomputeco/tapes/pkg/openapi"
+	"github.com/papercomputeco/tapes/pkg/tapesoapi"
 )
 
 // defaultFetchTimeout bounds a single cassette spec fetch.
@@ -34,13 +34,14 @@ const defaultFetchTimeout = 10 * time.Second
 // documents.
 type SpecCache interface {
 	// Status reports how current the cached document for a cassette is.
-	Status(name cassette.Name) openapi.Status
+	Status(name cassette.Name) tapesoapi.Status
 
 	// Spec returns one cassette's cached document and its digest.
 	Spec(name cassette.Name) ([]byte, cassette.Digest, bool)
 
-	// Document returns the merged OpenAPI document.
-	Document() ([]byte, error)
+	// Document returns everything this core publishes as one document: the
+	// core surface described by base, plus every cached cassette document.
+	Document(ctx context.Context, base *tapesoapi.Parser) ([]byte, error)
 
 	// Refresh fetches the current document from every configured source.
 	Refresh(ctx context.Context) []error
@@ -285,7 +286,7 @@ func (runner *Runner) refreshSource(ctx context.Context, index int) error {
 		Source:   state.url,
 	}
 
-	published, err := republish(result.document, instance)
+	published, err := republish(ctx, result.document, instance)
 	if err != nil {
 		return runner.failSource(index, err)
 	}
@@ -309,7 +310,7 @@ func (runner *Runner) refreshSource(ctx context.Context, index int) error {
 
 // admit parses the manifest a document must carry and checks it against the
 // contracts this core serves.
-func (runner *Runner) admit(document *openapi.Document) (cassette.Manifest, error) {
+func (runner *Runner) admit(document *tapesoapi.Document) (cassette.Manifest, error) {
 	declared, present, err := manifest.FromDocument(document)
 	if err != nil {
 		return nil, err
@@ -401,7 +402,7 @@ func (runner *Runner) markSourceFresh(index int) {
 }
 
 // Status reports how current the cached document for a cassette is.
-func (runner *Runner) Status(name cassette.Name) openapi.Status {
+func (runner *Runner) Status(name cassette.Name) tapesoapi.Status {
 	return runner.specs.status(name)
 }
 
@@ -414,12 +415,6 @@ func (runner *Runner) Spec(name cassette.Name) ([]byte, cassette.Digest, bool) {
 // there is nothing wrong or nothing known.
 func (runner *Runner) Problem(name cassette.Name) string {
 	return runner.specs.problem(name)
-}
-
-// Document returns every cached cassette document merged into one description
-// of the whole surface this core publishes.
-func (runner *Runner) Document() ([]byte, error) {
-	return openapi.Merge(runner.title, runner.version, runner.specs.documents())
 }
 
 // compile-time proof that a Runner is what the API server wants.

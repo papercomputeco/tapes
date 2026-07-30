@@ -22,7 +22,6 @@
             # Go toolchain
             pkgs.go_1_26
             pkgs.gotools
-            pkgs.go-swag
             pkgs.sqlc
 
             # Build tools

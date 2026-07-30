@@ -6,7 +6,7 @@ import (
 	"github.com/papercomputeco/tapes/api/cassetterunner"
 	"github.com/papercomputeco/tapes/pkg/cassette"
 	"github.com/papercomputeco/tapes/pkg/cassette/v1alpha1"
-	"github.com/papercomputeco/tapes/pkg/openapi"
+	"github.com/papercomputeco/tapes/pkg/tapesoapi"
 )
 
 // Discovery is the document served at GET /v1/cassettes.
@@ -36,7 +36,7 @@ type DiscoveryEntry struct {
 	Tables         []string           `json:"tables"`
 	Config         []DiscoverySetting `json:"config"`
 	OpenAPIPath    string             `json:"openapi_path"`
-	OpenAPIStatus  openapi.Status     `json:"openapi_status"`
+	OpenAPIStatus  tapesoapi.Status   `json:"openapi_status"`
 	ManifestDigest string             `json:"manifest_digest"`
 }
 
@@ -71,10 +71,10 @@ func cassetteSpecPath(name cassette.Name) string {
 func buildCassetteDiscovery(
 	registry *cassetterunner.Registry,
 	contractVersion string,
-	status func(cassette.Name) openapi.Status,
+	status func(cassette.Name) tapesoapi.Status,
 ) Discovery {
 	if status == nil {
-		status = func(cassette.Name) openapi.Status { return openapi.Missing }
+		status = func(cassette.Name) tapesoapi.Status { return tapesoapi.Missing }
 	}
 
 	instances := registry.Instances()
@@ -97,7 +97,7 @@ func buildCassetteDiscovery(
 // contract come from a type switch on the manifest version. The API is the
 // version-aware edge that turns a portable manifest into its discovery wire
 // representation.
-func discoveryEntry(instance *cassetterunner.Instance, status openapi.Status) DiscoveryEntry {
+func discoveryEntry(instance *cassetterunner.Instance, status tapesoapi.Status) DiscoveryEntry {
 	entry := DiscoveryEntry{
 		Name:           string(instance.Name),
 		RoutePrefix:    instance.Prefix(),

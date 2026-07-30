@@ -10,7 +10,7 @@ import (
 	"net/url"
 
 	"github.com/papercomputeco/tapes/pkg/cassette"
-	"github.com/papercomputeco/tapes/pkg/openapi"
+	"github.com/papercomputeco/tapes/pkg/tapesoapi"
 )
 
 // maxSpecBytes caps a fetched OpenAPI document. Specs are tens of kilobytes;
@@ -21,7 +21,7 @@ const maxSpecBytes = 8 << 20
 // fetched is one conditional GET of a cassette's OpenAPI document.
 type fetched struct {
 	// document is the parsed body, nil when the server answered 304.
-	document *openapi.Document
+	document *tapesoapi.Document
 
 	// etag is the validator to send on the next fetch, empty when the server
 	// published none.
@@ -71,7 +71,7 @@ func (runner *Runner) fetch(ctx context.Context, source, etag string) (fetched, 
 		return fetched{}, fmt.Errorf("%s exceeds %d bytes", safeSource(source), maxSpecBytes)
 	}
 
-	document, err := openapi.Parse(body)
+	document, err := tapesoapi.Parse(body)
 	if err != nil {
 		return fetched{}, err
 	}
@@ -83,19 +83,28 @@ func (runner *Runner) fetch(ctx context.Context, source, etag string) (fetched, 
 // shapes the cache holds.
 type publication struct {
 	document []byte
-	parsed   *openapi.Document
+	parsed   *tapesoapi.Document
 	digest   cassette.Digest
 }
 
 // republish moves every path a cassette declares from its own listener onto
-// core's public surface.
+// core's public surface, and refuses a document core could not publish.
+//
+// Both refusals are here, and both refuse the whole document rather than the
+// offending part: a spec that tried to claim a path outside its prefix is not a
+// spec to trust the rest of, and neither is one that does not describe itself
+// well enough to be compiled. Checking after the rewrite rather than before is
+// what makes the second check exact — see [publishable].
 //
 // The digest covers the republished bytes rather than the fetched ones,
 // because those are what a client is handed and caches against: moving the
 // public surface has to move the ETag.
-func republish(document *openapi.Document, instance *Instance) (*publication, error) {
+func republish(ctx context.Context, document *tapesoapi.Document, instance *Instance) (*publication, error) {
 	rewritten, err := document.RewritePrefix(instance.LocalPrefix(), instance.Prefix())
 	if err != nil {
+		return nil, fmt.Errorf("cassette %q: %w; the whole document is refused", instance.Name, err)
+	}
+	if err := publishable(ctx, rewritten, instance.Name); err != nil {
 		return nil, fmt.Errorf("cassette %q: %w; the whole document is refused", instance.Name, err)
 	}
 	encoded, err := rewritten.Marshal()

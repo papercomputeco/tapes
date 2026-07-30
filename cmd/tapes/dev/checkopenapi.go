@@ -1,20 +1,23 @@
 package devcmder
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
-	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/spf13/cobra"
 
 	"github.com/papercomputeco/tapes/api"
+	"github.com/papercomputeco/tapes/pkg/tapesoapi"
 )
 
 // tracesResponseSchema is the component the composite session-traces
 // response is validated against. It is the 200 body of
-// GET /v1/sessions/{id}/traces in api/openapi.yaml.
+// GET /v1/sessions/{id}/traces.
 const tracesResponseSchema = "SessionTracesResponse"
 
 const checkOpenAPILongDesc string = `Assert served wire conforms to the published OpenAPI schema.
@@ -22,8 +25,8 @@ const checkOpenAPILongDesc string = `Assert served wire conforms to the publishe
 Reads composite session-traces JSON (the GET /v1/sessions/{id}/traces
 response, as written by ` + "`tapes dev trace-fixtures`" + ` or captured from a
 live API) and validates each document against the ` + tracesResponseSchema + `
-schema embedded in api/openapi.yaml — the same contract paper vendors to
-generate its Rust client.
+schema in the contract the API server compiles from its own routes — the same
+contract paper vendors to generate its Rust client.
 
 This closes the loop the projection model asks for — the published OpenAPI
 contract must match what is served: check-invariants gates the structural
@@ -58,7 +61,7 @@ func newCheckOpenAPICmd() *cobra.Command {
 }
 
 func (c *checkOpenAPICommander) run(cmd *cobra.Command, paths []string) error {
-	schema, err := loadTracesResponseSchema()
+	contract, err := publishedContract(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -73,7 +76,7 @@ func (c *checkOpenAPICommander) run(cmd *cobra.Command, paths []string) error {
 
 	failed := 0
 	for _, file := range files {
-		violations, err := validateAgainstSchema(schema, file)
+		violations, err := validateAgainstSchema(contract, file)
 		if err != nil {
 			cmd.Printf("✘ %s: %v\n", filepath.Base(file), err)
 			failed++
@@ -97,45 +100,66 @@ func (c *checkOpenAPICommander) run(cmd *cobra.Command, paths []string) error {
 	return nil
 }
 
-// loadTracesResponseSchema loads the embedded OpenAPI contract and returns
-// the resolved SessionTracesResponse schema, with internal $refs (SessionItem,
-// TraceDetail, SpanItem, …) dereferenced so validation recurses into them.
-func loadTracesResponseSchema() (*openapi3.Schema, error) {
-	loader := openapi3.NewLoader()
-	doc, err := loader.LoadFromData(api.OpenAPISpec())
+// publishedContract compiles the API server's contract from its own routes.
+//
+// Compiled rather than read from a file: the contract is what the running
+// server describes, so checking wire against a checked-in copy would only prove
+// the wire agrees with whatever that copy last said. Field prose is absent here
+// — no docs root is passed — and prose is not what this command asserts.
+func publishedContract(ctx context.Context) (*tapesoapi.CompiledDoc, error) {
+	contract, err := api.CompileOpenAPI(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("load embedded openapi spec: %w", err)
+		return nil, fmt.Errorf("compile the api contract: %w", err)
 	}
-	ref, ok := doc.Components.Schemas[tracesResponseSchema]
-	if !ok || ref.Value == nil {
-		return nil, fmt.Errorf("openapi spec has no %q schema", tracesResponseSchema)
+	if _, ok := contract.ComponentSchema(tracesResponseSchema); !ok {
+		return nil, fmt.Errorf("the api contract defines no %q schema", tracesResponseSchema)
 	}
-	return ref.Value, nil
+	return contract, nil
 }
 
 // validateAgainstSchema reads one composite file and validates it against
 // the schema. Returns a human-readable violation list (empty when clean).
-func validateAgainstSchema(schema *openapi3.Schema, path string) ([]string, error) {
+func validateAgainstSchema(contract *tapesoapi.CompiledDoc, path string) ([]string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return validateSchemaBytes(schema, raw)
+	return validateSchemaBytes(contract, raw)
 }
 
 // validateSchemaBytes decodes composite JSON and validates it against the
 // schema (split out from the file reader so tests can exercise the
 // contract check on in-memory fixtures without touching disk).
-func validateSchemaBytes(schema *openapi3.Schema, raw []byte) ([]string, error) {
+func validateSchemaBytes(contract *tapesoapi.CompiledDoc, raw []byte) ([]string, error) {
+	// UseNumber keeps the digits the server sent: a large span ID that survives
+	// the wire only to be rounded by float64 here would be reported as a
+	// mismatch this command invented.
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+
 	var doc any
-	if err := json.Unmarshal(raw, &doc); err != nil {
+	if err := decoder.Decode(&doc); err != nil {
 		return nil, fmt.Errorf("decode: %w", err)
 	}
+
 	// A schema-validation failure is a reported non-conformance (a
 	// violation string), not a program error — the caller distinguishes
 	// "this file doesn't conform" from "the checker itself broke".
-	if verr := schema.VisitJSON(doc); verr != nil {
-		return []string{verr.Error()}, nil //nolint:nilerr // validation error is downgraded to a reported violation by design
+	verr := contract.ValidateInstance(tracesResponseSchema, doc)
+	if verr == nil {
+		return nil, nil
 	}
-	return nil, nil
+
+	// One line per disagreement, so a file with four drifted fields reports
+	// four places rather than one paragraph.
+	var instanceErr *tapesoapi.InstanceError
+	if errors.As(verr, &instanceErr) {
+		violations := make([]string, 0, len(instanceErr.Violations))
+		for _, violation := range instanceErr.Violations {
+			violations = append(violations, violation.String())
+		}
+		return violations, nil
+	}
+
+	return []string{verr.Error()}, nil
 }

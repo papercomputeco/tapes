@@ -1,0 +1,45 @@
+# One half of a deliberate collision; see conflict-right.yaml.
+#
+# The two documents define the same path+method and the same component name with
+# *different* contents, plus one component that is byte-identical in both. A
+# merge has to tell those apart: the identical one dedupes silently, and only
+# the differing ones are conflicts. Treating every repeat as a conflict would
+# make shared types unusable across documents.
+openapi: 3.0.3
+info:
+  title: Left
+  version: 1.0.0
+paths:
+  /items:
+    get:
+      operationId: listItemsLeft
+      summary: List items, the left way
+      responses:
+        "200":
+          description: the items
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Item"
+  /left-only:
+    get:
+      operationId: leftOnly
+      responses:
+        "200":
+          description: the shared shape, referenced identically by both documents
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Shared"
+components:
+  schemas:
+    Item:
+      type: object
+      properties:
+        leftField:
+          type: string
+    Shared:
+      type: object
+      properties:
+        id:
+          type: string

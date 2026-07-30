@@ -25,19 +25,6 @@ type seedDemoRequest struct {
 // exercises the full raw → derive → span pipeline. The operation is
 // idempotent: re-seeding dedupes at the raw layer and the derive pass
 // upserts the same projection.
-//
-//	@Summary		Seed demo sessions (operator)
-//	@ID			seedDemo
-//	@Description	Replays the bundled demo capture corpora through the ingest write path into the caller's org, then derives the seeded sessions. Idempotent: raw-turn dedup makes repeat seeds no-ops.
-//	@Tags			admin
-//	@Accept			json
-//	@Produce		json
-//	@Param			request	body		seedDemoRequest	false	"Seed options (overwrite is no longer supported)"
-//	@Success		200		{object}	seed.Result
-//	@Failure		400		{object}	llm.ErrorResponse	"Invalid payload or unsupported option"
-//	@Failure		500		{object}	llm.ErrorResponse	"Seeding failed"
-//	@Failure		501		{object}	llm.ErrorResponse	"Driver does not host the raw-turn layer"
-//	@Router			/v1/admin/seed/demo [post]
 func (s *Server) handleSeedDemo(c *fiber.Ctx) error {
 	var req seedDemoRequest
 	if len(c.Body()) > 0 {
@@ -85,18 +72,6 @@ type deriveRunResponse struct {
 // data-model iteration cheap — a classifier or projection change
 // redeploys, re-runs, and every captured session reclassifies without
 // re-capture.
-//
-//	@Summary		Re-derive the span projection (operator)
-//	@ID			runDerive
-//	@Description	Rebuilds traces, spans, links, and session rollups for every org from the immutable raw-turn store. Idempotent: re-running reproduces the same projection and prunes rows the current derive no longer emits.
-//	@Description
-//	@Description	This is how a projection or classifier change reaches already-captured data — it re-derives rather than re-captures. Cost scales with the raw layer, so it is an operator lever, not a request-path call.
-//	@Tags			admin
-//	@Produce		json
-//	@Success		200	{object}	deriveRunResponse	"Per-org derive reports"
-//	@Failure		500	{object}	llm.ErrorResponse	"Derive failed"
-//	@Failure		501	{object}	llm.ErrorResponse	"Driver does not host the raw-turn layer"
-//	@Router			/v1/admin/derive/run [post]
 func (s *Server) handleDeriveRun(c *fiber.Ctx) error {
 	runner, ok := s.driver.(deriveRunner)
 	if !ok {
@@ -117,23 +92,10 @@ type rawTurnAttributionRepairer interface {
 }
 
 // handleRawTurnAttributionRepair records an append-only attribution overlay
-// and synchronously rebuilds both affected session projections.
-//
-//	@Summary		Repair raw-turn attribution (operator)
-//	@ID			repairRawTurnAttribution
-//	@Description	Records an audited correction without modifying raw_turns, then re-derives the previous and effective sessions. Select exactly one row by raw_turn_id or paper_proxy_request_id.
-//	@Tags			admin
-//	@Accept			json
-//	@Produce		json
-//	@Param			request	body		storage.RawTurnAttributionRepairRequest	true	"Attribution repair"
-//	@Success		200		{object}	storage.RawTurnAttributionRepairResult	"Repair applied; source_cleanup_pending discloses a cosmetic leftover source session row that nothing retries automatically"
-//	@Success		202		{object}	storage.RawTurnAttributionRepairResult	"Correction recorded; projections_pending lists sessions the derive worker will converge"
-//	@Failure		400		{object}	llm.ErrorResponse	"Invalid payload or replacement attribution"
-//	@Failure		404		{object}	llm.ErrorResponse	"Raw turn not found"
-//	@Failure		409		{object}	llm.ErrorResponse	"Correlation selector is ambiguous"
-//	@Failure		500		{object}	llm.ErrorResponse	"Repair failed"
-//	@Failure		501		{object}	llm.ErrorResponse	"Driver does not support attribution repair"
-//	@Router			/v1/admin/raw-turns/attribution-repair [post]
+// and synchronously rebuilds both affected session projections. The published
+// contract for this route lives beside its registration in openapi_routes.go;
+// the request and result schemas come from the storage types the handler
+// actually decodes and returns.
 func (s *Server) handleRawTurnAttributionRepair(c *fiber.Ctx) error {
 	repairer, ok := s.driver.(rawTurnAttributionRepairer)
 	if !ok {

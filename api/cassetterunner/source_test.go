@@ -12,7 +12,7 @@ import (
 
 	"github.com/papercomputeco/tapes/api/cassetterunner"
 	"github.com/papercomputeco/tapes/pkg/cassette"
-	"github.com/papercomputeco/tapes/pkg/openapi"
+	"github.com/papercomputeco/tapes/pkg/tapesoapi"
 )
 
 func sourceDocument(name string) string {
@@ -97,7 +97,7 @@ var _ = Describe("OpenAPI cassette sources", func() {
   },
   "paths": {"/v1/cassettes/summary/results": {"get": {"operationId": "summary.results", "responses": {"200": {"description": "ok"}}}}}
 }`))
-		Expect(runtime.Status("summary")).To(Equal(openapi.Fresh))
+		Expect(runtime.Status("summary")).To(Equal(tapesoapi.Fresh))
 	})
 
 	It("keeps unresolved sources retryable", func(ctx SpecContext) {
@@ -166,11 +166,11 @@ var _ = Describe("OpenAPI cassette sources", func() {
 		Expect(found).To(BeFalse())
 		_, _, found = runtime.Spec("summary")
 		Expect(found).To(BeFalse())
-		Expect(runtime.Status("summary")).To(Equal(openapi.Missing))
+		Expect(runtime.Status("summary")).To(Equal(tapesoapi.Missing))
 
-		merged, err := runtime.Document()
+		merged, err := runtime.Document(context.Background(), nil)
 		Expect(err).NotTo(HaveOccurred())
-		document, err := openapi.Parse(merged)
+		document, err := tapesoapi.Parse(merged)
 		Expect(err).NotTo(HaveOccurred())
 		paths, err := document.Paths()
 		Expect(err).NotTo(HaveOccurred())
@@ -240,7 +240,7 @@ var _ = Describe("OpenAPI cassette sources", func() {
 		Expect(runtime.Refresh(ctx)).To(HaveLen(1), "the later duplicate remains a reported rejection")
 		Expect(registry.Instances()).To(HaveLen(1))
 		Expect(registry.Instances()[0].Source).To(Equal(first.URL + "/openapi"))
-		Expect(runtime.Status("summary")).To(Equal(openapi.Fresh), "a losing duplicate must not stale the winner")
+		Expect(runtime.Status("summary")).To(Equal(tapesoapi.Fresh), "a losing duplicate must not stale the winner")
 	})
 
 	It("rejects redirects so document admission and proxy origin cannot diverge", func(ctx SpecContext) {
@@ -276,7 +276,7 @@ var _ = Describe("OpenAPI cassette sources", func() {
 		Expect(ok).To(BeTrue())
 		Expect(after).To(Equal(before))
 		Expect(afterDigest).To(Equal(beforeDigest))
-		Expect(runtime.Status("summary")).To(Equal(openapi.Stale))
+		Expect(runtime.Status("summary")).To(Equal(tapesoapi.Stale))
 	})
 
 	DescribeTable("never publishes credentials from a rejected source URL",

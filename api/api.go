@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"net"
 
-	"github.com/gofiber/adaptor/v2"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"
 	"github.com/gofiber/fiber/v2/middleware/recover"
@@ -14,6 +13,8 @@ import (
 	"github.com/papercomputeco/tapes/api/mcp"
 	"github.com/papercomputeco/tapes/pkg/cassette"
 	"github.com/papercomputeco/tapes/pkg/storage"
+	"github.com/papercomputeco/tapes/pkg/tapesoapi"
+	"github.com/papercomputeco/tapes/pkg/tapesoapi/oasfiber"
 )
 
 // Server is the API server for managing and querying the Tapes system
@@ -36,12 +37,27 @@ type Server struct {
 	// is fixed at construction so cassette admission and the discovery
 	// document are answering from the same set.
 	contracts []cassette.ContractVersion
+
+	// openapi is the live description of this server's own surface, populated
+	// by the same calls that register the routes. GET /openapi compiles it —
+	// there is no other source for the published contract — which is why a
+	// route cannot be served here without being described.
+	openapi *tapesoapi.Parser
 }
 
 // NewServer creates a new API server.
 // The storer is injected to allow sharing with other components
 // (e.g., the proxy when not run as a singleton).
 func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server, error) {
+	return newServer(config, driver, log, nil)
+}
+
+// newServer builds the server with an explicit source of doc comments.
+//
+// docs is nil everywhere except under `tapes dev openapi --docs-root`: a
+// deployed binary has no source tree to read prose out of, so the contract it
+// serves carries route and operation prose but not per-field prose.
+func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tapesoapi.TypeDocs) (*Server, error) {
 	var err error
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
@@ -65,6 +81,7 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 		cassettes:     runner.Registry(),
 		cassetteSpecs: runner,
 		contracts:     contracts,
+		openapi:       NewOpenAPIParser(docs),
 	}
 
 	// RED metrics is registered first so it sits as the outermost wrapper.
@@ -91,63 +108,21 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 	app.Use(s.withOrgContext)
 
 	// /metrics is intentionally outside any auth group — Alloy scrapes
-	// in-cluster and there is no caller identity to verify.
+	// in-cluster and there is no caller identity to verify. It is registered
+	// straight on the app because Prometheus exposition is scraped by
+	// convention, not called from a generated client.
 	app.Get("/metrics", s.metrics.Handler())
-
-	app.Get("/ping", s.handlePing)
 
 	if config.EnableWebUI {
 		// Minimal same-origin web UI. Like Prometheus's built-in UI, this is
 		// served directly by the API binary and has no frontend build step.
+		// HTML, not API surface, so it is not described.
 		app.Get("/", s.handleWebUI)
 	}
 
-	// v1 surface: product sessions (sessions-table, UUID-keyed) and the
-	// span projection beneath them. Static paths are registered before
-	// parameterised ones.
-	app.Get("/v1/stats", s.handleStats)
-	app.Get("/v1/sessions", s.handleListSessions)
-	// /v1/sessions/export has no :id segment, so it must be registered
-	// before the bare /v1/sessions/:id route below — otherwise Fiber would
-	// match it as :id="export" and never reach this handler.
-	app.Get("/v1/sessions/export", s.handleExportSessions)
-	app.Get("/v1/sessions/:id/traces", s.handleGetSessionTraces)
-	app.Get("/v1/sessions/:id/raw_turns", s.handleListSessionRawTurns)
-	app.Get("/v1/sessions/:id/export", s.handleExportSession)
-	app.Get("/v1/traces", s.handleListTraceSummaries)
-	app.Get("/v1/traces/:trace_id/spans/:span_id", s.handleGetSpan)
-	app.Get("/v1/traces/:trace_id", s.handleGetTrace)
-	app.Get("/v1/sessions/:id", s.handleGetSession)
-	app.Delete("/v1/sessions/:id", s.handleDeleteSession)
-	app.Patch("/v1/sessions/:id", s.handleUpdateSession)
-	app.Get("/v1/sessions/:id/skills", s.handleListSessionSkills)
-	app.Get("/v1/search/spans", s.handleSearchSpansEndpoint)
-
-	// Skills: generate from sessions, persist, edit, version, duplicate, and
-	// render a drop-in SKILL.md. Skills are keyed on an opaque id (the route
-	// key, mirroring sessions); slug is a cosmetic label. Literal/sub-path routes
-	// are registered before the bare /:id param routes so they aren't captured.
-	app.Get("/v1/skills", s.handleListSkills)
-	app.Post("/v1/skills", s.handleCreateSkill)
-	app.Post("/v1/skills/generate", s.handleGenerateSkill)
-	app.Get("/v1/skills/:id/skill.md", s.handleSkillMarkdown)
-	app.Get("/v1/skills/:id/versions", s.handleListSkillVersions)
-	app.Post("/v1/skills/:id/versions", s.handlePublishSkill)
-	app.Post("/v1/skills/:id/duplicate", s.handleDuplicateSkill)
-	app.Put("/v1/skills/:id", s.handleUpdateSkill)
-	app.Delete("/v1/skills/:id", s.handleDeleteSkill)
-	app.Get("/v1/skills/:id", s.handleGetSkill)
-
-	app.Post("/v1/admin/seed/demo", s.handleSeedDemo)
-	app.Post("/v1/admin/derive/run", s.handleDeriveRun)
-	app.Post("/v1/admin/raw-turns/attribution-repair", s.handleRawTurnAttributionRepair)
-
-	// API reference UI. Always mounted — the viewer JS comes from a CDN
-	// at view time, so the binary cost is negligible.
-	s.mountSwagger(app)
-
-	// Register MCP server if span search and embedder are configured. The
-	// MCP `search` tool runs the same span search as GET /v1/search/spans.
+	// The MCP server is built before the routes because one of them mounts its
+	// handler. The MCP `search` tool runs the same span search as
+	// GET /v1/search/spans.
 	var mcpServer *mcp.Server
 	if config.SpanSearcher != nil && config.Embedder != nil {
 		s.logger.Debug("creating mcp server")
@@ -168,16 +143,34 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 			return nil, fmt.Errorf("failed to create noop MCP server: %w", err)
 		}
 	}
-
 	s.mcpServer = mcpServer
 
-	// Mount MCP handler using the fiber adaptor for net/http Handlers
-	// which is what the modelcontextprotocol/go-sdk uses under the hood
-	app.All("/v1/mcp", adaptor.HTTPHandler(s.mcpServer.Handler()))
+	// Every documented route registers through this wrapper, which puts it on
+	// the app and into the parser in one call.
+	//
+	// Registration order is still load-bearing, and the wrapper does not change
+	// it: Fiber matches in order, so a literal path must precede the
+	// parameterised route that would otherwise swallow it — /v1/sessions/export
+	// before /v1/sessions/:id, and the /v1/skills/:id sub-paths before the bare
+	// /v1/skills/:id. The route table in openapi_routes.go preserves that order.
+	router := oasfiber.Wrap(app, s.openapi, oasfiber.WithUndocumented(oasfiber.Fail))
+	s.mountV1(router)
+
+	// API reference UI. Always mounted — the viewer JS comes from a CDN
+	// at view time, so the binary cost is negligible.
+	s.mountReference(app)
 
 	// The cassette surface is always present. An install with no cassettes
 	// publishes an empty discovery document rather than changing the API shape.
-	s.mountCassettes(app)
+	s.mountCassettes(router)
+
+	// A route the wrapper could not describe is a defect in this file, not in a
+	// request. Surfacing it at construction is the whole point of the Fail
+	// policy above: the alternative is a contract that silently omits a served
+	// endpoint, which is the failure this machinery exists to prevent.
+	if err := router.Err(); err != nil {
+		return nil, err
+	}
 
 	return s, nil
 }

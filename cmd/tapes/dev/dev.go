@@ -14,7 +14,12 @@ dump-corpus, rederive, and embed-spans connect to a tapes Postgres
 database: dump-corpus exports raw_turns back into corpus files (the
 inverse of the fixture replay), rederive rebuilds the projection from
 raw (the direct-call form of POST /v1/admin/derive/run), and embed-spans
-backfills span embeddings.`
+backfills span embeddings.
+
+openapi compiles a published contract from the route registrations. The
+servers publish the same document at their own /openapi; this one adds the
+per-field prose a deployed binary cannot read, because the comments it
+comes from live in the source tree.`
 
 // NewDevCmd returns the `tapes dev` command group.
 func NewDevCmd() *cobra.Command {
@@ -27,6 +32,7 @@ func NewDevCmd() *cobra.Command {
 	cmd.AddCommand(newDumpCorpusCmd())
 	cmd.AddCommand(newCheckInvariantsCmd())
 	cmd.AddCommand(newCheckOpenAPICmd())
+	cmd.AddCommand(newOpenAPICmd())
 	cmd.AddCommand(newRederiveCmd())
 	cmd.AddCommand(newEmbedSpansCmd())
 	return cmd

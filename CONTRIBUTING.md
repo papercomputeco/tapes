@@ -3,8 +3,9 @@
 ## Quick start (recommended)
 
 The Nix flake dev shell is the recommended way to develop tapes. It pins the
-toolchain (Go 1.26, Dagger, `sqlc`, `swag`, `hurl`) and exports
-`GOEXPERIMENT=jsonv2`.
+toolchain (Go 1.26, Dagger, `sqlc`, `hurl`) and exports the environment
+the build and tests need — `GOEXPERIMENT=jsonv2` and `TEST_POSTGRES_DSN` — so
+you don't have to set either by hand.
 
 ```bash
 nix develop          # enter the dev shell

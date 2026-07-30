@@ -4,7 +4,7 @@ import (
 	"sync"
 
 	"github.com/papercomputeco/tapes/pkg/cassette"
-	"github.com/papercomputeco/tapes/pkg/openapi"
+	"github.com/papercomputeco/tapes/pkg/tapesoapi"
 )
 
 // entry is one cassette's OpenAPI document as core republished it.
@@ -20,10 +20,10 @@ import (
 // two answers to one question.
 type entry struct {
 	document []byte
-	parsed   *openapi.Document
+	parsed   *tapesoapi.Document
 	digest   cassette.Digest
 	source   string
-	status   openapi.Status
+	status   tapesoapi.Status
 	problem  string
 }
 
@@ -53,7 +53,7 @@ func (cache *specCache) publish(name cassette.Name, published *publication, sour
 		parsed:   published.parsed,
 		digest:   published.digest,
 		source:   source,
-		status:   openapi.Fresh,
+		status:   tapesoapi.Fresh,
 	}
 }
 
@@ -91,7 +91,7 @@ func (cache *specCache) markFresh(name cassette.Name, source string) {
 	if cached == nil || cached.source != source {
 		return
 	}
-	cached.status = openapi.Fresh
+	cached.status = tapesoapi.Fresh
 	cached.problem = ""
 }
 
@@ -108,7 +108,7 @@ func (cache *specCache) markStale(name cassette.Name, source, problem string) {
 	if cached == nil || cached.document == nil || cached.source != source {
 		return
 	}
-	cached.status = openapi.Stale
+	cached.status = tapesoapi.Stale
 	cached.problem = problem
 }
 
@@ -123,13 +123,13 @@ func (cache *specCache) hasSource(name cassette.Name, source string) bool {
 }
 
 // status reports how current the cached document for a cassette is.
-func (cache *specCache) status(name cassette.Name) openapi.Status {
+func (cache *specCache) status(name cassette.Name) tapesoapi.Status {
 	cache.mutex.RLock()
 	defer cache.mutex.RUnlock()
 
 	cached := cache.entries[name]
 	if cached == nil || cached.document == nil {
-		return openapi.Missing
+		return tapesoapi.Missing
 	}
 
 	return cached.status
@@ -163,11 +163,11 @@ func (cache *specCache) problem(name cassette.Name) string {
 
 // documents returns every cached document keyed by cassette name. The parsed
 // trees are never mutated after publication, so they are safe to hand out.
-func (cache *specCache) documents() map[string]*openapi.Document {
+func (cache *specCache) documents() map[string]*tapesoapi.Document {
 	cache.mutex.RLock()
 	defer cache.mutex.RUnlock()
 
-	documents := make(map[string]*openapi.Document, len(cache.entries))
+	documents := make(map[string]*tapesoapi.Document, len(cache.entries))
 	for name, cached := range cache.entries {
 		if cached.parsed != nil {
 			documents[string(name)] = cached.parsed

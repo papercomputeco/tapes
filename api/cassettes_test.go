@@ -17,8 +17,8 @@ import (
 	"github.com/papercomputeco/tapes/api/cassetterunner"
 	"github.com/papercomputeco/tapes/pkg/cassette"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
-	"github.com/papercomputeco/tapes/pkg/openapi"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
+	"github.com/papercomputeco/tapes/pkg/tapesoapi"
 )
 
 // stubSpecs is a spec cache stated directly, so the cassette surface can be
@@ -26,17 +26,21 @@ import (
 type stubSpecs struct {
 	documents map[cassette.Name][]byte
 	digests   map[cassette.Name]cassette.Digest
-	statuses  map[cassette.Name]openapi.Status
+	statuses  map[cassette.Name]tapesoapi.Status
 	merged    []byte
 	err       error
+
+	// base records the parser the aggregate was handed, so a spec can assert
+	// which description of core it merged against.
+	base *tapesoapi.Parser
 }
 
-func (source *stubSpecs) Status(name cassette.Name) openapi.Status {
+func (source *stubSpecs) Status(name cassette.Name) tapesoapi.Status {
 	if status, ok := source.statuses[name]; ok {
 		return status
 	}
 
-	return openapi.Missing
+	return tapesoapi.Missing
 }
 
 func (source *stubSpecs) Spec(name cassette.Name) ([]byte, cassette.Digest, bool) {
@@ -48,7 +52,11 @@ func (source *stubSpecs) Spec(name cassette.Name) ([]byte, cassette.Digest, bool
 	return document, source.digests[name], true
 }
 
-func (source *stubSpecs) Document() ([]byte, error) { return source.merged, source.err }
+func (source *stubSpecs) Document(_ context.Context, base *tapesoapi.Parser) ([]byte, error) {
+	source.base = base
+
+	return source.merged, source.err
+}
 
 func (source *stubSpecs) Refresh(context.Context) []error { return nil }
 
@@ -113,7 +121,7 @@ var _ = Describe("The cassette surface", func() {
 		source = &stubSpecs{
 			documents: map[cassette.Name][]byte{"summary": []byte(`{"openapi":"3.1.0"}`)},
 			digests:   map[cassette.Name]cassette.Digest{"summary": "sha256:abc"},
-			statuses:  map[cassette.Name]openapi.Status{"summary": openapi.Fresh},
+			statuses:  map[cassette.Name]tapesoapi.Status{"summary": tapesoapi.Fresh},
 			merged:    []byte(`{"openapi":"3.1.0","paths":{}}`),
 		}
 		server = newSurface(source)
@@ -238,7 +246,7 @@ var _ = Describe("The cassette surface", func() {
 			Expect(document.Cassettes).To(HaveLen(1))
 			Expect(document.Cassettes[0].Name).To(Equal("summary"))
 			Expect(document.Cassettes[0].RoutePrefix).To(Equal("/v1/cassettes/summary"))
-			Expect(document.Cassettes[0].OpenAPIStatus).To(Equal(openapi.Fresh))
+			Expect(document.Cassettes[0].OpenAPIStatus).To(Equal(tapesoapi.Fresh))
 			Expect(document.Problems).To(HaveLen(1))
 			Expect(document.Problems[0].Subject).To(Equal("http://sidecar.invalid/openapi"))
 		})
@@ -249,7 +257,7 @@ var _ = Describe("The cassette surface", func() {
 			_, body := do(bare, httptest.NewRequest(http.MethodGet, "/v1/cassettes", nil))
 			var document Discovery
 			Expect(json.Unmarshal(body, &document)).To(Succeed())
-			Expect(document.Cassettes[0].OpenAPIStatus).To(Equal(openapi.Missing))
+			Expect(document.Cassettes[0].OpenAPIStatus).To(Equal(tapesoapi.Missing))
 		})
 	})
 
@@ -271,7 +279,7 @@ var _ = Describe("The cassette surface", func() {
 
 		It("serves the cached document for a cassette that is currently down", func() {
 			upstream.Close()
-			source.statuses["summary"] = openapi.Stale
+			source.statuses["summary"] = tapesoapi.Stale
 
 			response, _ := get("/v1/cassettes/summary/openapi.json")
 			Expect(response.StatusCode).To(Equal(http.StatusOK),
@@ -334,10 +342,12 @@ var _ = Describe("The cassette surface", func() {
 			Expect(decoded["error"]).To(Equal("aggregate_failed"))
 		})
 
-		It("leaves core's own published contract alone", func() {
-			response, _ := get("/swagger/openapi.yaml")
-			Expect(response.StatusCode).To(Equal(http.StatusOK),
-				"the merged cassette surface is a different document from core's own")
+		It("merges against the live parser, not a second description of core", func() {
+			_, _ = get("/openapi")
+
+			Expect(source.base).To(BeIdenticalTo(server.openapi),
+				"core's half of the merge has to be the registrations themselves; "+
+					"any other description of core is a copy that can disagree with the routes")
 		})
 	})
 
@@ -358,7 +368,7 @@ var _ = Describe("The cassette surface", func() {
 						"depends":{"core":"v1"},
 						"api":{"prefix_path":"api"}
 					},
-					"paths":{"/api/runtime/ping":{"get":{}}}
+					"paths":{"/api/runtime/ping":{"get":{"responses":{"200":{"description":"pong"}}}}}
 				}`))
 			}))
 			DeferCleanup(cassetteServer.Close)
@@ -383,7 +393,7 @@ var _ = Describe("The cassette surface", func() {
 						"depends":{"core":"v1"},
 						"api":{"health":"/ping","openapi":"/openapi","prefix_path":"api"}
 					},
-					"paths":{"/api/runtime/ping":{"get":{}}}
+					"paths":{"/api/runtime/ping":{"get":{"responses":{"200":{"description":"pong"}}}}}
 				}`))
 			}))
 			DeferCleanup(cassetteServer.Close)
@@ -405,7 +415,7 @@ var _ = Describe("The cassette surface", func() {
 			var discovery Discovery
 			Expect(json.Unmarshal(body, &discovery)).To(Succeed())
 			Expect(discovery.Cassettes).To(HaveLen(1))
-			Expect(discovery.Cassettes[0].OpenAPIStatus).To(Equal(openapi.Fresh))
+			Expect(discovery.Cassettes[0].OpenAPIStatus).To(Equal(tapesoapi.Fresh))
 		})
 	})
 

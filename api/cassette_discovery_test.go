@@ -10,7 +10,7 @@ import (
 	"github.com/papercomputeco/tapes/api/cassetterunner"
 	"github.com/papercomputeco/tapes/pkg/cassette"
 	"github.com/papercomputeco/tapes/pkg/cassette/v1alpha1"
-	"github.com/papercomputeco/tapes/pkg/openapi"
+	"github.com/papercomputeco/tapes/pkg/tapesoapi"
 )
 
 const discoveryManifest = `{
@@ -61,7 +61,7 @@ var _ = Describe("cassette discovery", func() {
 	})
 
 	It("publishes what a cassette is", func() {
-		document := buildCassetteDiscovery(registry, "v1", func(cassette.Name) openapi.Status { return openapi.Fresh })
+		document := buildCassetteDiscovery(registry, "v1", func(cassette.Name) tapesoapi.Status { return tapesoapi.Fresh })
 
 		Expect(document.ContractVersion).To(Equal("v1"))
 		Expect(document.Cassettes).To(HaveLen(1))
@@ -74,7 +74,7 @@ var _ = Describe("cassette discovery", func() {
 		Expect(entry.Depends.Core).To(Equal("v1"))
 		Expect(entry.Depends.Views).To(ConsistOf("spans"))
 		Expect(entry.OpenAPIPath).To(Equal("/v1/cassettes/summary/openapi.json"))
-		Expect(entry.OpenAPIStatus).To(Equal(openapi.Fresh))
+		Expect(entry.OpenAPIStatus).To(Equal(tapesoapi.Fresh))
 		Expect(entry.ManifestDigest).To(HavePrefix("sha256:"))
 	})
 
@@ -96,7 +96,7 @@ var _ = Describe("cassette discovery", func() {
 
 	It("reports missing before a spec is fetched", func() {
 		document := buildCassetteDiscovery(registry, "v1", nil)
-		Expect(document.Cassettes[0].OpenAPIStatus).To(Equal(openapi.Missing))
+		Expect(document.Cassettes[0].OpenAPIStatus).To(Equal(tapesoapi.Missing))
 	})
 
 	It("publishes sorted rejections", func() {
