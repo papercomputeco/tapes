@@ -2,7 +2,10 @@
 package tapescmder
 
 import (
+	"fmt"
+	"io"
 	"log/slog"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -76,6 +79,21 @@ var tapesFlags = config.FlagSet{
 		ViperKey:    "update.disabled",
 		Description: "Disable checking for new versions",
 	},
+	config.FlagLogLevel: {
+		Name:        "log-level",
+		ViperKey:    "logging.level",
+		Description: "Minimum log level (debug, info, warn, error)",
+	},
+	config.FlagLogFormat: {
+		Name:        "log-format",
+		ViperKey:    "logging.format",
+		Description: "Log format (auto, console, text, json)",
+	},
+	config.FlagLogColor: {
+		Name:        "log-color",
+		ViperKey:    "logging.color",
+		Description: "Console log color mode (auto, always, never)",
+	},
 }
 
 func NewTapesCmd() *cobra.Command {
@@ -88,7 +106,12 @@ func NewTapesCmd() *cobra.Command {
 	}
 
 	// Global flags
+	defaults := config.NewDefaultConfig()
 	cmd.PersistentFlags().BoolP("debug", "d", false, "Enable debug logging")
+	_ = cmd.PersistentFlags().MarkDeprecated("debug", "use --log-level=debug instead")
+	cmd.PersistentFlags().String("log-level", defaults.Logging.Level, "Minimum log level (debug, info, warn, error)")
+	cmd.PersistentFlags().String("log-format", defaults.Logging.Format, "Log format (auto, console, text, json)")
+	cmd.PersistentFlags().String("log-color", defaults.Logging.Color, "Console log color mode (auto, always, never)")
 	cmd.PersistentFlags().String("config-dir", "", "Override path to .tapes/ config directory")
 	cmd.PersistentFlags().Bool("disable-telemetry", false, "Disable anonymous usage telemetry")
 	cmd.PersistentFlags().Bool("disable-update-check", false, "Disable checking for new versions")
@@ -123,24 +146,61 @@ func NewTapesCmd() *cobra.Command {
 func preRun(cmd *cobra.Command, args []string) error {
 	configDir, _ := cmd.Flags().GetString("config-dir")
 	v, err := config.InitViper(configDir)
-
-	updateDisabled := false
-	if err == nil {
-		config.BindRegisteredFlags(v, cmd, tapesFlags, []string{
-			config.FlagUpdateCheckDisabled,
-		})
-		updateDisabled = v.GetBool("update.disabled")
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
 	}
 
-	if !updateDisabled {
+	config.BindRegisteredFlags(v, cmd, tapesFlags, []string{
+		config.FlagUpdateCheckDisabled,
+		config.FlagTelemetryDisabled,
+		config.FlagLogLevel,
+		config.FlagLogFormat,
+		config.FlagLogColor,
+	})
+
+	settings, err := resolveLoggingSettings(cmd, v.GetString("logging.level"), v.GetString("logging.format"), v.GetString("logging.color"))
+	if err != nil {
+		return err
+	}
+	cmd.SetContext(logger.WithSettings(cmd.Context(), settings))
+	slog.SetDefault(settings.New())
+
+	if !v.GetBool("update.disabled") {
 		if msg := update.CheckForUpdate(utils.Version); msg != "" {
-			println("\033[33;1mTapes Update Available!\033[0m")
-			println("\033[34m" + utils.Version + " → " + msg + "\033[0m")
-			println("\033[37mRun: curl -sSfL https://download.tapes.dev/install | bash\033[0m")
+			printUpdateNotice(os.Stderr, msg, logger.ColorEnabled(os.Stderr, settings.Color))
 		}
 	}
 
-	return initTelemetry(cmd, args)
+	return initTelemetry(cmd, args, configDir, v.GetBool("telemetry.disabled"))
+}
+
+func printUpdateNotice(w io.Writer, version string, color bool) {
+	if color {
+		fmt.Fprintln(w, "\033[33;1mTapes Update Available!\033[0m")
+		fmt.Fprintf(w, "\033[34m%s → %s\033[0m\n", utils.Version, version)
+		fmt.Fprintln(w, "\033[37mRun: curl -sSfL https://download.tapes.dev/install | bash\033[0m")
+		return
+	}
+
+	fmt.Fprintln(w, "Tapes Update Available!")
+	fmt.Fprintf(w, "%s → %s\n", utils.Version, version)
+	fmt.Fprintln(w, "Run: curl -sSfL https://download.tapes.dev/install | bash")
+}
+
+func resolveLoggingSettings(cmd *cobra.Command, level, format, color string) (logger.Settings, error) {
+	debug, err := cmd.Root().PersistentFlags().GetBool("debug")
+	if err != nil {
+		return logger.Settings{}, fmt.Errorf("could not get debug flag: %w", err)
+	}
+	if debug && !cmd.Root().PersistentFlags().Changed("log-level") {
+		level = "debug"
+	}
+
+	settings, err := logger.ParseSettings(level, format, color)
+	if err != nil {
+		return logger.Settings{}, err
+	}
+	return settings, nil
 }
 
 // initTelemetry initializes anonymous telemetry and stores the client in the
@@ -148,23 +208,12 @@ func preRun(cmd *cobra.Command, args []string) error {
 // flag, env var, or CI detection — errors during init never block command
 // execution. Viper handles the flag > env > config file precedence for the
 // telemetry.disabled setting.
-func initTelemetry(cmd *cobra.Command, _ []string) error {
-	initTelemLogger := logger.New(logger.WithDebug(true))
-	configDir, _ := cmd.Flags().GetString("config-dir")
-
-	v, err := config.InitViper(configDir)
-	if err != nil {
-		initTelemLogger.Warn("Could not initiate telemetry, continuing", "error", err)
-		return nil
-	}
-
-	config.BindRegisteredFlags(v, cmd, tapesFlags, []string{
-		config.FlagTelemetryDisabled,
-	})
+func initTelemetry(cmd *cobra.Command, _ []string, configDir string, disabled bool) error {
+	initTelemLogger := logger.FromContext(cmd.Context())
 
 	// Single check covers --disable-telemetry flag, TAPES_TELEMETRY_DISABLED
 	// env var, and config.toml [telemetry] disabled setting.
-	if v.GetBool("telemetry.disabled") {
+	if disabled {
 		return nil
 	}
 

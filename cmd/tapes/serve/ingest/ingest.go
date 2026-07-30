@@ -21,7 +21,6 @@ type ingestCommander struct {
 	flags config.FlagSet
 
 	listen      string
-	debug       bool
 	postgresDSN string
 	project     string
 
@@ -126,12 +125,7 @@ func NewIngestCmd() *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			var err error
-			cmder.debug, err = cmd.Flags().GetBool("debug")
-			if err != nil {
-				return fmt.Errorf("could not get debug flag: %w", err)
-			}
-
+			cmder.logger = logger.FromContext(cmd.Context())
 			telemetry.FromContext(cmd.Context()).CaptureServerStarted("ingest")
 			return cmder.run()
 		},
@@ -150,8 +144,6 @@ func NewIngestCmd() *cobra.Command {
 }
 
 func (c *ingestCommander) run() error {
-	c.logger = logger.New(logger.WithDebug(c.debug))
-
 	driver, err := postgres.NewDriver(context.TODO(), c.postgresDSN)
 	if err != nil {
 		return err

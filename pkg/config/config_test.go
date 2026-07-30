@@ -78,6 +78,20 @@ dimensions = 768
 			Expect(cfg.Embedding.Dimensions).To(Equal(uint(768)))
 		})
 
+		It("rejects invalid resolved logging settings", func() {
+			data := `[logging]
+level = "verbose"
+`
+			Expect(os.WriteFile(filepath.Join(tmpDir, "config.toml"), []byte(data), 0o600)).To(Succeed())
+
+			c, err := config.NewConfiger(tmpDir)
+			Expect(err).NotTo(HaveOccurred())
+
+			cfg, err := c.LoadConfig()
+			Expect(err).To(MatchError(ContainSubstring("invalid logging config")))
+			Expect(cfg).To(BeNil())
+		})
+
 		It("loads all config fields", func() {
 			data := `version = 0
 
@@ -458,6 +472,9 @@ listen = ":7070"
 				"embedding.dimensions",
 				"opencode.provider",
 				"opencode.model",
+				"logging.level",
+				"logging.format",
+				"logging.color",
 			))
 		})
 
@@ -476,6 +493,9 @@ listen = ":7070"
 			Expect(config.IsValidConfigKey("client.api_target")).To(BeTrue())
 			Expect(config.IsValidConfigKey("opencode.provider")).To(BeTrue())
 			Expect(config.IsValidConfigKey("opencode.model")).To(BeTrue())
+			Expect(config.IsValidConfigKey("logging.level")).To(BeTrue())
+			Expect(config.IsValidConfigKey("logging.format")).To(BeTrue())
+			Expect(config.IsValidConfigKey("logging.color")).To(BeTrue())
 		})
 
 		It("returns false for invalid keys", func() {
@@ -520,6 +540,11 @@ listen = ":7070"
 					Target:     "http://localhost:11434",
 					Model:      "nomic-embed-text",
 					Dimensions: 1024,
+				},
+				Logging: config.LoggingConfig{
+					Level:  "info",
+					Format: "auto",
+					Color:  "auto",
 				},
 			}
 
@@ -696,6 +721,9 @@ var _ = Describe("NewDefaultConfig", func() {
 		Expect(cfg.Embedding.Target).To(Equal("http://localhost:11434"))
 		Expect(cfg.Embedding.Model).To(Equal("embeddinggemma"))
 		Expect(cfg.Embedding.Dimensions).To(Equal(uint(768)))
+		Expect(cfg.Logging.Level).To(Equal("info"))
+		Expect(cfg.Logging.Format).To(Equal("auto"))
+		Expect(cfg.Logging.Color).To(Equal("auto"))
 	})
 })
 
@@ -724,6 +752,9 @@ var _ = Describe("InitViper", func() {
 		Expect(v.GetString("api.listen")).To(Equal(defaults.API.Listen))
 		Expect(v.GetString("client.proxy_target")).To(Equal(defaults.Client.ProxyTarget))
 		Expect(v.GetString("client.api_target")).To(Equal(defaults.Client.APITarget))
+		Expect(v.GetString("logging.level")).To(Equal("info"))
+		Expect(v.GetString("logging.format")).To(Equal("auto"))
+		Expect(v.GetString("logging.color")).To(Equal("auto"))
 	})
 
 	It("reads config file values over defaults", func() {
@@ -745,29 +776,38 @@ upstream = "https://api.anthropic.com"
 	})
 
 	It("respects environment variables with TAPES_ prefix", func() {
-		os.Setenv("TAPES_PROXY_PROVIDER", "openai")
-		defer os.Unsetenv("TAPES_PROXY_PROVIDER")
+		Expect(os.Setenv("TAPES_PROXY_PROVIDER", "openai")).To(Succeed())
+		DeferCleanup(os.Unsetenv, "TAPES_PROXY_PROVIDER")
+		Expect(os.Setenv("TAPES_LOGGING_LEVEL", "warn")).To(Succeed())
+		DeferCleanup(os.Unsetenv, "TAPES_LOGGING_LEVEL")
 
 		v, err := config.InitViper(tmpDir)
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(v.GetString("proxy.provider")).To(Equal("openai"))
+		Expect(v.GetString("logging.level")).To(Equal("warn"))
 	})
 
 	It("env vars take precedence over config file values", func() {
 		data := `[proxy]
 provider = "anthropic"
+
+[logging]
+level = "verbose"
 `
 		err := os.WriteFile(filepath.Join(tmpDir, "config.toml"), []byte(data), 0o600)
 		Expect(err).NotTo(HaveOccurred())
 
-		os.Setenv("TAPES_PROXY_PROVIDER", "openai")
-		defer os.Unsetenv("TAPES_PROXY_PROVIDER")
+		Expect(os.Setenv("TAPES_PROXY_PROVIDER", "openai")).To(Succeed())
+		DeferCleanup(os.Unsetenv, "TAPES_PROXY_PROVIDER")
+		Expect(os.Setenv("TAPES_LOGGING_LEVEL", "error")).To(Succeed())
+		DeferCleanup(os.Unsetenv, "TAPES_LOGGING_LEVEL")
 
 		v, err := config.InitViper(tmpDir)
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(v.GetString("proxy.provider")).To(Equal("openai"))
+		Expect(v.GetString("logging.level")).To(Equal("error"))
 	})
 })
 

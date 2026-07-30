@@ -22,7 +22,6 @@ type embedSpansCommander struct {
 	postgresDSN string
 	orgID       string
 	batchSize   int
-	debug       bool
 
 	embeddingProvider   string
 	embeddingTarget     string
@@ -116,11 +115,6 @@ func newEmbedSpansCmd() *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			var err error
-			cmder.debug, err = cmd.Flags().GetBool("debug")
-			if err != nil {
-				return fmt.Errorf("could not get debug flag: %w", err)
-			}
 			return cmder.run(cmd)
 		},
 	}
@@ -137,7 +131,7 @@ func newEmbedSpansCmd() *cobra.Command {
 }
 
 func (c *embedSpansCommander) run(cmd *cobra.Command) error {
-	c.logger = logger.New(logger.WithDebug(c.debug))
+	c.logger = logger.FromContext(cmd.Context())
 	ctx := cmd.Context()
 
 	if c.postgresDSN == "" {

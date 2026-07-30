@@ -13,6 +13,10 @@ const (
 	defaultEmbeddingModel      = "embeddinggemma"
 	defaultEmbeddingDimensions = 768
 	defaultEmbeddingTarget     = "http://localhost:11434"
+
+	defaultLogLevel  = "info"
+	defaultLogFormat = "auto"
+	defaultLogColor  = "auto"
 )
 
 // NewDefaultConfig returns a Config with sane defaults for all fields.
@@ -42,6 +46,11 @@ func NewDefaultConfig() *Config {
 			Target:     defaultUpstream,
 			Model:      defaultEmbeddingModel,
 			Dimensions: defaultEmbeddingDimensions,
+		},
+		Logging: LoggingConfig{
+			Level:  defaultLogLevel,
+			Format: defaultLogFormat,
+			Color:  defaultLogColor,
 		},
 	}
 }

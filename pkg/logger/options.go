@@ -8,41 +8,65 @@ import (
 // Option configures a Logger created with New.
 type Option func(*config)
 
+// WithLevel sets the minimum enabled log level.
+func WithLevel(level slog.Leveler) Option {
+	return func(c *config) {
+		c.level = level
+	}
+}
+
+// WithFormat sets the log record format.
+func WithFormat(format Format) Option {
+	return func(c *config) {
+		c.format = format
+	}
+}
+
+// WithColor sets the console color policy.
+func WithColor(color ColorMode) Option {
+	return func(c *config) {
+		c.color = color
+	}
+}
+
 // WithDebug sets the log level to Debug when true, Info otherwise.
-func WithDebug(debug bool) Option {
-	return func(c *config) {
-		c.debug = debug
-		if debug {
-			c.level = slog.LevelDebug
-		} else {
-			c.level = slog.LevelInfo
-		}
-	}
-}
-
-// WithPretty is retained for source compatibility. Output formatting is now
-// selected by WithDebug: debug logs use tint and normal logs use slog text.
 //
-// Deprecated: use WithDebug to enable colorized debug output.
-func WithPretty(_ bool) Option {
-	return func(_ *config) {}
-}
-
-// WithJSON enables slog's JSON handler for structured service logs.
-func WithJSON(json bool) Option {
-	return func(c *config) {
-		c.json = json
+// Deprecated: use WithLevel.
+func WithDebug(debug bool) Option {
+	if debug {
+		return WithLevel(slog.LevelDebug)
 	}
+	return WithLevel(slog.LevelInfo)
 }
 
-// WithWriter overrides the output writer. Defaults to os.Stdout.
+// WithPretty selects tint console output when true and native text when false.
+//
+// Deprecated: use WithFormat.
+func WithPretty(pretty bool) Option {
+	if pretty {
+		return WithFormat(FormatConsole)
+	}
+	return WithFormat(FormatText)
+}
+
+// WithJSON selects JSON output when true and native text when false.
+//
+// Deprecated: use WithFormat.
+func WithJSON(json bool) Option {
+	if json {
+		return WithFormat(FormatJSON)
+	}
+	return WithFormat(FormatText)
+}
+
+// WithWriter overrides the output writer. Defaults to os.Stderr.
 func WithWriter(w io.Writer) Option {
 	return func(c *config) {
 		c.writers = []io.Writer{w}
 	}
 }
 
-// WithWriters sets multiple output writers (combined via io.MultiWriter).
+// WithWriters sets multiple output writers with per-destination handlers.
 func WithWriters(w ...io.Writer) Option {
 	return func(c *config) {
 		c.writers = w

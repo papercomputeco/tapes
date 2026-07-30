@@ -25,7 +25,6 @@ import (
 type deriveWorkerCommander struct {
 	flags config.FlagSet
 
-	debug       bool
 	postgresDSN string
 	project     string
 
@@ -136,12 +135,6 @@ func NewDeriveWorkerCmd() *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			var err error
-			cmder.debug, err = cmd.Flags().GetBool("debug")
-			if err != nil {
-				return fmt.Errorf("could not get debug flag: %w", err)
-			}
-
 			telemetry.FromContext(cmd.Context()).CaptureServerStarted("derive-worker")
 			return cmder.run(cmd.Context())
 		},
@@ -161,7 +154,7 @@ func NewDeriveWorkerCmd() *cobra.Command {
 }
 
 func (c *deriveWorkerCommander) run(ctx context.Context) error {
-	c.logger = logger.New(logger.WithDebug(c.debug))
+	c.logger = logger.FromContext(ctx)
 
 	// Bound the transient allocation overshoot of a large session derive
 	// to the container budget (PCC-767): the live set fits, but the

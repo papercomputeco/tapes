@@ -79,6 +79,9 @@ func ValidConfigKeys() []string {
 		"embedding.dimensions",
 		"opencode.provider",
 		"opencode.model",
+		"logging.level",
+		"logging.format",
+		"logging.color",
 		"telemetry.disabled",
 		"update.disabled",
 	}
@@ -155,6 +158,9 @@ func (c *Configer) LoadConfig() (*Config, error) {
 	// synthesize from defaults.
 	merged.Version = cfg.Version
 	merged.Cassettes = cfg.Cassettes
+	if err := validateLoggingConfig(merged.Logging); err != nil {
+		return nil, err
+	}
 
 	return merged, nil
 }
@@ -167,6 +173,9 @@ func (c *Configer) SaveConfig(cfg *Config) error {
 
 	if c.targetPath == "" {
 		return errors.New("cannot save empty target path")
+	}
+	if err := validateLoggingConfig(cfg.Logging); err != nil {
+		return err
 	}
 
 	var buf bytes.Buffer
@@ -218,6 +227,9 @@ func (c *Configer) SetConfigValue(key string, value string) error {
 	// Preserve fields which are not scalar set/get keys.
 	updated.Version = cfg.Version
 	updated.Cassettes = cfg.Cassettes
+	if err := validateLoggingConfig(updated.Logging); err != nil {
+		return err
+	}
 
 	return c.SaveConfig(updated)
 }
