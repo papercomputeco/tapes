@@ -200,7 +200,22 @@ func (document *Document) RewritePrefix(sourcePrefix, targetPrefix string) (*Doc
 	}
 	root := make(map[string]any, len(document.root))
 	for key, value := range document.root {
-		if key != serversKey {
+		switch key {
+		case serversKey:
+			// Dropped: paths resolve against the publisher.
+		case "webhooks":
+			// Webhook path items carry the same nested override surface as
+			// paths (OpenAPI 3.1), and the same rule applies: nothing in a
+			// republished document may name the cassette's own listener.
+			if hooks, ok := value.(map[string]any); ok {
+				stripped := make(map[string]any, len(hooks))
+				for name, hook := range hooks {
+					stripped[name] = stripNestedServers(hook)
+				}
+				value = stripped
+			}
+			root[key] = value
+		default:
 			root[key] = value
 		}
 	}

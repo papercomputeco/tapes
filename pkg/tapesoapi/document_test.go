@@ -128,6 +128,29 @@ var _ = Describe("Document", func() {
 			Expect(string(encoded)).To(ContainSubstring("pong"))
 		})
 
+		It("strips servers overrides from webhooks too", func() {
+			document := load([]byte(`{
+				"openapi":"3.1.0",
+				"paths":{"/api/demo/ping":{}},
+				"webhooks":{"thing.updated":{
+					"servers":[{"url":"http://cassette.internal:9999"}],
+					"post":{
+						"servers":[{"url":"http://cassette.internal:9999/op"}],
+						"responses":{"200":{"description":"ack"}}
+					}
+				}}
+			}`))
+
+			rewritten, err := document.RewritePrefix("/api/demo", "/v1/cassettes/demo")
+			Expect(err).NotTo(HaveOccurred())
+
+			encoded, err := rewritten.Marshal()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(encoded)).NotTo(ContainSubstring("cassette.internal"))
+			Expect(string(encoded)).To(ContainSubstring("thing.updated"))
+			Expect(string(encoded)).To(ContainSubstring("ack"))
+		})
+
 		It("refuses the whole document when one path escapes the prefix", func() {
 			document := load([]byte(
 				`{"openapi":"3.0.3","paths":{"/api/demo/ok":{},"/v1/sessions":{}}}`))
