@@ -16,10 +16,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Nix
-        uses: DeterminateSystems/determinate-nix-action@v3
+        uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
 
       - name: Cache Nix store
-        uses: DeterminateSystems/magic-nix-cache-action@v14
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
