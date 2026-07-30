@@ -212,34 +212,32 @@ func writeSpanSet(
 	if len(coveredSessions) == 0 {
 		return nil
 	}
-	if len(keepTraces) > 0 {
-		if _, err := qtx.PruneSpanLinks(ctx, gensqlc.PruneSpanLinksParams{
-			OrgID:            orgID,
-			SessionIds:       coveredSessions,
-			KeepFromTraceIds: keepLinkFromTrace,
-			KeepFromSpanIds:  keepLinkFromSpan,
-			KeepToTraceIds:   keepLinkToTrace,
-			KeepToSpanIds:    keepLinkToSpan,
-			KeepFromIos:      keepLinkFromIO,
-			KeepToIos:        keepLinkToIO,
-		}); err != nil {
-			return fmt.Errorf("prune span links: %w", err)
-		}
-		if _, err := qtx.PruneSpans(ctx, gensqlc.PruneSpansParams{
-			OrgID:        orgID,
-			SessionIds:   coveredSessions,
-			KeepTraceIds: keepSpanTraceIDs,
-			KeepSpanIds:  keepSpanIDs,
-		}); err != nil {
-			return fmt.Errorf("prune spans: %w", err)
-		}
-		if _, err := qtx.PruneSpanTurns(ctx, gensqlc.PruneSpanTurnsParams{
-			OrgID:        orgID,
-			SessionIds:   coveredSessions,
-			KeepTraceIds: keepTraces,
-		}); err != nil {
-			return fmt.Errorf("prune span turns: %w", err)
-		}
+	if _, err := qtx.PruneSpanLinks(ctx, gensqlc.PruneSpanLinksParams{
+		OrgID:            orgID,
+		SessionIds:       coveredSessions,
+		KeepFromTraceIds: keepLinkFromTrace,
+		KeepFromSpanIds:  keepLinkFromSpan,
+		KeepToTraceIds:   keepLinkToTrace,
+		KeepToSpanIds:    keepLinkToSpan,
+		KeepFromIos:      keepLinkFromIO,
+		KeepToIos:        keepLinkToIO,
+	}); err != nil {
+		return fmt.Errorf("prune span links: %w", err)
+	}
+	if _, err := qtx.PruneSpans(ctx, gensqlc.PruneSpansParams{
+		OrgID:        orgID,
+		SessionIds:   coveredSessions,
+		KeepTraceIds: keepSpanTraceIDs,
+		KeepSpanIds:  keepSpanIDs,
+	}); err != nil {
+		return fmt.Errorf("prune spans: %w", err)
+	}
+	if _, err := qtx.PruneSpanTurns(ctx, gensqlc.PruneSpanTurnsParams{
+		OrgID:        orgID,
+		SessionIds:   coveredSessions,
+		KeepTraceIds: keepTraces,
+	}); err != nil {
+		return fmt.Errorf("prune span turns: %w", err)
 	}
 	if err := qtx.FoldSessionRollupsFromSpans(ctx, coveredSessions); err != nil {
 		return fmt.Errorf("fold session rollups: %w", err)

@@ -60,12 +60,8 @@ To reset demo data, use a fresh database behind the API server.
 ## Prerequisites checklist
 
 - Go 1.26+
-- Docker (required for `make format`, `make check`, `make test` via Dagger, and
-  for the local test database)
-- PostgreSQL with pgvector + pg_duckdb for local runtime work. `make test-db-up`
-  starts one pinned to the image CI uses; don't substitute a stock postgres,
-  which is missing those extensions and fails `pkg/spanembed` in a way that
-  reads as a code bug.
+- Docker (required for `make format`, `make check`, and `make test` via Dagger)
+- PostgreSQL with pgvector + pg_duckdb for local runtime work
 - Optional: Ollama for embeddings when running `tapes serve`
 
 ## Common issues
@@ -91,11 +87,7 @@ make build-local
 ./build/tapes seed --demo --api-target http://localhost:8081
 ./build/tapes deck --api-target http://localhost:8081
 
-# Run tests locally (starts the Postgres the DB-backed suites need)
-make test-local
-make test-db-down          # when you're done with it
-
-# Run tests the way CI does, through Dagger
+# Run tests with the Postgres service provisioned by Dagger
 make test
 
 # Format code

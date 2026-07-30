@@ -52,6 +52,65 @@ SET last_seen_at     = sqlc.arg(now),
     parent_session_id = COALESCE(sqlc.narg(parent_session_id), sessions.parent_session_id)
 RETURNING *;
 
+-- name: UpsertSessionForAttributionRepair :one
+-- Materialize the corrected session identity and expand its liveness range
+-- from the repaired raw turn. LEAST/GREATEST make retries and out-of-order
+-- repairs idempotent. A missing repair subject must not erase a subject already
+-- attached to the target session.
+INSERT INTO sessions (
+    id, org_id, auth_subject, harness_id, harness_session_id,
+    name, cwd, harness_version, parent_session_id,
+    started_at, last_seen_at, harness_metadata
+) VALUES (
+    sqlc.arg(id), sqlc.arg(org_id), sqlc.arg(auth_subject),
+    sqlc.arg(harness_id), sqlc.arg(harness_session_id),
+    sqlc.narg(name), sqlc.narg(cwd), sqlc.narg(harness_version),
+    sqlc.narg(parent_session_id), sqlc.arg(captured_at),
+    sqlc.arg(captured_at), sqlc.arg(harness_metadata)
+)
+ON CONFLICT (org_id, harness_id, harness_session_id) DO UPDATE
+SET auth_subject      = COALESCE(NULLIF(EXCLUDED.auth_subject, ''), sessions.auth_subject),
+    started_at        = LEAST(sessions.started_at, EXCLUDED.started_at),
+    last_seen_at      = GREATEST(sessions.last_seen_at, EXCLUDED.last_seen_at),
+    harness_metadata  = sessions.harness_metadata || sqlc.arg(harness_metadata),
+    name              = COALESCE(sqlc.narg(name), sessions.name),
+    cwd               = COALESCE(sqlc.narg(cwd), sessions.cwd),
+    harness_version   = COALESCE(sqlc.narg(harness_version), sessions.harness_version),
+    parent_session_id = COALESCE(sqlc.narg(parent_session_id), sessions.parent_session_id)
+RETURNING *;
+
+-- name: DeleteEmptyUnreferencedSession :execrows
+-- Remove only the ghost identity left after attribution repair moves away its
+-- final effective raw turn. A zero-turn session that still anchors child
+-- lineage is a legitimate placeholder and must remain. This is deliberately
+-- narrower than the public subtree-cascading DeleteSession operation.
+DELETE FROM sessions s
+WHERE s.org_id = sqlc.arg(org_id)
+  AND s.harness_id = sqlc.arg(harness_id)
+  AND s.harness_session_id = sqlc.arg(harness_session_id)
+  AND NOT EXISTS (
+      SELECT 1
+      FROM raw_turns r
+      WHERE r.org_id = s.org_id
+        AND COALESCE((
+            SELECT c.harness_id
+            FROM raw_turn_attribution_corrections c
+            WHERE c.org_id = r.org_id AND c.raw_turn_id = r.id
+            ORDER BY c.id DESC LIMIT 1
+        ), r.harness_id) = s.harness_id
+        AND COALESCE((
+            SELECT c.harness_session_id
+            FROM raw_turn_attribution_corrections c
+            WHERE c.org_id = r.org_id AND c.raw_turn_id = r.id
+            ORDER BY c.id DESC LIMIT 1
+        ), r.harness_session_id) = s.harness_session_id
+  )
+  AND NOT EXISTS (
+      SELECT 1
+      FROM sessions child
+      WHERE child.parent_session_id = s.id
+  );
+
 -- name: GetSessionByNaturalKey :one
 -- Lookup by the unique (org_id, harness_id, harness_session_id) index.
 -- Used by the parent-FK resolution path in ingest: when an inbound
@@ -162,3 +221,9 @@ UPDATE sessions SET kind_counts = sqlc.arg(kind_counts) WHERE id = sqlc.arg(id);
 -- derived/auto title (the read layer resolves the fallback).
 UPDATE sessions SET display_name = sqlc.narg(display_name)
 WHERE id = sqlc.arg(id) AND org_id = sqlc.arg(org_id);
+
+-- name: SetSessionParent :exec
+-- Repair supplies complete effective lineage and may deliberately clear it.
+UPDATE sessions
+SET parent_session_id = sqlc.narg(parent_session_id)
+WHERE id = sqlc.arg(id);

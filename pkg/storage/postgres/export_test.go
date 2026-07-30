@@ -6,12 +6,42 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/papercomputeco/tapes/pkg/derive"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres/gensqlc"
 )
 
 func ToMigrateDSNForTest(dsn string) string {
 	return toMigrateDSN(dsn)
+}
+
+// SetRepairRederiveForTest swaps the synchronous rebuild the attribution
+// repair flow runs for each affected session, so a test can force a
+// mid-flight rederive failure (correction committed, one projection rebuilt,
+// the other stale) — a state with no black-box trigger. Returns a restore
+// func; the ginkgo specs run sequentially, so swapping the package variable
+// is race-free.
+func SetRepairRederiveForTest(
+	fn func(*Driver, context.Context, string, string, string, string) (*derive.RederiveReport, error),
+) (restore func()) {
+	prev := repairRederive
+	repairRederive = fn
+	return func() { repairRederive = prev }
+}
+
+// SetRepairSourceCleanupForTest swaps the best-effort deletion of the emptied
+// repair source session, so a test can force a cleanup-only failure after the
+// correction and both projection rebuilds applied — like the rederive seam, a
+// state with no black-box trigger. Returns a restore func; the ginkgo specs
+// run sequentially, so swapping the package variable is race-free.
+func SetRepairSourceCleanupForTest(
+	fn func(d *Driver, ctx context.Context, orgID pgtype.UUID, harnessID, harnessSessionID string) error,
+) (restore func()) {
+	prev := repairSourceCleanup
+	repairSourceCleanup = func(d *Driver, ctx context.Context, orgID pgtype.UUID, key repairSessionKey) error {
+		return fn(d, ctx, orgID, key.harnessID, key.harnessSessionID)
+	}
+	return func() { repairSourceCleanup = prev }
 }
 
 // SpanTurnUpsertForTest runs the real UpsertSpanTurn query so a test can
@@ -96,7 +126,7 @@ func (d *Driver) RawTurnsForDeriveForTest(ctx context.Context, orgID pgtype.UUID
 		if err != nil {
 			return nil, err
 		}
-		rec := rawTurnRecordFromRow(rawTurnFromDeriveRow(row))
+		rec := rawTurnRecordFromEffectiveRow(row)
 		recoverReduction(ctx, d.reducers, d.logger, &rec)
 		recs = append(recs, rec)
 	}

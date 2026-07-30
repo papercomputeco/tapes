@@ -12,15 +12,8 @@
   changing it changes everything for the internal merkle/dedup layer.
 - Always use `make` operations for development: use `make help` to understand
   the various operations available.
-- DB-backed tests need a running Postgres. Start it once with `make test-db-up`
-  and then `go test ./...` works normally — the dev shell exports
-  `TEST_POSTGRES_DSN` for you (see `flake.nix`). `make test-local` does both in
-  one step; `make test-db-down` stops it. If the database is down the suites
-  fail with the command to run, so you should not have to remember this.
-  Do not start a postgres container by hand: the image is pinned to the one CI
-  uses because it carries pgvector and pg_duckdb, and a stock postgres fails
-  `pkg/spanembed` on a missing extension — an environment gap that reads as a
-  code bug. `make test-db-up` verifies that pin still matches CI.
+- Run tests with `make test`; the Dagger workflow provisions the Postgres
+  service and passes its DSN to DB-backed suites.
 - Run `make format` to format and organize imports using `goimports` and `golangci-lint`
 - OpenAPI lives in `pkg/tapesoapi` (there is no swaggo and no annotation
   comments). A route is registered and described in the same call, through the

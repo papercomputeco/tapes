@@ -22,6 +22,96 @@ func (q *Queries) CountRawTurns(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const findRawTurnIDsByPaperProxyRequestID = `-- name: FindRawTurnIDsByPaperProxyRequestID :many
+SELECT id
+FROM raw_turns
+WHERE org_id = $1
+  AND session_envelope->'harness_metadata'->>'paperProxyRequestId' = $2::text
+ORDER BY id
+LIMIT 2
+`
+
+type FindRawTurnIDsByPaperProxyRequestIDParams struct {
+	OrgID               pgtype.UUID
+	PaperProxyRequestID string
+}
+
+func (q *Queries) FindRawTurnIDsByPaperProxyRequestID(ctx context.Context, arg FindRawTurnIDsByPaperProxyRequestIDParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, findRawTurnIDsByPaperProxyRequestID, arg.OrgID, arg.PaperProxyRequestID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getRawTurnAttributionForUpdate = `-- name: GetRawTurnAttributionForUpdate :one
+SELECT r.id, r.org_id, r.session_envelope, r.received_at,
+       COALESCE(c.harness_id, r.harness_id) AS harness_id,
+       COALESCE(c.harness_session_id, r.harness_session_id) AS harness_session_id,
+       COALESCE(c.thread_id, r.meta->>'thread_id', '') AS thread_id,
+       (c.id IS NOT NULL)::boolean AS has_correction,
+       COALESCE(c.parent_harness_session_id, '') AS corrected_parent_harness_session_id,
+       COALESCE(r.session_envelope->>'parent_harness_session_id', '')::text AS raw_parent_harness_session_id
+FROM raw_turns r
+LEFT JOIN LATERAL (
+    SELECT id, harness_id, harness_session_id, thread_id, parent_harness_session_id
+    FROM raw_turn_attribution_corrections
+    WHERE org_id = r.org_id AND raw_turn_id = r.id
+    ORDER BY id DESC LIMIT 1
+) c ON TRUE
+WHERE r.org_id = $1 AND r.id = $2
+FOR UPDATE OF r
+`
+
+type GetRawTurnAttributionForUpdateParams struct {
+	OrgID     pgtype.UUID
+	RawTurnID int64
+}
+
+type GetRawTurnAttributionForUpdateRow struct {
+	ID                              int64
+	OrgID                           pgtype.UUID
+	SessionEnvelope                 []byte
+	ReceivedAt                      pgtype.Timestamptz
+	HarnessID                       string
+	HarnessSessionID                string
+	ThreadID                        string
+	HasCorrection                   bool
+	CorrectedParentHarnessSessionID string
+	RawParentHarnessSessionID       string
+}
+
+// Locks the immutable row as a serialization point for competing repairs.
+func (q *Queries) GetRawTurnAttributionForUpdate(ctx context.Context, arg GetRawTurnAttributionForUpdateParams) (GetRawTurnAttributionForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, getRawTurnAttributionForUpdate, arg.OrgID, arg.RawTurnID)
+	var i GetRawTurnAttributionForUpdateRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.SessionEnvelope,
+		&i.ReceivedAt,
+		&i.HarnessID,
+		&i.HarnessSessionID,
+		&i.ThreadID,
+		&i.HasCorrection,
+		&i.CorrectedParentHarnessSessionID,
+		&i.RawParentHarnessSessionID,
+	)
+	return i, err
+}
+
 const insertRawTurn = `-- name: InsertRawTurn :execrows
 INSERT INTO raw_turns (
     org_id, source, provider, agent_name,
@@ -83,16 +173,69 @@ func (q *Queries) InsertRawTurn(ctx context.Context, arg InsertRawTurnParams) (i
 	return result.RowsAffected(), nil
 }
 
+const insertRawTurnAttributionCorrection = `-- name: InsertRawTurnAttributionCorrection :exec
+INSERT INTO raw_turn_attribution_corrections (
+    org_id, raw_turn_id, harness_id, harness_session_id, thread_id,
+    parent_harness_session_id, reason
+) VALUES (
+    $1, $2, $3,
+    $4, $5,
+    $6, $7
+)
+`
+
+type InsertRawTurnAttributionCorrectionParams struct {
+	OrgID                  pgtype.UUID
+	RawTurnID              int64
+	HarnessID              string
+	HarnessSessionID       string
+	ThreadID               string
+	ParentHarnessSessionID pgtype.Text
+	Reason                 string
+}
+
+func (q *Queries) InsertRawTurnAttributionCorrection(ctx context.Context, arg InsertRawTurnAttributionCorrectionParams) error {
+	_, err := q.db.Exec(ctx, insertRawTurnAttributionCorrection,
+		arg.OrgID,
+		arg.RawTurnID,
+		arg.HarnessID,
+		arg.HarnessSessionID,
+		arg.ThreadID,
+		arg.ParentHarnessSessionID,
+		arg.Reason,
+	)
+	return err
+}
+
 const listRawTurnHeadersBySession = `-- name: ListRawTurnHeadersBySession :many
-SELECT id, org_id, source, provider, agent_name, request_id,
-       received_at, meta,
-       COALESCE(length(raw_request::text), 0)::bigint AS request_bytes,
-       COALESCE(length(response::text), 0)::bigint AS response_bytes,
-       COALESCE(octet_length(raw_response), 0)::bigint AS raw_response_bytes,
-       raw_response_dropped
-FROM raw_turns
-WHERE org_id = $1 AND harness_id = $2 AND harness_session_id = $3
-ORDER BY id ASC
+SELECT r.id, r.org_id, r.source, r.provider, r.agent_name, r.request_id,
+       r.received_at,
+       (CASE WHEN c.id IS NULL THEN r.meta
+             ELSE jsonb_set(r.meta, '{thread_id}', to_jsonb(c.thread_id), true)
+        END)::jsonb AS meta,
+       COALESCE(length(r.raw_request::text), 0)::bigint AS request_bytes,
+       COALESCE(length(r.response::text), 0)::bigint AS response_bytes,
+       COALESCE(octet_length(r.raw_response), 0)::bigint AS raw_response_bytes,
+       r.raw_response_dropped
+FROM raw_turns r
+LEFT JOIN LATERAL (
+    SELECT id, harness_id, harness_session_id, thread_id
+    FROM raw_turn_attribution_corrections
+    WHERE org_id = r.org_id AND raw_turn_id = r.id
+    ORDER BY id DESC LIMIT 1
+) c ON TRUE
+WHERE r.org_id = $1
+  AND COALESCE((
+      SELECT c2.harness_id FROM raw_turn_attribution_corrections c2
+      WHERE c2.org_id = r.org_id AND c2.raw_turn_id = r.id
+      ORDER BY c2.id DESC LIMIT 1
+  ), r.harness_id) = $2
+  AND COALESCE((
+      SELECT c2.harness_session_id FROM raw_turn_attribution_corrections c2
+      WHERE c2.org_id = r.org_id AND c2.raw_turn_id = r.id
+      ORDER BY c2.id DESC LIMIT 1
+  ), r.harness_session_id) = $3
+ORDER BY r.id ASC
 `
 
 type ListRawTurnHeadersBySessionParams struct {
@@ -152,13 +295,37 @@ func (q *Queries) ListRawTurnHeadersBySession(ctx context.Context, arg ListRawTu
 }
 
 const listRawTurns = `-- name: ListRawTurns :many
-SELECT id, org_id, source, provider, agent_name,
-       harness_id, harness_session_id, request_id,
-       raw_request, response, meta, session_envelope, received_at,
-       raw_response, raw_response_encoding, raw_response_dropped
-FROM raw_turns
-WHERE id > $1
-ORDER BY id
+SELECT r.id, r.org_id, r.source, r.provider, r.agent_name,
+       COALESCE(c.harness_id, r.harness_id) AS harness_id,
+       COALESCE(c.harness_session_id, r.harness_session_id) AS harness_session_id,
+       r.request_id, r.raw_request, r.response,
+       (CASE WHEN c.id IS NULL THEN r.meta
+             ELSE jsonb_set(r.meta, '{thread_id}', to_jsonb(c.thread_id), true)
+        END)::jsonb AS meta,
+       (CASE WHEN c.id IS NULL THEN r.session_envelope
+             WHEN c.parent_harness_session_id IS NULL THEN
+                  (COALESCE(r.session_envelope, '{}'::jsonb) - 'parent_harness_session_id') ||
+                  jsonb_build_object(
+                      'harness_id', c.harness_id,
+                      'harness_session_id', c.harness_session_id
+                  )
+             ELSE COALESCE(r.session_envelope, '{}'::jsonb) || jsonb_build_object(
+                      'harness_id', c.harness_id,
+                      'harness_session_id', c.harness_session_id,
+                      'parent_harness_session_id', c.parent_harness_session_id
+                  )
+        END)::jsonb AS session_envelope,
+       r.received_at,
+       r.raw_response, r.raw_response_encoding, r.raw_response_dropped
+FROM raw_turns r
+LEFT JOIN LATERAL (
+    SELECT id, harness_id, harness_session_id, thread_id, parent_harness_session_id
+    FROM raw_turn_attribution_corrections
+    WHERE org_id = r.org_id AND raw_turn_id = r.id
+    ORDER BY id DESC LIMIT 1
+) c ON TRUE
+WHERE r.id > $1
+ORDER BY r.id
 LIMIT $2
 `
 
@@ -167,17 +334,36 @@ type ListRawTurnsParams struct {
 	PageSize int32
 }
 
+type ListRawTurnsRow struct {
+	ID                  int64
+	OrgID               pgtype.UUID
+	Source              string
+	Provider            string
+	AgentName           string
+	HarnessID           string
+	HarnessSessionID    string
+	RequestID           string
+	RawRequest          []byte
+	Response            []byte
+	Meta                []byte
+	SessionEnvelope     []byte
+	ReceivedAt          pgtype.Timestamptz
+	RawResponse         []byte
+	RawResponseEncoding string
+	RawResponseDropped  bool
+}
+
 // Keyset-paginated scan in insertion order, for the re-runnable deriver.
 // Pass after_id = 0 to start from the beginning.
-func (q *Queries) ListRawTurns(ctx context.Context, arg ListRawTurnsParams) ([]RawTurn, error) {
+func (q *Queries) ListRawTurns(ctx context.Context, arg ListRawTurnsParams) ([]ListRawTurnsRow, error) {
 	rows, err := q.db.Query(ctx, listRawTurns, arg.AfterID, arg.PageSize)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []RawTurn
+	var items []ListRawTurnsRow
 	for rows.Next() {
-		var i RawTurn
+		var i ListRawTurnsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
@@ -207,14 +393,42 @@ func (q *Queries) ListRawTurns(ctx context.Context, arg ListRawTurnsParams) ([]R
 }
 
 const listRawTurnsBySession = `-- name: ListRawTurnsBySession :many
-SELECT id, org_id, source, provider, agent_name,
-       harness_id, harness_session_id, request_id,
-       raw_request, response, meta, session_envelope, received_at,
-       raw_response, raw_response_encoding, raw_response_dropped
-FROM raw_turns
-WHERE org_id = $1
-  AND harness_session_id = $2
-ORDER BY id
+SELECT r.id, r.org_id, r.source, r.provider, r.agent_name,
+       COALESCE(c.harness_id, r.harness_id) AS harness_id,
+       COALESCE(c.harness_session_id, r.harness_session_id) AS harness_session_id,
+       r.request_id, r.raw_request, r.response,
+       (CASE WHEN c.id IS NULL THEN r.meta
+             ELSE jsonb_set(r.meta, '{thread_id}', to_jsonb(c.thread_id), true)
+        END)::jsonb AS meta,
+       (CASE WHEN c.id IS NULL THEN r.session_envelope
+             WHEN c.parent_harness_session_id IS NULL THEN
+                  (COALESCE(r.session_envelope, '{}'::jsonb) - 'parent_harness_session_id') ||
+                  jsonb_build_object(
+                      'harness_id', c.harness_id,
+                      'harness_session_id', c.harness_session_id
+                  )
+             ELSE COALESCE(r.session_envelope, '{}'::jsonb) || jsonb_build_object(
+                      'harness_id', c.harness_id,
+                      'harness_session_id', c.harness_session_id,
+                      'parent_harness_session_id', c.parent_harness_session_id
+                  )
+        END)::jsonb AS session_envelope,
+       r.received_at,
+       r.raw_response, r.raw_response_encoding, r.raw_response_dropped
+FROM raw_turns r
+LEFT JOIN LATERAL (
+    SELECT id, harness_id, harness_session_id, thread_id, parent_harness_session_id
+    FROM raw_turn_attribution_corrections
+    WHERE org_id = r.org_id AND raw_turn_id = r.id
+    ORDER BY id DESC LIMIT 1
+) c ON TRUE
+WHERE r.org_id = $1
+  AND COALESCE((
+      SELECT c2.harness_session_id FROM raw_turn_attribution_corrections c2
+      WHERE c2.org_id = r.org_id AND c2.raw_turn_id = r.id
+      ORDER BY c2.id DESC LIMIT 1
+  ), r.harness_session_id) = $2
+ORDER BY r.id
 `
 
 type ListRawTurnsBySessionParams struct {
@@ -222,16 +436,35 @@ type ListRawTurnsBySessionParams struct {
 	HarnessSessionID string
 }
 
+type ListRawTurnsBySessionRow struct {
+	ID                  int64
+	OrgID               pgtype.UUID
+	Source              string
+	Provider            string
+	AgentName           string
+	HarnessID           string
+	HarnessSessionID    string
+	RequestID           string
+	RawRequest          []byte
+	Response            []byte
+	Meta                []byte
+	SessionEnvelope     []byte
+	ReceivedAt          pgtype.Timestamptz
+	RawResponse         []byte
+	RawResponseEncoding string
+	RawResponseDropped  bool
+}
+
 // Every raw turn captured for one harness session, in insertion order.
-func (q *Queries) ListRawTurnsBySession(ctx context.Context, arg ListRawTurnsBySessionParams) ([]RawTurn, error) {
+func (q *Queries) ListRawTurnsBySession(ctx context.Context, arg ListRawTurnsBySessionParams) ([]ListRawTurnsBySessionRow, error) {
 	rows, err := q.db.Query(ctx, listRawTurnsBySession, arg.OrgID, arg.HarnessSessionID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []RawTurn
+	var items []ListRawTurnsBySessionRow
 	for rows.Next() {
-		var i RawTurn
+		var i ListRawTurnsBySessionRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,

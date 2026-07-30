@@ -5,6 +5,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/seed"
+	"github.com/papercomputeco/tapes/pkg/storage"
 	oas "github.com/papercomputeco/tapes/pkg/tapesoapi"
 	"github.com/papercomputeco/tapes/pkg/tapesoapi/oasfiber"
 )
@@ -462,6 +463,26 @@ func (s *Server) mountAdmin(router *oasfiber.Router) {
 			JSONResponse(200, "Per-org derive reports", s.schema(deriveRunResponse{})).
 			JSONResponse(500, "Derive failed", s.errorSchema()).
 			JSONResponse(501, "Driver does not host the raw-turn layer", s.errorSchema()))
+
+	router.Post("/v1/admin/raw-turns/attribution-repair", s.handleRawTurnAttributionRepair,
+		oasfiber.Doc("repairRawTurnAttribution").
+			Summary("Repair raw-turn attribution (operator)").
+			Description("Records an audited, append-only attribution correction without modifying "+
+				"raw_turns, then synchronously re-derives the previous and effective sessions. "+
+				"Select exactly one row by raw_turn_id or paper_proxy_request_id.").
+			Tag("admin").
+			JSONBody("Attribution repair", s.schema(storage.RawTurnAttributionRepairRequest{})).
+			JSONResponse(200, "Repair applied; source_cleanup_pending discloses a cosmetic "+
+				"leftover source session row that nothing retries automatically",
+				s.schema(storage.RawTurnAttributionRepairResult{})).
+			JSONResponse(202, "Correction recorded; projections_pending lists sessions the "+
+				"derive worker will converge",
+				s.schema(storage.RawTurnAttributionRepairResult{})).
+			JSONResponse(400, "Invalid payload or replacement attribution", s.errorSchema()).
+			JSONResponse(404, "Raw turn not found", s.errorSchema()).
+			JSONResponse(409, "Correlation selector is ambiguous", s.errorSchema()).
+			JSONResponse(500, "Repair failed", s.errorSchema()).
+			JSONResponse(501, "Driver does not support attribution repair", s.errorSchema()))
 }
 
 // mountMCP registers the streamable MCP transport.

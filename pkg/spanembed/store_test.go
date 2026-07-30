@@ -10,18 +10,14 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/papercomputeco/tapes/internal/testdb"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/spanembed"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 )
 
-func testPostgresDSN() (string, error) { return testdb.DSN() }
-
 // Store integration specs run against the Dagger Postgres service.
 // They use their own embedding table and a unique org per run, insert span
-// rows with NULL session_id, and clean up everything they created. The suite
-// lock serializes them with packages whose cleanup truncates shared span tables.
+// rows with NULL session_id, and clean up everything they created.
 var _ = Describe("Store", func() {
 	const tableName = "span_embeddings_store_test"
 
@@ -36,9 +32,7 @@ var _ = Describe("Store", func() {
 	BeforeEach(func() {
 		ctx = context.Background()
 
-		var err error
-		dsn, err = testPostgresDSN()
-		Expect(err).NotTo(HaveOccurred())
+		dsn = testPostgresDSN
 
 		// Open the tapes driver once so migrations (spans_20260615, span_turns_20260615)
 		// are applied, then keep a plain pool for the store under test.

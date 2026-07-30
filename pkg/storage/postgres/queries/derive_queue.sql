@@ -64,10 +64,18 @@ FROM derive_queue;
 -- writes nodes, which is what makes it safe to run concurrently with
 -- session derives.
 INSERT INTO derive_queue (org_id, harness_id, harness_session_id)
-SELECT DISTINCT org_id, harness_id, harness_session_id
-FROM raw_turns
-WHERE harness_session_id <> ''
-  AND received_at >= sqlc.arg(active_since)
+SELECT DISTINCT r.org_id,
+       COALESCE(c.harness_id, r.harness_id),
+       COALESCE(c.harness_session_id, r.harness_session_id)
+FROM raw_turns r
+LEFT JOIN LATERAL (
+    SELECT harness_id, harness_session_id
+    FROM raw_turn_attribution_corrections
+    WHERE org_id = r.org_id AND raw_turn_id = r.id
+    ORDER BY id DESC LIMIT 1
+) c ON TRUE
+WHERE COALESCE(c.harness_session_id, r.harness_session_id) <> ''
+  AND r.received_at >= sqlc.arg(active_since)
 ON CONFLICT (org_id, harness_id, harness_session_id) DO NOTHING;
 
 -- name: ListRawTurnIndexBySession :many
@@ -75,12 +83,27 @@ ON CONFLICT (org_id, harness_id, harness_session_id) DO NOTHING;
 -- session-scoped deriver's ordering pass. Full rows are then streamed
 -- one at a time via GetRawTurn — same memory discipline as the
 -- full-org pass.
-SELECT id, org_id, source, harness_id, harness_session_id, received_at, meta
-FROM raw_turns
-WHERE org_id = $1
-  AND harness_id = $2
-  AND harness_session_id = $3
-ORDER BY id;
+SELECT r.id, r.org_id, r.source,
+       COALESCE((SELECT c.harness_id
+                 FROM raw_turn_attribution_corrections c
+                 WHERE c.org_id = r.org_id AND c.raw_turn_id = r.id
+                 ORDER BY c.id DESC LIMIT 1), r.harness_id) AS harness_id,
+       COALESCE((SELECT c.harness_session_id
+                 FROM raw_turn_attribution_corrections c
+                 WHERE c.org_id = r.org_id AND c.raw_turn_id = r.id
+                 ORDER BY c.id DESC LIMIT 1), r.harness_session_id) AS harness_session_id,
+       r.received_at, r.meta
+FROM raw_turns r
+WHERE r.org_id = $1
+  AND COALESCE((SELECT c.harness_id
+                FROM raw_turn_attribution_corrections c
+                WHERE c.org_id = r.org_id AND c.raw_turn_id = r.id
+                ORDER BY c.id DESC LIMIT 1), r.harness_id) = $2
+  AND COALESCE((SELECT c.harness_session_id
+                FROM raw_turn_attribution_corrections c
+                WHERE c.org_id = r.org_id AND c.raw_turn_id = r.id
+                ORDER BY c.id DESC LIMIT 1), r.harness_session_id) = $3
+ORDER BY r.id;
 
 -- name: NextDeriveSeq :one
 -- One cursor value per derive pass: the derive transaction's own id. Every row

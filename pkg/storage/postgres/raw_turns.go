@@ -121,7 +121,7 @@ func (d *Driver) CountRawTurns(ctx context.Context) (int64, error) {
 	return d.q.CountRawTurns(ctx)
 }
 
-func rawTurnRecordFromRow(row gensqlc.RawTurn) storage.RawTurnRecord {
+func rawTurnRecordFromRow(row gensqlc.ListRawTurnsRow) storage.RawTurnRecord {
 	return storage.RawTurnRecord{
 		ID:               row.ID,
 		OrgID:            uuidString(row.OrgID),
@@ -143,8 +143,9 @@ func rawTurnRecordFromRow(row gensqlc.RawTurn) storage.RawTurnRecord {
 	}
 }
 
-// rawTurnFromDeriveRow widens the narrow GetRawTurn projection to the full row
-// shape so both paths share one converter.
+// rawTurnRecordFromEffectiveRow converts the GetRawTurn projection — the raw
+// row as seen through the latest attribution correction — to the record shape
+// the deriver consumes.
 //
 // GetRawTurn selects raw_response only for turns whose reduction is missing
 // its content blocks (see the query). The deriver reads the reduced `response`
@@ -155,10 +156,10 @@ func rawTurnRecordFromRow(row gensqlc.RawTurn) storage.RawTurnRecord {
 // RawResponseDropped is not selected at all: it is a fidelity marker for the
 // projection, not an input to derivation, and it is zero here because the
 // query didn't ask — which is not the same as the row not having it.
-func rawTurnFromDeriveRow(row gensqlc.GetRawTurnRow) gensqlc.RawTurn {
-	return gensqlc.RawTurn{
+func rawTurnRecordFromEffectiveRow(row gensqlc.GetRawTurnRow) storage.RawTurnRecord {
+	return storage.RawTurnRecord{
 		ID:               row.ID,
-		OrgID:            row.OrgID,
+		OrgID:            uuidString(row.OrgID),
 		Source:           row.Source,
 		Provider:         row.Provider,
 		AgentName:        row.AgentName,
@@ -169,7 +170,7 @@ func rawTurnFromDeriveRow(row gensqlc.GetRawTurnRow) gensqlc.RawTurn {
 		Response:         row.Response,
 		Meta:             row.Meta,
 		SessionEnvelope:  row.SessionEnvelope,
-		ReceivedAt:       row.ReceivedAt,
+		ReceivedAt:       row.ReceivedAt.Time,
 
 		RawResponse:         row.RawResponse,
 		RawResponseEncoding: row.RawResponseEncoding,

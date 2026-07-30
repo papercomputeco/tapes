@@ -6,19 +6,40 @@ WHERE org_id = $1
   AND harness_id = $2
   AND harness_session_id = $3;
 
+-- name: ListSessionsForRederive :many
+-- Whole-store rederive enumerates persisted identities, including sessions
+-- whose last effective raw turn was repaired away, so their stale projection
+-- is still covered and pruned.
+SELECT org_id, harness_id, harness_session_id
+FROM sessions
+ORDER BY org_id, harness_id, harness_session_id;
+
 -- name: ListRawTurnIndex :many
 -- Lightweight scan for the deriver's ordering pass: identity and
 -- timing only, no payloads. meta rides along because it carries the
 -- original capture time for backfilled rows.
-SELECT id, org_id, source, harness_id, harness_session_id, received_at, meta
-FROM raw_turns
-WHERE id > sqlc.arg(after_id)
-ORDER BY id
+SELECT r.id, r.org_id, r.source,
+       COALESCE(c.harness_id, r.harness_id) AS harness_id,
+       COALESCE(c.harness_session_id, r.harness_session_id) AS harness_session_id,
+       r.received_at, r.meta
+FROM raw_turns r
+LEFT JOIN LATERAL (
+    SELECT harness_id, harness_session_id
+    FROM raw_turn_attribution_corrections
+    WHERE org_id = r.org_id AND raw_turn_id = r.id
+    ORDER BY id DESC LIMIT 1
+) c ON TRUE
+WHERE r.id > sqlc.arg(after_id)
+ORDER BY r.id
 LIMIT sqlc.arg(page_size);
 
 -- name: GetRawTurn :one
--- The derive read. raw_response is selected ONLY for turns whose reduction is
--- missing its content blocks — the shape the deriver skips.
+-- The derive read, through the attribution-correction overlay: identity
+-- columns COALESCE to the latest correction, meta's thread_id is overridden
+-- when corrected, and the session envelope is rewritten to match.
+--
+-- raw_response is selected ONLY for turns whose reduction is missing its
+-- content blocks — the shape the deriver skips.
 --
 -- The column runs to the ingest cap, so selecting it unconditionally would pull
 -- megabytes through every derive read to be discarded. Selecting it never is
@@ -31,15 +52,39 @@ LIMIT sqlc.arg(page_size);
 -- the caller re-checks authoritatively before reducing, so a false positive
 -- costs one wasted read and a false negative is impossible for the case that
 -- matters (an empty reduction always lacks content).
-SELECT id, org_id, source, provider, agent_name,
-       harness_id, harness_session_id, request_id,
-       raw_request, response, meta, session_envelope, received_at,
+SELECT r.id, r.org_id, r.source, r.provider, r.agent_name,
+       COALESCE(c.harness_id, r.harness_id) AS harness_id,
+       COALESCE(c.harness_session_id, r.harness_session_id) AS harness_session_id,
+       r.request_id, r.raw_request, r.response,
+       (CASE WHEN c.id IS NULL THEN r.meta
+             ELSE jsonb_set(r.meta, '{thread_id}', to_jsonb(c.thread_id), true)
+        END)::jsonb AS meta,
+       (CASE WHEN c.id IS NULL THEN r.session_envelope
+             WHEN c.parent_harness_session_id IS NULL THEN
+                  (COALESCE(r.session_envelope, '{}'::jsonb) - 'parent_harness_session_id') ||
+                  jsonb_build_object(
+                      'harness_id', c.harness_id,
+                      'harness_session_id', c.harness_session_id
+                  )
+             ELSE COALESCE(r.session_envelope, '{}'::jsonb) || jsonb_build_object(
+                      'harness_id', c.harness_id,
+                      'harness_session_id', c.harness_session_id,
+                      'parent_harness_session_id', c.parent_harness_session_id
+                  )
+        END)::jsonb AS session_envelope,
+       r.received_at,
        CASE
-           WHEN jsonb_typeof(response -> 'message' -> 'content') = 'array'
-                AND jsonb_array_length(response -> 'message' -> 'content') > 0
+           WHEN jsonb_typeof(r.response -> 'message' -> 'content') = 'array'
+                AND jsonb_array_length(r.response -> 'message' -> 'content') > 0
            THEN NULL
-           ELSE raw_response
+           ELSE r.raw_response
        END::bytea AS raw_response,
-       raw_response_encoding
-FROM raw_turns
-WHERE id = $1;
+       r.raw_response_encoding
+FROM raw_turns r
+LEFT JOIN LATERAL (
+    SELECT id, harness_id, harness_session_id, thread_id, parent_harness_session_id
+    FROM raw_turn_attribution_corrections
+    WHERE org_id = r.org_id AND raw_turn_id = r.id
+    ORDER BY id DESC LIMIT 1
+) c ON TRUE
+WHERE r.id = $1;

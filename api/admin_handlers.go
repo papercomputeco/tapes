@@ -3,12 +3,14 @@ package api
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/papercomputeco/tapes/pkg/derive"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/seed"
+	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
 type seedDemoRequest struct {
@@ -83,4 +85,71 @@ func (s *Server) handleDeriveRun(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(deriveRunResponse{Orgs: reports})
+}
+
+type rawTurnAttributionRepairer interface {
+	RepairRawTurnAttribution(context.Context, string, storage.RawTurnAttributionRepairRequest) (storage.RawTurnAttributionRepairResult, error)
+}
+
+// handleRawTurnAttributionRepair records an append-only attribution overlay
+// and synchronously rebuilds both affected session projections. The published
+// contract for this route lives beside its registration in openapi_routes.go;
+// the request and result schemas come from the storage types the handler
+// actually decodes and returns.
+func (s *Server) handleRawTurnAttributionRepair(c *fiber.Ctx) error {
+	repairer, ok := s.driver.(rawTurnAttributionRepairer)
+	if !ok {
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "driver does not support raw-turn attribution repair"})
+	}
+	var req storage.RawTurnAttributionRepairRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "invalid payload: " + err.Error()})
+	}
+	if err := validateRawTurnAttributionRepairRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
+	}
+	req.OrgID = orgIDFromCtx(c)
+	result, err := repairer.RepairRawTurnAttribution(c.Context(), "", req)
+	if err != nil {
+		switch {
+		case errors.Is(err, storage.ErrRawTurnNotFound):
+			return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: err.Error()})
+		case errors.Is(err, storage.ErrRawTurnAmbiguous):
+			return c.Status(fiber.StatusConflict).JSON(llm.ErrorResponse{Error: err.Error()})
+		case errors.Is(err, storage.ErrRepairProjectionsPending):
+			// The correction committed and is effective; only the synchronous
+			// projection rebuild is outstanding, and the derive queue converges
+			// it. 202 with the result (projections_pending names the stale
+			// sessions) rather than a 500 that would misreport a recorded
+			// repair as a failure and invite a redundant retry.
+			s.logger.Warn("repair raw-turn attribution settling asynchronously", "error", err)
+			return c.Status(fiber.StatusAccepted).JSON(result)
+		default:
+			s.logger.Error("repair raw-turn attribution", "error", err)
+			return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: err.Error()})
+		}
+	}
+	return c.JSON(result)
+}
+
+func validateRawTurnAttributionRepairRequest(req storage.RawTurnAttributionRepairRequest) error {
+	if (req.RawTurnID > 0) == (strings.TrimSpace(req.PaperProxyRequestID) != "") {
+		return errors.New("exactly one of raw_turn_id or paper_proxy_request_id is required")
+	}
+	if req.HarnessID == "" {
+		return errors.New("harness_id is required")
+	}
+	if req.HarnessSessionID == "" {
+		return errors.New("harness_session_id is required")
+	}
+	if req.ParentHarnessSessionID != nil && *req.ParentHarnessSessionID == "" {
+		return errors.New("parent_harness_session_id must be omitted instead of empty")
+	}
+	if req.ParentHarnessSessionID != nil && *req.ParentHarnessSessionID == req.HarnessSessionID {
+		return errors.New("a session cannot parent itself")
+	}
+	if strings.TrimSpace(req.Reason) == "" {
+		return errors.New("reason is required")
+	}
+	return nil
 }
