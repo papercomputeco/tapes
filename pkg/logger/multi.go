@@ -7,7 +7,7 @@ import (
 )
 
 // multiHandler fans out log records to multiple slog.Handler instances.
-// Used by the start command to write pretty output to stdout and JSON to a
+// Used by the start command to write console output to stdout and JSON to a
 // log file simultaneously.
 type multiHandler struct {
 	handlers []slog.Handler

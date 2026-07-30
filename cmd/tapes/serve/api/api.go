@@ -23,7 +23,6 @@ type apiCommander struct {
 	flags config.FlagSet
 
 	listen      string
-	debug       bool
 	postgresDSN string
 	webUI       bool
 
@@ -129,12 +128,6 @@ func newAPICmd(cmder *apiCommander) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			var err error
-			cmder.debug, err = cmd.Flags().GetBool("debug")
-			if err != nil {
-				return fmt.Errorf("could not get debug flag: %w", err)
-			}
-
 			telemetry.FromContext(cmd.Context()).CaptureServerStarted("api")
 			return cmder.run(cmd.Context())
 		},
@@ -157,7 +150,7 @@ func newAPICmd(cmder *apiCommander) *cobra.Command {
 }
 
 func (c *apiCommander) run(ctx context.Context) error {
-	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
+	c.logger = logger.FromContext(ctx)
 
 	driver, err := postgres.NewDriver(ctx, c.postgresDSN)
 	if err != nil {

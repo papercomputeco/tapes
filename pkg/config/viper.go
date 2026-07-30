@@ -105,6 +105,11 @@ func setViperDefaults(v *viper.Viper) {
 	v.SetDefault("opencode.provider", d.OpenCode.Provider)
 	v.SetDefault("opencode.model", d.OpenCode.Model)
 
+	// Logging
+	v.SetDefault("logging.level", d.Logging.Level)
+	v.SetDefault("logging.format", d.Logging.Format)
+	v.SetDefault("logging.color", d.Logging.Color)
+
 	// Telemetry
 	v.SetDefault("telemetry.disabled", d.Telemetry.Disabled)
 

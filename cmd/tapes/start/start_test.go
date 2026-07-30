@@ -3,6 +3,7 @@ package startcmder
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,8 +15,32 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/papercomputeco/tapes/pkg/credentials"
+	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/start"
 )
+
+var _ = Describe("daemonArgs", func() {
+	It("propagates resolved logging settings", func() {
+		cmder := &startCommander{
+			logSettings: logger.Settings{
+				Level:  slog.LevelWarn,
+				Format: logger.FormatJSON,
+				Color:  logger.ColorNever,
+			},
+			configDir:   "/tmp/tapes",
+			postgresDSN: "postgres://example",
+		}
+
+		Expect(cmder.daemonArgs()).To(Equal([]string{
+			"start", "--daemon",
+			"--log-level", "warn",
+			"--log-format", "json",
+			"--log-color", "never",
+			"--config-dir", "/tmp/tapes",
+			"--postgres", "postgres://example",
+		}))
+	})
+})
 
 var _ = Describe("runLogs", func() {
 	var tmpDir string

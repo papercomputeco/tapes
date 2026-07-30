@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -19,10 +20,11 @@ import (
 	"github.com/papercomputeco/tapes/pkg/cliui"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/dotdir"
+	"github.com/papercomputeco/tapes/pkg/logger"
 )
 
 // verboseDocker controls whether the raw `docker ...` invocations and their
-// stdout are echoed. Off by default for a clean bootstrap; enabled by -d/--debug.
+// stdout are echoed. Off by default for a clean bootstrap; enabled at debug level.
 var verboseDocker bool
 
 const (
@@ -135,9 +137,7 @@ func (c *localCommander) loadConfigDir(cmd *cobra.Command) error {
 		return fmt.Errorf("could not get config-dir flag: %w", err)
 	}
 	c.configDir = configDir
-	if debug, derr := cmd.Flags().GetBool("debug"); derr == nil {
-		verboseDocker = debug
-	}
+	verboseDocker = logger.SettingsFromContext(cmd.Context()).Level == slog.LevelDebug
 	return nil
 }
 

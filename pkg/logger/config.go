@@ -3,31 +3,62 @@ package logger
 import (
 	"io"
 	"log/slog"
+	"os"
+	"time"
 
-	charmlog "github.com/charmbracelet/log"
+	"github.com/lmittmann/tint"
+	"golang.org/x/term"
 )
 
 // config holds the resolved logger configuration.
 type config struct {
-	level   slog.Level
+	level   slog.Leveler
 	writers []io.Writer
-	pretty  bool
-	json    bool
+	format  Format
+	color   ColorMode
 	source  bool
 }
 
-// buildHandler returns the appropriate slog.Handler for the configuration.
+// buildHandler returns handlers configured independently for each writer so
+// auto format and color decisions reflect the actual destination.
 func (c *config) buildHandler() slog.Handler {
-	w := c.writer()
+	handlers := make([]slog.Handler, len(c.writers))
+	for index, writer := range c.writers {
+		handlers[index] = c.buildHandlerForWriter(writer)
+	}
+	if len(handlers) == 1 {
+		return handlers[0]
+	}
+	return &multiHandler{handlers: handlers}
+}
 
-	if c.pretty {
-		return c.newCharmHandler(w)
+func (c *config) buildHandlerForWriter(w io.Writer) slog.Handler {
+	format := c.format
+	if format == FormatAuto {
+		if c.color == ColorAlways || isTerminal(w) {
+			format = FormatConsole
+		} else {
+			format = FormatText
+		}
 	}
 
-	if c.json {
+	switch format {
+	case FormatAuto, FormatText:
+		return slog.NewTextHandler(w, &slog.HandlerOptions{
+			Level:     c.level,
+			AddSource: c.source,
+		})
+	case FormatJSON:
 		return slog.NewJSONHandler(w, &slog.HandlerOptions{
 			Level:     c.level,
 			AddSource: c.source,
+		})
+	case FormatConsole:
+		return tint.NewTextHandler(w, &tint.Options{
+			Level:      c.level,
+			AddSource:  c.source,
+			TimeFormat: time.StampMilli,
+			NoColor:    !ColorEnabled(w, c.color),
 		})
 	}
 
@@ -37,35 +68,28 @@ func (c *config) buildHandler() slog.Handler {
 	})
 }
 
-// writer returns the resolved io.Writer. If multiple writers were configured,
-// they are combined via io.MultiWriter.
-func (c *config) writer() io.Writer {
-	if len(c.writers) == 1 {
-		return c.writers[0]
+// ColorEnabled reports whether color should be emitted to w under mode.
+func ColorEnabled(w io.Writer, mode ColorMode) bool {
+	switch mode {
+	case ColorAlways:
+		return true
+	case ColorNever:
+		return false
+	case ColorAuto:
+		if _, disabled := os.LookupEnv("NO_COLOR"); disabled {
+			return false
+		}
+		return isTerminal(w)
 	}
-	return io.MultiWriter(c.writers...)
+
+	return false
 }
 
-// newCharmHandler creates a charmbracelet/log handler configured as an slog.Handler.
-func (c *config) newCharmHandler(w io.Writer) slog.Handler {
-	var charmLevel charmlog.Level
-	switch {
-	case c.level <= slog.LevelDebug:
-		charmLevel = charmlog.DebugLevel
-	case c.level <= slog.LevelInfo:
-		charmLevel = charmlog.InfoLevel
-	case c.level <= slog.LevelWarn:
-		charmLevel = charmlog.WarnLevel
-	default:
-		charmLevel = charmlog.ErrorLevel
-	}
+type fileDescriptorWriter interface {
+	Fd() uintptr
+}
 
-	l := charmlog.NewWithOptions(w, charmlog.Options{
-		Level:           charmLevel,
-		ReportTimestamp: true,
-		ReportCaller:    c.source,
-	})
-
-	// *charmlog.Logger implements slog.Handler directly.
-	return l
+func isTerminal(w io.Writer) bool {
+	fdWriter, ok := w.(fileDescriptorWriter)
+	return ok && term.IsTerminal(int(fdWriter.Fd()))
 }

@@ -23,7 +23,6 @@ type proxyCommander struct {
 	listen       string
 	upstream     string
 	providerType string
-	debug        bool
 	postgresDSN  string
 	project      string
 
@@ -130,12 +129,7 @@ func NewProxyCmd() *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			var err error
-			cmder.debug, err = cmd.Flags().GetBool("debug")
-			if err != nil {
-				return fmt.Errorf("could not get debug flag: %w", err)
-			}
-
+			cmder.logger = logger.FromContext(cmd.Context())
 			telemetry.FromContext(cmd.Context()).CaptureServerStarted("proxy")
 			return cmder.run()
 		},
@@ -156,8 +150,6 @@ func NewProxyCmd() *cobra.Command {
 }
 
 func (c *proxyCommander) run() error {
-	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
-
 	driver, err := postgres.NewDriver(context.TODO(), c.postgresDSN)
 	if err != nil {
 		return err

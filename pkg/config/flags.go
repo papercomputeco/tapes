@@ -55,6 +55,9 @@ const (
 	FlagProxyTarget         = "proxy-target"
 	FlagTelemetryDisabled   = "telemetry-disabled"
 	FlagUpdateCheckDisabled = "update-check-disabled"
+	FlagLogLevel            = "log-level"
+	FlagLogFormat           = "log-format"
+	FlagLogColor            = "log-color"
 	FlagCassettes           = "cassettes"
 
 	FlagIngestListen = "ingest-listen"
