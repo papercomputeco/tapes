@@ -180,6 +180,10 @@ func (document *Document) Paths() ([]string, error) {
 
 // RewritePrefix returns a copy with every path moved from sourcePrefix to
 // targetPrefix and with servers removed so paths resolve against the publisher.
+// Servers are stripped at every level they can appear — root, path item, and
+// operation — because any surviving override would point generated clients at
+// the cassette's private listener instead of the public proxy that
+// republishes it.
 //
 // A path outside sourcePrefix fails the whole rewrite rather than being carried
 // over: an operator approves a cassette by name before ever seeing its
@@ -202,11 +206,42 @@ func (document *Document) RewritePrefix(sourcePrefix, targetPrefix string) (*Doc
 		if !segmentPrefix(sourcePrefix, path) {
 			return nil, fmt.Errorf("path %q is outside %s", path, sourcePrefix)
 		}
-		rewritten[targetPrefix+strings.TrimPrefix(path, sourcePrefix)] = declared[path]
+		rewritten[targetPrefix+strings.TrimPrefix(path, sourcePrefix)] = stripNestedServers(declared[path])
 	}
 	root["paths"] = rewritten
 
 	return &Document{root: root}, nil
+}
+
+// stripNestedServers removes `servers` from a path item and from each of its
+// operations. OpenAPI allows the override at both levels, and republication
+// is exactly the situation the override must not survive: the proxy is the
+// only server the aggregate may name.
+func stripNestedServers(value any) any {
+	item, ok := value.(map[string]any)
+	if !ok {
+		return value
+	}
+	out := make(map[string]any, len(item))
+	for key, entry := range item {
+		if key == "servers" {
+			continue
+		}
+		if operation, ok := entry.(map[string]any); ok {
+			if _, overrides := operation["servers"]; overrides {
+				trimmed := make(map[string]any, len(operation))
+				for opKey, opValue := range operation {
+					if opKey != "servers" {
+						trimmed[opKey] = opValue
+					}
+				}
+				entry = trimmed
+			}
+		}
+		out[key] = entry
+	}
+
+	return out
 }
 
 func segmentPrefix(prefix, path string) bool {

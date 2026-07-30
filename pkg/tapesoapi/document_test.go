@@ -101,6 +101,33 @@ var _ = Describe("Document", func() {
 			Expect(string(encoded)).NotTo(ContainSubstring("cassette.internal"))
 		})
 
+		It("drops servers overrides at the path item and operation level too", func() {
+			document := load([]byte(`{
+				"openapi":"3.0.3",
+				"servers":[{"url":"http://cassette.internal:9999"}],
+				"paths":{"/api/demo/ping":{
+					"servers":[{"url":"http://cassette.internal:9999/item"}],
+					"get":{
+						"servers":[{"url":"http://cassette.internal:9999/op"}],
+						"responses":{"200":{"description":"pong"}}
+					}
+				}}
+			}`))
+
+			rewritten, err := document.RewritePrefix("/api/demo", "/v1/cassettes/demo")
+			Expect(err).NotTo(HaveOccurred())
+
+			encoded, err := rewritten.Marshal()
+			Expect(err).NotTo(HaveOccurred())
+			// OpenAPI allows the override at every level, and republication is
+			// exactly where none of them may survive: a generated client
+			// honoring an operation-level override would call the cassette's
+			// private listener and bypass the proxy entirely.
+			Expect(string(encoded)).NotTo(ContainSubstring("cassette.internal"))
+			// The operation itself survives the strip.
+			Expect(string(encoded)).To(ContainSubstring("pong"))
+		})
+
 		It("refuses the whole document when one path escapes the prefix", func() {
 			document := load([]byte(
 				`{"openapi":"3.0.3","paths":{"/api/demo/ok":{},"/v1/sessions":{}}}`))

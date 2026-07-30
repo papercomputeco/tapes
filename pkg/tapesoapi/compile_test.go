@@ -108,6 +108,39 @@ var _ = Describe("Compile", func() {
 				To(Equal("#/components/requestBodies/acme_Widget"))
 		})
 
+		It("rewrites example references, in components and in media types", func() {
+			parser := newParser()
+			ingest(parser, []byte(`{
+				"openapi":"3.0.3",
+				"info":{"title":"x","version":"0"},
+				"paths":{"/things":{"get":{"operationId":"listThings","responses":{"200":{
+					"description":"ok",
+					"content":{"application/json":{
+						"schema":{"type":"string"},
+						"examples":{"shared":{"$ref":"#/components/examples/Canonical"}}
+					}}
+				}}}}},
+				"components":{"examples":{
+					"Canonical":{"value":"the one true example"},
+					"Alias":{"$ref":"#/components/examples/Canonical"}
+				}}
+			}`), tapesoapi.WithComponentNamespace("acme_"))
+
+			tree := compileTree(parser)
+			examples := object(object(tree, "components"), "examples")
+			Expect(examples).To(HaveKeys("acme_Canonical", "acme_Alias"))
+
+			// An example that is itself a Reference Object must follow its
+			// renamed target, or the aggregate ships a dangling reference —
+			// or worse, one that resolves to another cassette's component of
+			// the same pre-namespace name.
+			Expect(at(tree, "components", "examples", "acme_Alias", "$ref")).
+				To(Equal("#/components/examples/acme_Canonical"))
+			Expect(at(tree, "paths", "/things", "get", "responses", "200",
+				"content", "application/json", "examples", "shared", "$ref")).
+				To(Equal("#/components/examples/acme_Canonical"))
+		})
+
 		It("rewrites a discriminator mapping, whose values are references", func() {
 			parser := newParser()
 			ingest(parser, v30.Read(v30.DiscriminatedUnion),

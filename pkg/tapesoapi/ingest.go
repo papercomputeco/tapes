@@ -407,6 +407,34 @@ func renameRefs(fragment *Fragment, rewrites map[string]string) {
 	for _, header := range fragment.Components.Headers {
 		walkHeaderRefs(header, visit)
 	}
+	// Example values may themselves be Reference Objects; without this walk
+	// a namespaced example that referenced a sibling would keep the
+	// un-namespaced target and dangle in the aggregate (or resolve to an
+	// unrelated cassette's component of the same name).
+	for name, example := range fragment.Components.Examples {
+		fragment.Components.Examples[name] = walkExampleRef(example, visit)
+	}
+}
+
+// walkExampleRef rewrites the `$ref` of an example that is a Reference
+// Object. Literal examples pass through untouched — `$ref` is the only key
+// with reference semantics, and only at the top level of the value.
+func walkExampleRef(example any, visit func(string) string) any {
+	object, ok := example.(map[string]any)
+	if !ok {
+		return example
+	}
+	ref, ok := object["$ref"].(string)
+	if !ok {
+		return example
+	}
+	rewritten := make(map[string]any, len(object))
+	for key, value := range object {
+		rewritten[key] = value
+	}
+	rewritten["$ref"] = visit(ref)
+
+	return rewritten
 }
 
 func walkPathItemRefs(item *PathItem, visit func(string) string) {
@@ -488,6 +516,9 @@ func walkContentRefs(content map[string]*MediaType, visit func(string) string) {
 		if entry != nil {
 			entry.Schema.walkRefs(visit)
 			walkExtensionRefs(entry.Extensions, visit)
+			for name, example := range entry.Examples {
+				entry.Examples[name] = walkExampleRef(example, visit)
+			}
 		}
 	}
 }
