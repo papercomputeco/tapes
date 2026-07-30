@@ -7,11 +7,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/papercomputeco/tapes/internal/testdb"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 )
-
-func testPostgresDSN() (string, error) { return testdb.DSN() }
 
 var _ = Describe("Driver", func() {
 	Describe("NewDriver", func() {

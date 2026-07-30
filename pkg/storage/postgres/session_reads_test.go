@@ -31,8 +31,8 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		dsn, err := testPostgresDSN()
-		Expect(err).NotTo(HaveOccurred())
+		dsn := testPostgresDSN
+		var err error
 
 		driver, err = postgres.NewDriver(ctx, dsn)
 		Expect(err).NotTo(HaveOccurred())
@@ -250,8 +250,8 @@ var _ = Describe("Driver.ListSessionRecords (dynamic sort)", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		dsn, err := testPostgresDSN()
-		Expect(err).NotTo(HaveOccurred())
+		dsn := testPostgresDSN
+		var err error
 
 		driver, err = postgres.NewDriver(ctx, dsn)
 		Expect(err).NotTo(HaveOccurred())
@@ -445,8 +445,8 @@ var _ = Describe("Driver.GetSessionRecord preview", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		dsn, err := testPostgresDSN()
-		Expect(err).NotTo(HaveOccurred())
+		dsn := testPostgresDSN
+		var err error
 		driver, err = postgres.NewDriver(ctx, dsn)
 		Expect(err).NotTo(HaveOccurred())
 		var ok bool

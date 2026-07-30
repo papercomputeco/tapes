@@ -61,8 +61,8 @@ func (s droppingStore) RederiveSession(ctx context.Context, project, orgID, harn
 // driver (the only driver hosting the raw layer + dirty queue).
 var _ = storagetest.RunDeriveQueueSpecs("postgres", func() storage.Driver {
 	ctx := context.Background()
-	dsn, err := testPostgresDSN()
-	Expect(err).ToNot(HaveOccurred())
+	dsn := testPostgresDSN
+	var err error
 
 	d, err := postgres.NewDriver(ctx, dsn)
 	Expect(err).NotTo(HaveOccurred())
@@ -94,8 +94,8 @@ var _ = Describe("Derive worker storage (postgres)", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		dsn, err := testPostgresDSN()
-		Expect(err).ToNot(HaveOccurred())
+		dsn := testPostgresDSN
+		var err error
 
 		d, err := postgres.NewDriver(ctx, dsn)
 		Expect(err).NotTo(HaveOccurred())
