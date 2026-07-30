@@ -104,7 +104,7 @@ func NewServeCmd() *cobra.Command {
 }
 
 func (c *ServeCommander) run(cmd *cobra.Command) error {
-	c.stack.Logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
+	c.stack.Logger = logger.New(logger.WithDebug(c.debug))
 	c.configureCassettes(cmd)
 
 	// Signal-aware context: a SIGINT/SIGTERM cancels it, which stops the

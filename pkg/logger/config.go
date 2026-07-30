@@ -3,15 +3,16 @@ package logger
 import (
 	"io"
 	"log/slog"
+	"time"
 
-	charmlog "github.com/charmbracelet/log"
+	"github.com/lmittmann/tint"
 )
 
 // config holds the resolved logger configuration.
 type config struct {
 	level   slog.Level
 	writers []io.Writer
-	pretty  bool
+	debug   bool
 	json    bool
 	source  bool
 }
@@ -20,14 +21,18 @@ type config struct {
 func (c *config) buildHandler() slog.Handler {
 	w := c.writer()
 
-	if c.pretty {
-		return c.newCharmHandler(w)
-	}
-
 	if c.json {
 		return slog.NewJSONHandler(w, &slog.HandlerOptions{
 			Level:     c.level,
 			AddSource: c.source,
+		})
+	}
+
+	if c.debug {
+		return tint.NewTextHandler(w, &tint.Options{
+			Level:      slog.LevelDebug,
+			AddSource:  c.source,
+			TimeFormat: time.Kitchen,
 		})
 	}
 
@@ -44,28 +49,4 @@ func (c *config) writer() io.Writer {
 		return c.writers[0]
 	}
 	return io.MultiWriter(c.writers...)
-}
-
-// newCharmHandler creates a charmbracelet/log handler configured as an slog.Handler.
-func (c *config) newCharmHandler(w io.Writer) slog.Handler {
-	var charmLevel charmlog.Level
-	switch {
-	case c.level <= slog.LevelDebug:
-		charmLevel = charmlog.DebugLevel
-	case c.level <= slog.LevelInfo:
-		charmLevel = charmlog.InfoLevel
-	case c.level <= slog.LevelWarn:
-		charmLevel = charmlog.WarnLevel
-	default:
-		charmLevel = charmlog.ErrorLevel
-	}
-
-	l := charmlog.NewWithOptions(w, charmlog.Options{
-		Level:           charmLevel,
-		ReportTimestamp: true,
-		ReportCaller:    c.source,
-	})
-
-	// *charmlog.Logger implements slog.Handler directly.
-	return l
 }

@@ -161,7 +161,7 @@ func NewDeriveWorkerCmd() *cobra.Command {
 }
 
 func (c *deriveWorkerCommander) run(ctx context.Context) error {
-	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
+	c.logger = logger.New(logger.WithDebug(c.debug))
 
 	// Bound the transient allocation overshoot of a large session derive
 	// to the container budget (PCC-767): the live set fits, but the

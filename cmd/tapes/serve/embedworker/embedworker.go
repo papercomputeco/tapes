@@ -189,7 +189,7 @@ func NewEmbedWorkerCmd() *cobra.Command {
 }
 
 func (c *embedWorkerCommander) run(ctx context.Context) error {
-	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
+	c.logger = logger.New(logger.WithDebug(c.debug))
 
 	if c.postgresDSN == "" {
 		return errors.New("embed worker requires a postgres DSN (--postgres or storage.postgres_dsn)")

@@ -150,7 +150,7 @@ func NewIngestCmd() *cobra.Command {
 }
 
 func (c *ingestCommander) run() error {
-	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
+	c.logger = logger.New(logger.WithDebug(c.debug))
 
 	driver, err := postgres.NewDriver(context.TODO(), c.postgresDSN)
 	if err != nil {

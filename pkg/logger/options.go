@@ -11,6 +11,7 @@ type Option func(*config)
 // WithDebug sets the log level to Debug when true, Info otherwise.
 func WithDebug(debug bool) Option {
 	return func(c *config) {
+		c.debug = debug
 		if debug {
 			c.level = slog.LevelDebug
 		} else {
@@ -19,12 +20,12 @@ func WithDebug(debug bool) Option {
 	}
 }
 
-// WithPretty enables the charmbracelet/log handler for colorized,
-// human-friendly CLI output.
-func WithPretty(pretty bool) Option {
-	return func(c *config) {
-		c.pretty = pretty
-	}
+// WithPretty is retained for source compatibility. Output formatting is now
+// selected by WithDebug: debug logs use tint and normal logs use slog text.
+//
+// Deprecated: use WithDebug to enable colorized debug output.
+func WithPretty(_ bool) Option {
+	return func(_ *config) {}
 }
 
 // WithJSON enables slog's JSON handler for structured service logs.

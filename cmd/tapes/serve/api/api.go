@@ -157,7 +157,7 @@ func newAPICmd(cmder *apiCommander) *cobra.Command {
 }
 
 func (c *apiCommander) run(ctx context.Context) error {
-	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
+	c.logger = logger.New(logger.WithDebug(c.debug))
 
 	driver, err := postgres.NewDriver(ctx, c.postgresDSN)
 	if err != nil {

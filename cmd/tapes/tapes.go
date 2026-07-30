@@ -149,7 +149,7 @@ func preRun(cmd *cobra.Command, args []string) error {
 // execution. Viper handles the flag > env > config file precedence for the
 // telemetry.disabled setting.
 func initTelemetry(cmd *cobra.Command, _ []string) error {
-	initTelemLogger := logger.New(logger.WithDebug(true), logger.WithPretty(true))
+	initTelemLogger := logger.New(logger.WithDebug(true))
 	configDir, _ := cmd.Flags().GetString("config-dir")
 
 	v, err := config.InitViper(configDir)

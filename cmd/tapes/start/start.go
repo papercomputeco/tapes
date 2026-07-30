@@ -335,9 +335,9 @@ func (c *startCommander) runForeground(ctx context.Context) error {
 	}
 	defer logFile.Close()
 
-	prettyLogger := logger.New(logger.WithDebug(c.debug), logger.WithPretty(true), logger.WithWriter(os.Stdout))
+	consoleLogger := logger.New(logger.WithDebug(c.debug), logger.WithWriter(os.Stdout))
 	jsonLogger := logger.New(logger.WithDebug(c.debug), logger.WithJSON(true), logger.WithWriter(logFile))
-	log := logger.Multi(prettyLogger, jsonLogger)
+	log := logger.Multi(consoleLogger, jsonLogger)
 
 	return c.runServices(ctx, manager, log, false)
 }

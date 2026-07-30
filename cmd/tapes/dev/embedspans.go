@@ -137,7 +137,7 @@ func newEmbedSpansCmd() *cobra.Command {
 }
 
 func (c *embedSpansCommander) run(cmd *cobra.Command) error {
-	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
+	c.logger = logger.New(logger.WithDebug(c.debug))
 	ctx := cmd.Context()
 
 	if c.postgresDSN == "" {

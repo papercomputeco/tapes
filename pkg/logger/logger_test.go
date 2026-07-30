@@ -26,12 +26,16 @@ var _ = Describe("Logger", func() {
 			Expect(output).To(ContainSubstring("value"))
 		})
 
-		It("respects debug level", func() {
+		It("uses tint at debug level", func() {
 			var buf bytes.Buffer
 			l := logger.New(logger.WithWriter(&buf), logger.WithDebug(true))
 			l.Debug("debug msg")
 
-			Expect(buf.String()).To(ContainSubstring("debug msg"))
+			Expect(buf.String()).To(And(
+				ContainSubstring("debug msg"),
+				ContainSubstring("\x1b["),
+				MatchRegexp(`\d{1,2}:\d{2}(AM|PM)`),
+			))
 		})
 
 		It("filters debug when not enabled", func() {
@@ -54,12 +58,36 @@ var _ = Describe("Logger", func() {
 			Expect(parsed["count"]).To(BeNumerically("==", 42))
 		})
 
-		It("creates a pretty logger", func() {
+		It("uses native text output when debug is disabled", func() {
 			var buf bytes.Buffer
-			l := logger.New(logger.WithWriter(&buf), logger.WithPretty(true))
-			l.Info("pretty output")
+			l := logger.New(logger.WithWriter(&buf))
+			l.Info("text output")
 
-			Expect(buf.String()).To(ContainSubstring("pretty output"))
+			Expect(buf.String()).To(And(
+				ContainSubstring("level=INFO"),
+				ContainSubstring("msg=\"text output\""),
+				Not(ContainSubstring("\x1b[")),
+			))
+		})
+
+		It("keeps JSON output in debug mode", func() {
+			var buf bytes.Buffer
+			l := logger.New(logger.WithWriter(&buf), logger.WithJSON(true), logger.WithDebug(true))
+			l.Debug("structured debug")
+
+			var parsed map[string]any
+			err := json.Unmarshal(buf.Bytes(), &parsed)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(parsed["level"]).To(Equal("DEBUG"))
+			Expect(parsed["msg"]).To(Equal("structured debug"))
+		})
+
+		It("includes source in debug output", func() {
+			var buf bytes.Buffer
+			l := logger.New(logger.WithWriter(&buf), logger.WithDebug(true), logger.WithSource(true))
+			l.Debug("with source")
+
+			Expect(buf.String()).To(ContainSubstring("logger_test.go"))
 		})
 
 		It("supports multiple writers", func() {

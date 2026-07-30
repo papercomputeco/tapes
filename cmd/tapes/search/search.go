@@ -114,7 +114,7 @@ func NewSearchCmd() *cobra.Command {
 }
 
 func (c *searchCommander) run() error {
-	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
+	c.logger = logger.New(logger.WithDebug(c.debug))
 
 	// Span search is the only mode; the deprecated --spans flag is
 	// accepted as a no-op for muscle memory.
