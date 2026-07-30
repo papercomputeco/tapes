@@ -32,7 +32,7 @@ func (c *config) buildHandler() slog.Handler {
 		return tint.NewTextHandler(w, &tint.Options{
 			Level:      slog.LevelDebug,
 			AddSource:  c.source,
-			TimeFormat: time.Kitchen,
+			TimeFormat: time.StampMilli,
 		})
 	}
 

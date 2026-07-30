@@ -34,7 +34,7 @@ var _ = Describe("Logger", func() {
 			Expect(buf.String()).To(And(
 				ContainSubstring("debug msg"),
 				ContainSubstring("\x1b["),
-				MatchRegexp(`\d{1,2}:\d{2}(AM|PM)`),
+				MatchRegexp(`[A-Z][a-z]{2}\s+\d{1,2} \d{2}:\d{2}:\d{2}\.\d{3}`),
 			))
 		})
 
