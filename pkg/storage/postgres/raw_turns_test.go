@@ -19,8 +19,8 @@ var _ = Describe("RawTurnStore", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		dsn, err := testPostgresDSN()
-		Expect(err).ToNot(HaveOccurred())
+		dsn := testPostgresDSN
+		var err error
 
 		d, err := postgres.NewDriver(ctx, dsn)
 		Expect(err).NotTo(HaveOccurred())

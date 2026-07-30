@@ -10,16 +10,17 @@ import (
 	"github.com/papercomputeco/tapes/internal/testdb"
 )
 
-var suiteLock *testdb.SuiteLock
+var testPostgresDSN string
 
 var _ = BeforeSuite(func() {
-	var err error
-	suiteLock, err = testdb.AcquireSuiteLock(context.Background())
+	ctx := context.Background()
+	suite, err := testdb.AcquireSuite(ctx)
 	Expect(err).NotTo(HaveOccurred())
-})
+	testPostgresDSN = suite.DSN()
 
-var _ = AfterSuite(func() {
-	Expect(suiteLock.Close(context.Background())).To(Succeed())
+	DeferCleanup(func() {
+		Expect(suite.Close(ctx)).To(Succeed())
+	})
 })
 
 func TestPostgres(t *testing.T) {
