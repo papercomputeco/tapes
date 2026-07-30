@@ -21,12 +21,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Dagger
-        uses: ./.github/actions/setup-dagger
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@v3
+
+      - name: Cache Nix store
+        uses: DeterminateSystems/magic-nix-cache-action@v14
 
       - name: Check PR title conformance
         run: |
-          dagger call -m github.com/papercomputeco/daggerverse/ghcontrib@45e997aec734ec4875ff57bebed2317e1bd49185 \
+          nix develop --command dagger call -m github.com/papercomputeco/daggerverse/ghcontrib@45e997aec734ec4875ff57bebed2317e1bd49185 \
               --token=env://GH_TOKEN \
               --repo="${{ github.repository }}" \
             check-pull-request \
@@ -43,12 +46,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Dagger
-        uses: ./.github/actions/setup-dagger
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@v3
+
+      - name: Cache Nix store
+        uses: DeterminateSystems/magic-nix-cache-action@v14
 
       - name: Check Linear magic word
         run: |
-          dagger call -m github.com/papercomputeco/daggerverse/ghcontrib@45e997aec734ec4875ff57bebed2317e1bd49185 \
+          nix develop --command dagger call -m github.com/papercomputeco/daggerverse/ghcontrib@45e997aec734ec4875ff57bebed2317e1bd49185 \
               --token=env://GH_TOKEN \
               --repo="${{ github.repository }}" \
             check-pull-request-linear-magic-word \

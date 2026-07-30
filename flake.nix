@@ -17,10 +17,6 @@
         skills = paper-skills.lib;
       in
       {
-        # CI and local development consume the same Dagger CLI from this
-        # locked flake input. Keep dagger.json's engineVersion aligned with it.
-        packages.dagger = dagger.packages.${system}.dagger;
-
         devShells.default = pkgs.mkShell {
           buildInputs = [
             # Go toolchain

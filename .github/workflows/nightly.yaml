@@ -50,8 +50,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Dagger
-        uses: ./.github/actions/setup-dagger
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@v3
+
+      - name: Cache Nix store
+        uses: DeterminateSystems/magic-nix-cache-action@v14
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -74,7 +77,7 @@ jobs:
 
       - name: Push nightly tapes image
         run: |
-          dagger call \
+          nix develop --command dagger call \
             build-push-tapes-images \
               --registry=${{ vars.REGISTRY }} \
               --tags="nightly" \
@@ -86,7 +89,7 @@ jobs:
 
       - name: Build upload nightly release artifacts
         run: |
-          dagger call \
+          nix develop --command dagger call \
             nightly \
               --commit="${{ github.sha }}" \
               --post-hog-public-key="${{ secrets.POSTHOG_API_KEY }}" \

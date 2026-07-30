@@ -15,8 +15,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Dagger
-        uses: ./.github/actions/setup-dagger
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@v3
+
+      - name: Cache Nix store
+        uses: DeterminateSystems/magic-nix-cache-action@v14
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -32,7 +35,7 @@ jobs:
 
       - name: Push tapes image
         run: |
-          dagger call \
+          nix develop --command dagger call \
             build-push-tapes-images \
               --registry=${{ vars.REGISTRY }} \
               --tags="${{ github.event.release.tag_name }}" \
@@ -44,7 +47,7 @@ jobs:
 
       - name: Build upload release artifacts
         run: |
-          dagger call \
+          nix develop --command dagger call \
             release-latest \
               --version="${{ github.event.release.tag_name }}" \
               --commit="${{ github.sha }}" \
