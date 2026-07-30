@@ -189,6 +189,10 @@ func (document *Document) Paths() ([]string, error) {
 // over: an operator approves a cassette by name before ever seeing its
 // document, and a document that claims a path outside its own prefix is
 // claiming surface it was not granted.
+// serversKey is the OpenAPI field RewritePrefix strips at every level; see
+// that method for why republication may not let any of them survive.
+const serversKey = "servers"
+
 func (document *Document) RewritePrefix(sourcePrefix, targetPrefix string) (*Document, error) {
 	paths, err := document.Paths()
 	if err != nil {
@@ -196,7 +200,7 @@ func (document *Document) RewritePrefix(sourcePrefix, targetPrefix string) (*Doc
 	}
 	root := make(map[string]any, len(document.root))
 	for key, value := range document.root {
-		if key != "servers" {
+		if key != serversKey {
 			root[key] = value
 		}
 	}
@@ -224,14 +228,14 @@ func stripNestedServers(value any) any {
 	}
 	out := make(map[string]any, len(item))
 	for key, entry := range item {
-		if key == "servers" {
+		if key == serversKey {
 			continue
 		}
 		if operation, ok := entry.(map[string]any); ok {
-			if _, overrides := operation["servers"]; overrides {
+			if _, overrides := operation[serversKey]; overrides {
 				trimmed := make(map[string]any, len(operation))
 				for opKey, opValue := range operation {
-					if opKey != "servers" {
+					if opKey != serversKey {
 						trimmed[opKey] = opValue
 					}
 				}

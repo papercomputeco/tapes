@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -429,9 +430,7 @@ func walkExampleRef(example any, visit func(string) string) any {
 		return example
 	}
 	rewritten := make(map[string]any, len(object))
-	for key, value := range object {
-		rewritten[key] = value
-	}
+	maps.Copy(rewritten, object)
 	rewritten["$ref"] = visit(ref)
 
 	return rewritten
