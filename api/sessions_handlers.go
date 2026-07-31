@@ -331,26 +331,6 @@ func decodeSessionsCursor(token string) (sessionsCursor, error) {
 }
 
 // handleListSessions handles GET /v1/sessions.
-//
-//	@Summary		List sessions
-//	@ID			listSessions
-//	@Description	Returns one row per harness session from the sessions table, cursor-paginated. Default order is last_active (last_seen_at) desc; override with the sort and direction query params.
-//	@Tags			sessions
-//	@Produce		json
-//	@Param			limit				query		int		false	"Maximum number of sessions to return (default 50, max 200)"	minimum(1)
-//	@Param			cursor				query		string	false	"Opaque pagination cursor returned by a previous response"
-//	@Param			sort				query		string	false	"Sort column: last_active|started_at|turn_count|total_cost_usd|total_tokens|duration_ns|derived_status|auth_subject (default last_active)"
-//	@Param			direction			query		string	false	"Sort direction: asc|desc (default desc)"
-//	@Param			since				query		string	false	"Only include sessions with a turn started at or after this RFC3339 timestamp (activity window, matches /v1/stats)"	format(date-time)
-//	@Param			until				query		string	false	"Only include sessions with a turn started before this RFC3339 timestamp (activity window, matches /v1/stats)"			format(date-time)
-//	@Param			harness_id			query		string	false	"Filter to the single session with this harness id (exact match; requires harness_session_id, incompatible with cursor; limit is ignored when the filter is active)"
-//	@Param			harness_session_id	query		string	false	"Filter to the single session with this harness session id (exact match; requires harness_id, incompatible with cursor; limit is ignored when the filter is active)"
-//	@Param			auth_subject		query		string	false	"Filter the paged list to sessions captured for this gateway-stamped JWT subject (exact match; ignored on the harness filter path)"
-//	@Success		200					{object}	SessionListResponse
-//	@Failure		400					{object}	llm.ErrorResponse	"Invalid query parameters, a lone harness filter param, or cursor combined with the harness filter"
-//	@Failure		500					{object}	llm.ErrorResponse	"Failed to list sessions"
-//	@Failure		501					{object}	llm.ErrorResponse	"Sessions not supported by this backend"
-//	@Router			/v1/sessions [get]
 func (s *Server) handleListSessions(c *fiber.Ctx) error {
 	reader, ok := s.driver.(sessionsReader)
 	if !ok {
@@ -502,19 +482,6 @@ func (s *Server) listSessionsByHarness(c *fiber.Ctx, reader sessionsReader) erro
 }
 
 // handleGetSession handles GET /v1/sessions/:id.
-//
-//	@Summary		Get a session
-//	@ID			getSession
-//	@Description	Returns a single session record. The conversation content lives on the span model: GET /v1/sessions/{id}/traces.
-//	@Tags			sessions
-//	@Produce		json
-//	@Param			id	path		string	true	"Session id (UUID)"
-//	@Success		200	{object}	SessionDetailResponse
-//	@Failure		400	{object}	llm.ErrorResponse	"Missing or malformed id"
-//	@Failure		404	{object}	llm.ErrorResponse	"Session not found"
-//	@Failure		500	{object}	llm.ErrorResponse	"Failed to load session"
-//	@Failure		501	{object}	llm.ErrorResponse	"Sessions not supported by this backend"
-//	@Router			/v1/sessions/{id} [get]
 func (s *Server) handleGetSession(c *fiber.Ctx) error {
 	reader, ok := s.driver.(sessionsReader)
 	if !ok {
@@ -771,20 +738,6 @@ func exportFilename(base string, detail exportDetail) string {
 // handleExportSession handles GET /v1/sessions/:id/export. It renders the
 // session's full trace/span projection as one JSONL line, for the
 // console's per-session download.
-//
-//	@Summary		Export a session as JSONL
-//	@ID			exportSession
-//	@Description	Returns the session as a single JSON line (downloadable attachment): the session object with its traces, each trace carrying its full spans — the same shape as GET /v1/sessions/{id}/traces with payload=full. detail=traces exports turn headers only (no spans or links).
-//	@Tags			sessions
-//	@Produce		application/x-ndjson
-//	@Param			id		path	string	true	"Session id (UUID)"
-//	@Param			detail	query	string	false	"Export granularity: spans (default, traces with full spans) or traces (turn headers only)"	Enums(spans, traces)
-//	@Success		200		{string}	string	"JSONL body, one session object with nested traces (and spans at detail=spans)"
-//	@Failure		400		{object}	llm.ErrorResponse	"Missing or malformed id, or unrecognized detail"
-//	@Failure		404		{object}	llm.ErrorResponse	"Session not found"
-//	@Failure		500		{object}	llm.ErrorResponse	"Failed to load or render the session"
-//	@Failure		501		{object}	llm.ErrorResponse	"Sessions not supported by this backend"
-//	@Router			/v1/sessions/{id}/export [get]
 func (s *Server) handleExportSession(c *fiber.Ctx) error {
 	reader, ok := s.driver.(sessionsReader)
 	if !ok {
@@ -855,20 +808,6 @@ const exportSessionsPageLimit = maxSessionsLimit
 // days) as one nested JSON line each — session → traces → spans — paging
 // internally past the 200-row UI cap via the same keyset cursor
 // handleListSessions uses.
-//
-//	@Summary		Export sessions in a time window as JSONL
-//	@ID			exportSessions
-//	@Description	Streams one JSON line per session in the given window, newest-first, as a downloadable attachment. Each line is the session object with its traces, each trace carrying its full spans — the same shape as GET /v1/sessions/{id}/traces with payload=full. detail=traces exports turn headers only (no spans or links). Defaults to the trailing 30 days. Not bounded by the /v1/sessions list cap — pages internally.
-//	@Tags			sessions
-//	@Produce		application/x-ndjson
-//	@Param			since	query	string	false	"Only include sessions with a turn started at or after this RFC3339 timestamp (activity window; default: now - 30 days)"	format(date-time)
-//	@Param			until	query	string	false	"Only include sessions with a turn started before this RFC3339 timestamp (activity window)"								format(date-time)
-//	@Param			detail	query	string	false	"Export granularity: spans (default, traces with full spans) or traces (turn headers only)"				Enums(spans, traces)
-//	@Success		200		{string}	string	"JSONL body, one JSON object per session with nested traces (and spans at detail=spans)"
-//	@Failure		400		{object}	llm.ErrorResponse	"Malformed since/until, or unrecognized detail"
-//	@Failure		500		{object}	llm.ErrorResponse	"Failed to list or render sessions"
-//	@Failure		501		{object}	llm.ErrorResponse	"Sessions not supported by this backend"
-//	@Router			/v1/sessions/export [get]
 func (s *Server) handleExportSessions(c *fiber.Ctx) error {
 	reader, ok := s.driver.(sessionsReader)
 	if !ok {
@@ -983,18 +922,6 @@ func (s *Server) handleExportSessions(c *fiber.Ctx) error {
 }
 
 // handleDeleteSession handles DELETE /v1/sessions/:id.
-//
-//	@Summary		Delete a session
-//	@ID			deleteSession
-//	@Description	Permanently deletes a session and its subtree: subagent child sessions and their derived traces/spans cascade with it. Org-scoped — any caller in the org may delete any of its sessions. The immutable raw_turns capture log is left intact.
-//	@Tags			sessions
-//	@Param			id	path	string	true	"Session id (UUID)"
-//	@Success		204	"Session deleted"
-//	@Failure		400	{object}	llm.ErrorResponse	"Missing or malformed id"
-//	@Failure		404	{object}	llm.ErrorResponse	"Session not found"
-//	@Failure		500	{object}	llm.ErrorResponse	"Failed to delete session"
-//	@Failure		501	{object}	llm.ErrorResponse	"Sessions not supported by this backend"
-//	@Router			/v1/sessions/{id} [delete]
 func (s *Server) handleDeleteSession(c *fiber.Ctx) error {
 	writer, ok := s.driver.(sessionsWriter)
 	if !ok {
@@ -1046,20 +973,6 @@ var _ = sessionUpdateRequest{}
 // org-scoped predicate carried in storage (CC-2), and on success re-reads
 // GetSessionRecord to return the updated session summary so the client can
 // write its cache through (CC-6/CC-7 on the frontend side).
-//
-//	@Summary		Update a session's title
-//	@Description	Updates the user-editable display_name. An absent field is a 400; null or empty (after trim) clears back to the auto-derived title. Length is bounded to 200 characters.
-//	@Tags			sessions
-//	@Accept			json
-//	@Produce		json
-//	@Param			id		path		string					true	"Session id (UUID)"
-//	@Param			request	body		sessionUpdateRequest	true	"Update request"
-//	@Success		200		{object}	SessionDetailResponse
-//	@Failure		400		{object}	llm.ErrorResponse	"Missing/malformed id, missing display_name field, or display_name exceeds 200 characters"
-//	@Failure		404		{object}	llm.ErrorResponse	"Session not found or not in caller's org"
-//	@Failure		500		{object}	llm.ErrorResponse	"Failed to update session"
-//	@Failure		501		{object}	llm.ErrorResponse	"Sessions not supported by this backend"
-//	@Router			/v1/sessions/{id} [patch]
 func (s *Server) handleUpdateSession(c *fiber.Ctx) error {
 	reader, ok := s.driver.(sessionsReader)
 	if !ok {

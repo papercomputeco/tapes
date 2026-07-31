@@ -344,8 +344,12 @@ var _ = Describe("GET /v1/sessions/export", func() {
 		drv := newPagingDriver(org, 1, now)
 		server := newExportServer(drv)
 
-		since := now.Add(-10 * 24 * time.Hour)
-		until := now.Add(-1 * 24 * time.Hour)
+		// Keep this request inside the handler's real-time 30-day safety floor.
+		// The fixture's fixed 2026 timestamp is intentionally independent of the
+		// wall clock, but using it here would make this assertion expire.
+		requestNow := time.Now().UTC()
+		since := requestNow.Add(-10 * 24 * time.Hour)
+		until := requestNow.Add(-1 * 24 * time.Hour)
 		path := "/v1/sessions/export?since=" + since.Format(time.RFC3339) + "&until=" + until.Format(time.RFC3339)
 		resp, _ := getRaw(server, path, org)
 		Expect(resp.StatusCode).To(Equal(fiber.StatusOK))

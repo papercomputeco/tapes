@@ -1,0 +1,57 @@
+# The two places OpenAPI 3.0 and 3.1 spell the same meaning differently.
+#
+# 3.0 says `nullable: true` and expresses an exclusive bound as a boolean flag
+# modifying `minimum`/`maximum`. 3.1 says `type: [T, "null"]` and gives the
+# exclusive bound its own numeric keyword. Both must decode into the same IR, so
+# this fixture and its 3.1 twin (../../v3.1/fixtures/nullable-and-bounds.yaml)
+# are the version-neutrality proof.
+openapi: 3.0.3
+info:
+  title: Nullability and bounds
+  version: 1.0.0
+paths:
+  /values:
+    get:
+      operationId: getValues
+      responses:
+        "200":
+          description: the values
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Values"
+components:
+  schemas:
+    Values:
+      type: object
+      properties:
+        nullableString:
+          type: string
+          nullable: true
+        exclusiveLower:
+          type: number
+          minimum: 0
+          exclusiveMinimum: true
+        exclusiveUpper:
+          type: integer
+          maximum: 100
+          exclusiveMaximum: true
+        inclusiveBoth:
+          type: number
+          minimum: 1
+          maximum: 10
+        boundedString:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z-]+$"
+        enumerated:
+          type: string
+          enum: [red, green, blue]
+        freeFormObject:
+          type: object
+          additionalProperties: true
+        stringMap:
+          type: object
+          additionalProperties:
+            type: string

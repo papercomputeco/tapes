@@ -8,40 +8,65 @@ import (
 // Option configures a Logger created with New.
 type Option func(*config)
 
+// WithLevel sets the minimum enabled log level.
+func WithLevel(level slog.Leveler) Option {
+	return func(c *config) {
+		c.level = level
+	}
+}
+
+// WithFormat sets the log record format.
+func WithFormat(format Format) Option {
+	return func(c *config) {
+		c.format = format
+	}
+}
+
+// WithColor sets the console color policy.
+func WithColor(color ColorMode) Option {
+	return func(c *config) {
+		c.color = color
+	}
+}
+
 // WithDebug sets the log level to Debug when true, Info otherwise.
+//
+// Deprecated: use WithLevel.
 func WithDebug(debug bool) Option {
-	return func(c *config) {
-		if debug {
-			c.level = slog.LevelDebug
-		} else {
-			c.level = slog.LevelInfo
-		}
+	if debug {
+		return WithLevel(slog.LevelDebug)
 	}
+	return WithLevel(slog.LevelInfo)
 }
 
-// WithPretty enables the charmbracelet/log handler for colorized,
-// human-friendly CLI output.
+// WithPretty selects tint console output when true and native text when false.
+//
+// Deprecated: use WithFormat.
 func WithPretty(pretty bool) Option {
-	return func(c *config) {
-		c.pretty = pretty
+	if pretty {
+		return WithFormat(FormatConsole)
 	}
+	return WithFormat(FormatText)
 }
 
-// WithJSON enables slog's JSON handler for structured service logs.
+// WithJSON selects JSON output when true and native text when false.
+//
+// Deprecated: use WithFormat.
 func WithJSON(json bool) Option {
-	return func(c *config) {
-		c.json = json
+	if json {
+		return WithFormat(FormatJSON)
 	}
+	return WithFormat(FormatText)
 }
 
-// WithWriter overrides the output writer. Defaults to os.Stdout.
+// WithWriter overrides the output writer. Defaults to os.Stderr.
 func WithWriter(w io.Writer) Option {
 	return func(c *config) {
 		c.writers = []io.Writer{w}
 	}
 }
 
-// WithWriters sets multiple output writers (combined via io.MultiWriter).
+// WithWriters sets multiple output writers with per-destination handlers.
 func WithWriters(w ...io.Writer) Option {
 	return func(c *config) {
 		c.writers = w

@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -45,6 +46,14 @@ func InitViper(configDir string) (*viper.Viper, error) {
 		if !errors.As(err, &viper.ConfigFileNotFoundError{}) {
 			return nil, fmt.Errorf("reading config: %w", err)
 		}
+	} else {
+		data, err := os.ReadFile(v.ConfigFileUsed())
+		if err != nil {
+			return nil, fmt.Errorf("reading config: %w", err)
+		}
+		if _, err := ParseConfigTOML(data); err != nil {
+			return nil, fmt.Errorf("reading config: %w", err)
+		}
 	}
 
 	// 3. Environment variables: TAPES_PROXY_LISTEN, etc.
@@ -61,6 +70,7 @@ func setViperDefaults(v *viper.Viper) {
 	d := NewDefaultConfig()
 
 	v.SetDefault("version", d.Version)
+	v.SetDefault("cassettes", d.Cassettes)
 
 	// Storage
 	v.SetDefault("storage.postgres_dsn", d.Storage.PostgresDSN)
@@ -94,6 +104,11 @@ func setViperDefaults(v *viper.Viper) {
 	// OpenCode
 	v.SetDefault("opencode.provider", d.OpenCode.Provider)
 	v.SetDefault("opencode.model", d.OpenCode.Model)
+
+	// Logging
+	v.SetDefault("logging.level", d.Logging.Level)
+	v.SetDefault("logging.format", d.Logging.Format)
+	v.SetDefault("logging.color", d.Logging.Color)
 
 	// Telemetry
 	v.SetDefault("telemetry.disabled", d.Telemetry.Disabled)

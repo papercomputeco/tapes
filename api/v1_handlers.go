@@ -38,18 +38,6 @@ type StatsResponse struct {
 }
 
 // handleStats handles GET /v1/stats.
-//
-//	@Summary		Get aggregate session stats
-//	@ID			getStats
-//	@Description	Returns counts plus cost / token / duration / tool-call / completed-count totals for the window. The numbers are span-grain trace rollup sums (delta-only usage, agent time = sum of trace durations) so they agree with the session and trace views; turn_count counts traces. Filter the window with since/until.
-//	@Tags			sessions
-//	@Produce		json
-//	@Param			since		query		string	false	"Only include records at or after this RFC3339 timestamp"	format(date-time)
-//	@Param			until		query		string	false	"Only include records before or at this RFC3339 timestamp"	format(date-time)
-//	@Success		200			{object}	StatsResponse
-//	@Failure		400			{object}	llm.ErrorResponse	"Invalid query parameters"
-//	@Failure		500			{object}	llm.ErrorResponse	"Failed to compute stats"
-//	@Router			/v1/stats [get]
 func (s *Server) handleStats(c *fiber.Ctx) error {
 	since, until, err := parseStatsWindow(c)
 	if err != nil {

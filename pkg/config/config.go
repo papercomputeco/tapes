@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -78,6 +79,9 @@ func ValidConfigKeys() []string {
 		"embedding.dimensions",
 		"opencode.provider",
 		"opencode.model",
+		"logging.level",
+		"logging.format",
+		"logging.color",
 		"telemetry.disabled",
 		"update.disabled",
 	}
@@ -150,8 +154,13 @@ func (c *Configer) LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("unmarshalling config: %w", err)
 	}
 
-	// Preserve the version from the parsed config (version 0 is valid).
+	// Preserve fields whose zero values are meaningful or which viper should not
+	// synthesize from defaults.
 	merged.Version = cfg.Version
+	merged.Cassettes = cfg.Cassettes
+	if err := validateLoggingConfig(merged.Logging); err != nil {
+		return nil, err
+	}
 
 	return merged, nil
 }
@@ -164,6 +173,9 @@ func (c *Configer) SaveConfig(cfg *Config) error {
 
 	if c.targetPath == "" {
 		return errors.New("cannot save empty target path")
+	}
+	if err := validateLoggingConfig(cfg.Logging); err != nil {
+		return err
 	}
 
 	var buf bytes.Buffer
@@ -212,8 +224,12 @@ func (c *Configer) SetConfigValue(key string, value string) error {
 		return fmt.Errorf("invalid value for %s: %w", key, err)
 	}
 
-	// Preserve the version from the loaded config.
+	// Preserve fields which are not scalar set/get keys.
 	updated.Version = cfg.Version
+	updated.Cassettes = cfg.Cassettes
+	if err := validateLoggingConfig(updated.Logging); err != nil {
+		return err
+	}
 
 	return c.SaveConfig(updated)
 }
@@ -317,12 +333,28 @@ func ValidPresetNames() []string {
 // Returns an error if the version field is present and not equal to CurrentConfigVersion.
 func ParseConfigTOML(data []byte) (*Config, error) {
 	cfg := &Config{}
-	if err := toml.Unmarshal(data, cfg); err != nil {
+	metadata, err := toml.Decode(string(data), cfg)
+	if err != nil {
 		return nil, fmt.Errorf("parsing config TOML: %w", err)
 	}
 
 	if cfg.Version != 0 && cfg.Version != CurrentV {
 		return nil, fmt.Errorf("unsupported config version %d (expected %d)", cfg.Version, CurrentV)
+	}
+
+	unknown := make([]string, 0)
+	for _, key := range metadata.Undecoded() {
+		if len(key) > 0 && key[0] == "cassettes" {
+			unknown = append(unknown, key.String())
+		}
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		return nil, fmt.Errorf("unknown cassette config fields: %s", strings.Join(unknown, ", "))
+	}
+
+	if err := cfg.ValidateCassettes(); err != nil {
+		return nil, err
 	}
 
 	return cfg, nil

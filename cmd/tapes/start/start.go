@@ -57,7 +57,7 @@ Examples:
 )
 
 type startCommander struct {
-	debug         bool
+	logSettings   logger.Settings
 	configDir     string
 	logs          bool
 	daemon        bool
@@ -104,11 +104,8 @@ func NewStartCmd() *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmder.logSettings = logger.SettingsFromContext(cmd.Context())
 			var err error
-			cmder.debug, err = cmd.Flags().GetBool("debug")
-			if err != nil {
-				return fmt.Errorf("could not get debug flag: %w", err)
-			}
 			cmder.configDir, err = cmd.Flags().GetString("config-dir")
 			if err != nil {
 				return fmt.Errorf("could not get config-dir flag: %w", err)
@@ -335,9 +332,9 @@ func (c *startCommander) runForeground(ctx context.Context) error {
 	}
 	defer logFile.Close()
 
-	prettyLogger := logger.New(logger.WithDebug(c.debug), logger.WithPretty(true), logger.WithWriter(os.Stdout))
-	jsonLogger := logger.New(logger.WithDebug(c.debug), logger.WithJSON(true), logger.WithWriter(logFile))
-	log := logger.Multi(prettyLogger, jsonLogger)
+	consoleLogger := c.logSettings.New(logger.WithWriter(os.Stdout))
+	jsonLogger := c.logSettings.New(logger.WithFormat(logger.FormatJSON), logger.WithWriter(logFile))
+	log := logger.Multi(consoleLogger, jsonLogger)
 
 	return c.runServices(ctx, manager, log, false)
 }
@@ -354,7 +351,8 @@ func (c *startCommander) runDaemon(ctx context.Context) error {
 	}
 	defer logFile.Close()
 
-	log := logger.New(logger.WithDebug(c.debug), logger.WithJSON(true), logger.WithWriter(logFile))
+	logSettings := c.logSettings.WithDefaultFormat(logger.FormatJSON)
+	log := logSettings.New(logger.WithWriter(logFile))
 
 	return c.runServices(ctx, manager, log, true)
 }
@@ -581,18 +579,7 @@ func (c *startCommander) spawnDaemon(ctx context.Context, manager *start.Manager
 		return fmt.Errorf("opening log file: %w", err)
 	}
 
-	args := []string{"start", "--daemon"}
-	if c.debug {
-		args = append(args, "--debug")
-	}
-	if c.configDir != "" {
-		args = append(args, "--config-dir", c.configDir)
-	}
-	if c.postgresDSN != "" {
-		args = append(args, "--postgres", c.postgresDSN)
-	}
-
-	cmd := exec.CommandContext(ctx, execPath, args...)
+	cmd := exec.CommandContext(ctx, execPath, c.daemonArgs()...)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 
@@ -609,6 +596,23 @@ func (c *startCommander) spawnDaemon(ctx context.Context, manager *start.Manager
 	c.daemonDone = done
 
 	return logFile.Close()
+}
+
+func (c *startCommander) daemonArgs() []string {
+	args := []string{
+		"start",
+		"--daemon",
+		"--log-level", strings.ToLower(c.logSettings.Level.String()),
+		"--log-format", string(c.logSettings.Format),
+		"--log-color", string(c.logSettings.Color),
+	}
+	if c.configDir != "" {
+		args = append(args, "--config-dir", c.configDir)
+	}
+	if c.postgresDSN != "" {
+		args = append(args, "--postgres", c.postgresDSN)
+	}
+	return args
 }
 
 func (c *startCommander) waitForDaemon(ctx context.Context, manager *start.Manager) (*start.State, error) {

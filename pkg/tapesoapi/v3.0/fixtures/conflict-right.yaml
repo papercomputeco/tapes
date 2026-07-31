@@ -1,0 +1,43 @@
+# The other half of the collision; see conflict-left.yaml.
+#
+# `GET /items` and `schemas/Item` differ from the left document's and are
+# genuine conflicts. `schemas/Shared` is structurally identical to the left
+# document's and must dedupe without complaint.
+openapi: 3.0.3
+info:
+  title: Right
+  version: 1.0.0
+paths:
+  /items:
+    get:
+      operationId: listItemsRight
+      summary: List items, the right way
+      responses:
+        "200":
+          description: the items
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Item"
+  /right-only:
+    get:
+      operationId: rightOnly
+      responses:
+        "200":
+          description: the shared shape, referenced identically by both documents
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Shared"
+components:
+  schemas:
+    Item:
+      type: object
+      properties:
+        rightField:
+          type: integer
+    Shared:
+      type: object
+      properties:
+        id:
+          type: string

@@ -11,10 +11,6 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
 )
 
-// ptr is a small helper to take the address of a string literal inline in
-// table/spec bodies (name *string arguments to UpdateSessionDisplayName).
-func ptr(s string) *string { return &s }
-
 var _ = Describe("Driver.UpdateSessionDisplayName", func() {
 	var (
 		driver   storage.Driver
@@ -25,8 +21,8 @@ var _ = Describe("Driver.UpdateSessionDisplayName", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		dsn, err := testPostgresDSN()
-		Expect(err).NotTo(HaveOccurred())
+		dsn := testPostgresDSN
+		var err error
 
 		driver, err = postgres.NewDriver(ctx, dsn)
 		Expect(err).NotTo(HaveOccurred())
@@ -78,7 +74,7 @@ var _ = Describe("Driver.UpdateSessionDisplayName", func() {
 		orgA := newTestOrgID()
 		id := seedSession(orgA, "harness-org-match", "original text")
 
-		rows, err := pgDriver.UpdateSessionDisplayName(ctx, orgA, id, ptr("My corrected title"))
+		rows, err := pgDriver.UpdateSessionDisplayName(ctx, orgA, id, new("My corrected title"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rows).To(Equal(int64(1)))
 
@@ -93,7 +89,7 @@ var _ = Describe("Driver.UpdateSessionDisplayName", func() {
 		orgB := newTestOrgID()
 		id := seedSession(orgA, "harness-cross-org", "orgA original text")
 
-		rows, err := pgDriver.UpdateSessionDisplayName(ctx, orgB, id, ptr("hijacked title"))
+		rows, err := pgDriver.UpdateSessionDisplayName(ctx, orgB, id, new("hijacked title"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rows).To(Equal(int64(0)))
 
@@ -116,7 +112,7 @@ var _ = Describe("Driver.UpdateSessionDisplayName", func() {
 		// A syntactically valid but never-seeded UUID.
 		unknownID := "00000000-0000-0000-0000-000000000000"
 
-		rows, err := pgDriver.UpdateSessionDisplayName(ctx, orgA, unknownID, ptr("does not matter"))
+		rows, err := pgDriver.UpdateSessionDisplayName(ctx, orgA, unknownID, new("does not matter"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rows).To(Equal(int64(0)))
 	})
@@ -127,7 +123,7 @@ var _ = Describe("Driver.UpdateSessionDisplayName", func() {
 		setDerivedTitle(id, "auto-generated title")
 
 		// Give the row a user title first so there's something to clear.
-		rows, err := pgDriver.UpdateSessionDisplayName(ctx, orgA, id, ptr("manual title"))
+		rows, err := pgDriver.UpdateSessionDisplayName(ctx, orgA, id, new("manual title"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rows).To(Equal(int64(1)))
 
@@ -161,7 +157,7 @@ var _ = Describe("Driver.UpdateSessionDisplayName", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(before).NotTo(BeNil())
 
-		rows, err := pgDriver.UpdateSessionDisplayName(ctx, orgA, id, ptr("brand new manual name"))
+		rows, err := pgDriver.UpdateSessionDisplayName(ctx, orgA, id, new("brand new manual name"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rows).To(Equal(int64(1)))
 
@@ -207,7 +203,7 @@ var _ = Describe("Driver.UpdateSessionDisplayName", func() {
 		// DerivedTitle is exposed raw and never inherits the name fallback.
 		Expect(before.DerivedTitle).To(Equal("auto-generated title"))
 
-		rows, err := pgDriver.UpdateSessionDisplayName(ctx, orgA, id, ptr("user chosen title"))
+		rows, err := pgDriver.UpdateSessionDisplayName(ctx, orgA, id, new("user chosen title"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rows).To(Equal(int64(1)))
 

@@ -1,0 +1,83 @@
+# Every component section, each referenced from somewhere.
+#
+# Namespacing an ingested document has to rename keys in all of them and rewrite
+# every reference to match. A rewrite that handles only `schemas` — the easy,
+# obvious one — leaves the rest dangling, and this fixture is what catches that.
+openapi: 3.0.3
+info:
+  title: Components and references
+  version: 1.0.0
+paths:
+  /widgets/{widgetId}:
+    parameters:
+      - $ref: "#/components/parameters/WidgetId"
+    get:
+      operationId: getWidget
+      responses:
+        "200":
+          $ref: "#/components/responses/Widget"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: putWidget
+      requestBody:
+        $ref: "#/components/requestBodies/Widget"
+      responses:
+        "200":
+          $ref: "#/components/responses/Widget"
+components:
+  parameters:
+    WidgetId:
+      name: widgetId
+      in: path
+      required: true
+      schema:
+        type: string
+  headers:
+    RequestId:
+      description: correlation id
+      schema:
+        type: string
+  requestBodies:
+    Widget:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Widget"
+  responses:
+    Widget:
+      description: one widget
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Widget"
+    NotFound:
+      description: no such widget
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    Widget:
+      type: object
+      properties:
+        id:
+          type: string
+        parts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Part"
+    Part:
+      type: object
+      properties:
+        label:
+          type: string
+    Problem:
+      type: object
+      properties:
+        detail:
+          type: string

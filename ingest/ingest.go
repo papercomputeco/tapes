@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/adaptor/v2"
@@ -23,6 +24,8 @@ import (
 	"github.com/papercomputeco/tapes/pkg/llm/provider"
 	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
+	oas "github.com/papercomputeco/tapes/pkg/tapesoapi"
+	"github.com/papercomputeco/tapes/pkg/tapesoapi/oasfiber"
 	"github.com/papercomputeco/tapes/proxy/worker"
 )
 
@@ -174,6 +177,23 @@ type Server struct {
 	// reduction; its adapter is expected to send one.
 	reducers map[string]capture.Reducer
 
+	// openapi is the live description of this write surface, populated by the
+	// same calls that register the routes. GET /openapi compiles it, and that
+	// is the only place this contract is published.
+	openapi *oas.Parser
+
+	// contract caches what /openapi serves.
+	//
+	// The read API compiles its document per request because cassettes mount
+	// and unmount underneath it. This surface has no such half: its routes are
+	// fixed once newServer returns, so the document is identical on every
+	// request and the cache has nothing to invalidate. The error is cached with
+	// it — a compile that fails is deterministic too, and retrying it per
+	// request would just relearn the same failure.
+	contract     []byte
+	contractErr  error
+	contractOnce sync.Once
+
 	// rawStore is the optional immutable raw-capture layer. Non-nil
 	// only when the configured driver hosts it (Postgres). When nil,
 	// ingest behaves exactly as before the raw layer existed.
@@ -182,6 +202,15 @@ type Server struct {
 
 // New creates a new ingest Server.
 func New(config Config, driver storage.Driver, log *slog.Logger) (*Server, error) {
+	return newServer(config, driver, log, nil)
+}
+
+// newServer builds the server with an explicit source of doc comments.
+//
+// docs is nil everywhere except in the contract generator, which reads the
+// repository's doc comments so the published contract carries the prose that
+// documents each envelope field in the source.
+func newServer(config Config, driver storage.Driver, log *slog.Logger, docs oas.TypeDocs) (*Server, error) {
 	providers := make(map[string]provider.Provider)
 	for _, name := range provider.SupportedProviders() {
 		prov, err := provider.New(name)
@@ -213,6 +242,7 @@ func New(config Config, driver storage.Driver, log *slog.Logger) (*Server, error
 		server:     app,
 		providers:  providers,
 		metrics:    NewMetrics(),
+		openapi:    NewOpenAPIParser(docs),
 		reducers: map[string]capture.Reducer{
 			capture.ProviderAnthropic: capture.NewAnthropicReducer(),
 			capture.ProviderOpenAI:    capture.NewOpenAIResponsesReducer(),
@@ -222,10 +252,23 @@ func New(config Config, driver storage.Driver, log *slog.Logger) (*Server, error
 		s.rawStore = rawStore
 	}
 
-	app.Get("/ping", s.handlePing)
+	// Prometheus exposition is scraped by convention rather than called from a
+	// generated client, so it is registered outside the documented router.
 	app.Get("/metrics", adaptor.HTTPHandler(s.metrics.Handler()))
-	app.Post("/v1/ingest", s.handleIngest)
-	app.Post("/v1/ingest/transcript", s.handleTranscriptIngest)
+
+	// The contract endpoint is registered outside the documented router too, for
+	// a different reason: an operation whose response is the document it appears
+	// in is circular, and a generated client has no use for it.
+	app.Get("/openapi", s.handleOpenAPI)
+
+	// Every other route registers through the wrapper, which puts it on the app
+	// and into the parser in one call — so this surface cannot serve an
+	// endpoint the published envelope contract does not describe.
+	router := oasfiber.Wrap(app, s.openapi, oasfiber.WithUndocumented(oasfiber.Fail))
+	s.mountRoutes(router)
+	if err := router.Err(); err != nil {
+		return nil, err
+	}
 
 	return s, nil
 }
@@ -256,33 +299,10 @@ func (s *Server) Close() error {
 	return s.server.Shutdown()
 }
 
-// @Summary		Liveness probe
-// @ID			ingestPing
-// @Description	Reports that the ingest server is up. Does not check the database — a 200 here means the process is serving, not that a write would succeed.
-// @Tags			health
-// @Produce		json
-// @Success		200	{object}	pingResponse
-// @Router			/ping [get]
 func (s *Server) handlePing(c *fiber.Ctx) error {
 	return c.JSON(pingResponse{Status: "ok"})
 }
 
-// @Summary		Ingest one captured turn
-// @ID			ingestTurn
-// @Description	Appends one completed LLM turn to the immutable raw-turn log. The raw envelope is persisted BEFORE parsing, so a turn that fails provider parsing is still captured and a later parser fix re-derives it rather than needing a re-capture.
-// @Description
-// @Description	Idempotent when the adapter supplies meta.request_id: a retried POST of the same captured turn dedupes at the raw layer instead of appending twice.
-// @Description
-// @Description	The response may carry a reduced response, the verbatim upstream bytes (raw_response), or both. Raw-only is reduced server-side with the shared reducers, which is what lets two capture paths produce identical rows for identical traffic.
-// @Tags			ingest
-// @Accept			json
-// @Produce		json
-// @Param			request	body		TurnPayload	true	"Captured turn"
-// @Success		202		{object}	ingestAcceptedResponse	"Captured and queued for derivation"
-// @Failure		400		{object}	llm.ErrorResponse		"Malformed envelope or invalid session block"
-// @Failure		422		{object}	llm.ErrorResponse		"Well-formed but unprocessable (e.g. unknown provider)"
-// @Failure		502		{object}	llm.ErrorResponse		"A downstream dependency failed"
-// @Router			/v1/ingest [post]
 func (s *Server) handleIngest(c *fiber.Ctx) error {
 	bodySize := len(c.Body())
 
@@ -400,21 +420,6 @@ const transcriptWriteProvider = "transcript"
 // transcript (session continued) appends a new version — append-only,
 // like everything in the raw layer. The deriver reads the latest
 // version per (session, agent).
-//
-//	@Summary		Ingest one harness transcript file
-//	@ID			ingestTranscript
-//	@Description	Appends one harness transcript — the main session file or a single subagent's — to the raw layer verbatim. The deriver reconciles the records against the wire capture to recover the causal and fork skeleton; no node-path processing happens here.
-//	@Description
-//	@Description	Idempotent per content version: the dedup key includes a content hash, so re-uploading an unchanged file is a no-op (deduped=true) while a transcript that has grown appends a new version. The deriver reads the latest version per session and agent.
-//	@Tags			ingest
-//	@Accept			json
-//	@Produce		json
-//	@Param			request	body		TranscriptPayload	true	"Transcript file and its harness metadata"
-//	@Success		202		{object}	transcriptAcceptedResponse	"Stored, or already present as this content version"
-//	@Failure		400		{object}	llm.ErrorResponse			"Malformed body, invalid session block, or records not a JSON array"
-//	@Failure		500		{object}	llm.ErrorResponse			"Persisting the transcript failed"
-//	@Failure		501		{object}	llm.ErrorResponse			"Driver does not host the raw-turn layer"
-//	@Router			/v1/ingest/transcript [post]
 func (s *Server) handleTranscriptIngest(c *fiber.Ctx) error {
 	if s.rawStore == nil {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{

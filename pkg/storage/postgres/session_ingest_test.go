@@ -70,8 +70,8 @@ var _ = Describe("Driver.IngestTurn", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		dsn, err := testPostgresDSN()
-		Expect(err).ToNot(HaveOccurred())
+		dsn := testPostgresDSN
+		var err error
 
 		driver, err = postgres.NewDriver(ctx, dsn)
 		Expect(err).NotTo(HaveOccurred())

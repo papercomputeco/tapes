@@ -1,0 +1,77 @@
+# The hello-world cassette's publishable manifest.
+#
+# This is the authored form of the metadata this cassette serves at `/openapi`
+# under the `x-tapes-cassette` extension. It is the artifact a registry or an
+# orchestrator reads *before* anything is running: what image to pull, what port
+# it listens on, which contract of tapes it needs, and what a deployment has to
+# provision for it.
+#
+# The dependency only points one way. This file declares `depends.core = "v1"`;
+# a tapes core decides for itself whether it serves that contract and admits or
+# refuses the cassette accordingly. Nothing here names a version of tapes that
+# must exist, and tapes has no hardcoded opinion of what this file should say.
+#
+# This is not a second schema. `cassette/manifest.ParseTOML` transcodes TOML to
+# JSON and hands it to the same strict parser and the same validator core uses
+# on the embedded copy, so the field names below are the JSON field names, and a
+# key that does not exist is refused here exactly as it would be there.
+# `pkg/cassette/manifest/toml_test.go` parses this very file and asserts that
+# what it derives is what the rest of this directory does — the role and schema
+# compose provisions, the prefix main.go serves, the port the Dockerfile
+# exposes.
+#
+# The tapes API server reads none of this. Core discovers and aggregates a
+# cassette purely from the OpenAPI document it fetches over HTTP; this file is
+# for whoever has to start the thing in the first place.
+
+kind = "cassette/v1alpha1"
+
+# Who this cassette is, and what a deployment needs in order to run it.
+#
+# `name` is the identity everything else derives from: the route
+# (/v1/cassettes/hello-world), the Postgres schema ("hello-world"), and the
+# role ("cassette_hello-world").
+[cassette]
+name = "hello-world"
+version = "0.0.1"
+display_name = "Hello World"
+description = "The smallest API that is still a tapes cassette."
+license = "Apache-2.0"
+homepage = "https://github.com/papercomputeco/tapes"
+image = "tapes/hello-world-cassette:0.0.1"
+port = 9999
+
+# What this cassette needs from tapes.
+#
+# `core` is a major contract version, not a release: it names the tapes read
+# surface (the /v1 API and the tapes_v1 schema) this cassette was written
+# against. `views` are the contract views it wants SELECT on, and it wants
+# none — hello-world reads nothing of tapes' data and is a cassette anyway.
+[depends]
+core = "v1"
+views = []
+
+# Where the things core needs live on this cassette's own listener.
+#
+# `prefix_path` is the one that matters: this process serves its API under
+# /api/hello-world, core republishes it under /v1/cassettes/hello-world, and
+# this field is what makes that swap a stated fact rather than a guess.
+[api]
+health = "/ping"
+openapi = "/openapi"
+prefix_path = "api"
+
+# Tables this cassette owns in its own schema. The declaration is for whoever
+# provisions the database — core neither creates the schema nor grants access
+# to it. The cassette runs its own migration for this table at startup.
+[[tables]]
+name = "hello"
+
+# Configuration this cassette accepts, published as schema so a deployment can
+# render a form or validate values. Tapes never supplies these; the deployment
+# does, through the environment.
+[[config]]
+key = "greeting"
+type = "string"
+default = "Hello"
+description = "Greeting returned by the cassette."

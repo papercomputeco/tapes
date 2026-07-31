@@ -230,6 +230,12 @@ UPDATE sessions SET
     turn_count = COALESCE(f.turns, 0),
     model_usage = NULL,
     derived_title = NULL,
+    tasks = NULL,
+    kind_counts = NULL,
+    has_git_activity = false,
+    tool_result_count = 0,
+    tool_error_count = 0,
+    derived_status = 'unknown',
     derived_model = COALESCE((
         SELECT sp.model FROM spans_20260615 sp
         WHERE sp.session_id = sessions.id

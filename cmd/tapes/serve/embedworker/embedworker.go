@@ -27,7 +27,6 @@ import (
 type embedWorkerCommander struct {
 	flags config.FlagSet
 
-	debug       bool
 	postgresDSN string
 
 	interval      string
@@ -162,12 +161,6 @@ func NewEmbedWorkerCmd() *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			var err error
-			cmder.debug, err = cmd.Flags().GetBool("debug")
-			if err != nil {
-				return fmt.Errorf("could not get debug flag: %w", err)
-			}
-
 			telemetry.FromContext(cmd.Context()).CaptureServerStarted("embed-worker")
 			return cmder.run(cmd.Context())
 		},
@@ -189,7 +182,7 @@ func NewEmbedWorkerCmd() *cobra.Command {
 }
 
 func (c *embedWorkerCommander) run(ctx context.Context) error {
-	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
+	c.logger = logger.FromContext(ctx)
 
 	if c.postgresDSN == "" {
 		return errors.New("embed worker requires a postgres DSN (--postgres or storage.postgres_dsn)")

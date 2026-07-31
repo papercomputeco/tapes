@@ -34,7 +34,7 @@ type RawTurnHeaderItem struct {
 	AgentName     string          `json:"agent_name,omitempty"`
 	RequestID     string          `json:"request_id,omitempty"`
 	ReceivedAt    time.Time       `json:"received_at"`
-	Meta          json.RawMessage `json:"meta,omitempty" swaggertype:"object"`
+	Meta          json.RawMessage `json:"meta,omitempty" oas:"type=object"`
 	RequestBytes  int64           `json:"request_bytes"`
 	ResponseBytes int64           `json:"response_bytes"`
 }
@@ -71,18 +71,6 @@ func traceItemFromTurn(turn storage.SpanTurnRecord, spanCount int) TraceItem {
 }
 
 // handleListTraceSummaries handles GET /v1/traces?session_id=.
-//
-//	@Summary		List a session's traces (summaries)
-//	@ID			listTraces
-//	@Description	Returns turn headers for a session — no span payloads. Fetch GET /v1/traces/{trace_id} per turn for spans and links.
-//	@Tags			traces
-//	@Produce		json
-//	@Param			session_id	query		string	true	"Session id (UUID)"
-//	@Success		200			{object}	TraceListResponse
-//	@Failure		400			{object}	llm.ErrorResponse
-//	@Failure		500			{object}	llm.ErrorResponse
-//	@Failure		501			{object}	llm.ErrorResponse
-//	@Router			/v1/traces [get]
 func (s *Server) handleListTraceSummaries(c *fiber.Ctx) error {
 	sessions, ok := s.driver.(sessionsReader)
 	if !ok {
@@ -128,19 +116,6 @@ func BuildTraceList(rows []storage.TraceSummaryRecord) TraceListResponse {
 }
 
 // handleGetTrace handles GET /v1/traces/:trace_id.
-//
-//	@Summary		Get one trace with spans and links
-//	@ID			getTrace
-//	@Description	Returns one user-visible turn: its spans nested by parent_span_id and its dataflow links (links touching other traces included).
-//	@Tags			traces
-//	@Produce		json
-//	@Param			trace_id	path		string	true	"Trace id"
-//	@Param			payload		query		string	false	"Span payload mode: full (default) or preview (strings truncated; fetch the span endpoint for full payloads)"
-//	@Success		200			{object}	TraceDetail
-//	@Failure		404			{object}	llm.ErrorResponse
-//	@Failure		500			{object}	llm.ErrorResponse
-//	@Failure		501			{object}	llm.ErrorResponse
-//	@Router			/v1/traces/{trace_id} [get]
 func (s *Server) handleGetTrace(c *fiber.Ctx) error {
 	reader, ok := s.driver.(spanModelReader)
 	if !ok {
@@ -178,19 +153,6 @@ func BuildTraceDetail(turn storage.SpanTurnRecord, spans []storage.SpanRecord, l
 }
 
 // handleGetSpan handles GET /v1/traces/:trace_id/spans/:span_id.
-//
-//	@Summary		Get one span with full payloads
-//	@ID			getSpan
-//	@Description	The payload drill-in: one span's complete input/output content.
-//	@Tags			traces
-//	@Produce		json
-//	@Param			trace_id	path		string	true	"Trace id"
-//	@Param			span_id		path		string	true	"Span id"
-//	@Success		200			{object}	SpanItem
-//	@Failure		404			{object}	llm.ErrorResponse
-//	@Failure		500			{object}	llm.ErrorResponse
-//	@Failure		501			{object}	llm.ErrorResponse
-//	@Router			/v1/traces/{trace_id}/spans/{span_id} [get]
 func (s *Server) handleGetSpan(c *fiber.Ctx) error {
 	reader, ok := s.driver.(spanModelReader)
 	if !ok {
@@ -210,19 +172,6 @@ func (s *Server) handleGetSpan(c *fiber.Ctx) error {
 }
 
 // handleListSessionRawTurns handles GET /v1/sessions/:id/raw_turns.
-//
-//	@Summary		List a session's raw capture log (operator)
-//	@ID			listRawTurns
-//	@Description	The raw layer's wire log: one row per captured call or transcript push, identity and sizes only. `source` distinguishes what crossed the wire from what the harness pushed as its own account.
-//	@Tags			sessions
-//	@Produce		json
-//	@Param			id	path		string	true	"Session id (UUID)"
-//	@Success		200	{object}	RawTurnListResponse
-//	@Failure		400	{object}	llm.ErrorResponse
-//	@Failure		404	{object}	llm.ErrorResponse
-//	@Failure		500	{object}	llm.ErrorResponse
-//	@Failure		501	{object}	llm.ErrorResponse
-//	@Router			/v1/sessions/{id}/raw_turns [get]
 func (s *Server) handleListSessionRawTurns(c *fiber.Ctx) error {
 	sessions, ok := s.driver.(sessionsReader)
 	if !ok {

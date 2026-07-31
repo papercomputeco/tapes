@@ -7,9 +7,20 @@
 // than as a copy per server that can drift into disagreeing about what counts
 // as covered.
 //
-// This exists because an entire surface once shipped with no annotations and
-// nothing noticed: `tapes dev check-openapi` validates field types on one
-// endpoint's payload and says so explicitly, leaving route coverage unchecked.
+// This exists because an entire surface once shipped undescribed and nothing
+// noticed: `tapes dev check-openapi` validates field types on one endpoint's
+// payload and says so explicitly, leaving route coverage unchecked.
+//
+// Routes now register through pkg/tapesoapi/oasfiber, which describes a route
+// in the same call that mounts it, so the gap this check closes is much
+// narrower than it was — and narrower again now that the contract is compiled
+// from those same registrations rather than read from a file, which removes
+// staleness as a way for the two to disagree at all.
+//
+// What is left is exactly one boundary, and it is the reason to keep running
+// this: routes registered directly on the *fiber.App — a metrics exposition, a
+// UI, the contract endpoint itself — bypass the wrapper by design. This is what
+// keeps that list deliberate and current rather than growing quietly.
 package openapicheck
 
 import (
@@ -18,7 +29,8 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
-	"sigs.k8s.io/yaml"
+
+	"github.com/papercomputeco/tapes/pkg/tapesoapi"
 )
 
 // Route is one registered (method, path) pair, with the path in OpenAPI form.
@@ -97,22 +109,18 @@ func ToOpenAPIPath(p string) string {
 	return out
 }
 
-// specPaths is the slice of an OpenAPI document this check needs.
-type specPaths struct {
-	Paths map[string]map[string]any `json:"paths"`
-}
-
-// Check compares routes against the contract in specYAML.
-func Check(routes []Route, specYAML []byte, ex Exemptions) (Result, error) {
-	var doc specPaths
-	if err := yaml.Unmarshal(specYAML, &doc); err != nil {
-		return Result{}, fmt.Errorf("parse openapi document: %w", err)
-	}
-
+// Check compares routes against a compiled contract.
+//
+// It takes the compiled document rather than its bytes because there are no
+// bytes to take: neither server keeps a contract file, so a check that parsed
+// one would have to render the document just to read it back — a second parser
+// reading this module's own writing, and a place for the two to disagree about
+// what counts as an operation.
+func Check(routes []Route, contract *tapesoapi.CompiledDoc, ex Exemptions) Result {
 	documented := map[string]map[string]bool{}
-	for path, ops := range doc.Paths {
+	for path, methods := range contract.Operations() {
 		documented[path] = map[string]bool{}
-		for method := range ops {
+		for _, method := range methods {
 			documented[path][strings.ToUpper(method)] = true
 		}
 	}
@@ -172,7 +180,7 @@ func Check(routes []Route, specYAML []byte, ex Exemptions) (Result, error) {
 	sort.Strings(res.MissingFromSpec)
 	sort.Strings(res.PhantomInSpec)
 	sort.Strings(res.StaleExemptions)
-	return res, nil
+	return res
 }
 
 // Explain renders a Result as operator-facing guidance. Empty when everything
@@ -187,7 +195,9 @@ func (r Result) Explain(specPath string) string {
 		for _, s := range r.MissingFromSpec {
 			fmt.Fprintf(&b, "  - %s\n", s)
 		}
-		b.WriteString("Annotate the handler (swag) and run `make openapi`.\n" +
+		b.WriteString("Register the route through the documented router (pkg/tapesoapi/oasfiber) " +
+			"with a Doc(); the contract is compiled from those registrations, so nothing needs " +
+			"regenerating afterwards.\n" +
 			"If it is deliberately unpublished, add it to Exemptions.Undocumented with the reason.\n")
 	}
 	if len(r.PhantomInSpec) > 0 {

@@ -1,0 +1,47 @@
+# oneOf with a discriminator mapping, which is the one place a reference appears
+# somewhere other than a `$ref` key: the mapping's *values* are references, and
+# a namespacing pass has to rewrite them too.
+openapi: 3.0.3
+info:
+  title: Discriminated union
+  version: 1.0.0
+paths:
+  /events:
+    post:
+      operationId: postEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Event"
+      responses:
+        "202":
+          description: accepted
+components:
+  schemas:
+    Event:
+      oneOf:
+        - $ref: "#/components/schemas/Created"
+        - $ref: "#/components/schemas/Deleted"
+      discriminator:
+        propertyName: kind
+        mapping:
+          created: "#/components/schemas/Created"
+          deleted: "#/components/schemas/Deleted"
+    Created:
+      type: object
+      required: [kind, id]
+      properties:
+        kind:
+          type: string
+        id:
+          type: string
+    Deleted:
+      type: object
+      required: [kind, id]
+      properties:
+        kind:
+          type: string
+        id:
+          type: string

@@ -190,7 +190,7 @@ func (n *Node) computeHash() string {
 	}
 
 	// Canonicalize the nodes content JSON according to RFC 8785.
-	// This, as of Go 1.25.x, requires "GOEXPERIMENT=jsonv2" for the new json v2
+	// This, as of Go 1.26.x, requires "GOEXPERIMENT=jsonv2" for the new json v2
 	// and jsontext packages to properly canonicalize the payload.
 	// This effectively ensures that JSON blob hexes from one proxy run to the next
 	// are the same.

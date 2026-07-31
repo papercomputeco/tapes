@@ -126,8 +126,8 @@ var _ = Describe("derive_seq cursor [postgres]", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		dsn, err := testPostgresDSN()
-		Expect(err).NotTo(HaveOccurred())
+		dsn := testPostgresDSN
+		var err error
 
 		driver, err = postgres.NewDriver(ctx, dsn)
 		Expect(err).NotTo(HaveOccurred())
@@ -234,8 +234,8 @@ var _ = Describe("change feed under concurrent derives [postgres]", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		dsn, err := testPostgresDSN()
-		Expect(err).NotTo(HaveOccurred())
+		dsn := testPostgresDSN
+		var err error
 
 		driver, err = postgres.NewDriver(ctx, dsn)
 		Expect(err).NotTo(HaveOccurred())
@@ -324,8 +324,8 @@ var _ = Describe("recovering a failed reduction [postgres]", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		dsn, err := testPostgresDSN()
-		Expect(err).NotTo(HaveOccurred())
+		dsn := testPostgresDSN
+		var err error
 
 		driver, err = postgres.NewDriver(ctx, dsn)
 		Expect(err).NotTo(HaveOccurred())

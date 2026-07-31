@@ -12,8 +12,11 @@ type Config struct {
 	VectorStore VectorStoreConfig `toml:"vector_store"  mapstructure:"vector_store"`
 	Embedding   EmbeddingConfig   `toml:"embedding"     mapstructure:"embedding"`
 	OpenCode    OpenCodeConfig    `toml:"opencode"      mapstructure:"opencode"`
+	Logging     LoggingConfig     `toml:"logging"       mapstructure:"logging"`
 	Telemetry   TelemetryConfig   `toml:"telemetry"     mapstructure:"telemetry"`
 	Update      UpdateConfig      `toml:"update"        mapstructure:"update"`
+	// Cassettes contains exact OpenAPI document URLs for externally managed cassettes.
+	Cassettes []string `toml:"cassettes" mapstructure:"cassettes"`
 }
 
 // StorageConfig holds shared storage settings used by both proxy and API.
@@ -67,6 +70,13 @@ type OpenCodeConfig struct {
 	Model    string `toml:"model,omitempty"    mapstructure:"model"`
 }
 
+// LoggingConfig holds process-wide logging settings.
+type LoggingConfig struct {
+	Level  string `toml:"level,omitempty"  mapstructure:"level"`
+	Format string `toml:"format,omitempty" mapstructure:"format"`
+	Color  string `toml:"color,omitempty"  mapstructure:"color"`
+}
+
 // TelemetryConfig holds anonymous telemetry settings.
 type TelemetryConfig struct {
 	Disabled bool `toml:"disabled,omitempty" mapstructure:"disabled"`
@@ -97,6 +107,10 @@ var configKeySet = map[string]bool{
 	"embedding.dimensions":  true,
 	"opencode.provider":     true,
 	"opencode.model":        true,
+
+	"logging.level":  true,
+	"logging.format": true,
+	"logging.color":  true,
 
 	"storage.postgres_dsn": true,
 

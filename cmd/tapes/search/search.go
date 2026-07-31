@@ -30,7 +30,6 @@ type searchCommander struct {
 	quiet       bool
 	spans       bool
 	apiTarget   string
-	debug       bool
 	resultCount int
 
 	logger *slog.Logger
@@ -88,12 +87,7 @@ func NewSearchCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmder.query = args[0]
 
-			var err error
-			cmder.debug, err = cmd.Flags().GetBool("debug")
-			if err != nil {
-				return fmt.Errorf("could not get debug flag: %w", err)
-			}
-
+			cmder.logger = logger.FromContext(cmd.Context())
 			if err := cmder.run(); err != nil {
 				return err
 			}
@@ -112,8 +106,6 @@ func NewSearchCmd() *cobra.Command {
 }
 
 func (c *searchCommander) run() error {
-	c.logger = logger.New(logger.WithDebug(c.debug), logger.WithPretty(true))
-
 	// Span search is the only mode; the deprecated --spans flag is
 	// accepted as a no-op for muscle memory.
 	return c.runSpans()
