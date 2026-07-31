@@ -147,9 +147,11 @@ func (stack *Stack) Resolve(cmd *cobra.Command, flags config.FlagSet) error {
 	}
 
 	stack.PostgresDSN = v.GetString("storage.postgres_dsn")
-	stack.SQLitePath, err = config.LocalSQLitePath(v.GetString("storage.sqlite_path"), configDir)
-	if err != nil {
-		return fmt.Errorf("resolving local SQLite path: %w", err)
+	if stack.PostgresDSN == "" {
+		stack.SQLitePath, err = config.LocalSQLitePath(v.GetString("storage.sqlite_path"), configDir)
+		if err != nil {
+			return fmt.Errorf("resolving local SQLite path: %w", err)
+		}
 	}
 	stack.ProxyListen = v.GetString("proxy.listen")
 	stack.APIListen = v.GetString("api.listen")

@@ -172,6 +172,8 @@ func (d *Driver) ListSessionRecords(ctx context.Context, o string, opts storage.
 }
 
 func (d *Driver) UpdateSessionDisplayName(ctx context.Context, o, id string, name *string) (int64, error) {
+	d.write.Lock()
+	defer d.write.Unlock()
 	v := ""
 	if name != nil {
 		v = strings.TrimSpace(*name)
@@ -184,12 +186,47 @@ func (d *Driver) UpdateSessionDisplayName(ctx context.Context, o, id string, nam
 }
 
 func (d *Driver) DeleteSession(ctx context.Context, o, id string) (bool, error) {
-	r, e := d.db.ExecContext(ctx, `DELETE FROM sessions WHERE org_id=? AND id=?`, org(o), id)
-	if e != nil {
-		return false, e
+	d.write.Lock()
+	defer d.write.Unlock()
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
 	}
-	n, _ := r.RowsAffected()
-	return n > 0, nil
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE tree(id) AS (
+		SELECT id FROM sessions WHERE org_id=? AND id=?
+		UNION ALL SELECT s.id FROM sessions s JOIN tree t ON s.parent_session_id=t.id
+	) SELECT harness_id,harness_session_id FROM sessions WHERE id IN (SELECT id FROM tree)`, org(o), id)
+	if err != nil {
+		return false, err
+	}
+	var keys [][2]string
+	for rows.Next() {
+		var key [2]string
+		if err = rows.Scan(&key[0], &key[1]); err != nil {
+			_ = rows.Close()
+			return false, err
+		}
+		keys = append(keys, key)
+	}
+	if err = rows.Close(); err != nil {
+		return false, err
+	}
+	if len(keys) == 0 {
+		return false, nil
+	}
+	if _, err = tx.ExecContext(ctx, `WITH RECURSIVE tree(id) AS (
+		SELECT id FROM sessions WHERE org_id=? AND id=?
+		UNION ALL SELECT s.id FROM sessions s JOIN tree t ON s.parent_session_id=t.id
+	) DELETE FROM sessions WHERE id IN (SELECT id FROM tree)`, org(o), id); err != nil {
+		return false, err
+	}
+	for _, key := range keys {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM derive_queue WHERE org_id=? AND harness_id=? AND harness_session_id=?`, org(o), key[0], key[1]); err != nil {
+			return false, err
+		}
+	}
+	return true, tx.Commit()
 }
 
 func scanTurn(s interface{ Scan(...any) error }) (storage.SpanTurnRecord, error) {

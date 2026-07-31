@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -68,7 +69,33 @@ func NewDriver(ctx context.Context, path string) (*Driver, error) {
 	}
 	return d, nil
 }
-func (d *Driver) Open(ctx context.Context) error { _, err := d.db.ExecContext(ctx, schema); return err }
+
+const schemaVersion = 1
+
+func (d *Driver) Open(ctx context.Context) error {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err = tx.ExecContext(ctx, schema); err != nil {
+		return err
+	}
+	var version int
+	if err = tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+		return err
+	}
+	if version > schemaVersion {
+		return fmt.Errorf("local SQLite schema version %d is newer than this binary supports", version)
+	}
+	if version < schemaVersion {
+		if _, err = tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (d *Driver) Close() error {
 	if d == nil {
 		return nil
@@ -171,6 +198,11 @@ func (d *Driver) CountRawTurns(ctx context.Context) (int64, error) {
 func (d *Driver) IngestTurn(ctx context.Context, r storage.IngestTurnRequest) (storage.IngestTurnResult, error) {
 	if len(r.Nodes) == 0 {
 		return storage.IngestTurnResult{}, errors.New("no nodes")
+	}
+	if r.Session == nil || r.Session.HarnessSessionID == "" {
+		if parent := r.Nodes[0].ParentHash; parent != nil && *parent != "" {
+			return storage.IngestTurnResult{}, fmt.Errorf("nodes[0] must be the conversation root when no harness_session_id is supplied, got ParentHash=%q", *parent)
+		}
 	}
 	e, key, err := sessions.ResolveHarnessSessionID(r.Session, r.Nodes[0].Hash)
 	if err != nil {
@@ -320,119 +352,240 @@ func (d *Driver) TryDeriveSessionLock(_ context.Context, o, h, s string) (func()
 }
 
 func (d *Driver) RederiveSession(ctx context.Context, project, o, h, s string) (*derive.RederiveReport, error) {
-	rows, e := d.db.QueryContext(ctx, `SELECT id,org_id,source,provider,agent_name,harness_id,harness_session_id,request_id,raw_request,response,meta,session_envelope,received_at FROM raw_turns WHERE org_id=? AND harness_id=? AND harness_session_id=? ORDER BY id`, org(o), h, s)
-	if e != nil {
-		return nil, e
+	rows, err := d.db.QueryContext(ctx, `SELECT id,org_id,source,provider,agent_name,harness_id,harness_session_id,request_id,raw_request,response,raw_response,raw_response_encoding,meta,session_envelope,received_at FROM raw_turns WHERE org_id=? AND harness_id=? AND harness_session_id=? ORDER BY id`, org(o), h, s)
+	if err != nil {
+		return nil, err
 	}
 	defer rows.Close()
-	dv, e := derive.NewDeriver(project)
-	if e != nil {
-		return nil, e
-	}
+
+	var wire, transcripts []storage.RawTurnRecord
 	for rows.Next() {
-		var r storage.RawTurnRecord
-		var n int64
-		var request, response, metaJSON, envelope []byte
-		if e = rows.Scan(&r.ID, &r.OrgID, &r.Source, &r.Provider, &r.AgentName, &r.HarnessID, &r.HarnessSessionID, &r.RequestID, &request, &response, &metaJSON, &envelope, &n); e != nil {
-			return nil, e
+		var record storage.RawTurnRecord
+		var request, response, rawResponse, metadata, envelope []byte
+		var receivedAt int64
+		if err = rows.Scan(&record.ID, &record.OrgID, &record.Source, &record.Provider, &record.AgentName, &record.HarnessID, &record.HarnessSessionID, &record.RequestID, &request, &response, &rawResponse, &record.RawResponseEncoding, &metadata, &envelope, &receivedAt); err != nil {
+			return nil, err
 		}
-		r.RawRequest, r.Response, r.Meta, r.SessionEnvelope = request, response, metaJSON, envelope
-		r.ReceivedAt = tm(n)
-		dv.AddTurn(&r)
+		record.RawRequest, record.Response, record.RawResponse, record.Meta, record.SessionEnvelope = request, response, rawResponse, metadata, envelope
+		record.ReceivedAt = tm(receivedAt)
+		if record.Source == storage.RawTurnSourceTranscript {
+			transcripts = append(transcripts, record)
+			continue
+		}
+		wire = append(wire, record)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// The deriver requires capture order. A transcript is a causal sidecar,
+	// not a provider request/response, and is reconciled only after wire turns
+	// have been derived.
+	sort.SliceStable(wire, func(i, j int) bool { return derive.CapturedAt(&wire[i]).Before(derive.CapturedAt(&wire[j])) })
+	dv, err := derive.NewDeriver(project)
+	if err != nil {
+		return nil, err
+	}
+	for i := range wire {
+		recoverReduction(ctx, &wire[i])
+		dv.AddTurn(&wire[i])
 	}
 	set := dv.Finish()
-	if e = rows.Err(); e != nil {
-		return nil, e
+	key := derive.SessionKey{HarnessID: h, HarnessSessionID: s}
+	set.Sessions = append(set.Sessions, key)
+
+	// A transcript can be re-uploaded as it grows. Keep the newest version of
+	// each agent/lifecycle file before reconciling it with the wire projection.
+	// A legacy interacted record has no lifecycle marker in metadata, so inspect
+	// its content before letting it shadow that agent's spawn anchor.
+	groups := map[transcriptGroup][]storage.RawTurnRecord{}
+	for _, record := range transcripts {
+		group := transcriptGroupOf(record.Meta)
+		groups[group] = append(groups[group], record)
 	}
-	if e = d.writeSpans(ctx, org(o), h, s, set, derive.EmitSpans(set)); e != nil {
-		return nil, e
+	selected := make([]storage.RawTurnRecord, 0, len(groups))
+	for group, records := range groups {
+		sort.SliceStable(records, func(i, j int) bool { return records[i].ID > records[j].ID })
+		if group.kind != "" {
+			selected = append(selected, records[0])
+			continue
+		}
+		keptNonSpawn := false
+		for _, record := range records {
+			file, parseErr := derive.ParseTranscriptFile(&record)
+			if parseErr != nil {
+				return nil, fmt.Errorf("parse transcript row %d: %w", record.ID, parseErr)
+			}
+			if file.SpawnEvidence() {
+				selected = append(selected, record)
+				break
+			}
+			if !keptNonSpawn {
+				selected = append(selected, record)
+				keptNonSpawn = true
+			}
+		}
+	}
+	sort.SliceStable(selected, func(i, j int) bool { return selected[i].ID < selected[j].ID })
+	files := make([]*derive.TranscriptFile, 0, len(selected))
+	for i := range selected {
+		file, parseErr := derive.ParseTranscriptFile(&selected[i])
+		if parseErr != nil {
+			return nil, fmt.Errorf("parse transcript row %d: %w", selected[i].ID, parseErr)
+		}
+		files = append(files, file)
+	}
+	set.Report.Reconcile = derive.ReconcileTranscripts(set, files)
+
+	if err = d.writeSpans(ctx, org(o), h, s, set, derive.EmitSpans(set)); err != nil {
+		return nil, err
 	}
 	return &set.Report, nil
 }
 
-func j(v any) []byte {
-	b, err := json.Marshal(v)
-	if err != nil {
-		panic(fmt.Sprintf("marshal derived value: %v", err))
+type transcriptGroup struct{ agent, kind string }
+
+func transcriptGroupOf(meta []byte) transcriptGroup {
+	var value struct {
+		AgentID string `json:"agent_id"`
+		Kind    string `json:"kind"`
 	}
-	return b
+	_ = json.Unmarshal(meta, &value)
+	if value.AgentID == "" {
+		value.AgentID = "main"
+	}
+	if value.Kind == "started" {
+		value.Kind = ""
+	}
+	return transcriptGroup{agent: value.AgentID, kind: value.Kind}
 }
+
+func j(v any) ([]byte, error) { return json.Marshal(v) }
 
 func (d *Driver) writeSpans(ctx context.Context, o, h, s string, derived *derive.DerivedSet, set *derive.SpanSet) error {
 	d.write.Lock()
 	defer d.write.Unlock()
-	tx, e := d.db.BeginTx(ctx, nil)
-	if e != nil {
-		return e
-	}
-	defer func() { _ = tx.Rollback() }()
-	var sid string
-	if e = tx.QueryRowContext(ctx, `SELECT id FROM sessions WHERE org_id=? AND harness_id=? AND harness_session_id=?`, o, h, s).Scan(&sid); e != nil {
-		return e
-	}
-	if _, e = tx.ExecContext(ctx, `DELETE FROM span_links WHERE session_id=?`, sid); e != nil {
-		return e
-	}
-	if _, e = tx.ExecContext(ctx, `DELETE FROM span_turns WHERE session_id=?`, sid); e != nil {
-		return e
-	}
-	var in, out int64
-	var cost int64
-	turnCount := 0
-	models := map[string]int{}
-	for _, t := range set.Turns {
-		if t.Session.HarnessID != h || t.Session.HarnessSessionID != s {
-			continue
-		}
-		c := int64(t.TotalCostUSD * 1e6)
-		_, e = tx.ExecContext(ctx, `INSERT INTO span_turns VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, o, t.TraceID, sid, t.UserPrompt, t.ResponsePreview, t.Synthetic, "ok", t.Source, ns(t.StartedAt), ns(t.EndedAt), t.EndedAt.Sub(t.StartedAt).Nanoseconds(), t.TotalInputTokens, t.TotalOutputTokens, t.MainInputTokens, t.MainOutputTokens, t.CacheReadTokens, t.CacheCreationTokens, c)
-		if e != nil {
-			return e
-		}
-		turnCount++
-		in += t.TotalInputTokens
-		out += t.TotalOutputTokens
-		cost += c
-		for _, sp := range t.Spans {
-			if sp.Kind == "llm" && sp.CallKind == derive.KindMain && sp.ThreadID == "" && sp.Model != "" {
-				models[sp.Model]++
-			}
-			_, e = tx.ExecContext(ctx, `INSERT INTO spans VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, o, t.TraceID, sp.SpanID, sp.ParentSpanID, sid, sp.Kind, sp.Name, sp.Status, sp.CallKind, sp.ThreadID, sp.Model, sp.StopReason, ns(sp.StartedAt), sp.DurationNS, sp.Seq, j(sp.Input), j(sp.Output), j(sp.Usage), sp.RawTurnID, sp.NodeHash, j(sp.Verdict))
-			if e != nil {
-				return e
-			}
-		}
-	}
-	writeLink := func(link *derive.SpanLink) error {
-		_, err := tx.ExecContext(ctx, `INSERT INTO span_links VALUES(?,?,?,?,?,?,?,?,?)`, o, link.FromTraceID, link.FromSpanID, link.FromIO, link.ToTraceID, link.ToSpanID, link.ToIO, link.Kind, sid)
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
 		return err
 	}
+	defer func() { _ = tx.Rollback() }()
+	var sessionID string
+	if err = tx.QueryRowContext(ctx, `SELECT id FROM sessions WHERE org_id=? AND harness_id=? AND harness_session_id=?`, o, h, s).Scan(&sessionID); errors.Is(err, sql.ErrNoRows) {
+		// Raw capture can win a crash race with session ingest, and a deleted
+		// session intentionally leaves its immutable raw layer behind. Neither
+		// has a projection to write, so converge by clearing the queue entry.
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM span_links WHERE session_id=?`, sessionID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM span_turns WHERE session_id=?`, sessionID); err != nil {
+		return err
+	}
+
+	var inputTokens, outputTokens, cost int64
+	turnCount := 0
+	models := map[string]int{}
+	writtenTraces := map[string]struct{}{}
 	for _, turn := range set.Turns {
 		if turn.Session.HarnessID != h || turn.Session.HarnessSessionID != s {
 			continue
 		}
-		for _, link := range turn.Links {
-			if e = writeLink(link); e != nil {
-				return e
+		var endedAt any
+		duration := int64(0)
+		if !turn.EndedAt.IsZero() {
+			endedAt = ns(turn.EndedAt)
+			duration = turn.EndedAt.Sub(turn.StartedAt).Nanoseconds()
+		}
+		turnCost := int64(turn.TotalCostUSD * 1e6)
+		_, err = tx.ExecContext(ctx, `INSERT INTO span_turns VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			ON CONFLICT(org_id,trace_id) DO UPDATE SET session_id=excluded.session_id,user_prompt=excluded.user_prompt,response_preview=excluded.response_preview,synthetic=excluded.synthetic,status=excluded.status,source=excluded.source,started_at=excluded.started_at,ended_at=excluded.ended_at,duration_ns=excluded.duration_ns,total_input_tokens=excluded.total_input_tokens,total_output_tokens=excluded.total_output_tokens,main_input_tokens=excluded.main_input_tokens,main_output_tokens=excluded.main_output_tokens,cache_read_tokens=excluded.cache_read_tokens,cache_creation_tokens=excluded.cache_creation_tokens,total_cost_micros=excluded.total_cost_micros`, o, turn.TraceID, sessionID, turn.UserPrompt, turn.ResponsePreview, turn.Synthetic, "ok", turn.Source, ns(turn.StartedAt), endedAt, duration, turn.TotalInputTokens, turn.TotalOutputTokens, turn.MainInputTokens, turn.MainOutputTokens, turn.CacheReadTokens, turn.CacheCreationTokens, turnCost)
+		if err != nil {
+			return err
+		}
+		writtenTraces[turn.TraceID] = struct{}{}
+		turnCount++
+		inputTokens += turn.TotalInputTokens
+		outputTokens += turn.TotalOutputTokens
+		cost += turnCost
+		for _, span := range turn.Spans {
+			input, marshalErr := j(span.Input)
+			if marshalErr != nil {
+				return fmt.Errorf("marshal span %s input: %w", span.SpanID, marshalErr)
+			}
+			output, marshalErr := j(span.Output)
+			if marshalErr != nil {
+				return fmt.Errorf("marshal span %s output: %w", span.SpanID, marshalErr)
+			}
+			usage, marshalErr := j(span.Usage)
+			if marshalErr != nil {
+				return fmt.Errorf("marshal span %s usage: %w", span.SpanID, marshalErr)
+			}
+			verdict, marshalErr := j(span.Verdict)
+			if marshalErr != nil {
+				return fmt.Errorf("marshal span %s verdict: %w", span.SpanID, marshalErr)
+			}
+			_, err = tx.ExecContext(ctx, `INSERT INTO spans VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+				ON CONFLICT(org_id,trace_id,span_id) DO UPDATE SET parent_span_id=excluded.parent_span_id,session_id=excluded.session_id,kind=excluded.kind,name=excluded.name,status=excluded.status,call_kind=excluded.call_kind,thread_id=excluded.thread_id,model=excluded.model,stop_reason=excluded.stop_reason,started_at=excluded.started_at,duration_ns=excluded.duration_ns,seq=excluded.seq,input=excluded.input,output=excluded.output,usage=excluded.usage,raw_turn_id=excluded.raw_turn_id,node_hash=excluded.node_hash,verdict=excluded.verdict`, o, turn.TraceID, span.SpanID, span.ParentSpanID, sessionID, span.Kind, span.Name, span.Status, span.CallKind, span.ThreadID, span.Model, span.StopReason, ns(span.StartedAt), span.DurationNS, span.Seq, input, output, usage, span.RawTurnID, span.NodeHash, verdict)
+			if err != nil {
+				return err
+			}
+			if span.Kind == "llm" && span.CallKind == derive.KindMain && span.ThreadID == "" && span.Model != "" {
+				models[span.Model]++
+			}
+		}
+	}
+	writeLink := func(link *derive.SpanLink) error {
+		if _, ok := writtenTraces[link.FromTraceID]; !ok {
+			return nil
+		}
+		_, linkErr := tx.ExecContext(ctx, `INSERT INTO span_links VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(org_id,from_trace_id,from_span_id,to_trace_id,to_span_id,from_io,to_io) DO UPDATE SET kind=excluded.kind,session_id=excluded.session_id`, o, link.FromTraceID, link.FromSpanID, link.FromIO, link.ToTraceID, link.ToSpanID, link.ToIO, link.Kind, sessionID)
+		return linkErr
+	}
+	for _, turn := range set.Turns {
+		if _, ok := writtenTraces[turn.TraceID]; ok {
+			for _, link := range turn.Links {
+				if err = writeLink(link); err != nil {
+					return err
+				}
 			}
 		}
 	}
 	for _, link := range set.Links {
-		if e = writeLink(link); e != nil {
-			return e
+		if err = writeLink(link); err != nil {
+			return err
 		}
 	}
+
 	key := derive.SessionKey{HarnessID: h, HarnessSessionID: s}
-	st := set.Status[key]
+	status := "unknown"
+	if current, ok := set.Status[key]; ok && current.DerivedStatus != "" {
+		status = current.DerivedStatus
+	}
 	model := ""
 	for candidate, calls := range models {
 		if model == "" || calls > models[model] || (calls == models[model] && candidate < model) {
 			model = candidate
 		}
 	}
-	_, e = tx.ExecContext(ctx, `UPDATE sessions SET total_input_tokens=?,total_output_tokens=?,total_cost_micros=?,turn_count=?,derived_status=?,derived_title=?,derived_model=?,model_usage=?,tasks=?,kind_counts=? WHERE id=?`, in, out, cost, turnCount, st.DerivedStatus, derived.SessionTitles[key], model, j(set.ModelUsage[key]), j(set.Tasks[key]), j(set.KindCounts[key]), sid)
-	if e != nil {
-		return e
+	modelUsage, err := j(set.ModelUsage[key])
+	if err != nil {
+		return fmt.Errorf("marshal model usage: %w", err)
+	}
+	tasks, err := j(set.Tasks[key])
+	if err != nil {
+		return fmt.Errorf("marshal tasks: %w", err)
+	}
+	kindCounts, err := j(set.KindCounts[key])
+	if err != nil {
+		return fmt.Errorf("marshal kind counts: %w", err)
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE sessions SET total_input_tokens=?,total_output_tokens=?,total_cost_micros=?,turn_count=?,derived_status=?,derived_title=?,derived_model=?,model_usage=?,tasks=?,kind_counts=? WHERE id=?`, inputTokens, outputTokens, cost, turnCount, status, derived.SessionTitles[key], model, modelUsage, tasks, kindCounts, sessionID)
+	if err != nil {
+		return err
 	}
 	return tx.Commit()
 }

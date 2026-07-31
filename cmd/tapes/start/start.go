@@ -465,11 +465,17 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 	}
 	defer func() { _ = apiServer.Shutdown() }()
 
-	deriveStore, ok := driver.(deriveworker.Store)
-	if !ok {
-		return errors.New("selected storage does not support derivation")
+	// SQLite has no split-process worker: its single owning process derives
+	// alongside the local proxy and API. PostgreSQL keeps the established
+	// standalone derive-worker topology.
+	var deriveW *deriveworker.Worker
+	if pgDriver == nil {
+		deriveStore, ok := driver.(deriveworker.Store)
+		if !ok {
+			return errors.New("selected storage does not support derivation")
+		}
+		deriveW = deriveworker.NewWorker(deriveworker.Config{Project: startCfg.Project, Debounce: 2 * time.Second}, deriveStore, log)
 	}
-	deriveW := deriveworker.NewWorker(deriveworker.Config{Project: startCfg.Project, Debounce: 2 * time.Second}, deriveStore, log)
 	errChan := make(chan error, 3)
 
 	go func() {
@@ -483,11 +489,13 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 			errChan <- fmt.Errorf("api error: %w", err)
 		}
 	}()
-	go func() {
-		if err := deriveW.Run(ctx); err != nil {
-			errChan <- fmt.Errorf("derive worker error: %w", err)
-		}
-	}()
+	if deriveW != nil {
+		go func() {
+			if err := deriveW.Run(ctx); err != nil {
+				errChan <- fmt.Errorf("derive worker error: %w", err)
+			}
+		}()
+	}
 
 	// Write state AFTER server goroutines are launched — this is the fix for PCC-281.
 	// The listeners are already bound (ports allocated), so the kernel TCP backlog
@@ -760,13 +768,17 @@ func (c *startCommander) loadConfig() (*startConfig, error) {
 		return nil, fmt.Errorf("loading embedding credentials: %w", err)
 	}
 
-	sqlitePath, err := config.LocalSQLitePath(v.GetString("storage.sqlite_path"), c.configDir)
-	if err != nil {
-		return nil, fmt.Errorf("resolving local SQLite path: %w", err)
+	postgresDSN := v.GetString("storage.postgres_dsn")
+	var sqlitePath string
+	if postgresDSN == "" {
+		sqlitePath, err = config.LocalSQLitePath(v.GetString("storage.sqlite_path"), c.configDir)
+		if err != nil {
+			return nil, fmt.Errorf("resolving local SQLite path: %w", err)
+		}
 	}
 
 	return &startConfig{
-		PostgresDSN:         v.GetString("storage.postgres_dsn"),
+		PostgresDSN:         postgresDSN,
 		SQLitePath:          sqlitePath,
 		VectorStoreTarget:   v.GetString("vector_store.target"),
 		EmbeddingProvider:   embedding.Provider,

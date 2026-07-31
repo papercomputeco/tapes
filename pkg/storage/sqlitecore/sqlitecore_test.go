@@ -54,6 +54,31 @@ var _ = Describe("local core", func() {
 		Expect(err).To(MatchError(ContainSubstring("already in use")))
 	})
 
+	It("converges a queued raw session that was deleted before derive", func() {
+		const sessionID = "deleted-before-derive"
+		_, err := d.PutRawTurn(ctx, storage.RawTurnRecord{Source: storage.RawTurnSourceWire, Provider: "anthropic", HarnessID: "claude", HarnessSessionID: sessionID, RequestID: "turn"})
+		Expect(err).NotTo(HaveOccurred())
+		result, err := d.IngestTurn(ctx, storage.IngestTurnRequest{Session: &sessions.IngestEnvelope{HarnessID: "claude", HarnessSessionID: sessionID}, Nodes: []*merkle.Node{{Hash: "root"}}})
+		Expect(err).NotTo(HaveOccurred())
+		deleted, err := d.DeleteSession(ctx, "", result.SessionID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(deleted).To(BeTrue())
+		_, err = d.RederiveSession(ctx, "", "", "claude", sessionID)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("reconciles transcript sidecars without feeding them to the wire deriver", func() {
+		const sessionID = "transcript-sidecar"
+		_, err := d.PutRawTurn(ctx, storage.RawTurnRecord{Source: storage.RawTurnSourceTranscript, HarnessID: "claude", HarnessSessionID: sessionID, RawRequest: []byte(`[]`), Meta: []byte(`{"transcript":true,"agent_id":"main"}`)})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = d.IngestTurn(ctx, storage.IngestTurnRequest{Session: &sessions.IngestEnvelope{HarnessID: "claude", HarnessSessionID: sessionID}, Nodes: []*merkle.Node{{Hash: "root"}}})
+		Expect(err).NotTo(HaveOccurred())
+		report, err := d.RederiveSession(ctx, "", "", "claude", sessionID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(report.Reconcile).NotTo(BeNil())
+		Expect(report.Reconcile.TranscriptFiles).To(Equal(1))
+	})
+
 	It("derives a captured session into the API read model", func() {
 		const sessionID = "session-1"
 		_, err := d.PutRawTurn(ctx, storage.RawTurnRecord{
