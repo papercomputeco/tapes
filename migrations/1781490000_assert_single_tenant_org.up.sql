@@ -18,7 +18,7 @@ DECLARE
     sentinel CONSTANT UUID := '00000000-0000-0000-0000-000000000000';
     offenders BIGINT;
     tbl TEXT;
-    fixed_tables CONSTANT TEXT[] := ARRAY['sessions', 'raw_turns', 'nodes', 'derive_queue', 'raw_turn_attribution_corrections'];
+    fixed_tables CONSTANT TEXT[] := ARRAY['sessions', 'raw_turns', 'nodes', 'derive_queue', 'raw_turn_attribution_corrections', 'skills', 'skill_versions', 'spans', 'span_turns', 'span_links'];
     versioned RECORD;
 BEGIN
     FOREACH tbl IN ARRAY fixed_tables LOOP
