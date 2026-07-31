@@ -165,23 +165,30 @@ func CapturedAt(rec *storage.RawTurnRecord) time.Time {
 	if len(rec.Meta) > 0 {
 		_ = json.Unmarshal(rec.Meta, &meta)
 	}
+	// captured_at is the COMPLETION instant, but this function's callers
+	// want the turn's start (span StartedAt). It therefore only leads when
+	// the elapsed duration can rewind it to an exact start; otherwise an
+	// exact ts_request beats an approximation, and captured_at stands alone
+	// only as the last capture-side stamp available — late by the call's
+	// duration, still better than the ingest hop.
+	capturedAt := time.Time{}
 	if meta.CapturedAt != "" {
 		if ts, err := time.Parse(time.RFC3339Nano, meta.CapturedAt); err == nil {
-			// captured_at is the COMPLETION instant, but this function's
-			// callers want the turn's start (span StartedAt). Rewind by the
-			// call's duration when the envelope carries a usable one;
-			// without it the completion instant still beats the ingest hop
-			// it replaces, just late by the call's duration.
-			if e := meta.ElapsedSeconds; e > 0 && e <= maxDeriveElapsedSeconds {
-				ts = ts.Add(-time.Duration(e * float64(time.Second)))
-			}
-			return ts
+			capturedAt = ts
+		}
+	}
+	if !capturedAt.IsZero() {
+		if e := meta.ElapsedSeconds; e > 0 && e <= maxDeriveElapsedSeconds {
+			return capturedAt.Add(-time.Duration(e * float64(time.Second)))
 		}
 	}
 	if meta.TsRequest != "" {
 		if ts, err := time.Parse(time.RFC3339Nano, meta.TsRequest); err == nil {
 			return ts
 		}
+	}
+	if !capturedAt.IsZero() {
+		return capturedAt
 	}
 	return rec.ReceivedAt
 }
