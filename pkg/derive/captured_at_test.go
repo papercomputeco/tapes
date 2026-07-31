@@ -19,22 +19,34 @@ func TestCapturedAtPrecedence(t *testing.T) {
 
 	cases := []struct {
 		name string
-		meta map[string]string
+		meta map[string]any
 		want time.Time
 	}{
 		{
 			name: "captured_at wins over ts_request",
-			meta: map[string]string{"captured_at": captured, "ts_request": requested},
+			meta: map[string]any{"captured_at": captured, "ts_request": requested},
+			want: time.Date(2026, 7, 31, 11, 0, 0, 500_000_000, time.UTC),
+		},
+		{
+			// captured_at is the completion instant; span chronology wants
+			// the start, so a usable elapsed rewinds it.
+			name: "captured_at is rewound by elapsed to the start instant",
+			meta: map[string]any{"captured_at": captured, "elapsed_seconds": 2.5},
+			want: time.Date(2026, 7, 31, 10, 59, 58, 0, time.UTC),
+		},
+		{
+			name: "a corrupt elapsed does not shift captured_at",
+			meta: map[string]any{"captured_at": captured, "elapsed_seconds": 8.0e9},
 			want: time.Date(2026, 7, 31, 11, 0, 0, 500_000_000, time.UTC),
 		},
 		{
 			name: "ts_request stands alone",
-			meta: map[string]string{"ts_request": requested},
+			meta: map[string]any{"ts_request": requested},
 			want: time.Date(2026, 7, 31, 10, 59, 58, 0, time.UTC),
 		},
 		{
 			name: "malformed captured_at falls through to ts_request",
-			meta: map[string]string{"captured_at": "yesterday-ish", "ts_request": requested},
+			meta: map[string]any{"captured_at": "yesterday-ish", "ts_request": requested},
 			want: time.Date(2026, 7, 31, 10, 59, 58, 0, time.UTC),
 		},
 		{

@@ -132,10 +132,16 @@ type RederiveReport struct {
 // outright; backfilled rows carry ts_request; live rows fall back to
 // received_at).
 type rawMetaFields struct {
-	CapturedAt string `json:"captured_at"`
-	TsRequest  string `json:"ts_request"`
-	ThreadID   string `json:"thread_id"`
+	CapturedAt     string  `json:"captured_at"`
+	TsRequest      string  `json:"ts_request"`
+	ElapsedSeconds float64 `json:"elapsed_seconds"`
+	ThreadID       string  `json:"thread_id"`
 }
+
+// maxDeriveElapsedSeconds mirrors ingest's bound on a plausible
+// single-call duration; beyond it the elapsed value is treated as
+// corrupt rather than folded into chronology.
+const maxDeriveElapsedSeconds = 7 * 24 * 60 * 60
 
 // threadIDFromMeta resolves the capture-side harness sub-thread id
 // from a raw row's meta block.
@@ -147,11 +153,13 @@ func threadIDFromMeta(meta json.RawMessage) string {
 	return m.ThreadID
 }
 
-// CapturedAt resolves a raw record's original capture time: the
-// capture-side completion instant when the meta block carries one,
-// else the adapter's request timestamp, otherwise the ingest receive
-// time. The precedence mirrors ingest's raw-only CreatedAt stamping so
-// the two stay on one clock.
+// CapturedAt resolves a raw record's original capture-side START
+// instant, for span chronology: captured_at (a completion instant)
+// rewound by the call's elapsed duration when the meta block carries
+// both, else the adapter's request timestamp, otherwise the ingest
+// receive time. The source precedence mirrors ingest's raw-only
+// CreatedAt stamping — both fields ride one capture-side clock, offset
+// from each other by exactly the call's duration.
 func CapturedAt(rec *storage.RawTurnRecord) time.Time {
 	var meta rawMetaFields
 	if len(rec.Meta) > 0 {
@@ -159,6 +167,14 @@ func CapturedAt(rec *storage.RawTurnRecord) time.Time {
 	}
 	if meta.CapturedAt != "" {
 		if ts, err := time.Parse(time.RFC3339Nano, meta.CapturedAt); err == nil {
+			// captured_at is the COMPLETION instant, but this function's
+			// callers want the turn's start (span StartedAt). Rewind by the
+			// call's duration when the envelope carries a usable one;
+			// without it the completion instant still beats the ingest hop
+			// it replaces, just late by the call's duration.
+			if e := meta.ElapsedSeconds; e > 0 && e <= maxDeriveElapsedSeconds {
+				ts = ts.Add(-time.Duration(e * float64(time.Second)))
+			}
 			return ts
 		}
 	}
