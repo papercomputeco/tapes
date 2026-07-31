@@ -131,7 +131,7 @@ func sourceOrigin(source string) (string, error) {
 	parsed, err := url.Parse(source)
 	if err != nil ||
 		(parsed.Scheme != "http" && parsed.Scheme != "https") ||
-		parsed.Host == "" ||
+		parsed.Hostname() == "" ||
 		parsed.Fragment != "" ||
 		parsed.User != nil {
 		return "", fmt.Errorf(

@@ -103,6 +103,15 @@ var _ = Describe("OpenAPI cassette sources", func() {
 		Expect(runtime.Status("summary")).To(Equal(tapesoapi.Fresh))
 	})
 
+	It("rejects a port-only source authority before fetching", func(ctx SpecContext) {
+		runtime := cassetterunner.NewRunner(cassetterunner.Config{Contracts: servedContracts()})
+		runtime.SetSources([]string{"http://:8080/openapi"})
+
+		errs := runtime.Refresh(ctx)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0]).To(MatchError(ContainSubstring("must be a full http(s) URL")))
+	})
+
 	It("keeps unresolved sources retryable", func(ctx SpecContext) {
 		source := newMutableSource(`{"openapi":"3.1.0","paths":{}}`)
 		defer source.Close()

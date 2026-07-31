@@ -46,7 +46,7 @@ func validateCassetteURL(source string) string {
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return "must use the http or https scheme"
 	}
-	if parsed.Host == "" {
+	if parsed.Hostname() == "" {
 		return "must include a host"
 	}
 	if parsed.User != nil {

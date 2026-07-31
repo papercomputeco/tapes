@@ -31,11 +31,12 @@ enabled = true
 	})
 
 	It("validates full HTTP URLs while allowing an exact query", func() {
-		_, err := config.ParseConfigTOML([]byte(`cassettes = ["tcp://host/spec", "http://host/spec#fragment", "http://user:secret@host/spec"]`))
+		_, err := config.ParseConfigTOML([]byte(`cassettes = ["tcp://host/spec", "http://host/spec#fragment", "http://user:secret@host/spec", "http://:8080/openapi"]`))
 		Expect(err).To(MatchError(And(
 			ContainSubstring("http or https"),
 			ContainSubstring("fragment"),
 			ContainSubstring("must not include URL userinfo"),
+			ContainSubstring("must include a host"),
 		)))
 	})
 

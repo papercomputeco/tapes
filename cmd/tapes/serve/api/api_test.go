@@ -53,7 +53,8 @@ var _ = Describe("standalone API cassette configuration", func() {
 		},
 		Entry("without a scheme", "cassette.internal/openapi", "must use the http or https scheme"),
 		Entry("with a non-HTTP scheme", "ftp://cassette.internal/openapi", "must use the http or https scheme"),
-		Entry("without a host", "http:///openapi", "must include a host"),
+		Entry("without an authority", "http:///openapi", "must include a host"),
+		Entry("with only a port", "http://:8080/openapi", "must include a host"),
 		Entry("when malformed", "http://cassette.internal/%zz", "must be a valid URL"),
 	)
 })

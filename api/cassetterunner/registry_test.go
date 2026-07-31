@@ -96,6 +96,9 @@ var _ = Describe("Registry", func() {
 		one.URL = "http://127.0.0.1:9000?a=1"
 		Expect(reg.Put(one)).To(MatchError(ContainSubstring("must not carry a query or fragment")))
 
+		one.URL = "http://:9000"
+		Expect(reg.Put(one)).To(MatchError(ContainSubstring("must include a host")))
+
 		Expect(reg.Instances()).To(BeEmpty())
 	})
 
