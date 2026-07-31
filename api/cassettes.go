@@ -93,9 +93,6 @@ func (s *Server) runCassetteSpecRefresh(ctx context.Context, interval time.Durat
 		case <-time.After(startupRetry):
 		}
 	}
-	for _, err := range errs {
-		s.logger.Warn("could not refresh cassette OpenAPI document", "error", err)
-	}
 	if interval <= 0 {
 		return
 	}
@@ -107,9 +104,7 @@ func (s *Server) runCassetteSpecRefresh(ctx context.Context, interval time.Durat
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			for _, err := range s.RefreshCassetteSpecs(ctx) {
-				s.logger.Warn("could not refresh cassette OpenAPI document", "error", err)
-			}
+			s.RefreshCassetteSpecs(ctx)
 		}
 	}
 }

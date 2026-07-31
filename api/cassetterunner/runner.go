@@ -15,12 +15,14 @@ package cassetterunner
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/papercomputeco/tapes/pkg/cassette"
 	"github.com/papercomputeco/tapes/pkg/cassette/manifest"
+	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/tapesoapi"
 )
 
@@ -75,6 +77,10 @@ type Config struct {
 	// admitted from a document served by a different origin than the one core
 	// proxies traffic to.
 	Client *http.Client
+
+	// Logger records source admission and rejection. A nil logger discards
+	// records, which keeps standalone runner use safe.
+	Logger *slog.Logger
 }
 
 // sourceState is one configured OpenAPI URL and what resolving it produced.
@@ -94,6 +100,10 @@ type sourceState struct {
 
 	// resolved reports whether this source has ever been admitted.
 	resolved bool
+
+	// problem is the last rejection logged for this source. Keeping it with the
+	// source state prevents startup retries from repeating the same warning.
+	problem string
 }
 
 // Runner resolves configured cassette sources into a registry and keeps their
@@ -102,6 +112,7 @@ type Runner struct {
 	registry  *Registry
 	specs     *specCache
 	client    *http.Client
+	logger    *slog.Logger
 	contracts []cassette.ContractVersion
 	title     string
 	version   string
@@ -137,11 +148,16 @@ func NewRunner(config Config) *Runner {
 	if title == "" {
 		title = "tapes"
 	}
+	log := config.Logger
+	if log == nil {
+		log = logger.NewNoop()
+	}
 
 	return &Runner{
 		registry:  registry,
 		specs:     newSpecCache(),
 		client:    client,
+		logger:    log,
 		contracts: append([]cassette.ContractVersion(nil), config.Contracts...),
 		title:     title,
 		version:   config.Version,
@@ -204,8 +220,8 @@ func (runner *Runner) SetSources(sources []string) {
 // Refresh resolves every configured source once.
 //
 // Errors are returned per source rather than joined, because each one is a
-// separate operator-facing problem: the caller logs them individually and each
-// is already filed as a rejection against the source that produced it.
+// separate operator-facing problem. Each is logged and filed as a rejection
+// against the source that produced it.
 func (runner *Runner) Refresh(ctx context.Context) []error {
 	runner.refreshMutex.Lock()
 	defer runner.refreshMutex.Unlock()
@@ -372,14 +388,23 @@ func (runner *Runner) sourceIndex(source string) int {
 	return -1
 }
 
-// resolveSource pins a source to the cassette it produced.
+// resolveSource pins a source to the cassette it produced and reports its
+// first admission or recovery from a recorded problem.
 func (runner *Runner) resolveSource(index int, name cassette.Name, etag string) {
 	runner.mutex.Lock()
-	defer runner.mutex.Unlock()
-
+	state := runner.sources[index]
 	runner.sources[index].name = name
 	runner.sources[index].etag = etag
 	runner.sources[index].resolved = true
+	runner.sources[index].problem = ""
+	runner.mutex.Unlock()
+
+	if !state.resolved || state.problem != "" {
+		runner.logger.Info("admitted cassette OpenAPI source",
+			"source", safeSource(state.url),
+			"cassette", name,
+		)
+	}
 }
 
 // failSource records a source problem: against the cassette whose document it
@@ -391,6 +416,16 @@ func (runner *Runner) failSource(index int, err error) error {
 	}
 	runner.registry.SetRejection(safeSource(state.url), err)
 
+	if state.problem != err.Error() {
+		runner.mutex.Lock()
+		runner.sources[index].problem = err.Error()
+		runner.mutex.Unlock()
+		runner.logger.Warn("cassette OpenAPI source rejected",
+			"source", safeSource(state.url),
+			"error", err,
+		)
+	}
+
 	return err
 }
 
@@ -399,6 +434,16 @@ func (runner *Runner) markSourceFresh(index int) {
 	state := runner.source(index)
 	runner.specs.markFresh(state.name, state.url)
 	runner.registry.ClearRejection(safeSource(state.url))
+
+	if state.problem != "" {
+		runner.mutex.Lock()
+		runner.sources[index].problem = ""
+		runner.mutex.Unlock()
+		runner.logger.Info("refreshed cassette OpenAPI source",
+			"source", safeSource(state.url),
+			"cassette", state.name,
+		)
+	}
 }
 
 // Status reports how current the cached document for a cassette is.

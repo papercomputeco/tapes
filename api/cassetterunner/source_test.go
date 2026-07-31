@@ -1,10 +1,12 @@
 package cassetterunner_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/papercomputeco/tapes/api/cassetterunner"
 	"github.com/papercomputeco/tapes/pkg/cassette"
+	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/tapesoapi"
 )
 
@@ -117,6 +120,47 @@ var _ = Describe("OpenAPI cassette sources", func() {
 		Expect(runtime.Refresh(ctx)).To(BeEmpty())
 		Expect(registry.Instances()).To(HaveLen(1))
 		Expect(registry.Rejections()).To(BeEmpty())
+	})
+
+	It("logs a warning when an OpenAPI source problem is recorded", func(ctx SpecContext) {
+		source := newMutableSource(`{"openapi":"3.1.0","paths":{}}`)
+		defer source.Close()
+
+		var logs bytes.Buffer
+		runtime := cassetterunner.NewRunner(cassetterunner.Config{
+			Contracts: servedContracts(),
+			Logger: logger.New(
+				logger.WithWriter(&logs),
+				logger.WithFormat(logger.FormatJSON),
+				logger.WithColor(logger.ColorNever),
+			),
+		})
+		runtime.SetSources([]string{source.URL + "/openapi"})
+
+		Expect(runtime.Refresh(ctx)).To(HaveLen(1))
+		Expect(runtime.Refresh(ctx)).To(HaveLen(1))
+		Expect(logs.String()).To(And(
+			ContainSubstring(`"level":"WARN"`),
+			ContainSubstring(`"msg":"cassette OpenAPI source rejected"`),
+			ContainSubstring(`"source":"`+source.URL+`/openapi"`),
+			ContainSubstring("missing root extension"),
+		))
+		Expect(strings.Count(logs.String(), "cassette OpenAPI source rejected")).To(Equal(1),
+			"startup retries should not repeat an unchanged problem")
+
+		malformed := `{`
+		source.document.Store(&malformed)
+		Expect(runtime.Refresh(ctx)).To(HaveLen(1))
+		Expect(strings.Count(logs.String(), "cassette OpenAPI source rejected")).To(Equal(2),
+			"a changed problem should be reported")
+
+		valid := sourceDocument("summary")
+		source.document.Store(&valid)
+		Expect(runtime.Refresh(ctx)).To(BeEmpty())
+		source.document.Store(&malformed)
+		Expect(runtime.Refresh(ctx)).To(HaveLen(1))
+		Expect(strings.Count(logs.String(), "cassette OpenAPI source rejected")).To(Equal(3),
+			"a problem after recovery should be reported")
 	})
 
 	It("keeps the configured-order winner while preserving valid peers", func(ctx SpecContext) {
@@ -281,14 +325,24 @@ var _ = Describe("OpenAPI cassette sources", func() {
 
 	DescribeTable("never publishes credentials from a rejected source URL",
 		func(ctx SpecContext, source string) {
+			var logs bytes.Buffer
 			registry := cassetterunner.NewRegistry()
-			runtime := cassetterunner.NewRunner(cassetterunner.Config{Registry: registry, Contracts: servedContracts()})
+			runtime := cassetterunner.NewRunner(cassetterunner.Config{
+				Registry:  registry,
+				Contracts: servedContracts(),
+				Logger: logger.New(
+					logger.WithWriter(&logs),
+					logger.WithFormat(logger.FormatJSON),
+					logger.WithColor(logger.ColorNever),
+				),
+			})
 			runtime.SetSources([]string{source})
 			errs := runtime.Refresh(ctx)
 			Expect(errs).To(HaveLen(1))
 			Expect(errs[0].Error()).NotTo(ContainSubstring("secret"))
 			Expect(registry.Rejections()).To(HaveLen(1))
 			Expect(registry.Rejections()[0].Subject).NotTo(ContainSubstring("secret"))
+			Expect(logs.String()).NotTo(ContainSubstring("secret"))
 		},
 		Entry("parseable userinfo", "http://user:secret@example.invalid/openapi"),
 		Entry("malformed userinfo", "http://user:secret%zz@example.invalid/openapi"),

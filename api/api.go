@@ -66,6 +66,7 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 	contracts := resolveContractVersions(config.ContractVersions)
 	runner := cassetterunner.NewRunner(cassetterunner.Config{
 		Contracts: contracts,
+		Logger:    log,
 		Title:     "tapes",
 		// The aggregate document is versioned with the contract discovery
 		// advertises, so /openapi and /v1/cassettes cannot disagree about

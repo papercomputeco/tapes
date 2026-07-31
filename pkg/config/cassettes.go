@@ -7,12 +7,18 @@ import (
 	"github.com/papercomputeco/tapes/pkg/cassette"
 )
 
-// ValidateCassettes checks configured full OpenAPI source URLs. Resolution and
-// metadata admission are runtime concerns so unreachable sources remain retryable.
+// ValidateCassettes checks this config's cassette OpenAPI source URLs.
 func (config *Config) ValidateCassettes() error {
+	return ValidateCassetteSources(config.Cassettes)
+}
+
+// ValidateCassetteSources checks configured full OpenAPI source URLs. Resolution
+// and metadata admission are runtime concerns so unreachable sources remain
+// retryable.
+func ValidateCassetteSources(sources []string) error {
 	problems := make([]cassette.Problem, 0)
-	seen := make(map[string]int, len(config.Cassettes))
-	for index, source := range config.Cassettes {
+	seen := make(map[string]int, len(sources))
+	for index, source := range sources {
 		field := fmt.Sprintf("cassettes[%d]", index)
 		if message := validateCassetteURL(source); message != "" {
 			problems = append(problems, cassette.Problem{Field: field, Message: message})

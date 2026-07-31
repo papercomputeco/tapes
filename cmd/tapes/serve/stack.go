@@ -132,6 +132,9 @@ func (stack *Stack) Resolve(cmd *cobra.Command, flags config.FlagSet) error {
 	if err != nil {
 		return fmt.Errorf("loading cassette sources: %w", err)
 	}
+	if err := config.ValidateCassetteSources(stack.CassetteSources); err != nil {
+		return err
+	}
 
 	// Default pgvector to the primary Postgres DSN.
 	if v.GetString("vector_store.target") == "" && v.GetString("storage.postgres_dsn") != "" {

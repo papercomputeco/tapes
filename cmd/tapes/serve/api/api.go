@@ -99,6 +99,9 @@ func newAPICmd(cmder *apiCommander) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("loading cassette sources: %w", err)
 			}
+			if err := config.ValidateCassetteSources(cmder.cassetteSources); err != nil {
+				return err
+			}
 
 			cmder.listen = v.GetString("api.listen")
 			cmder.webUI = v.GetBool("api.web_ui")
@@ -151,6 +154,11 @@ func newAPICmd(cmder *apiCommander) *cobra.Command {
 
 func (c *apiCommander) run(ctx context.Context) error {
 	c.logger = logger.FromContext(ctx)
+	if len(c.cassetteSources) > 0 {
+		c.logger.Info("configured cassette OpenAPI sources",
+			"count", len(c.cassetteSources),
+		)
+	}
 
 	driver, err := postgres.NewDriver(ctx, c.postgresDSN)
 	if err != nil {
