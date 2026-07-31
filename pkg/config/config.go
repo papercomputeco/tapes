@@ -58,6 +58,27 @@ func NewConfiger(override string) (*Configer, error) {
 	return cfger, nil
 }
 
+// LocalSQLitePath resolves the SQLite database used by the combined
+// single-player runtime. An explicit path wins; otherwise it creates and uses
+// the current project's .tapes directory (or the configured directory).
+func LocalSQLitePath(configured, configDir string) (string, error) {
+	if configured != "" {
+		return configured, nil
+	}
+
+	target, err := dotdir.NewManager().Target(configDir)
+	if err != nil {
+		return "", err
+	}
+	if target == "" {
+		target = ".tapes"
+		if err := os.MkdirAll(target, 0o755); err != nil {
+			return "", fmt.Errorf("creating local tapes directory: %w", err)
+		}
+	}
+	return filepath.Join(target, "core.sqlite"), nil
+}
+
 // ValidConfigKeys returns the sorted list of all supported configuration key names.
 func ValidConfigKeys() []string {
 	// Return in a stable, logical order matching the TOML section layout.
@@ -84,6 +105,8 @@ func ValidConfigKeys() []string {
 		"logging.color",
 		"telemetry.disabled",
 		"update.disabled",
+		"storage.postgres_dsn",
+		"storage.sqlite_path",
 	}
 
 	// Sanity: only return keys that actually exist in the map.

@@ -3,6 +3,7 @@ package proxycmder
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -150,6 +151,9 @@ func NewProxyCmd() *cobra.Command {
 }
 
 func (c *proxyCommander) run() error {
+	if c.postgresDSN == "" {
+		return errors.New("tapes serve proxy requires --postgres; SQLite is single-process and runs through tapes serve or tapes start")
+	}
 	driver, err := postgres.NewDriver(context.TODO(), c.postgresDSN)
 	if err != nil {
 		return err

@@ -173,8 +173,12 @@ var _ = Describe("Worker pool capture", func() {
 			Expect(raws[0].HarnessID).To(Equal(sessions.HarnessIDUnknown))
 			Expect(raws[0].HarnessSessionID).NotTo(BeEmpty())
 
-			// No envelope -> no sessions row is upserted.
-			Expect(driver.IngestCalls()).To(BeEmpty())
+			// The session ingester receives the nil envelope and resolves the
+			// same synthetic identity as the raw layer. This closes the old
+			// capture→derive gap for envelope-less local proxy calls.
+			calls := driver.IngestCalls()
+			Expect(calls).To(HaveLen(1))
+			Expect(calls[0].Session).To(BeNil())
 		})
 
 		It("skips the raw write when the turn carries no verbatim request", func() {

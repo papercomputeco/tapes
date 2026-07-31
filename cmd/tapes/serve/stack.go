@@ -2,6 +2,7 @@ package servecmder
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -14,11 +15,14 @@ import (
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/credentials"
 	deriveworker "github.com/papercomputeco/tapes/pkg/derive/worker"
+	"github.com/papercomputeco/tapes/pkg/embeddings"
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/embedworker"
 	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/spanembed"
+	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
+	"github.com/papercomputeco/tapes/pkg/storage/sqlitecore"
 	"github.com/papercomputeco/tapes/proxy"
 )
 
@@ -45,6 +49,7 @@ type Stack struct {
 	// PostgresDSN is the capture and derived store. VectorStoreTarget is the
 	// pgvector connection, which defaults to the same database.
 	PostgresDSN       string
+	SQLitePath        string
 	VectorStoreTarget string
 
 	// Embedding* configure the embedder shared by the API's search read path
@@ -142,6 +147,10 @@ func (stack *Stack) Resolve(cmd *cobra.Command, flags config.FlagSet) error {
 	}
 
 	stack.PostgresDSN = v.GetString("storage.postgres_dsn")
+	stack.SQLitePath, err = config.LocalSQLitePath(v.GetString("storage.sqlite_path"), configDir)
+	if err != nil {
+		return fmt.Errorf("resolving local SQLite path: %w", err)
+	}
 	stack.ProxyListen = v.GetString("proxy.listen")
 	stack.APIListen = v.GetString("api.listen")
 	stack.APIWebUI = v.GetBool("api.web_ui")
@@ -181,40 +190,44 @@ func (stack *Stack) Resolve(cmd *cobra.Command, flags config.FlagSet) error {
 // The caller owns the signal handling: cancelling ctx stops the workers, and
 // the servers are torn down by the deferred closes on the way out.
 func (stack *Stack) Run(ctx context.Context) error {
-	driver, err := postgres.NewDriver(ctx, stack.PostgresDSN)
+	var driver storage.Driver
+	var pgDriver *postgres.Driver
+	var err error
+	if stack.PostgresDSN != "" {
+		pgDriver, err = postgres.NewDriver(ctx, stack.PostgresDSN)
+		driver = pgDriver
+	} else {
+		driver, err = sqlitecore.NewDriver(ctx, stack.SQLitePath)
+	}
 	if err != nil {
 		return err
 	}
 	defer driver.Close()
 
-	// The embedder serves the API's search read path and the in-process
-	// embed worker below. Capture-time embedding is retired: the embed
-	// worker family is the single writer of embeddings.
-	embedder, err := embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
-		ProviderType: stack.EmbeddingProvider,
-		TargetURL:    stack.EmbeddingTarget,
-		Model:        stack.EmbeddingModel,
-		Dimensions:   stack.EmbeddingDimensions,
-		APIKey:       stack.EmbeddingAPIKey,
-	})
-	if err != nil {
-		return fmt.Errorf("creating embedder: %w", err)
+	// Vector search belongs to Postgres only. SQLite core deliberately keeps
+	// capture and the derived read model, not a local vector/skills system.
+	var embedder embeddings.Embedder
+	var spanSearcher *spanembed.Store
+	if pgDriver != nil {
+		embedder, err = embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
+			ProviderType: stack.EmbeddingProvider,
+			TargetURL:    stack.EmbeddingTarget,
+			Model:        stack.EmbeddingModel,
+			Dimensions:   stack.EmbeddingDimensions,
+			APIKey:       stack.EmbeddingAPIKey,
+		})
+		if err != nil {
+			return fmt.Errorf("creating embedder: %w", err)
+		}
+		defer embedder.Close()
+		spanSearcher, err = spanembed.NewStore(pgDriver.DB(), spanembed.StoreConfig{Dimensions: stack.EmbeddingDimensions}, stack.Logger)
+		if err != nil {
+			return fmt.Errorf("could not create span embedding store: %w", err)
+		}
+		stack.Logger.Info("vector search enabled", "vector_store_target", config.RedactDSN(stack.VectorStoreTarget))
+	} else {
+		stack.Logger.Info("using local SQLite core store", "path", stack.SQLitePath)
 	}
-	defer embedder.Close()
-
-	spanSearcher, err := spanembed.NewStore(driver.DB(), spanembed.StoreConfig{
-		Dimensions: stack.EmbeddingDimensions,
-	}, stack.Logger)
-	if err != nil {
-		return fmt.Errorf("could not create span embedding store: %w", err)
-	}
-
-	stack.Logger.Info("vector search enabled",
-		"vector_store_target", config.RedactDSN(stack.VectorStoreTarget),
-		"embedding_provider", stack.EmbeddingProvider,
-		"embedding_target", stack.EmbeddingTarget,
-		"embedding_model", stack.EmbeddingModel,
-	)
 
 	// These constructors own worker pools whose lifecycle is closed explicitly
 	// below; neither constructor accepts an inherited context.
@@ -283,7 +296,7 @@ func (stack *Stack) Run(ctx context.Context) error {
 	// failures disable search but never fail the stack, and a failing pass
 	// backs off between retries instead of hammering a dead backend.
 	var embedW *embedworker.Worker
-	if stack.EmbedSpans {
+	if stack.EmbedSpans && spanSearcher != nil {
 		if err := spanSearcher.EnsureSchema(ctx); err != nil {
 			stack.Logger.Warn("span embedding disabled: could not prepare the embedding schema — tapes search will be unavailable", "error", err)
 		} else if pass, perr := spanembed.NewPass(spanSearcher, spanSearcher, embedder, spanembed.PassConfig{
@@ -298,7 +311,11 @@ func (stack *Stack) Run(ctx context.Context) error {
 			stack.Logger.Info("span embedding enabled (in-process)", "model", stack.EmbeddingModel)
 		}
 	}
-	deriveW := deriveworker.NewWorker(deriveCfg, driver, stack.Logger)
+	deriveStore, ok := driver.(deriveworker.Store)
+	if !ok {
+		return errors.New("selected storage does not support derivation")
+	}
+	deriveW := deriveworker.NewWorker(deriveCfg, deriveStore, stack.Logger)
 	stack.Logger.Info("starting derive worker (in-process)", "debounce", deriveCfg.Debounce)
 
 	errChan := make(chan error, 5)

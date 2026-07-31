@@ -7,37 +7,23 @@ curl -fsSL https://download.tapes.dev/install | bash
 tapes version
 ```
 
-## Bootstrap local dependencies
+## Storage modes
 
-Tapes uses PostgreSQL as its storage backend and pgvector for semantic search. The bundled bootstrap requires Docker and provisions:
+`tapes serve` and `tapes start` use a local SQLite core database at
+`.tapes/core.sqlite` by default. It is the Docker-free, single-player demo
+mode: it captures raw turns and derives sessions, traces, and spans.
 
-- PostgreSQL with pgvector and pg_duckdb;
-- Ollama for local embeddings. It reuses a running native server when available, or starts an Ollama container when Ollama is not installed. If native Ollama is installed but stopped, the command tells you to start it and pull the model.
+SQLite mode deliberately does not provide vector search, embeddings, skills,
+or independent service processes. It is one combined `tapes serve`/`tapes start`
+process on one host.
 
-```bash
-tapes local up
-tapes local status
-```
-
-The default PostgreSQL port is `5432`, Ollama port is `11434`, and embedding model is `embeddinggemma`. To force Ollama into Docker:
+For multi-player or platform deployments, provide PostgreSQL explicitly:
 
 ```bash
-tapes local up --docker-ollama
+tapes serve --postgres "$TAPES_STORAGE_POSTGRES_DSN"
 ```
 
-The PostgreSQL data directory lives under the active `.tapes/` directory. Stopping containers preserves it:
-
-```bash
-tapes local down
-```
-
-Delete both containers and captured PostgreSQL data only when a reset is intended:
-
-```bash
-tapes local down --wipe
-```
-
-> `--wipe` permanently removes locally captured sessions.
+PostgreSQL enables the separate services and pgvector-backed search.
 
 ## Start Tapes
 
@@ -45,7 +31,9 @@ tapes local down --wipe
 tapes serve
 ```
 
-Defaults are proxy `:8080`, read API `:8081`, private ingest API `:8082`, Ollama upstream `http://localhost:11434`, and background span embedding enabled. Verify the read API and configuration:
+Defaults are proxy `:8080`, read API `:8081`, and private ingest API `:8082`.
+The default SQLite mode does not start embeddings; pass `--postgres` to enable
+PostgreSQL-backed vector search. Verify the read API and configuration:
 
 ```bash
 curl http://localhost:8081/ping
@@ -61,7 +49,7 @@ tapes deck
 
 ## OpenAI embeddings
 
-Local PostgreSQL is still required, but Ollama need not be used for embeddings:
+PostgreSQL is required for embeddings, but Ollama need not be used:
 
 ```bash
 tapes auth openai

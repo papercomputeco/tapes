@@ -276,7 +276,7 @@ func (p *Pool) persistRawTurn(ctx context.Context, job Job, chain []*merkle.Node
 // driver) have no sessions surface, so this is a no-op for them.
 func (p *Pool) ingestSession(ctx context.Context, job Job, chain []*merkle.Node) {
 	ingester, ok := p.config.Driver.(storage.SessionIngester)
-	if !ok || job.Session == nil {
+	if !ok {
 		return
 	}
 

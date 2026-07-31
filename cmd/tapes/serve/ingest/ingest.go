@@ -3,6 +3,7 @@ package ingestcmder
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -144,6 +145,9 @@ func NewIngestCmd() *cobra.Command {
 }
 
 func (c *ingestCommander) run() error {
+	if c.postgresDSN == "" {
+		return errors.New("tapes serve ingest requires --postgres; SQLite is single-process and runs through tapes serve or tapes start")
+	}
 	driver, err := postgres.NewDriver(context.TODO(), c.postgresDSN)
 	if err != nil {
 		return err

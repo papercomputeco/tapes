@@ -30,6 +30,19 @@ var _ = Describe("Configer config", func() {
 		os.RemoveAll(tmpDir)
 	})
 
+	Describe("LocalSQLitePath", func() {
+		It("uses the configured directory and honors an explicit database path", func() {
+			path, err := config.LocalSQLitePath("", tmpDir)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(path).To(Equal(filepath.Join(tmpDir, "core.sqlite")))
+
+			explicit := filepath.Join(tmpDir, "elsewhere.sqlite")
+			path, err = config.LocalSQLitePath(explicit, tmpDir)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(path).To(Equal(explicit))
+		})
+	})
+
 	Describe("LoadConfig", func() {
 		It("returns default config when no config file exists", func() {
 			c, err := config.NewConfiger(tmpDir)
@@ -458,6 +471,7 @@ listen = ":7070"
 			keys := config.ValidConfigKeys()
 			Expect(keys).To(ContainElements(
 				"storage.postgres_dsn",
+				"storage.sqlite_path",
 				"proxy.provider",
 				"proxy.upstream",
 				"proxy.listen",

@@ -74,6 +74,7 @@ func setViperDefaults(v *viper.Viper) {
 
 	// Storage
 	v.SetDefault("storage.postgres_dsn", d.Storage.PostgresDSN)
+	v.SetDefault("storage.sqlite_path", d.Storage.SQLitePath)
 
 	// Proxy
 	v.SetDefault("proxy.provider", d.Proxy.Provider)

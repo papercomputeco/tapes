@@ -3,6 +3,7 @@ package apicmder
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -154,6 +155,9 @@ func newAPICmd(cmder *apiCommander) *cobra.Command {
 
 func (c *apiCommander) run(ctx context.Context) error {
 	c.logger = logger.FromContext(ctx)
+	if c.postgresDSN == "" {
+		return errors.New("tapes serve api requires --postgres; SQLite is single-process and runs through tapes serve or tapes start")
+	}
 	if len(c.cassetteSources) > 0 {
 		c.logger.Info("configured cassette OpenAPI sources",
 			"count", len(c.cassetteSources),

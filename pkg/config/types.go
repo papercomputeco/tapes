@@ -21,7 +21,11 @@ type Config struct {
 
 // StorageConfig holds shared storage settings used by both proxy and API.
 type StorageConfig struct {
+	// PostgresDSN selects the hosted, multi-player store when set.
 	PostgresDSN string `toml:"postgres_dsn,omitempty" mapstructure:"postgres_dsn"`
+	// SQLitePath is the local single-player core database. Empty resolves to
+	// <config-dir>/core.sqlite for the combined serve/start commands.
+	SQLitePath string `toml:"sqlite_path,omitempty" mapstructure:"sqlite_path"`
 }
 
 // ProxyConfig holds proxy-specific settings.
@@ -113,6 +117,7 @@ var configKeySet = map[string]bool{
 	"logging.color":  true,
 
 	"storage.postgres_dsn": true,
+	"storage.sqlite_path":  true,
 
 	"telemetry.disabled": true,
 

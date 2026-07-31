@@ -24,12 +24,16 @@ import (
 	"github.com/papercomputeco/tapes/api"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/credentials"
+	deriveworker "github.com/papercomputeco/tapes/pkg/derive/worker"
+	"github.com/papercomputeco/tapes/pkg/embeddings"
 	embeddingutils "github.com/papercomputeco/tapes/pkg/embeddings/utils"
 	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/spanembed"
 	"github.com/papercomputeco/tapes/pkg/start"
+	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
+	"github.com/papercomputeco/tapes/pkg/storage/sqlitecore"
 	"github.com/papercomputeco/tapes/proxy"
 )
 
@@ -71,6 +75,7 @@ type startCommander struct {
 
 type startConfig struct {
 	PostgresDSN         string
+	SQLitePath          string
 	VectorStoreTarget   string
 	EmbeddingProvider   string
 	EmbeddingTarget     string
@@ -393,23 +398,31 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 		return err
 	}
 
-	driver, err := postgres.NewDriver(ctx, startCfg.PostgresDSN)
+	var driver storage.Driver
+	var pgDriver *postgres.Driver
+	if startCfg.PostgresDSN != "" {
+		pgDriver, err = postgres.NewDriver(ctx, startCfg.PostgresDSN)
+		driver = pgDriver
+	} else {
+		driver, err = sqlitecore.NewDriver(ctx, startCfg.SQLitePath)
+	}
 	if err != nil {
 		return err
 	}
 	defer driver.Close()
 
-	embedder, err := embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
-		ProviderType: startCfg.EmbeddingProvider,
-		TargetURL:    startCfg.EmbeddingTarget,
-		Model:        startCfg.EmbeddingModel,
-		Dimensions:   startCfg.EmbeddingDimensions,
-		APIKey:       startCfg.EmbeddingAPIKey,
-	})
-	if err != nil {
-		return fmt.Errorf("could not create new embedder: %w", err)
-	}
-	if embedder != nil {
+	var embedder embeddings.Embedder
+	if pgDriver != nil {
+		embedder, err = embeddingutils.NewEmbedder(&embeddingutils.NewEmbedderOpts{
+			ProviderType: startCfg.EmbeddingProvider,
+			TargetURL:    startCfg.EmbeddingTarget,
+			Model:        startCfg.EmbeddingModel,
+			Dimensions:   startCfg.EmbeddingDimensions,
+			APIKey:       startCfg.EmbeddingAPIKey,
+		})
+		if err != nil {
+			return fmt.Errorf("could not create new embedder: %w", err)
+		}
 		defer embedder.Close()
 	}
 
@@ -438,18 +451,13 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 	}
 	defer proxyServer.Close()
 
-	spanSearcher, err := spanembed.NewStore(driver.DB(), spanembed.StoreConfig{
-		Dimensions: startCfg.EmbeddingDimensions,
-	}, log)
-	if err != nil {
-		return fmt.Errorf("could not create span embedding store: %w", err)
-	}
-
-	apiConfig := api.Config{
-		ListenAddr:   apiListener.Addr().String(),
-		Embedder:     embedder,
-		SpanSearcher: spanSearcher,
-		EnableWebUI:  startCfg.APIWebUI,
+	apiConfig := api.Config{ListenAddr: apiListener.Addr().String(), EnableWebUI: startCfg.APIWebUI}
+	if pgDriver != nil {
+		spanSearcher, err := spanembed.NewStore(pgDriver.DB(), spanembed.StoreConfig{Dimensions: startCfg.EmbeddingDimensions}, log)
+		if err != nil {
+			return fmt.Errorf("could not create span embedding store: %w", err)
+		}
+		apiConfig.Embedder, apiConfig.SpanSearcher = embedder, spanSearcher
 	}
 	apiServer, err := api.NewServer(apiConfig, driver, log)
 	if err != nil {
@@ -457,7 +465,12 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 	}
 	defer func() { _ = apiServer.Shutdown() }()
 
-	errChan := make(chan error, 2)
+	deriveStore, ok := driver.(deriveworker.Store)
+	if !ok {
+		return errors.New("selected storage does not support derivation")
+	}
+	deriveW := deriveworker.NewWorker(deriveworker.Config{Project: startCfg.Project, Debounce: 2 * time.Second}, deriveStore, log)
+	errChan := make(chan error, 3)
 
 	go func() {
 		if err := proxyServer.RunWithListener(proxyListener); err != nil {
@@ -468,6 +481,11 @@ func (c *startCommander) runServices(ctx context.Context, manager *start.Manager
 	go func() {
 		if err := apiServer.RunWithListener(apiListener); err != nil {
 			errChan <- fmt.Errorf("api error: %w", err)
+		}
+	}()
+	go func() {
+		if err := deriveW.Run(ctx); err != nil {
+			errChan <- fmt.Errorf("derive worker error: %w", err)
 		}
 	}()
 
@@ -742,8 +760,14 @@ func (c *startCommander) loadConfig() (*startConfig, error) {
 		return nil, fmt.Errorf("loading embedding credentials: %w", err)
 	}
 
+	sqlitePath, err := config.LocalSQLitePath(v.GetString("storage.sqlite_path"), c.configDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolving local SQLite path: %w", err)
+	}
+
 	return &startConfig{
 		PostgresDSN:         v.GetString("storage.postgres_dsn"),
+		SQLitePath:          sqlitePath,
 		VectorStoreTarget:   v.GetString("vector_store.target"),
 		EmbeddingProvider:   embedding.Provider,
 		EmbeddingTarget:     embedding.Target,
