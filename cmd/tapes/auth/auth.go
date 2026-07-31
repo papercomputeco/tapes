@@ -18,7 +18,10 @@ import (
 const authLongDesc string = `Store API credentials for LLM providers.
 
 Credentials are stored in credentials.toml in the .tapes/ directory and
-are read by the proxy when it forwards a captured call upstream.
+are used by the server-side features that call a provider themselves:
+span embedding and skill generation. The capture proxy is transparent —
+agents bring their own credentials, and a captured call is forwarded
+with whatever the agent sent, never with these.
 
 For OpenAI, use a service account key (sk-svcacct-...) with "All"
 permissions from platform.openai.com/api-keys. Personal project keys
@@ -101,22 +104,17 @@ func runAuth(provider, configDir string) error {
 		return err
 	}
 
-	envVar := credentials.EnvVarForProvider(provider)
 	fmt.Printf("\n  %s Stored %s credentials %s\n",
 		cliui.SuccessMark,
 		cliui.NameStyle.Render(provider),
-		cliui.DimStyle.Render("(injected as "+envVar+")"),
+		cliui.DimStyle.Render("(read by embedding and skill generation)"),
 	)
 
-	if provider == "openai" {
-		if strings.HasPrefix(apiKey, "sk-proj-") {
-			fmt.Printf("\n  %s Project keys (sk-proj-...) may lack required API scopes for codex.\n",
-				cliui.WarnStyle.Render("!"))
-			fmt.Printf("  %s Consider using a service account key (sk-svcacct-...) from platform.openai.com/api-keys.\n",
-				cliui.WarnStyle.Render(" "))
-		}
-		fmt.Printf("  %s Codex auth.json will be temporarily configured when codex is launched under capture.\n",
-			cliui.DimStyle.Render(" "))
+	if provider == "openai" && strings.HasPrefix(apiKey, "sk-proj-") {
+		fmt.Printf("\n  %s Project keys (sk-proj-...) may lack required API scopes.\n",
+			cliui.WarnStyle.Render("!"))
+		fmt.Printf("  %s Consider using a service account key (sk-svcacct-...) from platform.openai.com/api-keys.\n",
+			cliui.WarnStyle.Render(" "))
 	}
 
 	fmt.Println()
