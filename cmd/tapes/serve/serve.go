@@ -98,7 +98,7 @@ func NewServeCmd() *cobra.Command {
 
 func (c *ServeCommander) run(cmd *cobra.Command) error {
 	c.stack.Logger = logger.FromContext(cmd.Context())
-	c.configureCassettes(cmd)
+	c.configureCassettes()
 
 	// Signal-aware context: a SIGINT/SIGTERM cancels it, which stops the
 	// in-process workers' run loops (the HTTP servers are torn down via their

@@ -38,4 +38,23 @@ var _ = Describe("standalone API cassette configuration", func() {
 		Expect(command.PreRunE(command, nil)).To(Succeed())
 		Expect(commander.cassetteSources).To(Equal([]string{"http://flag/one", "http://flag/two"}))
 	})
+
+	DescribeTable("rejects invalid effective sources before server startup",
+		func(source, problem string) {
+			commander := &apiCommander{flags: apiFlags}
+			command := newAPICmd(commander)
+			command.Flags().String("config-dir", GinkgoT().TempDir(), "")
+			Expect(command.Flags().Set("cassettes", source)).To(Succeed())
+
+			Expect(command.PreRunE(command, nil)).To(MatchError(And(
+				ContainSubstring("cassettes[0]"),
+				ContainSubstring(problem),
+			)))
+		},
+		Entry("without a scheme", "cassette.internal/openapi", "must use the http or https scheme"),
+		Entry("with a non-HTTP scheme", "ftp://cassette.internal/openapi", "must use the http or https scheme"),
+		Entry("without an authority", "http:///openapi", "must include a host"),
+		Entry("with only a port", "http://:8080/openapi", "must include a host"),
+		Entry("when malformed", "http://cassette.internal/%zz", "must be a valid URL"),
+	)
 })

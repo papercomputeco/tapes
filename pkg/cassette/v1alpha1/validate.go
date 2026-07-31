@@ -45,7 +45,7 @@ func (m *Manifest) Validate(supported []cassette.ContractVersion) error {
 	}
 	if m.Cassette.Homepage != "" {
 		parsed, err := url.Parse(m.Cassette.Homepage)
-		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 			add("cassette.homepage", "must be an absolute http or https URL")
 		}
 	}

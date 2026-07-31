@@ -1,6 +1,7 @@
 package servecmder
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -8,6 +9,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
+
+	"github.com/papercomputeco/tapes/pkg/logger"
 )
 
 var _ = Describe("combined cassette configuration", func() {
@@ -45,5 +48,35 @@ var _ = Describe("combined cassette configuration", func() {
 		stack, cmd := newStack(directory)
 		Expect(stack.Resolve(cmd, ServeFlags)).To(Succeed())
 		Expect(stack.CassetteSources).To(Equal([]string{"http://one/openapi", "http://two/openapi"}))
+	})
+
+	It("rejects invalid effective sources before starting the stack", func() {
+		stack, cmd := newStack(GinkgoT().TempDir(), "--cassettes=cassette.internal/openapi")
+
+		Expect(stack.Resolve(cmd, ServeFlags)).To(MatchError(ContainSubstring(
+			"cassettes[0]: must use the http or https scheme",
+		)))
+	})
+
+	It("logs configured sources instead of writing command output", func() {
+		var logs bytes.Buffer
+		stack, cmd := newStack(GinkgoT().TempDir())
+		stack.CassetteSources = []string{"http://one/openapi"}
+		stack.Logger = logger.New(
+			logger.WithWriter(&logs),
+			logger.WithFormat(logger.FormatJSON),
+			logger.WithColor(logger.ColorNever),
+		)
+		var stdout bytes.Buffer
+		cmd.SetOut(&stdout)
+
+		commander := &ServeCommander{stack: *stack}
+		commander.configureCassettes()
+
+		Expect(stdout.String()).To(BeEmpty())
+		Expect(logs.String()).To(And(
+			ContainSubstring(`"msg":"configured cassette OpenAPI sources"`),
+			ContainSubstring(`"count":1`),
+		))
 	})
 })

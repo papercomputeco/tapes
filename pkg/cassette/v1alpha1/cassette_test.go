@@ -99,6 +99,16 @@ var _ = Describe("versioned cassette metadata", func() {
 		}))
 	})
 
+	It("rejects a homepage with only a port in its authority", func() {
+		manifest, err := v1alpha1.Parse([]byte(validMetadata))
+		Expect(err).NotTo(HaveOccurred())
+		manifest.Cassette.Homepage = "http://:8080"
+
+		Expect(manifest.Validate([]cassette.ContractVersion{"v1"})).To(MatchError(ContainSubstring(
+			"cassette.homepage: must be an absolute http or https URL",
+		)))
+	})
+
 	It("rejects float integers that would wrap and attributes bounds correctly", func() {
 		manifest := &v1alpha1.Manifest{
 			Kind: v1alpha1.Kind, Cassette: v1alpha1.Identity{Name: "summary", Version: "1"},
