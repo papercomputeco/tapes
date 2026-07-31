@@ -11,6 +11,8 @@ package backfill
 // It is exactly the case that separates PathUnescape from QueryUnescape.
 
 import (
+	"maps"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -31,9 +33,7 @@ var _ = Describe("sessionEnvelopeFromHeaders decode contract", func() {
 			"x-tapes-harness-id":         "claude",
 			"x-tapes-harness-session-id": sessionID,
 		}
-		for k, v := range extra {
-			m[k] = v
-		}
+		maps.Copy(m, extra)
 		return headersFrom(m)
 	}
 
