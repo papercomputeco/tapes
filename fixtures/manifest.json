@@ -89,7 +89,9 @@
       "files": [
         "corpus-cb9a87e5.jsonl.gz",
         "corpus-9fec0da7.jsonl.gz",
-        "corpus-0440f43d.jsonl.gz"
+        "corpus-0440f43d.jsonl.gz",
+        "corpus-codex-delta.jsonl.gz",
+        "corpus-codex-parallel.jsonl.gz"
       ],
       "goldens_location": "pkg/derive/testdata/",
       "goldens": [
@@ -97,13 +99,14 @@
         "golden-derive-9fec0da7.txt.gz",
         "golden-derive-0440f43d.txt.gz"
       ],
-      "harnesses": ["claude"],
+      "harnesses": ["claude", "codex"],
       "seed_set": ["corpus-cb9a87e5.jsonl.gz", "corpus-9fec0da7.jsonl.gz"],
       "description": "Gzipped raw_turns dumps of whole sessions. The deriver is a pure function of these rows, so the reconciliation pipeline regression-tests against them with no database.",
       "provenance": {
         "type": "fixture-grade recording",
-        "captured": "2026-06-10",
-        "notes": "Full live Claude sessions captured through a gateway in a clean-room exercise: the wire envelopes as dispatched by the capture path plus each session's transcript files (main + subagents)."
+        "captured": "2026-06-10 (claude), 2026-07-22 (codex)",
+        "notes": "Full live Claude sessions captured through a gateway in a clean-room exercise: the wire envelopes as dispatched by the capture path plus each session's transcript files (main + subagents).",
+        "codex_notes": "The two corpus-codex-* files are live captures through the July-22 codex_skills clearing gateway, re-shaped into the PCC-1021 post-fix attribution contract: every raw turn keyed to the ROOT Codex session id, the child thread id in meta.thread_id, and one transcript-source spawn-anchor row per child exactly as POST /v1/ingest/transcript mints it from the paperd uploader payload. corpus-codex-delta pins a root -> child (fork_turns:\"all\") -> grandchild chain; corpus-codex-parallel pins a seven-turn interleaved window of a 20-subagent session."
       },
       "scrub_attestation": "credential-redacted, clean-room; no customer content",
       "generators": {
@@ -113,6 +116,7 @@
       "gates": [
         "pkg/derive/corpus_test.go — pinned reconciliation numbers",
         "pkg/derive/spans_corpus_test.go — span projection gate",
+        "pkg/derive/codex_corpus_test.go — Codex subagent-nesting span gate (corpus-codex-*)",
         "pkg/derive/clone_equivalence_test.go — byte-golden",
         "pkg/derive/corpusfile_roundtrip_test.go — dump/load inverse",
         "cmd/tapes/dev/tracefixtures_idempotency_test.go — render determinism"
@@ -122,7 +126,7 @@
         "pkg/seed — demo seed (embeds the two-corpus seed_set only)",
         "downstream client/UI test suites, via tapes dev trace-fixtures"
       ],
-      "embed_note": "Physically homed under pkg/seed so the demo seed can go:embed the seed_set (embed can't cross '..'), keeping the 26 MB out of non-seed binaries. corpus-0440f43d is co-located and used by the derive gates and the fixture generator, but deliberately NOT in the seed_set: it is a much larger, many-session capture, and seeding it would triple the embedded payload and change the demo session count."
+      "embed_note": "Physically homed under pkg/seed so the demo seed can go:embed the seed_set (embed can't cross '..'), keeping the 26 MB out of non-seed binaries. corpus-0440f43d is co-located and used by the derive gates and the fixture generator, but deliberately NOT in the seed_set: it is a much larger, many-session capture, and seeding it would triple the embedded payload and change the demo session count. The corpus-codex-* pair is likewise co-located and NOT in the seed_set: they exist to pin the Codex subagent-nesting projection, not to seed demos."
     },
     {
       "name": "capture-reducer",

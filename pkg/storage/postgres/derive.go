@@ -124,8 +124,10 @@ func (d *Driver) RederiveSession(ctx context.Context, project, orgID, harnessID,
 	}
 
 	// Index scan: identity + timing only, no payloads. Transcript rows
-	// keep only the LATEST version per agent — transcript ingest
-	// appends a new row each time a file grows.
+	// keep only the LATEST version per (agent, lifecycle kind) —
+	// transcript ingest appends a new row each time a file grows, and a
+	// re-entry row (kind:"interacted") shares its target agent's id, so
+	// grouping by agent alone would let it shadow the started anchor.
 	index, err := d.q.ListRawTurnIndexBySession(ctx, gensqlc.ListRawTurnIndexBySessionParams{
 		OrgID:            org,
 		HarnessID:        harnessID,
@@ -136,13 +138,11 @@ func (d *Driver) RederiveSession(ctx context.Context, project, orgID, harnessID,
 	}
 
 	var wire []rawTurnIndexEntry
-	transcriptRows := map[string]int64{} // agentKey → latest raw id
+	transcriptGroups := map[transcriptGroup][]int64{} // group → raw ids
 	for _, row := range index {
 		if row.Source == storage.RawTurnSourceTranscript {
-			agentKey := transcriptAgentKey(row.Meta)
-			if row.ID > transcriptRows[agentKey] {
-				transcriptRows[agentKey] = row.ID
-			}
+			group := transcriptGroupOf(row.Meta)
+			transcriptGroups[group] = append(transcriptGroups[group], row.ID)
 			continue
 		}
 		rec := storage.RawTurnRecord{ID: row.ID, Meta: row.Meta, ReceivedAt: row.ReceivedAt.Time}
@@ -175,13 +175,11 @@ func (d *Driver) RederiveSession(ctx context.Context, project, orgID, harnessID,
 	// chains the reconciler's overlap tie-break is first-wins, and a
 	// nondeterministic file order would flip which parent_tool_use_id is
 	// stamped across re-derives.
-	transcriptIDs := make([]int64, 0, len(transcriptRows))
-	for _, id := range transcriptRows {
-		transcriptIDs = append(transcriptIDs, id)
-	}
-	sort.SliceStable(transcriptIDs, func(i, j int) bool { return transcriptIDs[i] < transcriptIDs[j] })
-	var files []*derive.TranscriptFile
-	for _, id := range transcriptIDs {
+	parsedFiles := map[int64]*derive.TranscriptFile{}
+	loadFile := func(id int64) (*derive.TranscriptFile, error) {
+		if file, ok := parsedFiles[id]; ok {
+			return file, nil
+		}
 		row, err := d.q.GetRawTurn(ctx, id)
 		if err != nil {
 			return nil, fmt.Errorf("fetch transcript row %d: %w", id, err)
@@ -190,6 +188,50 @@ func (d *Driver) RederiveSession(ctx context.Context, project, orgID, harnessID,
 		file, err := derive.ParseTranscriptFile(&rec)
 		if err != nil {
 			return nil, fmt.Errorf("parse transcript row %d: %w", id, err)
+		}
+		parsedFiles[id] = file
+		return file, nil
+	}
+	var transcriptIDs []int64
+	for group, ids := range transcriptGroups {
+		sort.SliceStable(ids, func(i, j int) bool { return ids[i] > ids[j] }) // newest first
+		if group.kind != "" {
+			// Explicitly-marked non-spawn lifecycle rows (interacted
+			// re-entries): the newest per (agent, kind) stays visible to
+			// reconciliation, which counts it and keeps it inert.
+			transcriptIDs = append(transcriptIDs, ids[0])
+			continue
+		}
+		// Spawn group ("" / "started" meta kind). A version-skew row —
+		// minted by an ingest build that predates the meta kind field —
+		// lands here even when its verbatim content says interacted, so
+		// the meta alone cannot pick the anchor: walk newest-first and
+		// keep the newest file whose CONTENT-recovered kind is spawn
+		// evidence. The newest non-spawn straggler is kept too, so it
+		// still shows up in reconciliation's interacted count instead of
+		// silently vanishing.
+		keptNonSpawn := false
+		for _, id := range ids {
+			file, err := loadFile(id)
+			if err != nil {
+				return nil, err
+			}
+			if file.SpawnEvidence() {
+				transcriptIDs = append(transcriptIDs, id)
+				break
+			}
+			if !keptNonSpawn {
+				keptNonSpawn = true
+				transcriptIDs = append(transcriptIDs, id)
+			}
+		}
+	}
+	sort.SliceStable(transcriptIDs, func(i, j int) bool { return transcriptIDs[i] < transcriptIDs[j] })
+	var files []*derive.TranscriptFile
+	for _, id := range transcriptIDs {
+		file, err := loadFile(id)
+		if err != nil {
+			return nil, err
 		}
 		files = append(files, file)
 	}
@@ -299,17 +341,36 @@ func (d *Driver) writeDerivedSet(ctx context.Context, orgKey string, set *derive
 	return tx.Commit(ctx)
 }
 
-// transcriptAgentKey extracts the agent id from a transcript row's
-// meta for latest-version grouping.
-func transcriptAgentKey(meta []byte) string {
+// transcriptGroup is the derive-read version-selection unit for
+// transcript rows: re-uploads of the SAME file (a transcript that
+// grew) supersede each other, while rows for the same agent with a
+// different lifecycle kind — a started spawn anchor vs. the interacted
+// re-entries that target the same child thread — are different files
+// and must never shadow one another.
+type transcriptGroup struct {
+	agent string
+	kind  string
+}
+
+// transcriptGroupOf extracts a transcript row's selection group from
+// its meta. Spawn evidence ("" and "started") collapses to one group:
+// legacy anchor rows predate the kind marker, and a skew-minted
+// interacted row also carries no meta kind — the content-aware walk in
+// RederiveSession resolves that group, not the meta.
+func transcriptGroupOf(meta []byte) transcriptGroup {
 	var m struct {
 		AgentID string `json:"agent_id"`
+		Kind    string `json:"kind"`
 	}
 	_ = json.Unmarshal(meta, &m)
-	if m.AgentID == "" {
-		return "main"
+	group := transcriptGroup{agent: m.AgentID, kind: m.Kind}
+	if group.agent == "" {
+		group.agent = "main"
 	}
-	return m.AgentID
+	if group.kind == "started" {
+		group.kind = ""
+	}
+	return group
 }
 
 // orgKeyForLookup maps the record's display org back to the canonical

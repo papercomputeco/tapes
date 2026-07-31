@@ -22,6 +22,19 @@ type ReconcileStats struct {
 	// Go-native version of the prototype's join-rate oracle.
 	ConversationJoined int `json:"conversation_joined"`
 	ConversationTotal  int `json:"conversation_total"`
+
+	// Codex thread-spawn anchoring (see codex.go). Unanchored threads
+	// degrade to trace-root placement — a non-zero count is the visible
+	// signal that spawn-anchor rows are missing or ambiguous.
+	CodexThreadsAnchored   int `json:"codex_threads_anchored,omitempty"`
+	CodexThreadsUnanchored int `json:"codex_threads_unanchored,omitempty"`
+
+	// CodexInteractedRows counts anchor rows carrying a non-started
+	// kind (interacted re-entries banked by paperd for future
+	// rendering). They are deliberately INERT: excluded from every
+	// join, they perturb nothing but this counter — the visible proof
+	// the rows arrived and were ignored by design (PCC-1021 C).
+	CodexInteractedRows int `json:"codex_interacted_rows,omitempty"`
 }
 
 // ReconcileTranscripts assigns each wire-derived conversation chain to
@@ -31,13 +44,31 @@ type ReconcileStats struct {
 // re-runnable like everything else in the deriver.
 func ReconcileTranscripts(set *DerivedSet, files []*TranscriptFile) *ReconcileStats {
 	stats := &ReconcileStats{TranscriptFiles: len(files)}
+	reconcileTranscriptChains(set, files, stats)
+	// Codex thread spawns anchor per CALL, not per chain root, and the
+	// agent_path fallback needs no transcript rows at all — so this
+	// stage runs unconditionally (see codex.go).
+	reconcileCodexSpawns(set, files, stats)
+	return stats
+}
+
+// reconcileTranscriptChains is the chain-root content/identity join —
+// the original ReconcileTranscripts body, plus the spawn-evidence kind
+// filter: Codex interacted anchor rows carry an AgentID and ToolUseID
+// shaped exactly like fork evidence, but joining one here would stamp a
+// send_message/followup_task call id as a chain's fork edge (their
+// target can even be the ROOT thread). They are not join candidates.
+func reconcileTranscriptChains(set *DerivedSet, files []*TranscriptFile, stats *ReconcileStats) {
 	if len(files) == 0 || len(set.Nodes) == 0 {
-		return stats
+		return
 	}
 
 	// Group transcript files per session.
 	bySession := map[SessionKey][]*TranscriptFile{}
 	for _, f := range files {
+		if !f.SpawnEvidence() {
+			continue
+		}
 		bySession[f.Session] = append(bySession[f.Session], f)
 	}
 
@@ -146,10 +177,9 @@ func ReconcileTranscripts(set *DerivedSet, files []*TranscriptFile) *ReconcileSt
 
 	subagents := map[string]struct{}{}
 	for _, f := range files {
-		if f.AgentID != "" && f.ToolUseID != "" {
+		if f.SpawnEvidence() && f.AgentID != "" && f.ToolUseID != "" {
 			subagents[f.ToolUseID] = struct{}{}
 		}
 	}
 	stats.SubagentForks = len(subagents)
-	return stats
 }

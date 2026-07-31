@@ -64,5 +64,7 @@ var _ = Describe("corpus writer round-trip (dump-corpus)", func() {
 		Entry("cb9a87e5 — plan mode, 2 subagents", corpusPath("corpus-cb9a87e5.jsonl.gz")),
 		Entry("9fec0da7 — compaction, multi-model", corpusPath("corpus-9fec0da7.jsonl.gz")),
 		Entry("0440f43d — 19 sessions, scale", corpusPath("corpus-0440f43d.jsonl.gz")),
+		Entry("codex-delta — depth-2 thread spawns", corpusPath("corpus-codex-delta.jsonl.gz")),
+		Entry("codex-parallel — interleaved thread spawns", corpusPath("corpus-codex-parallel.jsonl.gz")),
 	)
 })

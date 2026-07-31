@@ -27,20 +27,57 @@ type TranscriptFile struct {
 	Description string
 	ToolUseID   string
 
+	// Kind qualifies Codex sub_agent_activity anchor rows: "" or
+	// "started" is spawn evidence (join input); "interacted" is a
+	// re-entry record (send_message / followup_task) banked for future
+	// rendering and INERT in derivation — it must never anchor a
+	// thread, override a started anchor, or join a chain. Populated
+	// from row meta (paperd stamps kind:"interacted" on upload), with
+	// a record-content fallback for rows minted by an ingest build
+	// that predates the meta field.
+	Kind string
+
 	// signatures are the projected-content signatures of every block
 	// in the transcript — the join key against wire-derived nodes.
 	signatures map[string]struct{}
 }
 
+// SpawnEvidence reports whether this file may participate in the
+// spawn/fork joins. Only started (or legacy unmarked) rows qualify;
+// interacted rows — and any future lifecycle kind — are ignored by
+// derivation by design. Exported for the storage layer's derive-read
+// version selection, which must not let an interacted row shadow a
+// started anchor when both share an agent_id (the row's kind can be
+// recoverable only from record content, so meta alone cannot decide).
+func (f *TranscriptFile) SpawnEvidence() bool {
+	return f.Kind == "" || f.Kind == subAgentKindStarted
+}
+
 // transcriptRecord is the subset of a harness transcript line the
-// reconciler reads.
+// reconciler reads. Type/Payload exist only to recognize Codex
+// sub_agent_activity anchor records (see subAgentActivityKind);
+// Claude transcript lines never populate them.
 type transcriptRecord struct {
 	UUID       string `json:"uuid"`
 	ParentUUID string `json:"parentUuid"`
-	Message    struct {
+	Type       string `json:"type"`
+	Payload    struct {
+		Type string `json:"type"`
+		Kind string `json:"kind"`
+	} `json:"payload"`
+	Message struct {
 		Role    string          `json:"role"`
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
+}
+
+// subAgentActivityKind returns the sub_agent_activity lifecycle kind a
+// record carries, or "" for anything that is not such a record.
+func subAgentActivityKind(r *transcriptRecord) string {
+	if r.Type != "event_msg" || r.Payload.Type != "sub_agent_activity" {
+		return ""
+	}
+	return r.Payload.Kind
 }
 
 // transcriptBlock is a harness-side content block. Field names differ
@@ -65,6 +102,7 @@ type transcriptMetaFields struct {
 	AgentType   string `json:"agent_type"`
 	Description string `json:"description"`
 	ToolUseID   string `json:"tool_use_id"`
+	Kind        string `json:"kind"`
 }
 
 // IsTranscriptMeta reports whether a raw row's meta marks it as a
@@ -98,9 +136,19 @@ func ParseTranscriptFile(rec *storage.RawTurnRecord) (*TranscriptFile, error) {
 		AgentType:   m.AgentType,
 		Description: m.Description,
 		ToolUseID:   m.ToolUseID,
+		Kind:        m.Kind,
 		signatures:  map[string]struct{}{},
 	}
 	for _, r := range records {
+		// Version-skew guard: an ingest build older than the meta kind
+		// field drops paperd's kind marker, and an interacted row would
+		// then masquerade as spawn evidence. The record content itself
+		// is authoritative — an anchor row holds the verbatim
+		// sub_agent_activity line — so recover the kind from it when
+		// the meta carries none.
+		if file.Kind == "" {
+			file.Kind = subAgentActivityKind(&r)
+		}
 		for _, block := range transcriptBlocks(r.Message.Content) {
 			if sig := blockSignature(block); sig != "" {
 				file.signatures[sig] = struct{}{}
