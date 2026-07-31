@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -344,6 +345,12 @@ func buildWireTraceEnvelope(ctx context.Context, dir, turnDir string, reducer ca
 // captured X-Tapes-* request headers, mirroring tapes-extproc's
 // header→envelope mapping. Returns nil when no envelope headers were
 // present (matching extproc's omission semantics).
+//
+// cwd and session-name are both percent-decoded through
+// decodeEnvelopeHeaderValue, which is the same transform extproc
+// applies. The two parsers are meant to be interchangeable — the
+// shared fixture corpus (fixtures/envelope/cases) is what proves it —
+// so any change here belongs in extproc's ParseSessionEnvelope too.
 func sessionEnvelopeFromHeaders(header func(string) string) *sessions.IngestEnvelope {
 	harnessSessionID := header("x-tapes-harness-session-id")
 	harnessID := header("x-tapes-harness-id")
@@ -354,14 +361,12 @@ func sessionEnvelopeFromHeaders(header func(string) string) *sessions.IngestEnve
 		HarnessID:        harnessID,
 		HarnessSessionID: harnessSessionID,
 		HarnessVersion:   header("x-tapes-harness-version"),
-		Cwd:              header("x-tapes-cwd"),
+	}
+	if cwd := header("x-tapes-cwd"); cwd != "" {
+		env.Cwd = decodeEnvelopeHeaderValue("cwd", cwd)
 	}
 	if name := header("x-tapes-session-name"); name != "" {
-		if decoded, err := url.QueryUnescape(name); err == nil {
-			env.Name = decoded
-		} else {
-			env.Name = name
-		}
+		env.Name = decodeEnvelopeHeaderValue("session-name", name)
 	}
 	if parent := header("x-tapes-parent-harness-session-id"); parent != "" {
 		env.ParentHarnessSessionID = &parent
@@ -372,6 +377,69 @@ func sessionEnvelopeFromHeaders(header func(string) string) *sessions.IngestEnve
 		}
 	}
 	return env
+}
+
+// decodeEnvelopeHeaderValue turns one percent-encoded session-envelope
+// header value into the logical value that gets stored.
+//
+// The contract: the stored envelope value is the *logical* value.
+// Percent-encoding is transport framing that dies at the parser, so
+// every reader decodes and a non-ASCII path lands as itself rather
+// than as the escaped form the header hop demanded. Storing the
+// escaped form instead would leak wire encoding into the data model
+// and force a decoder into every consumer — the many-parsers
+// divergence this contract exists to kill.
+//
+// PathUnescape, not QueryUnescape: the encoding is RFC 3986
+// path-segment escaping, which leaves a literal `+` intact.
+// QueryUnescape would silently mistranslate `+` into a space, so a
+// session named "go+rust" would land as "go rust".
+//
+// The producer escapes control bytes so that no second header can be
+// smuggled across the header hop. Decoding hands that byte back, so
+// the injection defense moves from representation to validation: a
+// decoded value carrying any C0 control (< 0x20) or DEL (0x7F) is
+// refused outright — logged and stored empty — rather than persisted
+// raw. Refusing beats sanitizing because a path that needed a control
+// byte to be expressed is not a path any operator meant to record.
+//
+// A malformed encoding is non-fatal: the raw header value is used so
+// the row still records something recognisable. It passes the same
+// control-byte gate, so no path through this function can return a
+// control byte.
+func decodeEnvelopeHeaderValue(field, raw string) string {
+	value := raw
+	if decoded, err := url.PathUnescape(raw); err == nil {
+		value = decoded
+	} else {
+		slog.Warn("backfill: envelope header percent-decode failed; using raw value",
+			"field", field,
+			"error", err,
+			"raw_len", len(raw),
+		)
+	}
+	if hasControlRune(value) {
+		// Log the length, never the value: the whole point is to keep
+		// raw control bytes out of anything downstream, and a log sink
+		// is downstream.
+		slog.Warn("backfill: envelope header contains control bytes after decoding; dropping the value",
+			"field", field,
+			"decoded_len", len(value),
+		)
+		return ""
+	}
+	return value
+}
+
+// hasControlRune reports whether s contains a C0 control character
+// (< 0x20) or DEL (0x7F). These are the bytes that let a decoded value
+// forge header structure if it were ever re-emitted into a
+// header-shaped context, and the bytes an operator never intends to
+// have in a working directory or a session name.
+func hasControlRune(s string) bool {
+	return strings.ContainsFunc(s, func(r rune) bool {
+		return r < 0x20 || r == 0x7F
+	})
 }
 
 // providerFromPath extracts the provider segment from a gateway path
