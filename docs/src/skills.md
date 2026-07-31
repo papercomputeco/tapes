@@ -39,19 +39,24 @@ tapes skill list --type workflow
 
 ## Sync
 
+Authoring a skill reads session data, so `generate` and `list` live in `tapes`.
+Installing one into an agent's skills directory is a local file copy with no
+server involved, so it lives in the client,
+[`tapesctl`](https://github.com/papercomputeco/tapesctl).
+
 By default, sync writes to the global, agent-neutral `~/.agents/skills/`:
 
 ```bash
-tapes skill sync debug-react-hooks
+tapesctl skill sync debug-react-hooks
 ```
 
 Choose project-local or Claude Code paths explicitly:
 
 ```bash
-tapes skill sync debug-react-hooks --local             # .agents/skills/
-tapes skill sync debug-react-hooks --claude            # ~/.claude/skills/
-tapes skill sync debug-react-hooks --claude --local    # .claude/skills/
-tapes skill sync debug-react-hooks --dry-run
+tapesctl skill sync debug-react-hooks --local             # .agents/skills/
+tapesctl skill sync debug-react-hooks --claude            # ~/.claude/skills/
+tapesctl skill sync debug-react-hooks --claude --local    # .claude/skills/
+tapesctl skill sync debug-react-hooks --dry-run
 ```
 
 Generated skills are files you can inspect and version like other agent instructions. Preview generation and use `--dry-run` before syncing when the source session contains project-specific assumptions.

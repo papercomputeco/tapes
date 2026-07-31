@@ -48,11 +48,12 @@ if this one ever falls behind.
 
 ## Local demo data
 
-Seed demo sessions through the local API server (demo data is captured and
-derived just like live sessions, so it shows up in `tapes deck`):
+Seeding is a client operation, so it lives in
+[`tapesctl`](https://github.com/papercomputeco/tapesctl). Demo data is captured
+and derived just like live sessions, so it shows up in `tapes deck`:
 
 ```bash
-tapes seed --demo --api-target http://localhost:8081
+tapesctl seed --tapes-url http://localhost:8081
 ```
 
 To reset demo data, use a fresh database behind the API server.
@@ -71,7 +72,7 @@ To reset demo data, use a fresh database behind the API server.
   - `make build-local` sets this automatically
 - `make format`/`make check`/`make test` require Docker for Dagger
 - Demo seeding docs
-  - Use `tapes seed --demo --api-target http://localhost:8081` to seed demo sessions
+  - Use `tapesctl seed --tapes-url http://localhost:8081` to seed demo sessions
   - Use a fresh Postgres database behind the API when reseeding
 
 ## Example commands
@@ -83,8 +84,8 @@ make build-local
 # Start local dependencies
 ./build/tapes local
 
-# Seed demo data through a running API, then browse it in the deck UI
-./build/tapes seed --demo --api-target http://localhost:8081
+# Seed demo data through a running API (tapesctl), then browse it in the deck UI
+tapesctl seed --tapes-url http://localhost:8081
 ./build/tapes deck --api-target http://localhost:8081
 
 # Run tests with the Postgres service provisioned by Dagger

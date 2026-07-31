@@ -1,24 +1,31 @@
 # Agent integrations
 
-The proxy is transparent: point a supported provider client at it and Tapes forwards the request while recording the completed turn. For supported coding agents, `tapes start` is safer than editing configuration by hand.
+The proxy is transparent: point a supported provider client at it and Tapes forwards the request while recording the completed turn. For supported coding agents, launching through [`tapesctl`](https://github.com/papercomputeco/tapesctl) is safer than editing configuration by hand — it wires the agent to a just-in-time capture proxy that dies with the process.
 
-Start local dependencies before these examples:
+Start the server and its local dependencies before these examples:
 
 ```bash
 tapes local up
+tapes serve
+```
+
+Then install the client:
+
+```bash
+curl -sSfL https://download.tapes.dev/tapesctl/install | bash
 ```
 
 ## Claude Code
 
 ```bash
 tapes auth anthropic   # optional when ANTHROPIC_API_KEY is already set
-tapes start claude
+tapesctl start claude --tapes-url http://localhost:8081
 ```
 
-Tapes starts its agent runtime on automatically selected loopback ports, sets Claude Code's `ANTHROPIC_BASE_URL` to its agent-scoped proxy route, launches `claude`, and tags captured traffic as Claude. Pass Claude flags after `--`:
+`tapesctl` starts a loopback capture proxy, sets Claude Code's `ANTHROPIC_BASE_URL` to it, launches `claude`, and ships the captured turns to the server. Pass Claude flags after `--`:
 
 ```bash
-tapes start claude -- --worktree
+tapesctl start claude -- --worktree
 ```
 
 For a manually managed, fixed-port proxy:
@@ -31,18 +38,10 @@ ANTHROPIC_BASE_URL=http://localhost:8080 claude
 ## OpenCode
 
 ```bash
-tapes start opencode
+tapesctl start opencode --tapes-url http://localhost:8081
 ```
 
-On first use, choose Anthropic, OpenAI, or Ollama and a model. The choice is saved as `opencode.provider` and `opencode.model`. You can be explicit:
-
-```bash
-tapes start opencode --provider anthropic --model claude-sonnet-4-5
-tapes start opencode --provider openai --model gpt-5.2-codex
-tapes start opencode --provider ollama --model glm-4.7-flash
-```
-
-The launcher merges the user's existing OpenCode configuration into a temporary config, installs provider-specific proxy URLs, injects stored credentials, and restores normal behavior by deleting that temporary config at exit. It also selects the model on the command line. Switching provider or model inside OpenCode is not captured by the configured route; start a separate Tapes session instead.
+Switching provider or model inside OpenCode is not captured by the configured route; start a separate capture session instead.
 
 ## Ollama and generic clients
 
@@ -65,7 +64,7 @@ For another Anthropic-, OpenAI-, or Ollama-compatible application, configure its
 
 ```bash
 tapes status
-tapes sessions
+tapesctl sessions list --tapes-url http://localhost:8081
 ```
 
 ## OpenClaw
@@ -80,7 +79,7 @@ The read API health endpoint is separate from the proxy:
 
 ```bash
 curl http://localhost:8081/ping
-tapes sessions
+tapesctl sessions list --tapes-url http://localhost:8081
 ```
 
 Stop the foreground `tapes serve` process with `Ctrl-C`. `tapes local down` removes bootstrap containers but keeps PostgreSQL data unless `--wipe` is supplied.

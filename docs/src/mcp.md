@@ -39,7 +39,7 @@ tapes serve
 The bundled local setup configures PostgreSQL/pgvector and Ollama embeddings, and `tapes serve` embeds spans by default. Capture or seed data before searching:
 
 ```bash
-tapes seed --demo
+tapesctl seed --tapes-url http://localhost:8081
 ```
 
 If search dependencies are not configured, the endpoint serves an MCP server with no tools. If storage is configured but the span embedding projection is not initialized, search reports an error until the embed worker populates it.

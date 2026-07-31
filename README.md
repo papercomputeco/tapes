@@ -103,17 +103,26 @@ You can also provide the key with `OPENAI_API_KEY` instead of `tapes auth openai
 When OpenAI is selected without a key, Tapes fails at startup with an authentication
 configuration error from the OpenAI embedder.
 
+### Capturing and reading: `tapesctl`
+
+`tapes` is the server. Capturing a session and reading one back are client
+concerns, and they live in [`tapesctl`](https://github.com/papercomputeco/tapesctl):
+
+```bash
+curl -sSfL https://download.tapes.dev/tapesctl/install | bash
+```
+
 Start with demo data so every command below has something to show — this path
 works end to end before you wire up a real agent:
 
 ```bash
-tapes seed --demo
+tapesctl seed --tapes-url http://localhost:8081
 ```
 
 List captured sessions and their ids:
 
 ```bash
-tapes sessions
+tapesctl sessions list --tapes-url http://localhost:8081
 ```
 
 Browse sessions and drill into a single session in the deck TUI:
@@ -123,14 +132,13 @@ tapes deck
 ```
 
 Export a captured session as JSONL — the API's session→traces→spans projection
-verbatim. `tapes export` is a thin client of `GET /v1/sessions/{id}/export`, so
-it needs a running API (pass `--api-target`, or start one with `tapes serve`).
-The full span tree is included by default; pass `--detail traces` for turn
-headers only. Pass a full session id or its short prefix:
+verbatim. `tapesctl export` is a thin client of `GET /v1/sessions/{id}/export`,
+so it needs a running API. The full span tree is included by default; pass
+`--detail traces` for turn headers only:
 
 ```bash
-tapes export <session-id> --api-target http://127.0.0.1:8081 -o session.jsonl
-tapes export <session-id> --detail traces
+tapesctl export <session-id> --tapes-url http://localhost:8081 -o session.jsonl
+tapesctl export <session-id> --detail traces
 ```
 
 Search across captured spans (individual main-conversation LLM spans, with
@@ -146,8 +154,9 @@ the proxy:
 
 ```bash
 tapes local down --wipe && tapes local up   # recreate the DB, clearing the demo
-tapes start claude                          # or send any client at http://localhost:8080
+tapesctl start claude --tapes-url http://localhost:8081
 ```
 
-`tapes start` launches the agent wired to the proxy and tags the session. See
-the [agent guides](https://tapes.dev/guides) for Claude Code, OpenCode, and more.
+`tapesctl start` launches the agent under a just-in-time capture proxy and ships
+the turns to this server. See the [agent guides](https://tapes.dev/guides) for
+Claude Code, OpenCode, and more.

@@ -1,5 +1,5 @@
-// Package skillcmder provides the `tapes skill` CLI commands for generating,
-// listing, and syncing agent skills from session data.
+// Package skillcmder provides the `tapes skill` CLI commands for generating
+// and listing agent skills from session data.
 package skillcmder
 
 import "github.com/spf13/cobra"
@@ -8,22 +8,21 @@ import "github.com/spf13/cobra"
 func NewSkillCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "skill",
-		Short: "Generate, list, and sync agent skills from sessions",
+		Short: "Generate and list agent skills from sessions",
 		Long: `Extract reusable patterns from tapes sessions and output them as
-agent skill files. By default, skills sync to .agents/skills/ for use with any
-coding agent. Use --claude to sync to Claude Code's .claude/skills/ directory.
+agent skill files under ~/.tapes/skills/.
+
+Authoring a skill reads session data, so it lives here. Installing one into an
+agent's skills directory is a client concern: use 'tapesctl skill sync'.
 
 Examples:
   tapes skill generate abc123 --name debug-react-hooks
   tapes skill generate --name my-skill   (from the current session)
-  tapes skill list
-  tapes skill sync debug-react-hooks
-  tapes skill sync debug-react-hooks --claude`,
+  tapes skill list`,
 	}
 
 	cmd.AddCommand(newGenerateCmd())
 	cmd.AddCommand(newListCmd())
-	cmd.AddCommand(newSyncCmd())
 
 	return cmd
 }

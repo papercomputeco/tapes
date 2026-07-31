@@ -1,20 +1,18 @@
 # CLI reference
 
-Run `tapes <command> --help` for the complete, version-matched flag list. The commands below are the normal user surface.
+`tapes` is the server. It runs the services, owns the database, and carries the operator tooling around them. Capturing a session and reading one back are client concerns and live in [`tapesctl`](https://github.com/papercomputeco/tapesctl) — see [The client CLI](#the-client-cli) below.
+
+Run `tapes <command> --help` for the complete, version-matched flag list.
 
 | Command | Use |
 | --- | --- |
 | `tapes init [--preset ...]` | Create a local `.tapes/` configuration directory. |
 | `tapes local [up|status|down]` | Manage local PostgreSQL and Ollama dependencies. |
 | `tapes serve` | Run proxy, read API, private ingest API, derive worker, and optional embed worker together. |
-| `tapes start [agent]` | Start services, optionally launching Claude, OpenCode, or Codex. |
 | `tapes status` | Show active config, provider/upstream, API reachability, and capture summary. |
-| `tapes sessions` | List recent session IDs and summaries. |
 | `tapes deck` | Browse the session ROI dashboard and drill into traces/spans. |
 | `tapes search <query>` | Semantic search over main-conversation LLM spans. |
-| `tapes export <session-id>` | Stream the API session projection as JSONL. |
-| `tapes seed --demo` | Seed idempotent demo capture data through the normal write path. |
-| `tapes skill generate|list|sync` | Create and distribute reusable agent skills. |
+| `tapes skill generate|list` | Author reusable agent skills from session data. |
 | `tapes auth` | Store OpenAI or Anthropic credentials in `.tapes/credentials.toml`. |
 | `tapes config get|set|list` | Manage persistent scalar settings. |
 | `tapes version` | Print version information. |
@@ -47,33 +45,37 @@ tapes serve ingest
 
 The last three are operator-oriented: the derive worker projects dirty sessions, the independent embed worker populates search vectors, and the private ingest sidecar receives completed turns from a trusted gateway. See [HTTP APIs](./apis.md) before exposing any endpoint.
 
-## Launching agents
+## The client CLI
+
+Launching an agent under capture, listing sessions, exporting one, and seeding demo data are all client operations against a running server. They live in `tapesctl`:
 
 ```bash
-tapes start
-tapes start claude
-tapes start claude -- --dangerously-skip-permissions
-tapes start opencode --provider anthropic --model claude-sonnet-4-5
-tapes start codex
-tapes start --logs
+curl -sSfL https://download.tapes.dev/tapesctl/install | bash
 ```
 
-Arguments after `--` go directly to the agent. See [Agent integrations](./integrations.md).
+```bash
+tapesctl start claude --tapes-url http://localhost:8081
+tapesctl sessions list --tapes-url http://localhost:8081
+tapesctl export <session-id> --detail spans -o session.jsonl
+tapesctl seed --tapes-url http://localhost:8081
+tapesctl skill sync <name> --claude
+```
 
-## Listing, exporting, and piping
+Every `tapesctl` command takes `--tapes-url`, falling back to `TAPES_URL`. Arguments after `--` go directly to the agent. See [Agent integrations](./integrations.md) and the [`tapesctl` README](https://github.com/papercomputeco/tapesctl) for the full surface.
+
+## Searching
 
 ```bash
-tapes sessions
-tapes sessions --quiet | head -1
-tapes export <session-id> --detail spans -o session.jsonl
 tapes search "database migration" --top 10
 tapes search "database migration" --quiet
 ```
 
-`sessions` can connect to the API with `--api-target` or open PostgreSQL through a local in-process API with `--postgres`. `export` always calls a running read API. Full IDs and unambiguous short prefixes are accepted by export.
+`search` calls a running read API; point it with `--api-target`.
 
 ## Commands not intended as everyday workflow
 
 `backfill` is for replaying existing capture artifacts into a deployment. `dev` contains developer maintenance utilities. Consult their `--help` only when operating those workflows.
 
 Tapes no longer provides `chat` or `checkout` commands. It captures external agents; it does not host a chat client or expose history branching.
+
+The `start`, `export`, `seed`, `sessions`, and `skill sync` commands have moved to `tapesctl`; `tapes` keeps the server and the operator tooling.

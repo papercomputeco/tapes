@@ -2,9 +2,19 @@
 
 ## Install a release
 
+`tapes` is the server — it runs the services and owns the database:
+
 ```bash
 curl -fsSL https://download.tapes.dev/install | bash
 tapes version
+```
+
+[`tapesctl`](https://github.com/papercomputeco/tapesctl) is the client. It
+captures sessions and reads them back, and is what you use day to day:
+
+```bash
+curl -sSfL https://download.tapes.dev/tapesctl/install | bash
+tapesctl version
 ```
 
 ## Bootstrap local dependencies
@@ -55,7 +65,7 @@ tapes status
 Seed representative capture data through the normal ingest and derive path:
 
 ```bash
-tapes seed --demo
+tapesctl seed --tapes-url http://localhost:8081
 tapes deck
 ```
 

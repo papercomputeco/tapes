@@ -18,8 +18,7 @@ import (
 const authLongDesc string = `Store API credentials for LLM providers.
 
 Credentials are stored in credentials.toml in the .tapes/ directory and
-automatically injected as environment variables when launching agents
-via tapes start.
+are read by the proxy when it forwards a captured call upstream.
 
 For OpenAI, use a service account key (sk-svcacct-...) with "All"
 permissions from platform.openai.com/api-keys. Personal project keys
@@ -116,7 +115,7 @@ func runAuth(provider, configDir string) error {
 			fmt.Printf("  %s Consider using a service account key (sk-svcacct-...) from platform.openai.com/api-keys.\n",
 				cliui.WarnStyle.Render(" "))
 		}
-		fmt.Printf("  %s Codex auth.json will be temporarily configured when running 'tapes start codex'.\n",
+		fmt.Printf("  %s Codex auth.json will be temporarily configured when codex is launched under capture.\n",
 			cliui.DimStyle.Render(" "))
 	}
 

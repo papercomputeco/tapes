@@ -62,7 +62,7 @@ The embed worker runs a bounded pass at startup and periodically thereafter. Its
 ## Troubleshooting
 
 1. Confirm the API is reachable with `tapes status`.
-2. Confirm sessions and derived spans exist with `tapes sessions` and `tapes deck`.
+2. Confirm sessions and derived spans exist with `tapesctl sessions list` and `tapes deck`.
 3. Confirm the embedding service is running; for Ollama, use `curl http://localhost:11434/api/tags`.
 4. Confirm `embedding.model` and `embedding.dimensions` match.
 5. In a split deployment, verify the embed worker is running. A configured but uninitialized search surface returns HTTP `503`.

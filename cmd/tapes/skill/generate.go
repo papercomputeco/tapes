@@ -208,7 +208,7 @@ func (c *generateCommander) run(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(w, "\n  Saved to %s\n", path)
-	fmt.Fprintf(w, "  Run 'tapes skill sync %s' to install for Claude Code\n\n", c.name)
+	fmt.Fprintf(w, "  Run 'tapesctl skill sync %s' to install it for an agent\n\n", c.name)
 	return nil
 }
 

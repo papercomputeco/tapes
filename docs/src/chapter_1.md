@@ -6,10 +6,13 @@ Use Tapes to inspect agent work, measure token use and cost, search previous wor
 
 ## Quickstart
 
-Install the CLI:
+Tapes ships as two binaries: `tapes`, the server, and
+[`tapesctl`](https://github.com/papercomputeco/tapesctl), the client that
+captures sessions and reads them back. Install both:
 
 ```bash
 curl -fsSL https://download.tapes.dev/install | bash
+curl -sSfL https://download.tapes.dev/tapesctl/install | bash
 ```
 
 Docker is required for the bundled local dependencies. Start PostgreSQL with pgvector and Ollama with the default `embeddinggemma` embedding model:
@@ -29,8 +32,8 @@ tapes serve
 This runs the capture proxy on `http://localhost:8080`, read API on `http://localhost:8081`, private ingest API on `http://localhost:8082`, derive pipeline, and span-embedding pipeline. Seed data and browse it from another terminal:
 
 ```bash
-tapes seed --demo
-tapes sessions
+tapesctl seed --tapes-url http://localhost:8081
+tapesctl sessions list --tapes-url http://localhost:8081
 tapes deck
 ```
 
@@ -40,15 +43,15 @@ Search individual spans:
 tapes search "explain the retry logic"
 ```
 
-When ready to capture real work, launch a supported agent through Tapes:
+When ready to capture real work, launch a supported agent through the client:
 
 ```bash
-tapes start claude
+tapesctl start claude --tapes-url http://localhost:8081
 # or
-tapes start opencode
+tapesctl start opencode --tapes-url http://localhost:8081
 ```
 
-`tapes start` chooses local ports, starts the necessary services, launches the agent with its provider routed through the proxy, and tags the captured session. See [Agent integrations](./integrations.md) for manual and generic-proxy setups.
+`tapesctl start` launches the agent under a just-in-time capture proxy, routes its provider traffic through it, and ships the captured turns to the server. See [Agent integrations](./integrations.md) for manual and generic-proxy setups.
 
 ## Next steps
 

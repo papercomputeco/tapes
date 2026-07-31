@@ -9,7 +9,7 @@ tapes deck
 Deck reads the running API at `http://localhost:8081` by default. To explore without capturing an agent first:
 
 ```bash
-tapes seed --demo
+tapesctl seed --tapes-url http://localhost:8081
 tapes deck
 ```
 
@@ -48,4 +48,4 @@ The footer displays context-sensitive keys. Common controls include:
 
 ![Deck session drilldown](./assets/drill.png)
 
-Deck has no `--demo` or `--web` mode. Seed with `tapes seed --demo`; enable the separate minimal API browser UI, when wanted, with `tapes serve --api-web-ui`.
+Deck has no `--demo` or `--web` mode. Seed with `tapesctl seed`; enable the separate minimal API browser UI, when wanted, with `tapes serve --api-web-ui`.
