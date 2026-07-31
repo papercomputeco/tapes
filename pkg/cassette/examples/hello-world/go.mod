@@ -2,7 +2,10 @@ module github.com/papercomputeco/tapes/pkg/cassette/examples/hello-world
 
 go 1.26.1
 
-require github.com/jackc/pgx/v5 v5.8.0
+require (
+	github.com/jackc/pgx/v5 v5.8.0
+	github.com/papercomputeco/tapes v0.29.1-0.20260731172125-6224e51e362e
+)
 
 require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
@@ -15,11 +18,3 @@ require (
 	golang.org/x/text v0.34.0 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
-
-// The example uses the same OpenAPI library core does, so the document a
-// cassette publishes and the document core admits are built by one
-// implementation. It is a separate module, so the dependency is a local
-// replace rather than a version.
-require github.com/papercomputeco/tapes v0.0.0
-
-replace github.com/papercomputeco/tapes => ../../../..
