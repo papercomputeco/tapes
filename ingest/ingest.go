@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"strings"
 	"sync"
@@ -683,11 +684,25 @@ func (s *Server) reduceRawOnly(ctx context.Context, turn *TurnPayload) json.RawM
 // source to fall back on — ingest's own clock measures the dispatch hop,
 // not the call — so the honest outcome is an unstamped duration, counted
 // as a fallback so it is visible rather than silent.
+// maxElapsedSeconds bounds a plausible single-call duration. Beyond it
+// the value is treated as corrupt rather than stamped into timing data:
+// a week-long LLM call is not a call, it is a producer clock bug.
+const maxElapsedSeconds = 7 * 24 * 60 * 60
+
+// usableElapsed reports whether the meta elapsed value can safely be
+// turned into a duration or a timestamp offset. NaN and ±Inf survive
+// JSON-adjacent producers more often than one would hope, and either
+// would poison int64 conversion silently.
+func usableElapsed(elapsed float64) bool {
+	return !math.IsNaN(elapsed) && !math.IsInf(elapsed, 0) &&
+		elapsed > 0 && elapsed <= maxElapsedSeconds
+}
+
 func (s *Server) stampDuration(resp *llm.ChatResponse, turn *TurnPayload) {
 	if resp == nil {
 		return
 	}
-	if turn.Meta.ElapsedSeconds <= 0 {
+	if !usableElapsed(turn.Meta.ElapsedSeconds) {
 		s.metrics.ObserveRawOnlyStamp(turn.Provider, StampFieldDuration, StampSourceFallback)
 		return
 	}
@@ -756,7 +771,7 @@ func (s *Server) stampCaptureTime(resp *llm.ChatResponse, turn *TurnPayload) {
 		// completion instant CreatedAt denotes. Without it the request
 		// instant still stands — early by the call's duration, which is a
 		// far smaller error than the ingest hop it replaces.
-		if turn.Meta.ElapsedSeconds > 0 {
+		if usableElapsed(turn.Meta.ElapsedSeconds) {
 			requested = requested.Add(time.Duration(turn.Meta.ElapsedSeconds * float64(time.Second)))
 		}
 		resp.CreatedAt = requested

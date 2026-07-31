@@ -128,11 +128,13 @@ type RederiveReport struct {
 }
 
 // rawMetaFields is the minimal meta decode the deriver needs: original
-// capture time for chronology (backfilled rows carry ts_request; live
-// rows fall back to received_at).
+// capture time for chronology (captured_at is the completion instant
+// outright; backfilled rows carry ts_request; live rows fall back to
+// received_at).
 type rawMetaFields struct {
-	TsRequest string `json:"ts_request"`
-	ThreadID  string `json:"thread_id"`
+	CapturedAt string `json:"captured_at"`
+	TsRequest  string `json:"ts_request"`
+	ThreadID   string `json:"thread_id"`
 }
 
 // threadIDFromMeta resolves the capture-side harness sub-thread id
@@ -146,12 +148,19 @@ func threadIDFromMeta(meta json.RawMessage) string {
 }
 
 // CapturedAt resolves a raw record's original capture time: the
-// adapter's request timestamp when the meta block carries one,
-// otherwise the ingest receive time.
+// capture-side completion instant when the meta block carries one,
+// else the adapter's request timestamp, otherwise the ingest receive
+// time. The precedence mirrors ingest's raw-only CreatedAt stamping so
+// the two stay on one clock.
 func CapturedAt(rec *storage.RawTurnRecord) time.Time {
 	var meta rawMetaFields
 	if len(rec.Meta) > 0 {
 		_ = json.Unmarshal(rec.Meta, &meta)
+	}
+	if meta.CapturedAt != "" {
+		if ts, err := time.Parse(time.RFC3339Nano, meta.CapturedAt); err == nil {
+			return ts
+		}
 	}
 	if meta.TsRequest != "" {
 		if ts, err := time.Parse(time.RFC3339Nano, meta.TsRequest); err == nil {
