@@ -41,6 +41,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -323,12 +324,7 @@ var _ = Describe("envelope fixture corpus (parity gate)", func() {
 				what: "percent-decoding of non-ASCII",
 				why:  "the stored value is the logical value; a reader that stored the escaped form would force a decoder into every consumer",
 				holds: func(c corpusCase) bool {
-					for _, f := range []string{c.Envelope.Cwd, c.Envelope.Name} {
-						if hasNonASCII(f) {
-							return true
-						}
-					}
-					return false
+					return slices.ContainsFunc([]string{c.Envelope.Cwd, c.Envelope.Name}, hasNonASCII)
 				},
 			},
 			{
@@ -457,16 +453,10 @@ var _ = Describe("envelope fixture corpus (parity gate)", func() {
 
 		It("has at least one case per rule", func() {
 			for _, r := range rules {
-				covered := false
-				for _, c := range cases {
-					if r.holds(c) {
-						covered = true
-						break
-					}
-				}
+				covered := slices.ContainsFunc(cases, r.holds)
 				Expect(covered).To(BeTrue(), strings.Join([]string{
-					fmt.Sprintf("no case covers: %s", r.what),
-					fmt.Sprintf("why it matters: %s", r.why),
+					"no case covers: " + r.what,
+					"why it matters: " + r.why,
 					"",
 					"Either a case was deleted or renamed away from this behaviour, or the rule",
 					"was never pinned. Add a case rather than relaxing the rule — the contract is",
