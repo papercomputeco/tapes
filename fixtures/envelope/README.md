@@ -19,6 +19,7 @@ fixtures make their agreement executable: one set of cases both sides test again
 ```
 fixtures/envelope/
   README.md          ← this file
+  DIGEST             ← seals the case set; vendored copies recompute and compare
   cases/*.json       ← one case per file; consumers glob this directory
 ```
 
@@ -128,3 +129,46 @@ case through `sessionEnvelopeFromHeaders` + `Validate` and asserts the declared 
 / `error`. Keep it green — it is what stops these fixtures from silently drifting from the
 parser. Vendor this directory into other consumers (a small sync script keeps one copy
 authoritative) so every side tests against identical bytes.
+
+## `DIGEST` — what makes "identical bytes" checkable
+
+Conformance to a vendored copy only proves parity if every copy is the same corpus.
+Nothing about vendoring guarantees that: a hand-edit to one copy leaves two
+implementations testing against different bytes while both stay green.
+
+`DIGEST` closes that. It is a single line, `sha256:<hex>`, over the case set:
+
+> for each `cases/*.json`, sorted by base name, feed `"<basename>  <sha256-hex-of-file-bytes>\n"`
+> into a SHA-256; the digest is the hex of that hash.
+
+Deliberately trivial, so a consumer in any language can reimplement it from that
+sentence without a canonical-JSON library. It hashes **raw bytes**, not parsed JSON,
+because the sync script copies bytes — a reformat is drift too. It covers **names as
+well as contents**, so an addition, a deletion, and a rename are all caught rather than
+only an edit to a file that already existed.
+
+Consumers vendor `DIGEST` alongside `cases/` and recompute it in their own test suite.
+A stale or locally-edited copy then fails in the consumer's own CI, with no cross-repo
+checkout needed. `pkg/backfill/envelope_corpus_test.go` is this repo's copy of that
+check, and it prints the new value when the corpus legitimately changes.
+
+## Adding a case
+
+1. Write `cases/<name>.json`. `name` must match the filename — consumers key skips and
+   deviation entries off it. Use the synthetic identities above; never a real org,
+   subject, or session id.
+2. Pick `direction` honestly. `encode` is the lossy direction and **must** carry
+   `encode_from`; `roundtrip` and `decode` must not (it would duplicate `envelope`).
+3. Derive `headers` from the encoding rules above by hand, so the bytes stay auditable.
+4. Fill in `grounding` — the rule the case pins, in behavioral terms. A case that cannot
+   say which rule it pins cannot be reviewed, and the gate rejects it.
+5. Run the corpus gate, copy the new digest it prints into `DIGEST`, and commit both.
+6. Re-sync every vendored copy from the same commit, and land any parser change the new
+   case forces in the same PR — the corpus is the contract, so both halves travel
+   together.
+
+`pkg/backfill/envelope_corpus_test.go` also asserts that the corpus still **covers** the
+rules this README claims, stated as properties rather than case names. Deleting the only
+case that exercises a rule is otherwise invisible: every remaining case passes and the
+contract quietly shrinks. If that gate says a rule is uncovered, add a case rather than
+relaxing the rule.

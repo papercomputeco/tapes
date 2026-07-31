@@ -155,6 +155,11 @@ test-run-id: ## Runs tests via "go test" in the Dagger services environment
 	$(call print-target)
 	dagger call test --run-id="$$(date +%s)"
 
+.PHONY: parity
+parity: ## Runs the envelope contract fixture gates (no services needed)
+	$(call print-target)
+	dagger call check-parity
+
 .PHONY: e2e-test
 e2e-test: ## Runs end-to-end tests with Postgres and Ollama via Dagger
 	$(call print-target)

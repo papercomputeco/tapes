@@ -1,0 +1,27 @@
+{
+  "name": "error-metadata-padded-base64",
+  "category": "error",
+  "harness": "claude",
+  "description": "Metadata encoded with base64 padding is not base64url(no-pad) and is dropped as a non-fatal malformed field, exactly like any other unparseable metadata.",
+  "direction": "decode",
+  "headers": {
+    "x-tapes-harness-id": "claude",
+    "x-tapes-harness-session-id": "11111111-1111-4111-8111-111111111111",
+    "x-tapes-harness-metadata": "eyJhIjoxfQ==",
+    "x-paper-auth-org-id": "00000000-0000-4000-8000-000000000001",
+    "x-paper-auth-subject": "user_synthetic_fixture_subject"
+  },
+  "envelope": {
+    "org_id": "00000000-0000-4000-8000-000000000001",
+    "auth_subject": "user_synthetic_fixture_subject",
+    "harness_id": "claude",
+    "harness_session_id": "11111111-1111-4111-8111-111111111111"
+  },
+  "error": {
+    "field": "harness_metadata",
+    "rule": "must be valid base64url(no-pad)",
+    "disposition": "drop-field"
+  },
+  "grounding": "The metadata alphabet is base64url without padding, and it is the only accepted alphabet. A payload that decodes only under a padded or std alphabet is not conformant and is dropped.",
+  "notes": "The bytes here are a well-formed JSON object ({\"a\":1}) under a padded alphabet, so this case does not test JSON validity — it tests that the alphabet itself is part of the contract. It is the case that separates a strict decoder from a permissive one that tries several alphabets before giving up. Both readings are individually defensible, which is exactly why the corpus has to pick one: a strict reader and a permissive reader handed these identical bytes produce different rows, and 'the same capture on two paths yields the same row' is the property the corpus exists to protect. Pinning no-pad here makes any permissive decoder visible as a deviation instead of as silent disagreement."
+}
