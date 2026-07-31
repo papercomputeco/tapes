@@ -29,14 +29,14 @@ import (
 
 // patchSession issues a PATCH request against the server with the given raw
 // JSON body (verbatim, so callers can omit fields or send explicit null),
-// optionally with the X-Tapes-Org-Id header, and decodes the response as a
+// optionally with the retired org header, and decodes the response as a
 // SessionDetailResponse on 200 or an llm.ErrorResponse otherwise.
 func patchSession(server *Server, path, org, rawBody string) (SessionDetailResponse, llm.ErrorResponse, int) {
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, path, bytes.NewBufferString(rawBody))
 	Expect(err).NotTo(HaveOccurred())
 	req.Header.Set("Content-Type", "application/json")
 	if org != "" {
-		req.Header.Set(orgIDHeader, org)
+		req.Header.Set(legacyOrgIDHeader, org)
 	}
 	resp, err := server.app.Test(req)
 	Expect(err).NotTo(HaveOccurred())
@@ -65,7 +65,8 @@ func patchSession(server *Server, path, org, rawBody string) (SessionDetailRespo
 
 var _ = Describe("PATCH /v1/sessions/:id (handleUpdateSession)", func() {
 	const sessionID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-	const org = "11111111-1111-1111-1111-111111111111"
+	// Reads are scoped to the single tenant, so seeded data must live there.
+	const org = singleTenantOrgID
 
 	var record storage.SessionRecord
 

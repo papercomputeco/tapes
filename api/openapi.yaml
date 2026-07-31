@@ -935,11 +935,6 @@ paths:
           default: 5
           minimum: 1
           type: integer
-      - description: Tenant org UUID (defaults to the nil org)
-        in: header
-        name: X-Tapes-Org-Id
-        schema:
-          type: string
       responses:
         "200":
           content:

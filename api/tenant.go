@@ -1,56 +1,23 @@
 package api
 
-import (
-	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
-)
-
-const (
-	// orgIDHeader carries the client-asserted tenant on read requests.
-	// There is no auth layer to verify it: the value is trusted the same
-	// way the ingest envelope's org_id and the admin handlers' body org_id
-	// are trusted. It exists so a read can be scoped to one tenant — a
-	// content hash that several tenants share would otherwise resolve to an
-	// arbitrary one of them.
-	orgIDHeader = "X-Tapes-Org-Id"
-
-	// orgIDLocal is the fiber Locals key the tenant middleware writes and
-	// the handlers read back.
-	orgIDLocal = "org_id"
-
-	// nilOrgID is the sentinel tenant used when no org header is supplied.
-	// It matches the nil-UUID bucket that legacy and non-session writes
-	// land in, so existing single-tenant callers keep working unchanged.
-	nilOrgID = "00000000-0000-0000-0000-000000000000"
-)
-
-// withOrgContext canonicalises the client-asserted org_id header onto the
-// request Locals. An absent or unparseable header falls back to the nil-org
-// sentinel so the downstream lookup is always org-scoped to a valid UUID.
-func (s *Server) withOrgContext(c *fiber.Ctx) error {
-	c.Locals(orgIDLocal, canonicalOrgID(c.Get(orgIDHeader)))
-	return c.Next()
-}
-
-// canonicalOrgID parses a raw header value to its canonical UUID string,
-// falling back to the nil-org sentinel when empty or malformed.
-func canonicalOrgID(raw string) string {
-	if raw == "" {
-		return nilOrgID
-	}
-	parsed, err := uuid.Parse(raw)
-	if err != nil {
-		return nilOrgID
-	}
-	return parsed.String()
-}
-
-// orgIDFromCtx reads the canonical tenant the middleware stored, defaulting
-// to the nil-org sentinel if the middleware did not run (e.g. in tests that
-// invoke a handler helper directly).
-func orgIDFromCtx(c *fiber.Ctx) string {
-	if v, ok := c.Locals(orgIDLocal).(string); ok && v != "" {
-		return v
-	}
-	return nilOrgID
-}
+// singleTenantOrgID is the org every row in this deployment belongs to.
+//
+// A tapes deployment serves exactly one tenant: it runs in that tenant's
+// namespace against that tenant's own database, and the gateway in front of
+// it admits only tokens whose org_id claim matches that tenant's WorkOS
+// organization. There is nothing for a read to disambiguate, so reads scope
+// to the same sentinel the write path already stores.
+//
+// This replaces the X-Tapes-Org-Id request header, which let a caller name
+// its own tenant on every read with nothing verifying the claim — the header
+// was trusted the same way the ingest envelope's org_id is, which is to say
+// not at all. Anyone who could reach the read API could read any org by
+// asserting it. Tenancy is now settled before a request reaches this process,
+// by something positioned to check it.
+//
+// The constant is threaded through the handlers rather than pushed down into
+// the storage layer on purpose. The org_id columns and their composite
+// primary keys still exist; keeping the value at the handler boundary leaves
+// exactly one seam to delete when they go, instead of scattering the
+// assumption across the query layer.
+const singleTenantOrgID = "00000000-0000-0000-0000-000000000000"

@@ -48,7 +48,7 @@ func (s *Server) handleSeedDemo(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "overwrite is no longer supported; seeding is idempotent against the raw layer"})
 	}
 
-	report, err := seed.Run(c.Context(), s.driver, s.logger, orgIDFromCtx(c))
+	report, err := seed.Run(c.Context(), s.driver, s.logger, singleTenantOrgID)
 	if err != nil {
 		if errors.Is(err, seed.ErrUnsupportedDriver) {
 			return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: err.Error()})

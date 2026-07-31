@@ -125,7 +125,7 @@ func getRaw(server *Server, path, org string) (*http.Response, []byte) {
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 	Expect(err).NotTo(HaveOccurred())
 	if org != "" {
-		req.Header.Set(orgIDHeader, org)
+		req.Header.Set(legacyOrgIDHeader, org)
 	}
 	resp, err := server.app.Test(req, -1)
 	Expect(err).NotTo(HaveOccurred())
@@ -136,7 +136,8 @@ func getRaw(server *Server, path, org string) (*http.Response, []byte) {
 }
 
 var _ = Describe("GET /v1/sessions/:id/export", func() {
-	const org = "11111111-1111-1111-1111-111111111111"
+	// Reads are scoped to the single tenant, so seeded data must live there.
+	const org = singleTenantOrgID
 	const sessionID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 
 	var record storage.SessionRecord
@@ -284,16 +285,25 @@ var _ = Describe("GET /v1/sessions/:id/export", func() {
 		Expect(disposition).To(ContainSubstring(".jsonl"))
 	})
 
-	// T-5: cross-org -> 404, no disclosure.
-	It("returns 404 when the session belongs to a different org", func() {
+	// T-5: a caller cannot redirect the export at another tenant.
+	//
+	// This used to assert the inverse — that naming a foreign org returned
+	// 404 — which quietly conceded that the caller got to choose the org at
+	// all. It chose it on an unverified header, so the same mechanism that
+	// produced the 404 would have produced someone else's data had the org
+	// existed. The lookup is now pinned to this deployment's tenant and the
+	// asserted value is inert.
+	It("ignores a client-asserted org and keeps the export scoped to the single tenant", func() {
 		drv := newDriverWithSession()
 		server := newExportServer(drv)
 
 		otherOrg := "22222222-2222-2222-2222-222222222222"
-		resp, body := getRaw(server, "/v1/sessions/"+sessionID+"/export", otherOrg)
-		Expect(resp.StatusCode).To(Equal(fiber.StatusNotFound))
-		Expect(string(body)).NotTo(ContainSubstring("t1"))
-		Expect(drv.lastGetOrg).To(Equal(otherOrg))
+		resp, _ := getRaw(server, "/v1/sessions/"+sessionID+"/export", otherOrg)
+		Expect(resp.StatusCode).To(Equal(fiber.StatusOK),
+			"the asserted org must not change which tenant is read")
+		Expect(drv.lastGetOrg).NotTo(Equal(otherOrg),
+			"a client-asserted tenant must never reach the storage lookup")
+		Expect(drv.lastGetOrg).To(Equal(singleTenantOrgID))
 	})
 
 	It("returns 404 when the session does not exist", func() {

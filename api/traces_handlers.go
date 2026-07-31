@@ -239,7 +239,7 @@ func (s *Server) handleGetSessionTraces(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id must be a valid UUID"})
 	}
 
-	orgID := orgIDFromCtx(c)
+	orgID := singleTenantOrgID
 	sess, err := sessions.GetSessionRecord(c.Context(), orgID, id)
 	if err != nil {
 		s.logger.Error("get session for traces", "id", id, "error", err)

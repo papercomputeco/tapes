@@ -262,11 +262,10 @@ func (s *Server) handleGenerateSkill(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "llm provider not configured"})
 	}
 
-	// Read transcripts through an in-process, org-scoped querier rather than
-	// a loopback HTTP self-call: the self-call sent no X-Tapes-Org-Id, so in
-	// staging/prod the trace reads hit the nil-org sentinel and generated an
-	// empty skill for the real tenant.
-	query, ok := s.skillTraceQuerier(orgIDFromCtx(c))
+	// Read transcripts through an in-process querier rather than a loopback
+	// HTTP self-call: the round trip through the pod's own listener bought
+	// nothing but a JWT handshake and a connection.
+	query, ok := s.skillTraceQuerier(singleTenantOrgID)
 	if !ok {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "skills generation not supported by this backend"})
 	}
@@ -309,7 +308,7 @@ func (s *Server) handleGenerateSkill(c *fiber.Ctx) error {
 		UpdatedAt:               now,
 	}
 
-	saved, err := store.UpsertSkill(c.Context(), orgIDFromCtx(c), rec)
+	saved, err := store.UpsertSkill(c.Context(), singleTenantOrgID, rec)
 	if err != nil {
 		s.logger.Error("persist skill", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to persist skill"})
@@ -337,7 +336,7 @@ func (s *Server) handleGetSkill(c *fiber.Ctx) error {
 		return nil
 	}
 
-	rec, err := store.GetSkill(c.Context(), orgIDFromCtx(c), c.Params("id"))
+	rec, err := store.GetSkill(c.Context(), singleTenantOrgID, c.Params("id"))
 	if err != nil {
 		s.logger.Error("get skill", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to fetch skill"})
@@ -376,7 +375,7 @@ func (s *Server) handleListSkills(c *fiber.Ctx) error {
 	if !ok {
 		return nil
 	}
-	orgID := orgIDFromCtx(c)
+	orgID := singleTenantOrgID
 	subject := authSubjectFromCtx(c)
 
 	limit := defaultSkillsLimit
@@ -472,7 +471,7 @@ func (s *Server) handleListSessionSkills(c *fiber.Ctx) error {
 	if !ok {
 		return nil
 	}
-	recs, err := store.ListSkillsBySession(c.Context(), orgIDFromCtx(c), c.Params("id"))
+	recs, err := store.ListSkillsBySession(c.Context(), singleTenantOrgID, c.Params("id"))
 	if err != nil {
 		s.logger.Error("list session skills", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list skills"})
@@ -518,7 +517,7 @@ func (s *Server) handleUpdateSkill(c *fiber.Ctx) error {
 	if !ok {
 		return nil
 	}
-	orgID := orgIDFromCtx(c)
+	orgID := singleTenantOrgID
 	existing, err := store.GetSkill(c.Context(), orgID, c.Params("id"))
 	if err != nil {
 		s.logger.Error("get skill for update", "error", err)
@@ -591,7 +590,7 @@ func (s *Server) handleDeleteSkill(c *fiber.Ctx) error {
 	if !ok {
 		return nil
 	}
-	orgID := orgIDFromCtx(c)
+	orgID := singleTenantOrgID
 	existing, err := store.GetSkill(c.Context(), orgID, c.Params("id"))
 	if err != nil {
 		s.logger.Error("get skill for delete", "error", err)
@@ -669,7 +668,7 @@ func (s *Server) handleCreateSkill(c *fiber.Ctx) error {
 	if slug == "" {
 		slug = "new-skill"
 	}
-	orgID := orgIDFromCtx(c)
+	orgID := singleTenantOrgID
 
 	now := time.Now().UTC()
 	rec := storage.SkillRecord{
@@ -727,7 +726,7 @@ func (s *Server) handlePublishSkill(c *fiber.Ctx) error {
 	if !ok {
 		return nil
 	}
-	orgID := orgIDFromCtx(c)
+	orgID := singleTenantOrgID
 	existing, err := store.GetSkill(c.Context(), orgID, c.Params("id"))
 	if err != nil {
 		s.logger.Error("get skill for publish", "error", err)
@@ -819,7 +818,7 @@ func (s *Server) handleListSkillVersions(c *fiber.Ctx) error {
 	if !ok {
 		return nil
 	}
-	vers, err := store.ListSkillVersions(c.Context(), orgIDFromCtx(c), c.Params("id"))
+	vers, err := store.ListSkillVersions(c.Context(), singleTenantOrgID, c.Params("id"))
 	if err != nil {
 		s.logger.Error("list skill versions", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list versions"})
@@ -851,7 +850,7 @@ func (s *Server) handleDuplicateSkill(c *fiber.Ctx) error {
 	if !ok {
 		return nil
 	}
-	orgID := orgIDFromCtx(c)
+	orgID := singleTenantOrgID
 	existing, err := store.GetSkill(c.Context(), orgID, c.Params("id"))
 	if err != nil {
 		s.logger.Error("get skill for duplicate", "error", err)
@@ -902,7 +901,7 @@ func (s *Server) handleSkillMarkdown(c *fiber.Ctx) error {
 	if !ok {
 		return nil
 	}
-	rec, err := store.GetSkill(c.Context(), orgIDFromCtx(c), c.Params("id"))
+	rec, err := store.GetSkill(c.Context(), singleTenantOrgID, c.Params("id"))
 	if err != nil {
 		s.logger.Error("get skill for markdown", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to fetch skill"})
@@ -913,7 +912,7 @@ func (s *Server) handleSkillMarkdown(c *fiber.Ctx) error {
 
 	// Count the download as a real usage signal (best-effort — never fail the
 	// download over a counter write).
-	if err := store.IncrementSkillDownloads(c.Context(), orgIDFromCtx(c), rec.ID); err != nil {
+	if err := store.IncrementSkillDownloads(c.Context(), singleTenantOrgID, rec.ID); err != nil {
 		s.logger.Warn("increment skill downloads", "error", err)
 	}
 

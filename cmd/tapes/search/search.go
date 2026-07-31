@@ -29,7 +29,6 @@ type searchCommander struct {
 	topK        int
 	quiet       bool
 	spans       bool
-	orgID       string
 	apiTarget   string
 	debug       bool
 	resultCount int
@@ -107,7 +106,6 @@ func NewSearchCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&cmder.quiet, "quiet", "q", false, "Output only session IDs, one per line (for piping)")
 	cmd.Flags().BoolVar(&cmder.spans, "spans", false, "Deprecated: span search is the default; this flag is a no-op")
 	_ = cmd.Flags().MarkDeprecated("spans", "span search is the default mode now")
-	cmd.Flags().StringVar(&cmder.orgID, "org", "", "Tenant org UUID sent as X-Tapes-Org-Id (default: the nil org)")
 	config.AddStringFlag(cmd, cmder.flags, config.FlagAPITarget, &cmder.apiTarget)
 
 	return cmd
@@ -124,7 +122,7 @@ func (c *searchCommander) run() error {
 // runSpans executes a span search and renders per-span hits with
 // their trace/turn context.
 func (c *searchCommander) runSpans() error {
-	output, err := SearchSpansAPI(c.apiTarget, c.query, c.orgID, c.topK)
+	output, err := SearchSpansAPI(c.apiTarget, c.query, c.topK)
 	if err != nil {
 		return err
 	}
@@ -193,9 +191,8 @@ func (c *searchCommander) printSpanResult(rank int, result api.SpanSearchResult)
 }
 
 // SearchSpansAPI calls the tapes span search API and returns the
-// parsed output. orgID may be empty (the nil tenant).
-func SearchSpansAPI(apiTarget, query, orgID string, topK int) (*api.SpanSearchOutput, error) {
-	body, err := getSearch(apiTarget, "/v1/search/spans", query, orgID, topK)
+func SearchSpansAPI(apiTarget, query string, topK int) (*api.SpanSearchOutput, error) {
+	body, err := getSearch(apiTarget, "/v1/search/spans", query, topK)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +205,7 @@ func SearchSpansAPI(apiTarget, query, orgID string, topK int) (*api.SpanSearchOu
 
 // getSearch issues one search GET against the tapes API and returns
 // the raw response body.
-func getSearch(apiTarget, path, query, orgID string, topK int) ([]byte, error) {
+func getSearch(apiTarget, path, query string, topK int) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -225,9 +222,6 @@ func getSearch(apiTarget, path, query, orgID string, topK int) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating search request: %w", err)
-	}
-	if orgID != "" {
-		req.Header.Set("X-Tapes-Org-Id", orgID)
 	}
 
 	resp, err := http.DefaultClient.Do(req)

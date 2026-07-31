@@ -48,7 +48,6 @@ type SpanSearchOutput struct {
 //	@Produce		json
 //	@Param			query			query		string	true	"Search query"
 //	@Param			top_k			query		int		false	"Maximum number of results to return"	default(5)	minimum(1)
-//	@Param			X-Tapes-Org-Id	header		string	false	"Tenant org UUID (defaults to the nil org)"
 //	@Success		200				{object}	SpanSearchOutput
 //	@Failure		400				{object}	llm.ErrorResponse	"Missing or invalid query parameters"
 //	@Failure		503				{object}	llm.ErrorResponse	"Span search is not configured or not yet initialized"
@@ -86,7 +85,7 @@ func (s *Server) handleSearchSpansEndpoint(c *fiber.Ctx) error {
 		})
 	}
 
-	hits, err := s.config.SpanSearcher.Search(c.Context(), orgIDFromCtx(c), embedding, topK)
+	hits, err := s.config.SpanSearcher.Search(c.Context(), singleTenantOrgID, embedding, topK)
 	if errors.Is(err, spanembed.ErrNotInitialized) {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(llm.ErrorResponse{
 			Error: err.Error(),

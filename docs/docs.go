@@ -238,12 +238,6 @@ const docTemplate = `{
                         "description": "Maximum number of results to return",
                         "name": "top_k",
                         "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Tenant org UUID (defaults to the nil org)",
-                        "name": "X-Tapes-Org-Id",
-                        "in": "header"
                     }
                 ],
                 "responses": {
