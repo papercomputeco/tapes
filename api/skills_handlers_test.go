@@ -162,7 +162,7 @@ func doJSON(server *Server, method, path, body, org, author string) (map[string]
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if org != "" {
-		req.Header.Set(orgIDHeader, org)
+		req.Header.Set(legacyOrgIDHeader, org)
 	}
 	if author != "" {
 		req.Header.Set(authSubjectHeader, author)
@@ -191,7 +191,7 @@ var _ = Describe("Skills handlers", func() {
 		seedStubSkill(stub, "debug-react-hooks")
 		server := newSkillsServer(stub)
 
-		org := "11111111-1111-1111-1111-111111111111"
+		org := singleTenantOrgID
 		body, status := doJSON(server, http.MethodGet, "/v1/skills/debug-react-hooks", "", org, "")
 		Expect(status).To(Equal(fiber.StatusOK))
 		Expect(stub.lastOrg).To(Equal(org), "the read must be scoped to the requested tenant")

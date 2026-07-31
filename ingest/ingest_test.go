@@ -15,6 +15,7 @@ import (
 	"github.com/papercomputeco/tapes/ingest"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
+	"github.com/papercomputeco/tapes/pkg/sessions"
 )
 
 // ollamaRequest is a minimal Ollama-format request for test fixtures.
@@ -208,6 +209,38 @@ var _ = Describe("Ingest Server", func() {
 				WithTimeout(2 * time.Second).WithPolling(25 * time.Millisecond).
 				Should(Equal(1))
 			Expect(driver.RawTurns()[0].Provider).To(Equal("ollama"))
+		})
+
+		It("stores a client-asserted envelope org under the single-tenant sentinel", func() {
+			// The deployment settles the org, not the caller: an envelope
+			// naming its own org must not create rows the nil-scoped read
+			// side will never surface.
+			payload := ingest.TurnPayload{
+				Provider:  "ollama",
+				AgentName: "test-agent",
+				Session: &sessions.IngestEnvelope{
+					OrgID:            "9f9f9f9f-9f9f-4f9f-8f9f-9f9f9f9f9f9f",
+					HarnessID:        "claude-code",
+					HarnessSessionID: "b6e7c3f2-0000-4000-8000-000000000001",
+				},
+				RawRequest: mustJSON(ollamaRequest{
+					Model:    "llama3",
+					Messages: []ollamaMessage{{Role: "user", Content: "Hello"}},
+				}),
+				Response: reducedResponse("llama3", "Hi!", nil),
+			}
+
+			body, _ := json.Marshal(payload)
+			resp, err := client.Post(baseURL+"/v1/ingest", "application/json", bytes.NewReader(body))
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+			Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
+
+			Eventually(driver.CountRaw).
+				WithTimeout(2 * time.Second).WithPolling(25 * time.Millisecond).
+				Should(Equal(1))
+			Expect(driver.RawTurns()[0].OrgID).To(BeEmpty(),
+				"the asserted org must be canonicalized to the sentinel, not stored")
 		})
 
 		It("accepts a valid openai turn", func() {

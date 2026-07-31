@@ -51,7 +51,7 @@ func (s *Server) handleStats(c *fiber.Ctx) error {
 		s.logger.Error("stats unavailable: driver is not a SpanStatsReader")
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to compute stats"})
 	}
-	stats, err := reader.AggregateSpanStats(c.Context(), orgIDFromCtx(c), since, until)
+	stats, err := reader.AggregateSpanStats(c.Context(), singleTenantOrgID, since, until)
 	if err != nil {
 		s.logger.Error("aggregate span stats", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to compute stats"})

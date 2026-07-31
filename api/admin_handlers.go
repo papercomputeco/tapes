@@ -37,7 +37,7 @@ func (s *Server) handleSeedDemo(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "overwrite is no longer supported; seeding is idempotent against the raw layer"})
 	}
 
-	report, err := seed.Run(c.Context(), s.driver, s.logger, orgIDFromCtx(c))
+	report, err := seed.Run(c.Context(), s.driver, s.logger, singleTenantOrgID)
 	if err != nil {
 		if errors.Is(err, seed.ErrUnsupportedDriver) {
 			return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: err.Error()})
@@ -108,7 +108,7 @@ func (s *Server) handleRawTurnAttributionRepair(c *fiber.Ctx) error {
 	if err := validateRawTurnAttributionRepairRequest(req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
 	}
-	req.OrgID = orgIDFromCtx(c)
+	req.OrgID = singleTenantOrgID
 	result, err := repairer.RepairRawTurnAttribution(c.Context(), "", req)
 	if err != nil {
 		switch {

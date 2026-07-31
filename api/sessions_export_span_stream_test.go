@@ -72,7 +72,8 @@ func (r *goldenSpanReader) ListRawTurnHeaders(context.Context, string, string, s
 }
 
 var _ = Describe("streamSessionSpanExport (spans-grain streaming render)", func() {
-	const org = "11111111-1111-1111-1111-111111111111"
+	// Reads are scoped to the single tenant, so seeded data must live there.
+	const org = singleTenantOrgID
 	const sessionID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 
 	// A LastSeenAt well outside the liveness window so sessionItemFromStorage

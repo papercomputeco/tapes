@@ -166,18 +166,22 @@ var _ = Describe("POST /v1/ingest/transcript", func() {
 		return resp
 	}
 
-	It("accepts a transcript and persists the payload org when no gateway identity arrives", func() {
+	It("stores a transcript under the single-tenant sentinel regardless of the payload org", func() {
 		resp := post(transcriptBody(payloadOrg, "user_payload"), nil)
 		defer resp.Body.Close()
 		Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
 
 		rec := driver.lastRecord()
 		Expect(rec.Source).To(Equal(storage.RawTurnSourceTranscript))
-		Expect(rec.OrgID).To(Equal(payloadOrg))
+		Expect(rec.OrgID).To(BeEmpty(),
+			"the caller does not get to pick an org; the deployment is the tenant")
 		Expect(rec.HarnessSessionID).To(Equal(sessionID))
 	})
 
-	It("resolves org and subject from the gateway identity headers over the payload", func() {
+	It("resolves the subject from the gateway header and ignores any org header", func() {
+		// Identity from the edge is the subject only. The org is settled by
+		// the deployment — an org header (which nothing legitimate ever
+		// stamped) must not store rows the nil-scoped read side would miss.
 		resp := post(transcriptBody(payloadOrg, "user_payload"), map[string]string{
 			ingest.HeaderPaperAuthOrgID:   gatewayOrg,
 			ingest.HeaderPaperAuthSubject: "user_gateway",
@@ -186,38 +190,15 @@ var _ = Describe("POST /v1/ingest/transcript", func() {
 		Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
 
 		rec := driver.lastRecord()
-		Expect(rec.OrgID).To(Equal(gatewayOrg))
+		Expect(rec.OrgID).To(BeEmpty())
 
 		var envelope sessions.IngestEnvelope
 		Expect(json.Unmarshal(rec.SessionEnvelope, &envelope)).To(Succeed())
-		Expect(envelope.OrgID).To(Equal(gatewayOrg))
+		Expect(envelope.OrgID).To(BeEmpty())
 		Expect(envelope.AuthSubject).To(Equal("user_gateway"))
 	})
 
-	It("resolves the gateway org even when the payload carries none", func() {
-		// The production shape: paperd serializes org_id as "" because it
-		// cannot know the platform org UUID; the gateway supplies it.
-		resp := post(transcriptBody("", ""), map[string]string{
-			ingest.HeaderPaperAuthOrgID: gatewayOrg,
-		})
-		defer resp.Body.Close()
-		Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
-		Expect(driver.lastRecord().OrgID).To(Equal(gatewayOrg))
-	})
-
-	It("rejects a gateway org that is not a UUID", func() {
-		// The override runs before envelope validation: a gateway
-		// stamping a malformed org (e.g. a WorkOS org_… id passed through
-		// verbatim) must reject loudly at the boundary, not silently
-		// misattribute the upload.
-		resp := post(transcriptBody("", ""), map[string]string{
-			ingest.HeaderPaperAuthOrgID: "org_01KTCRQ6ZEXXJKVPGXES8XRZVN",
-		})
-		defer resp.Body.Close()
-		Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
-	})
-
-	It("keeps the payload subject when only the org header arrives", func() {
+	It("keeps the payload subject when no gateway subject arrives", func() {
 		resp := post(transcriptBody(payloadOrg, "user_payload"), map[string]string{
 			ingest.HeaderPaperAuthOrgID: gatewayOrg,
 		})
@@ -226,7 +207,6 @@ var _ = Describe("POST /v1/ingest/transcript", func() {
 
 		var envelope sessions.IngestEnvelope
 		Expect(json.Unmarshal(driver.lastRecord().SessionEnvelope, &envelope)).To(Succeed())
-		Expect(envelope.OrgID).To(Equal(gatewayOrg))
 		Expect(envelope.AuthSubject).To(Equal("user_payload"))
 	})
 
@@ -355,12 +335,11 @@ var _ = Describe("POST /v1/ingest/transcript", func() {
 		Expect(file.Kind).To(Equal("interacted"))
 	})
 
-	It("dedups an unchanged re-push and segregates the dedup key by org", func() {
-		// Same content, same org → deduped. Same content, different org
-		// (header-resolved) → its own row: org is part of the raw-layer
-		// identity, which is exactly what makes header-spoofed
-		// cross-tenant collisions impossible once the gateway strips
-		// inbound identity headers.
+	It("dedups an unchanged re-push even when the asserted org differs", func() {
+		// Single tenant: org is not part of identity, so the same content is
+		// the same row no matter what org a caller asserts. Before the org
+		// removal this was segregated by org; now nothing a caller sends can
+		// mint a second copy of the same transcript.
 		resp1 := post(transcriptBody(payloadOrg, ""), nil)
 		resp1.Body.Close()
 		resp2 := post(transcriptBody(payloadOrg, ""), nil)
@@ -378,7 +357,7 @@ var _ = Describe("POST /v1/ingest/transcript", func() {
 		resp3.Body.Close()
 		count, err := driver.CountRawTurns(context.Background())
 		Expect(err).NotTo(HaveOccurred())
-		Expect(count).To(Equal(int64(2)))
+		Expect(count).To(Equal(int64(1)))
 	})
 
 	scrapeMetrics := func() string {

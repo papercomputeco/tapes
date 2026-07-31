@@ -136,14 +136,19 @@ func (d *sessionsStubDriver) ListNodesBySession(_ context.Context, _ string) ([]
 	return nil, nil
 }
 
+// legacyOrgIDHeader is the retired X-Tapes-Org-Id request header. The server
+// no longer reads it; the tests keep the ability to send it so they can prove
+// that a client asserting its own tenant is ignored rather than obeyed.
+const legacyOrgIDHeader = "X-Tapes-Org-Id"
+
 // getSessionList issues GET path against the server, optionally with the
-// X-Tapes-Org-Id header (empty org sends no header), and decodes the body as
-// a SessionListResponse on 200 or an llm.ErrorResponse otherwise.
+// legacy org header, and decodes the body as a SessionListResponse on 200 or
+// an llm.ErrorResponse otherwise.
 func getSessionList(server *Server, path, org string) (SessionListResponse, llm.ErrorResponse, int) {
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 	Expect(err).NotTo(HaveOccurred())
 	if org != "" {
-		req.Header.Set(orgIDHeader, org)
+		req.Header.Set(legacyOrgIDHeader, org)
 	}
 	resp, err := server.app.Test(req)
 	Expect(err).NotTo(HaveOccurred())
@@ -267,20 +272,26 @@ var _ = Describe("harness natural-key filter on GET /v1/sessions", func() {
 		Expect(drv.listCalls).To(BeZero(), "a lone param must not fall through to the unfiltered list")
 	})
 
-	It("threads the X-Tapes-Org-Id org through to the harness lookup", func() {
+	It("ignores a client-asserted org header and scopes every read to the single tenant", func() {
+		// The retired header let any caller name the tenant it wanted to
+		// read, with nothing verifying the claim: reaching the read API was
+		// the whole of the authorization. Tenancy is now settled at the
+		// gateway, which pins the JWT's org_id claim to the tenant that owns
+		// these routes, so a value arriving here must carry no weight.
 		drv := &sessionsStubDriver{Driver: inmemory.NewDriver(), harnessRecord: &record}
 		server := newSessionsServer(drv)
 
-		org := "11111111-1111-1111-1111-111111111111"
-		_, _, status := getSessionList(server, "/v1/sessions?harness_id=claude&harness_session_id=sess-xyz", org)
+		otherTenant := "11111111-1111-1111-1111-111111111111"
+		_, _, status := getSessionList(server, "/v1/sessions?harness_id=claude&harness_session_id=sess-xyz", otherTenant)
 		Expect(status).To(Equal(fiber.StatusOK))
-		Expect(drv.lastOrgID).To(Equal(org), "the lookup must be scoped to the requested tenant")
+		Expect(drv.lastOrgID).NotTo(Equal(otherTenant),
+			"a client-asserted tenant must never reach the storage lookup")
+		Expect(drv.lastOrgID).To(Equal(singleTenantOrgID))
 
-		// Without the header the middleware falls back to the nil-org
-		// sentinel, which must still be threaded down to the lookup.
+		// And with no header at all, the same scoping.
 		_, _, status = getSessionList(server, "/v1/sessions?harness_id=claude&harness_session_id=sess-xyz", "")
 		Expect(status).To(Equal(fiber.StatusOK))
-		Expect(drv.lastOrgID).To(Equal(nilOrgID))
+		Expect(drv.lastOrgID).To(Equal(singleTenantOrgID))
 	})
 
 	It("threads auth_subject through to the paged list and echoes it on items", func() {
@@ -456,7 +467,7 @@ var _ = Describe("harness natural-key filter on GET /v1/sessions", func() {
 var _ = Describe("DELETE /v1/sessions/:id", func() {
 	const (
 		validID = "dddddddd-dddd-dddd-dddd-dddddddddddd"
-		org     = "11111111-1111-1111-1111-111111111111"
+		org     = singleTenantOrgID
 	)
 
 	newServer := func(driver storage.Driver) *Server {

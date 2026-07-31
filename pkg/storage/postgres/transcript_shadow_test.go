@@ -43,7 +43,11 @@ var _ = Describe("codex transcript anchor rows across the derive read", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		orgID = newTestOrgID()
+		// Ingest canonicalizes every write to the single-tenant sentinel
+		// (the nil org UUID) regardless of what the payload asserts, so the
+		// suite seeds and rederives under the sentinel too. The payload
+		// below still carries a made-up org to prove the canonicalization.
+		orgID = "00000000-0000-0000-0000-000000000000"
 		var err error
 		driver, err = postgres.NewDriver(ctx, testPostgresDSN)
 		Expect(err).NotTo(HaveOccurred())
@@ -79,7 +83,7 @@ var _ = Describe("codex transcript anchor rows across the derive read", func() {
 	postTranscript := func(agentID, toolUseID, kind string, records string) {
 		body, err := json.Marshal(map[string]any{
 			"session": map[string]any{
-				"org_id":             orgID,
+				"org_id":             "11111111-1111-1111-1111-111111111111",
 				"auth_subject":       "user-test",
 				"harness_id":         harnessID,
 				"harness_session_id": rootSession,

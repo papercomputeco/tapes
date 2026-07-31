@@ -72,7 +72,7 @@ func (s *Server) handleSearchSpansEndpoint(c *fiber.Ctx) error {
 		})
 	}
 
-	hits, err := s.config.SpanSearcher.Search(c.Context(), orgIDFromCtx(c), embedding, topK)
+	hits, err := s.config.SpanSearcher.Search(c.Context(), singleTenantOrgID, embedding, topK)
 	if errors.Is(err, spanembed.ErrNotInitialized) {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(llm.ErrorResponse{
 			Error: err.Error(),

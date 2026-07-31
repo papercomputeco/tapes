@@ -407,12 +407,13 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 		opts.Until = &t
 	}
 
-	orgID := orgIDFromCtx(c)
-	// Fetch one extra item to detect whether a next page exists.
-	// Trusted to the same degree as X-Tapes-Org-Id: client-asserted
-	// today, with the cloud edge able to stamp it server-side from the
-	// validated JWT once claim mapping is enabled on the read route.
+	orgID := singleTenantOrgID
+	// auth_subject is a caller-supplied filter, not an identity claim: it
+	// narrows results within this tenant and grants nothing. The verified
+	// subject is stamped at ingest from the JWT (x-paper-auth-subject) and
+	// is what gets stored; this only chooses which of those rows to show.
 	opts.AuthSubject = c.Query("auth_subject")
+	// Fetch one extra item to detect whether a next page exists.
 	opts.Limit = limit + 1
 	sessions, err := reader.ListSessionRecords(c.Context(), orgID, opts)
 	if err != nil {
@@ -464,7 +465,7 @@ func (s *Server) listSessionsByHarness(c *fiber.Ctx, reader sessionsReader) erro
 		})
 	}
 
-	orgID := orgIDFromCtx(c)
+	orgID := singleTenantOrgID
 	sess, err := reader.GetSessionRecordByHarness(c.Context(), orgID, harnessID, harnessSessionID)
 	if err != nil {
 		s.logger.Error("get session by harness", "error", err)
@@ -497,7 +498,7 @@ func (s *Server) handleGetSession(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id must be a valid UUID"})
 	}
 
-	orgID := orgIDFromCtx(c)
+	orgID := singleTenantOrgID
 	sess, err := reader.GetSessionRecord(c.Context(), orgID, id)
 	if err != nil {
 		s.logger.Error("get session", "id", id, "error", err)
@@ -762,7 +763,7 @@ func (s *Server) handleExportSession(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "detail must be spans or traces"})
 	}
 
-	orgID := orgIDFromCtx(c)
+	orgID := singleTenantOrgID
 	// Resolve existence under the org BEFORE anything is streamed, so a
 	// cross-org request gets a clean 404 with no headers or partial body
 	// committed — the same tenancy gate handleGetSession applies.
@@ -851,7 +852,7 @@ func (s *Server) handleExportSessions(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "until must be after since"})
 	}
 
-	orgID := orgIDFromCtx(c)
+	orgID := singleTenantOrgID
 	ctx := c.Context()
 
 	// Name the file after the window that actually produced it. The default
@@ -937,7 +938,7 @@ func (s *Server) handleDeleteSession(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id must be a valid UUID"})
 	}
 
-	orgID := orgIDFromCtx(c)
+	orgID := singleTenantOrgID
 	deleted, err := writer.DeleteSession(c.Context(), orgID, id)
 	if err != nil {
 		s.logger.Error("delete session", "id", id, "error", err)
@@ -1018,7 +1019,7 @@ func (s *Server) handleUpdateSession(c *fiber.Ctx) error {
 		}
 	}
 
-	orgID := orgIDFromCtx(c)
+	orgID := singleTenantOrgID
 	rowsAffected, err := reader.UpdateSessionDisplayName(c.Context(), orgID, id, normalized)
 	if err != nil {
 		s.logger.Error("update session display name", "id", id, "error", err)

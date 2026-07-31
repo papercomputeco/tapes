@@ -88,7 +88,7 @@ var _ = Describe("handleSearchSpansEndpoint", func() {
 		Expect(resp.StatusCode).To(Equal(fiber.StatusBadRequest))
 	})
 
-	It("returns hits with their trace/turn context, scoped to the asserted org", func() {
+	It("returns hits with their trace/turn context, scoped to the single tenant", func() {
 		startedAt := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 		searcher.hits = []spanembed.Hit{{
 			TraceID:    "trc_req1",
@@ -103,7 +103,7 @@ var _ = Describe("handleSearchSpansEndpoint", func() {
 
 		req, err := http.NewRequest(http.MethodGet, "/v1/search/spans?query=retry+backoff&top_k=3", nil)
 		Expect(err).NotTo(HaveOccurred())
-		req.Header.Set("X-Tapes-Org-Id", "11111111-1111-1111-1111-111111111111")
+		req.Header.Set(legacyOrgIDHeader, "11111111-1111-1111-1111-111111111111")
 		resp, err := server.app.Test(req)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resp.StatusCode).To(Equal(fiber.StatusOK))
@@ -123,16 +123,19 @@ var _ = Describe("handleSearchSpansEndpoint", func() {
 		Expect(out.Results[0].Snippet).To(ContainSubstring("max-poll-backoff"))
 		Expect(out.Results[0].StartedAt).To(Equal(startedAt))
 
-		Expect(searcher.lastOrg).To(Equal("11111111-1111-1111-1111-111111111111"))
+		// The header is sent above and must be ignored: span search is
+		// scoped to the tenant that owns this deployment, not to whatever
+		// the caller asked for.
+		Expect(searcher.lastOrg).To(Equal(singleTenantOrgID))
 	})
 
-	It("defaults the org to the nil tenant when no header is sent", func() {
+	It("scopes the search to the single tenant when no header is sent", func() {
 		req, err := http.NewRequest(http.MethodGet, "/v1/search/spans?query=x", nil)
 		Expect(err).NotTo(HaveOccurred())
 		resp, err := server.app.Test(req)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resp.StatusCode).To(Equal(fiber.StatusOK))
-		Expect(searcher.lastOrg).To(Equal(nilOrgID))
+		Expect(searcher.lastOrg).To(Equal(singleTenantOrgID))
 	})
 
 	It("returns 500 on search failures", func() {

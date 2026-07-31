@@ -187,8 +187,8 @@ func (s *Server) mountSessions(router *oasfiber.Router) {
 		oasfiber.Doc("deleteSession").
 			Summary("Delete a session").
 			Description("Permanently deletes a session and its subtree: subagent child sessions and "+
-				"their derived traces/spans cascade with it. Org-scoped — any caller in the org may "+
-				"delete any of its sessions. The immutable raw_turns capture log is left intact.").
+				"their derived traces/spans cascade with it. The immutable raw_turns capture log is "+
+				"left intact.").
 			Tag("sessions").
 			PathParam("id", oas.String(), oas.ParamDescription("Session id (UUID)")).
 			EmptyResponse(204, "Session deleted").
@@ -268,8 +268,6 @@ func (s *Server) mountSearch(router *oasfiber.Router) {
 				oas.ParamDescription("Search query")).
 			QueryParam("top_k", oas.Integer(oas.Minimum(1), oas.Default(5)),
 				oas.ParamDescription("Maximum number of results to return")).
-			HeaderParam("X-Tapes-Org-Id", oas.String(),
-				oas.ParamDescription("Tenant org UUID (defaults to the nil org)")).
 			JSONResponse(200, "Search hits", s.schema(SpanSearchOutput{})).
 			JSONResponse(400, "Missing or invalid query parameters", s.errorSchema()).
 			JSONResponse(500, "Search execution failed", s.errorSchema()).

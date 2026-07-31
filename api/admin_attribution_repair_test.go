@@ -44,18 +44,18 @@ var _ = Describe("raw-turn attribution repair admin endpoint", func() {
 			"/v1/admin/raw-turns/attribution-repair", bytes.NewBufferString(body))
 		Expect(err).NotTo(HaveOccurred())
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set(orgIDHeader, "11111111-1111-1111-1111-111111111111")
 		resp, err := s.app.Test(req)
 		Expect(err).NotTo(HaveOccurred())
 		return resp
 	}
 
-	It("threads an exact correlation selector and trusted org to storage", func() {
+	It("threads an exact correlation selector to storage under the single-tenant sentinel", func() {
 		stub := &attributionRepairStub{Driver: inmemory.NewDriver(), result: storage.RawTurnAttributionRepairResult{Recorded: true}}
 		resp := request(newServer(stub), `{"paper_proxy_request_id":"proxy-1","harness_id":"codex","harness_session_id":"child","thread_id":"thread","reason":"hook evidence"}`)
 		defer resp.Body.Close()
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
-		Expect(stub.req.OrgID).To(Equal("11111111-1111-1111-1111-111111111111"))
+		Expect(stub.req.OrgID).To(Equal(singleTenantOrgID),
+			"repairs scope to the deployment's single tenant, never a caller-asserted org")
 		Expect(stub.req.PaperProxyRequestID).To(Equal("proxy-1"))
 	})
 

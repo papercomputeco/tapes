@@ -16,12 +16,9 @@ var errSkillSessionNotFound = errors.New("source session not found")
 
 // skillTraceQuerier is the in-process, org-scoped implementation of
 // skill.Querier the generator reads transcripts through. It replaces an
-// HTTP loopback self-call: that hop carried no X-Tapes-Org-Id, so in
-// multi-tenant deployments trace reads fell back to the nil-org sentinel
-// and a real tenant's generate found zero turns and produced an empty
-// skill. Binding the org at construction and calling the driver directly
-// keeps every read scoped to the inbound tenant (and drops the spurious
-// in-pod round trip, with its JWT and connection overhead).
+// HTTP loopback self-call, whose round trip through the pod's own listener
+// bought nothing but a JWT handshake and a connection. Calling the driver
+// directly keeps the read on one code path with the rest of the handler.
 type skillTraceQuerier struct {
 	sessions sessionsReader
 	spans    spanModelReader

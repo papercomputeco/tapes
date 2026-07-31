@@ -87,7 +87,7 @@ func (s *Server) handleListTraceSummaries(c *fiber.Ctx) error {
 	if _, err := uuid.Parse(sessionID); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "session_id must be a valid UUID"})
 	}
-	orgID := orgIDFromCtx(c)
+	orgID := singleTenantOrgID
 	sess, err := sessions.GetSessionRecord(c.Context(), orgID, sessionID)
 	if err != nil {
 		s.logger.Error("get session for trace summaries", "session_id", sessionID, "error", err)
@@ -122,7 +122,7 @@ func (s *Server) handleGetTrace(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "span traces not supported by this backend"})
 	}
 	traceID := c.Params("trace_id")
-	turn, spans, links, err := reader.GetTraceDetail(c.Context(), orgIDFromCtx(c), traceID)
+	turn, spans, links, err := reader.GetTraceDetail(c.Context(), singleTenantOrgID, traceID)
 	if err != nil {
 		s.logger.Error("get trace", "trace_id", traceID, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to get trace"})
@@ -159,7 +159,7 @@ func (s *Server) handleGetSpan(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "span traces not supported by this backend"})
 	}
 	traceID, spanID := c.Params("trace_id"), c.Params("span_id")
-	rec, err := reader.GetSpanRecord(c.Context(), orgIDFromCtx(c), traceID, spanID)
+	rec, err := reader.GetSpanRecord(c.Context(), singleTenantOrgID, traceID, spanID)
 	if err != nil {
 		s.logger.Error("get span", "trace_id", traceID, "span_id", spanID, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to get span"})
@@ -185,7 +185,7 @@ func (s *Server) handleListSessionRawTurns(c *fiber.Ctx) error {
 	if _, err := uuid.Parse(id); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id must be a valid UUID"})
 	}
-	orgID := orgIDFromCtx(c)
+	orgID := singleTenantOrgID
 	sess, err := sessions.GetSessionRecord(c.Context(), orgID, id)
 	if err != nil {
 		s.logger.Error("get session for raw turns", "id", id, "error", err)

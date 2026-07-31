@@ -127,7 +127,8 @@ func newPagingDriver(org string, n int, latest time.Time) *pagingExportStubDrive
 }
 
 var _ = Describe("GET /v1/sessions/export", func() {
-	const org = "33333333-3333-3333-3333-333333333333"
+	// Reads are scoped to the single tenant, so seeded data must live there.
+	const org = singleTenantOrgID
 	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
 
 	// T-7: default window (no since/until) + bypasses the 200-row UI cap.
@@ -391,7 +392,7 @@ func getGzip(server *Server, path, org string) (*http.Response, []byte) {
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 	Expect(err).NotTo(HaveOccurred())
 	if org != "" {
-		req.Header.Set(orgIDHeader, org)
+		req.Header.Set(legacyOrgIDHeader, org)
 	}
 	req.Header.Set("Accept-Encoding", "gzip")
 	resp, err := server.app.Test(req, -1)

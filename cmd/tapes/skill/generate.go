@@ -232,7 +232,7 @@ func (c *generateCommander) resolveSessionIDs(cmd *cobra.Command, args []string)
 func (c *generateCommander) searchForSessions(cmd *cobra.Command) ([]string, error) {
 	fmt.Fprintf(cmd.OutOrStdout(), "Searching for %q...\n", c.search)
 
-	output, err := searchcmder.SearchSpansAPI(c.apiTarget, c.search, "", c.searchTop)
+	output, err := searchcmder.SearchSpansAPI(c.apiTarget, c.search, c.searchTop)
 	if err != nil {
 		return nil, fmt.Errorf("search: %w", err)
 	}
