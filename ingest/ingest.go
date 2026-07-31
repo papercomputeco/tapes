@@ -298,6 +298,13 @@ func (s *Server) handleIngest(c *fiber.Ctx) error {
 			Error: fmt.Sprintf("%s: %s", ErrEnvelope, err),
 		})
 	}
+	if payload.Session != nil {
+		// This deployment is single-tenant: writes take the same sentinel
+		// reads scope to, so a client asserting an org in the envelope
+		// cannot store rows the read side will never surface. The field
+		// stays in the wire contract until the org_id columns go.
+		payload.Session.OrgID = ""
+	}
 
 	if err := payload.Session.Validate(); err != nil {
 		s.logger.Warn("ingest envelope rejected",
@@ -523,9 +530,12 @@ func resolveGatewayIdentity(c *fiber.Ctx, session *sessions.IngestEnvelope) {
 	if session == nil {
 		return
 	}
-	if org := c.Get(HeaderPaperAuthOrgID); org != "" {
-		session.OrgID = org
-	}
+	// Single-tenant: the org is settled by the deployment, not the request.
+	// Neither the payload nor the gateway header may store rows under an org
+	// the read side will never surface — the sentinel is the only org until
+	// the columns go. (In practice nothing ever stamped the org header: the
+	// edge strips it from clients and mints only the subject.)
+	session.OrgID = ""
 	if sub := c.Get(HeaderPaperAuthSubject); sub != "" {
 		session.AuthSubject = sub
 	}
