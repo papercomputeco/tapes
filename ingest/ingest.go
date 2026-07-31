@@ -145,6 +145,25 @@ type TurnMeta struct {
 	RequestBytes        int     `json:"request_bytes,omitempty"`
 	ResponseBytes       int     `json:"response_bytes,omitempty"`
 	ElapsedSeconds      float64 `json:"elapsed_seconds,omitempty"`
+
+	// TsRequest is the capture-side instant the turn's request went
+	// upstream, RFC 3339. It is not new: pkg/backfill emits it and
+	// derive.CapturedAt already reads it as a row's original capture
+	// time, which is where every derived span's StartedAt comes from.
+	// Ingest parses it here so a server-side reduction can date itself
+	// from the same source the deriver uses, rather than a second,
+	// silently different clock.
+	TsRequest string `json:"ts_request,omitempty"`
+
+	// CapturedAt is the capture-side instant the turn COMPLETED
+	// upstream, RFC 3339 — the quantity CreatedAt actually means, and
+	// the one a producer that reduces live records as time.Now().
+	//
+	// Distinct from TsRequest by exactly the call's duration. Preferred
+	// over it because it needs no arithmetic to be exact; optional, and
+	// no released producer sends it yet. See stampCaptureTime for the
+	// precedence and what happens when neither field is present.
+	CapturedAt string `json:"captured_at,omitempty"`
 }
 
 // rawEnvelope is the shadow decode of an ingest body used for the
@@ -629,12 +648,152 @@ func (s *Server) reduceRawOnly(ctx context.Context, turn *TurnPayload) json.RawM
 		return nil
 	}
 
+	// The reducer sees only the upstream bytes, which carry neither the
+	// call's duration nor the instant it happened. Both are capture-side
+	// facts, and under raw-only ingest is the first place they can be put
+	// back on the reduction. Stamp them before marshaling so the raw layer
+	// and the derived path get the same values.
+	s.stampDuration(resp, turn)
+	s.stampCaptureTime(resp, turn)
+
 	out, err := json.Marshal(resp)
 	if err != nil {
 		return nil
 	}
 	turn.Response = *resp
 	return out
+}
+
+// stampDuration sets Usage.TotalDurationNs from the capture adapter's
+// meta.elapsed_seconds, allocating Usage if needed.
+//
+// This is the raw-only counterpart of proxy.stampDuration (PCC-514/570):
+// Anthropic and OpenAI do not surface call duration on the wire, so a
+// reduction performed from stored bytes has no duration in it, and the
+// column lands NULL — the exact regression those issues fixed on the proxy
+// path. The value survives the raw-only crossing on meta.elapsed_seconds,
+// so ingest re-stamps it here.
+//
+// Overwriting rather than filling-if-empty is deliberate, and matches the
+// proxy: a provider-reported internal duration (Ollama) measures something
+// different from wall-clock time at the capture point, and aggregate stats
+// are only comparable if every turn's duration means the same thing.
+//
+// An absent elapsed_seconds leaves the reduction alone. There is no second
+// source to fall back on — ingest's own clock measures the dispatch hop,
+// not the call — so the honest outcome is an unstamped duration, counted
+// as a fallback so it is visible rather than silent.
+func (s *Server) stampDuration(resp *llm.ChatResponse, turn *TurnPayload) {
+	if resp == nil {
+		return
+	}
+	if turn.Meta.ElapsedSeconds <= 0 {
+		s.metrics.ObserveRawOnlyStamp(turn.Provider, StampFieldDuration, StampSourceFallback)
+		return
+	}
+	if resp.Usage == nil {
+		resp.Usage = &llm.Usage{}
+	}
+	resp.Usage.TotalDurationNs = int64(turn.Meta.ElapsedSeconds * float64(time.Second))
+	s.metrics.ObserveRawOnlyStamp(turn.Provider, StampFieldDuration, StampSourceElapsed)
+}
+
+// stampCaptureTime sets CreatedAt to the capture-side instant the envelope
+// reports, so a raw-only row means the same thing a pre-reduced one does.
+//
+// The contract this enforces: CreatedAt is when the turn happened, never
+// when tapes heard about it. Under dual-send the producer reduced live and
+// stamped its own clock, so CreatedAt was capture time by construction.
+// Under raw-only the reduction moves to the server, and the reducers stamp
+// time.Now() (pkg/capture/anthropic.go, anthropic_state.go) — which is now
+// ingest time. Same field, silently different quantity: rows would sort and
+// bucket by when the ingest hop happened, and a replay of stored bytes would
+// date every turn to the replay.
+//
+// Sources, most precise first. Each is a capture-side clock; none is
+// ingest's:
+//
+//  1. meta.captured_at — the completion instant outright.
+//  2. meta.ts_request + meta.elapsed_seconds — request instant plus the
+//     call's duration, which is the same quantity by construction.
+//  3. meta.ts_request alone — the request instant, early by the call's
+//     duration but a real capture-side time, and already what
+//     derive.CapturedAt uses for the row's chronology.
+//
+// Preferring ts_request over ingest's clock is what keeps CreatedAt and the
+// derived span's StartedAt (derive.CapturedAt, same field) from disagreeing
+// about when one turn happened. It also means backfilled rows, which carry
+// ts_request today, get a correct CreatedAt without any producer change.
+//
+// With none of them present ingest keeps whatever the reducer produced and
+// counts a fallback. That fallback is not uniform, which is why it is
+// counted rather than assumed:
+//
+//   - OpenAI Responses reductions carry the upstream's own created_at
+//     (pkg/capture/openai_responses.go), so CreatedAt is already a real
+//     capture-side time and overwriting it would lose information.
+//   - Anthropic reductions carry time.Now(), so CreatedAt is ingest time —
+//     the drift this function exists to close, left visible on the counter
+//     until producers send one of the fields above.
+//
+// Guessing capture time as now-minus-elapsed is deliberately not done: it is
+// indistinguishable from the truth on a healthy dispatch and arbitrarily
+// wrong on a retried, buffered, or replayed one, which is the case that
+// matters.
+func (s *Server) stampCaptureTime(resp *llm.ChatResponse, turn *TurnPayload) {
+	if resp == nil {
+		return
+	}
+
+	if completed, ok := s.parseCaptureStamp(turn, "captured_at", turn.Meta.CapturedAt); ok {
+		resp.CreatedAt = completed
+		s.metrics.ObserveRawOnlyStamp(turn.Provider, StampFieldCreatedAt, StampSourceCapturedAt)
+		return
+	}
+
+	if requested, ok := s.parseCaptureStamp(turn, "ts_request", turn.Meta.TsRequest); ok {
+		// The elapsed offset is what turns a request instant into the
+		// completion instant CreatedAt denotes. Without it the request
+		// instant still stands — early by the call's duration, which is a
+		// far smaller error than the ingest hop it replaces.
+		if turn.Meta.ElapsedSeconds > 0 {
+			requested = requested.Add(time.Duration(turn.Meta.ElapsedSeconds * float64(time.Second)))
+		}
+		resp.CreatedAt = requested
+		s.metrics.ObserveRawOnlyStamp(turn.Provider, StampFieldCreatedAt, StampSourceTsRequest)
+		return
+	}
+
+	s.metrics.ObserveRawOnlyStamp(turn.Provider, StampFieldCreatedAt, StampSourceFallback)
+}
+
+// parseCaptureStamp parses one RFC 3339 capture-side timestamp off the meta
+// block, reporting whether it yielded a usable instant.
+//
+// RFC3339Nano matches derive.CapturedAt, so the two agree on what they
+// accept — a timestamp the deriver honors cannot be one ingest rejects.
+//
+// An absent field is ordinary: no producer sends either of these yet. A
+// present-but-malformed one is a producer bug and logged, since someone
+// meant to send it. Neither rejects the turn — the bytes are already stored,
+// and losing a whole turn over a timestamp would be a far worse trade.
+func (s *Server) parseCaptureStamp(turn *TurnPayload, field, value string) (time.Time, bool) {
+	raw := strings.TrimSpace(value)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	ts, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		s.logger.Warn("raw-only turn: capture timestamp not RFC 3339",
+			"provider", turn.Provider,
+			"request_id", turn.Meta.RequestID,
+			"field", field,
+			"value", raw,
+			"error", err,
+		)
+		return time.Time{}, false
+	}
+	return ts.UTC(), true
 }
 
 // reducedResponseAbsent reports whether a payload carried no reduced response.
