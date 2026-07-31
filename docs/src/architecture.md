@@ -39,7 +39,7 @@ Derived IDs are deterministic. Re-deriving unchanged raw input reproduces the sa
 
 ## Search
 
-The embedding worker embeds **main-conversation LLM spans** into PostgreSQL using pgvector. Search is span-only: `/v1/search/spans`, `tapes search`, and the MCP `search` tool all return individual span hits with session, trace, and turn context. They do not search session objects or a conversation DAG.
+The embedding worker embeds **main-conversation LLM spans** into PostgreSQL using pgvector. Search is span-only: `/v1/search/spans`, `tapesctl search`, and the MCP `search` tool all return individual span hits with session, trace, and turn context. They do not search session objects or a conversation DAG.
 
 ## Content addressing
 

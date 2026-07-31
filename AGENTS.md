@@ -53,8 +53,6 @@ The system is made up of:
   `/v1/sessions/{id}/raw_turns`).
 - A bundled CLI (`tapes`) for running the proxy, API, and workers, and for the
   operator tooling around them.
-- A deck TUI (`tapes deck`) — an ROI dashboard over sessions that drills into a
-  single session's traces and spans.
 
 CLI surface notes for agents:
 
@@ -65,16 +63,15 @@ CLI surface notes for agents:
 - The client commands that used to live here have **moved to `tapesctl`**:
   `tapes start` → `tapesctl start`, `tapes export` → `tapesctl export`,
   `tapes seed` → `tapesctl seed`, `tapes sessions` → `tapesctl sessions list`,
-  `tapes skill sync` → `tapesctl skill sync`. Do not re-add them here.
+  `tapes search` → `tapesctl search`, `tapes skill` → `tapesctl skill`.
+  Do not re-add them here.
 - `tapes chat` has been **removed**; tapes captures and derives, it does not host
   chat sessions.
-- `tapes search` is **span-only** — it queries the span projection
-  (`/v1/search/spans`) and returns individual main-conversation LLM spans with
-  their trace/turn context. It has no `tapesctl` equivalent yet, so it stays.
-- `tapes deck` is built on the traces/span model (not the old stems/merkle TUI).
-  It has no `tapesctl` equivalent yet, so it stays.
-- `tapes skill` still **generates** and **lists** skills (both read session data);
-  only `sync`, which just copies a file into an agent directory, moved out.
+- Span search stays **server-side** (`/v1/search/spans` and the embed worker);
+  only the client command moved. Search and skill authoring are slated for
+  extraction into cassettes.
+- The deck TUI has been **removed with no CLI replacement** — the console owns
+  the ROI/session-browsing surface.
 
 **Language:** Go 1.26+
 **Go Module:** `github.com/papercomputeco/tapes`

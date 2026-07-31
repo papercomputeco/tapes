@@ -69,7 +69,7 @@ curl -fsSL https://download.tapes.dev/install | bash
 ```
 
 `tapes` stores sessions in PostgreSQL (with the `pgvector` extension) and uses an
-embedding provider to power `tapes search`. The quickest way to get a local
+embedding provider to power `tapesctl search`. The quickest way to get a local
 Postgres — plus Ollama for embeddings — is the bundled Docker bootstrap (requires Docker):
 
 ```bash
@@ -83,7 +83,7 @@ commands below need no connection flags.
 Then start Tapes. `tapes serve` runs the whole local pipeline together — the
 proxy (capture), the API, and the derive worker (which projects captured turns
 into sessions/traces/spans) — so anything you capture becomes browsable
-automatically. It also embeds spans for `tapes search` by default (disable with
+automatically. It also embeds spans for `tapesctl search` by default (disable with
 `--embed-spans=false`):
 
 ```bash
@@ -128,7 +128,6 @@ tapesctl sessions list --tapes-url http://localhost:8081
 Browse sessions and drill into a single session in the deck TUI:
 
 ```bash
-tapes deck
 ```
 
 Export a captured session as JSONL — the API's session→traces→spans projection
@@ -146,7 +145,7 @@ their trace and turn context). `tapes serve` embeds spans by default, so this
 works out of the box:
 
 ```bash
-tapes search "explain the retry logic"
+tapesctl search "explain the retry logic"
 ```
 
 **Ready for the real thing?** Clear the demo data and point your own agent at

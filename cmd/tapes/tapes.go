@@ -12,13 +12,10 @@ import (
 	authcmder "github.com/papercomputeco/tapes/cmd/tapes/auth"
 	backfillcmder "github.com/papercomputeco/tapes/cmd/tapes/backfill"
 	configcmder "github.com/papercomputeco/tapes/cmd/tapes/config"
-	deckcmder "github.com/papercomputeco/tapes/cmd/tapes/deck"
 	devcmder "github.com/papercomputeco/tapes/cmd/tapes/dev"
 	initcmder "github.com/papercomputeco/tapes/cmd/tapes/init"
 	localcmder "github.com/papercomputeco/tapes/cmd/tapes/local"
-	searchcmder "github.com/papercomputeco/tapes/cmd/tapes/search"
 	servecmder "github.com/papercomputeco/tapes/cmd/tapes/serve"
-	skillcmder "github.com/papercomputeco/tapes/cmd/tapes/skill"
 	statuscmder "github.com/papercomputeco/tapes/cmd/tapes/status"
 	versioncmder "github.com/papercomputeco/tapes/cmd/tapes/version"
 	"github.com/papercomputeco/tapes/pkg/config"
@@ -116,15 +113,12 @@ func NewTapesCmd() *cobra.Command {
 
 	// Add subcommands
 	cmd.AddCommand(configcmder.NewConfigCmd())
-	cmd.AddCommand(deckcmder.NewDeckCmd())
 	cmd.AddCommand(devcmder.NewDevCmd())
 	cmd.AddCommand(authcmder.NewAuthCmd())
 	cmd.AddCommand(backfillcmder.NewBackfillCmd())
 	cmd.AddCommand(initcmder.NewInitCmd())
 	cmd.AddCommand(localcmder.NewLocalCmd())
-	cmd.AddCommand(searchcmder.NewSearchCmd())
 	cmd.AddCommand(servecmder.NewServeCmd())
-	cmd.AddCommand(skillcmder.NewSkillCmd())
 	cmd.AddCommand(statuscmder.NewStatusCmd())
 	cmd.AddCommand(versioncmder.NewVersionCmd())
 

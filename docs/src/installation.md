@@ -66,7 +66,7 @@ Seed representative capture data through the normal ingest and derive path:
 
 ```bash
 tapesctl seed --tapes-url http://localhost:8081
-tapes deck
+tapesctl sessions list
 ```
 
 ## OpenAI embeddings

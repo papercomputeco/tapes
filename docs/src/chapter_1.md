@@ -34,13 +34,13 @@ This runs the capture proxy on `http://localhost:8080`, read API on `http://loca
 ```bash
 tapesctl seed --tapes-url http://localhost:8081
 tapesctl sessions list --tapes-url http://localhost:8081
-tapes deck
+tapesctl sessions list
 ```
 
 Search individual spans:
 
 ```bash
-tapes search "explain the retry logic"
+tapesctl search "explain the retry logic"
 ```
 
 When ready to capture real work, launch a supported agent through the client:

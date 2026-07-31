@@ -9,21 +9,21 @@ A generated transcript follows the main conversation spine: turn-level prompts a
 A name in kebab-case is required:
 
 ```bash
-tapes skill generate <session-id> --name debug-react-hooks
+tapesctl skill generate <session-id> --name debug-react-hooks
 ```
 
 Use multiple session IDs, or find matching sessions through span search:
 
 ```bash
-tapes skill generate <session-a> <session-b> --name retry-patterns
-tapes skill generate --search "gum glow charm" \
+tapesctl skill generate <session-a> <session-b> --name retry-patterns
+tapesctl skill generate --search "gum glow charm" \
   --search-top 3 --name charm-cli-patterns
 ```
 
 Other useful controls are:
 
 ```bash
-tapes skill generate <session-id> --name morning-work \
+tapesctl skill generate <session-id> --name morning-work \
   --since 2026-02-17 --until 2026-02-17T17:00:00Z \
   --type workflow --preview
 ```
@@ -33,8 +33,8 @@ Skill types are `workflow`, `domain-knowledge`, and `prompt-template`. Generatio
 ## List
 
 ```bash
-tapes skill list
-tapes skill list --type workflow
+tapesctl skill list
+tapesctl skill list --type workflow
 ```
 
 ## Sync

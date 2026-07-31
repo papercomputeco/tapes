@@ -24,8 +24,8 @@ Each prints the server's JSON verbatim, so it composes with `jq`. `--tapes-url` 
 ## Browse interactively
 
 ```bash
-tapes deck
-tapes deck --session <session-id>
+tapesctl sessions list
+tapesctl sessions get <session-id>
 ```
 
 Deck shows session aggregates and drills into traces and spans. See [Deck](./deck.md).

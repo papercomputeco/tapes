@@ -10,9 +10,6 @@ Run `tapes <command> --help` for the complete, version-matched flag list.
 | `tapes local [up|status|down]` | Manage local PostgreSQL and Ollama dependencies. |
 | `tapes serve` | Run proxy, read API, private ingest API, derive worker, and optional embed worker together. |
 | `tapes status` | Show active config, provider/upstream, API reachability, and capture summary. |
-| `tapes deck` | Browse the session ROI dashboard and drill into traces/spans. |
-| `tapes search <query>` | Semantic search over main-conversation LLM spans. |
-| `tapes skill generate|list` | Author reusable agent skills from session data. |
 | `tapes auth` | Store OpenAI or Anthropic credentials in `.tapes/credentials.toml`. |
 | `tapes config get|set|list` | Manage persistent scalar settings. |
 | `tapes version` | Print version information. |
@@ -62,15 +59,6 @@ tapesctl skill sync <name> --claude
 ```
 
 Every `tapesctl` command takes `--tapes-url`, falling back to `TAPES_URL`. Arguments after `--` go directly to the agent. See [Agent integrations](./integrations.md) and the [`tapesctl` README](https://github.com/papercomputeco/tapesctl) for the full surface.
-
-## Searching
-
-```bash
-tapes search "database migration" --top 10
-tapes search "database migration" --quiet
-```
-
-`search` calls a running read API; point it with `--api-target`.
 
 ## Commands not intended as everyday workflow
 

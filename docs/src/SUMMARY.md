@@ -11,7 +11,6 @@
 # Concepts and workflows
 
 - [Architecture](./architecture.md)
-- [Deck](./deck.md)
 - [Search](./search.md)
 - [Skills](./skills.md)
 - [Inspecting and exporting data](./data.md)

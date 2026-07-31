@@ -50,7 +50,7 @@ if this one ever falls behind.
 
 Seeding is a client operation, so it lives in
 [`tapesctl`](https://github.com/papercomputeco/tapesctl). Demo data is captured
-and derived just like live sessions, so it shows up in `tapes deck`:
+and derived just like live sessions, so it shows up in `tapesctl sessions list`:
 
 ```bash
 tapesctl seed --tapes-url http://localhost:8081
@@ -86,7 +86,7 @@ make build-local
 
 # Seed demo data through a running API (tapesctl), then browse it in the deck UI
 tapesctl seed --tapes-url http://localhost:8081
-./build/tapes deck --api-target http://localhost:8081
+tapesctl sessions list --tapes-url http://localhost:8081
 
 # Run tests with the Postgres service provisioned by Dagger
 make test
