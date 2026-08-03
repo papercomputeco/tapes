@@ -49,8 +49,8 @@ var (
 
 // Server-trusted identity headers, populated by the upstream gateway
 // from validated JWT claims. This is the same contract the wire-capture
-// path consumes (tapes-extproc's internal/headers package reads the
-// identical names into the session envelope): clients are not permitted
+// path consumes (the extproc/headers package reads the identical
+// names into the session envelope): clients are not permitted
 // to send these themselves, and the gateway is responsible for
 // stripping inbound values so only edge-verified identity reaches the
 // handler. When the gateway is not configured to populate them, the

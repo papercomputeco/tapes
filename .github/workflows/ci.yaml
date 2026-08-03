@@ -36,6 +36,53 @@ jobs:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
         run: nix develop --command make parity
 
+  # The ext_proc adapter is a separate deployable built from this repository,
+  # and this is the gate that used to be its own repository's entire CI. It
+  # needs no services, so like parity it runs on every PR instead of waiting
+  # for the suite that needs a database — which is the point: extproc sits on
+  # the Envoy request path, and it should not be possible to break it here
+  # without the PR going red.
+  extproc:
+    name: Extproc Test (ext_proc adapter / wire-capture fidelity)
+    runs-on: depot-ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
+
+      - name: Cache Nix store
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+
+      - name: Run extproc tests via Dagger
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+        run: nix develop --command make test-extproc
+
+  # extproc ships as its own image, so a Dockerfile that no longer builds is a
+  # broken release rather than a broken test. The image is built and thrown
+  # away; publishing happens from release.yaml.
+  extproc-image:
+    name: Extproc Image
+    runs-on: depot-ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
+
+      - name: Cache Nix store
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+
+      - name: Build the extproc image via Dagger
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+        run: nix develop --command make check-extproc-image
+
   test-e2e:
     name: E2E Test (proxy / ingest / derive / span search)
     runs-on: depot-ubuntu-24.04
