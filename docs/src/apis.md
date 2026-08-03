@@ -8,16 +8,16 @@ The default read API listens on `:8081`. It serves health, derived data, search,
 
 | Area | Routes |
 | --- | --- |
-| Health and contract | `GET /ping`, `/swagger`, `/swagger/openapi.yaml` |
+| Health and contract | `GET /ping`, `GET /openapi`, `/swagger` |
 | Sessions | `/v1/sessions`, `/v1/sessions/{id}`, `/v1/sessions/{id}/traces`, `/v1/sessions/{id}/raw_turns`, `/v1/sessions/{id}/export` |
 | Traces and spans | `/v1/traces`, `/v1/traces/{trace_id}`, `/v1/traces/{trace_id}/spans/{span_id}` |
 | Search and aggregates | `GET /v1/search/spans`, `GET /v1/stats` |
 | Skills | `/v1/skills` and session skill routes |
 | MCP | `/v1/mcp` |
 | Operator actions | `/v1/admin/derive/run`, `/v1/admin/seed/demo` |
-| Cassettes | `GET /v1/cassettes` |
+| Cassettes | `GET /v1/cassettes`, `GET /v1/cassettes/{name}/openapi.json`, `/v1/cassettes/{name}`, `/v1/cassettes/{name}/*` |
 
-The authoritative parameters, schemas, and methods are in `api/openapi.yaml` and the running `/swagger/openapi.yaml`. Notable current behavior:
+The authoritative parameters, schemas, and methods are compiled from route registrations and served by the running API at `GET /openapi`; no generated contract is checked in. The aggregate includes admitted cassette operations. See [Cassettes](./cassettes.md) for their manifest and proxy contract. Notable current behavior:
 
 - session listing is cursor-paginated;
 - session and trace/span paths use UUID IDs;
@@ -29,7 +29,7 @@ There is no `/v1/search`, `/v1/sessions/summary`, or hash-based session route.
 
 ## Private ingest API
 
-The private ingest API defaults to `:8082` and publishes a separate contract in `ingest/openapi.yaml`. The all-in-one `tapes serve` stack starts it alongside the proxy and read API; `tapes serve ingest` runs it as a standalone sidecar. Its write routes are:
+The private ingest API defaults to `:8082` and serves its separate contract at `GET /openapi`. The all-in-one `tapes serve` stack starts it alongside the proxy and read API; `tapes serve ingest` runs it as a standalone sidecar. Its write routes are:
 
 - `POST /v1/ingest` — append one completed conversation turn;
 - `POST /v1/ingest/transcript` — append transcript capture data;

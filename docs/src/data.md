@@ -63,4 +63,4 @@ curl http://localhost:8081/v1/stats
 
 Session IDs and trace/span IDs are UUIDs, not content hashes. `GET /v1/sessions/{id}` returns session metadata; conversation content is on the trace/span endpoints. Raw-turn retrieval preserves the original capture separately from the derived model.
 
-Browse the live contract at `http://localhost:8081/swagger`, or fetch it from `http://localhost:8081/swagger/openapi.yaml`. See [HTTP APIs](./apis.md) for the surface and trust boundary.
+Browse the live contract at `http://localhost:8081/swagger`, or fetch it from `http://localhost:8081/openapi`. See [HTTP APIs](./apis.md) for the surface and trust boundary.

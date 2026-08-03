@@ -12,9 +12,11 @@
 # must exist, and tapes has no hardcoded opinion of what this file should say.
 #
 # This is not a second schema. `cassette/manifest.ParseTOML` transcodes TOML to
-# JSON and hands it to the same strict parser and the same validator core uses
-# on the embedded copy, so the field names below are the JSON field names, and a
-# key that does not exist is refused here exactly as it would be there.
+# JSON and hands it to the same strict parser core uses on the embedded copy, so
+# the field names below are the JSON field names, and a key that does not exist
+# is refused here exactly as it would be there. Parsing applies defaults;
+# deployment tooling must then call `Validate` with the contract versions its
+# target core serves.
 # `pkg/cassette/manifest/toml_test.go` parses this very file and asserts that
 # what it derives is what the rest of this directory does — the role and schema
 # compose provisions, the prefix main.go serves, the port the Dockerfile
