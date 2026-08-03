@@ -13,6 +13,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The envelope corpus is a contract between capture paths that live in
+  # different repositories, so a change to it can break a consumer this
+  # workflow never builds. It needs no services, so it gates every PR on its
+  # own rather than waiting for a suite that needs a database.
+  parity:
+    name: Contract Fixtures (envelope corpus parity)
+    runs-on: depot-ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
+
+      - name: Cache Nix store
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+
+      - name: Run contract fixture gates via Dagger
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+        run: nix develop --command make parity
+
   test-e2e:
     name: E2E Test (proxy / ingest / derive / span search)
     runs-on: depot-ubuntu-24.04
