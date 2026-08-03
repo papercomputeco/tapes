@@ -195,8 +195,8 @@ func (d *Driver) DeleteSession(ctx context.Context, o, id string) (bool, error) 
 	defer func() { _ = tx.Rollback() }()
 	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE tree(id) AS (
 		SELECT id FROM sessions WHERE org_id=? AND id=?
-		UNION ALL SELECT s.id FROM sessions s JOIN tree t ON s.parent_session_id=t.id
-	) SELECT harness_id,harness_session_id FROM sessions WHERE id IN (SELECT id FROM tree)`, org(o), id)
+		UNION SELECT s.id FROM sessions s JOIN tree t ON s.parent_session_id=t.id WHERE s.org_id=?
+	) SELECT harness_id,harness_session_id FROM sessions WHERE org_id=? AND id IN (SELECT id FROM tree)`, org(o), id, org(o), org(o))
 	if err != nil {
 		return false, err
 	}
@@ -217,11 +217,15 @@ func (d *Driver) DeleteSession(ctx context.Context, o, id string) (bool, error) 
 	}
 	if _, err = tx.ExecContext(ctx, `WITH RECURSIVE tree(id) AS (
 		SELECT id FROM sessions WHERE org_id=? AND id=?
-		UNION ALL SELECT s.id FROM sessions s JOIN tree t ON s.parent_session_id=t.id
-	) DELETE FROM sessions WHERE id IN (SELECT id FROM tree)`, org(o), id); err != nil {
+		UNION SELECT s.id FROM sessions s JOIN tree t ON s.parent_session_id=t.id WHERE s.org_id=?
+	) DELETE FROM sessions WHERE org_id=? AND id IN (SELECT id FROM tree)`, org(o), id, org(o), org(o)); err != nil {
 		return false, err
 	}
+	now := ns(time.Now())
 	for _, key := range keys {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO deleted_sessions VALUES(?,?,?,?) ON CONFLICT(org_id,harness_id,harness_session_id) DO UPDATE SET deleted_at=excluded.deleted_at`, org(o), key[0], key[1], now); err != nil {
+			return false, err
+		}
 		if _, err = tx.ExecContext(ctx, `DELETE FROM derive_queue WHERE org_id=? AND harness_id=? AND harness_session_id=?`, org(o), key[0], key[1]); err != nil {
 			return false, err
 		}

@@ -2,6 +2,7 @@ package sqlitecore_test
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -45,6 +46,36 @@ var _ = Describe("local core", func() {
 		Expect(q.DirtiedAt).To(BeTemporally("~", time.Now(), time.Second))
 	})
 
+	It("migrates an existing versioned database", func() {
+		path := filepath.Join(GinkgoT().TempDir(), "migrate.sqlite")
+		original, err := sqlitecore.NewDriver(ctx, path)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(original.Close()).To(Succeed())
+
+		db, err := sql.Open("sqlite", "file:"+path)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.Exec(`DROP TABLE deleted_sessions; PRAGMA user_version = 1`)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(db.Close()).To(Succeed())
+
+		migrated, err := sqlitecore.NewDriver(ctx, path)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(migrated.Close()).To(Succeed()) })
+		_, err = migrated.SweepDeriveDirty(ctx, time.Now().Add(-time.Hour))
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("rejects an unversioned database with a malformed known table", func() {
+		path := filepath.Join(GinkgoT().TempDir(), "malformed.sqlite")
+		db, err := sql.Open("sqlite", "file:"+path)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.Exec(`CREATE TABLE raw_turns (id INTEGER PRIMARY KEY)`)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(db.Close()).To(Succeed())
+		_, err = sqlitecore.NewDriver(ctx, path)
+		Expect(err).To(MatchError(And(ContainSubstring("initialize local SQLite schema"), ContainSubstring("org_id"))))
+	})
+
 	It("refuses a second process for the same local database", func() {
 		path := filepath.Join(GinkgoT().TempDir(), "locked.sqlite")
 		first, err := sqlitecore.NewDriver(ctx, path)
@@ -54,8 +85,28 @@ var _ = Describe("local core", func() {
 		Expect(err).To(MatchError(ContainSubstring("already in use")))
 	})
 
-	It("converges a queued raw session that was deleted before derive", func() {
-		const sessionID = "deleted-before-derive"
+	It("requeues a raw session when identity ingest follows a missing-session derive", func() {
+		const sessionID = "pre-ingest-race"
+		_, err := d.PutRawTurn(ctx, storage.RawTurnRecord{Source: storage.RawTurnSourceWire, Provider: "anthropic", HarnessID: "claude", HarnessSessionID: sessionID, RequestID: "turn"})
+		Expect(err).NotTo(HaveOccurred())
+		queued, err := d.GetDeriveDirty(ctx, "", "claude", sessionID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(queued).NotTo(BeNil())
+		_, err = d.RederiveSession(ctx, "", "", "claude", sessionID)
+		Expect(err).NotTo(HaveOccurred())
+		cleared, err := d.ClearDeriveDirty(ctx, *queued)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cleared).To(BeTrue())
+
+		_, err = d.IngestTurn(ctx, storage.IngestTurnRequest{Session: &sessions.IngestEnvelope{HarnessID: "claude", HarnessSessionID: sessionID}, Nodes: []*merkle.Node{{Hash: "root"}}})
+		Expect(err).NotTo(HaveOccurred())
+		queued, err = d.GetDeriveDirty(ctx, "", "claude", sessionID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(queued).NotTo(BeNil())
+	})
+
+	It("does not resurrect explicitly deleted sessions during a dirty sweep", func() {
+		const sessionID = "deleted-before-sweep"
 		_, err := d.PutRawTurn(ctx, storage.RawTurnRecord{Source: storage.RawTurnSourceWire, Provider: "anthropic", HarnessID: "claude", HarnessSessionID: sessionID, RequestID: "turn"})
 		Expect(err).NotTo(HaveOccurred())
 		result, err := d.IngestTurn(ctx, storage.IngestTurnRequest{Session: &sessions.IngestEnvelope{HarnessID: "claude", HarnessSessionID: sessionID}, Nodes: []*merkle.Node{{Hash: "root"}}})
@@ -63,8 +114,24 @@ var _ = Describe("local core", func() {
 		deleted, err := d.DeleteSession(ctx, "", result.SessionID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(deleted).To(BeTrue())
-		_, err = d.RederiveSession(ctx, "", "", "claude", sessionID)
+		queued, err := d.GetDeriveDirty(ctx, "", "claude", sessionID)
 		Expect(err).NotTo(HaveOccurred())
+		Expect(queued).To(BeNil())
+		swept, err := d.SweepDeriveDirty(ctx, time.Now().Add(-time.Hour))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(swept).To(BeZero())
+		queued, err = d.GetDeriveDirty(ctx, "", "claude", sessionID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(queued).To(BeNil())
+	})
+
+	It("rejects cyclic session parentage", func() {
+		parentB := "b"
+		_, err := d.IngestTurn(ctx, storage.IngestTurnRequest{Session: &sessions.IngestEnvelope{HarnessID: "claude", HarnessSessionID: "a", ParentHarnessSessionID: &parentB}, Nodes: []*merkle.Node{{Hash: "a-root"}}})
+		Expect(err).NotTo(HaveOccurred())
+		parentA := "a"
+		_, err = d.IngestTurn(ctx, storage.IngestTurnRequest{Session: &sessions.IngestEnvelope{HarnessID: "claude", HarnessSessionID: "b", ParentHarnessSessionID: &parentA}, Nodes: []*merkle.Node{{Hash: "b-root"}}})
+		Expect(err).To(MatchError(ContainSubstring("cycle")))
 	})
 
 	It("reconciles transcript sidecars without feeding them to the wire deriver", func() {

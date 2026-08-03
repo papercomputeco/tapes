@@ -28,7 +28,13 @@ type Driver struct {
 	db       *sql.DB
 	fileLock *flock.Flock
 	write    sync.Mutex
-	locks    sync.Map
+	lockMu   sync.Mutex
+	locks    map[string]*deriveSessionLock
+}
+
+type deriveSessionLock struct {
+	mu   sync.Mutex
+	refs int
 }
 
 var (
@@ -61,7 +67,7 @@ func NewDriver(ctx context.Context, path string) (*Driver, error) {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 	db.SetMaxOpenConns(4)
-	d := &Driver{db: db, fileLock: fileLock}
+	d := &Driver{db: db, fileLock: fileLock, locks: make(map[string]*deriveSessionLock)}
 	if err = d.Open(ctx); err != nil {
 		_ = db.Close()
 		_ = fileLock.Unlock()
@@ -70,7 +76,7 @@ func NewDriver(ctx context.Context, path string) (*Driver, error) {
 	return d, nil
 }
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 func (d *Driver) Open(ctx context.Context) error {
 	tx, err := d.db.BeginTx(ctx, nil)
@@ -78,9 +84,6 @@ func (d *Driver) Open(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err = tx.ExecContext(ctx, schema); err != nil {
-		return err
-	}
 	var version int
 	if err = tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return err
@@ -88,10 +91,30 @@ func (d *Driver) Open(ctx context.Context) error {
 	if version > schemaVersion {
 		return fmt.Errorf("local SQLite schema version %d is newer than this binary supports", version)
 	}
-	if version < schemaVersion {
-		if _, err = tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+	for version < schemaVersion {
+		switch version {
+		case 0:
+			if _, err = tx.ExecContext(ctx, schemaV1); err != nil {
+				return fmt.Errorf("initialize local SQLite schema: %w", err)
+			}
+			version = 1
+		case 1:
+			if _, err = tx.ExecContext(ctx, schemaV2); err != nil {
+				return fmt.Errorf("migrate local SQLite schema to version 2: %w", err)
+			}
+			version = 2
+		default:
+			return fmt.Errorf("no local SQLite migration from version %d", version)
+		}
+		if err = validateSchema(ctx, tx, version); err != nil {
 			return err
 		}
+		if _, err = tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
+			return err
+		}
+	}
+	if err = validateSchema(ctx, tx, schemaVersion); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -112,7 +135,7 @@ func (d *Driver) Close() error {
 	return result
 }
 
-const schema = `
+const schemaV1 = `
 CREATE TABLE IF NOT EXISTS raw_turns (id INTEGER PRIMARY KEY, org_id TEXT NOT NULL, source TEXT NOT NULL, provider TEXT NOT NULL, agent_name TEXT NOT NULL, harness_id TEXT NOT NULL, harness_session_id TEXT NOT NULL, request_id TEXT NOT NULL, raw_request BLOB, response BLOB, raw_response BLOB, raw_response_encoding TEXT NOT NULL, raw_response_dropped INTEGER NOT NULL, meta BLOB NOT NULL, session_envelope BLOB, received_at INTEGER NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS raw_turn_request ON raw_turns(org_id,request_id) WHERE request_id<>'';
 CREATE INDEX IF NOT EXISTS raw_turn_session ON raw_turns(org_id,harness_id,harness_session_id);
@@ -121,6 +144,54 @@ CREATE TABLE IF NOT EXISTS derive_queue (org_id TEXT NOT NULL,harness_id TEXT NO
 CREATE TABLE IF NOT EXISTS span_turns (org_id TEXT NOT NULL,trace_id TEXT NOT NULL,session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,user_prompt TEXT NOT NULL,response_preview TEXT NOT NULL,synthetic TEXT NOT NULL,status TEXT NOT NULL,source TEXT NOT NULL,started_at INTEGER NOT NULL,ended_at INTEGER,duration_ns INTEGER NOT NULL,total_input_tokens INTEGER NOT NULL,total_output_tokens INTEGER NOT NULL,main_input_tokens INTEGER NOT NULL,main_output_tokens INTEGER NOT NULL,cache_read_tokens INTEGER NOT NULL,cache_creation_tokens INTEGER NOT NULL,total_cost_micros INTEGER NOT NULL,PRIMARY KEY(org_id,trace_id));
 CREATE TABLE IF NOT EXISTS spans (org_id TEXT NOT NULL,trace_id TEXT NOT NULL,span_id TEXT NOT NULL,parent_span_id TEXT NOT NULL,session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,kind TEXT NOT NULL,name TEXT NOT NULL,status TEXT NOT NULL,call_kind TEXT NOT NULL,thread_id TEXT NOT NULL,model TEXT NOT NULL,stop_reason TEXT NOT NULL,started_at INTEGER NOT NULL,duration_ns INTEGER NOT NULL,seq INTEGER NOT NULL,input BLOB,output BLOB,usage BLOB,raw_turn_id INTEGER,node_hash TEXT NOT NULL,verdict BLOB,PRIMARY KEY(org_id,trace_id,span_id),FOREIGN KEY(org_id,trace_id) REFERENCES span_turns(org_id,trace_id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS span_links (org_id TEXT NOT NULL,from_trace_id TEXT NOT NULL,from_span_id TEXT NOT NULL,from_io TEXT NOT NULL,to_trace_id TEXT NOT NULL,to_span_id TEXT NOT NULL,to_io TEXT NOT NULL,kind TEXT NOT NULL,session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,PRIMARY KEY(org_id,from_trace_id,from_span_id,to_trace_id,to_span_id,from_io,to_io));`
+
+const schemaV2 = `
+CREATE TABLE IF NOT EXISTS deleted_sessions (org_id TEXT NOT NULL,harness_id TEXT NOT NULL,harness_session_id TEXT NOT NULL,deleted_at INTEGER NOT NULL,PRIMARY KEY(org_id,harness_id,harness_session_id));`
+
+var requiredSchemaColumns = map[int]map[string][]string{
+	1: {
+		"raw_turns":    {"id", "org_id", "source", "provider", "agent_name", "harness_id", "harness_session_id", "request_id", "raw_request", "response", "raw_response", "raw_response_encoding", "raw_response_dropped", "meta", "session_envelope", "received_at"},
+		"sessions":     {"id", "org_id", "harness_id", "harness_session_id", "name", "display_name", "derived_title", "cwd", "harness_version", "parent_session_id", "started_at", "last_seen_at", "auth_subject", "harness_metadata", "derived_status", "derived_model", "model_usage", "tasks", "kind_counts", "total_input_tokens", "total_output_tokens", "total_cost_micros", "turn_count"},
+		"derive_queue": {"org_id", "harness_id", "harness_session_id", "dirtied_at", "first_dirtied_at"},
+		"span_turns":   {"org_id", "trace_id", "session_id", "user_prompt", "response_preview", "synthetic", "status", "source", "started_at", "ended_at", "duration_ns", "total_input_tokens", "total_output_tokens", "main_input_tokens", "main_output_tokens", "cache_read_tokens", "cache_creation_tokens", "total_cost_micros"},
+		"spans":        {"org_id", "trace_id", "span_id", "parent_span_id", "session_id", "kind", "name", "status", "call_kind", "thread_id", "model", "stop_reason", "started_at", "duration_ns", "seq", "input", "output", "usage", "raw_turn_id", "node_hash", "verdict"},
+		"span_links":   {"org_id", "from_trace_id", "from_span_id", "from_io", "to_trace_id", "to_span_id", "to_io", "kind", "session_id"},
+	},
+	2: {
+		"deleted_sessions": {"org_id", "harness_id", "harness_session_id", "deleted_at"},
+	},
+}
+
+func validateSchema(ctx context.Context, tx *sql.Tx, version int) error {
+	for migration := 1; migration <= version; migration++ {
+		for table, required := range requiredSchemaColumns[migration] {
+			rows, err := tx.QueryContext(ctx, "PRAGMA table_info("+table+")")
+			if err != nil {
+				return fmt.Errorf("inspect local SQLite table %s: %w", table, err)
+			}
+			found := make(map[string]bool, len(required))
+			for rows.Next() {
+				var cid, notNull, primaryKey int
+				var name, columnType string
+				var defaultValue any
+				if err = rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+					_ = rows.Close()
+					return err
+				}
+				found[name] = true
+			}
+			if err = rows.Close(); err != nil {
+				return err
+			}
+			for _, column := range required {
+				if !found[column] {
+					return fmt.Errorf("local SQLite schema version %d is missing %s.%s", version, table, column)
+				}
+			}
+		}
+	}
+	return nil
+}
 
 func org(v string) string {
 	if v == "" {
@@ -220,6 +291,9 @@ func (d *Driver) IngestTurn(ctx context.Context, r storage.IngestTurnRequest) (s
 
 	var parent any
 	if e.ParentHarnessSessionID != nil {
+		if *e.ParentHarnessSessionID == key {
+			return storage.IngestTurnResult{}, errors.New("session cannot be its own parent")
+		}
 		var parentID string
 		err = tx.QueryRowContext(ctx, `SELECT id FROM sessions WHERE org_id=? AND harness_id=? AND harness_session_id=?`, o, e.HarnessIDOrUnknown(), *e.ParentHarnessSessionID).Scan(&parentID)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -228,6 +302,24 @@ func (d *Driver) IngestTurn(ctx context.Context, r storage.IngestTurnRequest) (s
 		}
 		if err != nil {
 			return storage.IngestTurnResult{}, err
+		}
+		var currentID string
+		currentErr := tx.QueryRowContext(ctx, `SELECT id FROM sessions WHERE org_id=? AND harness_id=? AND harness_session_id=?`, o, e.HarnessIDOrUnknown(), key).Scan(&currentID)
+		if currentErr != nil && !errors.Is(currentErr, sql.ErrNoRows) {
+			return storage.IngestTurnResult{}, currentErr
+		}
+		if currentErr == nil {
+			var cycle bool
+			if err = tx.QueryRowContext(ctx, `WITH RECURSIVE ancestors(id,parent_session_id) AS (
+				SELECT id,parent_session_id FROM sessions WHERE org_id=? AND id=?
+				UNION
+				SELECT s.id,s.parent_session_id FROM sessions s JOIN ancestors a ON s.id=a.parent_session_id WHERE s.org_id=?
+			) SELECT EXISTS(SELECT 1 FROM ancestors WHERE id=?)`, o, parentID, o, currentID).Scan(&cycle); err != nil {
+				return storage.IngestTurnResult{}, err
+			}
+			if cycle {
+				return storage.IngestTurnResult{}, errors.New("session parent would create a cycle")
+			}
 		}
 		parent = parentID
 	}
@@ -255,6 +347,15 @@ func (d *Driver) IngestTurn(ctx context.Context, r storage.IngestTurnRequest) (s
 		if _, err = tx.ExecContext(ctx, `UPDATE sessions SET derived_title=? WHERE id=?`, r.DerivedTitle, got); err != nil {
 			return storage.IngestTurnResult{}, err
 		}
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM deleted_sessions WHERE org_id=? AND harness_id=? AND harness_session_id=?`, o, e.HarnessIDOrUnknown(), key); err != nil {
+		return storage.IngestTurnResult{}, err
+	}
+	// Capture and identity are separate calls. If capture won a crash race and
+	// its queue entry was already cleared, identity ingest must make the raw
+	// session eligible again without waiting for the hourly sweep.
+	if _, err = tx.ExecContext(ctx, `INSERT INTO derive_queue VALUES(?,?,?,?,?) ON CONFLICT(org_id,harness_id,harness_session_id) DO UPDATE SET dirtied_at=excluded.dirtied_at`, o, e.HarnessIDOrUnknown(), key, now, now); err != nil {
+		return storage.IngestTurnResult{}, err
 	}
 	if err = tx.Commit(); err != nil {
 		return storage.IngestTurnResult{}, err
@@ -321,8 +422,10 @@ func (d *Driver) SweepDeriveDirty(ctx context.Context, activeSince time.Time) (i
 	defer d.write.Unlock()
 	now := ns(time.Now())
 	result, err := d.db.ExecContext(ctx, `INSERT INTO derive_queue(org_id,harness_id,harness_session_id,dirtied_at,first_dirtied_at)
-		SELECT org_id,harness_id,harness_session_id,?,? FROM raw_turns WHERE harness_session_id <> '' AND received_at >= ?
-		GROUP BY org_id,harness_id,harness_session_id
+		SELECT r.org_id,r.harness_id,r.harness_session_id,?,? FROM raw_turns r
+		LEFT JOIN deleted_sessions d ON d.org_id=r.org_id AND d.harness_id=r.harness_id AND d.harness_session_id=r.harness_session_id
+		WHERE r.harness_session_id <> '' AND r.received_at >= ? AND d.org_id IS NULL
+		GROUP BY r.org_id,r.harness_id,r.harness_session_id
 		ON CONFLICT(org_id,harness_id,harness_session_id) DO NOTHING`, now, now, ns(activeSince))
 	if err != nil {
 		return 0, err
@@ -342,13 +445,33 @@ func (d *Driver) DeriveQueueStats(ctx context.Context) (storage.DeriveQueueStats
 }
 
 func (d *Driver) TryDeriveSessionLock(_ context.Context, o, h, s string) (func(), bool, error) {
-	k := org(o) + "/" + h + "/" + s
-	v, _ := d.locks.LoadOrStore(k, &sync.Mutex{})
-	m := v.(*sync.Mutex)
-	if !m.TryLock() {
+	key := org(o) + "/" + h + "/" + s
+	d.lockMu.Lock()
+	entry := d.locks[key]
+	if entry == nil {
+		entry = &deriveSessionLock{}
+		d.locks[key] = entry
+	}
+	entry.refs++
+	d.lockMu.Unlock()
+	if !entry.mu.TryLock() {
+		d.releaseDeriveSessionLock(key, entry, false)
 		return func() {}, false, nil
 	}
-	return m.Unlock, true, nil
+	var once sync.Once
+	return func() { once.Do(func() { d.releaseDeriveSessionLock(key, entry, true) }) }, true, nil
+}
+
+func (d *Driver) releaseDeriveSessionLock(key string, entry *deriveSessionLock, unlock bool) {
+	if unlock {
+		entry.mu.Unlock()
+	}
+	d.lockMu.Lock()
+	defer d.lockMu.Unlock()
+	entry.refs--
+	if entry.refs == 0 && d.locks[key] == entry {
+		delete(d.locks, key)
+	}
 }
 
 func (d *Driver) RederiveSession(ctx context.Context, project, o, h, s string) (*derive.RederiveReport, error) {
