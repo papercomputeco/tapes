@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -39,6 +40,16 @@ func gzipBytes(b []byte) []byte {
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
 	_, err := zw.Write(b)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(zw.Close()).To(Succeed())
+	return buf.Bytes()
+}
+
+func zstdBytes(b []byte) []byte {
+	var buf bytes.Buffer
+	zw, err := zstd.NewWriter(&buf)
+	Expect(err).NotTo(HaveOccurred())
+	_, err = zw.Write(b)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(zw.Close()).To(Succeed())
 	return buf.Bytes()
@@ -166,6 +177,44 @@ var _ = Describe("Raw response capture", func() {
 		// The turn itself is not lost — only its verbatim bytes.
 		Expect(rec.Provider).To(Equal("anthropic"))
 		Expect(rec.Response).NotTo(BeEmpty())
+	})
+
+	It("marks a turn whose producer withheld the bytes", func() {
+		// The row looks identical on the wire to one from a producer that
+		// never captured raw bytes — same absent raw_response. The marker
+		// is the only thing separating "a limit took them" from "there
+		// were none", which are opposite operational facts.
+		post(ingest.TurnPayload{
+			Provider:            "anthropic",
+			RawRequest:          anthropicRequest,
+			Response:            reducedResponse("claude-3-5-sonnet-20241022", "Hello world", nil),
+			RawResponseWithheld: true,
+		})
+
+		rec := driver.RawTurns()[0]
+		Expect(rec.RawResponse).To(BeEmpty())
+		Expect(rec.RawResponseDropped).To(BeTrue())
+		// The turn is otherwise whole; only its verbatim bytes are gone.
+		Expect(rec.Response).NotTo(BeEmpty())
+	})
+
+	It("keeps the bytes when a producer both sends and claims to withhold them", func() {
+		// A contradicted claim loses to the evidence. Trusting it would
+		// discard verbatim capture on the strength of a flag the payload
+		// itself refutes, and would leave a marked row still carrying a
+		// raw_response — the one shape the marker must never produce.
+		post(ingest.TurnPayload{
+			Provider:            "anthropic",
+			RawRequest:          anthropicRequest,
+			RawResponse:         []byte(anthropicSSE),
+			RawResponseEncoding: "identity",
+			RawResponseWithheld: true,
+			Meta:                ingest.TurnMeta{ContentType: "text/event-stream"},
+		})
+
+		rec := driver.RawTurns()[0]
+		Expect(string(rec.RawResponse)).To(Equal(anthropicSSE))
+		Expect(rec.RawResponseDropped).To(BeFalse())
 	})
 
 	It("reduces a raw-only payload server-side", func() {
@@ -454,6 +503,51 @@ var _ = Describe("Raw response capture", func() {
 		})
 	})
 
+	It("reduces a zstd-encoded raw-only payload while storing the compressed bytes", func() {
+		// This is the case the raw-only lane existed for and could not
+		// serve: Codex traffic is zstd, so until ingest could decode it
+		// every zstd turn fell back to dual-send permanently. The bytes
+		// were already being stored — what was missing was the ability to
+		// get anything back out of them.
+		compressed := zstdBytes([]byte(anthropicSSE))
+
+		post(ingest.TurnPayload{
+			Provider:            "anthropic",
+			RawRequest:          anthropicRequest,
+			RawResponse:         compressed,
+			RawResponseEncoding: "zstd",
+			Meta:                ingest.TurnMeta{ContentType: "text/event-stream"},
+		})
+
+		rec := driver.RawTurns()[0]
+		Expect(rec.RawResponse).To(Equal(compressed))
+		Expect(rec.RawResponseEncoding).To(Equal("zstd"))
+		Expect(rec.RawResponseDropped).To(BeFalse())
+
+		var reduced llm.ChatResponse
+		Expect(json.Unmarshal(rec.Response, &reduced)).To(Succeed())
+		Expect(reduced.Message.GetText()).To(Equal("Hello world"))
+	})
+
+	It("reduces a raw-only payload whose stream was cut short", func() {
+		// The producer forwards the truncated compressed bytes as they
+		// arrived, so these are exactly what ingest is handed. Refusing
+		// them would discard a turn that is all there bar its trailer.
+		full := gzipBytes([]byte(anthropicSSE))
+
+		post(ingest.TurnPayload{
+			Provider:            "anthropic",
+			RawRequest:          anthropicRequest,
+			RawResponse:         full[:len(full)-8],
+			RawResponseEncoding: "gzip",
+			Meta:                ingest.TurnMeta{ContentType: "text/event-stream"},
+		})
+
+		var reduced llm.ChatResponse
+		Expect(json.Unmarshal(driver.RawTurns()[0].Response, &reduced)).To(Succeed())
+		Expect(reduced.Message.GetText()).To(Equal("Hello world"))
+	})
+
 	It("still stores the bytes when the encoding is one it cannot decode", func() {
 		post(ingest.TurnPayload{
 			Provider:            "anthropic",
@@ -464,9 +558,10 @@ var _ = Describe("Raw response capture", func() {
 		})
 
 		rec := driver.RawTurns()[0]
-		// A reduction ingest cannot perform is not a reason to lose the bytes:
-		// they are exactly what a later build with a zstd decoder re-derives
-		// from.
+		// zstd is decodable now, but these bytes are not valid zstd. A
+		// reduction ingest cannot perform is still not a reason to lose
+		// the bytes — the recovery path re-reads this column, so a fix to
+		// the decoder or the reducer can still reach this row.
 		Expect(rec.RawResponse).NotTo(BeEmpty())
 		Expect(rec.RawResponseEncoding).To(Equal("zstd"))
 		Expect(rec.RawResponseDropped).To(BeFalse())

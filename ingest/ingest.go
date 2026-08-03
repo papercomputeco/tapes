@@ -2,14 +2,12 @@ package ingest
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"math"
 	"net"
@@ -100,6 +98,30 @@ type TurnPayload struct {
 	// encoding rather than decompressed, so the stored column stays literally
 	// what the upstream sent.
 	RawResponseEncoding string `json:"raw_response_encoding,omitempty"`
+
+	// RawResponseWithheld says the producer captured verbatim bytes and
+	// deliberately did not send them — almost always because including them
+	// would have pushed the envelope past MaxIngestBodyBytes, so the choice
+	// was between a turn without its bytes and no turn at all.
+	//
+	// Without it that turn is indistinguishable from one produced by an
+	// adapter that never captured raw bytes in the first place: both arrive
+	// with raw_response absent. Those are opposite facts. The first is a
+	// limit that bit and wants tuning; the second is a deployment fact about
+	// which producers are running. A fidelity report that cannot separate
+	// them reports the wrong one — silently, and in the reassuring
+	// direction, since "this producer doesn't send raw" reads as expected
+	// where "we lost bytes we had" does not.
+	//
+	// Deliberately NOT named to match the raw_response_dropped column it
+	// feeds. The column is the union of two causes — the producer withheld,
+	// or ingest capped — and this field is only one of them. A shared name
+	// would imply the producer sets the column, when it contributes to it.
+	//
+	// Absent means "no claim", which is exactly the pre-existing behavior:
+	// every producer shipped before this field omits it and keeps reading as
+	// it always did.
+	RawResponseWithheld bool `json:"raw_response_withheld,omitempty"`
 
 	// Meta is the capture adapter's metadata block. Parsed for the
 	// fields ingest promotes (request_id for raw-turn dedup); the
@@ -623,7 +645,7 @@ func (s *Server) reduceRawOnly(ctx context.Context, turn *TurnPayload) json.RawM
 		return nil
 	}
 
-	body, err := decodeContentEncoding(turn.RawResponse, turn.RawResponseEncoding)
+	body, stats, err := capture.DecodeContentEncoding(turn.RawResponse, turn.RawResponseEncoding)
 	if err != nil {
 		s.logger.Warn("raw-only turn not reduced: decode failed",
 			"provider", turn.Provider,
@@ -632,6 +654,17 @@ func (s *Server) reduceRawOnly(ctx context.Context, turn *TurnPayload) json.RawM
 			"error", err,
 		)
 		return nil
+	}
+	if stats.Truncated {
+		// The reduction goes ahead: a turn recovered from a stream that
+		// ended early is worth more than no turn. Logged rather than
+		// dropped, because the reduction may be missing its tail and
+		// nothing downstream can tell that from the row alone.
+		s.logger.Info("raw-only turn reduced from a truncated body",
+			"provider", turn.Provider,
+			"request_id", turn.Meta.RequestID,
+			"encoding", turn.RawResponseEncoding,
+		)
 	}
 
 	resp, err := reducer.Reduce(ctx,
@@ -831,33 +864,6 @@ func reducedResponseAbsent(r llm.ChatResponse) bool {
 		r.Usage == nil
 }
 
-// decodeContentEncoding returns body decoded per encoding, for handing to a
-// reducer. The stored column keeps the ENCODED bytes; only the reduction sees
-// the decoded form.
-//
-// An unrecognized encoding is an error rather than a pass-through: handing
-// compressed bytes to a reducer that expects text yields a confusing parse
-// failure well away from the actual cause.
-func decodeContentEncoding(body []byte, encoding string) ([]byte, error) {
-	switch strings.ToLower(strings.TrimSpace(encoding)) {
-	case "", "identity":
-		return body, nil
-	case "gzip", "x-gzip":
-		zr, err := gzip.NewReader(bytes.NewReader(body))
-		if err != nil {
-			return nil, fmt.Errorf("gzip reader: %w", err)
-		}
-		defer zr.Close()
-		out, err := io.ReadAll(zr)
-		if err != nil {
-			return nil, fmt.Errorf("gzip decode: %w", err)
-		}
-		return out, nil
-	default:
-		return nil, fmt.Errorf("unsupported content-encoding %q", encoding)
-	}
-}
-
 // MaxRawResponseBytes caps the verbatim response bytes ingest will store on a
 // single turn. Beyond it the bytes are dropped and the row is marked
 // (raw_response_dropped), rather than the write being refused: the reduced
@@ -891,6 +897,27 @@ func (s *Server) persistRawTurn(ctx context.Context, turn *TurnPayload, raw rawE
 			"cap", MaxRawResponseBytes,
 		)
 		rawResponse, dropped = nil, true
+	}
+
+	// A producer that withheld its bytes lands the same marker as a turn
+	// whose bytes ingest dropped, because the marker answers "did verbatim
+	// bytes exist for this turn?" and for both the answer is yes-and-gone.
+	// Which limit bit is an operational question, not a fidelity one, and it
+	// is answered by these two log lines rather than by a second column: a
+	// tier nobody can act on differently is a tier that only splits the
+	// dashboards.
+	//
+	// Honored only when no bytes arrived, so that a marked row never also
+	// carries a raw_response. A producer claiming both sent the bytes, and
+	// the bytes are the stronger evidence — keeping them and ignoring the
+	// claim degrades to the truth, while trusting the claim would discard
+	// verbatim capture on the strength of a contradicted flag.
+	if turn.RawResponseWithheld && len(rawResponse) == 0 {
+		s.logger.Warn("raw response withheld by producer",
+			"provider", turn.Provider,
+			"request_id", turn.Meta.RequestID,
+		)
+		dropped = true
 	}
 
 	rec := storage.RawTurnRecord{
