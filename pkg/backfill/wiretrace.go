@@ -306,10 +306,7 @@ func buildWireTraceEnvelope(ctx context.Context, dir, turnDir string, reducer ca
 		return ""
 	}
 
-	// Mirror extproc's harness thread-id mapping (headers.ThreadID in
-	// tapes-extproc) so backfilled rows attribute threads exactly like
-	// live capture.
-	threadID := headers("x-claude-code-agent-id")
+	threadID := threadIDFromHeaders(headers)
 
 	envelope := &wireTraceEnvelope{
 		Provider:  provider,
@@ -340,6 +337,58 @@ func buildWireTraceEnvelope(ctx context.Context, dir, turnDir string, reducer ca
 	}
 	return envelope, "", nil
 }
+
+// threadIDFromHeaders resolves the harness-native sub-thread id for a
+// captured turn, or "" for a main-thread call (or a harness with no known
+// mapping). It mirrors extproc's harness thread-id mapping (headers.ThreadID
+// in tapes-extproc) so backfilled rows attribute threads exactly like live
+// capture; any change here belongs in extproc's ThreadID too.
+//
+// Claude Code is resolved from a header list (first present wins): it stamps
+// x-claude-code-agent-id only on calls made from a subagent context, so
+// presence alone is the signal.
+//
+// Codex is a header *pair*, not a list member. Codex stamps thread-id on
+// EVERY call — root turns carry thread-id == session-id, and only spawned
+// sub-thread (child) turns carry a distinct thread-id. So a sub-thread id is
+// resolved only when both headers are present AND they diverge. Both must be
+// present: a lone thread-id without its session-id counterpart isn't a
+// recognized Codex shape, and treating it as a sub-thread would risk
+// misrouting root spines.
+//
+// The root guard is not cosmetic: a non-empty thread_id on a root turn
+// misroutes the root spine into tapes derive's threadCall path and silently
+// degrades the session's derived status (terminalMainSpan requires
+// ThreadID=="").
+func threadIDFromHeaders(header func(string) string) string {
+	for _, name := range claudeThreadIDHeaders {
+		if v := header(name); v != "" {
+			return v
+		}
+	}
+	if tid := header(codexThreadIDHeader); tid != "" {
+		if sid := header(codexSessionIDHeader); sid != "" && tid != sid {
+			return tid
+		}
+	}
+	return ""
+}
+
+// claudeThreadIDHeaders is ordered; first present header wins.
+var claudeThreadIDHeaders = []string{
+	"x-claude-code-agent-id",
+}
+
+const (
+	// codexSessionIDHeader is the Codex harness's root session id, present
+	// on every Codex call.
+	codexSessionIDHeader = "session-id"
+
+	// codexThreadIDHeader is the Codex harness's thread id for this call:
+	// equal to session-id on root turns, a distinct id on sub-thread
+	// (spawned agent) turns.
+	codexThreadIDHeader = "thread-id"
+)
 
 // sessionEnvelopeFromHeaders rebuilds the session block from the
 // captured X-Tapes-* request headers, mirroring tapes-extproc's
