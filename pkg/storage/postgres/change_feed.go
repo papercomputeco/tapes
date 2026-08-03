@@ -43,10 +43,20 @@ const (
 	// reduction. Re-derivation is bounded by what that adapter chose to keep.
 	FidelityReduced = "reduced"
 
-	// FidelityDegraded marks a row whose verbatim bytes arrived and were
-	// dropped for exceeding the ingest cap. Distinct from reduced: this is a
-	// capture path that sent the bytes and a limit that refused them, which is
-	// a tuning signal rather than a deployment fact.
+	// FidelityDegraded marks a row whose verbatim bytes existed and are gone:
+	// either they arrived and exceeded the ingest cap, or the producer
+	// captured them and withheld them to keep the envelope under the
+	// transport limit. Distinct from reduced: this is a capture path that
+	// HAD the bytes and a limit that took them, which is a tuning signal
+	// rather than a deployment fact.
+	//
+	// Both causes share this tier on purpose. Fidelity answers what can be
+	// re-derived from a row, and neither can — the reason a limit bit does
+	// not change the answer. Which limit bit is an operations question,
+	// answered by the ingest logs that record each cause separately; giving
+	// it a tier would put a distinction nobody re-derives differently into
+	// every rollup, and rollups take the worst tier, so the split would be
+	// lost at the trace level anyway.
 	FidelityDegraded = "degraded"
 )
 

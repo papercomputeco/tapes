@@ -180,6 +180,44 @@ var _ = Describe("Raw response capture", func() {
 		Expect(rec.Response).NotTo(BeEmpty())
 	})
 
+	It("marks a turn whose producer withheld the bytes", func() {
+		// The row looks identical on the wire to one from a producer that
+		// never captured raw bytes — same absent raw_response. The marker
+		// is the only thing separating "a limit took them" from "there
+		// were none", which are opposite operational facts.
+		post(ingest.TurnPayload{
+			Provider:            "anthropic",
+			RawRequest:          anthropicRequest,
+			Response:            reducedResponse("claude-3-5-sonnet-20241022", "Hello world", nil),
+			RawResponseWithheld: true,
+		})
+
+		rec := driver.RawTurns()[0]
+		Expect(rec.RawResponse).To(BeEmpty())
+		Expect(rec.RawResponseDropped).To(BeTrue())
+		// The turn is otherwise whole; only its verbatim bytes are gone.
+		Expect(rec.Response).NotTo(BeEmpty())
+	})
+
+	It("keeps the bytes when a producer both sends and claims to withhold them", func() {
+		// A contradicted claim loses to the evidence. Trusting it would
+		// discard verbatim capture on the strength of a flag the payload
+		// itself refutes, and would leave a marked row still carrying a
+		// raw_response — the one shape the marker must never produce.
+		post(ingest.TurnPayload{
+			Provider:            "anthropic",
+			RawRequest:          anthropicRequest,
+			RawResponse:         []byte(anthropicSSE),
+			RawResponseEncoding: "identity",
+			RawResponseWithheld: true,
+			Meta:                ingest.TurnMeta{ContentType: "text/event-stream"},
+		})
+
+		rec := driver.RawTurns()[0]
+		Expect(string(rec.RawResponse)).To(Equal(anthropicSSE))
+		Expect(rec.RawResponseDropped).To(BeFalse())
+	})
+
 	It("reduces a raw-only payload server-side", func() {
 		post(ingest.TurnPayload{
 			Provider:    "anthropic",

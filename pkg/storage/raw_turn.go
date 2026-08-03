@@ -75,10 +75,16 @@ type RawTurnRecord struct {
 	// mean verbatim for the column to be worth having.
 	RawResponseEncoding string
 
-	// RawResponseDropped marks a turn whose raw response arrived but was
-	// too large to store. It is the difference between "this turn never had
-	// verbatim bytes" and "it did, and we chose not to keep them" — without
-	// it a fidelity gap is indistinguishable from an absence.
+	// RawResponseDropped marks a turn whose raw response existed and was not
+	// kept — because it arrived too large to store, or because the producer
+	// captured it and withheld it to fit the ingest transport limit. It is
+	// the difference between "this turn never had verbatim bytes" and "it
+	// did, and we chose not to keep them" — without it a fidelity gap is
+	// indistinguishable from an absence.
+	//
+	// True implies RawResponse is empty: the two say opposite things about
+	// the same bytes, so a row asserting both would be unreadable. Ingest
+	// enforces it on both paths.
 	RawResponseDropped bool
 
 	// Meta is the capture adapter's metadata block (model, stream,

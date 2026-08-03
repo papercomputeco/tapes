@@ -99,6 +99,30 @@ type TurnPayload struct {
 	// what the upstream sent.
 	RawResponseEncoding string `json:"raw_response_encoding,omitempty"`
 
+	// RawResponseWithheld says the producer captured verbatim bytes and
+	// deliberately did not send them — almost always because including them
+	// would have pushed the envelope past MaxIngestBodyBytes, so the choice
+	// was between a turn without its bytes and no turn at all.
+	//
+	// Without it that turn is indistinguishable from one produced by an
+	// adapter that never captured raw bytes in the first place: both arrive
+	// with raw_response absent. Those are opposite facts. The first is a
+	// limit that bit and wants tuning; the second is a deployment fact about
+	// which producers are running. A fidelity report that cannot separate
+	// them reports the wrong one — silently, and in the reassuring
+	// direction, since "this producer doesn't send raw" reads as expected
+	// where "we lost bytes we had" does not.
+	//
+	// Deliberately NOT named to match the raw_response_dropped column it
+	// feeds. The column is the union of two causes — the producer withheld,
+	// or ingest capped — and this field is only one of them. A shared name
+	// would imply the producer sets the column, when it contributes to it.
+	//
+	// Absent means "no claim", which is exactly the pre-existing behavior:
+	// every producer shipped before this field omits it and keeps reading as
+	// it always did.
+	RawResponseWithheld bool `json:"raw_response_withheld,omitempty"`
+
 	// Meta is the capture adapter's metadata block. Parsed for the
 	// fields ingest promotes (request_id for raw-turn dedup); the
 	// verbatim JSON is persisted alongside the raw turn so fields
@@ -873,6 +897,27 @@ func (s *Server) persistRawTurn(ctx context.Context, turn *TurnPayload, raw rawE
 			"cap", MaxRawResponseBytes,
 		)
 		rawResponse, dropped = nil, true
+	}
+
+	// A producer that withheld its bytes lands the same marker as a turn
+	// whose bytes ingest dropped, because the marker answers "did verbatim
+	// bytes exist for this turn?" and for both the answer is yes-and-gone.
+	// Which limit bit is an operational question, not a fidelity one, and it
+	// is answered by these two log lines rather than by a second column: a
+	// tier nobody can act on differently is a tier that only splits the
+	// dashboards.
+	//
+	// Honored only when no bytes arrived, so that a marked row never also
+	// carries a raw_response. A producer claiming both sent the bytes, and
+	// the bytes are the stronger evidence — keeping them and ignoring the
+	// claim degrades to the truth, while trusting the claim would discard
+	// verbatim capture on the strength of a contradicted flag.
+	if turn.RawResponseWithheld && len(rawResponse) == 0 {
+		s.logger.Warn("raw response withheld by producer",
+			"provider", turn.Provider,
+			"request_id", turn.Meta.RequestID,
+		)
+		dropped = true
 	}
 
 	rec := storage.RawTurnRecord{
