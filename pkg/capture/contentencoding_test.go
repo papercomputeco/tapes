@@ -10,10 +10,9 @@ import (
 	"compress/gzip"
 	"math/rand"
 
+	"github.com/klauspost/compress/zstd"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"github.com/klauspost/compress/zstd"
 
 	"github.com/papercomputeco/tapes/pkg/capture"
 )
