@@ -36,7 +36,9 @@ const AgentNameHeader = "X-Tapes-Agent-Name"
 //
 // The list is ordered; first present header wins. Add other harnesses'
 // equivalents here as they are identified — the rest of the pipeline is
-// harness-neutral and only sees the resolved thread id.
+// harness-neutral and only sees the resolved thread id. Codex is NOT a member
+// of this list: its sub-thread signal is a header *pair* (see the Codex
+// constants below), resolved separately in ThreadID.
 //
 // This must stay in step with tapes-extproc's harnessThreadIDHeaders: the two
 // are independent capture paths for the same traffic, and a header one records
@@ -49,6 +51,25 @@ var ThreadIDHeaders = []string{
 	"x-claude-code-agent-id",
 }
 
+// Codex's native identity headers. Unlike Claude Code, Codex stamps thread-id
+// on EVERY call — root turns carry thread-id == session-id, and only spawned
+// sub-thread (child) turns carry a distinct thread-id. So presence alone
+// doesn't mean "subagent"; the root guard in ThreadID compares the pair and
+// resolves root turns to "". Getting this wrong is not cosmetic: a non-empty
+// thread_id on a root turn misroutes the root spine into tapes derive's
+// threadCall path and silently degrades the session's derived status
+// (terminalMainSpan requires ThreadID=="").
+const (
+	// CodexSessionID is the Codex harness's root session id, present on
+	// every Codex call.
+	CodexSessionID = "session-id"
+
+	// CodexThreadID is the Codex harness's thread id for this call: equal to
+	// session-id on root turns, a distinct id on sub-thread (spawned agent)
+	// turns.
+	CodexThreadID = "thread-id"
+)
+
 // ThreadID resolves the harness-native sub-thread id for this request, or ""
 // for a main-thread call (or a harness with no known mapping). Fiber's Get is
 // case-insensitive, so the constants are written in the lowercase HTTP/2 form
@@ -57,6 +78,16 @@ func ThreadID(c *fiber.Ctx) string {
 	for _, name := range ThreadIDHeaders {
 		if v := strings.TrimSpace(c.Get(name)); v != "" {
 			return v
+		}
+	}
+	// Codex: sub-thread iff the thread-id / session-id pair diverges. Both
+	// must be present — a lone thread-id without its session-id counterpart
+	// isn't a recognized Codex shape, and treating it as a sub-thread would
+	// risk misrouting root spines (see the root-guard comment on the Codex
+	// constants above).
+	if tid := strings.TrimSpace(c.Get(CodexThreadID)); tid != "" {
+		if sid := strings.TrimSpace(c.Get(CodexSessionID)); sid != "" && tid != sid {
+			return tid
 		}
 	}
 	return ""

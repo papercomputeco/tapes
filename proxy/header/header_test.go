@@ -253,3 +253,84 @@ var _ = Describe("SetClientResponseHeaders", func() {
 		Expect(resp.Header.Get("X-Multi")).To(Equal("value1, value2"))
 	})
 })
+
+var _ = Describe("ThreadID", func() {
+	var app *fiber.App
+
+	BeforeEach(func() {
+		app = fiber.New()
+	})
+
+	AfterEach(func() {
+		app.Shutdown()
+	})
+
+	// resolve runs ThreadID against a request carrying the given headers.
+	resolve := func(hdrs map[string]string) string {
+		var got string
+
+		app.Post("/test", func(c *fiber.Ctx) error {
+			got = ThreadID(c)
+			return c.SendStatus(fiber.StatusOK)
+		})
+
+		req := httptest.NewRequest(http.MethodPost, "/test", nil)
+		for k, v := range hdrs {
+			req.Header.Set(k, v)
+		}
+
+		resp, err := app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		resp.Body.Close()
+
+		return got
+	}
+
+	It("resolves Claude Code's agent-id header", func() {
+		Expect(resolve(map[string]string{
+			"x-claude-code-agent-id": "agent-7",
+		})).To(Equal("agent-7"))
+	})
+
+	It("prefers the Claude list over the Codex pair", func() {
+		Expect(resolve(map[string]string{
+			"x-claude-code-agent-id": "agent-7",
+			"thread-id":              "thr-2",
+			"session-id":             "sess-1",
+		})).To(Equal("agent-7"))
+	})
+
+	It("resolves a Codex sub-thread when the pair diverges", func() {
+		Expect(resolve(map[string]string{
+			"thread-id":  "thr-2",
+			"session-id": "sess-1",
+		})).To(Equal("thr-2"))
+	})
+
+	// The root guard: a non-empty thread_id on a root turn would misroute
+	// the root spine into derive's threadCall path.
+	It("resolves a Codex root turn to empty when the pair matches", func() {
+		Expect(resolve(map[string]string{
+			"thread-id":  "sess-1",
+			"session-id": "sess-1",
+		})).To(BeEmpty())
+	})
+
+	It("ignores a lone thread-id with no session-id counterpart", func() {
+		Expect(resolve(map[string]string{
+			"thread-id": "thr-2",
+		})).To(BeEmpty())
+	})
+
+	It("ignores a lone session-id with no thread-id", func() {
+		Expect(resolve(map[string]string{
+			"session-id": "sess-1",
+		})).To(BeEmpty())
+	})
+
+	It("resolves to empty when no thread headers are present", func() {
+		Expect(resolve(map[string]string{
+			"content-type": "application/json",
+		})).To(BeEmpty())
+	})
+})
