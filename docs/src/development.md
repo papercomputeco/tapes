@@ -10,7 +10,7 @@ The repository's supported workflow is Make-based. Run `make help` before invoki
 - PostgreSQL with pgvector and pg_duckdb for runtime and DB-backed tests;
 - Ollama when exercising default local embeddings.
 
-The Nix development shell supplies Go, Dagger, sqlc, swag, hurl, mdBook, `GOEXPERIMENT=jsonv2`, and the test PostgreSQL DSN:
+The Nix development shell supplies Go, Dagger, sqlc, hurl, mdBook, and `GOEXPERIMENT=jsonv2`:
 
 ```bash
 git clone https://github.com/papercomputeco/tapes.git
@@ -37,15 +37,7 @@ make install
 
 ## Tests and checks
 
-DB-backed suites must use the pinned PostgreSQL image, which carries pgvector and pg_duckdb:
-
-```bash
-make test-db-up
-make test-local
-make test-db-down
-```
-
-Scope a local run with `PKG=./pkg/... make test-local`. CI-style operations run through Dagger:
+Run the test suite through Dagger so DB-backed suites receive the pinned PostgreSQL service with pgvector and pg_duckdb:
 
 ```bash
 make test
@@ -64,6 +56,6 @@ make docs-serve
 
 The mdBook source is `docs/src/`, configuration is `docs/book.toml`, and generated HTML is `docs/book/` (ignored by Git). `docs-serve` rebuilds and serves the book locally.
 
-## Generated contracts
+## OpenAPI contracts
 
-`make openapi` regenerates both read and ingest contracts and their Swagger intermediates. Do not hand-edit generated files. Documentation changes should validate routes against `api/openapi.yaml`, `ingest/openapi.yaml`, and current command `--help` output.
+Read and ingest routes register their OpenAPI descriptions through the `oasfiber` wrapper and each running server compiles its contract at `GET /openapi`. There is no generated contract to update or check in. From a checkout, `tapes dev openapi [api|ingest]` emits a contract with field prose when a consumer needs bytes on disk.

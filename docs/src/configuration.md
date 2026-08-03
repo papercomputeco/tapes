@@ -60,7 +60,7 @@ Useful supported keys include:
 | `telemetry.disabled` | Disable CLI usage telemetry | `false` |
 | `update.disabled` | Disable update checks | `false` |
 
-`cassettes = ["https://host/openapi"]` is a top-level array for operator-managed cassette OpenAPI URLs; it is not a dotted `config set` field.
+`cassettes = ["https://host/openapi"]` is a top-level array for operator-managed cassette OpenAPI URLs; it is not a dotted `config set` field. See [Cassettes](./cassettes.md) for the manifest, deployment responsibilities, and runtime behavior.
 
 ## Example
 

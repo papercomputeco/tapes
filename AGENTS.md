@@ -12,6 +12,10 @@
   changing it changes everything for the internal merkle/dedup layer.
 - Always use `make` operations for development: use `make help` to understand
   the various operations available.
+- Every PR that adds or changes user-visible features or functionality **MUST**
+  add or update the corresponding documentation in `docs/src/` in the same PR,
+  add any new pages to `docs/src/SUMMARY.md`, and run `make docs-build` before
+  review. Do not defer required documentation to a follow-up PR.
 - Run tests with `make test`; the Dagger workflow provisions the Postgres
   service and passes its DSN to DB-backed suites.
 - Run `make format` to format and organize imports using `goimports` and `golangci-lint`

@@ -1,8 +1,9 @@
 # Hello world cassette
 
-The minimum viable tapes cassette. It is its own Go module and imports nothing
-from tapes: a cassette talks to core over HTTP and to Postgres when its
-deployment supplies a DSN.
+The minimum viable tapes cassette. It is its own Go module, and its runtime
+contract with core is only HTTP (plus Postgres when its deployment supplies a
+DSN). This example imports `pkg/tapesoapi` to generate OpenAPI, but cassette
+builders may use any OpenAPI implementation.
 
 ## Run it
 
@@ -71,19 +72,22 @@ in the spec so that core has one artifact to fetch and one thing to configure.
 Core reads only this one.
 
 They are not two schemas. `cassette/manifest.ParseTOML` transcodes TOML into
-JSON and runs the same strict parser and validator core runs, so a field that
-does not exist is refused identically in both.
+JSON and runs the same strict parser core uses, so a field that does not exist
+is refused identically in both. Parsing applies defaults; deployment tooling
+must then call `Validate` with the contract versions its target core serves.
 
-Nor are they two documents. Both canonicalize to the same bytes, so both hash to
-the same digest — the one core publishes for the copy it fetched over HTTP:
+With the example's default `hello-world` installation identity, both copies
+canonicalize to the same bytes and hash to the same digest — the one core
+publishes for the copy it fetched over HTTP:
 
 ```sh
 curl -s localhost:8081/v1/cassettes | jq -r '.cassettes[0].manifest_digest'
 # sha256:8171d476...  the digest of cassette.toml
 ```
 
-If those ever disagree, the running cassette is not the one the manifest
-describes.
+If those disagree for the same installation identity, the running cassette is
+not the one the publishable manifest describes. Core does not fetch
+`cassette.toml` or perform this comparison for the deployment.
 
 ## Contract
 

@@ -11,6 +11,7 @@
 # Concepts and workflows
 
 - [Architecture](./architecture.md)
+- [Cassettes](./cassettes.md)
 - [Search](./search.md)
 - [Skills](./skills.md)
 - [Inspecting and exporting data](./data.md)
