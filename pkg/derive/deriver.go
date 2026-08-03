@@ -128,12 +128,20 @@ type RederiveReport struct {
 }
 
 // rawMetaFields is the minimal meta decode the deriver needs: original
-// capture time for chronology (backfilled rows carry ts_request; live
-// rows fall back to received_at).
+// capture time for chronology (captured_at is the completion instant
+// outright; backfilled rows carry ts_request; live rows fall back to
+// received_at).
 type rawMetaFields struct {
-	TsRequest string `json:"ts_request"`
-	ThreadID  string `json:"thread_id"`
+	CapturedAt     string  `json:"captured_at"`
+	TsRequest      string  `json:"ts_request"`
+	ElapsedSeconds float64 `json:"elapsed_seconds"`
+	ThreadID       string  `json:"thread_id"`
 }
+
+// maxDeriveElapsedSeconds mirrors ingest's bound on a plausible
+// single-call duration; beyond it the elapsed value is treated as
+// corrupt rather than folded into chronology.
+const maxDeriveElapsedSeconds = 7 * 24 * 60 * 60
 
 // threadIDFromMeta resolves the capture-side harness sub-thread id
 // from a raw row's meta block.
@@ -145,18 +153,42 @@ func threadIDFromMeta(meta json.RawMessage) string {
 	return m.ThreadID
 }
 
-// CapturedAt resolves a raw record's original capture time: the
-// adapter's request timestamp when the meta block carries one,
-// otherwise the ingest receive time.
+// CapturedAt resolves a raw record's original capture-side START
+// instant, for span chronology: captured_at (a completion instant)
+// rewound by the call's elapsed duration when the meta block carries
+// both, else the adapter's request timestamp, otherwise the ingest
+// receive time. The source precedence mirrors ingest's raw-only
+// CreatedAt stamping — both fields ride one capture-side clock, offset
+// from each other by exactly the call's duration.
 func CapturedAt(rec *storage.RawTurnRecord) time.Time {
 	var meta rawMetaFields
 	if len(rec.Meta) > 0 {
 		_ = json.Unmarshal(rec.Meta, &meta)
 	}
+	// captured_at is the COMPLETION instant, but this function's callers
+	// want the turn's start (span StartedAt). It therefore only leads when
+	// the elapsed duration can rewind it to an exact start; otherwise an
+	// exact ts_request beats an approximation, and captured_at stands alone
+	// only as the last capture-side stamp available — late by the call's
+	// duration, still better than the ingest hop.
+	capturedAt := time.Time{}
+	if meta.CapturedAt != "" {
+		if ts, err := time.Parse(time.RFC3339Nano, meta.CapturedAt); err == nil {
+			capturedAt = ts
+		}
+	}
+	if !capturedAt.IsZero() {
+		if e := meta.ElapsedSeconds; e > 0 && e <= maxDeriveElapsedSeconds {
+			return capturedAt.Add(-time.Duration(e * float64(time.Second)))
+		}
+	}
 	if meta.TsRequest != "" {
 		if ts, err := time.Parse(time.RFC3339Nano, meta.TsRequest); err == nil {
 			return ts
 		}
+	}
+	if !capturedAt.IsZero() {
+		return capturedAt
 	}
 	return rec.ReceivedAt
 }

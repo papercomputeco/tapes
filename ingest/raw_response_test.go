@@ -44,6 +44,41 @@ func gzipBytes(b []byte) []byte {
 	return buf.Bytes()
 }
 
+// stampCount sums the tapes_ingest_rawonly_stamp_total series matching the
+// given field and source. Either may be "" to mean "any", so passing both
+// empty totals the whole metric — the way to assert a path stamped nothing
+// at all.
+func stampCount(server *ingest.Server, field, source string) float64 {
+	families, err := server.Metrics().Registry().Gather()
+	Expect(err).NotTo(HaveOccurred())
+
+	var total float64
+	for _, family := range families {
+		if family.GetName() != "tapes_ingest_rawonly_stamp_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			var gotField, gotSource string
+			for _, label := range metric.GetLabel() {
+				switch label.GetName() {
+				case "field":
+					gotField = label.GetValue()
+				case "source":
+					gotSource = label.GetValue()
+				}
+			}
+			if field != "" && gotField != field {
+				continue
+			}
+			if source != "" && gotSource != source {
+				continue
+			}
+			total += metric.GetCounter().GetValue()
+		}
+	}
+	return total
+}
+
 var _ = Describe("Raw response capture", func() {
 	var (
 		server  *ingest.Server
@@ -193,6 +228,230 @@ var _ = Describe("Raw response capture", func() {
 		var reduced llm.ChatResponse
 		Expect(json.Unmarshal(rec.Response, &reduced)).To(Succeed())
 		Expect(reduced.Message.GetText()).To(Equal("adapter reduction"))
+	})
+
+	// The capture-side facts the upstream bytes do not carry. Under
+	// dual-send the producer reduced live and had both; under raw-only the
+	// reduction happens here, from stored bytes, and ingest has to put them
+	// back or the row means something different than it used to.
+	Describe("capture-side fields on a server-side reduction", func() {
+		// The duration a real dual-send turn reduced to live in the
+		// PCC-1029 clearing validation. Reducing that same turn's stored
+		// bytes offline produced no duration at all — this is the value
+		// that has to survive the crossing.
+		const liveElapsedSeconds = 1.747314975
+
+		It("stamps the duration from the envelope's elapsed_seconds", func() {
+			post(ingest.TurnPayload{
+				Provider:    "anthropic",
+				RawRequest:  anthropicRequest,
+				RawResponse: []byte(anthropicSSE),
+				Meta: ingest.TurnMeta{
+					ContentType:    "text/event-stream",
+					ElapsedSeconds: liveElapsedSeconds,
+				},
+			})
+
+			var reduced llm.ChatResponse
+			Expect(json.Unmarshal(driver.RawTurns()[0].Response, &reduced)).To(Succeed())
+
+			// The regression this guards: without the stamp the reduction
+			// carries no duration and the derived span's duration_ns lands
+			// NULL — the PCC-514/570 bug, reintroduced by moving reduction
+			// to the server.
+			Expect(reduced.Usage).NotTo(BeNil())
+			Expect(reduced.Usage.TotalDurationNs).NotTo(BeZero())
+			Expect(reduced.Usage.TotalDurationNs).To(BeNumerically("~", 1747314975, 1000))
+
+			Expect(stampCount(server, "duration", "elapsed_seconds")).To(Equal(1.0))
+		})
+
+		It("leaves the duration unstamped, and counted, when the envelope has none", func() {
+			post(ingest.TurnPayload{
+				Provider:    "anthropic",
+				RawRequest:  anthropicRequest,
+				RawResponse: []byte(anthropicSSE),
+				Meta:        ingest.TurnMeta{ContentType: "text/event-stream"},
+			})
+
+			var reduced llm.ChatResponse
+			Expect(json.Unmarshal(driver.RawTurns()[0].Response, &reduced)).To(Succeed())
+
+			// Ingest's own clock measures the dispatch hop, not the call, so
+			// there is nothing honest to put here. The turn still lands; the
+			// counter is what makes the hole visible.
+			Expect(reduced.Usage.TotalDurationNs).To(BeZero())
+			Expect(stampCount(server, "duration", "fallback")).To(Equal(1.0))
+		})
+
+		It("stamps created_at from the envelope's capture time", func() {
+			captured := time.Date(2026, 7, 28, 17, 36, 15, 0, time.UTC)
+
+			post(ingest.TurnPayload{
+				Provider:    "anthropic",
+				RawRequest:  anthropicRequest,
+				RawResponse: []byte(anthropicSSE),
+				Meta: ingest.TurnMeta{
+					ContentType: "text/event-stream",
+					CapturedAt:  captured.Format(time.RFC3339),
+				},
+			})
+
+			var reduced llm.ChatResponse
+			Expect(json.Unmarshal(driver.RawTurns()[0].Response, &reduced)).To(Succeed())
+
+			// The contract: CreatedAt is when the turn happened. The reducer
+			// stamped time.Now() during this test; the envelope's capture
+			// time has to win over it.
+			Expect(reduced.CreatedAt.UTC()).To(BeTemporally("==", captured))
+			Expect(stampCount(server, "created_at", "captured_at")).To(Equal(1.0))
+		})
+
+		It("dates the turn from ts_request plus elapsed when captured_at is absent", func() {
+			requested := time.Date(2026, 7, 28, 17, 36, 15, 0, time.UTC)
+
+			post(ingest.TurnPayload{
+				Provider:    "anthropic",
+				RawRequest:  anthropicRequest,
+				RawResponse: []byte(anthropicSSE),
+				Meta: ingest.TurnMeta{
+					ContentType:    "text/event-stream",
+					TsRequest:      requested.Format(time.RFC3339Nano),
+					ElapsedSeconds: liveElapsedSeconds,
+				},
+			})
+
+			var reduced llm.ChatResponse
+			Expect(json.Unmarshal(driver.RawTurns()[0].Response, &reduced)).To(Succeed())
+
+			// ts_request is the request instant; adding the call's duration
+			// gives the completion instant CreatedAt denotes. Reusing the
+			// field derive.CapturedAt already reads is what keeps CreatedAt
+			// and the derived span's StartedAt on the same clock.
+			Expect(reduced.CreatedAt.UTC()).To(BeTemporally(
+				"~", requested.Add(1747*time.Millisecond), time.Millisecond))
+			Expect(stampCount(server, "created_at", "ts_request")).To(Equal(1.0))
+		})
+
+		It("dates the turn from ts_request alone when no elapsed is available", func() {
+			requested := time.Date(2026, 7, 28, 17, 36, 15, 0, time.UTC)
+
+			post(ingest.TurnPayload{
+				Provider:    "anthropic",
+				RawRequest:  anthropicRequest,
+				RawResponse: []byte(anthropicSSE),
+				Meta: ingest.TurnMeta{
+					ContentType: "text/event-stream",
+					TsRequest:   requested.Format(time.RFC3339Nano),
+				},
+			})
+
+			var reduced llm.ChatResponse
+			Expect(json.Unmarshal(driver.RawTurns()[0].Response, &reduced)).To(Succeed())
+
+			// Early by the call's duration, which is a far smaller error than
+			// the ingest hop it replaces.
+			Expect(reduced.CreatedAt.UTC()).To(BeTemporally("==", requested))
+			Expect(stampCount(server, "created_at", "ts_request")).To(Equal(1.0))
+		})
+
+		It("prefers captured_at over ts_request when both are present", func() {
+			completed := time.Date(2026, 7, 28, 17, 36, 17, 0, time.UTC)
+
+			post(ingest.TurnPayload{
+				Provider:    "anthropic",
+				RawRequest:  anthropicRequest,
+				RawResponse: []byte(anthropicSSE),
+				Meta: ingest.TurnMeta{
+					ContentType:    "text/event-stream",
+					TsRequest:      "2026-07-28T17:36:15Z",
+					CapturedAt:     completed.Format(time.RFC3339),
+					ElapsedSeconds: liveElapsedSeconds,
+				},
+			})
+
+			var reduced llm.ChatResponse
+			Expect(json.Unmarshal(driver.RawTurns()[0].Response, &reduced)).To(Succeed())
+
+			// captured_at is the completion instant outright; it needs no
+			// arithmetic, so it wins.
+			Expect(reduced.CreatedAt.UTC()).To(BeTemporally("==", completed))
+			Expect(stampCount(server, "created_at", "captured_at")).To(Equal(1.0))
+			Expect(stampCount(server, "created_at", "ts_request")).To(BeZero())
+		})
+
+		It("falls back to ingest time, and counts it, when the envelope has no capture time", func() {
+			before := time.Now().UTC().Add(-time.Second)
+
+			post(ingest.TurnPayload{
+				Provider:    "anthropic",
+				RawRequest:  anthropicRequest,
+				RawResponse: []byte(anthropicSSE),
+				Meta:        ingest.TurnMeta{ContentType: "text/event-stream"},
+			})
+
+			var reduced llm.ChatResponse
+			Expect(json.Unmarshal(driver.RawTurns()[0].Response, &reduced)).To(Succeed())
+
+			// Documents the degradation rather than hiding it: with no
+			// producer sending captured_at yet, an Anthropic raw-only row's
+			// CreatedAt is ingest time. The counter is the signal that says
+			// so, and the reason this is a contract decision and not a bug
+			// fix.
+			Expect(reduced.CreatedAt.UTC()).To(BeTemporally(">=", before))
+			Expect(stampCount(server, "created_at", "fallback")).To(Equal(1.0))
+		})
+
+		It("keeps the turn and counts a fallback when captured_at is malformed", func() {
+			post(ingest.TurnPayload{
+				Provider:    "anthropic",
+				RawRequest:  anthropicRequest,
+				RawResponse: []byte(anthropicSSE),
+				Meta: ingest.TurnMeta{
+					ContentType: "text/event-stream",
+					CapturedAt:  "yesterday afternoon",
+				},
+			})
+
+			// A producer bug is not a reason to lose a turn whose bytes are
+			// already stored.
+			var reduced llm.ChatResponse
+			Expect(json.Unmarshal(driver.RawTurns()[0].Response, &reduced)).To(Succeed())
+			Expect(reduced.Message.GetText()).To(Equal("Hello world"))
+			Expect(stampCount(server, "created_at", "fallback")).To(Equal(1.0))
+		})
+
+		It("does not touch a payload that arrived with its own reduction", func() {
+			adapterCreatedAt := time.Date(2026, 7, 28, 17, 36, 15, 0, time.UTC)
+			adapterReduction := reducedResponse(
+				"claude-3-5-sonnet-20241022", "adapter reduction",
+				&llm.Usage{TotalDurationNs: 42},
+			)
+			adapterReduction.CreatedAt = adapterCreatedAt
+
+			post(ingest.TurnPayload{
+				Provider:            "anthropic",
+				RawRequest:          anthropicRequest,
+				Response:            adapterReduction,
+				RawResponse:         []byte(anthropicSSE),
+				RawResponseEncoding: "identity",
+				Meta: ingest.TurnMeta{
+					ContentType:    "text/event-stream",
+					ElapsedSeconds: liveElapsedSeconds,
+					CapturedAt:     time.Now().UTC().Format(time.RFC3339),
+				},
+			})
+
+			var reduced llm.ChatResponse
+			Expect(json.Unmarshal(driver.RawTurns()[0].Response, &reduced)).To(Succeed())
+
+			// Dual-send is untouched by all of this: the adapter measured the
+			// live stream, so its duration and timestamp stand even where the
+			// envelope also carries them.
+			Expect(reduced.Usage.TotalDurationNs).To(Equal(int64(42)))
+			Expect(reduced.CreatedAt.UTC()).To(BeTemporally("==", adapterCreatedAt))
+			Expect(stampCount(server, "", "")).To(BeZero())
+		})
 	})
 
 	It("still stores the bytes when the encoding is one it cannot decode", func() {
