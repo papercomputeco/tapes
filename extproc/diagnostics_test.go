@@ -1,4 +1,4 @@
-package main
+package extproc
 
 import (
 	. "github.com/onsi/ginkgo/v2"

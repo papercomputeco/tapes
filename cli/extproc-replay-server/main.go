@@ -294,7 +294,7 @@ func (s *Server) list(w http.ResponseWriter, _ *http.Request) {
 	_ = json.NewEncoder(w).Encode(entries)
 }
 
-// preview matches respBodyPreview in tapes-extproc/processor.go so the
+// preview matches respBodyPreview in extproc/processor.go so the
 // list output looks the same shape an operator sees in extproc logs.
 // Non-printable bytes are hex-escaped; longer bodies are truncated.
 func preview(b []byte, max int) string {

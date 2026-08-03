@@ -1,4 +1,4 @@
-package main
+package extproc
 
 import (
 	"bytes"
@@ -25,7 +25,7 @@ import (
 	"google.golang.org/grpc/status"
 	"gopkg.in/yaml.v3"
 
-	"github.com/papercomputeco/tapes-extproc/internal/headers"
+	"github.com/papercomputeco/tapes/extproc/headers"
 	"github.com/papercomputeco/tapes/pkg/capture"
 	"github.com/papercomputeco/tapes/pkg/llm"
 )

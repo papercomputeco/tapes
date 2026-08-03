@@ -23,10 +23,12 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+
+	"github.com/papercomputeco/tapes/extproc"
 )
 
 func main() {
-	cfg := ConfigFromEnv()
+	cfg := extproc.ConfigFromEnv()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -41,7 +43,7 @@ func main() {
 	)
 
 	// Create the ext_proc server.
-	processor, err := NewProcessor(cfg)
+	processor, err := extproc.NewProcessor(cfg)
 	if err != nil {
 		slog.Error("Failed to create processor", "error", err)
 		os.Exit(1)
@@ -49,7 +51,7 @@ func main() {
 
 	// gRPC server.
 	grpcServer := grpc.NewServer()
-	RegisterServer(grpcServer, processor)
+	extproc.RegisterServer(grpcServer, processor)
 
 	// Health check.
 	healthServer := health.NewServer()
