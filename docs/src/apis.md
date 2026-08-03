@@ -14,7 +14,7 @@ The default read API listens on `:8081`. It serves health, derived data, search,
 | Search and aggregates | `GET /v1/search/spans`, `GET /v1/stats` |
 | Skills | `/v1/skills` and session skill routes |
 | MCP | `/v1/mcp` |
-| Operator actions | `/v1/admin/derive/run`, `/v1/admin/seed/demo` |
+| Operator actions | `/v1/admin/derive/run`, `/v1/admin/seed/demo`, `/v1/admin/raw-turns/attribution-repair` |
 | Cassettes | `GET /v1/cassettes`, `GET /v1/cassettes/{name}/openapi.json`, `/v1/cassettes/{name}`, `/v1/cassettes/{name}/*` |
 
 The authoritative parameters, schemas, and methods are compiled from route registrations and served by the running API at `GET /openapi`; no generated contract is checked in. The aggregate includes admitted cassette operations. See [Cassettes](./cassettes.md) for their manifest and proxy contract. Notable current behavior:
@@ -27,13 +27,23 @@ The authoritative parameters, schemas, and methods are compiled from route regis
 
 There is no `/v1/search`, `/v1/sessions/summary`, or hash-based session route.
 
+### Attribution repair
+
+`POST /v1/admin/raw-turns/attribution-repair` records an audited, append-only attribution correction for exactly one raw turn — selected by `raw_turn_id` or `paper_proxy_request_id` — without modifying `raw_turns`, then synchronously re-derives the previous and effective sessions.
+
+A `200` is a completed repair. A `202` means the correction committed and is effective, but the synchronous projection rebuild did not finish: `projections_pending` names the stale sessions, which the derive worker converges on its own — the repair is recorded, so do not retry it.
+
+`source_cleanup_pending` is independent of the status code and can accompany either. It discloses an emptied source-session row the cleanup step failed to delete: cosmetic, anchoring no effective turns, and — unlike `projections_pending` — retried by nothing. It does not resolve on its own.
+
 ## Private ingest API
 
 The private ingest API defaults to `:8082` and serves its separate contract at `GET /openapi`. The all-in-one `tapes serve` stack starts it alongside the proxy and read API; `tapes serve ingest` runs it as a standalone sidecar. Its write routes are:
 
 - `POST /v1/ingest` — append one completed conversation turn;
-- `POST /v1/ingest/transcript` — append transcript capture data;
+- `POST /v1/ingest/transcript` — append one harness transcript file or spawn-anchor row;
 - `GET /ping` — health.
+
+A transcript payload is the main session transcript, one subagent's transcript, or a Codex spawn-anchor row (a `sub_agent_activity` rollout record). `agent_id` and `tool_use_id` carry the subagent fork edge the deriver reconciles against the wire capture. The optional `kind` field qualifies Codex anchor rows: absent or empty means spawn evidence; `"interacted"` marks a re-entry record (`send_message`, `followup_task`) that is stored for future rendering and deliberately ignored by derivation. Rows deduplicate on a content hash of `records`, so re-uploading unchanged content is a no-op while a grown transcript appends a new version; the deriver reads the latest version per (session, agent, lifecycle kind), so an interacted row never supersedes a spawn anchor.
 
 Run the standalone form only for sidecar/gateway capture:
 
