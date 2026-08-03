@@ -62,8 +62,8 @@ Each `cases/*.json` file is one object:
 | `x-tapes-harness-id`                   | `harness_id`                | verbatim; missing/empty → `"unknown"` |
 | `x-tapes-harness-session-id`           | `harness_session_id`        | verbatim |
 | `x-tapes-harness-version`              | `harness_version`           | verbatim |
-| `x-tapes-cwd`                          | `cwd`                       | producer percent-encodes UTF-8; **reader stores it verbatim (does NOT decode)** |
-| `x-tapes-session-name`                 | `name`                      | producer percent-encodes UTF-8 (capped 256 raw bytes); **reader percent-decodes** |
+| `x-tapes-cwd`                          | `cwd`                       | producer percent-encodes UTF-8; **reader percent-decodes**, then applies the control-byte guard |
+| `x-tapes-session-name`                 | `name`                      | producer percent-encodes UTF-8 (capped 256 raw bytes); **reader percent-decodes**, then applies the control-byte guard |
 | `x-tapes-parent-harness-session-id`    | `parent_harness_session_id` | verbatim; **an empty header is dropped by the reader** (omit it) |
 | `x-tapes-harness-metadata`             | `harness_metadata`          | **base64url(no-pad) of a JSON value**, raw ≤ 4 KiB; reader retains any valid JSON, validation requires an **object** |
 | `x-paper-auth-org-id`                  | `org_id`                    | server-trusted (set from a validated JWT claim); UUID or empty |
@@ -89,14 +89,24 @@ The header values are byte-exact and auditable — reproduce them from these rul
 ## Reader behavior the cases pin
 
 The `envelope` in each case is exactly what the reader produces from `headers` — not an
-idealized inverse of the producer. Two spots are deliberately asymmetric and easy to get
-wrong:
+idealized inverse of the producer. Every parser of this corpus must agree on all of it;
+these are the spots that are easy to get wrong:
 
-- **`cwd` is stored verbatim** (still percent-encoded), while **`name` is percent-decoded**.
-  So the non-ASCII / control-byte `cwd` cases are `direction: encode` with a lossy
-  round-trip: `encode_from` holds the logical path, but decoding the header yields the
-  encoded string. (That the reader decodes `name` but not `cwd` is a standing asymmetry
-  worth revisiting in the reader, not in these fixtures.)
+- **Both `cwd` and `name` are percent-decoded**, with the same RFC 3986 path-segment
+  rules (`PathUnescape`, not `QueryUnescape` — the latter would mistranslate a literal
+  `+` into a space). The stored value is the *logical* value; percent-encoding is
+  transport framing that dies at the parser, so `/Users/松本/code` is stored and
+  displayed as itself. A malformed encoding is non-fatal: the raw header value is kept
+  so the row still records something recognisable.
+- **A decoded value carrying control bytes is refused, not stored.** After decoding, if
+  `cwd` or `name` contains any C0 control (`< 0x20`) or DEL (`0x7F`), the parser logs
+  and stores the **empty** string — it never persists the raw bytes. That is why
+  `cwd-control-bytes-escaped` is `direction: encode`: the producer can encode such a
+  path, but no reader will store it, so the case stays lossy and keeps its
+  `encode_from`. Escaping stops a control byte from forging a header *on the wire*; the
+  guard stops it from reaching *storage*. The injection defense therefore lives in
+  validation rather than in representation, which is what lets the stored field stay a
+  logical path instead of an encoded one that every consumer would have to decode.
 - **Non-object metadata is retained, then rejected.** The reader accepts any valid-JSON
   metadata (arrays included); object-ness is enforced by envelope validation, so
   `error-metadata-not-object` is `reject-400`, not a silent drop. Metadata that isn't
