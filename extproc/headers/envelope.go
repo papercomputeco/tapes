@@ -146,7 +146,7 @@ func ParseSessionEnvelope(hdrs *extprocv3.HttpHeaders) SessionEnvelope {
 //
 // The tapes reader (pkg/backfill.sessionEnvelopeFromHeaders) applies
 // the identical transform; the shared fixture corpus under
-// testdata/envelope is what proves the two stay interchangeable.
+// fixtures/envelope is what proves the two stay interchangeable.
 func decodeEnvelopeHeaderValue(field, raw string) string {
 	value := raw
 	if decoded, err := url.PathUnescape(raw); err == nil {

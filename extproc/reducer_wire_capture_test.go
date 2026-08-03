@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,22 +32,41 @@ import (
 //
 // # Where the bundles come from
 //
-// recordingsDir is a vendored copy of the fixture-grade L1 corpus governed in
-// the tapes repository at fixtures/recordings/. Refresh it with
-// scripts/sync-wire-recordings.sh; that script's --check mode is the drift
-// detector. Because the corpus is committed, these tests always run — they do
-// not skip, and a regression in the reducer or the decode shim fails CI.
+// recordingsDir is the fixture-grade L1 corpus governed by fixtures/README.md
+// and indexed by fixtures/manifest.json. It used to be a vendored copy kept in
+// step by scripts/sync-wire-recordings.sh, because the corpus lived in another
+// repository; the adapter and the corpus share a repository now, so the copy
+// and the script that policed it are both gone and this reads the governed
+// bytes directly. Because the corpus is committed, these tests always run —
+// they do not skip, and a regression in the reducer or the decode shim fails
+// CI. It is also the same corpus pkg/backfill's scrub gate polices, so a leak
+// is caught once for every consumer rather than once per copy.
 //
-// Do NOT drop ad-hoc captures of your own traffic in here. Those go in
+// Do NOT drop ad-hoc captures of your own traffic in there. Those go in
 // wireCapturesDir, which is gitignored and drives the lenient diagnostic test
 // at the bottom of this file; real prompts and model responses must not be
-// committed. The bar a recording must clear to live in the vendored corpus —
-// clean-room, credential- and PII-free in headers and bodies, reviewed — is
-// stated in the upstream manifest.
-const (
-	recordingsDir   = "testdata/recordings"
-	wireCapturesDir = "testdata/wire-captures"
-)
+// committed. The bar a recording must clear to join the corpus — clean-room,
+// credential- and PII-free in headers and bodies, reviewed — is stated in
+// fixtures/README.md.
+
+// recordingsDir locates fixtures/recordings relative to this file, so the test
+// does not depend on the working directory `go test` was invoked from.
+func recordingsDir() string {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("runtime.Caller failed")
+	}
+	return filepath.Join(filepath.Dir(file), "..", "fixtures", "recordings")
+}
+
+// wireCapturesDir is the gitignored drop point for your own captures.
+func wireCapturesDir() string {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("runtime.Caller failed")
+	}
+	return filepath.Join(filepath.Dir(file), "testdata", "wire-captures")
+}
 
 // bundle is one turn-*/ directory: the request, the response, and the
 // metadata describing how the response was framed.
@@ -64,9 +84,9 @@ type bundle struct {
 func loadRecordings(t *testing.T) []bundle {
 	t.Helper()
 
-	sets, err := os.ReadDir(recordingsDir)
+	sets, err := os.ReadDir(recordingsDir())
 	if err != nil {
-		t.Fatalf("read %s: %v (run scripts/sync-wire-recordings.sh)", recordingsDir, err)
+		t.Fatalf("read %s: %v", recordingsDir(), err)
 	}
 
 	var out []bundle
@@ -74,7 +94,7 @@ func loadRecordings(t *testing.T) []bundle {
 		if !set.IsDir() {
 			continue
 		}
-		setDir := filepath.Join(recordingsDir, set.Name())
+		setDir := filepath.Join(recordingsDir(), set.Name())
 		turns, err := os.ReadDir(setDir)
 		if err != nil {
 			t.Fatalf("read %s: %v", setDir, err)
@@ -102,7 +122,7 @@ func loadRecordings(t *testing.T) []bundle {
 	// That must fail rather than vacuously pass: a skip here is exactly the
 	// hole these tests were un-skipped to close.
 	if len(out) == 0 {
-		t.Fatalf("no bundles under %s — the vendored corpus is missing; run scripts/sync-wire-recordings.sh", recordingsDir)
+		t.Fatalf("no bundles under %s — the fixture corpus is missing", recordingsDir())
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
 	return out
@@ -253,12 +273,12 @@ func TestWireCaptureProcessorFidelity(t *testing.T) {
 // pre- and post-decode. It asserts nothing: the labelled finding IS the
 // value, and captures of real traffic vary in ways a gate cannot predict.
 func TestLocalWireCapturesDiagnostic(t *testing.T) {
-	entries, err := os.ReadDir(wireCapturesDir)
+	entries, err := os.ReadDir(wireCapturesDir())
 	if err != nil && !os.IsNotExist(err) {
-		t.Fatalf("read %s: %v", wireCapturesDir, err)
+		t.Fatalf("read %s: %v", wireCapturesDir(), err)
 	}
 	if len(entries) == 0 {
-		t.Skipf("no captures in %s — drop a turn-*/ bundle here to exercise this", wireCapturesDir)
+		t.Skipf("no captures in %s — drop a turn-*/ bundle here to exercise this", wireCapturesDir())
 	}
 
 	r := capture.NewAnthropicReducer()
@@ -268,7 +288,7 @@ func TestLocalWireCapturesDiagnostic(t *testing.T) {
 		if !e.IsDir() {
 			continue
 		}
-		dir := filepath.Join(wireCapturesDir, e.Name())
+		dir := filepath.Join(wireCapturesDir(), e.Name())
 		t.Run(e.Name(), func(t *testing.T) {
 			_, meta, resp, err := loadWireCaptureBundle(dir)
 			if err != nil {

@@ -1,118 +1,60 @@
 package headers
 
-// Parity gate for the vendored envelope fixture corpus.
+// Coverage gate for the envelope fixture corpus, from extproc's side.
 //
-// envelope_fixtures_test.go is the *parser oracle*: it proves this repo's
+// envelope_fixtures_test.go is the *parser oracle*: it proves this package's
 // ParseSessionEnvelope matches what the corpus declares. That is only half of
 // the parity property. The corpus is a contract between independent
-// implementations in different repositories, and it holds them together
-// through three links:
+// implementations, and it holds them together through three links:
 //
 //  1. each implementation conforms to its copy of the corpus,
 //  2. every copy of the corpus is the same bytes, and
 //  3. the corpus still covers the rules the contract claims to pin.
 //
-// Link 1 is the oracle's. This file is 2 and 3.
+// Link 1 is the oracle's. This file is 3.
 //
-// Link 2 is the one vendoring puts at risk and the one nothing here was
-// checking. SOURCE.md says not to hand-edit the vendored cases, but nothing
-// enforced it, and scripts/sync-envelope-fixtures.sh --check needs a tapes
-// checkout that CI does not have. So an edit to a case in this tree — or a
-// half-finished sync — would leave this parser and the tapes reader testing
-// against different bytes, both green, which is the precise failure the shared
-// corpus exists to prevent. DIGEST is vendored alongside the cases and
-// recomputed here, so that now fails in this repo's own CI with no cross-repo
-// checkout involved.
+// Link 2 used to be here too, as a recomputation of DIGEST over a vendored
+// copy of the cases. That check existed because the corpus lived in another
+// repository: the sync script's --check mode needed a tapes checkout, which
+// extproc's CI never had, so a hand-edited case would have left this parser
+// and the tapes reader testing against different bytes while both stayed
+// green. There is no second copy to drift now — both read fixtures/envelope —
+// and pkg/backfill/envelope_corpus_test.go recomputes the seal over those
+// exact bytes in this same test run. Recomputing it a second time here would
+// assert that a file matches itself. The seal still matters, and still guards
+// the copies that remain outside this module: paper's producer-side vendor
+// under crates/paper-daemon/vendor/ is sealed by the same DIGEST.
 //
 // Link 3 is scoped deliberately. The rules asserted below are the ones this
 // parser implements: the decode transform and the metadata alphabet. Producer
 // concerns (the session-name byte cap, the header budget) and validation
-// outcomes (reject-400) are not extproc's surface — this repo's oracle
-// deliberately does not assert them, and the upstream gate covers them where
-// they belong. Asserting them here would be theatre.
+// outcomes (reject-400) are not extproc's surface — this package's oracle
+// deliberately does not assert them, and the backfill-side gate covers them
+// where they belong. Asserting them here would be theatre.
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
 	"unicode/utf8"
 )
 
-const vendoredCorpusDir = "testdata/envelope"
-
-// corpusDigest reimplements the digest defined in the corpus's own README.
-//
-// Reimplemented rather than shared, on purpose: a shared implementation would
-// be one more thing the two repositories have to keep in step, and the whole
-// point of the corpus is that independent implementations agree. The algorithm
-// is small enough to restate exactly — for each case file, sorted by base
-// name, feed "<basename>  <sha256-hex-of-file-bytes>\n" into a sha256 and hex
-// the result. Raw bytes, not parsed JSON, because the sync script copies bytes
-// and a reformat is drift too. Names as well as contents, so an addition, a
-// deletion and a rename are all caught.
-func corpusDigest(casesDir string) (string, int, error) {
-	matches, err := filepath.Glob(filepath.Join(casesDir, "*.json"))
-	if err != nil {
-		return "", 0, err
+// corpusDir locates fixtures/envelope relative to this file, so the tests do
+// not depend on the working directory `go test` was invoked from.
+func corpusDir() string {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("runtime.Caller failed")
 	}
-	if len(matches) == 0 {
-		return "", 0, fmt.Errorf("no case files under %s", casesDir)
-	}
-	sort.Strings(matches)
-
-	outer := sha256.New()
-	for _, m := range matches {
-		b, err := os.ReadFile(m)
-		if err != nil {
-			return "", 0, err
-		}
-		inner := sha256.Sum256(b)
-		fmt.Fprintf(outer, "%s  %s\n", filepath.Base(m), hex.EncodeToString(inner[:]))
-	}
-	return hex.EncodeToString(outer.Sum(nil)), len(matches), nil
+	return filepath.Join(filepath.Dir(file), "..", "..", "fixtures", "envelope")
 }
 
-// TestVendoredCorpusDigest is the drift detector that works without a tapes
-// checkout.
-func TestVendoredCorpusDigest(t *testing.T) {
-	casesDir := filepath.Join(vendoredCorpusDir, "cases")
-
-	got, n, err := corpusDigest(casesDir)
-	if err != nil {
-		t.Fatalf("compute corpus digest: %v", err)
-	}
-
-	digestPath := filepath.Join(vendoredCorpusDir, "DIGEST")
-	raw, err := os.ReadFile(digestPath)
-	if err != nil {
-		t.Fatalf("read %s: %v\n"+
-			"The vendored corpus is expected to carry the digest that seals it upstream.\n"+
-			"Re-sync it: ./scripts/sync-envelope-fixtures.sh <tapes-checkout>", digestPath, err)
-	}
-
-	want := strings.TrimSpace(string(raw))
-	if want != "sha256:"+got {
-		t.Fatalf("vendored envelope corpus does not match its DIGEST\n"+
-			"  recorded: %s\n"+
-			"  computed: sha256:%s  (%d cases)\n\n"+
-			"The cases in this tree are not the bytes they were vendored as. Either a case\n"+
-			"here was hand-edited — SOURCE.md says not to; a change belongs upstream — or a\n"+
-			"sync was interrupted. Re-sync from a tapes checkout at the SHA in SOURCE.md:\n"+
-			"  ./scripts/sync-envelope-fixtures.sh <tapes-checkout>\n\n"+
-			"Do not paper over this by editing DIGEST. It is what stops this parser and the\n"+
-			"tapes reader from testing against different corpora while both stay green.",
-			want, got, n)
-	}
-}
-
-// vendored case schema, decoded strictly so a typo'd field name is caught
+// corpus case schema, decoded strictly so a typo'd field name is caught
 // rather than silently ignored.
 type corpusCaseFull struct {
 	file        string
@@ -132,9 +74,9 @@ type corpusCaseFull struct {
 func loadCorpusCasesFull(t *testing.T) []corpusCaseFull {
 	t.Helper()
 
-	matches, err := filepath.Glob(filepath.Join(vendoredCorpusDir, "cases", "*.json"))
+	matches, err := filepath.Glob(filepath.Join(corpusDir(), "cases", "*.json"))
 	if err != nil {
-		t.Fatalf("glob vendored cases: %v", err)
+		t.Fatalf("glob corpus cases: %v", err)
 	}
 	sort.Strings(matches)
 
@@ -156,10 +98,10 @@ func loadCorpusCasesFull(t *testing.T) []corpusCaseFull {
 	return out
 }
 
-// TestVendoredCorpusSchema checks the vendored cases are structurally what the
+// TestCorpusSchema checks the corpus cases are structurally what the
 // oracle assumes. A truncated or malformed case would otherwise make the
 // oracle assert less than it appears to, quietly.
-func TestVendoredCorpusSchema(t *testing.T) {
+func TestCorpusSchema(t *testing.T) {
 	categories := map[string]bool{"valid": true, "percent-encoding": true, "budget": true, "unknown": true, "error": true}
 	harnesses := map[string]bool{"claude": true, "codex": true, "pi": true, "unknown": true}
 	directions := map[string]bool{"roundtrip": true, "decode": true, "encode": true}
@@ -228,14 +170,14 @@ func containsControlByte(s string) bool {
 	return false
 }
 
-// TestVendoredCorpusCoverage fails if the corpus stops exercising a decoder
+// TestCorpusCoverage fails if the corpus stops exercising a decoder
 // rule this parser implements.
 //
 // Stated as properties rather than case names so the assertions survive
 // renames. Deleting the only case that covers a rule is otherwise invisible:
 // every remaining case still passes and the contract quietly shrinks, which is
 // how two parsers drift apart without anything going red.
-func TestVendoredCorpusCoverage(t *testing.T) {
+func TestCorpusCoverage(t *testing.T) {
 	cases := loadCorpusCasesFull(t)
 
 	rules := []struct {

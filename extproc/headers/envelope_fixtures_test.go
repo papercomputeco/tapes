@@ -1,8 +1,7 @@
 package headers
 
-// Executable oracle for the shared envelope fixture corpus vendored at
-// testdata/envelope/cases (source: tapes fixtures/envelope — see
-// testdata/envelope/SOURCE.md).
+// Executable oracle for the shared envelope fixture corpus at
+// fixtures/envelope/cases.
 //
 // The corpus pins the X-Tapes-* header -> session-envelope contract for every
 // consumer, in any language. On its own it is inert JSON: nothing loads it, so
@@ -148,13 +147,12 @@ func deviates(caseName, field string) (deviation, bool) {
 func loadEnvelopeFixtures(t *testing.T) []envelopeFixtureCase {
 	t.Helper()
 
-	matches, err := filepath.Glob(filepath.Join("testdata", "envelope", "cases", "*.json"))
+	matches, err := filepath.Glob(filepath.Join(corpusDir(), "cases", "*.json"))
 	if err != nil {
 		t.Fatalf("glob envelope fixtures: %v", err)
 	}
 	if len(matches) == 0 {
-		t.Fatal("no envelope fixture cases found under testdata/envelope/cases " +
-			"(run scripts/sync-envelope-fixtures.sh <tapes-checkout>)")
+		t.Fatalf("no envelope fixture cases found under %s", filepath.Join(corpusDir(), "cases"))
 	}
 	sort.Strings(matches)
 
