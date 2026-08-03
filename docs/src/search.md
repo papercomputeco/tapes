@@ -18,20 +18,20 @@ tapes serve
 After capturing or seeding data:
 
 ```bash
-tapes search "how was authentication fixed?"
-tapes search "logging configuration" --top 10
+tapesctl search "how was authentication fixed?"
+tapesctl search "logging configuration" --top 10
 ```
 
 Use quiet output to return unique session IDs in score order:
 
 ```bash
-tapes search "Charm CLI patterns" --quiet --top 3
+tapesctl search "Charm CLI patterns" --quiet --top 3
 ```
 
 That output composes with skill generation:
 
 ```bash
-tapes skill generate $(tapes search "Charm CLI" --quiet --top 1) \
+tapesctl skill generate $(tapesctl search "Charm CLI" --quiet --top 1) \
   --name charm-patterns
 ```
 
@@ -62,7 +62,7 @@ The embed worker runs a bounded pass at startup and periodically thereafter. Its
 ## Troubleshooting
 
 1. Confirm the API is reachable with `tapes status`.
-2. Confirm sessions and derived spans exist with `tapes sessions` and `tapes deck`.
+2. Confirm sessions and derived spans exist with `tapesctl sessions list` and `tapesctl sessions list`.
 3. Confirm the embedding service is running; for Ollama, use `curl http://localhost:11434/api/tags`.
 4. Confirm `embedding.model` and `embedding.dimensions` match.
 5. In a split deployment, verify the embed worker is running. A configured but uninitialized search surface returns HTTP `503`.

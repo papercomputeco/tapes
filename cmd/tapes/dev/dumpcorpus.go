@@ -41,7 +41,7 @@ const dumpCorpusLongDesc string = `Export raw_turns from a database into corpus 
 
 A corpus file is a gzipped-JSONL dump of one session's raw_turns rows —
 the exact input the deriver replays (` + "`tapes dev trace-fixtures`" + `, the
-corpus regression tests, ` + "`tapes seed`" + `). This is the inverse: it turns
+corpus regression tests, the demo seeder). This is the inverse: it turns
 real captured sessions in a Postgres raw layer back into replayable
 corpus files, so diverse real-world sessions can drive the re-derive
 test tiers, not just the three curated fixtures.

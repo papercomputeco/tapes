@@ -12,17 +12,10 @@ import (
 	authcmder "github.com/papercomputeco/tapes/cmd/tapes/auth"
 	backfillcmder "github.com/papercomputeco/tapes/cmd/tapes/backfill"
 	configcmder "github.com/papercomputeco/tapes/cmd/tapes/config"
-	deckcmder "github.com/papercomputeco/tapes/cmd/tapes/deck"
 	devcmder "github.com/papercomputeco/tapes/cmd/tapes/dev"
-	exportcmd "github.com/papercomputeco/tapes/cmd/tapes/export"
 	initcmder "github.com/papercomputeco/tapes/cmd/tapes/init"
 	localcmder "github.com/papercomputeco/tapes/cmd/tapes/local"
-	searchcmder "github.com/papercomputeco/tapes/cmd/tapes/search"
-	seedcmder "github.com/papercomputeco/tapes/cmd/tapes/seed"
 	servecmder "github.com/papercomputeco/tapes/cmd/tapes/serve"
-	sessionscmder "github.com/papercomputeco/tapes/cmd/tapes/sessions"
-	skillcmder "github.com/papercomputeco/tapes/cmd/tapes/skill"
-	startcmder "github.com/papercomputeco/tapes/cmd/tapes/start"
 	statuscmder "github.com/papercomputeco/tapes/cmd/tapes/status"
 	versioncmder "github.com/papercomputeco/tapes/cmd/tapes/version"
 	"github.com/papercomputeco/tapes/pkg/config"
@@ -37,28 +30,29 @@ const tapesLongDesc string = `Tapes is automatic telemetry for your agents.
 Tapes captures LLM calls into an immutable raw-turn log and derives them into a
 browsable model of sessions -> traces -> spans.
 
-Run services using:
-  tapes start          Start proxy + API (auto ports)
-  tapes start <agent>  Start proxy + API and launch an agent
+This binary is the server. It runs the services, owns the database, and offers
+the operator tooling around them. To capture a session or read one back, use the
+client, tapesctl:
+
+  tapesctl start <agent>    Launch an agent under a capture proxy
+  tapesctl sessions list    Read back what was captured
+  tapesctl export <id>      Export a session as JSONL
+
+Run services:
   tapes serve          Run the full local stack: proxy, API, and derive worker
   tapes serve api      Run just the API server
   tapes serve proxy    Run just the proxy server
+  tapes serve ingest   Run just the ingest server
   tapes serve derive-worker  Project captured raw turns into sessions/traces/spans
+  tapes serve embed-worker   Backfill span embeddings for semantic search
 
-Initialize:
+Provision a local environment:
+  tapes local up                     Start Postgres and Ollama in Docker
   tapes init                         Initialize a local .tapes directory
   tapes init --preset <preset|url>   Initialize with a provider preset or remote config
 
-Browse and search:
-  tapes deck           ROI dashboard over sessions, traces, and spans
-  tapes search         Search main-conversation spans by semantic similarity
-  tapes seed --demo    Seed demo sessions to explore the deck
-
 Serve cassettes:
   Set cassettes = ["http://host/openapi"] or pass --cassettes, then run tapes serve
-
-Export a conversation:
-  tapes export <session-id>     Export a session as JSONL (the API projection)
 
 Configuration:
   tapes config set <key> <value>    Set a configuration value
@@ -118,20 +112,13 @@ func NewTapesCmd() *cobra.Command {
 	_ = cmd.PersistentFlags().MarkHidden("disable-update-check")
 
 	// Add subcommands
-	cmd.AddCommand(exportcmd.NewExportCmd())
 	cmd.AddCommand(configcmder.NewConfigCmd())
-	cmd.AddCommand(deckcmder.NewDeckCmd())
 	cmd.AddCommand(devcmder.NewDevCmd())
 	cmd.AddCommand(authcmder.NewAuthCmd())
 	cmd.AddCommand(backfillcmder.NewBackfillCmd())
 	cmd.AddCommand(initcmder.NewInitCmd())
 	cmd.AddCommand(localcmder.NewLocalCmd())
-	cmd.AddCommand(searchcmder.NewSearchCmd())
-	cmd.AddCommand(seedcmder.NewSeedCmd())
-	cmd.AddCommand(sessionscmder.NewSessionsCmd())
 	cmd.AddCommand(servecmder.NewServeCmd())
-	cmd.AddCommand(skillcmder.NewSkillCmd())
-	cmd.AddCommand(startcmder.NewStartCmd())
 	cmd.AddCommand(statuscmder.NewStatusCmd())
 	cmd.AddCommand(versioncmder.NewVersionCmd())
 
