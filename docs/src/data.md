@@ -10,36 +10,34 @@ This reports the selected `.tapes/` directory, provider and upstream, read API r
 
 ## List sessions
 
-```bash
-tapes sessions
-tapes sessions --api-target http://localhost:8081
-tapes sessions --quiet
-```
-
-The list includes full session IDs, turn count, cost, model, and a prompt preview. `--quiet` prints IDs only. For direct local database access without a separately running API:
+Reading the data model is a client operation, so it lives in [`tapesctl`](https://github.com/papercomputeco/tapesctl):
 
 ```bash
-tapes sessions --postgres \
-  'postgres://tapes:tapes@localhost:5432/tapes?sslmode=disable'
+tapesctl sessions list --tapes-url http://localhost:8081
+tapesctl sessions list --limit 20
+tapesctl sessions get <session-id>
+tapesctl sessions traces <session-id>
 ```
+
+Each prints the server's JSON verbatim, so it composes with `jq`. `--tapes-url` falls back to `TAPES_URL`. A running read API is required; start one with `tapes serve`.
 
 ## Browse interactively
 
 ```bash
-tapes deck
-tapes deck --session <session-id>
+tapesctl sessions list
+tapesctl sessions get <session-id>
 ```
 
 Deck shows session aggregates and drills into traces and spans. See [Deck](./deck.md).
 
 ## Export JSONL
 
-`tapes export` is a thin client for `GET /v1/sessions/{id}/export`. It streams the API's projection rather than maintaining a separate renderer or state store.
+`tapesctl export` is a thin client for `GET /v1/sessions/{id}/export`. It streams the API's projection rather than maintaining a separate renderer or state store.
 
 ```bash
-tapes export <session-id> -o session.jsonl
-tapes export <short-session-prefix> --detail traces
-tapes export <session-id> --api-target http://127.0.0.1:8081
+tapesctl export <session-id> -o session.jsonl
+tapesctl export <session-id> --detail traces
+tapesctl export <session-id> --tapes-url http://localhost:8081
 ```
 
 Detail modes:

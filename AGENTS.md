@@ -51,23 +51,27 @@ The system is made up of:
 - An API server for querying and exporting over the derived surface
   (`/v1/sessions`, `/v1/traces`, `/v1/stats`, `/v1/search/spans`,
   `/v1/sessions/{id}/raw_turns`).
-- An all in one, bundled CLI for running the proxy, API, derive worker, and
-  interfacing with the system.
-- A deck TUI (`tapes deck`) — an ROI dashboard over sessions that drills into a
-  single session's traces and spans.
+- A bundled CLI (`tapes`) for running the proxy, API, and workers, and for the
+  operator tooling around them.
 
 CLI surface notes for agents:
 
+- **`tapes` is the server; `tapesctl` is the client.** This binary runs the
+  services, owns the database, and carries the operator tooling. Capturing a
+  session and reading one back belong to `tapesctl`, a separate Rust CLI in its
+  own repository.
+- The client commands that used to live here have **moved to `tapesctl`**:
+  `tapes start` → `tapesctl start`, `tapes export` → `tapesctl export`,
+  `tapes seed` → `tapesctl seed`, `tapes sessions` → `tapesctl sessions list`,
+  `tapes search` → `tapesctl search`, `tapes skill` → `tapesctl skill`.
+  Do not re-add them here.
 - `tapes chat` has been **removed**; tapes captures and derives, it does not host
   chat sessions.
-- `tapes export` downloads a captured session as JSONL — the API's
-  session→traces→spans projection verbatim. It is a thin client of
-  `GET /v1/sessions/{id}/export`, not a second renderer, so the CLI and API
-  can't drift. It owns no state and needs a running API (`--api-target`).
-- `tapes search` is **span-only** — it queries the span projection
-  (`/v1/search/spans`) and returns individual main-conversation LLM spans with
-  their trace/turn context.
-- `tapes deck` is built on the traces/span model (not the old stems/merkle TUI).
+- Span search stays **server-side** (`/v1/search/spans` and the embed worker);
+  only the client command moved. Search and skill authoring are slated for
+  extraction into cassettes.
+- The deck TUI has been **removed with no CLI replacement** — the console owns
+  the ROI/session-browsing surface.
 
 **Language:** Go 1.26+
 **Go Module:** `github.com/papercomputeco/tapes`
