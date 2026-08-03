@@ -2,14 +2,12 @@ package ingest
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"math"
 	"net"
@@ -623,7 +621,7 @@ func (s *Server) reduceRawOnly(ctx context.Context, turn *TurnPayload) json.RawM
 		return nil
 	}
 
-	body, err := decodeContentEncoding(turn.RawResponse, turn.RawResponseEncoding)
+	body, stats, err := capture.DecodeContentEncoding(turn.RawResponse, turn.RawResponseEncoding)
 	if err != nil {
 		s.logger.Warn("raw-only turn not reduced: decode failed",
 			"provider", turn.Provider,
@@ -632,6 +630,17 @@ func (s *Server) reduceRawOnly(ctx context.Context, turn *TurnPayload) json.RawM
 			"error", err,
 		)
 		return nil
+	}
+	if stats.Truncated {
+		// The reduction goes ahead: a turn recovered from a stream that
+		// ended early is worth more than no turn. Logged rather than
+		// dropped, because the reduction may be missing its tail and
+		// nothing downstream can tell that from the row alone.
+		s.logger.Info("raw-only turn reduced from a truncated body",
+			"provider", turn.Provider,
+			"request_id", turn.Meta.RequestID,
+			"encoding", turn.RawResponseEncoding,
+		)
 	}
 
 	resp, err := reducer.Reduce(ctx,
@@ -829,33 +838,6 @@ func reducedResponseAbsent(r llm.ChatResponse) bool {
 		!r.Done &&
 		r.StopReason == "" &&
 		r.Usage == nil
-}
-
-// decodeContentEncoding returns body decoded per encoding, for handing to a
-// reducer. The stored column keeps the ENCODED bytes; only the reduction sees
-// the decoded form.
-//
-// An unrecognized encoding is an error rather than a pass-through: handing
-// compressed bytes to a reducer that expects text yields a confusing parse
-// failure well away from the actual cause.
-func decodeContentEncoding(body []byte, encoding string) ([]byte, error) {
-	switch strings.ToLower(strings.TrimSpace(encoding)) {
-	case "", "identity":
-		return body, nil
-	case "gzip", "x-gzip":
-		zr, err := gzip.NewReader(bytes.NewReader(body))
-		if err != nil {
-			return nil, fmt.Errorf("gzip reader: %w", err)
-		}
-		defer zr.Close()
-		out, err := io.ReadAll(zr)
-		if err != nil {
-			return nil, fmt.Errorf("gzip decode: %w", err)
-		}
-		return out, nil
-	default:
-		return nil, fmt.Errorf("unsupported content-encoding %q", encoding)
-	}
 }
 
 // MaxRawResponseBytes caps the verbatim response bytes ingest will store on a

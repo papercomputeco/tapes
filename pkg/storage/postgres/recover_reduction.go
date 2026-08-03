@@ -30,13 +30,9 @@ package postgres
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
 	"log/slog"
-	"strings"
 
 	"github.com/papercomputeco/tapes/pkg/capture"
 	"github.com/papercomputeco/tapes/pkg/llm"
@@ -145,24 +141,14 @@ func reducedResponseUnusable(raw json.RawMessage) bool {
 // handing to a reducer. The column keeps the ENCODED bytes — re-compression is
 // not byte-identical, so "verbatim" has to mean verbatim — and only the
 // reduction sees the decoded form.
+//
+// It delegates to pkg/capture so recovery decodes exactly what ingest decodes.
+// A narrower decoder here would be the worst possible place for the gap: these
+// are precisely the rows whose reduction already failed once, so an encoding
+// recovery cannot read is an encoding no build ever recovers.
 func decodeStoredEncoding(body []byte, encoding string) ([]byte, error) {
-	switch strings.ToLower(strings.TrimSpace(encoding)) {
-	case "", "identity":
-		return body, nil
-	case "gzip", "x-gzip":
-		zr, err := gzip.NewReader(bytes.NewReader(body))
-		if err != nil {
-			return nil, fmt.Errorf("gzip reader: %w", err)
-		}
-		defer zr.Close()
-		out, err := io.ReadAll(zr)
-		if err != nil {
-			return nil, fmt.Errorf("gzip decode: %w", err)
-		}
-		return out, nil
-	default:
-		return nil, fmt.Errorf("unsupported content-encoding %q", encoding)
-	}
+	out, _, err := capture.DecodeContentEncoding(body, encoding)
+	return out, err
 }
 
 // contentTypeFromMeta pulls the capture adapter's recorded content type out of
