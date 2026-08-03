@@ -14,6 +14,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/papercomputeco/tapes/ingest"
 	"github.com/papercomputeco/tapes/pkg/llm"
 )
 
@@ -241,25 +242,23 @@ var _ = Describe("Raw response lane", func() {
 		})
 	})
 
-	// These constants are mirrors of tapes' ingest package, which extproc
-	// cannot import while the raw lane is unreleased. Pinning the values
-	// turns a future divergence into a failing test here instead of
-	// mis-sized traffic in production.
-	Describe("the mirrored ingest contract", func() {
-		It("pins the storage cap at 8 MiB", func() {
-			Expect(MaxRawResponseBytes).To(Equal(8 << 20))
-		})
-
-		It("pins the transport limit at the base64-expanded cap plus headroom", func() {
-			Expect(MaxIngestBodyBytes).To(Equal(8<<20*4/3 + 4<<20))
-		})
-
-		It("mirrors exactly the encodings ingest can decode", func() {
+	// The two size limits are ingest's own constants now, so there is
+	// nothing left here to pin: a change to either is a change to the
+	// single declaration both sides read. What still needs stating is the
+	// raw-only interlock's admission set, which is extproc's decision and
+	// deliberately narrower than what ingest can decode.
+	Describe("the raw-only interlock's admission set", func() {
+		It("admits single-layer identity and gzip, however they are spelled", func() {
 			for _, ce := range []string{"", "identity", "gzip", "x-gzip", "GZIP", " gzip "} {
 				Expect(ingestCanDecodeEncoding(ce)).To(BeTrue(), "encoding %q", ce)
 			}
-			// extproc decodes these; ingest does not. That asymmetry is
-			// what the raw-only interlock exists for.
+		})
+
+		It("withholds raw-only for encodings the interlock has not been widened to", func() {
+			// ingest decodes zstd and stacked layers since it moved onto
+			// capture.DecodeContentEncoding. The interlock has not been
+			// widened to match, so these still fall back to dual-send.
+			// Widening it changes what goes on the wire and is its own change.
 			for _, ce := range []string{"zstd", "br", "gzip, gzip"} {
 				Expect(ingestCanDecodeEncoding(ce)).To(BeFalse(), "encoding %q", ce)
 			}
@@ -309,13 +308,13 @@ var _ = Describe("Raw response lane", func() {
 				// This is the deliberate one. Pre-dropping here would
 				// make raw_response_dropped unreachable and the row
 				// indistinguishable from a producer that never captured.
-				d := decideRawLane(RawResponseDual, MaxRawResponseBytes+1, 1024, "", false)
+				d := decideRawLane(RawResponseDual, ingest.MaxRawResponseBytes+1, 1024, "", false)
 				Expect(d.attachRaw).To(BeTrue())
 				Expect(d.skipReason).To(BeEmpty())
 			})
 
 			It("withholds bytes that would not survive the transport", func() {
-				d := decideRawLane(RawResponseDual, MaxIngestBodyBytes, 1024, "", false)
+				d := decideRawLane(RawResponseDual, ingest.MaxIngestBodyBytes, 1024, "", false)
 				Expect(d.attachRaw).To(BeFalse())
 				Expect(d.skipReason).To(Equal(rawSkipTransportBudget))
 			})
@@ -323,7 +322,7 @@ var _ = Describe("Raw response lane", func() {
 			It("never goes raw-only when the bytes were withheld", func() {
 				// Raw-only without bytes is a turn with no response at
 				// all — strictly worse than the historical shape.
-				d := decideRawLane(RawResponseRaw, MaxIngestBodyBytes, 1024, "", false)
+				d := decideRawLane(RawResponseRaw, ingest.MaxIngestBodyBytes, 1024, "", false)
 				Expect(d.attachRaw).To(BeFalse())
 				Expect(d.omitReduction).To(BeFalse())
 			})
@@ -333,7 +332,7 @@ var _ = Describe("Raw response lane", func() {
 				// response that fits alone may not fit alongside it.
 				rawLen := 6 << 20
 				Expect(rawResponseFits(rawLen, 1024)).To(BeTrue())
-				Expect(rawResponseFits(rawLen, MaxIngestBodyBytes)).To(BeFalse())
+				Expect(rawResponseFits(rawLen, ingest.MaxIngestBodyBytes)).To(BeFalse())
 			})
 		})
 	})
@@ -424,7 +423,7 @@ var _ = Describe("Raw response lane", func() {
 	Describe("the drop-and-mark path", func() {
 		It("puts over-cap bytes on the wire so ingest can mark the row degraded", func() {
 			in := anthropicTurn()
-			in.respBody = oversizeAnthropicSSE(MaxRawResponseBytes + (1 << 20))
+			in.respBody = oversizeAnthropicSSE(ingest.MaxRawResponseBytes + (1 << 20))
 
 			envelope, _ := runTurn(RawResponseDual, in)
 
@@ -433,7 +432,7 @@ var _ = Describe("Raw response lane", func() {
 
 			// Over the cap ingest stores at, so ingest will drop the
 			// bytes and set raw_response_dropped — fidelity:degraded.
-			Expect(len(raw)).To(BeNumerically(">", MaxRawResponseBytes))
+			Expect(len(raw)).To(BeNumerically(">", ingest.MaxRawResponseBytes))
 			Expect(raw).To(Equal(in.respBody))
 
 			// …and still small enough to be accepted by the transport,
@@ -441,7 +440,7 @@ var _ = Describe("Raw response lane", func() {
 			// 413 that loses the whole turn.
 			body, err := json.Marshal(envelope)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(len(body)).To(BeNumerically("<=", MaxIngestBodyBytes))
+			Expect(len(body)).To(BeNumerically("<=", ingest.MaxIngestBodyBytes))
 
 			// The reduction rides along, so the turn is still readable
 			// even though its verbatim bytes will not be stored.
@@ -450,7 +449,7 @@ var _ = Describe("Raw response lane", func() {
 
 		It("withholds bytes too large for the transport, keeping the turn", func() {
 			in := anthropicTurn()
-			in.respBody = oversizeAnthropicSSE(MaxIngestBodyBytes + (1 << 20))
+			in.respBody = oversizeAnthropicSSE(ingest.MaxIngestBodyBytes + (1 << 20))
 
 			envelope, proc := runTurn(RawResponseDual, in)
 
@@ -496,15 +495,15 @@ var _ = Describe("Raw response lane", func() {
 				Provider:            "anthropic",
 				Request:             json.RawMessage(`{}`),
 				Response:            reducedStub(),
-				RawResponse:         bytes.Repeat([]byte("x"), MaxIngestBodyBytes),
+				RawResponse:         bytes.Repeat([]byte("x"), ingest.MaxIngestBodyBytes),
 				RawResponseEncoding: "identity",
 			}
 			payload, err := json.Marshal(env)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(len(payload)).To(BeNumerically(">", MaxIngestBodyBytes))
+			Expect(len(payload)).To(BeNumerically(">", ingest.MaxIngestBodyBytes))
 
 			out, stripped := d.enforceBodyLimit(env, payload)
-			Expect(len(out)).To(BeNumerically("<=", MaxIngestBodyBytes))
+			Expect(len(out)).To(BeNumerically("<=", ingest.MaxIngestBodyBytes))
 			Expect(stripped.RawResponse).To(BeNil())
 			Expect(stripped.RawResponseEncoding).To(BeEmpty())
 			// The reduction survives: the turn still lands.
@@ -519,7 +518,7 @@ var _ = Describe("Raw response lane", func() {
 				Provider:        "anthropic",
 				Request:         json.RawMessage(`{}`),
 				Response:        nil,
-				RawResponse:     bytes.Repeat([]byte("x"), MaxIngestBodyBytes),
+				RawResponse:     bytes.Repeat([]byte("x"), ingest.MaxIngestBodyBytes),
 				reducedFallback: reduced,
 			}
 			payload, err := json.Marshal(env)

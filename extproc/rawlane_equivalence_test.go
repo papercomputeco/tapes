@@ -37,13 +37,18 @@ import (
 // state machine driven over the committed wire recordings, so the bytes under
 // test are the bytes the deployed path would actually send.
 
-// ingestDecodeContentEncoding mirrors tapes' ingest.decodeContentEncoding.
+// ingestDecodeContentEncoding decodes the way a server may assume it can for
+// bytes the raw-only interlock actually admits: identity and gzip, one layer,
+// no zstd and no stacked encodings.
 //
-// It is intentionally narrower than extproc's own decoder — identity and gzip,
-// one layer, no zstd and no stacked encodings — because the point is to
-// reproduce what the SERVER can do with the bytes, not what we can. Using
-// extproc's decoder here would hide exactly the asymmetry the raw-only
-// interlock exists to handle.
+// It is intentionally narrower than extproc's own decoder, because the point
+// is to reproduce what the receiver does with the bytes, not what we can.
+// Using extproc's decoder here would hide exactly the asymmetry the interlock
+// exists to handle. It is also narrower than ingest's decoder now is —
+// capture.DecodeContentEncoding handles zstd and stacked layers — but it
+// matches ingestCanDecodeEncoding, and that is the set these recordings ship
+// under. Calling the shared decoder here would prove equivalence over inputs
+// the interlock never lets through.
 func ingestDecodeContentEncoding(body []byte, encoding string) ([]byte, error) {
 	switch strings.ToLower(strings.TrimSpace(encoding)) {
 	case "", "identity":

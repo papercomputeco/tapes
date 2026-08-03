@@ -3,6 +3,8 @@ package extproc
 import (
 	"fmt"
 	"strings"
+
+	"github.com/papercomputeco/tapes/ingest"
 )
 
 // RawResponseMode selects what the dispatch envelope carries for the response
@@ -59,27 +61,26 @@ func (m RawResponseMode) sendsRawBytes() bool {
 	return m == RawResponseDual || m == RawResponseRaw
 }
 
-// MaxRawResponseBytes mirrors tapes' ingest.MaxRawResponseBytes (8 MiB), the
-// cap beyond which ingest stores no bytes and marks the row
-// raw_response_dropped — which is what surfaces as fidelity:degraded.
+// The two size limits this lane steers by belong to ingest and are read from
+// it directly: ingest.MaxRawResponseBytes, the 8 MiB cap beyond which ingest
+// stores no bytes and marks the row raw_response_dropped (what surfaces as
+// fidelity:degraded), and ingest.MaxIngestBodyBytes, the body limit on
+// /v1/ingest.
 //
-// This is a MIRROR, not an import: extproc pins a published tapes module and
-// the raw lane is not in a released tag yet, so the constant cannot be
-// referenced directly. rawlane_test.go pins the value so a drift shows up as a
-// test failure and not as silently mis-sized traffic.
+// They used to be mirrored constants here, because extproc built against a
+// published tapes module that predated the raw lane and could not name them.
+// Sharing a module removed the reason, and with it the drift the mirror's
+// pinning test existed to catch.
 //
-// extproc deliberately does NOT pre-drop at this cap. Ingest owns the
-// drop-and-mark decision, and a producer that dropped first would make the
-// marker unreachable: the row would be indistinguishable from one whose
-// producer never captured bytes at all. See rawResponseFits.
-const MaxRawResponseBytes = 8 << 20
-
-// MaxIngestBodyBytes mirrors tapes' ingest.MaxIngestBodyBytes — the Fiber body
-// limit on /v1/ingest. Exceeding it is a transport-level rejection that loses
-// the WHOLE turn (reduction, request, and session attribution included) with
-// no fidelity marker recorded anywhere. That is strictly worse than sending no
-// bytes at all, which is why rawResponseFits refuses to attach past it.
-const MaxIngestBodyBytes = MaxRawResponseBytes*4/3 + 4<<20
+// Two properties of the lane follow from these being ingest's numbers rather
+// than extproc's. extproc deliberately does NOT pre-drop at the storage cap:
+// ingest owns the drop-and-mark decision, and a producer that dropped first
+// would make the marker unreachable, leaving the row indistinguishable from
+// one whose producer never captured bytes at all. It does refuse to attach
+// past the body limit, because exceeding that is a transport-level rejection
+// that loses the WHOLE turn — reduction, request and session attribution
+// included — with no fidelity marker recorded anywhere, which is strictly
+// worse than sending no bytes at all. See rawResponseFits.
 
 // rawLaneEnvelopeReserve is the slack rawResponseFits holds back for the parts
 // of the envelope it does not measure: the reduced response, the meta block,
@@ -102,22 +103,29 @@ func base64Len(n int) int { return ((n + 2) / 3) * 4 }
 // unrecorded "producer sent nothing" — the exact ambiguity the marker exists
 // to resolve.
 func rawResponseFits(rawLen, reqLen int) bool {
-	budget := MaxIngestBodyBytes - reqLen - rawLaneEnvelopeReserve
+	budget := ingest.MaxIngestBodyBytes - reqLen - rawLaneEnvelopeReserve
 	if budget <= 0 {
 		return false
 	}
 	return base64Len(rawLen) <= budget
 }
 
-// ingestCanDecodeEncoding mirrors the encodings tapes' ingest can undo before
-// handing bytes to a reducer (ingest.decodeContentEncoding): empty, identity,
-// gzip, x-gzip — one layer only.
+// ingestCanDecodeEncoding reports the encodings the raw-only interlock is
+// willing to ship without a reduction attached: empty, identity, gzip, x-gzip
+// — one layer only. Shipping bytes the server cannot decode with no reduction
+// attached would store the bytes and lose the turn's content, which is worse
+// than either half alone.
 //
-// extproc's own decoder is strictly more capable: it handles zstd and peels
-// comma-stacked layers. That asymmetry is the reason raw-only is interlocked.
-// Shipping bytes ingest cannot decode with no reduction attached would store
-// the bytes and lose the turn's content, which is worse than either half
-// alone.
+// This is deliberately narrower than what ingest can now decode. It described
+// ingest exactly when ingest handled a single identity-or-gzip layer; ingest
+// has since moved onto capture.DecodeContentEncoding, which handles zstd and
+// peels comma-stacked layers — extproc's own rules, adopted server-side.
+//
+// Widening the interlock to match is a behaviour change to what goes on the
+// wire for zstd traffic, so it is not made here. Until it is, this predicate
+// is a conservative floor: everything it admits, ingest can certainly decode.
+// The cost of being wrong in this direction is a needless dual-send, not a
+// lost turn.
 func ingestCanDecodeEncoding(contentEncoding string) bool {
 	switch strings.ToLower(strings.TrimSpace(contentEncoding)) {
 	case "", "identity", "gzip", "x-gzip":

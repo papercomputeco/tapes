@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/papercomputeco/tapes/ingest"
 	"github.com/papercomputeco/tapes/pkg/llm"
 )
 
@@ -500,7 +501,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, env TurnEnvelope) {
 // DropIngestReject), and the raw lane should not invent a new failure mode
 // for turns it is not responsible for.
 func (d *Dispatcher) enforceBodyLimit(env TurnEnvelope, payload []byte) ([]byte, TurnEnvelope) {
-	if len(payload) <= MaxIngestBodyBytes || len(env.RawResponse) == 0 {
+	if len(payload) <= ingest.MaxIngestBodyBytes || len(env.RawResponse) == 0 {
 		return payload, env
 	}
 
@@ -508,7 +509,7 @@ func (d *Dispatcher) enforceBodyLimit(env TurnEnvelope, payload []byte) ([]byte,
 		"provider", env.Provider,
 		"request_id", env.Meta.RequestID,
 		"payload_bytes", len(payload),
-		"limit", MaxIngestBodyBytes,
+		"limit", ingest.MaxIngestBodyBytes,
 		"raw_response_bytes", len(env.RawResponse),
 		"raw_only", env.Response == nil,
 	)

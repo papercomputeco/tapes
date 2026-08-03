@@ -40,10 +40,12 @@ const AgentNameHeader = "X-Tapes-Agent-Name"
 // of this list: its sub-thread signal is a header *pair* (see the Codex
 // constants below), resolved separately in ThreadID.
 //
-// This must stay in step with tapes-extproc's harnessThreadIDHeaders: the two
+// This must stay in step with extproc/headers' harnessThreadIDHeaders: the two
 // are independent capture paths for the same traffic, and a header one records
 // and the other doesn't is a fidelity gap that only shows up as subagent turns
-// mis-attributed to the main thread.
+// mis-attributed to the main thread. They stayed separate through the extproc
+// fold because they read from different transports — a fiber.Ctx here, an
+// ext_proc HeaderMap there — so only the list itself could ever be shared.
 //
 // These headers are NOT stripped on the way upstream. They are the harness's
 // own, addressed to the model provider; tapes only observes them.

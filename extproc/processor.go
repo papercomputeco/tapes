@@ -26,6 +26,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/papercomputeco/tapes/extproc/headers"
+	"github.com/papercomputeco/tapes/ingest"
 	"github.com/papercomputeco/tapes/pkg/capture"
 	"github.com/papercomputeco/tapes/pkg/llm"
 )
@@ -651,7 +652,7 @@ func (p *Processor) recordRawLane(st *streamState, d rawLaneDecision) {
 			"reason", d.skipReason,
 			"resp_bytes", st.respBuf.Len(),
 			"req_bytes", st.reqBuf.Len(),
-			"limit", MaxIngestBodyBytes,
+			"limit", ingest.MaxIngestBodyBytes,
 		)
 		p.dispatcher.safeOnRawResponseSkipped(st.provider, d.skipReason)
 	case d.fallbackReason != "":
