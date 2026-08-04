@@ -6,6 +6,14 @@ COMMIT  := $(shell git rev-parse HEAD)
 BUILDTIME ?= $(shell date -u '+%Y-%m-%d %H:%M:%S')
 REGISTRY ?= public.ecr.aws/g4e5l3z3/papercomputeco
 IMAGE ?= tapes:dev
+
+# extproc does NOT ship from REGISTRY. tapes and postgres are published to ECR
+# Public, whose repositories are enumerated in terraform and carry an anonymous
+# pull policy; tapes-extproc is a private ECR repository in the Tooling account
+# that the data plane pulls via the cross-account role. The two are different
+# registries with different auth, so they get different variables — pointing
+# extproc at REGISTRY produces a push the release role has no permission for.
+EXTPROC_REGISTRY ?= 952121199601.dkr.ecr.us-east-1.amazonaws.com
 EXTPROC_IMAGE ?= tapes-extproc:dev
 
 POSTHOG_API_KEY ?=
@@ -195,7 +203,7 @@ build-local-extproc-image: ## Build a local tapes-extproc image for Kind/clearin
 build-push-extproc-images: ## Builds and publishes the multi-arch tapes-extproc container images
 	dagger call \
 		build-push-extproc-images \
-			--registry=${REGISTRY} \
+			--registry=${EXTPROC_REGISTRY} \
 			--tags=${VERSION} \
 			--tags=latest \
 			--version=${VERSION} \

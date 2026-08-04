@@ -68,6 +68,12 @@ jobs:
         with:
           registry-type: public
 
+      # extproc ships to private ECR, not to ECR Public alongside tapes. See
+      # the same step in release.yaml.
+      - name: Login to ECR (private)
+        id: login-ecr-private
+        uses: aws-actions/amazon-ecr-login@v2
+
       - name: Move nightly tag up to HEAD
         run: |
           git tag -f nightly
@@ -84,6 +90,24 @@ jobs:
               --version="nightly" \
               --commit="${{ github.sha }}" \
               --post-hog-public-key="${{ secrets.POSTHOG_API_KEY }}" \
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+
+      - name: Push nightly extproc image
+        run: |
+          if [ -z "${{ vars.EXTPROC_REGISTRY }}" ]; then
+            echo "EXTPROC_REGISTRY repository variable is not set." >&2
+            echo "It must be the private ECR registry host for the Tooling" >&2
+            echo "account (see makefile EXTPROC_REGISTRY). Refusing to push" >&2
+            echo "extproc to REGISTRY, which is ECR Public and hosts tapes." >&2
+            exit 1
+          fi
+          nix develop --command dagger call \
+            build-push-extproc-images \
+              --registry=${{ vars.EXTPROC_REGISTRY }} \
+              --tags="nightly" \
+              --version="nightly" \
+              --commit="${{ github.sha }}"
         env:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
