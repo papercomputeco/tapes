@@ -110,30 +110,33 @@ func rawResponseFits(rawLen, reqLen int) bool {
 	return base64Len(rawLen) <= budget
 }
 
-// ingestCanDecodeEncoding reports the encodings the raw-only interlock is
-// willing to ship without a reduction attached: empty, identity, gzip, x-gzip
-// — one layer only. Shipping bytes the server cannot decode with no reduction
-// attached would store the bytes and lose the turn's content, which is worse
-// than either half alone.
+// The raw-only interlock used to be a list of encoding names — empty,
+// identity, gzip, x-gzip, one layer — maintained here as extproc's belief
+// about what the far side could decode. A list is the wrong shape for that
+// question. It was accurate when written, went stale the moment ingest moved
+// onto capture.DecodeContentEncoding (zstd, stacked layers, salvage), and
+// nothing failed when it did: a stale list in this direction only over-sends,
+// so it could drift indefinitely while every test stayed green.
 //
-// This is deliberately narrower than what ingest can now decode. It described
-// ingest exactly when ingest handled a single identity-or-gzip layer; ingest
-// has since moved onto capture.DecodeContentEncoding, which handles zstd and
-// peels comma-stacked layers — extproc's own rules, adopted server-side.
+// What replaced it is not a better list, it is the absence of one. extproc and
+// ingest are one module and decode with one function, so the honest way to ask
+// "can the receiver decode these bytes?" is to notice that the receiver's
+// decoder has already decoded them: processor.dispatchTurn runs
+// capture.DecodeContentEncoding over the same (bytes, encoding) pair the
+// envelope carries, and drops the turn if it fails. decideRawLane is handed
+// that outcome. Two encodings cannot disagree when there is one decoder and
+// one execution of it.
 //
-// Widening the interlock to match is a behaviour change to what goes on the
-// wire for zstd traffic, so it is not made here. Until it is, this predicate
-// is a conservative floor: everything it admits, ingest can certainly decode.
-// The cost of being wrong in this direction is a needless dual-send, not a
-// lost turn.
-func ingestCanDecodeEncoding(contentEncoding string) bool {
-	switch strings.ToLower(strings.TrimSpace(contentEncoding)) {
-	case "", "identity", "gzip", "x-gzip":
-		return true
-	default:
-		return false
-	}
-}
+// DEPLOYMENT ORDERING. Widening this means raw-only now ships zstd and stacked
+// bodies, which the receiving ingest must be able to decode. Both binaries
+// build from this repo and land in the same release, but their pods roll
+// independently, so for a window a widened extproc can sit in front of an
+// older ingest. Under mode=dual that is harmless in either order — the
+// reduction always ships, so the bytes are a bonus. Under mode=raw it is not:
+// raw-only bytes a pre-zstd ingest cannot reduce store as unreducible archive.
+// mode=raw is enabled in no environment today and gates on the equivalence
+// proof, so this needs no machinery, only a rule: never switch an environment
+// to raw while its tapes image predates this change.
 
 // rawLaneDecision is the resolved shape of one envelope's response half.
 type rawLaneDecision struct {
@@ -157,7 +160,6 @@ const (
 	// allowed for.
 	rawSkipOversizeStripped = "oversize_stripped"
 	rawFallbackEncoding     = "encoding_not_decodable"
-	rawFallbackSalvaged     = "decode_salvaged"
 )
 
 // rawShapeDual and rawShapeRawOnly label the attached-bytes metric.
@@ -168,14 +170,25 @@ const (
 
 // decideRawLane resolves mode plus per-turn facts into the envelope shape.
 //
-// The interlocks all answer one question: would dropping our reduction leave
-// ingest unable to produce one? If yes, the turn degrades to dual rather than
-// raw-only — bytes are still captured, and the content still lands.
+// Both remaining interlocks answer one question: would dropping our reduction
+// leave ingest unable to produce one? If yes, the turn degrades to dual rather
+// than raw-only — bytes are still captured, and the content still lands.
 //
-//   - salvaged: extproc recovered content from a truncated gzip body that
-//     ingest's plain gzip.Reader + io.ReadAll would reject outright.
-//   - encoding: ingest cannot undo zstd or stacked encodings.
-func decideRawLane(mode RawResponseMode, rawLen, reqLen int, contentEncoding string, salvaged bool) rawLaneDecision {
+// ingestCanDecode is that question for the bytes themselves, and the caller
+// answers it by having already decoded them with ingest's decoder rather than
+// by inspecting the encoding name. On today's only call path it is therefore
+// always true, because a body that failed to decode never reaches dispatch.
+// The branch stays because "the caller decoded first" is a property of that
+// path, not of this function, and a future caller that attaches bytes it did
+// not decode should degrade to dual rather than ship unreducible archive.
+//
+// Salvage is deliberately NOT an interlock any more. It was one while ingest
+// decoded with a plain gzip.Reader that refused a stream ending early; ingest
+// now salvages on exactly extproc's rule — partial output plus
+// io.ErrUnexpectedEOF — and reduces the result rather than discarding it. A
+// truncated capture reduces to most of a turn on either side, so forcing dual
+// bought nothing and cost the bytes their raw-only path.
+func decideRawLane(mode RawResponseMode, rawLen, reqLen int, ingestCanDecode bool) rawLaneDecision {
 	if !mode.sendsRawBytes() {
 		return rawLaneDecision{}
 	}
@@ -188,13 +201,10 @@ func decideRawLane(mode RawResponseMode, rawLen, reqLen int, contentEncoding str
 	if mode != RawResponseRaw {
 		return d
 	}
-	switch {
-	case !ingestCanDecodeEncoding(contentEncoding):
+	if !ingestCanDecode {
 		d.fallbackReason = rawFallbackEncoding
-	case salvaged:
-		d.fallbackReason = rawFallbackSalvaged
-	default:
-		d.omitReduction = true
+		return d
 	}
+	d.omitReduction = true
 	return d
 }

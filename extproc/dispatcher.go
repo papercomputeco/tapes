@@ -201,6 +201,31 @@ type TurnEnvelope struct {
 	// without it the bytes are unreducible archive.
 	RawResponseEncoding string `json:"raw_response_encoding,omitempty"`
 
+	// RawResponseWithheld says this adapter captured verbatim bytes for the
+	// turn and chose not to send them — always because including them would
+	// have pushed the envelope past ingest's body limit, and a turn without
+	// its bytes beats no turn at all.
+	//
+	// Only the producer can know this. An envelope with no raw_response is
+	// otherwise the same envelope whether the bytes never existed or were
+	// dropped on the way out, and those are opposite operational facts: the
+	// first says which adapters are deployed, the second says a limit bit and
+	// wants tuning. Ingest folds this into raw_response_dropped; the field is
+	// spelled differently on purpose, because that column is the union of "the
+	// producer withheld" and "ingest capped" and this is only the first.
+	//
+	// It is set at exactly the two places bytes are withheld after being
+	// captured — the pre-dispatch transport-budget decision, and
+	// enforceBodyLimit's post-marshal strip — and nowhere else. In particular
+	// it is NOT set when the mode never asked for bytes: mode=off captured
+	// nothing to withhold, and marking those turns would report the whole
+	// fleet as losing bytes it never had.
+	//
+	// Invariant, relied on by ingest, which honors the marker only when no
+	// bytes arrived: withheld implies raw_response absent. Both writers below
+	// clear the bytes in the same breath as setting this.
+	RawResponseWithheld bool `json:"raw_response_withheld,omitempty"`
+
 	// No omitempty: it has no effect on a non-pointer struct, and meta is
 	// always sent.
 	Meta TurnMeta `json:"meta"`
@@ -214,7 +239,9 @@ type TurnEnvelope struct {
 	// There is deliberately no raw_response_dropped field. Ingest computes
 	// that marker itself from the bytes it actually received, and does not
 	// read one off the payload — a producer-supplied value would be
-	// unverifiable and could contradict what was stored.
+	// unverifiable and could contradict what was stored. RawResponseWithheld
+	// above is not a counterexample: it reports a decision made here, which
+	// ingest cannot observe, rather than an outcome ingest can see for itself.
 
 	// reducedFallback holds the adapter's reduction on a raw-only envelope
 	// so the transport backstop in Dispatch can restore it if the bytes
@@ -520,6 +547,10 @@ func (d *Dispatcher) enforceBodyLimit(env TurnEnvelope, payload []byte) ([]byte,
 	stripped := env
 	stripped.RawResponse = nil
 	stripped.RawResponseEncoding = ""
+	// Bytes existed and this process decided not to send them. Set in the
+	// same breath as clearing them so the two can never disagree — ingest
+	// honors the marker only on an envelope carrying no bytes.
+	stripped.RawResponseWithheld = true
 	if stripped.Response == nil {
 		// Raw-only: without the bytes there is no response at all, so the
 		// reduction has to come back or ingest rejects an empty turn.
