@@ -16,6 +16,7 @@ import (
 	"time"
 
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+
 	"github.com/papercomputeco/tapes/pkg/capture"
 	"github.com/papercomputeco/tapes/pkg/llm"
 )
@@ -84,14 +85,14 @@ type dualSendEnvelope struct {
 
 // captureDualSend drives one recorded turn through the processor in dual mode
 // and returns the envelope tapes-ingest received.
-func captureDualSend(t *testing.T, b bundle) dualSendEnvelope {
+func captureDualSend(ctx context.Context, t *testing.T, b bundle) dualSendEnvelope {
 	t.Helper()
-	return captureWithMode(t, b, RawResponseDual)
+	return captureWithMode(ctx, t, b, RawResponseDual)
 }
 
 // captureWithMode drives one recorded turn through the real processor state
 // machine in the given mode and returns the envelope tapes-ingest received.
-func captureWithMode(t *testing.T, b bundle, mode RawResponseMode) dualSendEnvelope {
+func captureWithMode(ctx context.Context, t *testing.T, b bundle, mode RawResponseMode) dualSendEnvelope {
 	t.Helper()
 
 	var (
@@ -118,7 +119,7 @@ func captureWithMode(t *testing.T, b bundle, mode RawResponseMode) dualSendEnvel
 	proc.Dispatcher().SetObserver(proc.Metrics().AsObserver())
 
 	stream := &fakeStream{
-		ctx: context.Background(),
+		ctx: ctx,
 		toSend: []*extprocv3.ProcessingRequest{
 			headerReq(map[string]string{
 				":method":      b.req.Method,
@@ -130,6 +131,11 @@ func captureWithMode(t *testing.T, b bundle, mode RawResponseMode) dualSendEnvel
 			respBodyReq(b.resp, true),
 		},
 	}
+	// Process dispatches on context.Background() on purpose: the POST to
+	// ingest has to outlive the ext_proc stream, which Envoy tears down as
+	// soon as it has its response. Inheriting the caller's context here would
+	// cancel in-flight dispatches and lose turns.
+	//nolint:contextcheck // deliberate: dispatch must outlive the stream.
 	if err := proc.Process(stream); err != nil {
 		t.Fatalf("Process: %v", err)
 	}
@@ -166,7 +172,7 @@ func TestDualSendReductionEquivalence(t *testing.T) {
 
 	for _, b := range loadRecordings(t) {
 		t.Run(b.name, func(t *testing.T) {
-			env := captureDualSend(t, b)
+			env := captureDualSend(ctx, t, b)
 
 			// Precondition: this is actually a dual-send.
 			if len(env.RawResponse) == 0 {
@@ -263,11 +269,13 @@ func TestDualSendReductionEquivalence(t *testing.T) {
 // selects what rides ALONGSIDE the bytes, never the bytes themselves — so
 // equivalence proven under dual carries over to raw-only.
 func TestDualSendRawOnlyParity(t *testing.T) {
+	ctx := context.Background()
+
 	for _, b := range loadRecordings(t) {
 		t.Run(b.name, func(t *testing.T) {
-			dual := captureDualSend(t, b)
+			dual := captureDualSend(ctx, t, b)
 
-			rawOnly := captureRawOnly(t, b)
+			rawOnly := captureRawOnly(ctx, t, b)
 			if rawOnly.Response != nil {
 				t.Fatalf("raw-only envelope carried a reduction")
 			}
@@ -284,9 +292,9 @@ func TestDualSendRawOnlyParity(t *testing.T) {
 }
 
 // captureRawOnly is captureDualSend in RawResponseRaw mode.
-func captureRawOnly(t *testing.T, b bundle) dualSendEnvelope {
+func captureRawOnly(ctx context.Context, t *testing.T, b bundle) dualSendEnvelope {
 	t.Helper()
-	return captureWithMode(t, b, RawResponseRaw)
+	return captureWithMode(ctx, t, b, RawResponseRaw)
 }
 
 func jsonDiff(t *testing.T, want, got any) string {

@@ -12,12 +12,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	processingmodev3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -33,8 +32,6 @@ type fakeStream struct {
 
 	recvMu sync.Mutex
 	recv   []*extprocv3.ProcessingResponse
-
-	closed bool
 }
 
 func (s *fakeStream) Recv() (*extprocv3.ProcessingRequest, error) {
@@ -114,7 +111,9 @@ func respBodyReq(body []byte, eos bool) *extprocv3.ProcessingRequest {
 func scrapeProcessorMetrics(proc *Processor) string {
 	srv := httptest.NewServer(proc.Metrics().Handler())
 	defer srv.Close()
-	resp, err := srv.Client().Get(srv.URL + "/")
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/", nil)
+	Expect(err).NotTo(HaveOccurred())
+	resp, err := srv.Client().Do(req)
 	Expect(err).NotTo(HaveOccurred())
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
@@ -138,6 +137,7 @@ func (o *observer) OnDrop(_ string, reason DropReason, _ string) {
 	defer o.mu.Unlock()
 	o.drops[reason]++
 }
+
 func (o *observer) DropCount(reason DropReason) int {
 	o.mu.Lock()
 	defer o.mu.Unlock()

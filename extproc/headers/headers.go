@@ -31,6 +31,11 @@ const (
 	Path   = ":path"
 )
 
+// harnessIDUnknown is the harness id substituted when the header is absent
+// or empty. It is a wire-visible value — it reaches ingest and is stored on
+// the session — so it is a contract, not a placeholder.
+const harnessIDUnknown = "unknown"
+
 // Standard request/response headers that extproc reads.
 const (
 	// ContentType drives the reducer's reduceStream vs. reduceOneShot
@@ -77,7 +82,7 @@ const (
 	TapesEnvelopePrefix = "x-tapes-"
 
 	// TapesHarnessID identifies the harness flavor. Missing or empty
-	// is parsed as "unknown".
+	// is parsed as harnessIDUnknown.
 	TapesHarnessID = "x-tapes-harness-id"
 
 	// TapesHarnessSessionID is the harness's session id (a UUID for

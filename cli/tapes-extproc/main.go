@@ -75,8 +75,10 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	// Start gRPC listener.
-	lis, err := net.Listen("tcp", cfg.ListenAddr)
+	// Start gRPC listener. ListenConfig rather than net.Listen so the bind
+	// is context-aware; the behaviour is otherwise identical.
+	var lc net.ListenConfig
+	lis, err := lc.Listen(context.Background(), "tcp", cfg.ListenAddr)
 	if err != nil {
 		slog.Error("Failed to listen", "addr", cfg.ListenAddr, "error", err)
 		os.Exit(1)

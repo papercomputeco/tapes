@@ -72,11 +72,11 @@ func ParseSessionEnvelope(hdrs *extprocv3.HttpHeaders) SessionEnvelope {
 		return out
 	}
 
-	// Missing harness-id is treated as "unknown" rather than
+	// Missing harness-id is treated as harnessIDUnknown rather than
 	// rejected. Empty string is the same as missing.
 	out.HarnessID = Get(hdrs, TapesHarnessID)
 	if out.HarnessID == "" {
-		out.HarnessID = "unknown"
+		out.HarnessID = harnessIDUnknown
 	}
 
 	out.HarnessSessionID = Get(hdrs, TapesHarnessSessionID)

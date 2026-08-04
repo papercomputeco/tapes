@@ -259,7 +259,7 @@ func (p *Processor) Process(stream extprocv3.ExternalProcessor_ProcessServer) er
 
 	for {
 		msg, err := stream.Recv()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
@@ -305,13 +305,13 @@ func (p *Processor) Process(stream extprocv3.ExternalProcessor_ProcessServer) er
 			}
 			if v.ResponseBody.GetEndOfStream() {
 				st.respEOS = true
-				switch {
-				case st.statusCode == 0:
+				switch st.statusCode {
+				case 0:
 					// Envoy should always send ResponseHeaders before ResponseBody.
 					// If we got here with no :status, something violated the contract
 					// — treat as a drop rather than implying success.
 					p.recordDrop(st, DropMissingStatus)
-				case st.statusCode == http.StatusOK:
+				case http.StatusOK:
 					p.dispatchTurn(context.Background(), st)
 				default:
 					p.recordDrop(st, DropUpstreamStatus)
@@ -337,8 +337,8 @@ func (p *Processor) onRequestHeaders(st *streamState, hdrs *extprocv3.HttpHeader
 	st.method = headers.Get(hdrs, headers.Method)
 	st.endpoint = classifyEndpoint(st.path)
 	st.requestContentEncoding = headers.Get(hdrs, headers.ContentEncoding)
-	st.streamLabel = "unknown"
-	st.modelFamily = "unknown"
+	st.streamLabel = labelUnknown
+	st.modelFamily = labelUnknown
 	st.requestID = headers.Get(hdrs, headers.RequestID)
 	if st.requestID == "" {
 		// Upstream sometimes arrives without x-request-id (clients without
@@ -739,7 +739,7 @@ func decodeRequestBody(body []byte, contentEncoding string) ([]byte, error) {
 		return nil, err
 	}
 	if stats.truncated {
-		return nil, fmt.Errorf("truncated compressed request body")
+		return nil, errors.New("truncated compressed request body")
 	}
 	return decoded, nil
 }
@@ -890,13 +890,10 @@ func respBodyPreview(body []byte, maxBytes int) string {
 	if len(body) == 0 {
 		return "<empty>"
 	}
-	n := len(body)
-	if n > maxBytes {
-		n = maxBytes
-	}
+	n := min(len(body), maxBytes)
 	var b strings.Builder
 	b.Grow(n + 16)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		c := body[i]
 		switch {
 		case c == '\\':
@@ -934,23 +931,23 @@ func (p *Processor) resolveProvider(hdrs *extprocv3.HttpHeaders) string {
 	path := headers.Get(hdrs, headers.Path)
 	switch {
 	case pathHasCleanSuffix(path, "/v1/chat/completions"):
-		return "openai"
+		return labelOpenAI
 	case pathHasCleanSuffix(path, "/v1/responses"), pathHasCleanSuffix(path, "/codex/responses"):
 		// Codex/OpenAI Responses traffic rides direct platform-gateway
 		// routes that bypass Envoy AI Gateway (api.openai.com under
 		// /v1/responses; chatgpt.com plan-auth under /codex/responses),
 		// so no backend-selector header is present; the path is the only
 		// provider signal.
-		return "openai"
+		return labelOpenAI
 	case pathHasCleanSuffix(path, "/v1/messages/count_tokens"):
-		return "anthropic"
+		return labelAnthropic
 	case pathHasCleanSuffix(path, "/v1/messages"):
-		return "anthropic"
+		return labelAnthropic
 	case pathHasCleanSuffix(path, "/api/chat"):
-		return "ollama"
+		return labelOllama
 	}
 
-	return "anthropic"
+	return labelAnthropic
 }
 
 // isTurnRequestPath reports whether path is a provider chat-completion turn.
@@ -985,7 +982,7 @@ func classifyEndpoint(path string) string {
 	case pathHasCleanSuffix(path, "/api/chat"):
 		return "ollama_chat"
 	default:
-		return "other"
+		return labelOther
 	}
 }
 
@@ -1009,15 +1006,15 @@ type requestMeta struct {
 // result in metrics/log dimensions without exposing prompt text.
 func parseRequestMeta(provider string, reqBody []byte) requestMeta {
 	meta := requestMeta{
-		StreamLabel: "unknown",
-		ModelFamily: "unknown",
+		StreamLabel: labelUnknown,
+		ModelFamily: labelUnknown,
 	}
 	if len(reqBody) == 0 {
 		return meta
 	}
 
 	switch provider {
-	case "anthropic", "openai", "ollama":
+	case labelAnthropic, labelOpenAI, labelOllama:
 		var probe struct {
 			Stream *bool  `json:"stream"`
 			Model  string `json:"model"`
@@ -1028,14 +1025,14 @@ func parseRequestMeta(provider string, reqBody []byte) requestMeta {
 		meta.Model = safeModel(probe.Model)
 		meta.ModelFamily = modelFamily(probe.Model)
 		if probe.Stream == nil {
-			meta.StreamLabel = "false"
+			meta.StreamLabel = labelFalse
 			return meta
 		}
 		meta.Streaming = *probe.Stream
 		if meta.Streaming {
 			meta.StreamLabel = "true"
 		} else {
-			meta.StreamLabel = "false"
+			meta.StreamLabel = labelFalse
 		}
 		return meta
 	default:
@@ -1071,9 +1068,9 @@ func modelFamily(model string) string {
 	case strings.HasPrefix(model, "gpt-5"):
 		return "gpt-5"
 	case model == "":
-		return "unknown"
+		return labelUnknown
 	default:
-		return "other"
+		return labelOther
 	}
 }
 
@@ -1083,7 +1080,7 @@ func statusClass(status int) string {
 
 func countSSEDataFrames(body []byte) int {
 	count := 0
-	for _, line := range bytes.Split(body, []byte{'\n'}) {
+	for line := range bytes.SplitSeq(body, []byte{'\n'}) {
 		if bytes.HasPrefix(bytes.TrimSpace(line), []byte("data:")) {
 			count++
 		}

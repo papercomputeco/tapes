@@ -38,6 +38,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -275,13 +276,7 @@ func TestCorpusCoverage(t *testing.T) {
 	}
 
 	for _, r := range rules {
-		covered := false
-		for _, c := range cases {
-			if r.holds(c) {
-				covered = true
-				break
-			}
-		}
+		covered := slices.ContainsFunc(cases, r.holds)
 		if !covered {
 			t.Errorf("no vendored case covers: %s\n"+
 				"  why it matters: %s\n\n"+

@@ -12,10 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 )
 
 // sessionEnvelopeFixture builds a minimal but well-formed turn that
@@ -108,7 +107,6 @@ func requestHeadersMutation(resps []*extprocv3.ProcessingResponse) []string {
 }
 
 var _ = Describe("Session envelope", func() {
-
 	Context("envelope stripping on RequestHeaders", func() {
 		It("removes every X-Tapes-* header before forwarding upstream", func() {
 			_, _, resps := runWithRequestHeaders(map[string]string{

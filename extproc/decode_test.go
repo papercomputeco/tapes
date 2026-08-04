@@ -242,7 +242,7 @@ func TestDecodeOnRealisticGzipSize(t *testing.T) {
 	// verify we get the same bytes back through decodeResponseBody.
 	var sb strings.Builder
 	sb.WriteString("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_X\",\"role\":\"assistant\"}}\n\n")
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		sb.WriteString("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"some text content here\"}}\n\n")
 	}
 	sb.WriteString("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")

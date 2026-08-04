@@ -59,6 +59,7 @@ import (
 	"sort"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 func main() {
@@ -90,8 +91,17 @@ func main() {
 	mux.Handle("/_replay/list", http.HandlerFunc(srv.list))
 	mux.Handle("/", http.HandlerFunc(srv.replay))
 
+	// Timeouts rather than http.ListenAndServe's none: a replay client that
+	// opens a connection and stops talking should not pin a goroutine for the
+	// life of the process.
+	srvHTTP := &http.Server{
+		Addr:              *listen,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
 	slog.Info("listening", "addr", *listen)
-	if err := http.ListenAndServe(*listen, mux); err != nil {
+	if err := srvHTTP.ListenAndServe(); err != nil {
 		slog.Error("server exited", "error", err)
 		os.Exit(1)
 	}
@@ -185,7 +195,7 @@ func loadBundle(dir string) (*Bundle, error) {
 		// body). Distinguish file-missing from file-present-but-empty:
 		// missing is a malformed bundle, empty is a legitimate capture.
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("response.sse missing")
+			return nil, errors.New("response.sse missing")
 		}
 		return nil, fmt.Errorf("read response.sse: %w", err)
 	}
@@ -262,10 +272,13 @@ func (s *Server) replay(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"status":  "ok",
-		"bundles": len(s.bundles),
-	})
+	body := struct {
+		Status  string `json:"status"`
+		Bundles int    `json:"bundles"`
+	}{Status: "ok", Bundles: len(s.bundles)}
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		slog.Warn("healthz encode", "error", err)
+	}
 }
 
 func (s *Server) list(w http.ResponseWriter, _ *http.Request) {
@@ -291,23 +304,22 @@ func (s *Server) list(w http.ResponseWriter, _ *http.Request) {
 			Preview:         preview(b.Response, 160),
 		})
 	}
-	_ = json.NewEncoder(w).Encode(entries)
+	if err := json.NewEncoder(w).Encode(entries); err != nil {
+		slog.Warn("list encode", "error", err)
+	}
 }
 
 // preview matches respBodyPreview in extproc/processor.go so the
 // list output looks the same shape an operator sees in extproc logs.
 // Non-printable bytes are hex-escaped; longer bodies are truncated.
-func preview(b []byte, max int) string {
+func preview(b []byte, limit int) string {
 	if len(b) == 0 {
 		return "<empty>"
 	}
-	n := len(b)
-	if n > max {
-		n = max
-	}
+	n := min(len(b), limit)
 	var sb strings.Builder
 	sb.Grow(n + 16)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		c := b[i]
 		switch {
 		case c == '\\':
@@ -326,7 +338,7 @@ func preview(b []byte, max int) string {
 			fmt.Fprintf(&sb, `\x%02x`, c)
 		}
 	}
-	if len(b) > max {
+	if len(b) > limit {
 		fmt.Fprintf(&sb, "...(%dB total)", len(b))
 	}
 	return sb.String()

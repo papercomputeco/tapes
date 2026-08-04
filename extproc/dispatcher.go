@@ -201,7 +201,9 @@ type TurnEnvelope struct {
 	// without it the bytes are unreducible archive.
 	RawResponseEncoding string `json:"raw_response_encoding,omitempty"`
 
-	Meta TurnMeta `json:"meta,omitempty"`
+	// No omitempty: it has no effect on a non-pointer struct, and meta is
+	// always sent.
+	Meta TurnMeta `json:"meta"`
 	// Session is the optional session-tracking block. Present
 	// (non-nil) when the inbound request carried any X-Tapes-*
 	// header; nil otherwise. omitempty keeps the wire shape stable
@@ -332,11 +334,12 @@ func (d *Dispatcher) RecordDrop(provider string, reason DropReason, requestID st
 // parsed request metadata. It keeps metric labels bounded while logs retain
 // enough context to answer model/endpoint/size/status questions.
 func (d *Dispatcher) RecordDropContext(provider string, reason DropReason, requestID string, ctx OutcomeContext) {
-	attrs := []any{
+	attrs := make([]any, 0, 6+len(ctx.logAttrs()))
+	attrs = append(attrs,
 		"provider", provider,
 		"reason", string(reason),
 		"request_id", requestID,
-	}
+	)
 	attrs = append(attrs, ctx.logAttrs()...)
 	slog.Warn("extproc drop",
 		attrs...,

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+
 	"github.com/papercomputeco/tapes/pkg/capture"
 )
 
@@ -324,7 +325,11 @@ func scrapeWireCaptureMetrics(t *testing.T, proc *Processor) string {
 	t.Helper()
 	srv := httptest.NewServer(proc.Metrics().Handler())
 	defer srv.Close()
-	resp, err := srv.Client().Get(srv.URL + "/")
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/", nil)
+	if err != nil {
+		t.Fatalf("build scrape request: %v", err)
+	}
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("scrape metrics: %v", err)
 	}

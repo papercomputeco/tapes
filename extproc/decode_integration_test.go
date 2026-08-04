@@ -87,13 +87,13 @@ data: {"type":"message_stop"}
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("ingest read: %v", err)
-			http.Error(w, err.Error(), 500)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		var env TurnEnvelope
 		if err := json.Unmarshal(body, &env); err != nil {
 			t.Errorf("ingest unmarshal: %v", err)
-			http.Error(w, err.Error(), 500)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		receivedEnvelope.Store(&env)
@@ -201,13 +201,13 @@ data: {"type":"message_stop"}
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("ingest read: %v", err)
-			http.Error(w, err.Error(), 500)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		var env TurnEnvelope
 		if err := json.Unmarshal(body, &env); err != nil {
 			t.Errorf("ingest unmarshal: %v", err)
-			http.Error(w, err.Error(), 500)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		receivedEnvelope.Store(&env)
@@ -267,7 +267,11 @@ func scrapeDecodeIntegrationMetrics(t *testing.T, proc *Processor) string {
 	t.Helper()
 	srv := httptest.NewServer(proc.Metrics().Handler())
 	defer srv.Close()
-	resp, err := srv.Client().Get(srv.URL + "/")
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/", nil)
+	if err != nil {
+		t.Fatalf("build scrape request: %v", err)
+	}
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("scrape metrics: %v", err)
 	}

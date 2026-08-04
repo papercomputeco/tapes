@@ -69,7 +69,7 @@ func TestLoadBundlesAndServe(t *testing.T) {
 
 	// Round-robin: first call → turn-001, second → turn-002, third wraps.
 	for i, want := range []string{"turn-001", "turn-002", "turn-001"} {
-		req := httptest.NewRequest("POST", "/v1/messages", nil)
+		req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 		rec := httptest.NewRecorder()
 		srv.replay(rec, req)
 		if got := rec.Header().Get("X-Replay-Turn"); got != want {
@@ -88,7 +88,7 @@ func TestPickByHeader(t *testing.T) {
 	}
 	srv := &Server{bundles: bundles}
 
-	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	req.Header.Set("X-Replay-Turn", "turn-bbb")
 	rec := httptest.NewRecorder()
 	srv.replay(rec, req)
@@ -111,7 +111,7 @@ func TestPickByQuery(t *testing.T) {
 	}
 	srv := &Server{bundles: bundles}
 
-	req := httptest.NewRequest("POST", "/v1/messages?turn=turn-aaa", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages?turn=turn-aaa", nil)
 	rec := httptest.NewRecorder()
 	srv.replay(rec, req)
 	body, _ := io.ReadAll(rec.Body)
@@ -124,7 +124,7 @@ func TestUnknownTurnReturns503(t *testing.T) {
 	srv := &Server{bundles: []*Bundle{
 		{Name: "turn-only", Meta: MetaRecord{Status: 200}, Response: []byte("only")},
 	}}
-	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	req.Header.Set("X-Replay-Turn", "missing")
 	rec := httptest.NewRecorder()
 	srv.replay(rec, req)
@@ -135,7 +135,7 @@ func TestUnknownTurnReturns503(t *testing.T) {
 
 func TestEmptyBundleSetReturns503(t *testing.T) {
 	srv := &Server{bundles: nil}
-	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	rec := httptest.NewRecorder()
 	srv.replay(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
@@ -156,7 +156,7 @@ func TestReplayServesCapturedStatusAndContentType(t *testing.T) {
 	}
 	srv := &Server{bundles: bundles}
 
-	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	rec := httptest.NewRecorder()
 	srv.replay(rec, req)
 
@@ -237,7 +237,7 @@ func TestListEndpoint(t *testing.T) {
 	bundles, _ := loadBundles(root)
 	srv := &Server{bundles: bundles}
 
-	req := httptest.NewRequest("GET", "/_replay/list", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_replay/list", nil)
 	rec := httptest.NewRecorder()
 	srv.list(rec, req)
 

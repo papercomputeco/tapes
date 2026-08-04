@@ -19,6 +19,36 @@ import (
 // captured and dispatched as usual.
 const DefaultLargeTurnThreshold = 4 * 1024 * 1024
 
+// Recurring label values. These are wire-visible: they appear verbatim in the
+// Prometheus label set and in the dispatched envelope, so every dashboard,
+// alert and downstream consumer reads these exact strings. Naming them keeps
+// the two dozen sites that emit them from drifting one character apart.
+const (
+	// labelUnknown is the value every normalizer falls back to. It means
+	// "we looked and could not tell", which is deliberately distinct from a
+	// label being absent.
+	labelUnknown = "unknown"
+	// labelOther collapses recognized-but-unenumerated values so provider
+	// and endpoint cardinality stays bounded.
+	labelOther = "other"
+	// labelAnthropic, labelOpenAI and labelOllama are the enumerated
+	// providers — the set normalizeProvider passes through rather than
+	// collapsing into labelOther.
+	labelAnthropic = "anthropic"
+	labelOpenAI    = "openai"
+	labelOllama    = "ollama"
+	// labelTrue and labelFalse are the stream label's two decided values;
+	// the label is a tri-state (true / false / unknown), not a boolean.
+	labelTrue  = "true"
+	labelFalse = "false"
+	// labelIdentity is the no-encoding content-encoding value. Empty is
+	// normalized to it, so "absent" and "identity" share one label.
+	labelIdentity = "identity"
+	// labelGzip is the one content-encoding named outside the enumeration,
+	// by the pre-render loop.
+	labelGzip = "gzip"
+)
+
 type Metrics struct {
 	registry *prometheus.Registry
 
@@ -189,13 +219,13 @@ func NewMetrics() *Metrics {
 	// without waiting for a first drop of each kind. reducer_empty is left
 	// unseeded because its content_type / upstream_status label space is
 	// open-ended and would just create a wall of zero rows.
-	preRenderProviders := []string{"anthropic", "openai", "ollama", "unknown"}
+	preRenderProviders := []string{labelAnthropic, labelOpenAI, labelOllama, labelUnknown}
 	for _, p := range preRenderProviders {
 		for _, r := range AllDropReasons() {
 			m.dropped.WithLabelValues(p, string(r)).Add(0)
 		}
-		for _, enc := range []string{"gzip", "x-gzip"} {
-			for _, seen := range []string{"false", "true"} {
+		for _, enc := range []string{labelGzip, "x-gzip"} {
+			for _, seen := range []string{labelFalse, labelTrue} {
 				m.responseSalvaged.WithLabelValues(p, enc, seen).Add(0)
 			}
 		}
@@ -223,7 +253,7 @@ func (m *Metrics) SetLargeTurnThreshold(bytes int) {
 // one line.
 func (m *Metrics) ObserveTurnSize(provider string, respBytes int) {
 	if provider == "" {
-		provider = "unknown"
+		provider = labelUnknown
 	}
 	if respBytes > m.largeTurnThreshold {
 		m.largeTurns.WithLabelValues(provider).Inc()
@@ -242,7 +272,7 @@ func (m *Metrics) Handler() http.Handler {
 // ObserveAccepted increments captured_total for a provider.
 func (m *Metrics) ObserveAccepted(provider string) {
 	if provider == "" {
-		provider = "unknown"
+		provider = labelUnknown
 	}
 	m.captured.WithLabelValues(provider).Inc()
 }
@@ -250,7 +280,7 @@ func (m *Metrics) ObserveAccepted(provider string) {
 // ObserveDrop increments dropped_total for a provider / reason.
 func (m *Metrics) ObserveDrop(provider string, reason DropReason) {
 	if provider == "" {
-		provider = "unknown"
+		provider = labelUnknown
 	}
 	m.dropped.WithLabelValues(provider, string(reason)).Inc()
 }
@@ -304,14 +334,14 @@ func (m *Metrics) ObserveBodyBytesByOutcome(provider, side, outcome, reason stri
 		reason = outcome
 	}
 	if side != "request" && side != "response" {
-		side = "unknown"
+		side = labelUnknown
 	}
 	m.bodyBytesByOutcome.WithLabelValues(provider, side, outcome, normalizeReason(reason)).Observe(float64(bytes))
 }
 
 // ObserveResponseDecoded records one decode attempt on the upstream
 // response body. encoding is the raw Content-Encoding header value
-// (normalized to lowercase, empty/"identity" mapped to "identity").
+// (normalized to lowercase, empty/labelIdentity mapped to labelIdentity).
 // result is "ok" or "error". The metric is purely observational —
 // success doesn't mean the reducer was happy with the decoded bytes,
 // just that decode itself succeeded. Pair with reducer_empty_total
@@ -319,7 +349,7 @@ func (m *Metrics) ObserveBodyBytesByOutcome(provider, side, outcome, reason stri
 func (m *Metrics) ObserveResponseDecoded(encoding, result string) {
 	enc := normalizeContentEncoding(encoding)
 	if result == "" {
-		result = "unknown"
+		result = labelUnknown
 	}
 	m.responseDecoded.WithLabelValues(enc, result).Inc()
 }
@@ -335,13 +365,13 @@ func (m *Metrics) ObserveResponseDecodeSalvaged(provider, encoding string, messa
 
 // normalizeContentEncoding folds the open header-value space into a
 // small label set: identity (incl. empty), gzip (incl. x-gzip),
-// br/deflate/etc. kept as-is, plus an "unknown" bucket for everything
+// br/deflate/etc. kept as-is, plus an labelUnknown bucket for everything
 // else so cardinality stays bounded across a long tail of one-off
 // upstream choices.
 func normalizeContentEncoding(ce string) string {
 	ce = strings.ToLower(strings.TrimSpace(ce))
 	if ce == "" {
-		return "identity"
+		return labelIdentity
 	}
 	// Multi-encoding values like "gzip, br" get a compact synthetic
 	// label so the count of layered cases is still observable without
@@ -350,10 +380,10 @@ func normalizeContentEncoding(ce string) string {
 		return "stacked"
 	}
 	switch ce {
-	case "identity", "gzip", "x-gzip", "br", "deflate", "zstd":
+	case labelIdentity, labelGzip, "x-gzip", "br", "deflate", "zstd":
 		return ce
 	default:
-		return "unknown"
+		return labelUnknown
 	}
 }
 
@@ -366,10 +396,10 @@ func normalizeContentEncoding(ce string) string {
 // type to keep cardinality bounded.
 func (m *Metrics) ObserveReducerEmpty(provider, contentType string, upstreamStatus int) {
 	if provider == "" {
-		provider = "unknown"
+		provider = labelUnknown
 	}
 	ct := normalizeContentType(contentType)
-	status := "unknown"
+	status := labelUnknown
 	if upstreamStatus > 0 {
 		status = strconv.Itoa(upstreamStatus)
 	}
@@ -382,7 +412,7 @@ func (m *Metrics) ObserveReducerEmpty(provider, contentType string, upstreamStat
 // vs. "text/event-stream").
 func normalizeContentType(ct string) string {
 	if ct == "" {
-		return "unknown"
+		return labelUnknown
 	}
 	if i := strings.IndexByte(ct, ';'); i >= 0 {
 		ct = ct[:i]
@@ -393,12 +423,12 @@ func normalizeContentType(ct string) string {
 func normalizeProvider(provider string) string {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	switch provider {
-	case "anthropic", "openai", "ollama":
+	case labelAnthropic, labelOpenAI, labelOllama:
 		return provider
 	case "":
-		return "unknown"
+		return labelUnknown
 	default:
-		return "other"
+		return labelOther
 	}
 }
 
@@ -408,43 +438,43 @@ func normalizeOutcome(outcome string) string {
 	case "accepted", "dropped":
 		return outcome
 	default:
-		return "unknown"
+		return labelUnknown
 	}
 }
 
 func normalizeReason(reason string) string {
 	reason = strings.TrimSpace(strings.ToLower(reason))
 	if reason == "" {
-		return "unknown"
+		return labelUnknown
 	}
 	for _, r := range AllDropReasons() {
 		if reason == string(r) {
 			return reason
 		}
 	}
-	if reason == "accepted" || reason == "unknown" {
+	if reason == "accepted" || reason == labelUnknown {
 		return reason
 	}
-	return "other"
+	return labelOther
 }
 
 func normalizeEndpointLabel(endpoint string) string {
 	endpoint = strings.TrimSpace(strings.ToLower(endpoint))
 	switch endpoint {
-	case "messages", "messages_count_tokens", "chat_completions", "responses", "ollama_chat", "other":
+	case "messages", "messages_count_tokens", "chat_completions", "responses", "ollama_chat", labelOther:
 		return endpoint
 	default:
-		return "unknown"
+		return labelUnknown
 	}
 }
 
 func normalizeStreamLabel(stream string) string {
 	stream = strings.TrimSpace(strings.ToLower(stream))
 	switch stream {
-	case "true", "false", "unknown":
+	case labelTrue, labelFalse, labelUnknown:
 		return stream
 	default:
-		return "unknown"
+		return labelUnknown
 	}
 }
 
@@ -453,23 +483,23 @@ func normalizeModelFamily(modelFamily string) string {
 	// Keep this allowlist intentionally bounded for Prometheus cardinality.
 	// Add new first-party model families here as they become routable.
 	switch modelFamily {
-	case "claude-fable-5", "claude-opus-4", "claude-sonnet-5", "claude-sonnet-4", "claude-haiku-4-5", "claude-3-7-sonnet", "claude-3-5-sonnet", "gpt-5", "unknown", "other":
+	case "claude-fable-5", "claude-opus-4", "claude-sonnet-5", "claude-sonnet-4", "claude-haiku-4-5", "claude-3-7-sonnet", "claude-3-5-sonnet", "gpt-5", labelUnknown, labelOther:
 		return modelFamily
 	case "":
-		return "unknown"
+		return labelUnknown
 	default:
-		return "other"
+		return labelOther
 	}
 }
 
 func normalizeStatusClass(statusClass string, status int) string {
 	statusClass = strings.TrimSpace(strings.ToLower(statusClass))
 	switch statusClass {
-	case "1xx", "2xx", "3xx", "4xx", "5xx", "unknown":
+	case "1xx", "2xx", "3xx", "4xx", "5xx", labelUnknown:
 		return statusClass
 	}
 	if status <= 0 {
-		return "unknown"
+		return labelUnknown
 	}
 	switch {
 	case status < 200:
@@ -483,14 +513,14 @@ func normalizeStatusClass(statusClass string, status int) string {
 	case status < 600:
 		return "5xx"
 	default:
-		return "unknown"
+		return labelUnknown
 	}
 }
 
 // ObserveSSEChunks records how many SSE frames a streamed turn produced.
 func (m *Metrics) ObserveSSEChunks(provider string, n int) {
 	if provider == "" {
-		provider = "unknown"
+		provider = labelUnknown
 	}
 	m.sseChunks.WithLabelValues(provider).Observe(float64(n))
 }
@@ -498,7 +528,7 @@ func (m *Metrics) ObserveSSEChunks(provider string, n int) {
 // ObserveTurnDuration records the header-to-dispatch wall time.
 func (m *Metrics) ObserveTurnDuration(provider string, seconds float64) {
 	if provider == "" {
-		provider = "unknown"
+		provider = labelUnknown
 	}
 	m.turnDuration.WithLabelValues(provider).Observe(seconds)
 }
@@ -506,7 +536,7 @@ func (m *Metrics) ObserveTurnDuration(provider string, seconds float64) {
 // ObserveBodyBytes records accumulated body size by side ("request" | "response").
 func (m *Metrics) ObserveBodyBytes(provider, side string, bytes int) {
 	if provider == "" {
-		provider = "unknown"
+		provider = labelUnknown
 	}
 	m.bodyBytes.WithLabelValues(provider, side).Observe(float64(bytes))
 }
@@ -514,7 +544,7 @@ func (m *Metrics) ObserveBodyBytes(provider, side string, bytes int) {
 // ObserveDispatchLatency records the HTTP POST roundtrip to ingest.
 func (m *Metrics) ObserveDispatchLatency(provider string, seconds float64) {
 	if provider == "" {
-		provider = "unknown"
+		provider = labelUnknown
 	}
 	m.dispatchSeconds.WithLabelValues(provider).Observe(seconds)
 }
@@ -532,6 +562,7 @@ func (o metricsObserver) OnAccepted(provider string, _ string) { o.m.ObserveAcce
 func (o metricsObserver) OnDrop(provider string, reason DropReason, _ string) {
 	o.m.ObserveDrop(provider, reason)
 }
+
 func (o metricsObserver) OnAcceptedContext(provider string, _ string, ctx OutcomeContext) {
 	o.m.ObserveTerminal(provider, "accepted", "accepted", ctx)
 	o.m.ObserveBodyBytesByOutcome(provider, "request", "accepted", "accepted", ctx.RequestBytes)
@@ -539,12 +570,14 @@ func (o metricsObserver) OnAcceptedContext(provider string, _ string, ctx Outcom
 	o.m.ObserveTurnDuration(provider, ctx.ElapsedSeconds)
 	o.m.ObserveTerminalDuration(provider, "accepted", "accepted", ctx.ElapsedSeconds)
 }
+
 func (o metricsObserver) OnDropContext(provider string, reason DropReason, _ string, ctx OutcomeContext) {
 	o.m.ObserveTerminal(provider, "dropped", string(reason), ctx)
 	o.m.ObserveBodyBytesByOutcome(provider, "request", "dropped", string(reason), ctx.RequestBytes)
 	o.m.ObserveBodyBytesByOutcome(provider, "response", "dropped", string(reason), ctx.ResponseBytes)
 	o.m.ObserveTerminalDuration(provider, "dropped", string(reason), ctx.ElapsedSeconds)
 }
+
 func (o metricsObserver) OnDispatchLatency(provider string, _ string, seconds float64) {
 	o.m.ObserveDispatchLatency(provider, seconds)
 }
