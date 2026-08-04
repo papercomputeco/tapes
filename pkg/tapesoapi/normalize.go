@@ -35,14 +35,14 @@ func normalizeMethod(method string) (string, error) {
 
 var templateParam = regexp.MustCompile(`\{([^{}/]*)\}`)
 
-// normalizePath canonicalizes a path so two spellings of the same route cannot
+// NormalizePath canonicalizes a path so two spellings of the same route cannot
 // both appear in one document.
 //
 // Trailing slashes are trimmed (except on the root) and the path must be
 // absolute. Parameter names are left alone: `{id}` and `{userId}` are different
 // paths to OpenAPI even when they route identically, and silently unifying them
 // would publish an operation nobody wrote.
-func normalizePath(path string) (string, error) {
+func NormalizePath(path string) (string, error) {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {
 		return "", errors.New("empty path")

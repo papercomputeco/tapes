@@ -538,6 +538,137 @@ var _ = Describe("Aggregator", func() {
 	})
 })
 
+var _ = Describe("Cassette MCP declarations", func() {
+	const toolSpec = `{
+  "openapi": "3.1.0",
+  "x-tapes-cassette": {
+    "kind": "cassette/v1alpha1",
+    "cassette": {"name": "summary", "version": "1.0.0"},
+    "depends": {"core": "v1"},
+    "api": {"prefix_path": "api"}
+  },
+  "paths": {"/api/summary/summarize": {"post": {
+    "operationId": "summarizeSession",
+    "summary": "Summarize a session",
+    "description": "Creates a concise summary.",
+    "x-tapes-mcp": {"name": "summarize_session", "annotations": {
+      "readOnlyHint": true, "idempotentHint": true, "openWorldHint": false
+    }},
+    "requestBody": {"required": true, "content": {"application/json": {
+      "schema": {"$ref": "#/components/schemas/SummaryInput"}
+    }}},
+    "responses": {"200": {"description": "summary", "content": {"application/json": {
+      "schema": {"type": "object", "properties": {"summary": {"type": "string"}}}
+    }}}}
+  }}},
+  "components": {"schemas": {
+    "SummaryInput": {"type": "object", "properties": {
+      "session_id": {"type": "string"},
+      "options": {"$ref": "#/components/schemas/Options"}
+    }, "required": ["session_id"]},
+    "Options": {"type": "object", "properties": {"brief": {"type": "boolean"}}}
+  }}
+}`
+
+	It("admits marked POST operations as namespaced tools with standalone schemas", func(ctx SpecContext) {
+		server := newCassetteServer(toolSpec)
+		DeferCleanup(server.Close)
+		runner := resolve(server)
+
+		Expect(runner.Refresh(ctx)).To(BeEmpty())
+		instance, ok := runner.Registry().Get("summary")
+		Expect(ok).To(BeTrue())
+		Expect(instance.MCPTools).To(HaveLen(1))
+
+		tool := instance.MCPTools[0]
+		Expect(tool.Name).To(Equal("summary.summarize_session"))
+		Expect(tool.Path).To(Equal("/v1/cassettes/summary/summarize"))
+		Expect(tool.Title).To(Equal("Summarize a session"))
+		Expect(tool.Annotations.ReadOnlyHint).To(BeTrue())
+		Expect(tool.Annotations.IdempotentHint).To(BeTrue())
+		Expect(tool.Annotations.OpenWorldHint).NotTo(BeNil())
+		Expect(*tool.Annotations.OpenWorldHint).To(BeFalse())
+		Expect(tool.InputSchema["$ref"]).To(Equal("#/$defs/SummaryInput"))
+		Expect(tool.InputSchema["$defs"].(map[string]any)).To(HaveKey("Options"))
+	})
+
+	It("keeps the published path spelling when the IR normalizes it", func(ctx SpecContext) {
+		withSlash := strings.Replace(toolSpec, `"/api/summary/summarize"`, `"/api/summary/summarize/"`, 1)
+		server := newCassetteServer(withSlash)
+		DeferCleanup(server.Close)
+		runner := resolve(server)
+
+		Expect(runner.Refresh(ctx)).To(BeEmpty())
+		instance, ok := runner.Registry().Get("summary")
+		Expect(ok).To(BeTrue())
+		Expect(instance.MCPTools[0].Path).To(Equal("/v1/cassettes/summary/summarize/"))
+	})
+
+	It("tolerates future extension fields", func(ctx SpecContext) {
+		future := strings.Replace(toolSpec, `"name": "summarize_session"`, `"name": "summarize_session", "future": true`, 1)
+		server := newCassetteServer(future)
+		DeferCleanup(server.Close)
+		runner := resolve(server)
+
+		Expect(runner.Refresh(ctx)).To(BeEmpty())
+		instance, ok := runner.Registry().Get("summary")
+		Expect(ok).To(BeTrue())
+		Expect(instance.MCPTools).To(HaveLen(1))
+	})
+
+	It("refuses schemas the MCP SDK cannot resolve", func(ctx SpecContext) {
+		invalid := strings.Replace(toolSpec, `"session_id": {"type": "string"}`, `"session_id": {"type": "string", "default": 1}`, 1)
+		server := newCassetteServer(invalid)
+		DeferCleanup(server.Close)
+		runner := resolve(server)
+
+		errs := runner.Refresh(ctx)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("validating"))
+		Expect(runner.Registry().Instances()).To(BeEmpty())
+	})
+
+	It("refuses marked operations outside the narrow JSON-body POST contract", func(ctx SpecContext) {
+		invalid := strings.Replace(toolSpec, `"post"`, `"get"`, 1)
+		server := newCassetteServer(invalid)
+		DeferCleanup(server.Close)
+		runner := resolve(server)
+
+		errs := runner.Refresh(ctx)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0]).To(MatchError(ContainSubstring("supported only on POST")))
+		Expect(runner.Registry().Instances()).To(BeEmpty())
+	})
+
+	It("refuses response contracts that cannot satisfy tool calls", func(ctx SpecContext) {
+		invalid := strings.Replace(toolSpec, `"schema": {"type": "object", "properties": {"summary": {"type": "string"}}}`, `"schema": {"type": "string"}`, 1)
+		server := newCassetteServer(invalid)
+		DeferCleanup(server.Close)
+		runner := resolve(server)
+
+		errs := runner.Refresh(ctx)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("response"))
+		Expect(runner.Registry().Instances()).To(BeEmpty())
+	})
+
+	It("retains the last admitted tools when a refresh becomes invalid", func(ctx SpecContext) {
+		server := newCassetteServer(toolSpec)
+		DeferCleanup(server.Close)
+		runner := resolve(server)
+		Expect(runner.Refresh(ctx)).To(BeEmpty())
+
+		invalid := strings.Replace(toolSpec, `"post"`, `"get"`, 1)
+		server.document.Store(&invalid)
+		Expect(runner.Refresh(ctx)).To(HaveLen(1))
+
+		instance, ok := runner.Registry().Get("summary")
+		Expect(ok).To(BeTrue())
+		Expect(instance.MCPTools).To(HaveLen(1))
+		Expect(instance.MCPTools[0].Name).To(Equal("summary.summarize_session"))
+	})
+})
+
 // coreRow stands in for a core response type: a named struct a route hands to
 // the parser, which registers it as a component and refers to it by name.
 type coreRow struct {
