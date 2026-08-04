@@ -27,6 +27,8 @@ The transparent proxy supports Anthropic, OpenAI, and Ollama traffic. It forward
 
 Capture is append-only. Replayed turns deduplicate by capture identity instead of rewriting prior capture.
 
+A captured turn is stored twice over: `raw_response` holds the upstream bytes verbatim, and `response` holds the reduced turn an adapter produced from them. Keeping the bytes is what makes the reduction reproducible and auditable rather than authoritative — a future data-model change becomes a re-derive over existing rows instead of a re-capture. Reducing server-side from those bytes is the end state, reached through a proven ratchet: see [Proving the capture ratchet](./cli.md#proving-the-capture-ratchet).
+
 ## Derivation: sessions, traces, and spans
 
 The deriver projects raw turns into the read model:

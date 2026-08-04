@@ -15,6 +15,7 @@ import (
 	devcmder "github.com/papercomputeco/tapes/cmd/tapes/dev"
 	initcmder "github.com/papercomputeco/tapes/cmd/tapes/init"
 	localcmder "github.com/papercomputeco/tapes/cmd/tapes/local"
+	rawcmder "github.com/papercomputeco/tapes/cmd/tapes/raw"
 	servecmder "github.com/papercomputeco/tapes/cmd/tapes/serve"
 	statuscmder "github.com/papercomputeco/tapes/cmd/tapes/status"
 	versioncmder "github.com/papercomputeco/tapes/cmd/tapes/version"
@@ -118,6 +119,7 @@ func NewTapesCmd() *cobra.Command {
 	cmd.AddCommand(backfillcmder.NewBackfillCmd())
 	cmd.AddCommand(initcmder.NewInitCmd())
 	cmd.AddCommand(localcmder.NewLocalCmd())
+	cmd.AddCommand(rawcmder.NewRawCmd())
 	cmd.AddCommand(servecmder.NewServeCmd())
 	cmd.AddCommand(statuscmder.NewStatusCmd())
 	cmd.AddCommand(versioncmder.NewVersionCmd())
