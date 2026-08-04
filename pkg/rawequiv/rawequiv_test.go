@@ -169,6 +169,26 @@ var _ = Describe("Raw-response equivalence", func() {
 				"an undecodable row would carry no reduction at all under mode=raw")
 		})
 
+		It("is classed unreducible when the meta block lost its content type", func() {
+			// The Anthropic reducer picks its streaming path from
+			// meta.content_type alone and does not sniff the body, so a row
+			// whose content type went missing reduces an SSE stream down the
+			// one-shot path, which cannot parse it.
+			//
+			// This is the sharpest edge on the road to mode=raw. Under dual
+			// the adapter's live reduction covers for it and the row looks
+			// perfect; under raw the same row would store no reduction at
+			// all. It has to surface as blocking, not as a skip.
+			rec := loadRecordings()[0]
+			row := rec.row()
+			row.Meta.ContentType = ""
+
+			out := rawequiv.Check(ctx, row, opts)
+
+			Expect(out.Class).To(Equal(rawequiv.ClassUnreducible))
+			Expect(out.Class.Blocking()).To(BeTrue())
+		})
+
 		It("is classed undecodable when the bytes are corrupt for their encoding", func() {
 			rec := loadRecordings()[0]
 			row := rec.row()
