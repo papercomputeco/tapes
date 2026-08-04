@@ -2,7 +2,6 @@ package extproc
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -19,7 +18,6 @@ import (
 
 	processingmodev3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
-	"github.com/klauspost/compress/zstd"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -498,7 +496,7 @@ func (p *Processor) dispatchTurn(ctx context.Context, st *streamState) {
 			p.metrics.ObserveSSEChunks(st.provider, countSSEDataFrames(decodedResp))
 		}
 	}
-	if decodeStats.truncated {
+	if decodeStats.Truncated {
 		messageStopSeen := bytes.Contains(decodedResp, []byte("event: message_stop")) ||
 			bytes.Contains(decodedResp, []byte(`"type":"message_stop"`))
 		if p.metrics != nil {
@@ -593,7 +591,20 @@ func (p *Processor) dispatchTurn(ctx context.Context, st *streamState) {
 	// decodedResp — is what the raw lane carries: the column is meant to be
 	// byte-faithful to what the upstream actually sent, and st.contentEncoding
 	// is what lets ingest undo the compression on its own terms.
-	rawLane := decideRawLane(p.rawResponseMode, len(respBytes), len(reqBytes), st.contentEncoding, decodeStats.truncated)
+	//
+	// decodeErr is the raw-only interlock, and it is nil by the time control
+	// reaches here — a body this build could not decode dropped the turn
+	// above. That early return is what makes raw-only safe rather than
+	// hopeful: the decode that already succeeded on this exact
+	// (respBytes, st.contentEncoding) pair ran capture.DecodeContentEncoding,
+	// which is the function ingest will run on the same pair. The interlock is
+	// therefore a fact carried forward, not a guess about the receiver.
+	//
+	// It is passed rather than hardcoded true so the guard survives
+	// refactoring: a future path that attaches bytes it did not decode
+	// inherits the fallback instead of silently shipping unreducible bytes
+	// with no reduction beside them.
+	rawLane := decideRawLane(p.rawResponseMode, len(respBytes), len(reqBytes), decodeErr == nil)
 	p.recordRawLane(st, rawLane)
 
 	envelope := TurnEnvelope{
@@ -624,6 +635,16 @@ func (p *Processor) dispatchTurn(ctx context.Context, st *streamState) {
 	if rawLane.attachRaw {
 		envelope.RawResponse = respBytes
 		envelope.RawResponseEncoding = st.contentEncoding
+	}
+	if rawLane.skipReason != "" {
+		// We captured bytes for this turn and are not sending them. Say so:
+		// without the marker this envelope is indistinguishable from one
+		// produced by an adapter that never captured raw bytes at all, and
+		// ingest would read a lost capture as an absent feature.
+		//
+		// Keyed off skipReason rather than off mode, so the modes that never
+		// wanted bytes stay unmarked — they withheld nothing.
+		envelope.RawResponseWithheld = true
 	}
 	if rawLane.omitReduction {
 		// Raw-only: ingest reduces server-side with the shared reducers.
@@ -729,134 +750,61 @@ func buildSessionEnvelope(st *streamState) *DispatchedSessionEnvelope {
 	}
 }
 
+// Decoding a captured body's Content-Encoding is capture.DecodeContentEncoding
+// — the same function the receiving ingest runs on the bytes this adapter
+// ships. It used to be a second implementation here, byte-identical by
+// discipline rather than by construction, from the era when extproc built
+// against a published tapes module and could not name it.
+//
+// That mattered for more than tidiness. The raw-only lane interlocks on
+// whether ingest can decode what we send (see rawlane.go); with two decoders
+// the interlock could only ever be an assertion about a copy. With one, a turn
+// that decoded here has been decoded by ingest's decoder, on the exact bytes
+// and encoding the envelope carries.
+//
+// The request and response halves still differ, and that difference is the
+// reason these two wrappers exist rather than raw calls at each site: a
+// truncated response is salvaged, a truncated request is refused.
+
 // decodeRequestBody returns canonical request JSON for metadata parsing,
 // reducer input, and the ingest envelope. Pi 0.80.4+ compresses Codex
 // request bodies with zstd, so treating the wire bytes as json.RawMessage
 // causes the entire turn to fail during envelope marshaling.
+//
+// A salvaged request is refused where a salvaged response is kept: the
+// response is prose, and most of it still reads, while the request is JSON
+// the reducer and metadata parser both have to parse. A truncated one is not
+// partially useful, it is a syntax error.
 func decodeRequestBody(body []byte, contentEncoding string) ([]byte, error) {
-	decoded, stats, err := decodeBodyWithStats(body, contentEncoding)
+	decoded, stats, err := capture.DecodeContentEncoding(body, contentEncoding)
 	if err != nil {
 		return nil, err
 	}
-	if stats.truncated {
+	if stats.Truncated {
 		return nil, errors.New("truncated compressed request body")
 	}
 	return decoded, nil
 }
 
-// decodeResponseBody returns the bytes the reducer should parse, given
-// the captured Content-Encoding header. Identity, empty, or unset
-// encoding is a pass-through (zero-copy: the returned slice IS body).
-// gzip and zstd are decompressed from the fully buffered wire body before
-// reduction. The same bounded decoder is shared with compressed requests.
+// decodeResponseBody returns the bytes the reducer should parse, given the
+// captured Content-Encoding header. What is and is not decodable, how stacked
+// layers are peeled, and where the size cap sits are all
+// capture.DecodeContentEncoding's to state — restating them here is how the
+// two copies started drifting the first time.
 //
-// Unknown encodings return an error rather than passing through bytes
-// the reducer would mis-parse. The dispatchTurn caller turns that into
-// a DropResponseDecode so the operator sees a distinct reason rather
-// than a laundered "reducer_error".
-//
-// Multiple comma-separated encodings (e.g., "gzip, br") are accepted
-// only if every layer is one we know; the layers are peeled in reverse
-// order. This is rare in practice (an LLM upstream is unlikely to
-// stack encodings) but the right shape if it ever happens.
+// What is local: an error here becomes a DropResponseDecode in dispatchTurn,
+// so an encoding this build cannot read shows up in dashboards under its own
+// reason rather than laundered into "reducer_error".
 func decodeResponseBody(body []byte, contentEncoding string) ([]byte, error) {
-	decoded, _, err := decodeResponseBodyWithStats(body, contentEncoding)
+	decoded, _, err := capture.DecodeContentEncoding(body, contentEncoding)
 	return decoded, err
 }
 
-type decodeStats struct {
-	truncated bool
-}
-
-func decodeResponseBodyWithStats(body []byte, contentEncoding string) ([]byte, decodeStats, error) {
-	return decodeBodyWithStats(body, contentEncoding)
-}
-
-func decodeBodyWithStats(body []byte, contentEncoding string) ([]byte, decodeStats, error) {
-	ce := strings.TrimSpace(strings.ToLower(contentEncoding))
-	if ce == "" || ce == "identity" {
-		return body, decodeStats{}, nil
-	}
-	// Apply layers right-to-left per RFC 9110 §8.4.
-	layers := splitContentEncoding(ce)
-	current := body
-	var stats decodeStats
-	for i := len(layers) - 1; i >= 0; i-- {
-		decoded, layerStats, err := decodeOneLayer(current, layers[i])
-		if err != nil {
-			return nil, decodeStats{}, fmt.Errorf("content-encoding %q: %w", contentEncoding, err)
-		}
-		stats.truncated = stats.truncated || layerStats.truncated
-		current = decoded
-	}
-	return current, stats, nil
-}
-
-// splitContentEncoding parses a Content-Encoding header value into
-// individual encodings, dropping empty tokens and trimming whitespace.
-func splitContentEncoding(ce string) []string {
-	parts := strings.Split(ce, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" || p == "identity" {
-			continue
-		}
-		out = append(out, p)
-	}
-	return out
-}
-
-// maxDecompressedBytes caps one decompressed request or response body.
-// It bounds decompression bombs regardless of which Envoy route delivered
-// the body and sits well above the request/response sizes normally captured.
-const maxDecompressedBytes = 32 << 20 // 32 MiB
-
-func decodeOneLayer(body []byte, encoding string) ([]byte, decodeStats, error) {
-	switch encoding {
-	case "gzip", "x-gzip":
-		gz, err := gzip.NewReader(bytes.NewReader(body))
-		if err != nil {
-			return nil, decodeStats{}, fmt.Errorf("gzip reader init: %w", err)
-		}
-		defer gz.Close()
-		// Read one byte past the cap so we can detect overflow without
-		// ambiguity when the decoded body is exactly maxDecompressedBytes.
-		decoded, err := io.ReadAll(io.LimitReader(gz, maxDecompressedBytes+1))
-		if len(decoded) > maxDecompressedBytes {
-			return nil, decodeStats{}, fmt.Errorf("gzip decoded body exceeds %d bytes", maxDecompressedBytes)
-		}
-		if err != nil {
-			if errors.Is(err, io.ErrUnexpectedEOF) && len(decoded) > 0 {
-				return decoded, decodeStats{truncated: true}, nil
-			}
-			return nil, decodeStats{}, fmt.Errorf("gzip read: %w", err)
-		}
-		return decoded, decodeStats{}, nil
-	case "zstd":
-		zr, err := zstd.NewReader(
-			bytes.NewReader(body),
-			zstd.WithDecoderMaxMemory(maxDecompressedBytes),
-			zstd.WithDecoderMaxWindow(maxDecompressedBytes),
-		)
-		if err != nil {
-			return nil, decodeStats{}, fmt.Errorf("zstd reader init: %w", err)
-		}
-		defer zr.Close()
-		decoded, err := io.ReadAll(io.LimitReader(zr, maxDecompressedBytes+1))
-		if len(decoded) > maxDecompressedBytes {
-			return nil, decodeStats{}, fmt.Errorf("zstd decoded body exceeds %d bytes", maxDecompressedBytes)
-		}
-		if err != nil {
-			if errors.Is(err, io.ErrUnexpectedEOF) && len(decoded) > 0 {
-				return decoded, decodeStats{truncated: true}, nil
-			}
-			return nil, decodeStats{}, fmt.Errorf("zstd read: %w", err)
-		}
-		return decoded, decodeStats{}, nil
-	default:
-		return nil, decodeStats{}, fmt.Errorf("unsupported encoding %q", encoding)
-	}
+// decodeResponseBodyWithStats is decodeResponseBody plus the salvage report.
+// Callers that care whether the stream ended early — the truncation metric,
+// and nothing else — take this form.
+func decodeResponseBodyWithStats(body []byte, contentEncoding string) ([]byte, capture.DecodeStats, error) {
+	return capture.DecodeContentEncoding(body, contentEncoding)
 }
 
 // reducerEmptyReason classifies a reducer output that ingest's

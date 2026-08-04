@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
+
+	"github.com/papercomputeco/tapes/pkg/capture"
 )
 
 func gzipped(t *testing.T, body string) []byte {
@@ -155,7 +157,7 @@ func TestDecodeResponseBodySalvagesTruncatedGzip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode with stats: %v", err)
 	}
-	if !stats.truncated {
+	if !stats.Truncated {
 		t.Fatal("expected truncated decode stats")
 	}
 	if !strings.Contains(string(got), "message_stop") {
@@ -175,7 +177,7 @@ func TestDecodeZstdTruncationIsSalvagedOnlyForResponses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if !stats.truncated {
+	if !stats.Truncated {
 		t.Fatal("expected truncated decode stats")
 	}
 	if !bytes.Equal(got, plain) {
@@ -203,12 +205,12 @@ func TestDecodeResponseBodyPreservesUnderlyingBytesOnPassthrough(t *testing.T) {
 
 func TestDecodeRejectsOversizedGzip(t *testing.T) {
 	// A decompression bomb: a tiny gzip payload that would expand past
-	// maxDecompressedBytes. Compressing maxDecompressedBytes+1 zero
+	// capture.MaxDecompressedBytes. Compressing capture.MaxDecompressedBytes+1 zero
 	// bytes produces ~32 KB of gzip, decoding to >32 MiB — the size cap
 	// must reject this with an error rather than letting ReadAll allocate.
 	var buf bytes.Buffer
 	w := gzip.NewWriter(&buf)
-	if _, err := w.Write(make([]byte, maxDecompressedBytes+1)); err != nil {
+	if _, err := w.Write(make([]byte, capture.MaxDecompressedBytes+1)); err != nil {
 		t.Fatalf("gzip write: %v", err)
 	}
 	if err := w.Close(); err != nil {
@@ -225,7 +227,7 @@ func TestDecodeRejectsOversizedGzip(t *testing.T) {
 }
 
 func TestDecodeRejectsOversizedZstd(t *testing.T) {
-	compressed := zstdCompressed(t, make([]byte, maxDecompressedBytes+1))
+	compressed := zstdCompressed(t, make([]byte, capture.MaxDecompressedBytes+1))
 
 	_, err := decodeRequestBody(compressed, "zstd")
 	if err == nil {

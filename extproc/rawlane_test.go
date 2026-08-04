@@ -16,6 +16,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/papercomputeco/tapes/ingest"
+	"github.com/papercomputeco/tapes/pkg/capture"
 	"github.com/papercomputeco/tapes/pkg/llm"
 )
 
@@ -245,63 +246,66 @@ var _ = Describe("Raw response lane", func() {
 
 	// The two size limits are ingest's own constants now, so there is
 	// nothing left here to pin: a change to either is a change to the
-	// single declaration both sides read. What still needs stating is the
-	// raw-only interlock's admission set, which is extproc's decision and
-	// deliberately narrower than what ingest can decode.
-	Describe("the raw-only interlock's admission set", func() {
-		It("admits single-layer identity and gzip, however they are spelled", func() {
-			for _, ce := range []string{"", "identity", "gzip", "x-gzip", "GZIP", " gzip "} {
-				Expect(ingestCanDecodeEncoding(ce)).To(BeTrue(), "encoding %q", ce)
+	// single declaration both sides read. The interlock went the same way —
+	// it used to be a list of encoding names extproc maintained as its belief
+	// about the far side, and is now the verdict of the one decoder both sides
+	// run. So there is no admission set to assert here either; what is worth
+	// pinning is the widening that follows, and the one branch that survives.
+	Describe("the raw-only interlock", func() {
+		It("admits every encoding the shared decoder decodes, including the ones the old name list refused", func() {
+			plain := []byte(anthropicTurnSSE)
+			for _, tc := range []struct {
+				encoding string
+				body     []byte
+			}{
+				{"", plain},
+				{"identity", plain},
+				{"gzip", gzipBytes(plain)},
+				{"x-gzip", gzipBytes(plain)},
+				{" GZIP ", gzipBytes(plain)},
+				// Below this line: refused by the old list, and
+				// decodable by ingest the whole time it was refused.
+				{"zstd", zstdBytes(plain)},
+				{"gzip, gzip", gzipBytes(gzipBytes(plain))},
+				{"identity, zstd", zstdBytes(plain)},
+			} {
+				decoded, _, err := capture.DecodeContentEncoding(tc.body, tc.encoding)
+				Expect(err).NotTo(HaveOccurred(), "encoding %q", tc.encoding)
+				Expect(decoded).To(Equal(plain), "encoding %q", tc.encoding)
 			}
 		})
 
-		It("withholds raw-only for encodings the interlock has not been widened to", func() {
-			// ingest decodes zstd and stacked layers since it moved onto
-			// capture.DecodeContentEncoding. The interlock has not been
-			// widened to match, so these still fall back to dual-send.
-			// Widening it changes what goes on the wire and is its own change.
-			for _, ce := range []string{"zstd", "br", "gzip, gzip"} {
-				Expect(ingestCanDecodeEncoding(ce)).To(BeFalse(), "encoding %q", ce)
-			}
+		It("keeps the reduction when the caller could not decode the bytes", func() {
+			// Unreachable from dispatchTurn, which drops a turn whose body
+			// failed to decode before the lane is consulted. Kept as the
+			// guard for any future caller that attaches bytes it did not
+			// decode: those must degrade to dual, not ship archive.
+			d := decideRawLane(RawResponseRaw, 1024, 512, false)
+			Expect(d.attachRaw).To(BeTrue())
+			Expect(d.omitReduction).To(BeFalse())
+			Expect(d.fallbackReason).To(Equal(rawFallbackEncoding))
 		})
 	})
 
 	Describe("the attach decision", func() {
 		It("attaches nothing when the mode is off", func() {
-			d := decideRawLane(RawResponseOff, 1024, 512, "", false)
+			d := decideRawLane(RawResponseOff, 1024, 512, true)
 			Expect(d.attachRaw).To(BeFalse())
 			Expect(d.omitReduction).To(BeFalse())
 			Expect(d.skipReason).To(BeEmpty())
 		})
 
 		It("attaches bytes and keeps the reduction in dual mode", func() {
-			d := decideRawLane(RawResponseDual, 1024, 512, "gzip", false)
+			d := decideRawLane(RawResponseDual, 1024, 512, true)
 			Expect(d.attachRaw).To(BeTrue())
 			Expect(d.omitReduction).To(BeFalse())
 		})
 
 		It("drops the reduction in raw mode", func() {
-			d := decideRawLane(RawResponseRaw, 1024, 512, "gzip", false)
+			d := decideRawLane(RawResponseRaw, 1024, 512, true)
 			Expect(d.attachRaw).To(BeTrue())
 			Expect(d.omitReduction).To(BeTrue())
 			Expect(d.fallbackReason).To(BeEmpty())
-		})
-
-		It("keeps the reduction when ingest could not decode the bytes", func() {
-			d := decideRawLane(RawResponseRaw, 1024, 512, "zstd", false)
-			Expect(d.attachRaw).To(BeTrue())
-			Expect(d.omitReduction).To(BeFalse())
-			Expect(d.fallbackReason).To(Equal(rawFallbackEncoding))
-		})
-
-		It("keeps the reduction when the content was salvaged from a truncated body", func() {
-			// extproc recovers content from a truncated gzip stream;
-			// ingest's plain gzip.Reader + io.ReadAll would error, so
-			// raw-only would lose the turn's content entirely.
-			d := decideRawLane(RawResponseRaw, 1024, 512, "gzip", true)
-			Expect(d.attachRaw).To(BeTrue())
-			Expect(d.omitReduction).To(BeFalse())
-			Expect(d.fallbackReason).To(Equal(rawFallbackSalvaged))
 		})
 
 		Context("around the caps", func() {
@@ -309,13 +313,13 @@ var _ = Describe("Raw response lane", func() {
 				// This is the deliberate one. Pre-dropping here would
 				// make raw_response_dropped unreachable and the row
 				// indistinguishable from a producer that never captured.
-				d := decideRawLane(RawResponseDual, ingest.MaxRawResponseBytes+1, 1024, "", false)
+				d := decideRawLane(RawResponseDual, ingest.MaxRawResponseBytes+1, 1024, true)
 				Expect(d.attachRaw).To(BeTrue())
 				Expect(d.skipReason).To(BeEmpty())
 			})
 
 			It("withholds bytes that would not survive the transport", func() {
-				d := decideRawLane(RawResponseDual, ingest.MaxIngestBodyBytes, 1024, "", false)
+				d := decideRawLane(RawResponseDual, ingest.MaxIngestBodyBytes, 1024, true)
 				Expect(d.attachRaw).To(BeFalse())
 				Expect(d.skipReason).To(Equal(rawSkipTransportBudget))
 			})
@@ -323,7 +327,7 @@ var _ = Describe("Raw response lane", func() {
 			It("never goes raw-only when the bytes were withheld", func() {
 				// Raw-only without bytes is a turn with no response at
 				// all — strictly worse than the historical shape.
-				d := decideRawLane(RawResponseRaw, ingest.MaxIngestBodyBytes, 1024, "", false)
+				d := decideRawLane(RawResponseRaw, ingest.MaxIngestBodyBytes, 1024, true)
 				Expect(d.attachRaw).To(BeFalse())
 				Expect(d.omitReduction).To(BeFalse())
 			})
@@ -396,17 +400,65 @@ var _ = Describe("Raw response lane", func() {
 			Expect(envelope).NotTo(HaveKey("raw_response_dropped"))
 		})
 
-		It("falls back to dual when ingest could not decode the encoding", func() {
+		// Codex traffic is zstd, so while the interlock was a name list
+		// that admitted only identity and gzip, raw-only was unreachable
+		// for an entire harness by construction — silently, since a
+		// dual-send looks exactly like a working deployment.
+		It("ships zstd raw-only now that the interlock asks the shared decoder", func() {
 			in := anthropicTurn()
 			in.respBody = zstdBytes([]byte(anthropicTurnSSE))
 			in.contentEncoding = "zstd"
 
 			envelope, proc := runTurn(RawResponseRaw, in)
 
-			Expect(envelope).To(HaveKey("raw_response"))
-			Expect(envelope["response"]).NotTo(MatchJSON("null"))
-			Expect(scrapeProcessorMetrics(proc)).To(ContainSubstring(
-				`tapes_extproc_raw_response_fallback_total{provider="anthropic",reason="encoding_not_decodable"} 1`))
+			var raw []byte
+			Expect(json.Unmarshal(envelope["raw_response"], &raw)).To(Succeed())
+			Expect(raw).To(Equal(in.respBody))
+			Expect(envelope["response"]).To(MatchJSON("null"))
+
+			metrics := scrapeProcessorMetrics(proc)
+			Expect(metrics).To(ContainSubstring(
+				`tapes_extproc_raw_response_attached_total{provider="anthropic",shape="raw_only"} 1`))
+			Expect(metrics).NotTo(ContainSubstring("tapes_extproc_raw_response_fallback_total"))
+		})
+
+		It("ships stacked encodings raw-only", func() {
+			in := anthropicTurn()
+			in.respBody = gzipBytes(gzipBytes([]byte(anthropicTurnSSE)))
+			in.contentEncoding = "gzip, gzip"
+
+			envelope, _ := runTurn(RawResponseRaw, in)
+
+			var raw []byte
+			Expect(json.Unmarshal(envelope["raw_response"], &raw)).To(Succeed())
+			Expect(raw).To(Equal(in.respBody))
+			Expect(envelope["response"]).To(MatchJSON("null"))
+		})
+
+		// Salvage used to force a dual-send, on the belief that ingest's
+		// plain gzip.Reader would refuse a stream that ended early. Ingest
+		// salvages on extproc's own rule now and reduces what it recovered,
+		// so the fallback bought nothing.
+		It("ships a salvaged truncated body raw-only", func() {
+			gz := gzipBytes([]byte(anthropicTurnSSE))
+			in := anthropicTurn()
+			// Drop the 8-byte gzip trailer: every data byte survives, but
+			// the stream ends early, which is what trips the salvage path.
+			in.respBody = gz[:len(gz)-8]
+			in.contentEncoding = "gzip"
+
+			envelope, proc := runTurn(RawResponseRaw, in)
+
+			var raw []byte
+			Expect(json.Unmarshal(envelope["raw_response"], &raw)).To(Succeed())
+			Expect(raw).To(Equal(in.respBody))
+			Expect(envelope["response"]).To(MatchJSON("null"))
+
+			metrics := scrapeProcessorMetrics(proc)
+			// The salvage still happened and is still metered — what
+			// changed is that it no longer forces the reduction along.
+			Expect(metrics).To(ContainSubstring("tapes_extproc_response_decode_salvaged_total"))
+			Expect(metrics).NotTo(ContainSubstring("tapes_extproc_raw_response_fallback_total"))
 		})
 
 		It("meters the shape it dispatched", func() {
@@ -462,6 +514,82 @@ var _ = Describe("Raw response lane", func() {
 		})
 	})
 
+	// The producer half of the withheld contract. Ingest cannot see the
+	// difference between "this adapter captured nothing" and "this adapter
+	// captured and could not send it" — both arrive with no raw_response —
+	// so the fact has to ride the envelope or it is lost.
+	Describe("the withheld marker", func() {
+		It("marks a turn whose bytes lost the transport budget", func() {
+			in := anthropicTurn()
+			in.respBody = oversizeAnthropicSSE(ingest.MaxIngestBodyBytes + (1 << 20))
+
+			envelope, _ := runTurn(RawResponseDual, in)
+
+			Expect(envelope["raw_response_withheld"]).To(MatchJSON("true"))
+			// The invariant ingest relies on: the marker is honored only
+			// on an envelope carrying no bytes.
+			Expect(envelope).NotTo(HaveKey("raw_response"))
+		})
+
+		It("marks a turn the post-marshal backstop stripped", func() {
+			in := anthropicTurn()
+			// Passes the pre-dispatch estimate, exceeds the real limit
+			// once marshalled — see the transport-backstop suite.
+			in.respBody = manyDeltaAnthropicSSE(8<<20, 64<<10)
+
+			envelope, _ := runTurn(RawResponseDual, in)
+
+			Expect(envelope["raw_response_withheld"]).To(MatchJSON("true"))
+			Expect(envelope).NotTo(HaveKey("raw_response"))
+		})
+
+		It("leaves the key off a turn that shipped its bytes", func() {
+			envelope, _ := runTurn(RawResponseDual, anthropicTurn())
+
+			Expect(envelope).To(HaveKey("raw_response"))
+			// omitempty: absent means "no claim", which is what every
+			// producer built before the field says.
+			Expect(envelope).NotTo(HaveKey("raw_response_withheld"))
+		})
+
+		It("leaves the key off when the mode never asked for bytes", func() {
+			// mode=off captured nothing to withhold. Marking these would
+			// report the whole fleet as losing bytes it never had.
+			envelope, _ := runTurn(RawResponseOff, anthropicTurn())
+
+			Expect(envelope).NotTo(HaveKey("raw_response"))
+			Expect(envelope).NotTo(HaveKey("raw_response_withheld"))
+		})
+
+		// The field is declared twice — here and on ingest.TurnPayload —
+		// because the two structs are different shapes, so the tag is the
+		// only thing holding them together. Marshal one, parse the other:
+		// a renamed tag fails here rather than in a fidelity report.
+		It("parses onto ingest's TurnPayload under the name ingest reads", func() {
+			d := NewDispatcher("http://example.invalid", 1, nil)
+
+			env := TurnEnvelope{
+				Provider:            "anthropic",
+				Request:             json.RawMessage(`{}`),
+				Response:            reducedStub(),
+				RawResponse:         bytes.Repeat([]byte("x"), ingest.MaxIngestBodyBytes),
+				RawResponseEncoding: "identity",
+			}
+			payload, err := json.Marshal(env)
+			Expect(err).NotTo(HaveOccurred())
+
+			out, _ := d.enforceBodyLimit(env, payload)
+
+			var turn ingest.TurnPayload
+			Expect(json.Unmarshal(out, &turn)).To(Succeed())
+			Expect(turn.RawResponseWithheld).To(BeTrue())
+			// dropped ⟹ raw_response empty: ingest honors the marker
+			// only when no bytes arrived, so a producer that sent both
+			// would have its claim ignored.
+			Expect(turn.RawResponse).To(BeEmpty())
+		})
+	})
+
 	Describe("the transport backstop", func() {
 		It("counts a stripped turn as skipped, never as attached", func() {
 			in := anthropicTurn()
@@ -509,6 +637,9 @@ var _ = Describe("Raw response lane", func() {
 			Expect(stripped.RawResponseEncoding).To(BeEmpty())
 			// The reduction survives: the turn still lands.
 			Expect(stripped.Response).NotTo(BeNil())
+			// …and the bytes that existed are recorded as withheld
+			// rather than as never captured.
+			Expect(stripped.RawResponseWithheld).To(BeTrue())
 		})
 
 		It("restores the reduction when it strips a raw-only envelope", func() {
@@ -530,6 +661,7 @@ var _ = Describe("Raw response lane", func() {
 			// Without this the turn would carry no response at all and
 			// ingest would reject it.
 			Expect(stripped.Response).To(Equal(reduced))
+			Expect(stripped.RawResponseWithheld).To(BeTrue())
 		})
 
 		It("leaves an envelope under the limit untouched", func() {
