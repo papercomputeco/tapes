@@ -43,7 +43,20 @@
 //
 // Usage:
 //
-//	replay-server --captures-dir /path/to/wire-captures --listen :8080
+//	replay-server --captures-dir /path/to/wire-captures
+//
+// # Listening
+//
+// The default bind is loopback. What this server hands out is captured
+// upstream traffic — real model responses, and whatever was in the prompts
+// that produced them — so binding every interface by default would publish
+// that to anything able to reach the host, which for the ad-hoc captures this
+// is usually pointed at is a disclosure rather than an inconvenience.
+//
+// Exercising extproc through Envoy inside a cluster needs a reachable address,
+// and that stays supported — it just has to be asked for:
+//
+//	replay-server --captures-dir /captures --listen 0.0.0.0:8080
 package main
 
 import (
@@ -65,7 +78,7 @@ import (
 func main() {
 	var (
 		capturesDir = flag.String("captures-dir", "", "directory of paperd wire-trace bundles (one turn-*/ subdir per turn)")
-		listen      = flag.String("listen", ":8080", "HTTP listen address")
+		listen      = flag.String("listen", "127.0.0.1:8080", "HTTP listen address; defaults to loopback because bundles contain captured prompts and model responses. Pass 0.0.0.0:8080 to expose it (e.g. to Envoy in a cluster).")
 	)
 	flag.Parse()
 
