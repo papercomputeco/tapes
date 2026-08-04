@@ -84,6 +84,14 @@ CLI surface notes for agents:
 
 - `api/` - REST API server for interfacing with `tapes` system
 - `cli/` - Individual CLI targets
+- `extproc/` - The Envoy ext_proc adapter that captures LLM traffic at the AI
+  Gateway and POSTs completed turns to ingest. It ships as its own image
+  (`Dockerfile.extproc`, `cli/tapes-extproc`) rather than as a `tapes serve`
+  subcommand: it sits on the request path and must not depend on the API, the
+  database or the derive worker being healthy. Same repository, so it shares
+  `pkg/capture`'s reducers and ingest's limits directly — which is the point,
+  since two capture paths that reduce differently is the failure it exists to
+  avoid.
 - `cmd/` - `spf13/cobra` commands: these are built to be modular in order to be bundled
   in various CLIs
 - `pkg/` - Go packages. Use the `go doc` command to get the documentation on the

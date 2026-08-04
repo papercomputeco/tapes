@@ -7,6 +7,15 @@ BUILDTIME ?= $(shell date -u '+%Y-%m-%d %H:%M:%S')
 REGISTRY ?= public.ecr.aws/g4e5l3z3/papercomputeco
 IMAGE ?= tapes:dev
 
+# extproc does NOT ship from REGISTRY. tapes and postgres are published to ECR
+# Public, whose repositories are enumerated in terraform and carry an anonymous
+# pull policy; tapes-extproc is a private ECR repository in the Tooling account
+# that the data plane pulls via the cross-account role. The two are different
+# registries with different auth, so they get different variables — pointing
+# extproc at REGISTRY produces a push the release role has no permission for.
+EXTPROC_REGISTRY ?= 952121199601.dkr.ecr.us-east-1.amazonaws.com
+EXTPROC_IMAGE ?= tapes-extproc:dev
+
 POSTHOG_API_KEY ?=
 POSTHOG_ENDPOINT ?= https://us.i.posthog.com
 
@@ -98,7 +107,7 @@ release: ## Builds and releases tapes artifacts
 			--secret-access-key=env://BUCKET_SECRET_ACCESS_KEY
 
 .PHONY: build-images
-build-images: build-tapes-image ## Builds all container artifacts
+build-images: build-tapes-image build-extproc-image ## Builds all container artifacts
 
 .PHONY: build-local-image
 build-local-image: ## Build a local Docker image for Kind/clearing (IMAGE=tapes:dev)
@@ -159,6 +168,46 @@ test-run-id: ## Runs tests via "go test" in the Dagger services environment
 parity: ## Runs the envelope contract fixture gates (no services needed)
 	$(call print-target)
 	dagger call check-parity
+
+.PHONY: test-extproc
+test-extproc: ## Runs the ext_proc adapter's test suite (no services needed)
+	$(call print-target)
+	dagger call check-extproc
+
+.PHONY: check-extproc-image
+check-extproc-image: ## Builds the tapes-extproc image without loading it (CI gate)
+	$(call print-target)
+	dagger call \
+		build-extproc-image \
+			--version=${VERSION} \
+			--commit=${COMMIT} \
+		sync
+
+.PHONY: build-extproc-image
+build-extproc-image: ## Builds and loads the tapes-extproc image locally (EXTPROC_IMAGE=tapes-extproc:dev)
+	$(call print-target)
+	dagger call \
+		build-extproc-image \
+			--version=${VERSION} \
+			--commit=${COMMIT} \
+		export-image \
+			--name=${EXTPROC_IMAGE}
+
+.PHONY: build-local-extproc-image
+# Cross-repo clearing contract; keep the Dagger invocation owned by
+# build-extproc-image.
+build-local-extproc-image: ## Build a local tapes-extproc image for Kind/clearing
+	$(MAKE) build-extproc-image EXTPROC_IMAGE="$(EXTPROC_IMAGE)"
+
+.PHONY: build-push-extproc-images
+build-push-extproc-images: ## Builds and publishes the multi-arch tapes-extproc container images
+	dagger call \
+		build-push-extproc-images \
+			--registry=${EXTPROC_REGISTRY} \
+			--tags=${VERSION} \
+			--tags=latest \
+			--version=${VERSION} \
+			--commit=${COMMIT}
 
 .PHONY: e2e-test
 e2e-test: ## Runs end-to-end tests with Postgres and Ollama via Dagger

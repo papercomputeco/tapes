@@ -1,0 +1,49 @@
+# syntax=docker/dockerfile:1
+
+# tapes-extproc is a second deployable out of this repository, separate from
+# the tapes server image built by Dockerfile. It is the Envoy ext_proc sidecar:
+# it has to come up and stay up on the request path whether or not the API, the
+# database or the derive worker are healthy, which is why it stays its own
+# process rather than becoming another `tapes serve` subcommand.
+
+# Build the tapes-extproc binary
+FROM golang:1.26 AS builder
+ARG TARGETOS
+ARG TARGETARCH
+ARG LDFLAGS="-s -w"
+
+WORKDIR /workspace
+# Copy the Go Modules manifests
+COPY go.mod go.mod
+COPY go.sum go.sum
+# cache deps before building and copying source so that we don't need to re-download as much
+# and so that source changes don't invalidate our downloaded layer
+RUN go mod download
+
+# Copy the go source. The whole module goes in rather than a hand-listed
+# subset: extproc imports ingest, pkg/capture and pkg/llm directly now, which
+# is the point of it living here, and a selective COPY breaks silently the next
+# time it reaches for another package.
+COPY . .
+
+# Build. GOEXPERIMENT must match the rest of this module: the packages extproc
+# shares with the server compile under jsonv2, and building one binary in the
+# module without it is how the sidecar ends up decoding differently from the
+# server it feeds.
+RUN CGO_ENABLED=0 GOEXPERIMENT="jsonv2" GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build -a -ldflags="${LDFLAGS}" -o tapes-extproc ./cli/tapes-extproc
+
+# Use distroless as minimal base image to package the tapes-extproc binary
+# Refer to https://github.com/GoogleContainerTools/distroless for more details
+#
+# Kept as it was rather than adopting the alpine base the tapes image uses: the
+# uid below is part of the deployed contract.
+FROM gcr.io/distroless/static:nonroot
+WORKDIR /
+COPY --from=builder /workspace/tapes-extproc .
+USER 65532:65532
+
+# gRPC ext_proc, and the HTTP metrics/health surface.
+EXPOSE 50051 9090
+
+ENTRYPOINT ["/tapes-extproc"]

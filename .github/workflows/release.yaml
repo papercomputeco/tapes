@@ -33,6 +33,14 @@ jobs:
         with:
           registry-type: public
 
+      # extproc ships to a private ECR repository in the Tooling account, not
+      # to ECR Public alongside tapes: the public repositories are enumerated
+      # in terraform with an anonymous-pull policy and tapes-extproc is not one
+      # of them. Two registries, two logins. Both use the same assumed role.
+      - name: Login to ECR (private)
+        id: login-ecr-private
+        uses: aws-actions/amazon-ecr-login@v2
+
       - name: Push tapes image
         run: |
           nix develop --command dagger call \
@@ -42,6 +50,28 @@ jobs:
               --tags="latest" \
               --version="${{ github.event.release.tag_name }}" \
               --commit="${{ github.sha }}" \
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+
+      # Without this the data plane has no image to pin: tko's versions.yaml
+      # names <EXTPROC_REGISTRY>/tapes-extproc:<tag>, and a release that
+      # publishes only the tapes image leaves that tag missing.
+      - name: Push extproc image
+        run: |
+          if [ -z "${{ vars.EXTPROC_REGISTRY }}" ]; then
+            echo "EXTPROC_REGISTRY repository variable is not set." >&2
+            echo "It must be the private ECR registry host for the Tooling" >&2
+            echo "account (see makefile EXTPROC_REGISTRY). Refusing to push" >&2
+            echo "extproc to REGISTRY, which is ECR Public and hosts tapes." >&2
+            exit 1
+          fi
+          nix develop --command dagger call \
+            build-push-extproc-images \
+              --registry=${{ vars.EXTPROC_REGISTRY }} \
+              --tags="${{ github.event.release.tag_name }}" \
+              --tags="latest" \
+              --version="${{ github.event.release.tag_name }}" \
+              --commit="${{ github.sha }}"
         env:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 

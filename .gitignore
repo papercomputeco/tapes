@@ -20,3 +20,14 @@
 
 # Claude Code
 .claude/
+
+# Ad-hoc wire captures from paperd/extproc contain real user prompts and model
+# responses. Drop them here to run the wire-capture tests against your own
+# traffic locally; this directory is never committed.
+#
+# Committable recordings are a different thing. A recording may be committed
+# only if it is fixture-grade: captured in a clean room, credential- and
+# PII-free in headers *and* bodies, and reviewed. That bar, and the recordings
+# meeting it, are governed by fixtures/manifest.json and policed by
+# pkg/backfill/recordings_scrub_test.go.
+extproc/testdata/wire-captures/
