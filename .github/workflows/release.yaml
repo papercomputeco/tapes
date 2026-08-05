@@ -95,6 +95,29 @@ jobs:
           BUCKET_SECRET_ACCESS_KEY: ${{ secrets.BUCKET_SECRET_ACCESS_KEY }}
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
+      # The two published OpenAPI contracts, attached so a consumer can generate
+      # a client against a fixed release instead of against whatever a live
+      # server happens to be serving. Names are load-bearing: consumers fetch
+      # tapes-api-<tag>.yaml and tapes-ingest-<tag>.yaml by predictable name.
+      #
+      # These are the CORE compiled documents — the routes each server
+      # registers, with field prose folded in from this checkout. Neither is the
+      # runtime aggregate a server publishes at GET /openapi: that document has
+      # each mounted cassette's spec merged into it, which makes it a property
+      # of a deployment's cassettes rather than of this release, and it is not
+      # something a release asset can honestly stand in for.
+      #
+      # Exported outside build/ deliberately: the upload step below derives an
+      # os/arch suffix from each path under build/, and a contract has neither.
+      - name: Build API contracts
+        run: |
+          nix develop --command dagger call \
+            contracts \
+            export \
+              --path=./contracts
+        env:
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+
       - name: Upload artifacts to release
         run: |
           mkdir -p dist
@@ -113,6 +136,10 @@ jobs:
 
             cp "$file" "dist/$new_name"
           done
+
+          tag="${{ github.event.release.tag_name }}"
+          cp contracts/tapes-api.yaml "dist/tapes-api-${tag}.yaml"
+          cp contracts/tapes-ingest.yaml "dist/tapes-ingest-${tag}.yaml"
 
           gh release upload "${{ github.event.release.tag_name }}" dist/*
         env:
