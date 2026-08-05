@@ -211,7 +211,7 @@ func (p *Parser) AddOperation(method, path string, operation *Operation, provena
 	if err != nil {
 		return fmt.Errorf("%s %s: %w", method, path, err)
 	}
-	normalizedPath, err := normalizePath(path)
+	normalizedPath, err := NormalizePath(path)
 	if err != nil {
 		return err
 	}

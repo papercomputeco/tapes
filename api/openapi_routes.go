@@ -497,8 +497,8 @@ func (s *Server) mountMCP(router *oasfiber.Router) {
 			Summary("Invoke the streamable MCP endpoint").
 			Description("Sends a JSON-RPC 2.0 request to the stateless Model Context Protocol "+
 				"endpoint mounted at /v1/mcp.\n\nTypical calls include initialize, tools/list, and "+
-				"tools/call. When search is configured, the server exposes a search tool over this "+
-				"transport.").
+				"tools/call. The server exposes tools advertised by installed cassettes, plus the "+
+				"legacy core search tool while search is configured in core.").
 			Tag("mcp").
 			JSONBody("JSON-RPC 2.0 request", s.schema(MCPRequest{})).
 			JSONResponse(200, "JSON-RPC 2.0 response", s.schema(MCPResponse{})).

@@ -7,98 +7,102 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/papercomputeco/tapes/api/cassetterunner"
 	"github.com/papercomputeco/tapes/pkg/embeddings"
 	"github.com/papercomputeco/tapes/pkg/spanembed"
 	"github.com/papercomputeco/tapes/pkg/utils"
 )
 
 // SpanSearcher performs vector-similarity search over span embeddings.
-// *spanembed.Store implements it; it is the exact same search path the
-// HTTP GET /v1/search/spans handler uses. Defined here (rather than
-// imported from package api) so the MCP server reuses the span search
-// without creating an import cycle with package api.
 type SpanSearcher interface {
 	Search(ctx context.Context, orgID string, embedding []float32, topK int) ([]spanembed.Hit, error)
 }
 
 type Config struct {
-	// SpanSearcher runs semantic search over the span-embedding
-	// projection (main llm spans, delta-only content) — the same search
-	// the HTTP /v1/search/spans surface uses.
+	// SpanSearcher and Embedder optionally retain the legacy core search tool
+	// while search moves to a cassette. They must be supplied together.
 	SpanSearcher SpanSearcher
+	Embedder     embeddings.Embedder
 
-	// Embedder converts the query text to a vector for SpanSearcher.
-	Embedder embeddings.Embedder
+	// Cassettes is the live registry whose advertised tools are exposed.
+	Cassettes *cassetterunner.Registry
 
-	// Noop for empty MCP server
-	Noop bool
+	// Client invokes admitted cassette operations. Nil uses a redirect-refusing client.
+	Client *http.Client
 
-	// Logger is the configured logger
 	Logger *slog.Logger
 }
 
 type Server struct {
-	config    Config
-	mcpServer *mcp.Server
-	handler   *mcp.StreamableHTTPHandler
+	config  Config
+	client  *http.Client
+	handler *mcpsdk.StreamableHTTPHandler
 }
 
-// NewServer creates a new MCP server with the search tool.
-func NewServer(c Config) (*Server, error) {
-	s := &Server{
-		config: c,
+// NewServer creates a stateless MCP server over the current cassette registry.
+func NewServer(config Config) (*Server, error) {
+	if (config.SpanSearcher == nil) != (config.Embedder == nil) {
+		return nil, errors.New("span searcher and embedder must be configured together")
+	}
+	if config.SpanSearcher != nil && config.Logger == nil {
+		return nil, errors.New("logger is required when core search is configured")
 	}
 
-	// Create the MCP server
-	mcpServer := mcp.NewServer(
-		&mcp.Implementation{
-			Name:    "tapes",
-			Version: utils.Version,
-		},
-		&mcp.ServerOptions{},
-	)
-
-	if c.Noop {
-		// return the empty MCP server with no tools configured
-		// if the noop flag is set (i.e., MCP capabilities are disabled)
-		s.mcpServer = mcpServer
-		return s, nil
+	client := config.Client
+	if client == nil {
+		client = cassetterunner.NewHTTPClient()
 	}
-
-	if c.SpanSearcher == nil {
-		return nil, errors.New("span searcher is required")
-	}
-	if c.Embedder == nil {
-		return nil, errors.New("embedder is required")
-	}
-	if c.Logger == nil {
-		return nil, errors.New("logger is required")
-	}
-
-	// Add tools
-	mcp.AddTool(mcpServer, &mcp.Tool{
-		Name:        searchToolName,
-		Description: searchDescription,
-	}, s.handleSearch)
-
-	s.mcpServer = mcpServer
-
-	// Create a streamable HTTP net/http handler for stateless operations
-	s.handler = mcp.NewStreamableHTTPHandler(
-		func(_ *http.Request) *mcp.Server {
-			return mcpServer
-		},
-		&mcp.StreamableHTTPOptions{
-			Stateless: true,
-		},
-	)
-
+	s := &Server{config: config, client: client}
+	s.handler = mcpsdk.NewStreamableHTTPHandler(s.serverForRequest, &mcpsdk.StreamableHTTPOptions{Stateless: true})
 	return s, nil
 }
 
-// Handler returns the HTTP handler for the MCP server.
-func (s *Server) Handler() http.Handler {
-	return s.handler
+// serverForRequest takes a fresh snapshot because the HTTP transport is
+// stateless and cassettes can be admitted, refreshed, or removed at runtime.
+func (s *Server) serverForRequest(request *http.Request) *mcpsdk.Server {
+	server := mcpsdk.NewServer(
+		&mcpsdk.Implementation{Name: "tapes", Version: utils.Version},
+		&mcpsdk.ServerOptions{
+			Logger: s.config.Logger,
+			Capabilities: &mcpsdk.ServerCapabilities{
+				Tools: &mcpsdk.ToolCapabilities{ListChanged: false},
+			},
+		},
+	)
+
+	if s.config.SpanSearcher != nil {
+		mcpsdk.AddTool(server, &mcpsdk.Tool{
+			Name:        searchToolName,
+			Description: searchDescription,
+		}, s.handleSearch)
+	}
+	if s.config.Cassettes == nil {
+		return server
+	}
+
+	for _, instance := range s.config.Cassettes.Instances() {
+		for _, advertised := range instance.MCPTools {
+			mcpsdk.AddTool[map[string]any, any](server, &mcpsdk.Tool{
+				Name:        advertised.Name,
+				Title:       advertised.Title,
+				Description: advertised.Description,
+				InputSchema: advertised.InputSchema,
+				Annotations: &mcpsdk.ToolAnnotations{
+					DestructiveHint: advertised.Annotations.DestructiveHint,
+					IdempotentHint:  advertised.Annotations.IdempotentHint,
+					OpenWorldHint:   advertised.Annotations.OpenWorldHint,
+					ReadOnlyHint:    advertised.Annotations.ReadOnlyHint,
+				},
+			}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, input map[string]any) (*mcpsdk.CallToolResult, any, error) {
+				output, err := s.callCassette(ctx, request, instance, advertised, input)
+				return nil, output, err
+			})
+		}
+	}
+	return server
 }
+
+// Handler returns the HTTP handler for the MCP server.
+func (s *Server) Handler() http.Handler { return s.handler }

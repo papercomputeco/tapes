@@ -40,6 +40,9 @@ type fetched struct {
 // implementation is what stops them from drifting into two sets of size
 // limits, status handling, and error text.
 func (runner *Runner) fetch(ctx context.Context, source, etag string) (fetched, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultFetchTimeout)
+	defer cancel()
+
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
 	if err != nil {
 		return fetched{}, err
@@ -85,6 +88,7 @@ type publication struct {
 	document []byte
 	parsed   *tapesoapi.Document
 	digest   cassette.Digest
+	tools    []MCPTool
 }
 
 // republish moves every path a cassette declares from its own listener onto
@@ -111,12 +115,17 @@ func republish(ctx context.Context, document *tapesoapi.Document, instance *Inst
 	if err != nil {
 		return nil, fmt.Errorf("cassette %q: %w", instance.Name, err)
 	}
+	tools, err := extractMCPTools(rewritten, string(instance.Name))
+	if err != nil {
+		return nil, fmt.Errorf("cassette %q: %w; the whole document is refused", instance.Name, err)
+	}
 	sum := sha256.Sum256(encoded)
 
 	return &publication{
 		document: encoded,
 		parsed:   rewritten,
 		digest:   cassette.Digest("sha256:" + hex.EncodeToString(sum[:])),
+		tools:    tools,
 	}, nil
 }
 

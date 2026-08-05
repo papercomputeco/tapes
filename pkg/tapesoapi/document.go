@@ -353,7 +353,7 @@ func convertPathItems(in map[string]*wirePathItem, provenance Provenance) (map[s
 	}
 	out := make(map[string]*PathItem, len(in))
 	for path, item := range in {
-		normalized, err := normalizePath(path)
+		normalized, err := NormalizePath(path)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", provenance, err)
 		}

@@ -16,7 +16,9 @@ not Tapes, starts it and supplies its credentials and configuration.
 The complete runnable example is in
 [`pkg/cassette/examples/hello-world`](https://github.com/papercomputeco/tapes/tree/main/pkg/cassette/examples/hello-world).
 It includes an HTTP service, OpenAPI generation, `cassette.toml`, a container,
-PostgreSQL provisioning, and a Compose deployment.
+PostgreSQL provisioning, and a Compose deployment. A smaller
+[`mcp-tool` example](https://github.com/papercomputeco/tapes/tree/main/pkg/cassette/examples/mcp-tool)
+advertises one `ping` tool and returns `pong`.
 
 ## What a cassette must provide
 
@@ -335,6 +337,82 @@ resolved source URL; the source is pinned to its first admitted identity.
 Cassette requests receive `X-Tapes-Cassette: <name>` and standard forwarded
 headers. The current proxy buffers complete requests and responses. Treat the
 POC surface as JSON request/response APIs; streaming is not currently supported.
+
+## MCP tool advertisement
+
+A cassette can expose an operation through the Tapes MCP endpoint by adding
+`x-tapes-mcp` to that operation:
+
+```json
+{
+  "post": {
+    "operationId": "summarizeSession",
+    "summary": "Summarize a session",
+    "x-tapes-mcp": {
+      "name": "summarize_session",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    "requestBody": {
+      "required": true,
+      "content": {
+        "application/json": {
+          "schema": {
+            "type": "object",
+            "properties": {"session_id": {"type": "string"}},
+            "required": ["session_id"]
+          }
+        }
+      }
+    },
+    "responses": {"200": {
+      "description": "Summary",
+      "content": {"application/json": {"schema": {
+        "type": "object",
+        "properties": {"summary": {"type": "string"}}
+      }}}
+    }}
+  }
+}
+```
+
+For a cassette named `summary`, this registers the MCP tool
+`summary.summarize_session`. The operation summary and description become the
+tool title and description. Annotations use the MCP field names
+`readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint`; they
+are client hints, not authorization rules.
+
+The initial bridge is deliberately narrow. An advertised operation must:
+
+- be declared in an OpenAPI 3.1 document;
+- use `POST` with no path, query, header, or cookie parameters;
+- have an inline, required `application/json` request body whose schema resolves
+  to an object; and
+- return a JSON object on success; and
+- advertise no more than 128 tools per cassette.
+
+Put every tool argument in the JSON body. Local
+`#/components/schemas/...` references are supported and are bundled into the
+standalone JSON Schema published through MCP. Remote references and a
+request-body `$ref` are not supported. A cassette needing other HTTP semantics
+should expose a small JSON-body POST facade rather than relying on Tapes to act
+as a general OpenAPI client.
+
+Malformed advertised tools refuse the refreshed cassette document. Unknown
+extension fields are ignored so newer declarations remain compatible with older
+Tapes servers. If a later refresh fails, Tapes retains the previously admitted
+document and tools just as it retains the cassette's stale HTTP surface. Tool calls use the admitted
+cassette origin, forward the caller's end-to-end headers, set
+`X-Tapes-Cassette`, refuse redirects, and return non-2xx responses as MCP tool
+errors.
+
+The tool declaration lives on the operation rather than inside
+`x-tapes-cassette`, so adding or changing a tool changes the OpenAPI ETag but not
+the cassette manifest digest. Admitting a cassette also trusts its operation and
+schema prose: MCP clients may place that text directly in an agent's context.
 
 ## Run and register a cassette
 
