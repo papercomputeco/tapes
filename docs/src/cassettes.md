@@ -19,6 +19,8 @@ It includes an HTTP service, OpenAPI generation, `cassette.toml`, a container,
 PostgreSQL provisioning, and a Compose deployment. A smaller
 [`mcp-tool` example](https://github.com/papercomputeco/tapes/tree/main/pkg/cassette/examples/mcp-tool)
 advertises one `ping` tool and returns `pong`.
+[Running a cassette locally](./cassette-walkthrough.md) walks the hello-world
+example end to end, including driving the discovered surface with `tapesctl`.
 
 ## What a cassette must provide
 
