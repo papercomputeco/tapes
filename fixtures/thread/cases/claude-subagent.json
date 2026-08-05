@@ -1,0 +1,10 @@
+{
+  "name": "claude-subagent",
+  "harness": "claude",
+  "description": "A call made from a Claude Code subagent context carries x-claude-code-agent-id; its value is the thread id verbatim.",
+  "headers": {
+    "x-claude-code-agent-id": "agent-aaaaaaaa"
+  },
+  "thread_id": "agent-aaaaaaaa",
+  "grounding": "Claude Code stamps its agent-id header only on sub-thread calls, so presence alone is the signal and the value maps verbatim."
+}

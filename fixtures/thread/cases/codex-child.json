@@ -1,0 +1,11 @@
+{
+  "name": "codex-child",
+  "harness": "codex",
+  "description": "A Codex sub-thread (spawned agent) turn: thread-id diverges from session-id and resolves to the thread id.",
+  "headers": {
+    "thread-id": "44444444-4444-4444-8444-444444444444",
+    "session-id": "33333333-3333-4333-8333-333333333333"
+  },
+  "thread_id": "44444444-4444-4444-8444-444444444444",
+  "grounding": "Codex stamps both headers on every call; the sub-thread signal is their divergence, and the resolved id is the thread-id value."
+}

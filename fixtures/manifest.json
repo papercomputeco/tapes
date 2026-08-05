@@ -36,6 +36,27 @@
       "consumer_note": "The vendored copies are refreshed by each consumer's scripts/sync-envelope-fixtures.sh, which also detects drift (--check). A change to cases/*.json or README.md here is not live for those consumers until it is synced, and all copies should be refreshed from the same commit."
     },
     {
+      "name": "thread",
+      "layer": "L0",
+      "kind": "synthetic-cases",
+      "location": "fixtures/thread/",
+      "count": 8,
+      "harnesses": ["claude", "codex"],
+      "description": "Request header set -> resolved sub-thread id (meta.thread_id). Pins the harness-native thread-identity vocabulary — Claude's presence-list header and Codex's divergent thread-id/session-id pair with its root guard — whose canonical home is tapes-harnesses src/envelope.rs (HARNESS_THREAD_ID_RULES) with the lifecycle counterpart in src/attribution/codex_app.",
+      "provenance": {
+        "type": "synthetic",
+        "notes": "Hand-authored; synthetic repeated-digit UUIDs and obviously-fake agent ids only."
+      },
+      "scrub_attestation": "synthetic-by-construction",
+      "consumers": [
+        "extproc reader + authored-home gate (oracle, DIGEST seal, rule coverage): extproc/headers/thread_corpus_test.go",
+        "live proxy reader: proxy/header/thread_corpus_test.go",
+        "recording backfill reader: pkg/backfill/wiretrace_threadid_corpus_test.go",
+        "tapes-harnesses (envelope::thread_id), via a vendored copy next to vendor/tapes-envelope-fixtures/ using the same sync + DIGEST mechanism"
+      ],
+      "consumer_note": "Same vendoring contract as the envelope family: one authoritative copy here, DIGEST-sealed; refresh every vendored copy from the same commit as the reader change it forces."
+    },
+    {
       "name": "recordings",
       "layer": "L1",
       "kind": "wire-recordings",

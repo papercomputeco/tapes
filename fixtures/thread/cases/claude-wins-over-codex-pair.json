@@ -1,0 +1,12 @@
+{
+  "name": "claude-wins-over-codex-pair",
+  "harness": "claude",
+  "description": "When one request carries evidence for both harnesses, Claude's dedicated header wins over a Codex-shaped divergent pair.",
+  "headers": {
+    "x-claude-code-agent-id": "agent-aaaaaaaa",
+    "thread-id": "44444444-4444-4444-8444-444444444444",
+    "session-id": "33333333-3333-4333-8333-333333333333"
+  },
+  "thread_id": "agent-aaaaaaaa",
+  "grounding": "Rule order is precedence: the Claude list is tried before the Codex pair, and precedence is only observable on exactly this shape, which is when a silent reordering would matter."
+}

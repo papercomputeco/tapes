@@ -123,6 +123,12 @@ const (
 // harness-neutral and only sees the resolved thread_id. Codex is NOT a
 // member of this list: its sub-thread signal is a header *pair* (see
 // the Codex constants below), resolved separately in ThreadID.
+//
+// Canonical home: tapes-harnesses src/envelope.rs
+// (CLAUDE_THREAD_ID_HEADERS, and HARNESS_THREAD_ID_RULES for the rule
+// shape). The spelling here must match it byte for byte — the shared
+// corpus at fixtures/thread/ pins that (thread_corpus_test.go), so a
+// rename on either side fails a test naming the other.
 var harnessThreadIDHeaders = []string{
 	"x-claude-code-agent-id",
 }
@@ -135,6 +141,13 @@ var harnessThreadIDHeaders = []string{
 // is not cosmetic: a non-empty thread_id on a root turn misroutes the
 // root spine into tapes derive's threadCall path and silently degrades
 // the session's derived status (terminalMainSpan requires ThreadID=="").
+//
+// Canonical home: tapes-harnesses src/envelope.rs
+// (CODEX_THREAD_ID_HEADER / CODEX_SESSION_ID_HEADER); the lifecycle
+// counterpart of the same identities is src/attribution/codex_app
+// (session_id = the root session, agent_id = the child thread). The
+// shared corpus at fixtures/thread/ pins the spellings and the pair
+// rule cross-language (thread_corpus_test.go).
 const (
 	// CodexSessionID is the Codex harness's root session id, present
 	// on every Codex call.

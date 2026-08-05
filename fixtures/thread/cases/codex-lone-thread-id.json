@@ -1,0 +1,10 @@
+{
+  "name": "codex-lone-thread-id",
+  "harness": "codex",
+  "description": "A thread-id with no session-id beside it is not a recognised Codex shape and resolves to nothing.",
+  "headers": {
+    "thread-id": "44444444-4444-4444-8444-444444444444"
+  },
+  "thread_id": "",
+  "grounding": "The pair rule requires both headers: treating a lone thread-id as a sub-thread would risk misrouting root spines on evidence the rule cannot confirm."
+}
