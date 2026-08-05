@@ -42,6 +42,14 @@ format: ## Runs golangci-lint linters and formatters with auto-fixes applied.
 # registered and serves it at GET /openapi. Neither is generated into a checked-in
 # file, so neither can be stale, so there is nothing to regenerate or verify.
 #
+# What IS checked in is a fingerprint per surface: api/CONTRACT and
+# ingest/CONTRACT. Those are not copies of the document, they are copies of its
+# identity, and the specs beside them recompile and compare on every run — so a
+# change to a published contract fails until someone writes the new value in,
+# which turns "this changes a contract" into a line in the diff rather than
+# something a reviewer has to infer. They seal the PROSE-STRIPPED document, so a
+# doc-comment edit is not a contract event.
+#
 # `contracts` below writes the documents themselves, with per-field prose folded
 # in from a checkout, for consumers that want bytes on disk. Still not checked
 # in, and still read by nothing here.

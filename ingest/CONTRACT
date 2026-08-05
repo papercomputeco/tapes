@@ -1,0 +1,19 @@
+# Seal for the ingest write surface's published OpenAPI contract.
+#
+# The value is CompiledDoc.Fingerprint() — sha256 over the rendered JSON — of
+# the document compiled from this server's route registrations with no doc
+# comments folded in. That is what `tapes dev openapi ingest --docs-root ''`
+# renders.
+#
+# Prose is deliberately excluded so that editing a doc comment is not a
+# contract event. Everything a capture adapter is built against — the envelope
+# schema, its required fields, the accepted status codes — is included.
+#
+# This surface is the one every capture adapter writes through, in this repo
+# and in others (tapes-extproc, tapesctl, paperd). A change to it that lands
+# unannounced is a change those adapters discover in production, which is why
+# it is sealed rather than merely covered.
+#
+# ingest/openapi_seal_test.go recompiles and compares. If it fails, it prints
+# the value to write here. Bump it in the same change that moved the contract.
+sha256:b51bebaecb5e0942cd2fba11d694126e36c6a4e33088a77b8171eb8c3acecfb7

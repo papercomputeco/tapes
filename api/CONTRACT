@@ -1,0 +1,16 @@
+# Seal for the read API's published OpenAPI contract.
+#
+# The value is CompiledDoc.Fingerprint() — sha256 over the rendered JSON — of
+# the CORE document compiled from this server's route registrations with no doc
+# comments folded in. That is what `tapes dev openapi api --docs-root ''`
+# renders. It is not what a running server serves at GET /openapi once
+# cassettes are mounted: that document is the core one with each mounted
+# cassette's spec merged into it, and it changes as cassettes come and go.
+#
+# Prose is deliberately excluded so that editing a doc comment is not a
+# contract event. Everything a generated client is built from — paths,
+# operations, parameters, schemas, status codes — is included.
+#
+# api/openapi_seal_test.go recompiles and compares. If it fails, it prints the
+# value to write here. Bump it in the same change that moved the contract.
+sha256:c966a65a6c3ab126a908e9a7db55905323686e50077441f52f5675752c9ff8ea
