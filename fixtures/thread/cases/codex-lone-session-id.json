@@ -1,0 +1,10 @@
+{
+  "name": "codex-lone-session-id",
+  "harness": "codex",
+  "description": "A session-id with no thread-id counterpart is a main-thread call.",
+  "headers": {
+    "session-id": "33333333-3333-4333-8333-333333333333"
+  },
+  "thread_id": "",
+  "grounding": "The pair rule requires both headers; a session id alone carries no sub-thread evidence."
+}

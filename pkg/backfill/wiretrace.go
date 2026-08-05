@@ -375,6 +375,15 @@ func threadIDFromHeaders(header func(string) string) string {
 }
 
 // claudeThreadIDHeaders is ordered; first present header wins.
+//
+// Canonical home for these spellings and the rules below:
+// tapes-harnesses src/envelope.rs (CLAUDE_THREAD_ID_HEADERS,
+// CODEX_THREAD_ID_HEADER / CODEX_SESSION_ID_HEADER,
+// HARNESS_THREAD_ID_RULES); the lifecycle counterpart of the Codex
+// identities is src/attribution/codex_app (session_id = the root
+// session, agent_id = the child thread). Pinned cross-language by the
+// shared corpus at fixtures/thread/ (wiretrace_threadid_corpus_test.go
+// here; the authored-home gate lives in extproc/headers).
 var claudeThreadIDHeaders = []string{
 	"x-claude-code-agent-id",
 }

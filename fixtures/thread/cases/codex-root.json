@@ -1,0 +1,12 @@
+{
+  "name": "codex-root",
+  "harness": "codex",
+  "description": "A Codex root turn: thread-id equals session-id and resolves to the main thread.",
+  "headers": {
+    "thread-id": "33333333-3333-4333-8333-333333333333",
+    "session-id": "33333333-3333-4333-8333-333333333333"
+  },
+  "thread_id": "",
+  "grounding": "The root guard: an equal pair is a root turn. A non-empty thread id on a root turn misroutes the root spine into derive's thread path and silently degrades the session's derived status, so the guard is behavior, not cosmetics.",
+  "notes": "This is why Codex cannot be expressed as a flat first-present header list."
+}

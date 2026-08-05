@@ -173,6 +173,20 @@ type Span struct {
 	// CallKind is the §2g taxonomy verbatim ("main", "offshoot:…",
 	// "injected:…") on llm and event spans.
 	CallKind string
+	// ThreadID names the harness sub-thread the producing call was made
+	// FROM (raw meta.thread_id), "" for the root spine. It is a per-span
+	// mark, not a per-trace label, and its distribution across a
+	// session's traces is deliberately lopsided: every one of a
+	// subagent's spans is emitted into the single trace that hosts its
+	// spawn (threadCall pins the agent span's turn and reuses it), so
+	// the spawning trace carries all the thread-labeled spans while
+	// every other trace of the session is root-spine work whose spans
+	// carry "" — including in Codex subagent sessions, where the root
+	// guard resolves thread-id==session-id turns to "". That emptiness
+	// is a correctness requirement, not a lost label: terminalMainSpan
+	// and responsePreview select the status/answer leaf by ThreadID=="",
+	// and a stray thread id on spine spans would misroute the root
+	// spine and degrade the session's derived status.
 	ThreadID string
 	Model    string
 

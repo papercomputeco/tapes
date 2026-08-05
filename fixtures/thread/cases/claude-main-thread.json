@@ -1,0 +1,10 @@
+{
+  "name": "claude-main-thread",
+  "harness": "claude",
+  "description": "A main-thread Claude Code call carries no thread header at all.",
+  "headers": {
+    "content-type": "application/json"
+  },
+  "thread_id": "",
+  "grounding": "Claude Code omits the agent-id header entirely on the main thread; no rule fires and the call resolves to the main thread."
+}

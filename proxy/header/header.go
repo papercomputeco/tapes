@@ -49,6 +49,12 @@ const AgentNameHeader = "X-Tapes-Agent-Name"
 //
 // These headers are NOT stripped on the way upstream. They are the harness's
 // own, addressed to the model provider; tapes only observes them.
+//
+// Canonical home: tapes-harnesses src/envelope.rs (CLAUDE_THREAD_ID_HEADERS,
+// and HARNESS_THREAD_ID_RULES for the rule shape). The shared corpus at
+// fixtures/thread/ pins the spelling and resolution across every reader
+// (thread_corpus_test.go here; the authored-home gate lives in
+// extproc/headers).
 var ThreadIDHeaders = []string{
 	"x-claude-code-agent-id",
 }
@@ -61,6 +67,11 @@ var ThreadIDHeaders = []string{
 // thread_id on a root turn misroutes the root spine into tapes derive's
 // threadCall path and silently degrades the session's derived status
 // (terminalMainSpan requires ThreadID=="").
+//
+// Canonical home: tapes-harnesses src/envelope.rs (CODEX_THREAD_ID_HEADER /
+// CODEX_SESSION_ID_HEADER); the lifecycle counterpart of the same identities
+// is src/attribution/codex_app (session_id = the root session, agent_id =
+// the child thread). Pinned cross-language by fixtures/thread/.
 const (
 	// CodexSessionID is the Codex harness's root session id, present on
 	// every Codex call.

@@ -1,0 +1,10 @@
+{
+  "name": "claude-empty-agent-id",
+  "harness": "claude",
+  "description": "An agent-id header present with an empty value counts as absent.",
+  "headers": {
+    "x-claude-code-agent-id": ""
+  },
+  "thread_id": "",
+  "grounding": "An empty value is no evidence: only a non-empty agent id resolves a sub-thread."
+}
