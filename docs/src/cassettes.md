@@ -17,6 +17,8 @@ The complete runnable example is in
 [`pkg/cassette/examples/hello-world`](https://github.com/papercomputeco/tapes/tree/main/pkg/cassette/examples/hello-world).
 It includes an HTTP service, OpenAPI generation, `cassette.toml`, a container,
 PostgreSQL provisioning, and a Compose deployment.
+[Running a cassette locally](./cassette-walkthrough.md) walks that example end
+to end, including driving the discovered surface with `tapesctl`.
 
 ## What a cassette must provide
 

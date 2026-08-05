@@ -58,6 +58,11 @@ or without editing the config file:
 tapes serve --cassettes=http://127.0.0.1:9999/openapi
 ```
 
+`tapesctl` turns the discovered surface into commands
+(`TAPES_URL=http://localhost:8081 tapesctl hello-world get-hello`); the
+[Running a cassette locally](../../../../docs/src/cassette-walkthrough.md)
+guide walks this whole directory end to end.
+
 ## The two manifests
 
 The same declaration is published twice, to two readers, at two different times.

@@ -12,6 +12,7 @@
 
 - [Architecture](./architecture.md)
 - [Cassettes](./cassettes.md)
+- [Running a cassette locally](./cassette-walkthrough.md)
 - [Search](./search.md)
 - [Skills](./skills.md)
 - [Inspecting and exporting data](./data.md)
