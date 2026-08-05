@@ -36,15 +36,28 @@ format: ## Runs golangci-lint linters and formatters with auto-fixes applied.
 	$(call print-target)
 	dagger call fix-lint export --path . --quiet
 
-# There is no openapi target. tapes publishes two contracts — the read API and
-# the ingest write surface are different servers with different trust models,
-# see the header of ingest/openapi.go — and each server compiles its own from
-# the routes it registered and serves it at GET /openapi. Nothing is generated,
-# so nothing can be stale, so there is nothing to check.
+# tapes publishes two contracts — the read API and the ingest write surface are
+# different servers with different trust models, see the header of
+# ingest/openapi.go — and each server compiles its own from the routes it
+# registered and serves it at GET /openapi. Neither is generated into a checked-in
+# file, so neither can be stale, so there is nothing to regenerate or verify.
 #
-# `tapes dev openapi [api|ingest]` prints the same document with per-field prose
-# folded in from a checkout, for consumers that want bytes on disk. Its output
-# is not read by anything here and is not checked in.
+# What IS checked in is a fingerprint per surface: api/CONTRACT and
+# ingest/CONTRACT. Those are not copies of the document, they are copies of its
+# identity, and the specs beside them recompile and compare on every run — so a
+# change to a published contract fails until someone writes the new value in,
+# which turns "this changes a contract" into a line in the diff rather than
+# something a reviewer has to infer. They seal the PROSE-STRIPPED document, so a
+# doc-comment edit is not a contract event.
+#
+# `contracts` below writes the documents themselves, with per-field prose folded
+# in from a checkout, for consumers that want bytes on disk. Still not checked
+# in, and still read by nothing here.
+
+.PHONY: contracts
+contracts: ## Compiles both published OpenAPI contracts into ./build/contracts
+	$(call print-target)
+	dagger call contracts export --path ./build/contracts
 
 .PHONY: generate
 generate: ## Regenerates sqlc queries
