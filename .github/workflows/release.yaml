@@ -137,9 +137,16 @@ jobs:
             cp "$file" "dist/$new_name"
           done
 
+          # A git tag may legally contain a slash (v1.0/rc1). Interpolated into
+          # a filename it reads as a directory that was never created, so the
+          # copy fails and takes the release with it. Flattened for the asset
+          # name only; the upload below still addresses the release by its real
+          # tag. This repo tags vX.Y.Z, where the substitution is a no-op — a
+          # consumer building the name from a version it knows is unaffected.
           tag="${{ github.event.release.tag_name }}"
-          cp contracts/tapes-api.yaml "dist/tapes-api-${tag}.yaml"
-          cp contracts/tapes-ingest.yaml "dist/tapes-ingest-${tag}.yaml"
+          asset_tag="${tag//\//-}"
+          cp contracts/tapes-api.yaml "dist/tapes-api-${asset_tag}.yaml"
+          cp contracts/tapes-ingest.yaml "dist/tapes-ingest-${asset_tag}.yaml"
 
           gh release upload "${{ github.event.release.tag_name }}" dist/*
         env:
