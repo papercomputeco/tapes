@@ -70,9 +70,9 @@ In this repository (three independent readers of the same traffic):
 * `extproc/headers/thread_corpus_test.go` — extproc's `ThreadID` over ext_proc
   `HttpHeaders`. Also the authored-home gate: it recomputes `DIGEST` and
   checks the corpus still covers the rules above.
-* `proxy/header/header_test.go` — the live proxy's `ThreadID` over a
+* `proxy/header/thread_corpus_test.go` — the live proxy's `ThreadID` over a
   `fiber.Ctx`.
-* `pkg/backfill/wiretrace_threadid_test.go` — the recording backfill's
+* `pkg/backfill/wiretrace_threadid_corpus_test.go` — the recording backfill's
   `threadIDFromHeaders`.
 
 In `tapes-harnesses`: `envelope::thread_id` / `HARNESS_THREAD_ID_RULES`. Vendor
