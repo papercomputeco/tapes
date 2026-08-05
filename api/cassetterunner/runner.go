@@ -137,12 +137,7 @@ func NewRunner(config Config) *Runner {
 	}
 	client := config.Client
 	if client == nil {
-		client = &http.Client{
-			Timeout: defaultFetchTimeout,
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		}
+		client = NewHTTPClient()
 	}
 	title := config.Title
 	if title == "" {
@@ -306,6 +301,7 @@ func (runner *Runner) refreshSource(ctx context.Context, index int) error {
 	if err != nil {
 		return runner.failSource(index, err)
 	}
+	instance.MCPTools = published.tools
 
 	// The document is cached before the instance is registered, never after.
 	// A reader that sees a cassette in the registry must be able to fetch its

@@ -47,24 +47,13 @@ var _ = Describe("MCP Server", func() {
 	})
 
 	Describe("NewServer", func() {
-		It("returns an error when span searcher is nil", func() {
+		It("returns an error when only one core search dependency is configured", func() {
 			logger := tapeslogger.NewNoop()
 			_, err := mcp.NewServer(mcp.Config{
 				Embedder: embedder,
 				Logger:   logger,
 			})
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("span searcher is required"))
-		})
-
-		It("returns an error when embedder is nil", func() {
-			logger := tapeslogger.NewNoop()
-			_, err := mcp.NewServer(mcp.Config{
-				SpanSearcher: searcher,
-				Logger:       logger,
-			})
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("embedder is required"))
+			Expect(err).To(MatchError(ContainSubstring("must be configured together")))
 		})
 
 		It("returns an error when logger is nil", func() {
@@ -85,10 +74,10 @@ var _ = Describe("MCP Server", func() {
 			Expect(handler).NotTo(BeNil())
 		})
 
-		It("creates a noop server with no tools", func() {
-			s, err := mcp.NewServer(mcp.Config{Noop: true})
+		It("creates a usable server without core search", func() {
+			s, err := mcp.NewServer(mcp.Config{})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(s).NotTo(BeNil())
+			Expect(s.Handler()).NotTo(BeNil())
 		})
 	})
 })

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"
@@ -19,12 +20,13 @@ import (
 
 // Server is the API server for managing and querying the Tapes system
 type Server struct {
-	config    Config
-	driver    storage.Driver
-	logger    *slog.Logger
-	app       *fiber.App
-	metrics   *Metrics
-	mcpServer *mcp.Server
+	config         Config
+	driver         storage.Driver
+	logger         *slog.Logger
+	app            *fiber.App
+	metrics        *Metrics
+	mcpServer      *mcp.Server
+	cassetteClient *http.Client
 
 	// cassettes is the fleet this server publishes, and cassetteSpecs is the
 	// cache of the documents it publishes for them. They are separate fields
@@ -64,6 +66,7 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 	})
 
 	contracts := resolveContractVersions(config.ContractVersions)
+	cassetteClient := cassetterunner.NewHTTPClient()
 	runner := cassetterunner.NewRunner(cassetterunner.Config{
 		Contracts: contracts,
 		Logger:    log,
@@ -72,17 +75,19 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 		// advertises, so /openapi and /v1/cassettes cannot disagree about
 		// which surface a client is looking at.
 		Version: string(currentContractVersion(contracts)),
+		Client:  cassetteClient,
 	})
 	s := &Server{
-		config:        config,
-		driver:        driver,
-		logger:        log,
-		app:           app,
-		metrics:       NewMetrics(),
-		cassettes:     runner.Registry(),
-		cassetteSpecs: runner,
-		contracts:     contracts,
-		openapi:       NewOpenAPIParser(docs),
+		config:         config,
+		driver:         driver,
+		logger:         log,
+		app:            app,
+		metrics:        NewMetrics(),
+		cassetteClient: cassetteClient,
+		cassettes:      runner.Registry(),
+		cassetteSpecs:  runner,
+		contracts:      contracts,
+		openapi:        NewOpenAPIParser(docs),
 	}
 
 	// RED metrics is registered first so it sits as the outermost wrapper.
@@ -114,28 +119,19 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 		app.Get("/", s.handleWebUI)
 	}
 
-	// The MCP server is built before the routes because one of them mounts its
-	// handler. The MCP `search` tool runs the same span search as
-	// GET /v1/search/spans.
-	var mcpServer *mcp.Server
-	if config.SpanSearcher != nil && config.Embedder != nil {
-		s.logger.Debug("creating mcp server")
-		mcpServer, err = mcp.NewServer(mcp.Config{
-			SpanSearcher: config.SpanSearcher,
-			Embedder:     config.Embedder,
-			Logger:       log,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to create MCP server: %w", err)
-		}
-	} else {
-		s.logger.Debug("creating noop mcp server")
-		mcpServer, err = mcp.NewServer(mcp.Config{
-			Noop: true,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to create noop MCP server: %w", err)
-		}
+	// The MCP server reads cassette tools from the live registry on each
+	// stateless request. Core search remains optional while it moves to its own
+	// cassette.
+	s.logger.Debug("creating mcp server")
+	mcpServer, err := mcp.NewServer(mcp.Config{
+		SpanSearcher: config.SpanSearcher,
+		Embedder:     config.Embedder,
+		Cassettes:    s.cassettes,
+		Client:       cassetteClient,
+		Logger:       log,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create MCP server: %w", err)
 	}
 	s.mcpServer = mcpServer
 

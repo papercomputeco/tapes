@@ -203,19 +203,9 @@ func (s *Server) proxyToCassette(c *fiber.Ctx, instance *cassetterunner.Instance
 	}
 
 	proxy := &httputil.ReverseProxy{
+		Transport: s.cassetteClient.Transport,
 		Rewrite: func(proxied *httputil.ProxyRequest) {
-			proxied.Out.URL.Scheme = target.Scheme
-			proxied.Out.URL.Host = target.Host
-			proxied.Out.URL.Path = forwarded
-			// RawPath holds the escaped form of the inbound path. Leaving it
-			// set would make it disagree with the Path just assigned, and the
-			// escaped one wins on the wire.
-			proxied.Out.URL.RawPath = ""
-			proxied.Out.Host = target.Host
-			proxied.SetXForwarded()
-			// Name the cassette selected by core so the upstream can correlate
-			// the request with the public install that routed it.
-			proxied.Out.Header.Set("X-Tapes-Cassette", string(instance.Name))
+			cassetterunner.RewriteProxyRequest(proxied, target, forwarded, instance.Name)
 		},
 		// A cassette being down is an expected state, not a core failure, so it
 		// gets a 502 that names the cassette rather than a bare gateway error

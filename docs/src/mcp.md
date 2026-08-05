@@ -8,9 +8,30 @@ http://localhost:8081/v1/mcp
 
 Configure that URL as a **streamable HTTP** server in an MCP client. The transport supports `POST` for JSON-RPC invocation, `GET` for the stream, and `DELETE` for session termination semantics.
 
-## Search tool
+## Cassette tools
 
-When span search and the embedder are configured, the server registers one tool:
+The MCP server aggregates tools advertised by installed cassettes. A cassette
+marks an OpenAPI operation with `x-tapes-mcp`; Tapes validates its JSON-body
+contract and publishes it under a cassette-qualified name such as
+`summary.summarize_session`. `tools/list` reads the current cassette registry,
+so successfully refreshed cassettes appear without restarting Tapes and removed
+cassettes disappear.
+
+Tool arguments are sent as the cassette operation's JSON request body. A
+successful JSON object is returned as both MCP structured content and JSON text;
+non-2xx responses and unavailable cassettes are tool errors. Calls use the same
+admitted cassette origin and caller identity headers as the cassette HTTP proxy.
+See [Cassettes](./cassettes.md#mcp-tool-advertisement) for the extension and its
+initial POST-only constraints.
+
+The transport is stateless, so it cannot push reliable out-of-band tool-list
+change notifications. A client connected while the cassette fleet changes may
+need to reconnect or issue `tools/list` again.
+
+## Legacy core search tool
+
+While search is being extracted to its own cassette, configuring span search
+and the embedder still registers the core tool below:
 
 | Field | Value |
 | --- | --- |
@@ -42,8 +63,14 @@ The bundled local setup configures PostgreSQL/pgvector and Ollama embeddings, an
 tapesctl seed --tapes-url http://localhost:8081
 ```
 
-If search dependencies are not configured, the endpoint serves an MCP server with no tools. If storage is configured but the span embedding projection is not initialized, search reports an error until the embed worker populates it.
+If search dependencies are not configured, the legacy core search tool is
+omitted; cassette tools remain available. If storage is configured but the span
+embedding projection is not initialized, core search reports an error until the
+embed worker populates it.
 
 ## Scope
 
-Header-less MCP search uses the same nil-org tenant bucket as header-less HTTP search. The current MCP tool does not expose arbitrary session browsing, writes, checkout, or history branching. Use the [read API](./apis.md) for session and trace inspection.
+Header-less core MCP search uses the same nil-org tenant bucket as header-less
+HTTP search. Cassette tools can expose whatever behavior their admitted POST
+operation implements; MCP annotations are descriptive hints and do not replace
+gateway or cassette authorization.

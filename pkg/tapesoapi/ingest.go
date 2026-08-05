@@ -289,7 +289,7 @@ func prefixPaths(fragment *Fragment, prefix string) error {
 	}
 	prefixed := make(map[string]*PathItem, len(fragment.Paths))
 	for _, path := range fragment.paths() {
-		mounted, err := normalizePath(joinPath(prefix, path))
+		mounted, err := NormalizePath(joinPath(prefix, path))
 		if err != nil {
 			return err
 		}

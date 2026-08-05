@@ -50,6 +50,10 @@ type Instance struct {
 	// Source is the exact configured OpenAPI document URL. It is also the
 	// stable subject any problem with this cassette is filed under.
 	Source string
+
+	// MCPTools are the cassette operations admitted for MCP tool calling.
+	// They are replaced with the instance after a successful spec refresh.
+	MCPTools []MCPTool
 }
 
 // Prefix returns the cassette's canonical route prefix on the public surface.
