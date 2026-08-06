@@ -1,0 +1,10 @@
+{
+  "name": "client_disconnect",
+  "class": "transport",
+  "constant": "DropClientDisconnect",
+  "summary": "The downstream client tore the connection down mid-exchange.",
+  "trigger": "The intercepted stream closed with bytes seen or the request completed, and the shape did not match a recoverable early close.",
+  "grounding": "Transport: it requires a downstream connection whose closure this path can observe. An implementation that is handed a completed request and response — a replay, a batch import, a client that writes turns to a local file — cannot produce it, and cannot be conformant or divergent with respect to it. Nothing about the exchange itself is being judged here, which is the test that separates this from the policy reasons.",
+  "not_expressible": "A connection teardown is not data. The classification also depends on stream state this corpus deliberately does not model.",
+  "notes": "The reference adapter narrows this deliberately: a 200 that stopped before end-of-stream with bytes buffered is the dominant shape under streamed interception and is usually a complete logical turn, so it is sent to the reducer instead, and the reducer's own gates classify whatever comes back. Only what is left over lands here — which is why a spike is worth reading as a real client problem."
+}

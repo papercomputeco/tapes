@@ -1,0 +1,10 @@
+{
+  "name": "upstream_status",
+  "class": "policy",
+  "constant": "DropUpstreamStatus",
+  "summary": "The upstream did not return a success status, so there is no completed exchange to record.",
+  "trigger": "The response phase completed and the upstream status was anything other than a success.",
+  "grounding": "A turn is a completed exchange with a provider; an error response is a record of one failing to happen. Capturing them would put failed requests in the same log as conversations and leave every consumer to re-derive the difference — including the deriver, which projects rows into a conversation tree. Any implementation sees the status, so any implementation can apply this, which is what makes it contract rather than plumbing.",
+  "not_expressible": "The status alone does not decide it: the reason is only reached once the response phase has completed, which is stream state rather than data. A case asserting status-to-outcome would pin the status test and silently claim the surrounding lifecycle it does not exercise.",
+  "notes": "The two implementations currently disagree here — the gateway adapter captures only 200 and drops the rest; the client records upstream_status in metadata and captures regardless. Recorded in the README as a known divergence rather than repaired by this corpus."
+}

@@ -13,6 +13,7 @@ Everything is generated downhill from one recording:
 L0  Envelope fixtures      fixtures/envelope/         header set -> expected parsed envelope (+ errors)
 L0  Thread fixtures        fixtures/thread/           header set -> resolved sub-thread id
 L0  Content-encoding       fixtures/content-encoding/ (body, encoding) -> decoded bytes | salvage | error
+L0  Drop reasons           fixtures/drop-reason/      why a turn was not captured — policy vs transport
 L1  Wire recordings        fixtures/recordings/       turn-*/ bundles — verbatim transport bytes
 L2  Corpus (.jsonl.gz)     pkg/seed/corpus/           raw_turns rows — derive gates, seed
 L3  Rendered API fixtures  (generated downstream)     via `tapes dev trace-fixtures`
@@ -23,7 +24,11 @@ One clean-room capture session -> the wire-trace recorder emits **L1** -> ingest
 **L0** families are synthesized directly from the contract they pin, not captured.
 Envelope and thread pin *header* contracts; content-encoding pins a *capture policy*,
 which is the same problem one layer in — a decision implemented independently in two
-languages, whose agreement nothing checked until it was made executable.
+languages, whose agreement nothing checked until it was made executable. Drop-reason
+goes one step further and pins the *boundary of the contract itself*: which decisions
+about capturing a turn every implementation must share, and which belong to the
+deployment that made them. It specifies both, because a reason nobody classified is a
+reason the next implementation guesses about.
 
 ## Why some families live outside this directory
 
@@ -60,6 +65,10 @@ fixtures/
     DIGEST
     cases/*.json
   content-encoding/  ← L0 synthetic (body, encoding)->decode-outcome cases
+    README.md
+    DIGEST
+    cases/*.json
+  drop-reason/       ← L0 synthetic one-case-per-reason vocabulary + classification
     README.md
     DIGEST
     cases/*.json

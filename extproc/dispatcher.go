@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/papercomputeco/tapes/ingest"
+	"github.com/papercomputeco/tapes/pkg/capture"
 	"github.com/papercomputeco/tapes/pkg/llm"
 )
 
@@ -131,30 +132,59 @@ func (c OutcomeContext) logAttrs() []any {
 // it a named type (not a string literal) forces new call sites to add a
 // constant and — by extension — a metric label row. Dashboards and alerts
 // then stay stable against typos.
+//
+// The enum has two halves, and which half a reason is in is a decision rather
+// than a grouping — see fixtures/drop-reason/, where both halves are specified
+// and the line between them is argued.
 type DropReason string
 
+// The capture-policy half. These say what makes a turn capturable at all, so
+// they belong to every implementation of tapes capture and not to this one:
+// two capture paths that disagree about any of them record different sessions
+// from identical traffic.
+//
+// The strings are therefore NOT declared here. They are conversions of the
+// specified vocabulary in pkg/capture, so this adapter reads the contract
+// instead of restating it — restating it is how the last capture contract
+// drifted while both copies stayed green. Behaviour and metric labels are
+// unchanged: these are the same strings they have always been, sourced from
+// the place that now owns them.
 const (
-	DropMarshalError       DropReason = "marshal_error"
-	DropIngestReject       DropReason = "ingest_reject"
-	DropIngestTimeout      DropReason = "ingest_timeout"
-	DropSemFull            DropReason = "sem_full"
-	DropReducerError       DropReason = "reducer_error"
-	DropRequestDecode      DropReason = "request_decode"
-	DropResponseDecode     DropReason = "response_decode"
-	DropUnknownProvider    DropReason = "unknown_provider"
-	DropClientDisconnect   DropReason = "client_disconnect"
+	DropUpstreamStatus  = DropReason(capture.DropUpstreamStatus)
+	DropNonTurnRequest  = DropReason(capture.DropNonTurnRequest)
+	DropRequestDecode   = DropReason(capture.DropRequestDecode)
+	DropEmptyResponse   = DropReason(capture.DropEmptyResponse)
+	DropUnknownProvider = DropReason(capture.DropUnknownProvider)
+	DropResponseDecode  = DropReason(capture.DropResponseDecode)
+	DropReducerError    = DropReason(capture.DropReducerError)
+)
+
+// The transport and runtime half. These are correctly this adapter's own: each
+// one names a way THIS deployment can fail to move bytes, and an implementation
+// without a dispatch queue, a downstream client connection or a remote ingest
+// endpoint cannot produce them. Promoting them to the shared vocabulary would
+// specify one deployment's plumbing as everyone's contract.
+//
+// They stay declared here for exactly that reason, and the corpus specifies
+// them as non-contract so that "not shared" is recorded rather than assumed.
+const (
+	DropMarshalError     DropReason = "marshal_error"
+	DropIngestReject     DropReason = "ingest_reject"
+	DropIngestTimeout    DropReason = "ingest_timeout"
+	DropSemFull          DropReason = "sem_full"
+	DropClientDisconnect DropReason = "client_disconnect"
+	// DropUpstreamNoResponse: the stream was torn down after the request
+	// completed and before any response byte arrived. Distinct from
+	// DropEmptyResponse, which is a response phase that completed normally
+	// carrying nothing: that is a property of the exchange, this is a
+	// property of the connection.
 	DropUpstreamNoResponse DropReason = "upstream_no_response"
-	DropUpstreamStatus     DropReason = "upstream_status"
-	DropMissingStatus      DropReason = "missing_status"
-	DropNonTurnRequest     DropReason = "non_turn_request"
-	// DropEmptyResponse: upstream completed the response phase with EOS
-	// but zero body bytes. Structurally distinct from
-	// DropUpstreamNoResponse (which fires when the stream is torn down
-	// before EOS) and from a reducer-produced empty Content (which
-	// fires on bytes that parsed but yielded no blocks). Health checks
-	// and keepalive probes can land here on the wire, so the
-	// classification is expected-traffic, not error.
-	DropEmptyResponse DropReason = "empty_response"
+	// DropMissingStatus: the response phase ended without Envoy ever
+	// sending :status, which violates the ext_proc message contract. It is
+	// a transport reason despite looking like a policy one — no
+	// implementation that reads a status directly off a response can
+	// reach it.
+	DropMissingStatus DropReason = "missing_status"
 )
 
 // AllDropReasons enumerates every constant above so metric wiring can

@@ -1,0 +1,10 @@
+{
+  "name": "request_decode",
+  "class": "policy",
+  "constant": "DropRequestDecode",
+  "summary": "The request body could not be decoded to the bytes a reducer would parse.",
+  "trigger": "The content-encoding decode of the request body failed, or produced a salvaged (truncated) result where the request side does not accept one.",
+  "grounding": "The decode policy itself — which codings are readable, how stacked layers compose, the output cap, the salvage rule — is contract and is specified in fixtures/content-encoding/. This reason is what a turn carries when that policy refuses it, so it inherits the same class: an implementation that decoded where the reference refuses would capture a turn the reference drops, and vice versa. Naming it distinctly also keeps an unreadable coding out of reducer_error, where it would be laundered into 'the content was bad' and debugged in the wrong place — the failure mode that kept PCC-1126 invisible.",
+  "not_expressible": "The decision is already specified as executable cases one layer down, over (body, encoding) pairs, in fixtures/content-encoding/. Restating those here as drop outcomes would duplicate the corpus that already owns them and give two places to update when the policy moves.",
+  "notes": "The request side refuses a salvaged decode that the response side accepts. A truncated response is most of a turn worth keeping; a truncated request is a prompt with an unknown amount missing, and the reduction would be attributed to input the harness did not send."
+}

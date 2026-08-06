@@ -1,0 +1,10 @@
+{
+  "name": "missing_status",
+  "class": "transport",
+  "constant": "DropMissingStatus",
+  "summary": "The response phase ended without a status ever being observed.",
+  "trigger": "The response reached end of stream while the recorded status was still zero.",
+  "grounding": "Transport, and it reads like policy, which is why the argument is written down. 'Do not capture a turn whose upstream status you never saw' is a rule any implementation would endorse — but no other implementation can be in this situation. It exists only because ext_proc can deliver a response body before its headers, violating its own message contract; a path that reads the status off a response object always has one. A reason unreachable by construction elsewhere cannot be a shared contract, however sound the rule behind it sounds.",
+  "not_expressible": "It is a protocol-ordering violation by the surrounding proxy, not a property of the turn.",
+  "notes": "Treated as a drop rather than assumed successful: implying success from a missing status would put turns of unknown provenance in the log, and this counter is how the contract violation becomes visible at all."
+}

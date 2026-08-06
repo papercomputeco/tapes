@@ -1,0 +1,10 @@
+{
+  "name": "reducer_error",
+  "class": "policy",
+  "constant": "DropReducerError",
+  "summary": "The bytes decoded but the reducer refused them.",
+  "trigger": "The reducer returned an error for a request/response pair that passed every earlier gate.",
+  "grounding": "The last policy gate, and contract for the same reason as the rest: two implementations whose reducers disagree about what is reducible capture different sessions. Everything upstream of it said the turn was capturable in principle — right path, right method, readable bytes, a known provider — so a count here means the content itself was not a turn, and that is a distinct thing for an operator to chase.",
+  "not_expressible": "Expressing it needs provider wire bytes and a reducer to run them through. Those exist as fixtures already — pkg/capture/fixtures/ and fixtures/recordings/ — and belong there rather than duplicated into a vocabulary corpus.",
+  "notes": "A reducer that SUCCEEDS but produces empty content is not this reason and is not a drop at all: the turn is dispatched and the emptiness is metered separately. Conflating the two would hide a dispatched-but-contentless turn behind a drop counter."
+}

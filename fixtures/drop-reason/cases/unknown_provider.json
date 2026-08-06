@@ -1,0 +1,10 @@
+{
+  "name": "unknown_provider",
+  "class": "policy",
+  "constant": "DropUnknownProvider",
+  "summary": "No reducer claims this provider and endpoint, so the bytes cannot be read as a turn.",
+  "trigger": "Provider and endpoint resolved, and no registered reducer handles the pair.",
+  "grounding": "The set of provider shapes capture can read is a property of the build, and it is contract because it decides which traffic becomes sessions: an implementation with a reducer the other lacks captures turns the other silently does not. A turn refused for this reason is a coverage gap rather than a defect in the traffic, which is why it is worth its own reason — it is the counter an operator reads to find out that a provider went unwatched.",
+  "not_expressible": "The answer depends on which reducers a build registers, which is exactly the thing that differs between implementations. A case pinning the current set would assert the reducer registry rather than the rule that an unclaimed shape is refused rather than guessed at.",
+  "notes": "This is the reason a NEW provider produces before it is supported, so a nonzero count is the signal to add a reducer, not to fix the traffic."
+}

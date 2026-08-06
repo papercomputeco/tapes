@@ -1,0 +1,10 @@
+{
+  "name": "ingest_reject",
+  "class": "transport",
+  "constant": "DropIngestReject",
+  "summary": "The ingest endpoint refused the envelope.",
+  "trigger": "The POST to ingest completed with a non-success status after retries were exhausted.",
+  "grounding": "Transport: it requires a remote ingest endpoint that can refuse. The refusal may well be about the turn's content, but the reason names the transport outcome, and an implementation that appends to a local store has no such conversation to have. Specifying it would specify one deployment's topology.",
+  "not_expressible": "It is the outcome of an HTTP exchange with another service.",
+  "notes": "The turn's fate here is decided by a different service's rules, which is exactly why it is not this vocabulary's business: a shared reason would imply a shared acceptance policy that no one has written."
+}

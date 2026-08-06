@@ -1,0 +1,131 @@
+{
+  "name": "non_turn_request",
+  "class": "policy",
+  "constant": "DropNonTurnRequest",
+  "summary": "The request is not a turn: not a turn path, or not a turn-shaped method on one.",
+  "trigger": "The request path is not a known provider chat-completion endpoint, or the method on such a path is present and not POST.",
+  "grounding": "Providers put non-conversation endpoints on the same host as conversation ones — token counting, model listing — and their successful responses contain counts and catalogues, not assistant content. Reducing those into turns would put non-conversation in the conversation log. The same argument covers method: a health probe against the chat endpoint is a probe, whatever path it names. This is a pure function of the request line, so every implementation can apply it identically, and one that does not captures a different set of turns from identical traffic.",
+  "examples": [
+    {
+      "description": "the ordinary Anthropic turn",
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages"
+      },
+      "expect": "eligible"
+    },
+    {
+      "description": "the OpenAI chat-completions turn",
+      "request": {
+        "method": "POST",
+        "path": "/v1/chat/completions"
+      },
+      "expect": "eligible"
+    },
+    {
+      "description": "the OpenAI responses turn",
+      "request": {
+        "method": "POST",
+        "path": "/v1/responses"
+      },
+      "expect": "eligible"
+    },
+    {
+      "description": "the Codex responses turn, on its own prefix",
+      "request": {
+        "method": "POST",
+        "path": "/codex/responses"
+      },
+      "expect": "eligible"
+    },
+    {
+      "description": "the Ollama chat turn",
+      "request": {
+        "method": "POST",
+        "path": "/api/chat"
+      },
+      "expect": "eligible"
+    },
+    {
+      "description": "a gateway-prefixed turn path still resolves",
+      "request": {
+        "method": "POST",
+        "path": "/local-gw/codex/responses"
+      },
+      "expect": "eligible"
+    },
+    {
+      "description": "a query string does not change the endpoint",
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages?beta=true"
+      },
+      "expect": "eligible"
+    },
+    {
+      "description": "a trailing slash does not change the endpoint",
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages/"
+      },
+      "expect": "eligible"
+    },
+    {
+      "description": "the method is matched case-insensitively",
+      "request": {
+        "method": "post",
+        "path": "/v1/messages"
+      },
+      "expect": "eligible"
+    },
+    {
+      "description": "an absent method is not evidence of a non-turn method",
+      "request": {
+        "method": "",
+        "path": "/v1/messages"
+      },
+      "expect": "eligible"
+    },
+    {
+      "description": "a HEAD health probe on the turn path is a probe, not a turn",
+      "request": {
+        "method": "HEAD",
+        "path": "/v1/messages"
+      },
+      "expect": "dropped"
+    },
+    {
+      "description": "a GET on the turn path carries no turn to capture",
+      "request": {
+        "method": "GET",
+        "path": "/v1/messages"
+      },
+      "expect": "dropped"
+    },
+    {
+      "description": "token counting is adjacent to the turn path and is not conversation",
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages/count_tokens"
+      },
+      "expect": "dropped"
+    },
+    {
+      "description": "model listing is not conversation",
+      "request": {
+        "method": "GET",
+        "path": "/v1/models"
+      },
+      "expect": "dropped"
+    },
+    {
+      "description": "an unrelated path on the same host",
+      "request": {
+        "method": "POST",
+        "path": "/api/hello"
+      },
+      "expect": "dropped"
+    }
+  ],
+  "notes": "`eligible` means the turn passes THIS gate, not that it is captured: a later gate may still refuse it. The HEAD example is the whole of the health-probe policy. There is no rewrite of a probe anywhere on this path — a probe is dropped under this reason like any other non-turn method, and nothing about the request or the response is altered. The two implementations currently disagree on this reason: the client has no path or method gate at all. See the README's known divergences."
+}

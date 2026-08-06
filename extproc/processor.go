@@ -412,7 +412,7 @@ func (p *Processor) dispatchTurn(ctx context.Context, st *streamState) {
 		p.metrics.ObserveTurnSize(st.provider, len(respBytes))
 	}
 
-	if !isTurnRequestPath(st.path) || (st.method != "" && !strings.EqualFold(st.method, http.MethodPost)) {
+	if !isCapturableTurnRequest(st.method, st.path) {
 		slog.Debug("extproc: skipping non-turn request",
 			"provider", st.provider,
 			"path", st.path,
@@ -896,6 +896,25 @@ func (p *Processor) resolveProvider(hdrs *extprocv3.HttpHeaders) string {
 	}
 
 	return labelAnthropic
+}
+
+// isCapturableTurnRequest reports whether (method, path) is a turn request at
+// all — the DropNonTurnRequest predicate, and the only part of the drop-reason
+// taxonomy that is a pure function of data the corpus can carry.
+//
+// It is a named function rather than a condition inlined at its one call site
+// so that fixtures/drop-reason/cases/non_turn_request.json can be executed
+// against the same code the processor runs. A predicate specified in a corpus
+// and separately implemented at a call site is two predicates.
+//
+// An absent method is treated as capturable: Envoy always sends :method, so an
+// empty one means the header was not observed rather than that a non-POST
+// method was used, and refusing on missing information would drop real turns.
+func isCapturableTurnRequest(method, path string) bool {
+	if !isTurnRequestPath(path) {
+		return false
+	}
+	return method == "" || strings.EqualFold(method, http.MethodPost)
 }
 
 // isTurnRequestPath reports whether path is a provider chat-completion turn.

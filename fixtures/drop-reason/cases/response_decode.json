@@ -1,0 +1,10 @@
+{
+  "name": "response_decode",
+  "class": "policy",
+  "constant": "DropResponseDecode",
+  "summary": "The response body could not be decoded to the bytes a reducer would parse.",
+  "trigger": "The content-encoding decode of the response body failed.",
+  "grounding": "Same policy and same class as request_decode, one side over: the rule lives in fixtures/content-encoding/ and this reason is what a turn carries when that rule refuses it. Reducers parse textual SSE and JSON, so a coding left undone yields silently empty content on the streaming path and a parse error on the one-shot path — both far from the cause. Erroring under a distinct reason is what puts it in a dashboard rather than in reducer_error.",
+  "not_expressible": "As with request_decode, the decision is already executable one layer down over (body, encoding) pairs.",
+  "notes": "This reason collapses the three failure classes the decode corpus keeps apart (unsupported, oversize, undecodable) into one label. That is a deliberate separate decision at this layer, not an oversight; splitting it is cheap because the classes are already named and asserted there. A truncated-but-salvageable response is NOT this reason — it decodes, is dispatched, and is metered as salvaged."
+}
