@@ -10,15 +10,20 @@ harness matrix the cut was taken against. Read the manifest first.
 Everything is generated downhill from one recording:
 
 ```
-L0  Envelope fixtures      fixtures/envelope/     header set -> expected parsed envelope (+ errors)
-L1  Wire recordings        fixtures/recordings/   turn-*/ bundles — verbatim transport bytes
-L2  Corpus (.jsonl.gz)     pkg/seed/corpus/       raw_turns rows — derive gates, seed
-L3  Rendered API fixtures  (generated downstream)  via `tapes dev trace-fixtures`
+L0  Envelope fixtures      fixtures/envelope/         header set -> expected parsed envelope (+ errors)
+L0  Thread fixtures        fixtures/thread/           header set -> resolved sub-thread id
+L0  Content-encoding       fixtures/content-encoding/ (body, encoding) -> decoded bytes | salvage | error
+L1  Wire recordings        fixtures/recordings/       turn-*/ bundles — verbatim transport bytes
+L2  Corpus (.jsonl.gz)     pkg/seed/corpus/           raw_turns rows — derive gates, seed
+L3  Rendered API fixtures  (generated downstream)     via `tapes dev trace-fixtures`
 ```
 
 One clean-room capture session -> the wire-trace recorder emits **L1** -> ingest +
 `tapes dev dump-corpus` emits **L2** -> `tapes dev trace-fixtures` emits **L3**. The
-**L0** envelope cases are synthesized directly from the header contract, not captured.
+**L0** families are synthesized directly from the contract they pin, not captured.
+Envelope and thread pin *header* contracts; content-encoding pins a *capture policy*,
+which is the same problem one layer in — a decision implemented independently in two
+languages, whose agreement nothing checked until it was made executable.
 
 ## Why some families live outside this directory
 
@@ -49,6 +54,14 @@ fixtures/
   README.md          ← this file
   envelope/          ← L0 synthetic header<->envelope cases
     README.md
+    cases/*.json
+  thread/            ← L0 synthetic header->thread_id cases
+    README.md
+    DIGEST
+    cases/*.json
+  content-encoding/  ← L0 synthetic (body, encoding)->decode-outcome cases
+    README.md
+    DIGEST
     cases/*.json
   recordings/        ← L1 wire recordings, one directory per capture set
     README.md

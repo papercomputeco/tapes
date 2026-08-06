@@ -1,0 +1,9 @@
+{
+  "name": "salvage-zstd-cut-mid-stream",
+  "category": "salvage",
+  "description": "A zstd stream cut at three quarters of its length, long enough to span several blocks so that completed blocks are recoverable.",
+  "encoding": "zstd",
+  "body": { "build": { "plaintext": { "repeat_utf8": { "text": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}", "count": 8000 } }, "layers": ["zstd"], "truncate": { "keep_head_ratio": [3, 4] } } },
+  "expect": { "outcome": "salvaged", "decoded": { "nonempty_prefix_of_plaintext": true } },
+  "grounding": "Salvage is not a gzip-specific concession: the same rule holds for the encoding Codex actually sends, which is the one most likely to be cut off in a long streaming turn."
+}

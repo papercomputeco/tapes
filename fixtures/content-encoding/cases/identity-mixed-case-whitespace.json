@@ -1,0 +1,9 @@
+{
+  "name": "identity-mixed-case-whitespace",
+  "category": "identity",
+  "description": "Coding tokens are matched case-insensitively after trimming surrounding whitespace.",
+  "encoding": "  Identity  ",
+  "body": { "build": { "plaintext": { "utf8": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" }, "layers": [] } },
+  "expect": { "outcome": "decoded", "decoded": { "equals_plaintext": true } },
+  "grounding": "HTTP field values are case-insensitive and may carry optional whitespace. A decoder that matched them literally would drop turns based on how a proxy happened to spell the header."
+}

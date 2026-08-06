@@ -1,0 +1,10 @@
+{
+  "name": "error-unsupported-layer-in-stack",
+  "category": "error",
+  "description": "An unsupported layer inside a stack names both the failing token and the whole header.",
+  "encoding": "gzip, brotli-experimental",
+  "body": { "build": { "plaintext": { "utf8": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" }, "layers": [] } },
+  "expect": { "outcome": "error", "error": { "class": "unsupported", "message_contains": ["brotli-experimental", "gzip, brotli-experimental"] } },
+  "grounding": "With stacked codings the token alone does not say which header produced it, and the header alone does not say which layer failed. Both are required in the message; this is the one place the corpus asserts message content, because the message content is the contract.",
+  "notes": "The body is plaintext: the outer layer is rejected before anything is decoded, so what the bytes are cannot matter — and a case where it did would be hiding a decode attempt."
+}

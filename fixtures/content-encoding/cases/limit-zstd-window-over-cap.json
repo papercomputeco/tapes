@@ -1,0 +1,16 @@
+{
+  "name": "limit-zstd-window-over-cap",
+  "category": "limit",
+  "description": "A hand-built zstd frame declaring a 128 MiB window (windowLog 27) is refused before its content is expanded.",
+  "encoding": "zstd",
+  "body": { "bytes_b64": "KLUv/QCIKQAAaGVsbG8=" },
+  "expect": { "outcome": "error", "error": { "class": "undecodable", "detail": "declared window size exceeds the decoder's bound" } },
+  "grounding": "The output cap alone bounds the bomb only after the bomb exists. The window bound refuses a hostile frame up front, at a cost of fourteen bytes read.",
+  "contested": {
+    "question": "Go bounds the zstd decoder with both WithDecoderMaxWindow and WithDecoderMaxMemory; the Rust binding exposes window_log_max only. What does the corpus assert?",
+    "decision": "The window bound, because it is the part that is observable from outside the decoder — this fourteen-byte frame distinguishes a decoder that sets it from one that does not. Max-memory is asserted nowhere: with the window already bounded at the output cap it changes no outcome this corpus can construct, so a case for it would be asserting one language binding's API surface rather than the capture policy.",
+    "open": "If a future frame shape is found that Go refuses on memory and Rust accepts, it belongs here as a new case and the divergence becomes real. Until then the two implementations are conformant with each other.",
+    "asserted": "window bound at windowLog 25 (= log2 of the 32 MiB output cap), inclusive"
+  },
+  "notes": "Same frame as limit-zstd-window-at-cap with the window descriptor changed from 0x78 to 0x88 (exponent 17 -> windowLog 27). Nothing else differs, so the outcome difference is attributable to the window alone."
+}

@@ -1,0 +1,9 @@
+{
+  "name": "zstd-basic",
+  "category": "supported",
+  "description": "A single zstd layer decodes back to the plaintext.",
+  "encoding": "zstd",
+  "body": { "build": { "plaintext": { "utf8": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" }, "layers": ["zstd"] } },
+  "expect": { "outcome": "decoded", "decoded": { "equals_plaintext": true } },
+  "grounding": "Codex/pi traffic is zstd. This is the case whose absence in the tapesctl proxy dropped every turn of a `tapesctl start pi` session while the gateway route stored the same traffic intact (PCC-1126)."
+}

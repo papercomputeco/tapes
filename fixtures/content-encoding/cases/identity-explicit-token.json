@@ -1,0 +1,9 @@
+{
+  "name": "identity-explicit-token",
+  "category": "identity",
+  "description": "The explicit identity token is a no-op, not a coding to undo.",
+  "encoding": "identity",
+  "body": { "build": { "plaintext": { "utf8": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" }, "layers": [] } },
+  "expect": { "outcome": "decoded", "decoded": { "equals_plaintext": true } },
+  "grounding": "RFC 9110 identity names the absence of a transformation. Treating it as a coding would make every identity-labelled body an unsupported-encoding drop."
+}

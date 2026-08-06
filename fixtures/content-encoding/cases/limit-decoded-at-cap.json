@@ -1,0 +1,10 @@
+{
+  "name": "limit-decoded-at-cap",
+  "category": "limit",
+  "description": "A body that decodes to exactly the per-layer cap is accepted.",
+  "encoding": "gzip",
+  "body": { "build": { "plaintext": { "repeat_byte": { "byte": 97, "count": 33554432 } }, "layers": ["gzip"] } },
+  "expect": { "outcome": "decoded", "decoded": { "equals_plaintext": true } },
+  "grounding": "The cap is a limit, not a strict inequality. Implementations read one byte past it so that at-the-limit and over-it are distinguishable without a second read; this case pins which side of the boundary the equal case falls on.",
+  "notes": "33554432 = 32 MiB = MaxDecompressedBytes. Consumers generate these bytes rather than committing them; a 32 MiB blob is not reviewable and its compressed form is compressor-specific."
+}

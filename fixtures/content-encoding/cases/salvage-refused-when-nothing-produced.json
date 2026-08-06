@@ -1,0 +1,9 @@
+{
+  "name": "salvage-refused-when-nothing-produced",
+  "category": "salvage",
+  "description": "A zstd stream cut inside its only block: it ended early AND produced nothing, so it is refused rather than salvaged.",
+  "encoding": "zstd",
+  "body": { "build": { "plaintext": { "utf8": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" }, "layers": ["zstd"], "truncate": { "keep_head_ratio": [1, 2] } } },
+  "expect": { "outcome": "error", "error": { "class": "undecodable", "detail": "unexpected EOF with no output produced" } },
+  "grounding": "Salvage requires two conjuncts, not one: the stream ended early *and* it produced something first. Dropping the second conjunct would land every corrupt capture as a silently empty turn, which reads downstream as a real but contentless turn rather than as a failure."
+}

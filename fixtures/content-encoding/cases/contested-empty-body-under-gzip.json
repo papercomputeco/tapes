@@ -1,0 +1,15 @@
+{
+  "name": "contested-empty-body-under-gzip",
+  "category": "error",
+  "description": "A zero-byte body whose headers still claim gzip: the decoder errors, because an empty byte string is not a gzip stream.",
+  "encoding": "gzip",
+  "body": { "bytes_b64": "" },
+  "expect": { "outcome": "error", "error": { "class": "undecodable", "detail": "EOF reading the gzip header" } },
+  "grounding": "The decoder's contract is over (bytes, encoding) alone. Given a claimed coding and no stream to undo it on, erroring is the only honest answer — the decoder cannot know whether the body was empty by design or lost in flight.",
+  "contested": {
+    "question": "A bodiless request (e.g. a GET) whose headers still advertise an encoding. Go's decoder errors on empty input; the tapesctl proxy returns before decoding, so the same request is a debug-level non-event there. Which is correct?",
+    "decision": "Both, at different layers — and the corpus says so rather than picking one. This case pins the DECODER: empty input under a claimed coding is an error. The rule that a bodiless request must never reach the decoder is a CALLER PRECONDITION, stated in `caller_precondition` below and asserted by neither side's decoder test. tapesctl's early return satisfies it and is conformant, not divergent.",
+    "rationale": "The alternative — teaching the decoder to return empty-for-empty — would silently swallow a body that was lost in flight, which is the failure this whole corpus exists to make loud. And it cannot be done consistently anyway: see divergence-empty-body-under-zstd, where the Go decoder already does exactly that, for zstd only.",
+    "caller_precondition": "A caller MUST NOT invoke the decoder for a request with no body. A bodiless request is a non-event, not a dropped turn, and must not be counted or logged as a decode failure."
+  }
+}
