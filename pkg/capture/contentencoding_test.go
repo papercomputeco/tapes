@@ -132,6 +132,45 @@ var _ = Describe("DecodeContentEncoding", func() {
 		}
 	})
 
+	It("refuses an empty body identically under every coding", func() {
+		// The rule these two share is the assertion: an empty body under a
+		// coding that claims to have transformed some is an error, and which
+		// decoder the header named does not get to decide it. gzip errored
+		// here on its own (its reader consumes the header eagerly) while zstd
+		// returned success with zero bytes, so a body lost in flight was loud
+		// under one coding and silent under the other.
+		for _, enc := range []string{"gzip", "x-gzip", "zstd", "GZIP", " zstd "} {
+			_, _, err := capture.DecodeContentEncoding(nil, enc)
+			Expect(err).To(HaveOccurred(), "encoding %q", enc)
+			Expect(err.Error()).To(ContainSubstring("empty body"), "encoding %q", enc)
+		}
+	})
+
+	It("keeps an unsupported coding unsupported even with an empty body", func() {
+		// Precedence, and it is not cosmetic: nothing is read for a coding
+		// with no decoder, so the bytes cannot change the answer. If the
+		// empty-body guard ran first, an unreadable coding would be reported
+		// as an unreadable stream — the two failure classes the corpus keeps
+		// apart, collapsed by argument order.
+		_, _, err := capture.DecodeContentEncoding(nil, "br")
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("unsupported encoding"))
+		Expect(err.Error()).NotTo(ContainSubstring("empty body"))
+	})
+
+	It("still passes an empty body through when no coding is claimed", func() {
+		// The empty-body rule is about a claim with nothing behind it. With
+		// no claim there is nothing to undo, so this stays a success — it is
+		// what the caller precondition (never call the decoder for a bodiless
+		// request) degrades to if a caller calls anyway.
+		for _, enc := range []string{"", "identity", " Identity , identity "} {
+			out, stats, err := capture.DecodeContentEncoding(nil, enc)
+			Expect(err).NotTo(HaveOccurred(), "encoding %q", enc)
+			Expect(out).To(BeEmpty())
+			Expect(stats.Truncated).To(BeFalse())
+		}
+	})
+
 	It("names both the header and the offending token on an unknown encoding", func() {
 		_, _, err := capture.DecodeContentEncoding([]byte(plain), "gzip, brotli-experimental")
 		Expect(err).To(HaveOccurred())

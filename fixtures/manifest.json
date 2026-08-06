@@ -78,7 +78,7 @@
       "contested_cases": [
         "limit-zstd-window-over-cap — Go bounds the zstd decoder with both max-window and max-memory; the Rust binding exposes window_log_max only. The corpus asserts the window bound (observable) and nothing about max-memory (not observable).",
         "contested-empty-body-under-gzip — a bodiless request whose headers still claim an encoding. The decoder errors; not calling the decoder at all for a bodiless request is recorded as a CALLER PRECONDITION, which the tapesctl proxy's early return satisfies.",
-        "divergence-empty-body-under-zstd — the same empty body under zstd succeeds with zero bytes in the reference implementation. Recorded as observed and flagged as a suspected bug, not promoted to a rule."
+        "contested-empty-body-under-zstd — RESOLVED (PCC-1134). Authored recording that the same empty body succeeded with zero bytes under zstd, flagged as a suspected bug rather than promoted to a rule, with an open question for the second implementation. The Rust consumer answered that it errors under both codings, making this the corpus's first genuine cross-language divergence; it was resolved in the reference implementation, which now states the empty-body rule above both decoder libraries. The case pins the agreed rule and keeps the argument."
       ]
     },
     {
