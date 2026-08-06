@@ -86,11 +86,26 @@ Each `cases/*.json` file is one object.
 | --- | --- | --- |
 | `plaintext` | yes | the logical content; exactly one of the plaintext forms below |
 | `layers` | yes | codings to apply, **left-to-right**, in the same order the header lists them. `[]` means the body is the plaintext |
-| `truncate` | no | exactly one of `{"drop_tail_bytes": n}` or `{"keep_head_ratio": [num, den]}`, applied to the **encoded** bytes after all layers |
+| `truncate` | no | exactly one of `{"drop_tail_bytes": n}`, `{"keep_head_bytes": n}` or `{"keep_head_ratio": [num, den]}`, applied to the **encoded** bytes after all layers |
 
 `keep_head_ratio` is integer arithmetic: keep `len * num / den` bytes, truncating
 the division. The encoded length differs per compressor, so a ratio-truncated
 case can only assert a property of its output, never a length.
+
+The three forms are not interchangeable, because each one holds a different
+thing fixed across compressors:
+
+* `drop_tail_bytes` fixes what is **missing** — a gzip stream short its 8-byte
+  trailer is short its trailer whoever compressed it.
+* `keep_head_ratio` fixes a **fraction**, so the surviving prefix is
+  compressor-specific and the case can only assert a property of the output.
+* `keep_head_bytes` fixes an **absolute prefix**, and is the only form that can
+  express a cut point derived from the container format rather than from one
+  encoder's output. Use it when the case asserts what is *not* yet possible at
+  that offset — `salvage-refused-when-nothing-produced` keeps 9 bytes because
+  that is the most a zstd frame can carry before any encoder's first byte of
+  block content, so "no output is producible" holds for all of them rather than
+  for the compressor that happened to build the fixture.
 
 Plaintext forms:
 
@@ -195,6 +210,20 @@ each `cases/*.json`, sorted by base name, feed
 recompute it in their own suite, so a stale or hand-edited copy fails in the
 consumer's own CI.
 
+`DIGEST` makes a corpus change **visible**, not impossible. It is recomputed
+from whatever cases exist, so deleting a case and re-sealing is a legal, green
+two-line diff — which is why the coverage gate below names the case that pins
+each rule rather than trusting the seal to notice.
+
+## Coverage
+
+The authored home also asserts, rule by rule, that the case pinning each policy
+rule is still there and still pins it. That table is closed in both directions:
+a rule whose case is gone fails, and a case no rule names fails. So a case
+cannot be deleted, gutted in place, or renamed without the diff saying which
+policy rule moved — and a new case cannot be added without recording what it is
+for.
+
 ## Adding a case
 
 1. Write `cases/<name>.json`; `name` must match the filename.
@@ -202,7 +231,9 @@ consumer's own CI.
    assertion, and annotate them in `notes`.
 3. Fill in `grounding` — the policy rule the case pins, in behavioral terms.
 4. If the case encodes a decision rather than a settled rule, add `contested`.
-5. Run `go test ./pkg/capture/`, copy the new digest it prints into `DIGEST`,
+5. Add the rule the case pins to the coverage table in the authored-home gate,
+   naming this case. The gate fails on any case no rule names.
+6. Run `go test ./pkg/capture/`, copy the new digest it prints into `DIGEST`,
    and commit both.
-6. Re-sync any vendored copy from the same commit, together with whatever
+7. Re-sync any vendored copy from the same commit, together with whatever
    implementation change the new case forces.

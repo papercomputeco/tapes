@@ -1,9 +1,10 @@
 {
   "name": "salvage-refused-when-nothing-produced",
   "category": "salvage",
-  "description": "A zstd stream cut inside its only block: it ended early AND produced nothing, so it is refused rather than salvaged.",
+  "description": "A zstd stream cut before its first block's content ever arrived: it ended early AND produced nothing, so it is refused rather than salvaged.",
   "encoding": "zstd",
-  "body": { "build": { "plaintext": { "utf8": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" }, "layers": ["zstd"], "truncate": { "keep_head_ratio": [1, 2] } } },
+  "body": { "build": { "plaintext": { "utf8": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" }, "layers": ["zstd"], "truncate": { "keep_head_bytes": 9 } } },
   "expect": { "outcome": "error", "error": { "class": "undecodable", "detail": "unexpected EOF with no output produced" } },
-  "grounding": "Salvage requires two conjuncts, not one: the stream ended early *and* it produced something first. Dropping the second conjunct would land every corrupt capture as a silently empty turn, which reads downstream as a real but contentless turn rather than as a failure."
+  "grounding": "Salvage requires two conjuncts, not one: the stream ended early *and* it produced something first. Dropping the second conjunct would land every corrupt capture as a silently empty turn, which reads downstream as a real but contentless turn rather than as a failure. The cut is an absolute byte count, not a ratio, because \"nothing was producible\" has to be true for every compressor and not just the one that built the fixture: whether a whole block happens to land inside some fraction of the stream is a property of an encoder's block splitting and level, so a ratio would let a conformant decoder fed another encoder's bytes legitimately salvage output and fail a case that is supposed to be about the decoder.",
+  "notes": "9 bytes is derived from the zstd frame structure, not from this stream's length: the 4-byte magic, plus the smallest frame header the format allows (2 bytes — a frame-header descriptor and a window descriptor), plus a 3-byte block header. So byte 10 is the earliest position at which any encoder's first byte of block *content* can appear, and a block that has delivered no content can have produced no output — whatever its type. An encoder that writes a larger frame header (up to 14 bytes) or splits differently only pushes that first content byte further out, so the bound holds for all of them. Distinct from error-corrupt-zstd-frame, which is a frame that is malformed rather than merely unfinished."
 }

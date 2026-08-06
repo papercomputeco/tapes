@@ -19,8 +19,9 @@ package capture_test
 //  1. the oracle — every case decodes to its declared outcome;
 //  2. the DIGEST seal — the authored home recomputes it, so a corpus change is
 //     a one-line reviewable diff and vendored copies can detect staleness;
-//  3. coverage — the corpus still exercises each policy rule, stated as
-//     properties so the assertions survive case renames.
+//  3. coverage — each policy rule names the case that pins it, and that case
+//     must still be there and still pin it. Closed in both directions: a case
+//     no rule names fails too.
 
 import (
 	"bytes"
@@ -69,6 +70,7 @@ type plaintextSpec struct {
 
 type truncateSpec struct {
 	DropTailBytes *int  `json:"drop_tail_bytes"`
+	KeepHeadBytes *int  `json:"keep_head_bytes"`
 	KeepHeadRatio []int `json:"keep_head_ratio"`
 }
 
@@ -203,12 +205,20 @@ func buildBody(c encodingCase) (body, plaintext []byte) {
 		case t.DropTailBytes != nil:
 			Expect(len(body)).To(BeNumerically(">", *t.DropTailBytes))
 			body = body[:len(body)-*t.DropTailBytes]
+		case t.KeepHeadBytes != nil:
+			// An absolute prefix, for cut points derived from the container
+			// format rather than from this compressor's output length. It
+			// must actually cut: a keep count at or past the encoded length
+			// would silently turn the case into an untruncated one.
+			Expect(len(body)).To(BeNumerically(">", *t.KeepHeadBytes),
+				"%s: keep_head_bytes must be shorter than the encoded body", c.file)
+			body = body[:*t.KeepHeadBytes]
 		case len(t.KeepHeadRatio) == 2:
 			num, den := t.KeepHeadRatio[0], t.KeepHeadRatio[1]
 			Expect(den).To(BeNumerically(">", 0))
 			body = body[:len(body)*num/den]
 		default:
-			Fail(fmt.Sprintf("%s: truncate must set exactly one form", c.file))
+			Fail(c.file + ": truncate must set exactly one form")
 		}
 	}
 	return body, plaintext
@@ -337,18 +347,31 @@ var _ = Describe("content-encoding corpus", func() {
 
 	// --- gate 3: coverage ---------------------------------------------------
 
-	// Deleting the only case that covers a policy rule is otherwise invisible,
-	// and that is exactly how independent implementations drift. Stated as
-	// properties rather than case names so the assertions survive renames.
+	// Deleting the only case that pins a policy rule is otherwise invisible, and
+	// that is exactly how independent implementations drift.
+	//
+	// Every rule names the case that pins it. An earlier version of this gate
+	// stated the rules as properties over the whole corpus ("some case decodes
+	// gzip"), which does not hold the line: a neighbour that happens to share
+	// the shape — the alias case, a cap case, a stacked case — satisfies the
+	// same predicate, so deleting the dedicated case left this gate green while
+	// the rule it pinned was no longer pinned anywhere. Naming the case makes
+	// the deletion fail; checking the predicate against THAT case makes gutting
+	// it in place fail too.
+	//
+	// The table is closed in the other direction as well — a case no rule names
+	// fails — so a case cannot be added without recording what it is for, and
+	// the table cannot quietly fall behind the corpus.
+	//
+	// Renaming a case therefore has to update this table. That is the intended
+	// cost: the DIGEST already makes a rename a reviewed one-line diff, and this
+	// makes it a reviewed diff that says which rule moved.
 	Describe("still covers", func() {
-		covers := func(holds func(encodingCase) bool) bool {
-			for _, c := range cases {
-				if holds(c) {
-					return true
-				}
-			}
-			return false
+		byName := make(map[string]encodingCase, len(cases))
+		for _, c := range cases {
+			byName[c.Name] = c
 		}
+
 		layersOf := func(c encodingCase) []string {
 			if c.Body.Build == nil {
 				return nil
@@ -361,80 +384,158 @@ var _ = Describe("content-encoding corpus", func() {
 			}
 			return strings.Contains(strings.ToLower(*c.Encoding), coding)
 		}
+		unnormalised := func(c encodingCase) bool {
+			if c.Encoding == nil {
+				return false
+			}
+			e := *c.Encoding
+			return e != strings.ToLower(strings.TrimSpace(e))
+		}
+		emptyBody := func(c encodingCase) bool {
+			return c.Body.BytesB64 != nil && *c.Body.BytesB64 == ""
+		}
+		corruptFrame := func(c encodingCase, coding string) bool {
+			return c.Category == "error" && usesCoding(c, coding) &&
+				c.Body.BytesB64 != nil && *c.Body.BytesB64 != "" &&
+				c.Expect.Outcome == "error" && c.Expect.Error.Class == "undecodable"
+		}
 
-		rules := map[string]func(encodingCase) bool{
-			"an absent Content-Encoding header": func(c encodingCase) bool {
+		type rule struct {
+			// what the corpus must still pin, and the one case that pins it.
+			what     string
+			pinnedBy string
+			holds    func(encodingCase) bool
+		}
+
+		rules := []rule{
+			{"an absent Content-Encoding header", "identity-header-absent", func(c encodingCase) bool {
 				return c.Encoding == nil && c.Expect.Outcome == "decoded"
-			},
-			"a present-but-empty header": func(c encodingCase) bool {
+			}},
+			{"a present-but-empty header", "identity-empty-header", func(c encodingCase) bool {
 				return c.Encoding != nil && *c.Encoding == "" && c.Expect.Outcome == "decoded"
-			},
-			"the explicit identity token as a no-op": func(c encodingCase) bool {
+			}},
+			{"the explicit identity token as a no-op", "identity-explicit-token", func(c encodingCase) bool {
 				return usesCoding(c, "identity") && len(layersOf(c)) == 0 &&
 					c.Expect.Outcome == "decoded"
-			},
-			"case-insensitive, whitespace-tolerant token matching": func(c encodingCase) bool {
-				if c.Encoding == nil {
-					return false
-				}
-				e := *c.Encoding
-				return e != strings.ToLower(strings.TrimSpace(e)) && c.Expect.Outcome != "error"
-			},
-			"gzip": func(c encodingCase) bool {
-				return usesCoding(c, "gzip") && c.Expect.Outcome == "decoded"
-			},
-			"the x-gzip alias": func(c encodingCase) bool {
+			}},
+			{"a list of nothing but identity tokens", "identity-only-list", func(c encodingCase) bool {
+				return usesCoding(c, "identity") && len(layersOf(c)) == 0 &&
+					strings.Contains(*c.Encoding, ",") && c.Expect.Outcome == "decoded"
+			}},
+			{"identity matched case-insensitively after trimming", "identity-mixed-case-whitespace", func(c encodingCase) bool {
+				return unnormalised(c) && usesCoding(c, "identity") && c.Expect.Outcome == "decoded"
+			}},
+			{"gzip", "gzip-basic", func(c encodingCase) bool {
+				return usesCoding(c, "gzip") && len(layersOf(c)) == 1 && c.Expect.Outcome == "decoded"
+			}},
+			{"the x-gzip alias", "gzip-x-gzip-alias", func(c encodingCase) bool {
 				return usesCoding(c, "x-gzip") && c.Expect.Outcome == "decoded"
-			},
-			"zstd": func(c encodingCase) bool {
-				return usesCoding(c, "zstd") && c.Expect.Outcome == "decoded"
-			},
-			"stacked layers peeled right-to-left": func(c encodingCase) bool {
+			}},
+			{"a real coding token matched case-insensitively after trimming", "gzip-uppercase-whitespace", func(c encodingCase) bool {
+				return unnormalised(c) && len(layersOf(c)) == 1 && c.Expect.Outcome == "decoded"
+			}},
+			{"zstd", "zstd-basic", func(c encodingCase) bool {
+				return usesCoding(c, "zstd") && len(layersOf(c)) == 1 && c.Expect.Outcome == "decoded"
+			}},
+			{"stacked layers peeled right-to-left", "stacked-gzip-then-zstd", func(c encodingCase) bool {
 				return len(layersOf(c)) > 1 && c.Expect.Outcome == "decoded"
-			},
-			"identity mixed in with a real coding": func(c encodingCase) bool {
-				return usesCoding(c, "identity") && len(layersOf(c)) == 1
-			},
-			"salvage of a truncated gzip stream": func(c encodingCase) bool {
-				return c.Expect.Outcome == "salvaged" && usesCoding(c, "gzip")
-			},
-			"salvage of a truncated zstd stream": func(c encodingCase) bool {
+			}},
+			{"identity mixed in with a real coding", "stacked-identity-is-not-a-layer", func(c encodingCase) bool {
+				return usesCoding(c, "identity") && len(layersOf(c)) == 1 && c.Expect.Outcome == "decoded"
+			}},
+			{"salvage of a gzip stream cut mid-stream", "salvage-gzip-cut-mid-stream", func(c encodingCase) bool {
+				return c.Expect.Outcome == "salvaged" && usesCoding(c, "gzip") &&
+					c.Expect.Decoded != nil && c.Expect.Decoded.NonemptyPrefixOfPlaintext
+			}},
+			{"salvage of a gzip stream missing only its integrity trailer", "salvage-gzip-missing-trailer", func(c encodingCase) bool {
+				return c.Expect.Outcome == "salvaged" && usesCoding(c, "gzip") &&
+					c.Expect.Decoded != nil && c.Expect.Decoded.EqualsPlaintext
+			}},
+			{"salvage of a zstd stream cut mid-stream", "salvage-zstd-cut-mid-stream", func(c encodingCase) bool {
 				return c.Expect.Outcome == "salvaged" && usesCoding(c, "zstd")
-			},
-			"salvage refused when the stream produced nothing": func(c encodingCase) bool {
-				return c.Category == "salvage" && c.Expect.Outcome == "error"
-			},
-			"a body at exactly the output cap": func(c encodingCase) bool {
+			}},
+			{"salvage refused when the stream produced nothing", "salvage-refused-when-nothing-produced", func(c encodingCase) bool {
+				return c.Category == "salvage" && c.Expect.Outcome == "error" &&
+					c.Expect.Error.Class == "undecodable"
+			}},
+			{"a body at exactly the output cap", "limit-decoded-at-cap", func(c encodingCase) bool {
 				b := c.Body.Build
 				return b != nil && b.Plaintext.RepeatByte != nil &&
 					b.Plaintext.RepeatByte.Count == capture.MaxDecompressedBytes &&
 					c.Expect.Outcome == "decoded"
-			},
-			"a body one byte over the output cap": func(c encodingCase) bool {
-				return c.Expect.Outcome == "error" && c.Expect.Error.Class == "oversize"
-			},
-			"a coding with no decoder": func(c encodingCase) bool {
+			}},
+			{"a body one byte over the output cap", "limit-decoded-over-cap", func(c encodingCase) bool {
+				b := c.Body.Build
+				return b != nil && b.Plaintext.RepeatByte != nil &&
+					b.Plaintext.RepeatByte.Count == capture.MaxDecompressedBytes+1 &&
+					c.Expect.Outcome == "error" && c.Expect.Error.Class == "oversize"
+			}},
+			{"a zstd frame declaring exactly the bounded window", "limit-zstd-window-at-cap", func(c encodingCase) bool {
+				return usesCoding(c, "zstd") && c.Body.BytesB64 != nil && c.Expect.Outcome == "decoded"
+			}},
+			{"a zstd frame declaring a window over the bound", "limit-zstd-window-over-cap", func(c encodingCase) bool {
+				return usesCoding(c, "zstd") && c.Body.BytesB64 != nil &&
+					c.Expect.Outcome == "error" && c.Expect.Error.Class == "undecodable" &&
+					len(c.Contested) > 0
+			}},
+			{"a coding with no decoder", "error-unsupported-encoding", func(c encodingCase) bool {
 				return c.Expect.Outcome == "error" && c.Expect.Error.Class == "unsupported"
-			},
-			"a corrupt body under a supported coding": func(c encodingCase) bool {
-				return c.Expect.Outcome == "error" && c.Expect.Error.Class == "undecodable" &&
-					c.Category == "error" && c.Body.BytesB64 != nil && *c.Body.BytesB64 != ""
-			},
-			"an error naming both the failing token and the whole header": func(c encodingCase) bool {
-				return c.Expect.Outcome == "error" && len(c.Expect.Error.MessageContains) > 1
-			},
-			"a recorded contested decision": func(c encodingCase) bool {
-				return len(c.Contested) > 0
-			},
+			}},
+			{"an error naming both the failing token and the whole header", "error-unsupported-layer-in-stack", func(c encodingCase) bool {
+				return c.Expect.Outcome == "error" && c.Expect.Error.Class == "unsupported" &&
+					len(c.Expect.Error.MessageContains) > 1
+			}},
+			{"a corrupt gzip frame", "error-corrupt-gzip-header", func(c encodingCase) bool {
+				return corruptFrame(c, "gzip")
+			}},
+			{"a corrupt zstd frame", "error-corrupt-zstd-frame", func(c encodingCase) bool {
+				return corruptFrame(c, "zstd")
+			}},
+			{"an empty body refused under gzip", "contested-empty-body-under-gzip", func(c encodingCase) bool {
+				return emptyBody(c) && usesCoding(c, "gzip") &&
+					c.Expect.Outcome == "error" && c.Expect.Error.Class == "undecodable" &&
+					len(c.Contested) > 0
+			}},
+			{"the same empty body under zstd, recorded as observed", "divergence-empty-body-under-zstd", func(c encodingCase) bool {
+				return emptyBody(c) && usesCoding(c, "zstd") && len(c.Contested) > 0
+			}},
 		}
 
-		for name, holds := range rules {
-			what, rule := name, holds
-			It(what, func() {
-				Expect(covers(rule)).To(BeTrue(),
-					"no case covers %s any more. Deleting the last case for a policy\n"+
-						"  rule silently un-pins it for every consumer, including %s.", what, otherHome)
+		for _, r := range rules {
+			rr := r
+			It(rr.what, func() {
+				c, ok := byName[rr.pinnedBy]
+				Expect(ok).To(BeTrue(),
+					"cases/%s.json is gone, so nothing pins %s any more. Deleting the\n"+
+						"  last case for a policy rule silently un-pins it for every\n"+
+						"  consumer, including %s. If the case moved, point this rule at\n"+
+						"  its new name; if the rule is genuinely gone, delete both.",
+					rr.pinnedBy, rr.what, otherHome)
+				Expect(rr.holds(c)).To(BeTrue(),
+					"cases/%s.json still exists but no longer pins %s. Editing a case\n"+
+						"  out from under its rule un-pins the rule as surely as deleting\n"+
+						"  the file, and for the same consumers, including %s.",
+					rr.pinnedBy, rr.what, otherHome)
 			})
 		}
+
+		// The other direction: a case nothing names is a case whose purpose is
+		// recorded nowhere, and the first thing a future reader will consider
+		// redundant.
+		It("names a rule for every case", func() {
+			pinned := make(map[string]bool, len(rules))
+			for _, r := range rules {
+				pinned[r.pinnedBy] = true
+			}
+			var undeclared []string
+			for _, c := range cases {
+				if !pinned[c.Name] {
+					undeclared = append(undeclared, c.Name)
+				}
+			}
+			Expect(undeclared).To(BeEmpty(),
+				"these cases are pinned by no rule in this gate. Add the rule each one\n"+
+					"  exists to pin, so that deleting it later fails here.")
+		})
 	})
 })
