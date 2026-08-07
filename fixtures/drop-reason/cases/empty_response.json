@@ -1,0 +1,10 @@
+{
+  "name": "empty_response",
+  "class": "policy",
+  "constant": "DropEmptyResponse",
+  "summary": "The response phase completed normally carrying zero body bytes.",
+  "trigger": "The response reached its end of stream and the accumulated body was empty.",
+  "grounding": "There is nothing to reduce, no encoding to undo, and no preview that would tell a reader anything new. Any implementation observing a completed response sees the same emptiness and must make the same call, so this is contract. It is deliberately distinct from a reduction that came out empty: that one had bytes and lost them somewhere in the reducer, which is a defect worth investigating, while this one never had any, which routinely is not.",
+  "not_expressible": "Byte length is trivially data, but the reason is only reached once the response phase has completed — the distinction from upstream_no_response is entirely about that lifecycle, not about the bytes. A case over body length would assert the easy half and imply the half that carries the meaning.",
+  "notes": "Health checks and keepalive probes land here on the wire, so the classification is expected traffic rather than error, and the reference adapter logs it at debug. A dashboard that alerts on it will alert on a working system."
+}

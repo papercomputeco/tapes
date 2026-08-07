@@ -1,0 +1,16 @@
+{
+  "name": "contested-empty-body-under-zstd",
+  "category": "error",
+  "description": "The same zero-byte body under zstd instead of gzip: the decoder errors, because an empty byte string is not a zstd frame either. The empty-body rule does not depend on which coding the header named.",
+  "encoding": "zstd",
+  "body": { "bytes_b64": "" },
+  "expect": { "outcome": "error", "error": { "class": "undecodable", "detail": "no bytes to undo a claimed coding on" } },
+  "grounding": "One rule for every non-identity coding: a body with no bytes under a coding that claims to have transformed some is an anomaly — a body lost in flight, a truncated proxy read, a client that set the header and sent nothing — and the decoder says so rather than returning empty-for-empty. Pairs with contested-empty-body-under-gzip, which pins the identical outcome one coding over.",
+  "contested": {
+    "question": "Is an empty body under zstd a success or an error?",
+    "decision": "An error, matching gzip. This case previously recorded the opposite as OBSERVED behaviour and flagged it as a suspected bug: Go's gzip reader consumed its header eagerly and reported EOF on empty input, while its zstd reader yielded zero bytes and no error. Identical inputs, opposite outcomes, decided by which decoder the header happened to name — an accident of two dependencies rather than a policy. The reference implementation now states the rule itself, above both decoder libraries, so neither can decide it.",
+    "rationale": "Succeeding with zero bytes silently swallows a body lost in flight, which is the failure this corpus exists to make loud. It is also the answer the second implementation already gave for BOTH codings — libzstd's streaming decoder calls a zero-byte input an incomplete frame — so erroring resolves a Go-internal inconsistency rather than choosing between two implementations.",
+    "resolved_by": "PCC-1134. The Rust consumer wired to this corpus answered the `open` question this case used to carry: it errors under both codings. That made this the corpus's first cross-language divergence, and it was resolved in the reference implementation, which is where the case argued it should be resolved.",
+    "caller_precondition": "Unchanged and still load-bearing: a caller MUST NOT invoke the decoder for a request with no body. See contested-empty-body-under-gzip. With that honoured, neither answer is reachable in production — which is why the fix is safe and why the precondition is not made redundant by it."
+  }
+}

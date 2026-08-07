@@ -17,6 +17,15 @@ import (
 // agentic traffic (~1 MB) but below pathological tool-use turns. The
 // threshold is observability, not a cap — turns above it are still
 // captured and dispatched as usual.
+//
+// It is deliberately NOT capture policy, and that was a decision rather than
+// an omission — see fixtures/drop-reason/README.md, which records it alongside
+// the drop-reason taxonomy because it is the same kind of question. It gates a
+// counter and nothing else: two builds that disagree about it capture, dispatch
+// and store byte-identical turns, and differ only in one deployment's sizing
+// dashboard. That is also why it is settable per deployment. A threshold that
+// dropped or truncated a turn would have to be contract; this one is an
+// observability knob wearing a policy's shape.
 const DefaultLargeTurnThreshold = 4 * 1024 * 1024
 
 // Recurring label values. These are wire-visible: they appear verbatim in the

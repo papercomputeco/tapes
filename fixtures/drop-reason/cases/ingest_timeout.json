@@ -1,0 +1,10 @@
+{
+  "name": "ingest_timeout",
+  "class": "transport",
+  "constant": "DropIngestTimeout",
+  "summary": "The POST to the ingest endpoint timed out or failed in transport, and retries did not recover it.",
+  "trigger": "The dispatch attempt failed with a transport error or deadline, on every attempt.",
+  "grounding": "Transport for the same reason as ingest_reject: it names a network exchange with another service. It is separated from a rejection because the two point at different problems — a refusal is a disagreement about content, a timeout is an unreachable or overloaded dependency — and an operator reads them differently.",
+  "not_expressible": "It is a network outcome, not a property of the turn.",
+  "notes": "Retry policy is deliberately not specified here either: how many attempts and how long to wait is a deployment's tuning, and a capture path with no network has neither."
+}

@@ -1,0 +1,10 @@
+{
+  "name": "upstream_no_response",
+  "class": "transport",
+  "constant": "DropUpstreamNoResponse",
+  "summary": "The request completed and the stream was torn down before any response byte arrived.",
+  "trigger": "The request reached end of stream, the response never did, and no response bytes were buffered.",
+  "grounding": "Transport, and the closest call in the taxonomy: it is 'no response bytes', which is also empty_response. The difference is whether the response phase COMPLETED. A normally-completed response carrying nothing is a property of the exchange, and every implementation sees it — that is contract. A stream torn down before its response phase is a property of the connection, and only a path that intercepts the stream as it happens can tell the two apart at all. Specifying it would require every implementation to have a stream to lose.",
+  "not_expressible": "The distinction that decides the class is stream lifecycle, which is precisely what this corpus does not model.",
+  "notes": "Kept separate from empty_response despite both meaning 'nothing came back', because collapsing them would put an upstream that is silently failing in the same counter as health probes doing exactly what they are supposed to."
+}

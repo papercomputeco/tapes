@@ -197,7 +197,17 @@ reasoning travels with the bytes into every vendored copy, and so that the next
 person to change the case finds the argument before they change it.
 
 Three cases carry one today: `limit-zstd-window-over-cap`,
-`contested-empty-body-under-gzip`, and `divergence-empty-body-under-zstd`.
+`contested-empty-body-under-gzip`, and `contested-empty-body-under-zstd`.
+
+The last of those is the corpus working as intended, end to end. It was authored
+recording the reference implementation's *observed* behaviour — an empty body
+under zstd succeeded with zero bytes while the same body under gzip errored — and
+flagged as a suspected bug rather than promoted to a rule, with an open question
+asking a second implementation to report what it did. The Rust consumer answered
+(it errors under both codings), which made the pair a genuine cross-language
+divergence, and it was resolved where the case argued it should be: in the
+reference implementation, not by bending either test. The case now pins the
+agreed rule and keeps the argument (PCC-1134).
 
 ## Consumers
 

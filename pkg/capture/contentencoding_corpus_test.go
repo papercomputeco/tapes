@@ -549,13 +549,20 @@ var _ = Describe("content-encoding corpus", func() {
 			{"a corrupt zstd frame", "error-corrupt-zstd-frame", func(c encodingCase) bool {
 				return corruptFrame(c, "zstd")
 			}},
+			// One rule, pinned once per coding. The whole point of the
+			// empty-body rule is that it does not depend on which decoder the
+			// header named, so a corpus that pinned it for only one coding —
+			// or that let one case stand in for both — would re-open exactly
+			// the gap it was written to close.
 			{"an empty body refused under gzip", "contested-empty-body-under-gzip", func(c encodingCase) bool {
 				return emptyBody(c) && usesCoding(c, "gzip") &&
 					c.Expect.Outcome == "error" && c.Expect.Error.Class == "undecodable" &&
 					len(c.Contested) > 0
 			}},
-			{"the same empty body under zstd, recorded as observed", "divergence-empty-body-under-zstd", func(c encodingCase) bool {
-				return emptyBody(c) && usesCoding(c, "zstd") && len(c.Contested) > 0
+			{"an empty body refused under zstd", "contested-empty-body-under-zstd", func(c encodingCase) bool {
+				return emptyBody(c) && usesCoding(c, "zstd") &&
+					c.Expect.Outcome == "error" && c.Expect.Error.Class == "undecodable" &&
+					len(c.Contested) > 0
 			}},
 		}
 

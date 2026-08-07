@@ -1,0 +1,10 @@
+{
+  "name": "marshal_error",
+  "class": "transport",
+  "constant": "DropMarshalError",
+  "summary": "The turn envelope could not be serialised for dispatch.",
+  "trigger": "Encoding the envelope to its wire form returned an error.",
+  "grounding": "Transport, and arguably neither half: it is a bug rather than a rule. It says nothing about whether the turn was capturable — every policy gate already passed — only that this deployment could not write its own envelope. The envelope it fails on is one deployment's wire format, so there is nothing here for another implementation to conform to.",
+  "not_expressible": "A serialisation failure is a defect in the serialiser, not a decision about a turn.",
+  "notes": "It has a reason at all because the failure was once silent: the error was discarded and the turn vanished for weeks with nothing counting it. A nonzero count here is always a bug in this code, never a property of the traffic."
+}

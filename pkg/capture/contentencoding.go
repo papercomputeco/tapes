@@ -59,6 +59,10 @@ type DecodeStats struct {
 // re-compression is not byte-identical, so a column that promises "verbatim"
 // has to keep what arrived.
 //
+// An empty body under any non-identity coding is an error, uniformly across
+// codings — see refuseEmpty. Callers must not reach here for a request that
+// simply had no body.
+//
 // An unrecognized encoding is an error rather than a pass-through. Handing
 // compressed bytes to a reducer that expects text yields a parse failure well
 // away from the actual cause, and the bytes are still stored either way — so
@@ -121,6 +125,9 @@ func splitContentEncoding(ce string) []string {
 func decodeOneLayer(body []byte, encoding string) ([]byte, DecodeStats, error) {
 	switch encoding {
 	case "gzip", "x-gzip":
+		if err := refuseEmpty(body, "gzip"); err != nil {
+			return nil, DecodeStats{}, err
+		}
 		zr, err := gzip.NewReader(bytes.NewReader(body))
 		if err != nil {
 			return nil, DecodeStats{}, fmt.Errorf("gzip reader init: %w", err)
@@ -129,6 +136,9 @@ func decodeOneLayer(body []byte, encoding string) ([]byte, DecodeStats, error) {
 		return readCapped(zr, "gzip")
 
 	case "zstd":
+		if err := refuseEmpty(body, "zstd"); err != nil {
+			return nil, DecodeStats{}, err
+		}
 		// Bound the decoder itself as well as its output. The window and
 		// memory limits let a hostile frame be refused before it is
 		// expanded, rather than after MaxDecompressedBytes of it exists.
@@ -149,6 +159,50 @@ func decodeOneLayer(body []byte, encoding string) ([]byte, DecodeStats, error) {
 		// untested code that only exists to be wrong later.
 		return nil, DecodeStats{}, fmt.Errorf("unsupported encoding %q", encoding)
 	}
+}
+
+// refuseEmpty applies the empty-body rule: a body with no bytes under a coding
+// that claims to have transformed some is an error, whichever coding it is.
+//
+// The rule is stated here rather than left to the decoder libraries because
+// they do not agree. Go's gzip reader consumes its header eagerly and reports
+// EOF on empty input; klauspost's zstd reader yields zero bytes and no error.
+// That made DecodeContentEncoding return opposite outcomes for identical input,
+// decided only by which decoder the header happened to name — not a policy, an
+// accident of two dependencies. Under gzip a body lost in flight surfaced as an
+// error; under zstd it was silently indistinguishable from a legitimately empty
+// payload, which is the failure this decoder exists to make loud.
+//
+// Erroring is the answer both codings now give, and it is the one the second
+// implementation of this policy already gave for both: libzstd's streaming
+// decoder calls a zero-byte input an incomplete frame. So this closes a
+// Go-internal inconsistency rather than choosing between two implementations.
+//
+// It is called from each supported branch rather than once above the switch so
+// that an unsupported coding stays unsupported whatever the bytes are: nothing
+// is read for a coding with no decoder, so the body cannot change the answer.
+//
+// This is not the guard that keeps ordinary bodiless requests (a GET whose
+// headers still advertise a coding) out of the logs. That is a caller
+// precondition — don't call the decoder when there is no body — and the two
+// capture paths meet it differently, which is worth stating plainly because it
+// is where this rule becomes visible.
+//
+// The standalone client returns before decoding, so a bodiless request is a
+// non-event there. The gateway adapter does not: extproc decodes the request
+// body on every request end-of-stream, with no check that any bytes arrived, so
+// an empty body frame does reach here and does error. What keeps ordinary
+// bodiless traffic off the drop dashboards on that path is the turn-request
+// gate above it, which filters a GET before the decode error is consulted at
+// all. What is left over is real and intended: a POST to a turn path that
+// claims a coding and carries no body now terminates as a request_decode drop
+// instead of dispatching an empty request — the same answer gzip already gave
+// for the same input, now given for every coding.
+func refuseEmpty(body []byte, kind string) error {
+	if len(body) > 0 {
+		return nil
+	}
+	return fmt.Errorf("%s: empty body under a claimed content-coding", kind)
 }
 
 // readCapped drains r under the size cap, applying the salvage rule.

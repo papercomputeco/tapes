@@ -78,7 +78,35 @@
       "contested_cases": [
         "limit-zstd-window-over-cap — Go bounds the zstd decoder with both max-window and max-memory; the Rust binding exposes window_log_max only. The corpus asserts the window bound (observable) and nothing about max-memory (not observable).",
         "contested-empty-body-under-gzip — a bodiless request whose headers still claim an encoding. The decoder errors; not calling the decoder at all for a bodiless request is recorded as a CALLER PRECONDITION, which the tapesctl proxy's early return satisfies.",
-        "divergence-empty-body-under-zstd — the same empty body under zstd succeeds with zero bytes in the reference implementation. Recorded as observed and flagged as a suspected bug, not promoted to a rule."
+        "contested-empty-body-under-zstd — RESOLVED (PCC-1134). Authored recording that the same empty body succeeded with zero bytes under zstd, flagged as a suspected bug rather than promoted to a rule, with an open question for the second implementation. The Rust consumer answered that it errors under both codings, making this the corpus's first genuine cross-language divergence; it was resolved in the reference implementation, which now states the empty-body rule above both decoder libraries. The case pins the agreed rule and keeps the argument."
+      ]
+    },
+    {
+      "name": "drop-reason",
+      "layer": "L0",
+      "kind": "synthetic-cases",
+      "location": "fixtures/drop-reason/",
+      "count": 14,
+      "harnesses": ["claude", "codex", "pi", "unknown"],
+      "description": "One case per drop reason: the vocabulary of answers to 'why was this turn not captured', each classified as capture POLICY (a rule about capturability that any implementation must share) or TRANSPORT/RUNTIME (specific to how one deployment moves bytes). Both halves are specified — the transport reasons are included precisely so that 'this one is not contract' is recorded rather than assumed. The policy half is homed in Go at pkg/capture/dropreason.go, which extproc reads rather than restating.",
+      "provenance": {
+        "type": "synthetic",
+        "notes": "Hand-authored. Cases carry the reason's wire string, its class, the Go constant that carries it, and the argument for its class. Only non_turn_request is a pure function of request data today, so it is the only case with executable examples; every other case carries not_expressible saying why."
+      },
+      "scrub_attestation": "synthetic-by-construction",
+      "consumers": [
+        "tapes authored-home gate (oracle, two-way vocabulary conformance, DIGEST seal, rule coverage): extproc/dropreason_corpus_test.go",
+        "pkg/capture/dropreason.go — the Go home of the policy half (capture.PolicyDropReasons), asserted against the corpus by that gate",
+        "tapesctl — has no drop-reason vocabulary today; it drops turns for several policy reasons and reports them only as log prose. The corpus is the specification an implementation there should be wired to."
+      ],
+      "consumer_note": "Same vendoring contract as the sibling L0 families: one authoritative copy here, DIGEST-sealed; refresh every vendored copy from the same commit as the implementation change it forces.",
+      "why": "The gateway adapter carried a fourteen-value enum that existed in Go only and was specified nowhere, so nothing decided which reasons were shared capture policy and which were artefacts of one deployment's plumbing. Naively unifying them with the client's three decode error classes would have merged two different axes.",
+      "known_divergences": [
+        "upstream_status — the gateway adapter captures only a 200 response and drops the rest; the client records the upstream status in metadata and captures the turn regardless.",
+        "non_turn_request — the gateway adapter gates on a known set of turn paths and on POST; the client has no path or method gate, so anything with a JSON body is a capture candidate."
+      ],
+      "explicitly_not_contract": [
+        "DefaultLargeTurnThreshold (4 MiB, extproc/metrics.go) — gates a counter and nothing else. Two builds that disagree about it capture, dispatch and store byte-identical turns, which is why it is settable per deployment. A threshold that dropped or truncated a turn would be contract."
       ]
     },
     {
