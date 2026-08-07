@@ -133,9 +133,10 @@ func (r SealResult) Explain() string {
 
 	fmt.Fprintf(&b, `
 This fingerprint covers the prose-stripped document — the routes, schemas,
-parameters and responses the %s server registers. Doc comments are not in it,
-so a comment edit cannot have caused this: something about the published shape
-moved.
+parameters and responses the %s server registers. Doc comments folded in from a
+docs root are not in it, so editing one cannot have caused this. Text declared
+inline on a registration — a Summary or a Description — is in it, and is the
+likeliest cause of a move that touches no route, schema or status code.
 
 If you changed the %s contract on purpose, write this line into %s:
 
