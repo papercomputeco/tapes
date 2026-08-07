@@ -13,6 +13,11 @@ package extproc
 // to catch — a reason drifting into the wrong half, or existing in only one
 // place — is visible only from here.
 //
+// This is the authored home, not the only consumer: the standalone client
+// vendors the same cases and runs the same examples against its own predicates.
+// A rule weakened here to make one implementation green therefore has to be
+// weakened in a corpus the other implementation is also reading.
+//
 // Four gates, mirroring the sibling corpora:
 //
 //  1. the oracle — every case's executable examples hold against the predicate
@@ -30,6 +35,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -61,10 +67,20 @@ type dropExampleRequest struct {
 	Path   string `json:"path"`
 }
 
+type dropExampleResponse struct {
+	Status int `json:"status"`
+}
+
+// An example carries the block its reason's predicate reads, and only that
+// block: `request` for a rule over the request line, `response` for one over
+// the upstream status. Both are pointers so "absent" is distinguishable from
+// "present and zero" — a status of 0 is missing_status, a different reason
+// entirely, and an example that meant to name it must not read as an empty one.
 type dropExample struct {
-	Description string             `json:"description"`
-	Request     dropExampleRequest `json:"request"`
-	Expect      string             `json:"expect"`
+	Description string               `json:"description"`
+	Request     *dropExampleRequest  `json:"request"`
+	Response    *dropExampleResponse `json:"response"`
+	Expect      string               `json:"expect"`
 }
 
 // The two values an example's `expect` may take. Named because the corpus
@@ -164,22 +180,49 @@ var _ = Describe("drop-reason corpus", func() {
 				for _, ex := range c.Examples {
 					Expect(ex.Description).NotTo(BeEmpty(), "each example needs a description")
 					Expect(ex.Expect).To(BeElementOf(exampleEligible, exampleDropped))
+					wantEligible := ex.Expect == exampleEligible
 
-					// Only non_turn_request is a pure function of request data
-					// today, so it is the only reason whose examples can be
-					// executed. A second one gains a branch here — and until
-					// then, an examples block on any other reason is a case
-					// asserting something nobody runs.
-					Expect(c.Name).To(Equal(string(capture.DropNonTurnRequest)),
-						"only %s carries executable examples today; %s must declare\n"+
-							"  not_expressible or gain an evaluator here",
-						capture.DropNonTurnRequest, c.Name)
+					// Two reasons are pure functions of data a case can carry,
+					// so those two are the ones whose examples can be executed.
+					// A third gains a branch here — and until then, an examples
+					// block on any other reason is a case asserting something
+					// nobody runs.
+					// An expression switch rather than one over the enum: this
+					// is deliberately NOT exhaustive over the vocabulary — the
+					// reasons with no evaluator are the ones that must declare
+					// not_expressible, and the default below is what says so.
+					switch {
+					case c.Name == string(capture.DropNonTurnRequest):
+						Expect(ex.Request).NotTo(BeNil(),
+							"%s: an example of %s must carry a request", c.file, c.Name)
+						Expect(ex.Response).To(BeNil(),
+							"%s: %s reads the request line, not the status", c.file, c.Name)
 
-					got := isCapturableTurnRequest(ex.Request.Method, ex.Request.Path)
-					Expect(got).To(Equal(ex.Expect == exampleEligible),
-						"%s: %s (%s %q).\n  This is shared capture policy. If it genuinely changed, the same\n"+
-							"  change belongs in the other capture path too: %s.",
-						c.file, ex.Description, ex.Request.Method, ex.Request.Path, otherCaptureHome)
+						got := isCapturableTurnRequest(ex.Request.Method, ex.Request.Path)
+						Expect(got).To(Equal(wantEligible),
+							"%s: %s (%s %q).\n  This is shared capture policy. If it genuinely changed, the same\n"+
+								"  change belongs in the other capture path too: %s.",
+							c.file, ex.Description, ex.Request.Method, ex.Request.Path, otherCaptureHome)
+					case c.Name == string(capture.DropUpstreamStatus):
+						Expect(ex.Response).NotTo(BeNil(),
+							"%s: an example of %s must carry a response", c.file, c.Name)
+						Expect(ex.Request).To(BeNil(),
+							"%s: %s reads the status, not the request line", c.file, c.Name)
+						// 0 is missing_status — a transport reason, and not an
+						// outcome this predicate is ever asked about.
+						Expect(ex.Response.Status).NotTo(BeZero(),
+							"%s: a status of 0 is %s, not %s", c.file, DropMissingStatus, c.Name)
+
+						got := isCapturableUpstreamStatus(ex.Response.Status)
+						Expect(got).To(Equal(wantEligible),
+							"%s: %s (status %d).\n  This is shared capture policy. If it genuinely changed, the same\n"+
+								"  change belongs in the other capture path too: %s.",
+							c.file, ex.Description, ex.Response.Status, otherCaptureHome)
+					default:
+						Fail(fmt.Sprintf(
+							"%s carries examples but has no evaluator here; it must declare\n"+
+								"  not_expressible or gain one", c.Name))
+					}
 				}
 			})
 		}
@@ -299,6 +342,14 @@ var _ = Describe("drop-reason corpus", func() {
 		exampleHolds := func(c dropReasonCase, pick func(dropExample) bool) bool {
 			return slices.ContainsFunc(c.Examples, pick)
 		}
+		// The status half of the schema, as a predicate over the block a rule
+		// reads. The request half stays inline: those rules pre-date the
+		// second example shape and read the method and the path together.
+		statusHolds := func(c dropReasonCase, pick func(int, string) bool) bool {
+			return exampleHolds(c, func(ex dropExample) bool {
+				return ex.Response != nil && pick(ex.Response.Status, ex.Expect)
+			})
+		}
 
 		rules := map[string]func(dropReasonCase) bool{
 			"both halves of the taxonomy": func(c dropReasonCase) bool {
@@ -306,33 +357,40 @@ var _ = Describe("drop-reason corpus", func() {
 			},
 			"a health probe on a turn path, refused for its method": func(c dropReasonCase) bool {
 				return exampleHolds(c, func(ex dropExample) bool {
-					return strings.EqualFold(ex.Request.Method, "HEAD") && ex.Expect == exampleDropped
+					return ex.Request != nil && strings.EqualFold(ex.Request.Method, "HEAD") &&
+						ex.Expect == exampleDropped
 				})
 			},
 			"a non-POST read method on a turn path": func(c dropReasonCase) bool {
 				return exampleHolds(c, func(ex dropExample) bool {
-					return strings.EqualFold(ex.Request.Method, "GET") && ex.Expect == exampleDropped
+					return ex.Request != nil && strings.EqualFold(ex.Request.Method, "GET") &&
+						ex.Expect == exampleDropped
 				})
 			},
 			"an endpoint adjacent to a turn path that is not conversation": func(c dropReasonCase) bool {
 				return exampleHolds(c, func(ex dropExample) bool {
-					return strings.Contains(ex.Request.Path, "count_tokens") && ex.Expect == exampleDropped
+					return ex.Request != nil && strings.Contains(ex.Request.Path, "count_tokens") &&
+						ex.Expect == exampleDropped
 				})
 			},
 			"case-insensitive method matching": func(c dropReasonCase) bool {
 				return exampleHolds(c, func(ex dropExample) bool {
+					if ex.Request == nil {
+						return false
+					}
 					m := ex.Request.Method
 					return m != "" && m != strings.ToUpper(m) && ex.Expect == exampleEligible
 				})
 			},
 			"an absent method treated as capturable": func(c dropReasonCase) bool {
 				return exampleHolds(c, func(ex dropExample) bool {
-					return ex.Request.Method == "" && ex.Expect == exampleEligible
+					return ex.Request != nil && ex.Request.Method == "" && ex.Expect == exampleEligible
 				})
 			},
 			"a turn path behind a gateway prefix": func(c dropReasonCase) bool {
 				return exampleHolds(c, func(ex dropExample) bool {
-					return strings.Count(strings.Trim(ex.Request.Path, "/"), "/") > 1 &&
+					return ex.Request != nil &&
+						strings.Count(strings.Trim(ex.Request.Path, "/"), "/") > 1 &&
 						ex.Expect == exampleEligible
 				})
 			},
@@ -346,12 +404,36 @@ var _ = Describe("drop-reason corpus", func() {
 				}
 				for _, w := range want {
 					if !exampleHolds(c, func(ex dropExample) bool {
-						return strings.HasSuffix(ex.Request.Path, w) && ex.Expect == exampleEligible
+						return ex.Request != nil && strings.HasSuffix(ex.Request.Path, w) &&
+							ex.Expect == exampleEligible
 					}) {
 						return false
 					}
 				}
 				return true
+			},
+			"the one upstream status a turn may carry": func(c dropReasonCase) bool {
+				return statusHolds(c, func(status int, expect string) bool {
+					return status == http.StatusOK && expect == exampleEligible
+				})
+			},
+			"a non-200 success status refused anyway": func(c dropReasonCase) bool {
+				// The rule most likely to be "simplified" into a 2xx class by
+				// someone reading only the summary. Pinned as its own rule so
+				// that widening it has to delete a case rather than pass.
+				return statusHolds(c, func(status int, expect string) bool {
+					return status/100 == 2 && status != http.StatusOK && expect == exampleDropped
+				})
+			},
+			"a client-error exchange refused": func(c dropReasonCase) bool {
+				return statusHolds(c, func(status int, expect string) bool {
+					return status/100 == 4 && expect == exampleDropped
+				})
+			},
+			"a provider-side failure refused": func(c dropReasonCase) bool {
+				return statusHolds(c, func(status int, expect string) bool {
+					return status/100 == 5 && expect == exampleDropped
+				})
 			},
 		}
 

@@ -303,13 +303,13 @@ func (p *Processor) Process(stream extprocv3.ExternalProcessor_ProcessServer) er
 			}
 			if v.ResponseBody.GetEndOfStream() {
 				st.respEOS = true
-				switch st.statusCode {
-				case 0:
+				switch {
+				case st.statusCode == 0:
 					// Envoy should always send ResponseHeaders before ResponseBody.
 					// If we got here with no :status, something violated the contract
 					// — treat as a drop rather than implying success.
 					p.recordDrop(st, DropMissingStatus)
-				case http.StatusOK:
+				case isCapturableUpstreamStatus(st.statusCode):
 					p.dispatchTurn(context.Background(), st)
 				default:
 					p.recordDrop(st, DropUpstreamStatus)
@@ -898,9 +898,27 @@ func (p *Processor) resolveProvider(hdrs *extprocv3.HttpHeaders) string {
 	return labelAnthropic
 }
 
+// isCapturableUpstreamStatus reports whether an upstream status leaves a turn
+// capturable — the DropUpstreamStatus predicate.
+//
+// Exactly 200, deliberately, and not "any 2xx": a turn is a completed exchange
+// with a provider, and the chat-completion endpoints this path fronts answer a
+// completed exchange with 200 and nothing else. Widening it to a class would
+// admit 201/204 shapes no provider sends here, which is a rule nobody could
+// point at a real response.
+//
+// Named rather than inlined at its call site for the same reason as
+// isCapturableTurnRequest: fixtures/drop-reason/cases/upstream_status.json
+// carries executable examples, and they have to run against the code the
+// processor actually runs. Reaching this predicate at all is stream state —
+// the response phase must have completed — which is why the corpus's examples
+// say what they cover and the surrounding lifecycle stays out of them.
+func isCapturableUpstreamStatus(status int) bool {
+	return status == http.StatusOK
+}
+
 // isCapturableTurnRequest reports whether (method, path) is a turn request at
-// all — the DropNonTurnRequest predicate, and the only part of the drop-reason
-// taxonomy that is a pure function of data the corpus can carry.
+// all — the DropNonTurnRequest predicate.
 //
 // It is a named function rather than a condition inlined at its one call site
 // so that fixtures/drop-reason/cases/non_turn_request.json can be executed
