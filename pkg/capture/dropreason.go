@@ -31,6 +31,8 @@ package capture
 // implementations agreeing on an enum but not on its spelling would still
 // produce two vocabularies.
 
+import "slices"
+
 // DropReason is one answer to "why was this turn not captured". Values are the
 // wire-visible strings: metric label values and log fields, so they are part of
 // the contract rather than an internal detail.
@@ -106,10 +108,5 @@ func PolicyDropReasons() []DropReason {
 // IsPolicyDropReason reports whether reason is one of the shared capture-policy
 // reasons rather than a deployment's own transport or runtime reason.
 func IsPolicyDropReason(reason DropReason) bool {
-	for _, r := range PolicyDropReasons() {
-		if r == reason {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(PolicyDropReasons(), reason)
 }

@@ -184,8 +184,20 @@ func decodeOneLayer(body []byte, encoding string) ([]byte, DecodeStats, error) {
 //
 // This is not the guard that keeps ordinary bodiless requests (a GET whose
 // headers still advertise a coding) out of the logs. That is a caller
-// precondition — don't call the decoder when there is no body — and callers on
-// both capture paths satisfy it by returning early.
+// precondition — don't call the decoder when there is no body — and the two
+// capture paths meet it differently, which is worth stating plainly because it
+// is where this rule becomes visible.
+//
+// The standalone client returns before decoding, so a bodiless request is a
+// non-event there. The gateway adapter does not: extproc decodes the request
+// body on every request end-of-stream, with no check that any bytes arrived, so
+// an empty body frame does reach here and does error. What keeps ordinary
+// bodiless traffic off the drop dashboards on that path is the turn-request
+// gate above it, which filters a GET before the decode error is consulted at
+// all. What is left over is real and intended: a POST to a turn path that
+// claims a coding and carries no body now terminates as a request_decode drop
+// instead of dispatching an empty request — the same answer gzip already gave
+// for the same input, now given for every coding.
 func refuseEmpty(body []byte, kind string) error {
 	if len(body) > 0 {
 		return nil

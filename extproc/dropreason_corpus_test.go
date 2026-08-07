@@ -33,6 +33,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 
@@ -65,6 +66,14 @@ type dropExample struct {
 	Request     dropExampleRequest `json:"request"`
 	Expect      string             `json:"expect"`
 }
+
+// The two values an example's `expect` may take. Named because the corpus
+// spells them out once per example and a typo in one of them would silently
+// weaken an assertion rather than fail it.
+const (
+	exampleEligible = "eligible"
+	exampleDropped  = "dropped"
+)
 
 type dropReasonCase struct {
 	file           string
@@ -154,7 +163,7 @@ var _ = Describe("drop-reason corpus", func() {
 
 				for _, ex := range c.Examples {
 					Expect(ex.Description).NotTo(BeEmpty(), "each example needs a description")
-					Expect(ex.Expect).To(BeElementOf("eligible", "dropped"))
+					Expect(ex.Expect).To(BeElementOf(exampleEligible, exampleDropped))
 
 					// Only non_turn_request is a pure function of request data
 					// today, so it is the only reason whose examples can be
@@ -167,7 +176,7 @@ var _ = Describe("drop-reason corpus", func() {
 						capture.DropNonTurnRequest, c.Name)
 
 					got := isCapturableTurnRequest(ex.Request.Method, ex.Request.Path)
-					Expect(got).To(Equal(ex.Expect == "eligible"),
+					Expect(got).To(Equal(ex.Expect == exampleEligible),
 						"%s: %s (%s %q).\n  This is shared capture policy. If it genuinely changed, the same\n"+
 							"  change belongs in the other capture path too: %s.",
 						c.file, ex.Description, ex.Request.Method, ex.Request.Path, otherCaptureHome)
@@ -285,20 +294,10 @@ var _ = Describe("drop-reason corpus", func() {
 
 	Describe("still covers", func() {
 		covers := func(holds func(dropReasonCase) bool) bool {
-			for _, c := range cases {
-				if holds(c) {
-					return true
-				}
-			}
-			return false
+			return slices.ContainsFunc(cases, holds)
 		}
 		exampleHolds := func(c dropReasonCase, pick func(dropExample) bool) bool {
-			for _, ex := range c.Examples {
-				if pick(ex) {
-					return true
-				}
-			}
-			return false
+			return slices.ContainsFunc(c.Examples, pick)
 		}
 
 		rules := map[string]func(dropReasonCase) bool{
@@ -307,42 +306,47 @@ var _ = Describe("drop-reason corpus", func() {
 			},
 			"a health probe on a turn path, refused for its method": func(c dropReasonCase) bool {
 				return exampleHolds(c, func(ex dropExample) bool {
-					return strings.EqualFold(ex.Request.Method, "HEAD") && ex.Expect == "dropped"
+					return strings.EqualFold(ex.Request.Method, "HEAD") && ex.Expect == exampleDropped
 				})
 			},
 			"a non-POST read method on a turn path": func(c dropReasonCase) bool {
 				return exampleHolds(c, func(ex dropExample) bool {
-					return strings.EqualFold(ex.Request.Method, "GET") && ex.Expect == "dropped"
+					return strings.EqualFold(ex.Request.Method, "GET") && ex.Expect == exampleDropped
 				})
 			},
 			"an endpoint adjacent to a turn path that is not conversation": func(c dropReasonCase) bool {
 				return exampleHolds(c, func(ex dropExample) bool {
-					return strings.Contains(ex.Request.Path, "count_tokens") && ex.Expect == "dropped"
+					return strings.Contains(ex.Request.Path, "count_tokens") && ex.Expect == exampleDropped
 				})
 			},
 			"case-insensitive method matching": func(c dropReasonCase) bool {
 				return exampleHolds(c, func(ex dropExample) bool {
 					m := ex.Request.Method
-					return m != "" && m != strings.ToUpper(m) && ex.Expect == "eligible"
+					return m != "" && m != strings.ToUpper(m) && ex.Expect == exampleEligible
 				})
 			},
 			"an absent method treated as capturable": func(c dropReasonCase) bool {
 				return exampleHolds(c, func(ex dropExample) bool {
-					return ex.Request.Method == "" && ex.Expect == "eligible"
+					return ex.Request.Method == "" && ex.Expect == exampleEligible
 				})
 			},
 			"a turn path behind a gateway prefix": func(c dropReasonCase) bool {
 				return exampleHolds(c, func(ex dropExample) bool {
 					return strings.Count(strings.Trim(ex.Request.Path, "/"), "/") > 1 &&
-						ex.Expect == "eligible"
+						ex.Expect == exampleEligible
 				})
 			},
 			"every provider family's turn path": func(c dropReasonCase) bool {
-				want := []string{"/v1/messages", "/v1/chat/completions", "/v1/responses",
-					"/codex/responses", "/api/chat"}
+				want := []string{
+					"/v1/messages",
+					"/v1/chat/completions",
+					"/v1/responses",
+					"/codex/responses",
+					"/api/chat",
+				}
 				for _, w := range want {
 					if !exampleHolds(c, func(ex dropExample) bool {
-						return strings.HasSuffix(ex.Request.Path, w) && ex.Expect == "eligible"
+						return strings.HasSuffix(ex.Request.Path, w) && ex.Expect == exampleEligible
 					}) {
 						return false
 					}
