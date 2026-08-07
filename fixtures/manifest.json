@@ -91,19 +91,22 @@
       "description": "One case per drop reason: the vocabulary of answers to 'why was this turn not captured', each classified as capture POLICY (a rule about capturability that any implementation must share) or TRANSPORT/RUNTIME (specific to how one deployment moves bytes). Both halves are specified — the transport reasons are included precisely so that 'this one is not contract' is recorded rather than assumed. The policy half is homed in Go at pkg/capture/dropreason.go, which extproc reads rather than restating.",
       "provenance": {
         "type": "synthetic",
-        "notes": "Hand-authored. Cases carry the reason's wire string, its class, the Go constant that carries it, and the argument for its class. Only non_turn_request is a pure function of request data today, so it is the only case with executable examples; every other case carries not_expressible saying why."
+        "notes": "Hand-authored. Cases carry the reason's wire string, its class, the Go constant that carries it, and the argument for its class. non_turn_request (a pure function of the request line) and upstream_status (a pure function of the status) carry executable examples; every other case carries not_expressible saying why."
       },
       "scrub_attestation": "synthetic-by-construction",
       "consumers": [
         "tapes authored-home gate (oracle, two-way vocabulary conformance, DIGEST seal, rule coverage): extproc/dropreason_corpus_test.go",
         "pkg/capture/dropreason.go — the Go home of the policy half (capture.PolicyDropReasons), asserted against the corpus by that gate",
-        "tapesctl — has no drop-reason vocabulary today; it drops turns for several policy reasons and reports them only as log prose. The corpus is the specification an implementation there should be wired to."
+        "tapesctl Rust oracle (the same examples run against the client's own predicates, plus the DIGEST seal and a shape gate): crates/tapesctl/tests/drop_reason_corpus.rs over crates/tapesctl/src/start/turn_policy.rs. It carries the two reasons whose gates it applies; the policy reasons it drops for but does not yet name remain log prose there."
       ],
       "consumer_note": "Same vendoring contract as the sibling L0 families: one authoritative copy here, DIGEST-sealed; refresh every vendored copy from the same commit as the implementation change it forces.",
       "why": "The gateway adapter carried a fourteen-value enum that existed in Go only and was specified nowhere, so nothing decided which reasons were shared capture policy and which were artefacts of one deployment's plumbing. Naively unifying them with the client's three decode error classes would have merged two different axes.",
-      "known_divergences": [
-        "upstream_status — the gateway adapter captures only a 200 response and drops the rest; the client records the upstream status in metadata and captures the turn regardless.",
-        "non_turn_request — the gateway adapter gates on a known set of turn paths and on POST; the client has no path or method gate, so anything with a JSON body is a capture candidate."
+      "known_divergences": [],
+      "cross_implementation": [
+        "upstream_status and non_turn_request — the two reasons that decide whether an exchange is a turn at all — were the family's known divergences and are now applied by both capture paths, from the same cases. Both carry executable examples, so agreement is asserted rather than asserted-about.",
+        "The status rule is exactly 200, not a 2xx class; cases pin 201 and 204 as dropped for that reason.",
+        "The path both predicates read is the one the provider sees: each implementation resolves the request path against its upstream route before applying the same clean-suffix rule, because a harness's own path can be a proper suffix of the provider's.",
+        "Not asserted anywhere: precedence between the reasons, and the fact that the client applies these two policy reasons and not the remaining five."
       ],
       "explicitly_not_contract": [
         "DefaultLargeTurnThreshold (4 MiB, extproc/metrics.go) — gates a counter and nothing else. Two builds that disagree about it capture, dispatch and store byte-identical turns, which is why it is settable per deployment. A threshold that dropped or truncated a turn would be contract."

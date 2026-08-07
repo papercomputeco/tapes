@@ -3,8 +3,58 @@
   "class": "policy",
   "constant": "DropUpstreamStatus",
   "summary": "The upstream did not return a success status, so there is no completed exchange to record.",
-  "trigger": "The response phase completed and the upstream status was anything other than a success.",
-  "grounding": "A turn is a completed exchange with a provider; an error response is a record of one failing to happen. Capturing them would put failed requests in the same log as conversations and leave every consumer to re-derive the difference — including the deriver, which projects rows into a conversation tree. Any implementation sees the status, so any implementation can apply this, which is what makes it contract rather than plumbing.",
-  "not_expressible": "The status alone does not decide it: the reason is only reached once the response phase has completed, which is stream state rather than data. A case asserting status-to-outcome would pin the status test and silently claim the surrounding lifecycle it does not exercise.",
-  "notes": "The two implementations currently disagree here — the gateway adapter captures only 200 and drops the rest; the client records upstream_status in metadata and captures regardless. Recorded in the README as a known divergence rather than repaired by this corpus."
+  "trigger": "The response phase completed and the upstream status was anything other than 200.",
+  "grounding": "A turn is a completed exchange with a provider; an error response is a record of one failing to happen. Capturing them would put failed requests in the same log as conversations and leave every consumer to re-derive the difference — including the deriver, which projects rows into a conversation tree. Any implementation sees the status, so any implementation can apply this, which is what makes it contract rather than plumbing. Dropping is not silence: the exchange is still reported under this reason, with its status, so the diagnostic value of a failed call survives without a failed call becoming a turn.",
+  "examples": [
+    {
+      "description": "the completed exchange every provider answers a turn with",
+      "response": {
+        "status": 200
+      },
+      "expect": "eligible"
+    },
+    {
+      "description": "a 2xx that is not 200 is still not a completed turn — the rule is the status, not its class",
+      "response": {
+        "status": 201
+      },
+      "expect": "dropped"
+    },
+    {
+      "description": "a success carrying no content is not an exchange to record",
+      "response": {
+        "status": 204
+      },
+      "expect": "dropped"
+    },
+    {
+      "description": "a malformed request the provider refused",
+      "response": {
+        "status": 400
+      },
+      "expect": "dropped"
+    },
+    {
+      "description": "an authentication failure",
+      "response": {
+        "status": 401
+      },
+      "expect": "dropped"
+    },
+    {
+      "description": "a rate limit",
+      "response": {
+        "status": 429
+      },
+      "expect": "dropped"
+    },
+    {
+      "description": "a provider-side failure",
+      "response": {
+        "status": 500
+      },
+      "expect": "dropped"
+    }
+  ],
+  "notes": "`eligible` means the exchange passes THIS gate, not that it is captured: every later gate still applies. The examples are reached only once the response phase has completed — that lifecycle is stream state rather than data, and is deliberately outside what a case can assert; a status of 0 is `missing_status`, a transport reason, and is not an input here. Both implementations apply this gate: the gateway adapter dispatches only on 200 and records everything else under this reason, and the standalone client refuses to capture a non-200 exchange and logs the reason with the status at a severity an operator sees."
 }

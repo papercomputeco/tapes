@@ -6,7 +6,7 @@ one per drop reason.
 
 A capture path that declines to record a turn owes an answer to "why". The
 gateway adapter has carried a closed enum of fourteen answers; the standalone
-client carries none — it logs a sentence per site. Neither was specified
+client carried none — it logged a sentence per site. Neither was specified
 anywhere, so nothing decided the question that matters:
 
 > Which of these answers are rules that any implementation of tapes capture
@@ -77,16 +77,29 @@ what triggers it — is specified as data, one case per file, and is executable:
 a consumer asserts its own reasons against `cases/*.json` and fails if either
 side has a reason the other does not.
 
-The **behaviour** behind each reason is a different matter, and only one of them
-is expressible as cases today. `non_turn_request` is a pure function of
-`(method, path)`, so `cases/non_turn_request.json` carries `examples` that any
-implementation can run. The rest depend on bytes, streams, reducers or a live
-upstream; a case for them would either restate prose as JSON or pin one
-implementation's internals. Those cases carry `not_expressible` saying so.
+The **behaviour** behind each reason is a different matter, and two of them are
+expressible as cases today. `non_turn_request` is a pure function of
+`(method, path)` and `upstream_status` a pure function of the status, so both
+carry `examples` that any implementation can run. The rest depend on bytes,
+streams, reducers or a live upstream; a case for them would either restate prose
+as JSON or pin one implementation's internals. Those cases carry
+`not_expressible` saying so.
 
 This is the honest state, not the target: expressing more of them means giving
 each implementation a pure classifier to point the cases at, which is a change
 to the implementations first and to this corpus second — never the reverse.
+`upstream_status` is that route already walked once. It carried
+`not_expressible` — the status alone does not decide it, since the reason is
+only reached once the response phase has completed — and it gained examples when
+both implementations grew a named `status -> capturable` predicate for the cases
+to run against. The lifecycle around it is still outside what a case asserts,
+which is now recorded in the case's own `notes` rather than as a reason to
+express nothing.
+
+The two executable reasons are also the two that decide whether an exchange is a
+turn at all, which is why they are worth the predicates: everything downstream
+of them — decode, reducer, provider coverage — only ever sees exchanges both
+gates admitted.
 
 ## Precedence
 
@@ -140,10 +153,20 @@ wire string.
 | `not_expressible` | no | why this reason carries no examples yet. Required when `examples` is absent |
 | `notes` | no | anything a consumer needs to know |
 
-`examples` is an array of objects, each with a `description`, a `request`
-(`method` and `path`), and an `expect` of `eligible` or `dropped`. `eligible`
-means the turn passes THIS reason's gate, not that it is captured — a later
-gate may still refuse it.
+`examples` is an array of objects, each with a `description`, an `expect` of
+`eligible` or `dropped`, and exactly one input block — the one this reason's
+predicate reads:
+
+| block | fields | read by |
+| --- | --- | --- |
+| `request` | `method`, `path` | `non_turn_request` |
+| `response` | `status` | `upstream_status` |
+
+`eligible` means the turn passes THIS reason's gate, not that it is captured —
+a later gate may still refuse it. A case carrying the wrong block, or both,
+fails the gate: the block is what says which predicate the example is an example
+*of*, and an example nothing runs is the failure this corpus exists to prevent
+reintroduced one level up.
 
 ## Consumers
 
@@ -155,24 +178,35 @@ gate may still refuse it.
   keeps.
 * `pkg/capture/dropreason.go` — the Go home of the policy half
   (`capture.PolicyDropReasons`), which the gate asserts this corpus against.
-* `tapesctl` — has no drop-reason vocabulary today. It drops turns for several
-  of the policy reasons (`request_decode` when a body will not decode, an
-  unparseable request that has no reason here at all) and reports them only as
-  log prose. This corpus is the specification an implementation there should be
-  wired to.
+* `tapesctl` — vendors this corpus and runs the same examples against its own
+  predicates (`crates/tapesctl/tests/drop_reason_corpus.rs`, over
+  `crates/tapesctl/src/start/turn_policy.rs`), plus the DIGEST seal. It carries
+  the two reasons whose gates it applies, spelled from the corpus. The other
+  policy reasons are drops it makes and does not yet name — `request_decode`
+  when a body will not decode, `reducer_error`'s neighbourhood when a request
+  is unparseable — and they remain log prose there until it names them.
 
-## Known divergences
+## Both implementations apply the eligibility gates
 
-The two capture paths do not currently agree on two policy reasons. They are
-recorded here rather than fixed by this corpus, because the corpus's job is to
-make disagreement visible and a silent repair would defeat it:
+`upstream_status` and `non_turn_request` are the two reasons that decide whether
+an exchange is a turn at all, and both capture paths apply both. They were the
+corpus's known divergences and are not any more: the client had no path or
+method gate and captured a failed exchange with the status in metadata.
 
-* **`upstream_status`** — the gateway adapter captures only a 200 response and
-  drops everything else. The client records the upstream status in metadata and
-  captures the turn regardless.
-* **`non_turn_request`** — the gateway adapter gates on a known set of turn
-  paths and on POST. The client has no path gate; anything with a JSON body is
-  a capture candidate.
+Two consequences worth stating, because they are where the agreement could
+quietly decay:
+
+* **The status rule is exactly 200**, not a 2xx class. Cases pin `201` and `204`
+  as dropped for that reason.
+* **The path is the one the PROVIDER sees.** Both implementations run the same
+  clean-suffix predicate; each feeds it the request path as resolved against the
+  upstream route, because a harness's own path can be a proper suffix of the
+  provider's. Feeding it an unresolved path would drop real turns while the gate
+  looked identical.
+
+Both apply them in the specified precedence — status first, so a probe that also
+failed upstream is reported the same way by both — but that ordering is still
+asserted nowhere in this corpus, for the reason given above.
 
 ## `DIGEST`
 
@@ -190,6 +224,10 @@ consumer's own CI.
 3. Add the constant — to `pkg/capture/dropreason.go` if it is policy, to the
    deployment if it is transport. The gate fails until both sides agree.
 4. Give it `examples` if it is a pure function of data, or `not_expressible`
-   saying why not.
+   saying why not. Examples need an input block the schema knows and an
+   evaluator on each consuming side; adding a third means adding both, in the
+   same change as the predicate the examples run against.
 5. Run `go test ./extproc/`, copy the new digest it prints into `DIGEST`, and
    commit both.
+6. Refresh every vendored copy from the same commit, and land the consumer
+   change the new case forces alongside it.
