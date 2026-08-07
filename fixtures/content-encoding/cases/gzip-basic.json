@@ -1,0 +1,9 @@
+{
+  "name": "gzip-basic",
+  "category": "supported",
+  "description": "A single gzip layer decodes back to the plaintext.",
+  "encoding": "gzip",
+  "body": { "build": { "plaintext": { "utf8": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" }, "layers": ["gzip"] } },
+  "expect": { "outcome": "decoded", "decoded": { "equals_plaintext": true } },
+  "grounding": "gzip is the encoding the Anthropic response path uses; it is the baseline every capture path must read."
+}

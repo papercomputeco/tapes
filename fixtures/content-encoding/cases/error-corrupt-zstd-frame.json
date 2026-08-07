@@ -1,0 +1,10 @@
+{
+  "name": "error-corrupt-zstd-frame",
+  "category": "error",
+  "description": "A zstd magic number followed by a malformed frame header is refused.",
+  "encoding": "zstd",
+  "body": { "bytes_b64": "KLUv/f8=" },
+  "expect": { "outcome": "error", "error": { "class": "undecodable", "detail": "reserved bit set on frame header" } },
+  "grounding": "Corruption that is detectable in the header must fail before any output exists, so it can never be mistaken for the salvage path.",
+  "notes": "Byte-exact: the zstd magic 28 b5 2f fd followed by 0xff, a frame-header descriptor with the reserved bit set."
+}

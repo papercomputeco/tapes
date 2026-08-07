@@ -1,0 +1,10 @@
+{
+  "name": "salvage-gzip-cut-mid-stream",
+  "category": "salvage",
+  "description": "A gzip stream cut at three quarters of its length: the deflate stream had already emitted output, so a prefix of the body is recovered.",
+  "encoding": "gzip",
+  "body": { "build": { "plaintext": { "repeat_utf8": { "text": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}", "count": 8000 } }, "layers": ["gzip"], "truncate": { "keep_head_ratio": [3, 4] } } },
+  "expect": { "outcome": "salvaged", "decoded": { "nonempty_prefix_of_plaintext": true } },
+  "grounding": "The salvage rule is about the stream ending early, not about where. The recovered length depends on the compressor's block boundaries and therefore differs between implementations, so the case asserts the property (a non-empty prefix of the original) rather than a byte count.",
+  "notes": "`keep_head_ratio` is integer division over the *encoded* length: keep floor(len * 3 / 4) bytes. The encoded length differs per compressor, which is exactly why the expectation is a property."
+}

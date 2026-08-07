@@ -1,0 +1,10 @@
+{
+  "name": "error-unsupported-encoding",
+  "category": "error",
+  "description": "A coding with no decoder is an error, not a pass-through.",
+  "encoding": "br",
+  "body": { "build": { "plaintext": { "utf8": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" }, "layers": [] } },
+  "expect": { "outcome": "error", "error": { "class": "unsupported", "message_contains": ["br"] } },
+  "grounding": "Passing the bytes through hands a reducer compressed input and reports the failure as a parse error well away from the actual cause — which is exactly how PCC-1126 stayed invisible. The bytes are stored either way, so erroring here loses nothing and names the real problem.",
+  "notes": "br and deflate are unsupported deliberately: no capture path emits them, and a decoder for a coding nothing produces is untested code that only exists to be wrong later. If a path starts emitting one, this case changes rather than a silent pass-through appearing."
+}

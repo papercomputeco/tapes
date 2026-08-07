@@ -1,0 +1,10 @@
+{
+  "name": "stacked-gzip-then-zstd",
+  "category": "stacked",
+  "description": "Stacked codings are peeled right-to-left: `gzip, zstd` is zstd(gzip(body)) and zstd comes off first.",
+  "encoding": "gzip, zstd",
+  "body": { "build": { "plaintext": { "utf8": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" }, "layers": ["gzip", "zstd"] } },
+  "expect": { "outcome": "decoded", "decoded": { "equals_plaintext": true } },
+  "grounding": "RFC 9110 8.4 lists codings in the order they were applied, so the last listed is the outermost. Peeling left-to-right hands gzip's decoder a zstd frame and fails on the very first layer, which is the only reason this asymmetry is testable at all.",
+  "notes": "`layers` in this corpus is stated in the same order as the header: left is applied first, so a consumer builds the body by applying `layers` left-to-right and decodes by peeling right-to-left."
+}

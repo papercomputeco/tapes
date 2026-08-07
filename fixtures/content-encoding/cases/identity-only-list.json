@@ -1,0 +1,9 @@
+{
+  "name": "identity-only-list",
+  "category": "identity",
+  "description": "A list made only of identity tokens is zero layers, not two.",
+  "encoding": "identity, identity",
+  "body": { "build": { "plaintext": { "utf8": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" }, "layers": [] } },
+  "expect": { "outcome": "decoded", "decoded": { "equals_plaintext": true } },
+  "grounding": "identity is dropped during the split rather than handled as a layer, so it composes: a list of them reduces to nothing to do."
+}

@@ -57,6 +57,31 @@
       "consumer_note": "Same vendoring contract as the envelope family: one authoritative copy here, DIGEST-sealed; refresh every vendored copy from the same commit as the reader change it forces."
     },
     {
+      "name": "content-encoding",
+      "layer": "L0",
+      "kind": "synthetic-cases",
+      "location": "fixtures/content-encoding/",
+      "count": 25,
+      "harnesses": ["claude", "codex"],
+      "description": "(body bytes, Content-Encoding value) -> decoded bytes, a reported salvage, or a classified error. Pins the captured-body decode POLICY rather than a header contract: which codings are readable, how stacked layers compose (peeled right-to-left), the 32 MiB per-layer output cap, the zstd window bound, and the two-conjunct salvage rule. The reference implementation is pkg/capture/contentencoding.go; the same policy is implemented independently in Rust in tapesctl (crates/tapesctl/src/start/content_encoding.rs).",
+      "provenance": {
+        "type": "synthetic",
+        "notes": "Hand-authored. Bodies are recipes (a plaintext plus the layers to apply) that each consumer compresses locally, because compressed output is not stable across implementations and pinning it would assert compressor identity rather than the policy. Byte-exact base64 is used only where the bytes are the assertion: two hand-built zstd frames differing solely in their window descriptor, two deliberately corrupt frames, and the empty body."
+      },
+      "scrub_attestation": "synthetic-by-construction",
+      "consumers": [
+        "tapes reference oracle + authored-home gate (oracle, DIGEST seal, policy coverage): pkg/capture/contentencoding_corpus_test.go",
+        "tapesctl (Rust client decoder): crates/tapesctl/src/start/content_encoding.rs — NOT yet wired up; the corpus is the specification it should be wired to"
+      ],
+      "consumer_note": "Same vendoring contract as the envelope and thread families: one authoritative copy here, DIGEST-sealed; refresh every vendored copy from the same commit as the implementation change it forces.",
+      "why": "PCC-1126: tapesctl dropped every content-encoding: zstd request body — all of Codex/pi's traffic — while the gateway route decoded the same bytes fine. Nothing was red, because the two implementations' agreement was a point-in-time claim by whoever last read both files.",
+      "contested_cases": [
+        "limit-zstd-window-over-cap — Go bounds the zstd decoder with both max-window and max-memory; the Rust binding exposes window_log_max only. The corpus asserts the window bound (observable) and nothing about max-memory (not observable).",
+        "contested-empty-body-under-gzip — a bodiless request whose headers still claim an encoding. The decoder errors; not calling the decoder at all for a bodiless request is recorded as a CALLER PRECONDITION, which the tapesctl proxy's early return satisfies.",
+        "divergence-empty-body-under-zstd — the same empty body under zstd succeeds with zero bytes in the reference implementation. Recorded as observed and flagged as a suspected bug, not promoted to a rule."
+      ]
+    },
+    {
       "name": "recordings",
       "layer": "L1",
       "kind": "wire-recordings",

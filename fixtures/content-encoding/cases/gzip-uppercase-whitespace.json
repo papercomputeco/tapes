@@ -1,0 +1,9 @@
+{
+  "name": "gzip-uppercase-whitespace",
+  "category": "supported",
+  "description": "A real coding token is also matched case-insensitively and trimmed.",
+  "encoding": " GZIP ",
+  "body": { "build": { "plaintext": { "utf8": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" }, "layers": ["gzip"] } },
+  "expect": { "outcome": "decoded", "decoded": { "equals_plaintext": true } },
+  "grounding": "Companion to identity-mixed-case-whitespace: normalisation must happen before the token is dispatched, not only on the identity fast path."
+}

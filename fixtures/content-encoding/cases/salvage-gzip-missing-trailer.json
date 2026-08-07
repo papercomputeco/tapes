@@ -1,0 +1,9 @@
+{
+  "name": "salvage-gzip-missing-trailer",
+  "category": "salvage",
+  "description": "A gzip stream whose 8-byte trailer (CRC32 + ISIZE) never arrived: every payload byte is recoverable, only the integrity footer is missing.",
+  "encoding": "gzip",
+  "body": { "build": { "plaintext": { "utf8": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" }, "layers": ["gzip"], "truncate": { "drop_tail_bytes": 8 } } },
+  "expect": { "outcome": "salvaged", "decoded": { "equals_plaintext": true } },
+  "grounding": "A capture cut off in flight is still most of a turn. Refusing it would discard everything the stream did deliver in exchange for nothing — but the salvage is reported, so a recovered reduction is never silently indistinguishable from a clean one."
+}

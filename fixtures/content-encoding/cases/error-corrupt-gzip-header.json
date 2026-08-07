@@ -1,0 +1,10 @@
+{
+  "name": "error-corrupt-gzip-header",
+  "category": "error",
+  "description": "Bytes that are not a gzip frame at all are refused.",
+  "encoding": "gzip",
+  "body": { "bytes_b64": "bm90IGEgZ3ppcCBmcmFtZSBhdCBhbGw=" },
+  "expect": { "outcome": "error", "error": { "class": "undecodable", "detail": "invalid gzip header" } },
+  "grounding": "A corrupt header is a hard failure, not a salvage: there is no partial turn inside it to keep. Salvage is scoped to streams that ended early after producing output.",
+  "notes": "Byte-exact: the ASCII string 'not a gzip frame at all'."
+}

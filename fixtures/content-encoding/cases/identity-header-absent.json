@@ -1,0 +1,9 @@
+{
+  "name": "identity-header-absent",
+  "category": "identity",
+  "description": "No Content-Encoding header at all: the body is already plaintext and is handed back untouched.",
+  "encoding": null,
+  "body": { "build": { "plaintext": { "utf8": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" }, "layers": [] } },
+  "expect": { "outcome": "decoded", "decoded": { "equals_plaintext": true } },
+  "grounding": "An absent header means no coding was applied. This is the common case for an uncompressed harness and must not cost a copy or a decoder."
+}

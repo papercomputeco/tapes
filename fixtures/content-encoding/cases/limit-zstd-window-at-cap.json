@@ -1,0 +1,10 @@
+{
+  "name": "limit-zstd-window-at-cap",
+  "category": "limit",
+  "description": "A hand-built zstd frame declaring a 32 MiB window (windowLog 25) decodes: the window bound is inclusive at the cap.",
+  "encoding": "zstd",
+  "body": { "bytes_b64": "KLUv/QB4KQAAaGVsbG8=" },
+  "expect": { "outcome": "decoded", "decoded": { "bytes_b64": "aGVsbG8=" } },
+  "grounding": "Companion to limit-zstd-window-over-cap. Without it, that case would only prove the crafted frame is rejected for *some* reason; together they prove the rejection is the window bound and locate it at log2(32 MiB) = 25.",
+  "notes": "Byte-exact because the bytes are the case. Frame: magic 28 b5 2f fd; frame-header descriptor 0x00 (no content size, not single-segment, no checksum, no dictionary); window descriptor 0x78 (exponent 15 -> windowLog 25, mantissa 0); one raw last-block header 29 00 00 carrying the five bytes 'hello'."
+}

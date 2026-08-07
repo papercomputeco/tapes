@@ -1,0 +1,9 @@
+{
+  "name": "stacked-identity-is-not-a-layer",
+  "category": "stacked",
+  "description": "identity mixed in with a real coding contributes no layer.",
+  "encoding": "identity, gzip",
+  "body": { "build": { "plaintext": { "utf8": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" }, "layers": ["gzip"] } },
+  "expect": { "outcome": "decoded", "decoded": { "equals_plaintext": true } },
+  "grounding": "`identity, gzip` is one layer of gzip. A decoder that counted identity as a layer would try to undo a second, non-existent coding and drop the turn."
+}

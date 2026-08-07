@@ -1,0 +1,9 @@
+{
+  "name": "limit-decoded-over-cap",
+  "category": "limit",
+  "description": "One byte past the per-layer cap is refused: the decompression-bomb guard.",
+  "encoding": "gzip",
+  "body": { "build": { "plaintext": { "repeat_byte": { "byte": 97, "count": 33554433 } }, "layers": ["gzip"] } },
+  "expect": { "outcome": "error", "error": { "class": "oversize" } },
+  "grounding": "The encoded bytes are already capped on the way in, but a few KiB of zstd expands to gigabytes if nothing stops it. The cap must be identical on every capture path: a body the gateway accepted and stored must not be one another path refuses, or the two paths disagree about which turns exist."
+}

@@ -1,0 +1,9 @@
+{
+  "name": "identity-empty-header",
+  "category": "identity",
+  "description": "A present but empty Content-Encoding value is treated exactly like an absent one.",
+  "encoding": "",
+  "body": { "build": { "plaintext": { "utf8": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" }, "layers": [] } },
+  "expect": { "outcome": "decoded", "decoded": { "equals_plaintext": true } },
+  "grounding": "An empty header value names no coding. Distinguishing it from an absent header would make the outcome depend on whether an intermediary stripped or blanked the header."
+}

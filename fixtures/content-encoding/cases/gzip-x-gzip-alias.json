@@ -1,0 +1,9 @@
+{
+  "name": "gzip-x-gzip-alias",
+  "category": "supported",
+  "description": "x-gzip is the same coding as gzip and must decode identically.",
+  "encoding": "x-gzip",
+  "body": { "build": { "plaintext": { "utf8": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" }, "layers": ["gzip"] } },
+  "expect": { "outcome": "decoded", "decoded": { "equals_plaintext": true } },
+  "grounding": "x-gzip is the historical spelling and is still emitted by some intermediaries. Accepting only the modern spelling would drop those turns as unsupported."
+}
