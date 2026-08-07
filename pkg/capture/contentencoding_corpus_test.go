@@ -77,6 +77,7 @@ type truncateSpec struct {
 type buildSpec struct {
 	Plaintext plaintextSpec `json:"plaintext"`
 	Layers    []string      `json:"layers"`
+	Members   *int          `json:"members"`
 	Truncate  *truncateSpec `json:"truncate"`
 }
 
@@ -181,6 +182,36 @@ func applyLayer(body []byte, layer string) []byte {
 	return buf.Bytes()
 }
 
+// splitIntoMembers cuts a plaintext into the n chunks a case asked to be
+// encoded independently, defaulting to one — an ordinary single-member body.
+//
+// Chunks are as near equal as integer division allows, with the remainder on
+// the last one. Every chunk must be non-empty: an empty member is a different
+// case (an empty stream inside a stream) and would make "two members" quietly
+// mean "one member and a zero-byte one".
+func splitIntoMembers(file string, plaintext []byte, members *int) [][]byte {
+	n := 1
+	if members != nil {
+		n = *members
+	}
+	Expect(n).To(BeNumerically(">=", 1), "%s: members must be at least 1", file)
+	Expect(len(plaintext)).To(BeNumerically(">=", n),
+		"%s: %d members needs at least %d plaintext bytes, got %d",
+		file, n, n, len(plaintext))
+
+	out := make([][]byte, 0, n)
+	size := len(plaintext) / n
+	for i := range n {
+		start := i * size
+		end := start + size
+		if i == n-1 {
+			end = len(plaintext)
+		}
+		out = append(out, plaintext[start:end])
+	}
+	return out
+}
+
 // buildBody returns the wire bytes for a case, plus the plaintext they were
 // built from (nil for a bytes_b64 case, which has no plaintext).
 func buildBody(c encodingCase) (body, plaintext []byte) {
@@ -194,11 +225,21 @@ func buildBody(c encodingCase) (body, plaintext []byte) {
 	}
 
 	plaintext = buildPlaintext(c.Body.Build.Plaintext)
-	body = plaintext
-	// Layers are listed in header order — left is applied first — so the
-	// body is built left-to-right and decoded right-to-left.
-	for _, layer := range c.Body.Build.Layers {
-		body = applyLayer(body, layer)
+
+	// A multi-member body is the same plaintext, encoded in more than one
+	// go. The split is over the PLAINTEXT rather than the encoded bytes, so
+	// the member boundary is at the same logical offset for every
+	// compressor and the case can still assert equality with the whole
+	// plaintext — which is the assertion that matters, and the one a split
+	// of the encoded stream could not make.
+	for _, chunk := range splitIntoMembers(c.file, plaintext, c.Body.Build.Members) {
+		// Layers are listed in header order — left is applied first — so
+		// the body is built left-to-right and decoded right-to-left.
+		encoded := chunk
+		for _, layer := range c.Body.Build.Layers {
+			encoded = applyLayer(encoded, layer)
+		}
+		body = append(body, encoded...)
 	}
 	if t := c.Body.Build.Truncate; t != nil {
 		switch {
@@ -378,6 +419,15 @@ var _ = Describe("content-encoding corpus", func() {
 			}
 			return c.Body.Build.Layers
 		}
+		// How many members the recipe encodes the plaintext into; 1 unless the
+		// case is specifically about a concatenated stream. Guards the two
+		// multi-member rules against being satisfied by an ordinary body.
+		membersOf := func(c encodingCase) int {
+			if c.Body.Build == nil || c.Body.Build.Members == nil {
+				return 1
+			}
+			return *c.Body.Build.Members
+		}
 		usesCoding := func(c encodingCase, coding string) bool {
 			if c.Encoding == nil {
 				return false
@@ -436,6 +486,14 @@ var _ = Describe("content-encoding corpus", func() {
 			}},
 			{"zstd", "zstd-basic", func(c encodingCase) bool {
 				return usesCoding(c, "zstd") && len(layersOf(c)) == 1 && c.Expect.Outcome == "decoded"
+			}},
+			{"every member of a concatenated gzip stream", "gzip-concatenated-members", func(c encodingCase) bool {
+				return usesCoding(c, "gzip") && membersOf(c) > 1 && c.Expect.Outcome == "decoded" &&
+					c.Expect.Decoded != nil && c.Expect.Decoded.EqualsPlaintext
+			}},
+			{"every frame of a concatenated zstd stream", "zstd-concatenated-frames", func(c encodingCase) bool {
+				return usesCoding(c, "zstd") && membersOf(c) > 1 && c.Expect.Outcome == "decoded" &&
+					c.Expect.Decoded != nil && c.Expect.Decoded.EqualsPlaintext
 			}},
 			{"stacked layers peeled right-to-left", "stacked-gzip-then-zstd", func(c encodingCase) bool {
 				return len(layersOf(c)) > 1 && c.Expect.Outcome == "decoded"

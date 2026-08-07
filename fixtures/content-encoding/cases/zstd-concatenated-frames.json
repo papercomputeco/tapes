@@ -1,0 +1,10 @@
+{
+  "name": "zstd-concatenated-frames",
+  "category": "supported",
+  "description": "A zstd body emitted as two concatenated frames decodes to the whole plaintext, the same way a multi-member gzip body does.",
+  "encoding": "zstd",
+  "body": { "build": { "plaintext": { "utf8": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" }, "layers": ["zstd"], "members": 2 } },
+  "expect": { "outcome": "decoded", "decoded": { "equals_plaintext": true } },
+  "grounding": "The zstd format permits frames to be concatenated, and the rule is the one `gzip-concatenated-members` pins, stated for the corpus's other real coding: a decoder consumes the whole body, not its first frame. It is a separate case rather than a note on the gzip one because the two codings are decoded by unrelated libraries on both sides, so agreement here is not implied by agreement there — and because a rule pinned for only one coding is a rule the next binding swap can quietly drop for the other.",
+  "notes": "Unlike the gzip case, this one pins agreement rather than repairing a divergence: both implementations already read the second frame — Go through `klauspost/compress/zstd`, Rust through the `zstd` crate's streaming `read::Decoder`, which wraps libzstd's own multi-frame behaviour. Neither needed a multi-frame opt-in, which is exactly why nothing would have noticed if one of them lost it."
+}

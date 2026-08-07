@@ -86,7 +86,21 @@ Each `cases/*.json` file is one object.
 | --- | --- | --- |
 | `plaintext` | yes | the logical content; exactly one of the plaintext forms below |
 | `layers` | yes | codings to apply, **left-to-right**, in the same order the header lists them. `[]` means the body is the plaintext |
+| `members` | no | encode the plaintext as this many independently-encoded, concatenated streams instead of one. Default `1` |
 | `truncate` | no | exactly one of `{"drop_tail_bytes": n}`, `{"keep_head_bytes": n}` or `{"keep_head_ratio": [num, den]}`, applied to the **encoded** bytes after all layers |
+
+`members` splits the **plaintext** into that many near-equal chunks (remainder
+on the last), runs each through `layers` on its own, and concatenates the
+results. Splitting the plaintext rather than the encoded stream is what makes
+the recipe compressor-independent: the member boundary is at the same logical
+offset whoever compressed it, so the case can still assert equality with the
+*whole* plaintext. A split of the encoded bytes could not — it would be cutting
+at an offset only one encoder's output has.
+
+Both codings this corpus decodes allow it. A gzip stream is a series of members
+(RFC 1952 §2.2) and zstd frames may be concatenated, and a streaming compressor
+that flushes mid-body produces exactly this. Every chunk must be non-empty, so
+`members` may not exceed the plaintext length.
 
 `keep_head_ratio` is integer arithmetic: keep `len * num / den` bytes, truncating
 the division. The encoded length differs per compressor, so a ratio-truncated

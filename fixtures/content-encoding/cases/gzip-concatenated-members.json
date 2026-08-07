@@ -1,0 +1,10 @@
+{
+  "name": "gzip-concatenated-members",
+  "category": "supported",
+  "description": "A gzip body emitted as two concatenated members decodes to the whole plaintext, not to the first member's share of it.",
+  "encoding": "gzip",
+  "body": { "build": { "plaintext": { "utf8": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" }, "layers": ["gzip"], "members": 2 } },
+  "expect": { "outcome": "decoded", "decoded": { "equals_plaintext": true } },
+  "grounding": "RFC 1952 2.2 defines a gzip stream as a *series* of members, so reading one is reading a prefix of the body, not the body. A streaming compressor that flushed and restarted mid-request emits exactly this shape, which makes it ordinary traffic rather than an edge case. It is pinned because of how it fails: a single-member decoder stops at the first trailer and returns *success* with no truncation reported, so the capture is silently short and the loss reappears much later as a parse error with nothing pointing at the decoder. Every other way this corpus's decoders can lose bytes is loud; this one is not, which is why it needs a case rather than a comment.",
+  "notes": "Written after the two implementations were found disagreeing here: Go's `compress/gzip` reader continues into later members unless `Multistream(false)` is set, while Rust's `flate2::read::GzDecoder` stops at the first and `flate2::read::MultiGzDecoder` is the variant that does not. The `members` recipe field exists for this case. It splits the *plaintext* rather than the encoded bytes, so the split point is the same for every compressor and the assertion stays the one this corpus prefers: a gzip stream of X decodes to X."
+}
