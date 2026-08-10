@@ -142,6 +142,7 @@ func (s *Server) mountRoutes(router *oasfiber.Router) {
 			JSONBody("Captured turn", s.schema(TurnPayload{})).
 			JSONResponse(202, "Captured and queued for derivation", s.schema(ingestAcceptedResponse{})).
 			JSONResponse(400, "Malformed envelope or invalid session block", s.errorSchema()).
+			JSONResponse(413, "Body exceeds the ingest size limit", s.errorSchema()).
 			JSONResponse(422, "Well-formed but unprocessable (e.g. unknown provider)", s.errorSchema()).
 			JSONResponse(502, "A downstream dependency failed", s.errorSchema()))
 
@@ -162,6 +163,7 @@ func (s *Server) mountRoutes(router *oasfiber.Router) {
 				s.schema(transcriptAcceptedResponse{})).
 			JSONResponse(400, "Malformed body, invalid session block, or records not a JSON array",
 				s.errorSchema()).
+			JSONResponse(413, "Body exceeds the ingest size limit", s.errorSchema()).
 			JSONResponse(500, "Persisting the transcript failed", s.errorSchema()).
 			JSONResponse(501, "Driver does not host the raw-turn layer", s.errorSchema()))
 }

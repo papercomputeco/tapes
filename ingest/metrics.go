@@ -99,6 +99,9 @@ const (
 	// payload or a downstream outage — so no handler exit is invisible to the
 	// writes counter.
 	ResultInternalErr Result = "internal_error"
+	// ResultRejectOversize is a body-limit 413, recorded pre-parse by the
+	// app-level error handler — always under provider "unknown".
+	ResultRejectOversize Result = "reject_oversize"
 )
 
 // ObserveWrite increments the writes counter for a given provider/result.

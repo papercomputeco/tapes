@@ -38,4 +38,36 @@ var _ = Describe("Ingest OpenAPI route coverage", func() {
 		)
 		Expect(res.OK()).To(BeTrue(), res.Explain("the compiled ingest contract"))
 	})
+
+	It("documents the 413 body-limit response for ingest operations", func(ctx SpecContext) {
+		server, err := New(Config{ListenAddr: ":0"}, inmemory.NewDriver(), tapeslogger.NewNoop())
+		Expect(err).NotTo(HaveOccurred())
+
+		contract, err := server.OpenAPIParser().Compile(ctx)
+		Expect(err).NotTo(HaveOccurred())
+
+		tree := contract.Tree()
+		for _, path := range []string{"/v1/ingest", "/v1/ingest/transcript"} {
+			responses := treeAt(tree, "paths", path, "post", "responses")
+			Expect(treeAt(responses, "413")).NotTo(BeNil(),
+				"POST %s does not document the 413 body-limit rejection", path)
+			// Same schema as the surface's other rejections, so adapters can
+			// parse every error from this surface uniformly.
+			Expect(treeAt(responses, "413", "content", "application/json", "schema")).
+				To(Equal(treeAt(responses, "400", "content", "application/json", "schema")),
+					"POST %s must document the 413 body with the shared error schema", path)
+		}
+	})
 })
+
+// treeAt walks nested map[string]any keys, returning nil when any is absent.
+func treeAt(node any, keys ...string) any {
+	for _, key := range keys {
+		m, ok := node.(map[string]any)
+		if !ok {
+			return nil
+		}
+		node = m[key]
+	}
+	return node
+}

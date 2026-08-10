@@ -250,9 +250,14 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs oas.
 		providers[name] = prov
 	}
 
+	// Built before the Server struct because the fiber.Config needs it: the
+	// body-limit error handler records rejections on the same registry.
+	metrics := NewMetrics()
+
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 		BodyLimit:             MaxIngestBodyBytes,
+		ErrorHandler:          newBodyLimitErrorHandler(log, metrics),
 	})
 
 	wp, err := worker.NewPool(&worker.Config{
@@ -271,7 +276,7 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs oas.
 		logger:     log,
 		server:     app,
 		providers:  providers,
-		metrics:    NewMetrics(),
+		metrics:    metrics,
 		openapi:    NewOpenAPIParser(docs),
 	}
 	if rawStore, ok := driver.(storage.RawTurnStore); ok {

@@ -41,6 +41,8 @@ Run the standalone form only for sidecar/gateway capture:
 tapes serve ingest --postgres "$TAPES_STORAGE_POSTGRES_DSN"
 ```
 
+Request bodies are capped at roughly 14.67 MiB. A POST over the limit is rejected with `413` and the surface's standard JSON error envelope (`{"error": "..."}`), the same shape as every other rejection, so capture adapters can parse all failures uniformly. Each body-limit rejection is counted in `tapes_ingest_writes_total{provider="unknown",status="reject_oversize"}` (the body is never parsed, so the provider is unknown) and logged with the declared content length, the configured limit, and the request path.
+
 The ingest server appends to immutable `raw_turns`; it does not provide the read API. Treat it as a private trusted write surface, not as a public application endpoint. Authentication, network policy, and gateway grants are deployment responsibilities.
 
 ## Provider proxy
