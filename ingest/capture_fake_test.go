@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
@@ -24,6 +25,8 @@ type captureDriver struct {
 	mu          sync.Mutex
 	rawTurns    []storage.RawTurnRecord
 	ingestCalls []storage.IngestTurnRequest
+	requestIDs  []string
+	upstreamIDs []string
 }
 
 func newCaptureDriver() *captureDriver {
@@ -47,11 +50,23 @@ func (d *captureDriver) CountRawTurns(_ context.Context) (int64, error) {
 	return int64(len(d.rawTurns)), nil
 }
 
-func (d *captureDriver) IngestTurn(_ context.Context, req storage.IngestTurnRequest) (storage.IngestTurnResult, error) {
+func (d *captureDriver) IngestTurn(ctx context.Context, req storage.IngestTurnRequest) (storage.IngestTurnResult, error) {
 	d.mu.Lock()
 	d.ingestCalls = append(d.ingestCalls, req)
+	d.requestIDs = append(d.requestIDs, tapeslogger.RequestIDFromContext(ctx))
+	d.upstreamIDs = append(d.upstreamIDs, tapeslogger.UpstreamRequestIDFromContext(ctx))
 	d.mu.Unlock()
+	if log := tapeslogger.RequestLoggerFromContext(ctx); log != nil {
+		log.Info("test dependency write")
+	}
 	return storage.IngestTurnResult{SessionID: "00000000-0000-0000-0000-000000000001"}, nil
+}
+
+// WorkerCorrelation returns correlation restored on asynchronous storage calls.
+func (d *captureDriver) WorkerCorrelation() ([]string, []string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]string(nil), d.requestIDs...), append([]string(nil), d.upstreamIDs...)
 }
 
 // RawTurns returns a copy of every raw turn the server captured.
