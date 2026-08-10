@@ -57,7 +57,7 @@ func NewMetrics() *Metrics {
 			prometheus.HistogramOpts{
 				Name:    "tapes_ingest_body_bytes",
 				Help:    "Size of accepted ingest envelopes by provider.",
-				Buckets: prometheus.ExponentialBucketsRange(256, 16*1024*1024, 12),
+				Buckets: prometheus.ExponentialBucketsRange(256, 64*1024*1024, 14),
 			},
 			[]string{"provider"},
 		),
