@@ -1,7 +1,9 @@
 package logger_test
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -21,5 +23,21 @@ var _ = Describe("request logging context", func() {
 	It("returns empty values when no request scope is present", func() {
 		Expect(logger.RequestIDFromContext(context.Background())).To(BeEmpty())
 		Expect(logger.RequestLoggerFromContext(context.Background())).To(BeNil())
+	})
+
+	It("keeps provider correlation separate from a missing Paper request ID", func() {
+		var logs bytes.Buffer
+		ctx := logger.WithRequestMetadata(
+			context.Background(),
+			"",
+			"provider-request-7",
+			slog.New(slog.NewJSONHandler(&logs, nil)),
+		)
+
+		Expect(logger.RequestIDFromContext(ctx)).To(BeEmpty())
+		Expect(logger.UpstreamRequestIDFromContext(ctx)).To(Equal("provider-request-7"))
+		logger.RequestLoggerFromContext(ctx).Info("provider-only correlation")
+		Expect(logs.String()).To(ContainSubstring(`"upstream_request_id":"provider-request-7"`))
+		Expect(logs.String()).NotTo(ContainSubstring(`"request_id"`))
 	})
 })

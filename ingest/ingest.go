@@ -17,6 +17,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/llm/provider"
+	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	oas "github.com/papercomputeco/tapes/pkg/tapesoapi"
@@ -126,7 +127,7 @@ type TurnPayload struct {
 	RawResponseWithheld bool `json:"raw_response_withheld,omitempty"`
 
 	// Meta is the capture adapter's metadata block. Parsed for the
-	// fields ingest promotes (request_id for raw-turn dedup); the
+	// fields ingest promotes (request IDs and raw-turn dedup); the
 	// verbatim JSON is persisted alongside the raw turn so fields
 	// unknown to this build survive.
 	Meta TurnMeta `json:"meta"`
@@ -147,12 +148,14 @@ type TurnPayload struct {
 
 // TurnMeta mirrors the capture adapter's meta block (tapes-extproc
 // TurnMeta). Every field is optional; adapters that predate a field
-// simply omit it. Ingest only reads RequestID directly (raw-turn
-// dedup) — the rest ride along verbatim in the raw layer and become
-// queryable post-derive.
+// simply omit it. Ingest reads the two request IDs and ThreadID for
+// asynchronous processing; the full block rides along verbatim in the raw
+// layer and becomes queryable post-derive. RequestID is Paper's canonical attempt ID;
+// UpstreamRequestID, when present, is issued independently by the provider.
 type TurnMeta struct {
-	RequestID   string `json:"request_id,omitempty"`
-	ContentType string `json:"content_type,omitempty"`
+	RequestID         string `json:"request_id,omitempty"`
+	UpstreamRequestID string `json:"upstream_request_id,omitempty"`
+	ContentType       string `json:"content_type,omitempty"`
 
 	// ThreadID is the harness sub-thread id resolved by the capture
 	// adapter (extproc headers.ThreadID); "" for main-thread calls.
@@ -907,6 +910,15 @@ func validateReducedResponse(resp *llm.ChatResponse) error {
 	return nil
 }
 
+const maxWorkerCorrelationBytes = 256
+
+func boundedWorkerCorrelation(value string) string {
+	if len(value) > maxWorkerCorrelationBytes {
+		return ""
+	}
+	return value
+}
+
 // processTurn parses a raw turn payload and enqueues it for async DAG storage.
 // Returned errors wrap one of ErrEnvelope / ErrUnprocessable / ErrDownstream so
 // the caller can map to an HTTP status without re-parsing the message.
@@ -939,7 +951,14 @@ func (s *Server) processTurn(turn *TurnPayload, weight int) error {
 		sessHarnessSessionID = turn.Session.HarnessSessionID
 		sessOrgID = turn.Session.OrgID
 	}
-	s.logger.Debug("ingesting turn",
+	requestID := boundedWorkerCorrelation(turn.Meta.RequestID)
+	upstreamRequestID := boundedWorkerCorrelation(turn.Meta.UpstreamRequestID)
+	log := tapeslogger.WithRequestFields(
+		s.logger,
+		requestID,
+		upstreamRequestID,
+	)
+	log.Debug("ingesting turn",
 		"provider", prov.Name(),
 		"agent", turn.AgentName,
 		"model", parsedReq.Model,
@@ -949,17 +968,19 @@ func (s *Server) processTurn(turn *TurnPayload, weight int) error {
 	)
 
 	switch reason := s.workerPool.Admit(worker.Job{
-		Provider:  prov.Name(),
-		AgentName: turn.AgentName,
-		ThreadID:  turn.Meta.ThreadID,
-		Req:       parsedReq,
-		Resp:      &parsedResp,
-		Session:   turn.Session,
-		Weight:    weight,
+		Provider:          prov.Name(),
+		AgentName:         turn.AgentName,
+		ThreadID:          turn.Meta.ThreadID,
+		RequestID:         requestID,
+		UpstreamRequestID: upstreamRequestID,
+		Req:               parsedReq,
+		Resp:              &parsedResp,
+		Session:           turn.Session,
+		Weight:            weight,
 	}); reason {
 	case worker.RejectNone:
 	case worker.RejectByteBudget:
-		s.logger.Error("ingest enqueue failed: worker byte budget exceeded",
+		log.Error("ingest enqueue failed: worker byte budget exceeded",
 			"provider", prov.Name(),
 			"agent", turn.AgentName,
 			"model", parsedReq.Model,
@@ -968,7 +989,7 @@ func (s *Server) processTurn(turn *TurnPayload, weight int) error {
 		s.metrics.SetQueueDepth(s.workerPool.Len())
 		return ErrWorkerByteBudget
 	case worker.RejectQueueFull:
-		s.logger.Error("ingest enqueue failed: worker queue full",
+		log.Error("ingest enqueue failed: worker queue full",
 			"provider", prov.Name(),
 			"agent", turn.AgentName,
 			"model", parsedReq.Model,

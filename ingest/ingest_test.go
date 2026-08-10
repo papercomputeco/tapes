@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -59,7 +60,10 @@ func reducedResponse(model, text string, usage *llm.Usage) llm.ChatResponse {
 }
 
 func newTestServer() (*ingest.Server, *captureDriver, string) {
-	logger := tapeslogger.NewNoop()
+	return newTestServerWithLogger(tapeslogger.NewNoop())
+}
+
+func newTestServerWithLogger(logger *slog.Logger) (*ingest.Server, *captureDriver, string) {
 	driver := newCaptureDriver()
 
 	s, err := ingest.New(
@@ -214,6 +218,89 @@ var _ = Describe("Ingest Server", func() {
 	})
 
 	Describe("POST /v1/ingest", func() {
+		It("TestTapesIngestWorkerPropagatesRequestIDInJobMetadata", func() {
+			const (
+				requestID         = "d9de5526-b3c2-44d7-b2d0-2c555ef012f2"
+				upstreamRequestID = "provider-request-42"
+			)
+			var logs bytes.Buffer
+			log := slog.New(slog.NewJSONHandler(&logs, nil))
+			correlationServer, correlationDriver, correlationURL := newTestServerWithLogger(log)
+			defer func() { Expect(correlationServer.Close()).To(Succeed()) }()
+
+			payload := ingest.TurnPayload{
+				Provider: "ollama",
+				RawRequest: mustJSON(ollamaRequest{
+					Model:    "llama3",
+					Messages: []ollamaMessage{{Role: "user", Content: "Hello"}},
+				}),
+				Response: reducedResponse("llama3", "Hi", nil),
+				Meta: ingest.TurnMeta{
+					RequestID:         requestID,
+					UpstreamRequestID: upstreamRequestID,
+				},
+				Session: &sessions.IngestEnvelope{
+					HarnessID:        "claude",
+					HarnessSessionID: "correlation-session",
+				},
+			}
+			body, err := json.Marshal(payload)
+			Expect(err).NotTo(HaveOccurred())
+			resp, err := client.Post(correlationURL+"/v1/ingest", "application/json", bytes.NewReader(body))
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+			Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
+
+			Eventually(func() []string {
+				requestIDs, _ := correlationDriver.WorkerCorrelation()
+				return requestIDs
+			}).Should(ConsistOf(requestID))
+			_, upstreamIDs := correlationDriver.WorkerCorrelation()
+			Expect(upstreamIDs).To(ConsistOf(upstreamRequestID))
+			Expect(logs.String()).To(ContainSubstring(`"request_id":"` + requestID + `"`))
+			Expect(logs.String()).To(ContainSubstring(`"upstream_request_id":"` + upstreamRequestID + `"`))
+		})
+
+		It("TestRequestAndUpstreamRequestIDsRemainDistinctAndUnlabeled", func() {
+			const (
+				requestID         = "56ae9423-cc87-4a45-bccc-b21752a5783c"
+				upstreamRequestID = "provider-request-99"
+			)
+			payload := ingest.TurnPayload{
+				Provider: "ollama",
+				RawRequest: mustJSON(ollamaRequest{
+					Model:    "llama3",
+					Messages: []ollamaMessage{{Role: "user", Content: "Hello"}},
+				}),
+				Response: reducedResponse("llama3", "Hi", nil),
+				Meta: ingest.TurnMeta{
+					RequestID:         requestID,
+					UpstreamRequestID: upstreamRequestID,
+				},
+				Session: &sessions.IngestEnvelope{
+					HarnessID:        "claude",
+					HarnessSessionID: "label-safety-session",
+				},
+			}
+			body, err := json.Marshal(payload)
+			Expect(err).NotTo(HaveOccurred())
+			resp, err := client.Post(baseURL+"/v1/ingest", "application/json", bytes.NewReader(body))
+			Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+			Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
+
+			families, err := server.Metrics().Registry().Gather()
+			Expect(err).NotTo(HaveOccurred())
+			for _, family := range families {
+				for _, metric := range family.Metric {
+					for _, label := range metric.Label {
+						Expect(label.GetName()).NotTo(BeElementOf("request_id", "upstream_request_id"))
+						Expect(label.GetValue()).NotTo(BeElementOf(requestID, upstreamRequestID))
+					}
+				}
+			}
+		})
+
 		It("accepts a valid ollama turn and captures it into the raw layer", func() {
 			payload := ingest.TurnPayload{
 				Provider:  "ollama",

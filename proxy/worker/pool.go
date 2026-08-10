@@ -20,6 +20,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/derive"
 	"github.com/papercomputeco/tapes/pkg/llm"
+	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
@@ -52,8 +53,13 @@ type Job struct {
 	// the main thread), captured at the wire and stamped onto the
 	// turn's nodes as non-hashed metadata.
 	ThreadID string
-	Req      *llm.ChatRequest
-	Resp     *llm.ChatResponse
+	// RequestID is Paper's canonical identifier for the captured HTTP attempt.
+	// UpstreamRequestID is the provider's independent identifier for its side
+	// of that attempt; it must never replace RequestID when the latter is empty.
+	RequestID         string
+	UpstreamRequestID string
+	Req               *llm.ChatRequest
+	Resp              *llm.ChatResponse
 
 	// Weight is the estimated bytes this job retains live (its parsed body)
 	// while queued and processed; the pool holds it against the byte budget
@@ -163,24 +169,24 @@ func (p *Pool) Enqueue(job Job) bool {
 // until the job finishes processing (released in worker). RejectNone means the
 // job was enqueued; the other reasons name the ceiling that declined it.
 func (p *Pool) Admit(job Job) RejectReason {
+	log := tapeslogger.WithRequestFields(p.logger, job.RequestID, job.UpstreamRequestID)
 	if !p.reserve(job.Weight) {
-		p.logger.Error("job not queued, byte budget exceeded, job dropped",
+		log.Error("job not queued, byte budget exceeded, job dropped",
 			"provider", job.Provider,
 			"model", job.Req.Model,
 		)
 		return RejectByteBudget
 	}
-
 	select {
 	case p.queue <- job:
-		p.logger.Debug("job queued",
+		log.Debug("job queued",
 			"provider", job.Provider,
 			"model", job.Req.Model,
 		)
 		return RejectNone
 	default:
 		p.release(job.Weight)
-		p.logger.Error("job not queued, queue full, job dropped",
+		log.Error("job not queued, queue full, job dropped",
 			"provider", job.Provider,
 			"model", job.Req.Model,
 		)
@@ -249,11 +255,17 @@ func (p *Pool) worker(id uint) {
 // deriver's input), and ensures the turn's sessions row exists so the
 // deriver can resolve it and attach the turn's spans.
 func (p *Pool) processJob(job Job) {
-	ctx := context.Background()
+	ctx := tapeslogger.WithRequestMetadata(
+		context.Background(),
+		job.RequestID,
+		job.UpstreamRequestID,
+		p.logger,
+	)
+	log := tapeslogger.RequestLoggerFromContext(ctx)
 
 	chain := buildTurnChain(job, p.config.Project)
 	if len(chain) == 0 {
-		p.logger.Error("capture skipped: turn produced no nodes",
+		log.Error("capture skipped: turn produced no nodes",
 			"provider", job.Provider,
 		)
 		return
@@ -269,7 +281,9 @@ func (p *Pool) processJob(job Job) {
 // capture inserts the row at ~capture time, so the deriver's
 // received_at fallback is accurate.
 type rawTurnMeta struct {
-	ThreadID string `json:"thread_id,omitempty"`
+	ThreadID          string `json:"thread_id,omitempty"`
+	RequestID         string `json:"request_id,omitempty"`
+	UpstreamRequestID string `json:"upstream_request_id,omitempty"`
 }
 
 // persistRawTurn appends one captured turn to the immutable raw-turn
@@ -286,6 +300,7 @@ type rawTurnMeta struct {
 // Failures are logged, never propagated: a raw-layer outage must not
 // take down capture.
 func (p *Pool) persistRawTurn(ctx context.Context, job Job, chain []*merkle.Node) {
+	log := tapeslogger.RequestLoggerFromContext(ctx)
 	rawStore, ok := p.config.Driver.(storage.RawTurnStore)
 	if !ok || len(job.RawRequest) == 0 {
 		return
@@ -296,32 +311,40 @@ func (p *Pool) persistRawTurn(ctx context.Context, job Job, chain []*merkle.Node
 
 	envelope, harnessSessionID, err := sessions.ResolveHarnessSessionID(job.Session, root.Hash)
 	if err != nil {
-		p.logger.Error("raw turn skipped: resolve harness_session_id",
+		log.Error("raw turn skipped: resolve harness_session_id",
 			"provider", job.Provider, "error", err)
 		return
 	}
 
 	response, err := json.Marshal(job.Resp)
 	if err != nil {
-		p.logger.Error("raw turn skipped: marshal response",
+		log.Error("raw turn skipped: marshal response",
 			"provider", job.Provider, "error", err)
 		return
 	}
 
-	meta, err := json.Marshal(rawTurnMeta{ThreadID: job.ThreadID})
+	meta, err := json.Marshal(rawTurnMeta{
+		ThreadID:          job.ThreadID,
+		RequestID:         job.RequestID,
+		UpstreamRequestID: job.UpstreamRequestID,
+	})
 	if err != nil {
-		p.logger.Error("raw turn skipped: marshal meta",
+		log.Error("raw turn skipped: marshal meta",
 			"provider", job.Provider, "error", err)
 		return
 	}
 
 	sessionJSON, err := json.Marshal(envelope)
 	if err != nil {
-		p.logger.Error("raw turn skipped: marshal session envelope",
+		log.Error("raw turn skipped: marshal session envelope",
 			"provider", job.Provider, "error", err)
 		return
 	}
 
+	requestID := job.RequestID
+	if requestID == "" {
+		requestID = head.Hash
+	}
 	if _, err := rawStore.PutRawTurn(ctx, storage.RawTurnRecord{
 		OrgID:            envelope.OrgID,
 		Source:           storage.RawTurnSourceWire,
@@ -329,16 +352,16 @@ func (p *Pool) persistRawTurn(ctx context.Context, job Job, chain []*merkle.Node
 		AgentName:        job.AgentName,
 		HarnessID:        envelope.HarnessIDOrUnknown(),
 		HarnessSessionID: harnessSessionID,
-		// The leaf (response) node hash is content-addressed and unique
-		// per turn, so it both dedupes an identical re-send and ties the
-		// raw row back to the turn's Merkle identity.
-		RequestID:       head.Hash,
+		// A canonical request ID wins when the capture path supplied one.
+		// The leaf hash remains the legacy local-proxy fallback: it dedupes
+		// identical re-sends without borrowing a provider-issued ID.
+		RequestID:       requestID,
 		RawRequest:      job.RawRequest,
 		Response:        response,
 		Meta:            meta,
 		SessionEnvelope: sessionJSON,
 	}); err != nil {
-		p.logger.Error("raw turn persist failed",
+		log.Error("raw turn persist failed",
 			"provider", job.Provider,
 			"harness_session_id", harnessSessionID,
 			"error", err,
@@ -356,6 +379,7 @@ func (p *Pool) persistRawTurn(ctx context.Context, job Job, chain []*merkle.Node
 // Drivers without the SessionIngester capability (the in-memory test
 // driver) have no sessions surface, so this is a no-op for them.
 func (p *Pool) ingestSession(ctx context.Context, job Job, chain []*merkle.Node) {
+	log := tapeslogger.RequestLoggerFromContext(ctx)
 	ingester, ok := p.config.Driver.(storage.SessionIngester)
 	if !ok || job.Session == nil {
 		return
@@ -366,7 +390,7 @@ func (p *Pool) ingestSession(ctx context.Context, job Job, chain []*merkle.Node)
 		Nodes:        chain,
 		DerivedTitle: derive.SessionTitle(chain[len(chain)-1].Kind, job.Resp),
 	}); err != nil {
-		p.logger.Error("session ingest failed",
+		log.Error("session ingest failed",
 			"provider", job.Provider,
 			"error", err,
 		)
