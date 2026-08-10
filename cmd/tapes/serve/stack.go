@@ -235,7 +235,7 @@ func (stack *Stack) Run(ctx context.Context) error {
 		"provider", stack.ProviderType,
 	)
 
-	apiServer, err := api.NewServer(api.Config{
+	apiServer, err := api.NewServer(api.Config{ //nolint:contextcheck // Fiber owns request contexts.
 		ListenAddr:       stack.APIListen,
 		Embedder:         embedder,
 		SpanSearcher:     spanSearcher,
