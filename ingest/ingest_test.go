@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -175,6 +176,40 @@ var _ = Describe("Ingest Server", func() {
 			defer scrape.Body.Close()
 			txt, _ := io.ReadAll(scrape.Body)
 			Expect(string(txt)).To(ContainSubstring(`status="unknown_provider"`))
+		})
+
+		It("exposes tapes_ingest_body_bytes buckets topping out at 64 MiB", func() {
+			payload := ingest.TurnPayload{
+				Provider: "ollama",
+				RawRequest: mustJSON(ollamaRequest{
+					Model:    "llama3",
+					Messages: []ollamaMessage{{Role: "user", Content: "Hello"}},
+				}),
+				Response: reducedResponse("llama3", "Hi", nil),
+			}
+			body, _ := json.Marshal(payload)
+			resp, err := client.Post(baseURL+"/v1/ingest", "application/json", bytes.NewReader(body))
+			Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+
+			scrape, err := client.Get(baseURL + "/metrics")
+			Expect(err).NotTo(HaveOccurred())
+			defer scrape.Body.Close()
+			txt, _ := io.ReadAll(scrape.Body)
+
+			// 64<<20 renders as 6.7108864e+07; the top finite bucket must sit
+			// there so a near-limit envelope doesn't just saturate into +Inf.
+			Expect(string(txt)).To(ContainSubstring(`tapes_ingest_body_bytes_bucket{provider="ollama",le="6.7108864e+07"}`))
+			Expect(string(txt)).To(ContainSubstring("# HELP tapes_ingest_body_bytes Size of accepted ingest envelopes by provider."))
+
+			// 14 mirrors the bucket count in metrics.go's ExponentialBucketsRange.
+			finite := 0
+			for line := range strings.SplitSeq(string(txt), "\n") {
+				if strings.HasPrefix(line, "tapes_ingest_body_bytes_bucket{") && !strings.Contains(line, `le="+Inf"`) {
+					finite++
+				}
+			}
+			Expect(finite).To(Equal(14))
 		})
 	})
 
