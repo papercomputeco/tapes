@@ -213,7 +213,7 @@ func (c *apiCommander) run(ctx context.Context) error {
 		)
 	}
 
-	server, err := api.NewServer(apiConfig, driver, c.logger)
+	server, err := api.NewServer(apiConfig, driver, c.logger) //nolint:contextcheck // Fiber owns request contexts.
 	if err != nil {
 		return fmt.Errorf("could not build new api server: %w", err)
 	}

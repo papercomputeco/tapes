@@ -90,7 +90,12 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 		openapi:        NewOpenAPIParser(docs),
 	}
 
-	// RED metrics is registered first so it sits as the outermost wrapper.
+	// Correlation is the outermost request middleware so every downstream log,
+	// including metrics/recovery error paths, can share one validated ID.
+	app.Use(requestIDMiddleware(log))
+
+	// RED metrics is registered after correlation so it remains outside the
+	// recovery middleware while inheriting the request context.
 	// Order matters: the request-count and duration increments run AFTER
 	// c.Next() returns, not in a defer, so a panic unwinding through them
 	// would skip those updates. Putting recover.New() inside the metrics

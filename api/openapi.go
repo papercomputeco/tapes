@@ -72,7 +72,7 @@ func NewOpenAPIParser(docs tapesoapi.TypeDocs) *tapesoapi.Parser {
 // driver — the handlers it registers are function values, and nothing calls
 // them.
 func CompileOpenAPI(ctx context.Context, docs tapesoapi.TypeDocs) (*tapesoapi.CompiledDoc, error) {
-	server, err := newServer(
+	server, err := newServer( //nolint:contextcheck // Fiber establishes context only when a request arrives.
 		Config{ListenAddr: ":0"},
 		nil,
 		slog.New(slog.DiscardHandler),
