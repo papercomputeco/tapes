@@ -129,7 +129,9 @@ func newPagingDriver(org string, n int, latest time.Time) *pagingExportStubDrive
 var _ = Describe("GET /v1/sessions/export", func() {
 	// Reads are scoped to the single tenant, so seeded data must live there.
 	const org = singleTenantOrgID
-	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	// Relative to the wall clock: the handler clamps its window to
+	// time.Now()-30d, so a pinned calendar date ages out of range.
+	now := time.Now().UTC().Truncate(time.Second)
 
 	// T-7: default window (no since/until) + bypasses the 200-row UI cap.
 	It("streams every session in the default 30-day window, past the 200-row cap", func() {
