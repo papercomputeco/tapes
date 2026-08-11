@@ -25,6 +25,7 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/papercomputeco/tapes/extproc"
+	"github.com/papercomputeco/tapes/pkg/utils"
 )
 
 func main() {
@@ -36,6 +37,8 @@ func main() {
 	slog.SetDefault(logger)
 
 	slog.Info("Starting tapes-extproc",
+		"version", utils.Version,
+		"commit", utils.Sha,
 		"listen_addr", cfg.ListenAddr,
 		"metrics_addr", cfg.MetricsAddr,
 		"ingest_url", cfg.IngestURL,
@@ -48,6 +51,9 @@ func main() {
 		slog.Error("Failed to create processor", "error", err)
 		os.Exit(1)
 	}
+	// utils.Version/utils.Sha are stamped by the image build's ldflags
+	// (releaseLDFlags in .dagger/build.go); "dev"/"HEAD" mean an unstamped build.
+	processor.Metrics().SetBuildInfo(utils.Version, utils.Sha)
 
 	// gRPC server.
 	grpcServer := grpc.NewServer()
