@@ -90,6 +90,8 @@ type Metrics struct {
 	requestContentLength        *prometheus.HistogramVec
 	requestContentLengthUnknown *prometheus.CounterVec
 
+	buildInfo *prometheus.GaugeVec
+
 	largeTurnThreshold int
 }
 
@@ -245,8 +247,15 @@ func NewMetrics() *Metrics {
 			},
 			[]string{"provider"},
 		),
+		buildInfo: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "tapes_extproc_build_info",
+				Help: "Build metadata for the running binary. Value is always 1 so other metrics can be joined onto version and commit with a group_left on this series.",
+			},
+			[]string{"version", "commit"},
+		),
 	}
-	reg.MustRegister(m.captured, m.terminal, m.largeTurns, m.dropped, m.reducerEmpty, m.responseDecoded, m.responseSalvaged, m.rawAttached, m.rawSkipped, m.rawFallback, m.sseChunks, m.turnDuration, m.terminalDuration, m.bodyBytes, m.bodyBytesByOutcome, m.dispatchSeconds, m.inflight, m.requestContentLength, m.requestContentLengthUnknown)
+	reg.MustRegister(m.captured, m.terminal, m.largeTurns, m.dropped, m.reducerEmpty, m.responseDecoded, m.responseSalvaged, m.rawAttached, m.rawSkipped, m.rawFallback, m.sseChunks, m.turnDuration, m.terminalDuration, m.bodyBytes, m.bodyBytesByOutcome, m.dispatchSeconds, m.inflight, m.requestContentLength, m.requestContentLengthUnknown, m.buildInfo)
 	m.largeTurnThreshold = DefaultLargeTurnThreshold
 
 	// Pre-create a zero row for every known drop reason × every provider we
@@ -597,6 +606,12 @@ func (m *Metrics) ObserveDispatchLatency(provider string, seconds float64) {
 		provider = labelUnknown
 	}
 	m.dispatchSeconds.WithLabelValues(provider).Observe(seconds)
+}
+
+// SetBuildInfo publishes the build metadata series. The value is always
+// exactly 1 (Prometheus build_info convention — enables group_left joins).
+func (m *Metrics) SetBuildInfo(version, commit string) {
+	m.buildInfo.WithLabelValues(version, commit).Set(1)
 }
 
 // SetInflight updates the gauge of currently-dispatching turns.

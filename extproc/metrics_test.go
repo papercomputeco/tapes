@@ -3,13 +3,18 @@ package extproc
 import (
 	"io"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/papercomputeco/tapes/pkg/utils"
 )
 
 var _ = Describe("Extproc metrics", func() {
@@ -248,6 +253,43 @@ var _ = Describe("Extproc metrics", func() {
 		Expect(txt).NotTo(ContainSubstring(`tapes_extproc_request_content_length_bytes_bucket`))
 		Expect(txt).NotTo(ContainSubstring(`tapes_extproc_request_content_length_bytes_count`))
 		Expect(txt).NotTo(ContainSubstring(`tapes_extproc_request_content_length_bytes_sum`))
+	})
+
+	It("declares utils.Version/utils.Sha for the ldflags contract and renders build_info as 1", func() {
+		// Referencing the package vars directly means compiling this file
+		// proves the utils.Version/utils.Sha ldflags symbols still exist.
+		// Values are not pinned: release builds stamp them via -X.
+		Expect(utils.Version).NotTo(BeEmpty())
+		Expect(utils.Sha).NotTo(BeEmpty())
+
+		// Lock the other side of the contract: the Dagger build must still
+		// stamp exactly these symbol names, and the extproc image build must
+		// still route through it.
+		_, file, _, ok := runtime.Caller(0)
+		Expect(ok).To(BeTrue(), "runtime.Caller failed")
+		build, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", ".dagger", "build.go"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(build)).To(ContainSubstring(`-X 'github.com/papercomputeco/tapes/pkg/utils.Version=`))
+		Expect(string(build)).To(ContainSubstring(`-X 'github.com/papercomputeco/tapes/pkg/utils.Sha=`))
+		img, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", ".dagger", "extproc.go"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(img)).To(ContainSubstring(`releaseLDFlags(`))
+
+		m := NewMetrics()
+		m.SetBuildInfo("v1.2.3", "abc1234")
+
+		srv := httptest.NewServer(m.Handler())
+		defer srv.Close()
+
+		resp, err := srv.Client().Get(srv.URL + "/")
+		Expect(err).NotTo(HaveOccurred())
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		txt := string(body)
+
+		// Exact line: value 1 (build_info join convention) and only the
+		// version/commit labels.
+		Expect(txt).To(ContainSubstring(`tapes_extproc_build_info{commit="abc1234",version="v1.2.3"} 1`))
 	})
 
 	It("AllDropReasons has no duplicates and no whitespace", func() {
