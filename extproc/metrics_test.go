@@ -3,10 +3,13 @@ package extproc
 import (
 	"io"
 	"net/http/httptest"
+	"regexp"
+	"strconv"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 var _ = Describe("Extproc metrics", func() {
@@ -159,6 +162,94 @@ var _ = Describe("Extproc metrics", func() {
 		Expect(txt).To(ContainSubstring(`model_family="other"`))
 	})
 
+	It("shares one 256B-to-64MiB 14-bucket scheme across all three body-size histograms", func() {
+		// bodySizeBuckets must be exactly the 14-bucket exponential range
+		// from 256 B to 64 MiB.
+		Expect(bodySizeBuckets).To(Equal(prometheus.ExponentialBucketsRange(256, 64*1024*1024, 14)))
+		Expect(bodySizeBuckets).To(HaveLen(14))
+		Expect(bodySizeBuckets[0]).To(BeNumerically("~", 256, 1e-6))
+		Expect(bodySizeBuckets[13]).To(BeNumerically("~", 64*1024*1024, 1))
+
+		// Cross-check the rendered exposition: all three body-size
+		// histograms must scrape identical le= boundary sets.
+		m := NewMetrics()
+		m.ObserveBodyBytes("anthropic", "request", 1024)
+		m.ObserveBodyBytesByOutcome("anthropic", "request", "accepted", "accepted", 1024)
+		m.ObserveRequestContentLength("anthropic", 1024)
+
+		srv := httptest.NewServer(m.Handler())
+		defer srv.Close()
+
+		resp, err := srv.Client().Get(srv.URL + "/")
+		Expect(err).NotTo(HaveOccurred())
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		txt := string(body)
+
+		bodyLes := metricsBucketBoundaries(txt, "tapes_extproc_body_bytes")
+		outcomeLes := metricsBucketBoundaries(txt, "tapes_extproc_body_bytes_by_outcome")
+		contentLengthLes := metricsBucketBoundaries(txt, "tapes_extproc_request_content_length_bytes")
+
+		// 14 finite boundaries plus the implicit +Inf bucket.
+		Expect(bodyLes).To(HaveLen(15))
+		Expect(outcomeLes).To(Equal(bodyLes))
+		Expect(contentLengthLes).To(Equal(bodyLes))
+
+		Expect(bodyLes[len(bodyLes)-1]).To(Equal("+Inf"))
+		first, err := strconv.ParseFloat(bodyLes[0], 64)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(first).To(BeNumerically("~", 256, 1e-6))
+		last, err := strconv.ParseFloat(bodyLes[len(bodyLes)-2], 64)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(last).To(BeNumerically("~", 64*1024*1024, 1))
+	})
+
+	It("routes content-length metric providers through the normalizeProvider allowlist", func() {
+		m := NewMetrics()
+		m.ObserveRequestContentLength("custom-weird-provider", 512)
+		m.ObserveRequestContentLengthUnknown("custom-weird-provider")
+
+		srv := httptest.NewServer(m.Handler())
+		defer srv.Close()
+
+		resp, err := srv.Client().Get(srv.URL + "/")
+		Expect(err).NotTo(HaveOccurred())
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		txt := string(body)
+
+		// Exact sample lines: off-allowlist providers normalize to "other",
+		// and the full-line match proves provider is the only label.
+		Expect(txt).To(ContainSubstring(`tapes_extproc_request_content_length_bytes_count{provider="other"} 1`))
+		Expect(txt).To(ContainSubstring(`tapes_extproc_request_content_length_unknown_total{provider="other"} 1`))
+
+		// The raw provider string must never leak into a label row.
+		Expect(txt).NotTo(ContainSubstring(`provider="custom-weird-provider"`))
+	})
+
+	It("ObserveRequestContentLengthUnknown increments the counter and never touches the histogram", func() {
+		m := NewMetrics()
+		m.ObserveRequestContentLengthUnknown("anthropic")
+		m.ObserveRequestContentLengthUnknown("anthropic")
+
+		srv := httptest.NewServer(m.Handler())
+		defer srv.Close()
+
+		resp, err := srv.Client().Get(srv.URL + "/")
+		Expect(err).NotTo(HaveOccurred())
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		txt := string(body)
+
+		Expect(txt).To(ContainSubstring(`tapes_extproc_request_content_length_unknown_total{provider="anthropic"} 2`))
+
+		// No histogram series may render at all: absent series means _count
+		// is 0 and the le="256" bucket is 0 (no Observe(0) stand-in).
+		Expect(txt).NotTo(ContainSubstring(`tapes_extproc_request_content_length_bytes_bucket`))
+		Expect(txt).NotTo(ContainSubstring(`tapes_extproc_request_content_length_bytes_count`))
+		Expect(txt).NotTo(ContainSubstring(`tapes_extproc_request_content_length_bytes_sum`))
+	})
+
 	It("AllDropReasons has no duplicates and no whitespace", func() {
 		seen := map[string]bool{}
 		for _, r := range AllDropReasons() {
@@ -169,3 +260,18 @@ var _ = Describe("Extproc metrics", func() {
 		}
 	})
 })
+
+// metricsBucketBoundaries extracts the ordered, de-duplicated le= boundary
+// values rendered for a histogram's _bucket samples in a scraped exposition body.
+func metricsBucketBoundaries(txt, metric string) []string {
+	re := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(metric) + `_bucket\{[^}]*le="([^"]+)"[^}]*\} `)
+	var les []string
+	seen := map[string]bool{}
+	for _, match := range re.FindAllStringSubmatch(txt, -1) {
+		if !seen[match[1]] {
+			seen[match[1]] = true
+			les = append(les, match[1])
+		}
+	}
+	return les
+}

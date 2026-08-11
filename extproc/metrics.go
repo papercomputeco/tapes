@@ -28,6 +28,14 @@ import (
 // observability knob wearing a policy's shape.
 const DefaultLargeTurnThreshold = 4 * 1024 * 1024
 
+// bodySizeBuckets is the single bucket scheme shared by every body-size
+// histogram (tapes_extproc_body_bytes, tapes_extproc_body_bytes_by_outcome,
+// tapes_extproc_request_content_length_bytes): 256 B → 64 MiB across 14
+// buckets. 64 MiB tops the 32 MB Anthropic Messages contract plus
+// gRPC/framing headroom; defining it once keeps the histograms comparable
+// bucket-for-bucket in PromQL. Do not fork per-histogram copies.
+var bodySizeBuckets = prometheus.ExponentialBucketsRange(256, 64*1024*1024, 14)
+
 // Recurring label values. These are wire-visible: they appear verbatim in the
 // Prometheus label set and in the dispatched envelope, so every dashboard,
 // alert and downstream consumer reads these exact strings. Naming them keeps
@@ -78,6 +86,9 @@ type Metrics struct {
 	bodyBytesByOutcome *prometheus.HistogramVec
 	dispatchSeconds    *prometheus.HistogramVec
 	inflight           prometheus.Gauge
+
+	requestContentLength        *prometheus.HistogramVec
+	requestContentLengthUnknown *prometheus.CounterVec
 
 	largeTurnThreshold int
 }
@@ -195,7 +206,7 @@ func NewMetrics() *Metrics {
 			prometheus.HistogramOpts{
 				Name:    "tapes_extproc_body_bytes",
 				Help:    "Accumulated body size at EndOfStream, by provider and side.",
-				Buckets: prometheus.ExponentialBucketsRange(256, 16*1024*1024, 12),
+				Buckets: bodySizeBuckets,
 			},
 			[]string{"provider", "side"},
 		),
@@ -203,7 +214,7 @@ func NewMetrics() *Metrics {
 			prometheus.HistogramOpts{
 				Name:    "tapes_extproc_body_bytes_by_outcome",
 				Help:    "Accumulated request/response body size by terminal outcome. Use this to compare failed and captured turn sizes without relying on success-only body_bytes.",
-				Buckets: prometheus.ExponentialBucketsRange(256, 16*1024*1024, 12),
+				Buckets: bodySizeBuckets,
 			},
 			[]string{"provider", "side", "outcome", "reason"},
 		),
@@ -219,8 +230,23 @@ func NewMetrics() *Metrics {
 			Name: "tapes_extproc_inflight_dispatches",
 			Help: "Number of dispatches currently awaiting completion.",
 		}),
+		requestContentLength: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "tapes_extproc_request_content_length_bytes",
+				Help:    "Request Content-Length as observed at the request-headers phase, before any body message can be rejected at the gRPC recv boundary — so >4 MiB requests that never survive the body phase are still sized here. Absent or unparseable Content-Length is never observed (not even as 0); those requests are counted in tapes_extproc_request_content_length_unknown_total instead.",
+				Buckets: bodySizeBuckets,
+			},
+			[]string{"provider"},
+		),
+		requestContentLengthUnknown: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "tapes_extproc_request_content_length_unknown_total",
+				Help: "Requests whose Content-Length header was absent or unparseable at the request-headers phase (e.g. chunked/streaming clients). These requests make no observation in tapes_extproc_request_content_length_bytes, so this counter measures exactly the population that histogram cannot see.",
+			},
+			[]string{"provider"},
+		),
 	}
-	reg.MustRegister(m.captured, m.terminal, m.largeTurns, m.dropped, m.reducerEmpty, m.responseDecoded, m.responseSalvaged, m.rawAttached, m.rawSkipped, m.rawFallback, m.sseChunks, m.turnDuration, m.terminalDuration, m.bodyBytes, m.bodyBytesByOutcome, m.dispatchSeconds, m.inflight)
+	reg.MustRegister(m.captured, m.terminal, m.largeTurns, m.dropped, m.reducerEmpty, m.responseDecoded, m.responseSalvaged, m.rawAttached, m.rawSkipped, m.rawFallback, m.sseChunks, m.turnDuration, m.terminalDuration, m.bodyBytes, m.bodyBytesByOutcome, m.dispatchSeconds, m.inflight, m.requestContentLength, m.requestContentLengthUnknown)
 	m.largeTurnThreshold = DefaultLargeTurnThreshold
 
 	// Pre-create a zero row for every known drop reason × every provider we
@@ -548,6 +574,21 @@ func (m *Metrics) ObserveBodyBytes(provider, side string, bytes int) {
 		provider = labelUnknown
 	}
 	m.bodyBytes.WithLabelValues(provider, side).Observe(float64(bytes))
+}
+
+// ObserveRequestContentLength records a parsed request Content-Length at the
+// request-headers phase. Callers must only pass successfully parsed values;
+// absent/unparseable headers go through ObserveRequestContentLengthUnknown
+// instead so the histogram's low buckets are never corrupted by zero stand-ins.
+func (m *Metrics) ObserveRequestContentLength(provider string, bytes int64) {
+	m.requestContentLength.WithLabelValues(normalizeProvider(provider)).Observe(float64(bytes))
+}
+
+// ObserveRequestContentLengthUnknown counts a request whose Content-Length was
+// absent or unparseable at the request-headers phase. Increments only the
+// unknown counter — never the content-length histogram.
+func (m *Metrics) ObserveRequestContentLengthUnknown(provider string) {
+	m.requestContentLengthUnknown.WithLabelValues(normalizeProvider(provider)).Inc()
 }
 
 // ObserveDispatchLatency records the HTTP POST roundtrip to ingest.
