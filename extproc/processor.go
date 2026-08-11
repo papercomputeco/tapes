@@ -353,6 +353,22 @@ func (p *Processor) onRequestHeaders(st *streamState, hdrs *extprocv3.HttpHeader
 	st.session = headers.ParseSessionEnvelope(hdrs)
 	st.orgID = headers.Get(hdrs, headers.PaperAuthOrgID)
 	st.authSubject = headers.Get(hdrs, headers.PaperAuthSubject)
+
+	// The headers phase is the only callback guaranteed for every
+	// request — bodies over the gRPC recv limit never reach
+	// onRequestBody — so pre-boundary size observation must live here.
+	// Unknown lengths are counted, never observed as 0.
+	if p.metrics != nil {
+		if v := headers.Get(hdrs, headers.ContentLength); v != "" {
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+				p.metrics.ObserveRequestContentLength(st.provider, n)
+			} else {
+				p.metrics.ObserveRequestContentLengthUnknown(st.provider)
+			}
+		} else {
+			p.metrics.ObserveRequestContentLengthUnknown(st.provider)
+		}
+	}
 }
 
 // onRequestBody accumulates request-body chunks and, on EndOfStream, parses

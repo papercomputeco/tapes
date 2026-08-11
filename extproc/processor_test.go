@@ -18,6 +18,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/proto"
 )
 
 // fakeStream is a hand-rolled ExternalProcessor_ProcessServer that feeds
@@ -769,6 +770,79 @@ data: {"type":"response.completed","response":{"id":"resp_1","object":"response"
 		Expect(recorded.lastRequestID).NotTo(BeEmpty(),
 			"request ID should be synthesized when upstream didn't set x-request-id")
 		Expect(recorded.lastRequestID).To(HavePrefix("extproc-"))
+	})
+
+	It("observes Content-Length in onRequestHeaders before any body message arrives", func() {
+		// Headers-only stream: no RequestBody frame ever exists, so a nonzero
+		// histogram count can only have been observed at the headers phase.
+		stream := &fakeStream{
+			ctx: context.Background(),
+			toSend: []*extprocv3.ProcessingRequest{
+				headerReq(map[string]string{":method": "POST", ":path": "/v1/messages", "content-length": "12345"}),
+			},
+		}
+		Expect(proc.Process(stream)).To(Succeed())
+
+		txt := scrapeProcessorMetrics(proc)
+		Expect(txt).To(ContainSubstring(`tapes_extproc_request_content_length_bytes_count{provider="anthropic"} 1`))
+		Expect(txt).To(ContainSubstring(`tapes_extproc_request_content_length_bytes_sum{provider="anthropic"} 12345`))
+	})
+
+	It("counts absent and garbage Content-Length as unknown, with no histogram observation", func() {
+		// Absent and unparseable headers both count as unknown; neither may
+		// land in the histogram, not even as an Observe(0).
+		absent := &fakeStream{
+			ctx: context.Background(),
+			toSend: []*extprocv3.ProcessingRequest{
+				headerReq(map[string]string{":method": "POST", ":path": "/v1/messages"}),
+			},
+		}
+		garbage := &fakeStream{
+			ctx: context.Background(),
+			toSend: []*extprocv3.ProcessingRequest{
+				headerReq(map[string]string{":method": "POST", ":path": "/v1/messages", "content-length": "banana"}),
+			},
+		}
+		Expect(proc.Process(absent)).To(Succeed())
+		Expect(proc.Process(garbage)).To(Succeed())
+
+		txt := scrapeProcessorMetrics(proc)
+		Expect(txt).To(ContainSubstring(`tapes_extproc_request_content_length_unknown_total{provider="anthropic"} 2`))
+		Expect(txt).NotTo(ContainSubstring(`tapes_extproc_request_content_length_bytes_count{provider="anthropic"}`))
+	})
+
+	It("keeps the headers-phase ProcessingResponse byte-identical regardless of Content-Length", func() {
+		// Observation must not alter forwarding: with and without a huge
+		// Content-Length, the headers response and dispatch outcome match.
+		body := []byte(`{"id":"msg_1","type":"message","role":"assistant","model":"claude-3-5-sonnet-20241022","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}`)
+		reqBody := []byte(`{"model":"claude-3-5-sonnet-20241022","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`)
+		turnStream := func(hdrs map[string]string) *fakeStream {
+			return &fakeStream{
+				ctx: context.Background(),
+				toSend: []*extprocv3.ProcessingRequest{
+					headerReq(hdrs),
+					reqBodyReq(reqBody, true),
+					respHeaderReq("200", "application/json"),
+					respBodyReq(body, true),
+				},
+			}
+		}
+		without := turnStream(map[string]string{":method": "POST", ":path": "/v1/messages"})
+		with := turnStream(map[string]string{":method": "POST", ":path": "/v1/messages", "content-length": "99999999999"})
+
+		Expect(proc.Process(without)).To(Succeed())
+		Eventually(obs.accepted.Load).WithTimeout(2 * time.Second).Should(Equal(int32(1)))
+		Expect(proc.Process(with)).To(Succeed())
+		Eventually(obs.accepted.Load).WithTimeout(2 * time.Second).Should(Equal(int32(2)))
+		for _, reason := range AllDropReasons() {
+			Expect(obs.DropCount(reason)).To(BeZero(), "unexpected drop %q", reason)
+		}
+
+		withoutFirst, err := proto.Marshal(without.Responses()[0])
+		Expect(err).NotTo(HaveOccurred())
+		withFirst, err := proto.Marshal(with.Responses()[0])
+		Expect(err).NotTo(HaveOccurred())
+		Expect(withFirst).To(Equal(withoutFirst))
 	})
 
 	It("enumerates every DropReason exactly once so metric label rows stay closed", func() {

@@ -48,6 +48,13 @@ const (
 	// must be undone before captured bytes reach parsing or ingest.
 	// If a new encoding shows up, this is the single read site to audit.
 	ContentEncoding = "content-encoding"
+
+	// ContentLength feeds pre-boundary request-size observation.
+	// Envoy always delivers request headers, even when the body is
+	// later rejected at the gRPC recv limit — so the declared length
+	// read here at the headers phase is the only size signal that
+	// covers requests too large to ever reach a body-phase callback.
+	ContentLength = "content-length"
 )
 
 // Extension headers (x-*) used by adjacent components.
