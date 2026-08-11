@@ -3,6 +3,7 @@ package extproc
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -721,6 +722,80 @@ data: {"type":"response.completed","response":{"id":"resp_1","object":"response"
 		Expect(line).To(ContainSubstring(`"model_family":"claude-opus-4"`))
 		Expect(line).To(ContainSubstring(`"req_bytes":`))
 		Expect(line).To(ContainSubstring(`"elapsed_ms":`))
+	})
+
+	It("TestExtProcPreservesCanonicalRequestIDAndSignalsMissingFallback", func() {
+		// Given a canonical request ID arriving from the trusted upstream
+		// gateways and a structured logger that captures ext-proc events.
+		const canonicalRequestID = "18a36a78-1038-4bcb-8965-8e0d4c0f51c2"
+		var logs bytes.Buffer
+		previous := slog.Default()
+		slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+		defer slog.SetDefault(previous)
+		requestBody := []byte(`{"model":"claude-3-5-sonnet-20241022","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`)
+		responseBody := []byte(`{"id":"msg_1","type":"message","role":"assistant","model":"claude-3-5-sonnet-20241022","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+
+		// When a complete turn is captured with that header.
+		canonicalStream := &fakeStream{
+			ctx: context.Background(),
+			toSend: []*extprocv3.ProcessingRequest{
+				headerReq(map[string]string{
+					":method":      "POST",
+					":path":        "/v1/messages",
+					"x-request-id": canonicalRequestID,
+				}),
+				reqBodyReq(requestBody, true),
+				respHeaderReq("200", "application/json"),
+				respBodyReq(responseBody, true),
+			},
+		}
+		Expect(proc.Process(canonicalStream)).To(Succeed())
+
+		// Then the dispatched TurnEnvelope preserves the canonical value
+		// byte-for-byte rather than replacing it.
+		var captured TurnEnvelope
+		Eventually(func() string {
+			body := ingestBody.Load()
+			if body == nil {
+				return ""
+			}
+			Expect(json.Unmarshal(body.([]byte), &captured)).To(Succeed())
+			return captured.Meta.RequestID
+		}).WithTimeout(2 * time.Second).Should(Equal(canonicalRequestID))
+
+		// When the same canonical ID reaches a terminal log path, and a
+		// separate request arrives without any upstream correlation header.
+		canonicalDrop := &fakeStream{
+			ctx: context.Background(),
+			toSend: []*extprocv3.ProcessingRequest{
+				headerReq(map[string]string{
+					":method":      "POST",
+					":path":        "/v1/messages",
+					"x-request-id": canonicalRequestID,
+				}),
+				reqBodyReq(requestBody, true),
+			},
+		}
+		Expect(proc.Process(canonicalDrop)).To(Succeed())
+
+		fallbackObserver := newRecordingObserver()
+		proc.Dispatcher().SetObserver(fallbackObserver)
+		missingIDStream := &fakeStream{
+			ctx: context.Background(),
+			toSend: []*extprocv3.ProcessingRequest{
+				headerReq(map[string]string{":method": "POST", ":path": "/v1/messages"}),
+				reqBodyReq(requestBody, true),
+			},
+		}
+		Expect(proc.Process(missingIDStream)).To(Succeed())
+
+		// Then logs retain the canonical ID, while only the missing-header
+		// request receives the visibly non-canonical extproc-* fallback that
+		// the observer sees on the same terminal outcome.
+		fallbackRequestID := fallbackObserver.lastRequestID
+		Expect(fallbackRequestID).To(MatchRegexp(`^extproc-[0-9a-f]{16}$`))
+		Expect(logs.String()).To(ContainSubstring(`"request_id":"` + canonicalRequestID + `"`))
+		Expect(logs.String()).To(ContainSubstring(`"request_id":"` + fallbackRequestID + `"`))
 	})
 
 	It("empty 200 upstream body: drops with reason=empty_response, not reducer_error", func() {
