@@ -178,6 +178,10 @@ var _ = Describe("Dispatcher", func() {
 			WithTimeout(5 * time.Second).
 			Should(BeNumerically(">=", 1))
 	})
+
+	It("includes request_over_budget in AllDropReasons exactly once", func() {
+		Expect(AllDropReasons()).To(ContainElement(DropRequestOverBudget))
+	})
 })
 
 // silence unused-import guard for io/json when tests don't reach certain paths.

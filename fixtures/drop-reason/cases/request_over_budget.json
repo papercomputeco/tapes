@@ -1,0 +1,10 @@
+{
+  "name": "request_over_budget",
+  "class": "transport",
+  "constant": "DropRequestOverBudget",
+  "summary": "The request body outgrew the capture budget, so the turn was shed before any ingest work.",
+  "trigger": "Accumulating another request-body chunk would have pushed the capture buffer past requestCaptureBudget, the largest request the ingest POST can carry (ingest's body limit minus the envelope reserve).",
+  "grounding": "Transport: the budget is derived from one deployment's ingest body limit and envelope reserve — a property of where the bytes are being sent, not of what a turn is. A request this large can never land at that ingest, so buffering it fully and letting the POST fail would spend memory to reach the same loss; capture stops instead, while every chunk is still acked and forwarding is untouched. An implementation that writes turns synchronously, or whose sink has no body limit, can never emit it.",
+  "not_expressible": "The budget trip is a comparison against accumulated runtime state, not a property of data a case can carry.",
+  "notes": "Like sem_full, the turn was fine and the capture path chose to shed it — here because the loss was already certain at ingest's body limit. Distinct from ingest_reject, which is the receiver refusing bytes that were actually sent."
+}

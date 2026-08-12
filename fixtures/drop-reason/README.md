@@ -5,7 +5,7 @@ L0-layer fixtures, sibling to `fixtures/envelope/`, `fixtures/thread/` and
 one per drop reason.
 
 A capture path that declines to record a turn owes an answer to "why". The
-gateway adapter has carried a closed enum of fourteen answers; the standalone
+gateway adapter has carried a closed enum of fifteen answers; the standalone
 client carried none — it logged a sentence per site. Neither was specified
 anywhere, so nothing decided the question that matters:
 
@@ -50,6 +50,7 @@ is transport. If yes and it disagrees, capture fidelity differs.
 | `upstream_no_response` | transport | requires observing a stream torn down before its response phase |
 | `missing_status` | transport | an ext_proc message-ordering violation; unreachable where a status is read off a response |
 | `sem_full` | transport | requires a bounded dispatch queue |
+| `request_over_budget` | transport | requires a capture buffer bounded by a remote ingest's body limit |
 | `ingest_reject` | transport | requires a remote ingest endpoint that can refuse |
 | `ingest_timeout` | transport | requires a remote ingest endpoint that can time out |
 | `marshal_error` | transport | serialising to one deployment's wire envelope |
@@ -118,6 +119,12 @@ upstream_status → non_turn_request → request_decode → empty_response
 `upstream_status` is first because a non-success exchange is not examined
 further. `reducer_error` is last because everything before it says the turn was
 capturable in principle and only the content says otherwise.
+
+Transport reasons sit outside this chain, with one exception worth stating:
+`request_over_budget` short-circuits the reference adapter's dispatch before
+any gate from `non_turn_request` on — a capture that stopped accumulating has
+nothing coherent for the later gates to read. Only `upstream_status`, decided
+at the stream level before dispatch is reached, precedes it.
 
 Precedence is stated here and asserted nowhere: asserting it needs the same
 pure classifier the behaviour cases need.

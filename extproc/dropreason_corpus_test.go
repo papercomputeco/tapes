@@ -147,6 +147,7 @@ var extprocDropConstants = map[string]DropReason{
 	"DropUpstreamNoResponse": DropUpstreamNoResponse,
 	"DropMissingStatus":      DropMissingStatus,
 	"DropSemFull":            DropSemFull,
+	"DropRequestOverBudget":  DropRequestOverBudget,
 	"DropIngestReject":       DropIngestReject,
 	"DropIngestTimeout":      DropIngestTimeout,
 	"DropMarshalError":       DropMarshalError,
