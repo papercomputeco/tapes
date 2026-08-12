@@ -183,3 +183,102 @@ type Spans20260615 struct {
 	DeriveSeq    int64
 	Fidelity     string
 }
+
+// v1 contract view over the sessions table.
+type TapesV1Session struct {
+	ID                pgtype.UUID
+	OrgID             pgtype.UUID
+	AuthSubject       string
+	HarnessID         string
+	HarnessSessionID  string
+	Name              pgtype.Text
+	Cwd               pgtype.Text
+	HarnessVersion    pgtype.Text
+	ParentSessionID   pgtype.UUID
+	StartedAt         pgtype.Timestamptz
+	LastSeenAt        pgtype.Timestamptz
+	EndedAt           pgtype.Timestamptz
+	HarnessMetadata   []byte
+	TotalInputTokens  int64
+	TotalOutputTokens int64
+	TotalCostUsd      pgtype.Numeric
+	TurnCount         int32
+	DerivedStatus     string
+	HasGitActivity    bool
+	ToolResultCount   int32
+	ToolErrorCount    int32
+	DerivedTitle      pgtype.Text
+	DerivedModel      string
+	ModelUsage        []byte
+	TotalTokens       pgtype.Int8
+	DurationNs        pgtype.Int8
+	Tasks             []byte
+	KindCounts        []byte
+	DisplayName       pgtype.Text
+}
+
+// v1 contract view over the current span projection generation (see derived_projection_schemas).
+type TapesV1Span struct {
+	OrgID        pgtype.UUID
+	TraceID      string
+	SpanID       string
+	ParentSpanID string
+	SessionID    pgtype.UUID
+	Kind         string
+	Name         string
+	Status       string
+	CallKind     string
+	ThreadID     string
+	Model        string
+	StopReason   string
+	StartedAt    pgtype.Timestamptz
+	DurationNs   int64
+	Input        []byte
+	Output       []byte
+	Usage        []byte
+	RawTurnID    pgtype.Int8
+	NodeHash     string
+	Seq          int64
+	Verdict      []byte
+	ContentHash  string
+	DeriveSeq    int64
+	Fidelity     string
+}
+
+// v1 contract view over the current span-link projection generation (see derived_projection_schemas).
+type TapesV1SpanLink struct {
+	OrgID       pgtype.UUID
+	FromTraceID string
+	FromSpanID  string
+	FromIo      string
+	ToTraceID   string
+	ToSpanID    string
+	ToIo        string
+	Kind        string
+	SessionID   pgtype.UUID
+}
+
+// v1 contract view over the current span-turn projection generation (see derived_projection_schemas).
+type TapesV1SpanTurn struct {
+	OrgID               pgtype.UUID
+	TraceID             string
+	SessionID           pgtype.UUID
+	UserPrompt          string
+	Synthetic           string
+	Status              string
+	StartedAt           pgtype.Timestamptz
+	EndedAt             pgtype.Timestamptz
+	DurationNs          int64
+	TotalInputTokens    int64
+	TotalOutputTokens   int64
+	TotalCostUsd        pgtype.Numeric
+	MainInputTokens     int64
+	MainOutputTokens    int64
+	CacheReadTokens     int64
+	CacheCreationTokens int64
+	ResponsePreview     string
+	Source              string
+	ContentHash         string
+	DeriveSeq           int64
+	Fidelity            string
+}

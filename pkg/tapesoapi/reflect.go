@@ -183,7 +183,7 @@ func (r *reflector) reflectConcrete(t reflect.Type) (*Schema, error) {
 		return schema, nil
 	}
 
-	switch t.Kind() { //nolint:exhaustive // the default reports every kind with no JSON shape
+	switch t.Kind() {
 	case reflect.Bool:
 		return Boolean(), nil
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32:
@@ -227,6 +227,11 @@ func (r *reflector) reflectConcrete(t reflect.Type) (*Schema, error) {
 		return AnyValue(), nil
 	case reflect.Pointer:
 		return r.reflect(t.Elem(), fieldTags{})
+	case reflect.Invalid, reflect.Uintptr, reflect.Complex64, reflect.Complex128,
+		reflect.Chan, reflect.Func, reflect.UnsafePointer:
+		// Named rather than left to the default so the switch stays
+		// exhaustive: these kinds have no JSON shape by construction.
+		return nil, fmt.Errorf("cannot derive an OpenAPI schema for %s (kind %s)", t, t.Kind())
 	default:
 		return nil, fmt.Errorf("cannot derive an OpenAPI schema for %s (kind %s)", t, t.Kind())
 	}

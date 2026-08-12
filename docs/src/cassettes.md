@@ -205,6 +205,21 @@ at most 63 bytes. `raw_turns` is explicitly forbidden: it is an internal capture
 log, not a cassette contract view. The manifest derives requested grants as
 `tapes_<core>.<view>`, for example `tapes_v1.spans`.
 
+The `v1` contract publishes four views, created by core's migrations in the
+`tapes_v1` schema:
+
+| View                 | Fronts                                        |
+| -------------------- | --------------------------------------------- |
+| `tapes_v1.sessions`  | the sessions table                            |
+| `tapes_v1.spans`     | the current span projection generation        |
+| `tapes_v1.span_turns`| the current span-turn projection generation   |
+| `tapes_v1.span_links`| the current span-link projection generation   |
+
+The views are the stable names. The physical projection tables behind them are
+date-versioned and rotate when a new projection generation lands; the views are
+repointed in the same migration, so a cassette granted the views never notices.
+Point queries and grants at `tapes_v1.*`, never at a physical table name.
+
 This is a declaration only. Tapes does not check that a named view exists, apply
 grants, create roles, or give the cassette a database credential. Deployment
 tooling owns those actions.
