@@ -185,6 +185,10 @@ const (
 	// implementation that reads a status directly off a response can
 	// reach it.
 	DropMissingStatus DropReason = "missing_status"
+	// DropRequestOverBudget: request accumulation stopped at
+	// requestCaptureBudget — a request that large can never land at ingest,
+	// so the turn is shed before any marshal or POST. Forwarding is untouched.
+	DropRequestOverBudget DropReason = "request_over_budget"
 )
 
 // AllDropReasons enumerates every constant above so metric wiring can
@@ -206,6 +210,7 @@ func AllDropReasons() []DropReason {
 		DropMissingStatus,
 		DropNonTurnRequest,
 		DropEmptyResponse,
+		DropRequestOverBudget,
 	}
 }
 

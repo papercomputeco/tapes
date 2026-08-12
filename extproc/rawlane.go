@@ -89,6 +89,12 @@ func (m RawResponseMode) sendsRawBytes() bool {
 // optimistic, so an imprecise reserve costs a wasted marshal, never a turn.
 const rawLaneEnvelopeReserve = 1 << 20
 
+// requestCaptureBudget is the most request bytes worth accumulating: a request
+// above ingest.MaxIngestBodyBytes − rawLaneEnvelopeReserve cannot land at
+// ingest at all, so buffering past it spends exactly the memory this budget
+// exists to bound. Derived, never mirrored, so it tracks ingest's limits.
+const requestCaptureBudget = ingest.MaxIngestBodyBytes - rawLaneEnvelopeReserve
+
 // base64Len returns the encoded length of n bytes under standard padded
 // base64, which is how encoding/json renders a []byte field.
 func base64Len(n int) int { return ((n + 2) / 3) * 4 }

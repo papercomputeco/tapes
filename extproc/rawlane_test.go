@@ -339,6 +339,12 @@ var _ = Describe("Raw response lane", func() {
 				Expect(rawResponseFits(rawLen, 1024)).To(BeTrue())
 				Expect(rawResponseFits(rawLen, ingest.MaxIngestBodyBytes)).To(BeFalse())
 			})
+
+			It("derives requestCaptureBudget from ingest limits, not a mirrored literal", func() {
+				// Pins the derivation itself: a re-introduced mirror constant
+				// would hold still while ingest's limits move.
+				Expect(requestCaptureBudget).To(Equal(ingest.MaxIngestBodyBytes - rawLaneEnvelopeReserve))
+			})
 		})
 	})
 

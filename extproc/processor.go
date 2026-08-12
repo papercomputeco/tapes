@@ -121,6 +121,11 @@ type streamState struct {
 	decodedReq []byte
 	respBuf    bytes.Buffer
 
+	// reqOverBudget is sticky: once a chunk would push reqBuf past
+	// requestCaptureBudget, capture stops and dispatchTurn sheds the turn
+	// as request_over_budget. Forwarding acks continue untouched.
+	reqOverBudget bool
+
 	reqEOS  bool
 	respEOS bool
 }
@@ -377,7 +382,11 @@ func (p *Processor) onRequestHeaders(st *streamState, hdrs *extprocv3.HttpHeader
 // FULL_DUPLEX_STREAMED for this one request — decoupling the client tee
 // from the capture accumulator and keeping non-streaming turns on BUFFERED.
 func (p *Processor) onRequestBody(st *streamState, body *extprocv3.HttpBody) *extprocv3.ProcessingResponse {
-	if _, err := st.reqBuf.Write(body.GetBody()); err != nil {
+	// Over-budget streams stop accumulating but never stop acking: capture
+	// degrades, forwarding never does.
+	if st.reqOverBudget || st.reqBuf.Len()+len(body.GetBody()) > requestCaptureBudget {
+		st.reqOverBudget = true
+	} else if _, err := st.reqBuf.Write(body.GetBody()); err != nil {
 		slog.Warn("extproc: reqBuf write error", "error", err)
 	}
 
@@ -389,19 +398,32 @@ func (p *Processor) onRequestBody(st *streamState, body *extprocv3.HttpBody) *ex
 
 	if body.GetEndOfStream() {
 		st.reqEOS = true
-		st.decodedReq, st.requestDecodeErr = decodeRequestBody(st.reqBuf.Bytes(), st.requestContentEncoding)
-		if st.requestDecodeErr == nil {
-			meta := parseRequestMeta(st.provider, st.decodedReq)
-			st.streaming = meta.Streaming
-			st.streamLabel = meta.StreamLabel
-			st.model = meta.Model
-			st.modelFamily = meta.ModelFamily
+		// Capture-side parsing only: a truncated or over-large decoded request
+		// is not worth reducing, so skip the meta parse. dispatchTurn sheds
+		// the turn via the reqOverBudget guard. The response-mode decision
+		// below is deliberately NOT skipped — it is a forwarding concern and
+		// must never hinge on the capture budget.
+		if !st.reqOverBudget {
+			st.decodedReq, st.requestDecodeErr = decodeRequestBody(st.reqBuf.Bytes(), st.requestContentEncoding)
+			if st.requestDecodeErr == nil && len(st.decodedReq) > requestCaptureBudget {
+				// The wire bytes fit the budget but decompressed past it: the
+				// envelope carries the decoded request, so ingest would 413 it.
+				// Shed as request_over_budget instead of a lost turn.
+				st.reqOverBudget = true
+				st.decodedReq = nil
+			} else if st.requestDecodeErr == nil {
+				meta := parseRequestMeta(st.provider, st.decodedReq)
+				st.streaming = meta.Streaming
+				st.streamLabel = meta.StreamLabel
+				st.model = meta.Model
+				st.modelFamily = meta.ModelFamily
+			}
 		}
-		// Only flip the response-body mode when we have a reducer that can
-		// actually consume the streamed bytes. Exposing non-capturable
-		// providers to FULL_DUPLEX_STREAMED would trade a stable Envoy code
-		// path for a newer one without any capture benefit in return.
-		if _, ok := p.reducerFor(st.provider, st.endpoint); st.streaming && ok {
+		// Flip the response body to FULL_DUPLEX_STREAMED when a reducer could
+		// consume this turn. An over-budget request can't be parsed for
+		// stream:true, so assume streaming there: the response must never be
+		// buffered on account of a shed capture — forwarding never degrades.
+		if _, ok := p.reducerFor(st.provider, st.endpoint); ok && (st.streaming || st.reqOverBudget) {
 			resp.ModeOverride = &processingmodev3.ProcessingMode{
 				ResponseHeaderMode: processingmodev3.ProcessingMode_SEND,
 				ResponseBodyMode:   processingmodev3.ProcessingMode_FULL_DUPLEX_STREAMED,
@@ -415,6 +437,14 @@ func (p *Processor) onRequestBody(st *streamState, body *extprocv3.HttpBody) *ex
 // dispatchTurn hands the accumulated bodies to the matching reducer and
 // forwards the canonical envelope to tapes-ingest.
 func (p *Processor) dispatchTurn(ctx context.Context, st *streamState) {
+	if st.reqOverBudget {
+		// Shed before any decode/reduce/marshal/POST — and before the body
+		// observations: reqBuf holds only the truncated capture, and sizing
+		// for these requests is owned by the headers-phase Content-Length.
+		p.recordDrop(st, DropRequestOverBudget)
+		return
+	}
+
 	rawReqBytes := st.reqBuf.Bytes()
 	reqBytes := st.decodedReq
 	respBytes := st.respBuf.Bytes()

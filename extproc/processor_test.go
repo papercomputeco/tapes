@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +16,7 @@ import (
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	processingmodev3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"github.com/klauspost/compress/zstd"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"google.golang.org/grpc/metadata"
@@ -143,6 +145,20 @@ func (o *observer) DropCount(reason DropReason) int {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.drops[reason]
+}
+
+// teeObserver fans terminal outcomes out to two observers so a single
+// Process run can assert both spy counts and real metric rows.
+type teeObserver struct{ a, b Observer }
+
+func (t teeObserver) OnAccepted(provider, requestID string) {
+	t.a.OnAccepted(provider, requestID)
+	t.b.OnAccepted(provider, requestID)
+}
+
+func (t teeObserver) OnDrop(provider string, reason DropReason, requestID string) {
+	t.a.OnDrop(provider, reason, requestID)
+	t.b.OnDrop(provider, reason, requestID)
 }
 
 // recordingObserver captures the last request ID seen on any drop, so tests
@@ -809,6 +825,97 @@ data: {"type":"response.completed","response":{"id":"resp_1","object":"response"
 		txt := scrapeProcessorMetrics(proc)
 		Expect(txt).To(ContainSubstring(`tapes_extproc_request_content_length_unknown_total{provider="anthropic"} 2`))
 		Expect(txt).NotTo(ContainSubstring(`tapes_extproc_request_content_length_bytes_count{provider="anthropic"}`))
+	})
+
+	It("reserves no reqBuf memory from a Content-Length before any body arrives", func() {
+		// The header phase must not eagerly allocate on an unverified
+		// Content-Length: buffers grow lazily from real bytes, bounded by the
+		// accumulation budget, so a header-only stream costs nothing.
+		lying := &streamState{}
+		proc.onRequestHeaders(lying, headerReq(map[string]string{
+			":method": "POST", ":path": "/v1/messages", "content-length": "99999999999",
+		}).GetRequestHeaders())
+		Expect(lying.reqBuf.Cap()).To(Equal(0))
+	})
+
+	It("over-budget request: acks every chunk, records exactly one request_over_budget, and never POSTs to ingest", func() {
+		proc.Dispatcher().SetObserver(teeObserver{a: obs, b: proc.Metrics().AsObserver()})
+		// 7 × 2 MiB = 14 MiB, past requestCaptureBudget (~13.67 MiB).
+		chunk := bytes.Repeat([]byte("a"), 2<<20)
+		const chunks = 7
+		toSend := make([]*extprocv3.ProcessingRequest, 0, chunks+3)
+		toSend = append(toSend, headerReq(map[string]string{
+			":method": "POST", ":path": "/v1/messages",
+			"content-length": strconv.Itoa(chunks * len(chunk)),
+		}))
+		for i := range chunks {
+			toSend = append(toSend, reqBodyReq(chunk, i == chunks-1))
+		}
+		toSend = append(toSend,
+			respHeaderReq("200", "application/json"),
+			respBodyReq([]byte(`{}`), true),
+		)
+		stream := &fakeStream{ctx: context.Background(), toSend: toSend}
+
+		Expect(proc.Process(stream)).To(Succeed())
+
+		acks := 0
+		var modeOverride *processingmodev3.ProcessingMode
+		for _, r := range stream.Responses() {
+			if rb := r.GetRequestBody(); rb != nil {
+				acks++
+				if r.ModeOverride != nil {
+					modeOverride = r.ModeOverride
+				}
+			}
+		}
+		Expect(acks).To(Equal(chunks))
+
+		// Forwarding must not degrade because capture was shed: the response
+		// still flips to FULL_DUPLEX_STREAMED so a large streaming response is
+		// never buffered on account of the over-budget request.
+		Expect(modeOverride).NotTo(BeNil())
+		Expect(modeOverride.ResponseBodyMode).To(Equal(processingmodev3.ProcessingMode_FULL_DUPLEX_STREAMED))
+
+		Expect(obs.DropCount(DropRequestOverBudget)).To(Equal(1))
+		Expect(obs.accepted.Load()).To(Equal(int32(0)))
+		Consistently(func() any { return ingestBody.Load() }).
+			WithTimeout(100 * time.Millisecond).
+			Should(BeNil())
+
+		txt := scrapeProcessorMetrics(proc)
+		Expect(txt).To(ContainSubstring(`tapes_extproc_turns_dropped_total{provider="anthropic",reason="request_over_budget"} 1`))
+	})
+
+	It("sheds a compressed body that decodes past the budget as request_over_budget", func() {
+		proc.Dispatcher().SetObserver(teeObserver{a: obs, b: proc.Metrics().AsObserver()})
+		// Encoded bytes fit the accumulation budget; decoded bytes do not.
+		// The envelope carries the decoded request, so this must shed rather
+		// than marshal a turn ingest would 413.
+		decoded := bytes.Repeat([]byte("a"), requestCaptureBudget+(1<<20))
+		enc, err := zstd.NewWriter(nil)
+		Expect(err).NotTo(HaveOccurred())
+		compressed := enc.EncodeAll(decoded, nil)
+		Expect(enc.Close()).To(Succeed())
+		Expect(len(compressed)).To(BeNumerically("<", requestCaptureBudget))
+
+		stream := &fakeStream{ctx: context.Background(), toSend: []*extprocv3.ProcessingRequest{
+			headerReq(map[string]string{
+				":method": "POST", ":path": "/v1/messages",
+				"content-encoding": "zstd", "content-length": strconv.Itoa(len(compressed)),
+			}),
+			reqBodyReq(compressed, true),
+			respHeaderReq("200", "application/json"),
+			respBodyReq([]byte(`{}`), true),
+		}}
+
+		Expect(proc.Process(stream)).To(Succeed())
+
+		Expect(obs.DropCount(DropRequestOverBudget)).To(Equal(1))
+		Expect(obs.accepted.Load()).To(Equal(int32(0)))
+		Consistently(func() any { return ingestBody.Load() }).
+			WithTimeout(100 * time.Millisecond).
+			Should(BeNil())
 	})
 
 	It("keeps the headers-phase ProcessingResponse byte-identical regardless of Content-Length", func() {
