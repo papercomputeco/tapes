@@ -21,18 +21,22 @@ var _ = Describe("ConfigFromEnv", func() {
 	BeforeEach(func() {
 		// Defaults are only observable from an unset environment.
 		Expect(os.Unsetenv("TAPES_GRPC_MAX_RECV_BYTES")).To(Succeed())
+		Expect(os.Unsetenv("TAPES_DISPATCH_BYTE_BUDGET")).To(Succeed())
 		Expect(os.Unsetenv("TAPES_MAX_INFLIGHT_DISPATCHES")).To(Succeed())
 	})
 
-	It("reads TAPES_GRPC_MAX_RECV_BYTES and TAPES_MAX_INFLIGHT_DISPATCHES with 64 MiB / 100 defaults", func() {
+	It("reads TAPES_GRPC_MAX_RECV_BYTES, TAPES_DISPATCH_BYTE_BUDGET, and TAPES_MAX_INFLIGHT_DISPATCHES with 64 MiB / 256 MiB / 100 defaults", func() {
 		cfg := ConfigFromEnv()
 		Expect(cfg.GRPCMaxRecvBytes).To(Equal(64 << 20))
+		Expect(cfg.DispatchByteBudget).To(Equal(int64(256 << 20)))
 		Expect(cfg.MaxInflight).To(Equal(100))
 
 		setenv("TAPES_GRPC_MAX_RECV_BYTES", "16777216")
+		setenv("TAPES_DISPATCH_BYTE_BUDGET", "33554432")
 		setenv("TAPES_MAX_INFLIGHT_DISPATCHES", "7")
 		cfg = ConfigFromEnv()
 		Expect(cfg.GRPCMaxRecvBytes).To(Equal(16 << 20))
+		Expect(cfg.DispatchByteBudget).To(Equal(int64(32 << 20)))
 		Expect(cfg.MaxInflight).To(Equal(7))
 	})
 
@@ -44,9 +48,11 @@ var _ = Describe("ConfigFromEnv", func() {
 
 		for _, bad := range []string{"banana", "-1", "0"} {
 			setenv("TAPES_GRPC_MAX_RECV_BYTES", bad)
+			setenv("TAPES_DISPATCH_BYTE_BUDGET", bad)
 			setenv("TAPES_MAX_INFLIGHT_DISPATCHES", bad)
 			cfg := ConfigFromEnv()
 			Expect(cfg.GRPCMaxRecvBytes).To(Equal(64<<20), "value %q", bad)
+			Expect(cfg.DispatchByteBudget).To(Equal(int64(256<<20)), "value %q", bad)
 			Expect(cfg.MaxInflight).To(Equal(100), "value %q", bad)
 		}
 

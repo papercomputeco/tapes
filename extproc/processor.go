@@ -143,7 +143,7 @@ func NewProcessor(cfg Config) (*Processor, error) {
 	}
 
 	metrics := NewMetrics()
-	dispatcher := NewDispatcher(cfg.IngestURL, cfg.MaxInflight, &http.Client{
+	dispatcher := NewDispatcher(cfg.IngestURL, cfg.MaxInflight, cfg.DispatchByteBudget, &http.Client{
 		Timeout: 30 * time.Second,
 	})
 	dispatcher.SetObserver(metrics.AsObserver())

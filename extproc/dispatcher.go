@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"time"
 
+	"golang.org/x/sync/semaphore"
+
 	"github.com/papercomputeco/tapes/ingest"
 	"github.com/papercomputeco/tapes/pkg/capture"
 	"github.com/papercomputeco/tapes/pkg/llm"
@@ -22,6 +24,9 @@ type Dispatcher struct {
 	ingestURL  string
 	httpClient *http.Client
 	sem        chan struct{}
+	// byteSem charges each in-flight dispatch its marshalled payload size, so
+	// total dispatch memory is bounded in bytes as well as in count.
+	byteSem *semaphore.Weighted
 
 	// observer receives every terminal outcome (accept / drop / retry). Tests
 	// inject an in-memory observer; production leaves it nil and relies on
@@ -365,11 +370,15 @@ type DispatchedSessionEnvelope struct {
 	HarnessMetadata        map[string]any `json:"harness_metadata,omitempty"`
 }
 
-// NewDispatcher returns a Dispatcher with the given ingest URL and in-flight
-// cap. maxInflight <= 0 defaults to 100.
-func NewDispatcher(ingestURL string, maxInflight int, client *http.Client) *Dispatcher {
+// NewDispatcher returns a Dispatcher with the given ingest URL, in-flight
+// count cap, and in-flight payload byte budget. Non-positive values fall back
+// to the config defaults.
+func NewDispatcher(ingestURL string, maxInflight int, byteBudget int64, client *http.Client) *Dispatcher {
 	if maxInflight <= 0 {
-		maxInflight = 100
+		maxInflight = defaultMaxInflight
+	}
+	if byteBudget <= 0 {
+		byteBudget = defaultDispatchByteBudget
 	}
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
@@ -378,6 +387,7 @@ func NewDispatcher(ingestURL string, maxInflight int, client *http.Client) *Disp
 		ingestURL:  ingestURL,
 		httpClient: client,
 		sem:        make(chan struct{}, maxInflight),
+		byteSem:    semaphore.NewWeighted(byteBudget),
 	}
 }
 
@@ -527,6 +537,17 @@ func (d *Dispatcher) Dispatch(ctx context.Context, env TurnEnvelope) {
 		return
 	}
 
+	// Byte admission is charged on the final marshalled payload — the bytes
+	// enforceBodyLimit ruled on — so it can only run after marshal; a failed
+	// acquire must give back the count slot taken above or the slot leaks.
+	weight := int64(len(payload))
+	if !d.byteSem.TryAcquire(weight) {
+		<-d.sem
+		d.safeOnInflight(len(d.sem))
+		d.RecordDropContext(env.Provider, DropSemFull, env.Meta.RequestID, env.Meta.outcomeContext())
+		return
+	}
+
 	// Attachment is metered here — after enforceBodyLimit has ruled on the
 	// real marshalled size — so each turn is counted once, by the shape it
 	// actually ships with. Metering the pre-dispatch decision instead would
@@ -540,12 +561,20 @@ func (d *Dispatcher) Dispatch(ctx context.Context, env TurnEnvelope) {
 		d.safeOnRawResponseAttached(env.Provider, shape)
 	}
 
+	// The goroutine must reference only these extracted values and payload —
+	// never env — so the envelope and the request bytes it aliases are
+	// collectible for the whole retry window instead of pinning ~2× body.
+	provider := env.Provider
+	requestID := env.Meta.RequestID
+	outcome := env.Meta.outcomeContext()
+
 	go func() {
 		defer func() {
+			d.byteSem.Release(weight)
 			<-d.sem
 			d.safeOnInflight(len(d.sem))
 		}()
-		d.postWithRetry(ctx, env.Provider, env.Meta.RequestID, env.Meta.outcomeContext(), payload)
+		d.postWithRetry(ctx, provider, requestID, outcome, payload)
 	}()
 }
 

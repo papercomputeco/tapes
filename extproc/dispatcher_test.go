@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,7 +36,7 @@ var _ = Describe("Dispatcher", func() {
 		}))
 		defer ingest.Close()
 
-		d := NewDispatcher(ingest.URL, 4, &http.Client{Timeout: 2 * time.Second})
+		d := NewDispatcher(ingest.URL, 4, 0, &http.Client{Timeout: 2 * time.Second})
 		d.SetObserver(panicObserver{})
 
 		env := TurnEnvelope{
@@ -49,14 +50,14 @@ var _ = Describe("Dispatcher", func() {
 	})
 
 	It("survives a panicking observer on drops (via RecordDrop)", func() {
-		d := NewDispatcher("http://127.0.0.1:0", 1, nil)
+		d := NewDispatcher("http://127.0.0.1:0", 1, 0, nil)
 		d.SetObserver(panicObserver{})
 		Expect(func() { d.RecordDrop("anthropic", DropReducerError, "req") }).NotTo(Panic())
 	})
 
 	It("drops with reason=marshal_error on unmarshalable payload without panic or semaphore leak", func() {
 		obs := newObserver()
-		d := NewDispatcher("http://127.0.0.1:0", 1, nil)
+		d := NewDispatcher("http://127.0.0.1:0", 1, 0, nil)
 		d.SetObserver(obs)
 
 		bad := TurnEnvelope{
@@ -79,7 +80,7 @@ var _ = Describe("Dispatcher", func() {
 			w.WriteHeader(http.StatusAccepted)
 		}))
 		defer srv.Close()
-		d2 := NewDispatcher(srv.URL, 1, nil)
+		d2 := NewDispatcher(srv.URL, 1, 0, nil)
 		d2.Dispatch(context.Background(), TurnEnvelope{
 			Provider: "anthropic",
 			Request:  json.RawMessage(`{}`),
@@ -100,7 +101,7 @@ var _ = Describe("Dispatcher", func() {
 		obs := newObserver()
 		// Sem is sized ≥ N so none of the test dispatches spuriously trip
 		// DropSemFull — we're testing concurrent bookkeeping, not backpressure.
-		d := NewDispatcher(ingest.URL, N+8, &http.Client{Timeout: 5 * time.Second})
+		d := NewDispatcher(ingest.URL, N+8, 0, &http.Client{Timeout: 5 * time.Second})
 		d.SetObserver(obs)
 
 		var wg sync.WaitGroup
@@ -138,7 +139,7 @@ var _ = Describe("Dispatcher", func() {
 		defer ingest.Close()
 
 		obs := newObserver()
-		d := NewDispatcher(ingest.URL, 1, &http.Client{Timeout: 5 * time.Second})
+		d := NewDispatcher(ingest.URL, 1, 0, &http.Client{Timeout: 5 * time.Second})
 		d.SetObserver(obs)
 		d.Dispatch(context.Background(), TurnEnvelope{
 			Provider: "anthropic",
@@ -161,7 +162,7 @@ var _ = Describe("Dispatcher", func() {
 		defer func() { close(blocked); ingest.Close() }()
 
 		obs := newObserver()
-		d := NewDispatcher(ingest.URL, 1, &http.Client{Timeout: 1 * time.Second})
+		d := NewDispatcher(ingest.URL, 1, 0, &http.Client{Timeout: 1 * time.Second})
 		d.SetObserver(obs)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -181,6 +182,117 @@ var _ = Describe("Dispatcher", func() {
 
 	It("includes request_over_budget in AllDropReasons exactly once", func() {
 		Expect(AllDropReasons()).To(ContainElement(DropRequestOverBudget))
+	})
+
+	It("drops sem_full when the marshalled payload exceeds the dispatch byte budget while a small payload proceeds", func() {
+		const budget = 1024
+		var posts atomic.Int32
+		ingest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			posts.Add(1)
+			w.WriteHeader(http.StatusAccepted)
+		}))
+		defer ingest.Close()
+
+		obs := newObserver()
+		d := NewDispatcher(ingest.URL, 4, budget, &http.Client{Timeout: 2 * time.Second})
+		d.SetObserver(obs)
+
+		// Request alone marshals past the budget, so admission must fail on
+		// payload weight — the count cap (4) cannot be the cause.
+		big := TurnEnvelope{
+			Provider: "anthropic",
+			Request:  json.RawMessage(fmt.Sprintf(`{"pad":%q}`, strings.Repeat("A", 4*budget))),
+			Response: &llm.ChatResponse{Model: "m"},
+		}
+		d.Dispatch(context.Background(), big)
+		Expect(obs.DropCount(DropSemFull)).To(Equal(1))
+		// The drop path is synchronous and spawns no goroutine, so no POST
+		// can have been issued for the oversize envelope.
+		Expect(posts.Load()).To(Equal(int32(0)))
+
+		small := TurnEnvelope{
+			Provider: "anthropic",
+			Request:  json.RawMessage(`{}`),
+			Response: &llm.ChatResponse{Model: "m"},
+		}
+		d.Dispatch(context.Background(), small)
+		Eventually(func() int32 { return obs.accepted.Load() }).
+			WithTimeout(2 * time.Second).
+			Should(Equal(int32(1)))
+		Expect(posts.Load()).To(Equal(int32(1)))
+
+		// The small payload's weight is released after its goroutine finishes;
+		// the full budget being acquirable again proves charge and release.
+		Eventually(func() bool {
+			if d.byteSem.TryAcquire(budget) {
+				d.byteSem.Release(budget)
+				return true
+			}
+			return false
+		}).WithTimeout(2 * time.Second).Should(BeTrue())
+	})
+
+	It("returns immediately with sem_full while an in-flight dispatch holds the byte budget", func() {
+		blocked := make(chan struct{})
+		ingest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			<-blocked
+			w.WriteHeader(http.StatusAccepted)
+		}))
+		defer func() { close(blocked); ingest.Close() }()
+
+		obs := newObserver()
+		env := TurnEnvelope{
+			Provider: "anthropic",
+			Request:  json.RawMessage(`{}`),
+			Response: &llm.ChatResponse{Model: "m"},
+		}
+		// Budget sized to exactly one marshalled envelope, so the pinned
+		// first dispatch leaves zero headroom for an identical second one.
+		payload, err := json.Marshal(env)
+		Expect(err).NotTo(HaveOccurred())
+		d := NewDispatcher(ingest.URL, 4, int64(len(payload)), &http.Client{Timeout: 10 * time.Second})
+		d.SetObserver(obs)
+
+		// Dispatch acquires count and bytes synchronously before returning,
+		// so the budget is fully held once this call comes back.
+		d.Dispatch(context.Background(), env)
+		Expect(obs.DropCount(DropSemFull)).To(Equal(0))
+
+		// Admission is TryAcquire, never a blocking Acquire: the call must
+		// return while the budget is still held by the pinned dispatch.
+		done := make(chan struct{})
+		go func() {
+			d.Dispatch(context.Background(), env)
+			close(done)
+		}()
+		Eventually(done).WithTimeout(2 * time.Second).Should(BeClosed())
+		Expect(obs.DropCount(DropSemFull)).To(Equal(1))
+	})
+
+	It("still enforces the count cap under an ample byte budget", func() {
+		blocked := make(chan struct{})
+		ingest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			<-blocked
+			w.WriteHeader(http.StatusAccepted)
+		}))
+		defer func() { close(blocked); ingest.Close() }()
+
+		obs := newObserver()
+		// Budget dwarfs the payloads, so only the count cap of 1 can refuse
+		// the second dispatch.
+		d := NewDispatcher(ingest.URL, 1, 1<<20, &http.Client{Timeout: 10 * time.Second})
+		d.SetObserver(obs)
+
+		env := TurnEnvelope{
+			Provider: "anthropic",
+			Request:  json.RawMessage(`{}`),
+			Response: &llm.ChatResponse{Model: "m"},
+		}
+		d.Dispatch(context.Background(), env)
+		Expect(obs.DropCount(DropSemFull)).To(Equal(0))
+
+		d.Dispatch(context.Background(), env)
+		Expect(obs.DropCount(DropSemFull)).To(Equal(1))
 	})
 })
 

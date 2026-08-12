@@ -11,9 +11,13 @@ import (
 // Defaults for the numeric env-configured capacities. The recv limit must
 // cover the 32 MB Anthropic Messages contract plus gRPC framing and coalescing
 // headroom: the upstream aigw filter buffers, so a body arrives as one message.
+// The dispatch byte budget admits ~18 concurrent capture-budget-sized payloads
+// (~13.67 MiB each) or 4 recv-limit-sized ones, where the count cap alone
+// would admit ~1.4 GiB against the pod's memory limit.
 const (
-	defaultGRPCMaxRecvBytes = 64 << 20
-	defaultMaxInflight      = 100
+	defaultGRPCMaxRecvBytes   = 64 << 20
+	defaultMaxInflight        = 100
+	defaultDispatchByteBudget = 256 << 20
 )
 
 // Config holds configuration for the tapes-extproc adapter.
@@ -30,6 +34,8 @@ type Config struct {
 	MaxInflight int
 	// GRPCMaxRecvBytes is the gRPC server's maximum receive message size.
 	GRPCMaxRecvBytes int
+	// DispatchByteBudget bounds the total marshalled payload bytes in flight to ingest.
+	DispatchByteBudget int64
 	// RawResponseMode selects whether the dispatch envelope carries the
 	// verbatim upstream response bytes, the adapter's reduction, or both.
 	// Zero value is RawResponseOff, so a Config built by a test or an
@@ -51,13 +57,14 @@ func ConfigFromEnv() Config {
 	}
 
 	cfg := Config{
-		IngestURL:        envOrDefault("TAPES_INGEST_URL", "http://tapes-ingest:8090"),
-		ListenAddr:       envOrDefault("TAPES_LISTEN_ADDR", "0.0.0.0:50051"),
-		MetricsAddr:      envOrDefault("TAPES_METRICS_ADDR", "0.0.0.0:9090"),
-		ProviderMapFile:  envOrDefault("TAPES_PROVIDER_MAP_FILE", ""),
-		MaxInflight:      int(envIntOrDefault("TAPES_MAX_INFLIGHT_DISPATCHES", defaultMaxInflight)),
-		GRPCMaxRecvBytes: int(envIntOrDefault("TAPES_GRPC_MAX_RECV_BYTES", defaultGRPCMaxRecvBytes)),
-		RawResponseMode:  rawMode,
+		IngestURL:          envOrDefault("TAPES_INGEST_URL", "http://tapes-ingest:8090"),
+		ListenAddr:         envOrDefault("TAPES_LISTEN_ADDR", "0.0.0.0:50051"),
+		MetricsAddr:        envOrDefault("TAPES_METRICS_ADDR", "0.0.0.0:9090"),
+		ProviderMapFile:    envOrDefault("TAPES_PROVIDER_MAP_FILE", ""),
+		MaxInflight:        int(envIntOrDefault("TAPES_MAX_INFLIGHT_DISPATCHES", defaultMaxInflight)),
+		GRPCMaxRecvBytes:   int(envIntOrDefault("TAPES_GRPC_MAX_RECV_BYTES", defaultGRPCMaxRecvBytes)),
+		DispatchByteBudget: envIntOrDefault("TAPES_DISPATCH_BYTE_BUDGET", defaultDispatchByteBudget),
+		RawResponseMode:    rawMode,
 	}
 	return cfg
 }

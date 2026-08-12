@@ -2,8 +2,8 @@
   "name": "sem_full",
   "class": "transport",
   "constant": "DropSemFull",
-  "summary": "The bounded dispatch queue was full, so the turn was shed rather than queued.",
-  "trigger": "Acquiring a dispatch slot failed because every in-flight slot was taken.",
+  "summary": "Dispatch admission was saturated — no in-flight slot, or no room in the byte budget — so the turn was shed rather than queued.",
+  "trigger": "Dispatch admission failed on either bound: every in-flight slot was taken, or the marshalled payload did not fit the remaining dispatch byte budget (the byte path gives back the count slot it took before recording the drop).",
   "grounding": "Transport: it requires a bounded concurrent dispatch queue to exist. This is backpressure — the capture path shedding load to avoid becoming the reason the request path is slow — and its correct value is a property of one deployment's capacity, not of what a turn is. An implementation that writes turns synchronously has no such queue and can never emit it.",
   "not_expressible": "Queue saturation is runtime state, not data.",
   "notes": "One of a matched load-shedding pair with request_over_budget: both mean the turn was fine and the capture path chose to shed it. This one sheds because the dispatch queue was saturated; request_over_budget sheds because the loss was already certain at the ingest body limit. Both are the counters to read before concluding that traffic changed."
