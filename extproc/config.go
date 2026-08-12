@@ -3,6 +3,17 @@ package extproc
 import (
 	"log/slog"
 	"os"
+	"strconv"
+
+	"google.golang.org/grpc"
+)
+
+// Defaults for the numeric env-configured capacities. The recv limit must
+// cover the 32 MB Anthropic Messages contract plus gRPC framing and coalescing
+// headroom: the upstream aigw filter buffers, so a body arrives as one message.
+const (
+	defaultGRPCMaxRecvBytes = 64 << 20
+	defaultMaxInflight      = 100
 )
 
 // Config holds configuration for the tapes-extproc adapter.
@@ -17,6 +28,8 @@ type Config struct {
 	ProviderMapFile string
 	// MaxInflight is the dispatch semaphore capacity.
 	MaxInflight int
+	// GRPCMaxRecvBytes is the gRPC server's maximum receive message size.
+	GRPCMaxRecvBytes int
 	// RawResponseMode selects whether the dispatch envelope carries the
 	// verbatim upstream response bytes, the adapter's reduction, or both.
 	// Zero value is RawResponseOff, so a Config built by a test or an
@@ -38,14 +51,21 @@ func ConfigFromEnv() Config {
 	}
 
 	cfg := Config{
-		IngestURL:       envOrDefault("TAPES_INGEST_URL", "http://tapes-ingest:8090"),
-		ListenAddr:      envOrDefault("TAPES_LISTEN_ADDR", "0.0.0.0:50051"),
-		MetricsAddr:     envOrDefault("TAPES_METRICS_ADDR", "0.0.0.0:9090"),
-		ProviderMapFile: envOrDefault("TAPES_PROVIDER_MAP_FILE", ""),
-		MaxInflight:     100,
-		RawResponseMode: rawMode,
+		IngestURL:        envOrDefault("TAPES_INGEST_URL", "http://tapes-ingest:8090"),
+		ListenAddr:       envOrDefault("TAPES_LISTEN_ADDR", "0.0.0.0:50051"),
+		MetricsAddr:      envOrDefault("TAPES_METRICS_ADDR", "0.0.0.0:9090"),
+		ProviderMapFile:  envOrDefault("TAPES_PROVIDER_MAP_FILE", ""),
+		MaxInflight:      int(envIntOrDefault("TAPES_MAX_INFLIGHT_DISPATCHES", defaultMaxInflight)),
+		GRPCMaxRecvBytes: int(envIntOrDefault("TAPES_GRPC_MAX_RECV_BYTES", defaultGRPCMaxRecvBytes)),
+		RawResponseMode:  rawMode,
 	}
 	return cfg
+}
+
+// GRPCServerOptions builds the server options main wires into grpc.NewServer;
+// the recv limit default is justified at defaultGRPCMaxRecvBytes.
+func GRPCServerOptions(cfg Config) []grpc.ServerOption {
+	return []grpc.ServerOption{grpc.MaxRecvMsgSize(cfg.GRPCMaxRecvBytes)}
 }
 
 func envOrDefault(key, defaultVal string) string {
@@ -53,4 +73,33 @@ func envOrDefault(key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
+}
+
+// envIntOrDefault reads a positive integer environment variable. Every
+// consumer is a capacity that must stay positive, so an unparseable or
+// non-positive value falls back to the default and says so.
+func envIntOrDefault(key string, defaultVal int64) int64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		slog.Error("invalid integer env value, falling back to default",
+			"error", err,
+			"key", key,
+			"value", v,
+			"default", defaultVal,
+		)
+		return defaultVal
+	}
+	if n <= 0 {
+		slog.Error("invalid integer env value, falling back to default",
+			"key", key,
+			"value", v,
+			"default", defaultVal,
+		)
+		return defaultVal
+	}
+	return n
 }
