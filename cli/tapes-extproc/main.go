@@ -43,6 +43,7 @@ func main() {
 		"metrics_addr", cfg.MetricsAddr,
 		"ingest_url", cfg.IngestURL,
 		"raw_response_mode", cfg.RawResponseMode,
+		"grpc_max_recv_bytes", cfg.GRPCMaxRecvBytes,
 	)
 
 	// Create the ext_proc server.
@@ -56,7 +57,7 @@ func main() {
 	processor.Metrics().SetBuildInfo(utils.Version, utils.Sha)
 
 	// gRPC server.
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(extproc.GRPCServerOptions(cfg)...)
 	extproc.RegisterServer(grpcServer, processor)
 
 	// Health check.
