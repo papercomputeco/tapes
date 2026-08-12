@@ -572,7 +572,7 @@ var _ = Describe("Raw response lane", func() {
 		// only thing holding them together. Marshal one, parse the other:
 		// a renamed tag fails here rather than in a fidelity report.
 		It("parses onto ingest's TurnPayload under the name ingest reads", func() {
-			d := NewDispatcher("http://example.invalid", 1, nil)
+			d := NewDispatcher("http://example.invalid", 1, 0, nil)
 
 			env := TurnEnvelope{
 				Provider:            "anthropic",
@@ -624,7 +624,7 @@ var _ = Describe("Raw response lane", func() {
 		// rawResponseFits runs on an estimate, before the envelope
 		// exists. This is the exact check on the marshalled bytes.
 		It("strips the bytes rather than letting the turn 413", func() {
-			d := NewDispatcher("http://example.invalid", 1, nil)
+			d := NewDispatcher("http://example.invalid", 1, 0, nil)
 
 			env := TurnEnvelope{
 				Provider:            "anthropic",
@@ -649,7 +649,7 @@ var _ = Describe("Raw response lane", func() {
 		})
 
 		It("restores the reduction when it strips a raw-only envelope", func() {
-			d := NewDispatcher("http://example.invalid", 1, nil)
+			d := NewDispatcher("http://example.invalid", 1, 0, nil)
 
 			reduced := reducedStub()
 			env := TurnEnvelope{
@@ -671,7 +671,7 @@ var _ = Describe("Raw response lane", func() {
 		})
 
 		It("leaves an envelope under the limit untouched", func() {
-			d := NewDispatcher("http://example.invalid", 1, nil)
+			d := NewDispatcher("http://example.invalid", 1, 0, nil)
 
 			env := TurnEnvelope{
 				Provider:    "anthropic",
