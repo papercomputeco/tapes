@@ -111,16 +111,18 @@ func makeOllamaResponseBody(model, role, content string) []byte {
 
 var _ = Describe("Proxy capture byte budget", func() {
 	var (
-		p        *Proxy
-		driver   *captureDriver
-		upstream *httptest.Server
+		p           *Proxy
+		driver      *captureDriver
+		upstream    *httptest.Server
+		respContent string
 	)
 
 	BeforeEach(func() {
+		respContent = "ok"
 		upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write(makeOllamaResponseBody("test-model", "assistant", "ok"))
+			w.Write(makeOllamaResponseBody("test-model", "assistant", respContent))
 		}))
 		driver = newCaptureDriver()
 		var err error
@@ -179,6 +181,30 @@ var _ = Describe("Proxy capture byte budget", func() {
 		raws := driver.RawTurns()
 		Expect(raws).To(HaveLen(1))
 		Expect([]byte(raws[0].RawRequest)).To(Equal(small))
+	})
+
+	It("charges the response body too, so a small-request/large-response turn is dropped", func() {
+		// A small request would fit the budget on its own; the large upstream
+		// response is what pushes the job's retained bytes over it. Charging
+		// the request alone would let this turn bypass the budget.
+		respContent = strings.Repeat("y", 1024)
+		reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+			{Role: "user", Content: "hi"},
+		}, new(false))
+		Expect(len(reqBody)).To(BeNumerically("<", 512))
+
+		resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		body, err := io.ReadAll(resp.Body)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(body)).To(ContainSubstring("yyy")) // forwarded in full
+		resp.Body.Close()
+
+		p.Close()
+		p = nil
+
+		Expect(driver.RawTurns()).To(BeEmpty())
 	})
 })
 

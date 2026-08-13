@@ -229,6 +229,24 @@ func localCaptureSession() *sessions.IngestEnvelope {
 	return &sessions.IngestEnvelope{}
 }
 
+// responseWeight is the byte-budget contribution of the reduced response a
+// capture job retains until a worker marshals and stores it. The streamed
+// paths still hold the raw response bytes and pass those directly; the
+// reduce-from-stream path keeps no such buffer, so the reduced form is
+// marshaled for its size (the worker marshals it again to store — the extra
+// pass is bounded and only on that path). Returns 0 for a nil or unmarshalable
+// response so the request weight still lands.
+func responseWeight(resp *llm.ChatResponse) int {
+	if resp == nil {
+		return 0
+	}
+	b, err := json.Marshal(resp)
+	if err != nil {
+		return 0
+	}
+	return len(b)
+}
+
 func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL string, prov provider.Provider, agentName, threadID string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
 	// Build upstream URL
 	upstreamURL += path
@@ -296,11 +314,14 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL 
 				Req:        parsedReq,
 				Resp:       parsedResp,
 				RawRequest: body,
-				// Charge the request body against the queue byte budget:
-				// it is the bounded (32 MB contract) buffer the job retains
-				// live, so an unweighted enqueue here would let proxy-captured
-				// turns bypass the budget the ingest path already respects.
-				Weight:  len(body),
+				// Charge both halves the job retains against the queue byte
+				// budget — the request body (bounded by the 32 MB contract)
+				// and the response the worker marshals and stores. Weighing
+				// the request alone would let a response-heavy turn exceed the
+				// budget; omitting the weight entirely (the earlier bug) let
+				// proxy captures bypass it wholesale, unlike the ingest path
+				// which charges the full request+response envelope.
+				Weight:  len(body) + len(respBody),
 				Session: localCaptureSession(),
 			})
 		}
@@ -448,9 +469,10 @@ func (p *Proxy) handleSSEStreamViaCapture(r capture.Reducer, httpResp *http.Resp
 		Req:        parsedReq,
 		Resp:       resp,
 		RawRequest: rawRequest,
-		// Request body charged against the queue byte budget (see the
-		// non-streaming path for the rationale).
-		Weight:  len(rawRequest),
+		// Request + reduced-response bytes charged against the queue byte
+		// budget (see the non-streaming path). This path keeps no raw
+		// response buffer, so the reduced form is measured via responseWeight.
+		Weight:  len(rawRequest) + responseWeight(resp),
 		Session: localCaptureSession(),
 	})
 }
@@ -637,6 +659,14 @@ func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, 
 				finalResp.Model = parsedReq.Model
 			}
 			stampDuration(finalResp, startTime)
+			// Sum the raw streamed chunks the job's response was reduced from
+			// for the response half of the byte-budget weight (see the
+			// non-streaming path). Chunk bytes over-estimate the stored
+			// response, which is the safe direction for a memory guard.
+			respBytes := 0
+			for _, ch := range allChunks {
+				respBytes += len(ch)
+			}
 			p.workerPool.Enqueue(worker.Job{
 				Provider:   prov.Name(),
 				AgentName:  agentName,
@@ -644,10 +674,8 @@ func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, 
 				Req:        parsedReq,
 				Resp:       finalResp,
 				RawRequest: rawRequest,
-				// Request body charged against the queue byte budget (see the
-				// non-streaming path for the rationale).
-				Weight:  len(rawRequest),
-				Session: localCaptureSession(),
+				Weight:     len(rawRequest) + respBytes,
+				Session:    localCaptureSession(),
 			})
 		}
 	}
