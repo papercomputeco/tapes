@@ -131,6 +131,7 @@ data: {"type":"message_stop"}
 	env := receivedEnvelope.Load()
 	if env == nil {
 		t.Fatal("ingest never received the dispatched turn — decode path likely dropped it")
+		return
 	}
 
 	if env.Provider != "anthropic" {
@@ -138,6 +139,7 @@ data: {"type":"message_stop"}
 	}
 	if env.Response == nil {
 		t.Fatalf("response is nil — decode path didn't produce a ChatResponse")
+		return
 	}
 	if env.Response.Message.Role != "assistant" {
 		t.Errorf("role: got %q, want assistant", env.Response.Message.Role)
@@ -159,6 +161,7 @@ data: {"type":"message_stop"}
 	// without the dispatchTurn stamp nodes.total_duration_ns stays NULL.
 	if env.Response.Usage == nil {
 		t.Fatal("response usage is nil — duration stamp would have nothing to write")
+		return
 	}
 	if env.Response.Usage.TotalDurationNs <= 0 {
 		t.Errorf("total_duration_ns: got %d, want > 0 (wall-clock not stamped)", env.Response.Usage.TotalDurationNs)
@@ -243,9 +246,11 @@ data: {"type":"message_stop"}
 	env := receivedEnvelope.Load()
 	if env == nil {
 		t.Fatal("ingest never received the dispatched turn")
+		return
 	}
 	if env.Response == nil {
 		t.Fatal("response is nil")
+		return
 	}
 	if env.Response.Message.Role != "assistant" {
 		t.Errorf("role: got %q, want assistant", env.Response.Message.Role)
