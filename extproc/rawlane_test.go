@@ -345,6 +345,20 @@ var _ = Describe("Raw response lane", func() {
 				// would hold still while ingest's limits move.
 				Expect(requestCaptureBudget).To(Equal(ingest.MaxIngestBodyBytes - rawLaneEnvelopeReserve))
 			})
+
+			It("lifts requestCaptureBudget above the Phase 2 mid-band ceiling", func() {
+				// It now exceeds the old ~13.67 MiB budget, so the whole
+				// ~13.67–47 MiB band is buffered and captured, not shed.
+				Expect(requestCaptureBudget).To(Equal(ingest.MaxIngestBodyBytes - rawLaneEnvelopeReserve))
+				Expect(requestCaptureBudget).To(BeNumerically(">", 14<<20))
+			})
+
+			It("keeps the decompression cap at or above requestCaptureBudget so a just-over request sheds, not decode-errors", func() {
+				// Read/decode side ≥ producer side: a body decoding to
+				// requestCaptureBudget+1 stays under the cap and reaches the
+				// over-budget check instead of erroring in readCapped.
+				Expect(capture.MaxDecompressedBytes).To(BeNumerically(">=", requestCaptureBudget))
+			})
 		})
 	})
 
@@ -539,9 +553,11 @@ var _ = Describe("Raw response lane", func() {
 
 		It("marks a turn the post-marshal backstop stripped", func() {
 			in := anthropicTurn()
-			// Passes the pre-dispatch estimate, exceeds the real limit
-			// once marshalled — see the transport-backstop suite.
-			in.respBody = manyDeltaAnthropicSSE(8<<20, 64<<10)
+			// Passes the pre-dispatch estimate — base64 of the raw bytes
+			// fits the reserve-adjusted budget — while the marshalled
+			// envelope exceeds the real limit, because the reduction carries
+			// the same text the verbatim bytes do. See the backstop suite.
+			in.respBody = manyDeltaAnthropicSSE(ingest.MaxIngestBodyBytes/2, 64<<10)
 
 			envelope, _ := runTurn(RawResponseDual, in)
 
@@ -599,17 +615,17 @@ var _ = Describe("Raw response lane", func() {
 	Describe("the transport backstop", func() {
 		It("counts a stripped turn as skipped, never as attached", func() {
 			in := anthropicTurn()
-			// Sized to pass the pre-dispatch estimate — base64 of ~8.4 MiB
+			// Sized to pass the pre-dispatch estimate — base64 of ~23 MiB
 			// of SSE fits the reserve-adjusted budget — while the marshalled
 			// envelope exceeds the transport limit, because the reduction
-			// carries the same ~8 MiB of text the verbatim bytes do. The
+			// carries the same ~23 MiB of text the verbatim bytes do. The
 			// deltas must stay small (64 KiB) so the reducer's line scanner
 			// actually accumulates the text instead of erroring out with a
 			// stub reduction. The post-marshal backstop then strips, and the
 			// attach counter must reflect the shape the turn actually
 			// shipped with: one skip, zero attaches, not
 			// attached-then-skipped.
-			in.respBody = manyDeltaAnthropicSSE(8<<20, 64<<10)
+			in.respBody = manyDeltaAnthropicSSE(ingest.MaxIngestBodyBytes/2, 64<<10)
 
 			envelope, proc := runTurn(RawResponseDual, in)
 

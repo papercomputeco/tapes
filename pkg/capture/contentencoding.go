@@ -39,10 +39,13 @@ import (
 // decompression bomb: the compressed bytes are already capped on the way in,
 // but a few KiB of zstd expands to gigabytes if nothing stops it.
 //
-// 32 MiB matches extproc's cap exactly. It has to: a body extproc accepted and
-// forwarded must not then be rejected here, or the raw lane would drop bytes
-// the producer believed were safe to send.
-const MaxDecompressedBytes = 32 << 20
+// 48 MiB must stay ≥ extproc's requestCaptureBudget (MaxIngestBodyBytes −
+// rawLaneEnvelopeReserve, ≈45.67 MiB). A request whose wire bytes fit but decode
+// just past the budget must reach the over-budget shed and drop as
+// request_over_budget; if this cap were lower, readCapped would error first and
+// route the turn down the decode-error path instead. Read/decode side ≥
+// producer side is the ordering that keeps that shed reachable.
+const MaxDecompressedBytes = 48 << 20
 
 // DecodeStats reports what had to be tolerated to produce the decoded bytes.
 type DecodeStats struct {

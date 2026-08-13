@@ -195,4 +195,11 @@ var _ = Describe("DecodeContentEncoding", func() {
 		out, _ := decode(gzipped(make([]byte, capture.MaxDecompressedBytes)), "gzip")
 		Expect(out).To(HaveLen(capture.MaxDecompressedBytes))
 	})
+
+	It("caps one decompressed body at 48 MiB", func() {
+		// The read/decode ceiling must sit at 48 MiB so it stays ≥ extproc's
+		// requestCaptureBudget: a just-over request then sheds by budget
+		// rather than erroring in readCapped.
+		Expect(capture.MaxDecompressedBytes).To(Equal(48 << 20))
+	})
 })

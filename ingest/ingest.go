@@ -705,15 +705,22 @@ func (s *Server) reduceRawOnly(ctx context.Context, turn *TurnPayload) json.RawM
 // so an oversize turn still lands with a usable reduced response.
 const MaxRawResponseBytes = 8 << 20
 
-// MaxIngestBodyBytes is the request body limit, derived from
-// MaxRawResponseBytes rather than chosen independently: raw_response travels
-// base64-encoded (4/3 expansion), alongside the raw request, the reduced
-// response, and the meta block. Fiber's 4 MiB default would reject a body
-// carrying a raw response well under the cap, which would make the cap
-// unreachable and its drop-and-mark path dead code — the limit that actually
-// bit would be an unrelated framework default, and turns would fail at the
+// MaxDecodedRequestBytes is the decoded-request ceiling the body limit must
+// hold: Anthropic's Messages API contract caps a request at 32 MB decoded, and
+// the envelope carries that request in full, so a body limit below it would
+// shed large-but-valid requests before they reach ingest.
+const MaxDecodedRequestBytes = 32 << 20
+
+// MaxIngestBodyBytes is the request body limit, derived from its parts rather
+// than chosen independently: a full decoded request (MaxDecodedRequestBytes),
+// plus raw_response travelling base64-encoded (MaxRawResponseBytes*4/3), plus a
+// reserve for the reduced response, the meta block, and JSON scaffolding. It is
+// derived, not a literal, so it can never silently desync from those budgets
+// and Fiber's 4 MiB default can't become the real limit: that default would
+// reject a body carrying a raw response well under the cap, making the cap
+// unreachable and its drop-and-mark path dead code — turns would fail at the
 // transport with no fidelity marker recorded anywhere.
-const MaxIngestBodyBytes = MaxRawResponseBytes*4/3 + 4<<20
+const MaxIngestBodyBytes = MaxDecodedRequestBytes + MaxRawResponseBytes*4/3 + 4<<20
 
 func (s *Server) persistRawTurn(ctx context.Context, turn *TurnPayload, raw rawEnvelope) {
 	rawResponse := turn.RawResponse

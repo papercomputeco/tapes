@@ -253,4 +253,39 @@ var _ = Describe("body-limit rejections", func() {
 			Should(Equal(1))
 		Expect(driver.RawTurns()[0].Provider).To(Equal("ollama"))
 	})
+
+	It("accepts a ~30 MiB turn that the Phase 2 ceiling would have rejected", func() {
+		// The retired ~14.67 MiB ceiling would have 413'd this body; the
+		// raised limit accepts it. Base64 grows 3 raw bytes into 4 body
+		// bytes, so pad to ~30 MiB — well above the old ceiling and under
+		// the new MaxIngestBodyBytes.
+		const target = 30 << 20
+		payload := ingest.TurnPayload{
+			Provider: "ollama",
+			RawRequest: mustJSON(ollamaRequest{
+				Model:    "llama3",
+				Messages: []ollamaMessage{{Role: "user", Content: "Hello"}},
+			}),
+			Response:    reducedResponse("llama3", "Hi", nil),
+			RawResponse: bytes.Repeat([]byte("x"), 3),
+		}
+		base, err := json.Marshal(payload)
+		Expect(err).NotTo(HaveOccurred())
+
+		extra := (target - len(base) - 8) / 4
+		payload.RawResponse = bytes.Repeat([]byte("x"), 3+3*extra)
+		body, err := json.Marshal(payload)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(len(body)).To(BeNumerically(">", 15<<20))
+		Expect(len(body)).To(BeNumerically("<=", ingest.MaxIngestBodyBytes))
+
+		resp, err := client.Post(baseURL+"/v1/ingest", "application/json", bytes.NewReader(body))
+		Expect(err).NotTo(HaveOccurred())
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
+
+		Eventually(driver.CountRaw).
+			WithTimeout(2 * time.Second).WithPolling(25 * time.Millisecond).
+			Should(Equal(1))
+	})
 })
