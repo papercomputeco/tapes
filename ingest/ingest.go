@@ -196,6 +196,23 @@ type rawEnvelope struct {
 	Session  json.RawMessage `json:"session"`
 }
 
+// ingestBody decodes the /v1/ingest envelope in a single pass. The dual-view
+// fields (response/meta/session) stay json.RawMessage so one decode yields both
+// the verbatim slices the raw row stores and — via a cheap sub-decode of those
+// small fields — the typed values the handler validates and reduces. Field
+// meanings are documented on TurnPayload; request is already the verbatim slice.
+type ingestBody struct {
+	Provider            string          `json:"provider"`
+	AgentName           string          `json:"agent_name,omitempty"`
+	RawRequest          json.RawMessage `json:"request"`
+	Response            json.RawMessage `json:"response"`
+	RawResponse         []byte          `json:"raw_response,omitempty"`
+	RawResponseEncoding string          `json:"raw_response_encoding,omitempty"`
+	RawResponseWithheld bool            `json:"raw_response_withheld,omitempty"`
+	Meta                json.RawMessage `json:"meta"`
+	Session             json.RawMessage `json:"session,omitempty"`
+}
+
 // Server is an HTTP server that accepts completed LLM conversation turns
 // for async capture to the raw_turns log.
 type Server struct {
@@ -334,13 +351,22 @@ func (s *Server) handlePing(c *fiber.Ctx) error {
 	return c.JSON(pingResponse{Status: "ok"})
 }
 
+// decodeEnvelopeField typed-decodes one dual-view sub-field from its verbatim
+// slice. An absent field (nil/empty) leaves dst at its zero value, matching a
+// single whole-envelope decode where the key was simply missing.
+func decodeEnvelopeField(raw json.RawMessage, dst any) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	return json.Unmarshal(raw, dst)
+}
+
 func (s *Server) handleIngest(c *fiber.Ctx) error {
 	bodySize := len(c.Body())
 
-	var payload TurnPayload
-	if err := c.BodyParser(&payload); err != nil {
+	rejectEnvelope := func(reason string, err error) error {
 		s.logger.Warn("ingest envelope rejected",
-			"reason", "envelope",
+			"reason", reason,
 			"error", err,
 			"bytes", bodySize,
 		)
@@ -349,6 +375,33 @@ func (s *Server) handleIngest(c *fiber.Ctx) error {
 			Error: fmt.Sprintf("%s: %s", ErrEnvelope, err),
 		})
 	}
+
+	// The dual-view fields stay json.RawMessage so one decode yields both the
+	// verbatim slices the raw row stores and, via the sub-decodes below, the
+	// typed payload.
+	var body ingestBody
+	if err := c.BodyParser(&body); err != nil {
+		return rejectEnvelope("envelope", err)
+	}
+
+	payload := TurnPayload{
+		Provider:            body.Provider,
+		AgentName:           body.AgentName,
+		RawRequest:          body.RawRequest,
+		RawResponse:         body.RawResponse,
+		RawResponseEncoding: body.RawResponseEncoding,
+		RawResponseWithheld: body.RawResponseWithheld,
+	}
+	if err := decodeEnvelopeField(body.Response, &payload.Response); err != nil {
+		return rejectEnvelope("envelope", err)
+	}
+	if err := decodeEnvelopeField(body.Meta, &payload.Meta); err != nil {
+		return rejectEnvelope("envelope", err)
+	}
+	if err := decodeEnvelopeField(body.Session, &payload.Session); err != nil {
+		return rejectEnvelope("envelope", err)
+	}
+
 	if payload.Session != nil {
 		// This deployment is single-tenant: writes take the same sentinel
 		// reads scope to, so a client asserting an org in the envelope
@@ -358,15 +411,7 @@ func (s *Server) handleIngest(c *fiber.Ctx) error {
 	}
 
 	if err := payload.Session.Validate(); err != nil {
-		s.logger.Warn("ingest envelope rejected",
-			"reason", "session",
-			"error", err,
-			"bytes", bodySize,
-		)
-		s.metrics.ObserveWrite("", ResultRejectEnv, bodySize)
-		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{
-			Error: fmt.Sprintf("%s: %s", ErrEnvelope, err),
-		})
+		return rejectEnvelope("session", err)
 	}
 
 	// A raw-only payload carries the verbatim upstream bytes and no reduction.
@@ -380,13 +425,16 @@ func (s *Server) handleIngest(c *fiber.Ctx) error {
 	// fails provider parsing (422) is still captured, so a future
 	// parser fix re-derives it instead of needing a re-capture.
 	if s.rawStore != nil {
-		var raw rawEnvelope
-		if err := json.Unmarshal(c.Body(), &raw); err == nil {
-			if len(reduced) > 0 {
-				raw.Response = reduced
-			}
-			s.persistRawTurn(c.Context(), &payload, raw)
+		raw := rawEnvelope{
+			Request:  body.RawRequest,
+			Response: body.Response,
+			Meta:     body.Meta,
+			Session:  body.Session,
 		}
+		if len(reduced) > 0 {
+			raw.Response = reduced
+		}
+		s.persistRawTurn(c.Context(), &payload, raw)
 	}
 
 	start := time.Now()
