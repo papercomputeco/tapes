@@ -1,6 +1,6 @@
 <h1>
 <p align="center">
-  <img src="./tapes.png" alt="Tapes Logo">
+  <img width="1280" height="640" alt="Tapes logo" src="https://github.com/user-attachments/assets/133642d6-88e6-4f96-be7a-e6e109a59e5d" />
   <br><code>tapes</code>
 </h1>
 </p>
@@ -19,6 +19,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/github/stars/papercomputeco/tapes">
+
   ·
   <a target="_blank" href="https://github.com/papercomputeco/tapes/releases/latest">
     <img src="https://img.shields.io/github/v/release/papercomputeco/tapes?style=flat-square">
