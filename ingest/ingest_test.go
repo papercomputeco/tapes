@@ -343,5 +343,48 @@ var _ = Describe("Ingest Server", func() {
 
 			Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
 		})
+
+		It("stores the verbatim request/response/meta sub-fields after the single-pass parse", func() {
+			// Distinct sub-fields, no RawResponse: the Response is stored as
+			// sent, not server-reduced.
+			wantRequest := mustJSON(ollamaRequest{
+				Model:    "llama3",
+				Messages: []ollamaMessage{{Role: "user", Content: "single-pass request"}},
+			})
+			response := reducedResponse("llama3", "single-pass response", &llm.Usage{
+				PromptTokens: 3, CompletionTokens: 5, TotalTokens: 8,
+			})
+			meta := ingest.TurnMeta{RequestID: "req-single-pass", ContentType: "application/json"}
+			session := &sessions.IngestEnvelope{
+				HarnessID:        "claude-code",
+				HarnessSessionID: "b6e7c3f2-0000-4000-8000-0000000000aa",
+			}
+
+			body, err := json.Marshal(ingest.TurnPayload{
+				Provider:   "ollama",
+				AgentName:  "test-agent",
+				RawRequest: wantRequest,
+				Response:   response,
+				Meta:       meta,
+				Session:    session,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			resp, err := client.Post(baseURL+"/v1/ingest", "application/json", bytes.NewReader(body))
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+			Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
+
+			Eventually(driver.CountRaw).
+				WithTimeout(2 * time.Second).WithPolling(25 * time.Millisecond).
+				Should(Equal(1))
+
+			// Each sub-field must land byte-faithfully to what the wire carried.
+			rec := driver.RawTurns()[0]
+			Expect(string(rec.RawRequest)).To(Equal(string(wantRequest)))
+			Expect(string(rec.Response)).To(Equal(string(mustJSON(response))))
+			Expect(string(rec.Meta)).To(Equal(string(mustJSON(meta))))
+			Expect(string(rec.SessionEnvelope)).To(Equal(string(mustJSON(session))))
+		})
 	})
 })
