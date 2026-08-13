@@ -1,6 +1,6 @@
 <h1>
 <p align="center">
-  <img width="1280" height="640" alt="image" src="https://github.com/user-attachments/assets/133642d6-88e6-4f96-be7a-e6e109a59e5d" />
+  <img width="1280" height="640" alt="Tapes logo" src="https://github.com/user-attachments/assets/133642d6-88e6-4f96-be7a-e6e109a59e5d" />
   <br><code>tapes</code>
 </h1>
 </p>
