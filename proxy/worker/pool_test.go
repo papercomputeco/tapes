@@ -83,4 +83,47 @@ var _ = Describe("Worker Pool", func() {
 			Expect(p.Len()).To(Equal(2))
 		})
 	})
+
+	Describe("Admit", func() {
+		// Bypass NewPool as the Len spec does: real workers would drain the
+		// queue and release reserved weight before the assertions run, so a
+		// consumer-less pool is the only way to pin in-flight bytes.
+		weighted := func(weight int) Job {
+			return Job{Provider: "p", Req: &llm.ChatRequest{Model: "m"}, Weight: weight}
+		}
+
+		It("rejects a job that would exceed the byte budget even when slots are free", func() {
+			// Ample slots, tight budget: only the byte budget can bite.
+			p := &Pool{
+				queue:      make(chan Job, 8),
+				byteBudget: 100,
+				logger:     tapeslogger.NewNoop(),
+			}
+
+			Expect(p.Admit(weighted(80))).To(Equal(RejectNone))
+			// 80+80 overshoots the budget while 7 slots stay open.
+			Expect(p.Admit(weighted(80))).To(Equal(RejectByteBudget))
+			Expect(p.Len()).To(Equal(1)) // count cap was not the cause
+
+			// Releasing the queued job's weight on completion readmits it.
+			p.release(80)
+			Expect(p.Admit(weighted(80))).To(Equal(RejectNone))
+		})
+
+		It("distinguishes a byte-budget rejection from a slot-count rejection", func() {
+			// Single slot, roomy budget: fill the slot, then a fitting job
+			// can only be turned away by the count cap.
+			full := &Pool{queue: make(chan Job, 1), byteBudget: 1 << 20, logger: tapeslogger.NewNoop()}
+			Expect(full.Admit(weighted(1))).To(Equal(RejectNone))
+			slotReject := full.Admit(weighted(1))
+			Expect(slotReject).To(Equal(RejectQueueFull))
+
+			// Open slots, tight budget: only the byte budget can turn a job away.
+			tight := &Pool{queue: make(chan Job, 8), byteBudget: 100, logger: tapeslogger.NewNoop()}
+			byteReject := tight.Admit(weighted(150))
+			Expect(byteReject).To(Equal(RejectByteBudget))
+
+			Expect(byteReject).NotTo(Equal(slotReject))
+		})
+	})
 })

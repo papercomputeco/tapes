@@ -28,6 +28,20 @@ import (
 var (
 	defaultNumWorkers   uint = 3
 	defaultJobQueueSize uint = 256
+	// Each queued Job retains its parsed body live, so the slot count alone
+	// does not bound memory; this budget does.
+	defaultJobQueueByteBudget int64 = 256 << 20
+)
+
+// RejectReason names the ceiling that declined a job so the ingest saturation
+// signal can attribute a drop to the budget that bit. RejectNone means the job
+// was enqueued.
+type RejectReason int
+
+const (
+	RejectNone RejectReason = iota
+	RejectQueueFull
+	RejectByteBudget
 )
 
 // Job is a unit of work for the worker pool to execute against.
@@ -40,6 +54,12 @@ type Job struct {
 	ThreadID string
 	Req      *llm.ChatRequest
 	Resp     *llm.ChatResponse
+
+	// Weight is the estimated bytes this job retains live (its parsed body)
+	// while queued and processed; the pool holds it against the byte budget
+	// from admission until the job completes. Zero leaves the job unweighted,
+	// so only the slot-count cap applies.
+	Weight int
 
 	// RawRequest is the verbatim provider request body the proxy
 	// received, persisted unparsed into the immutable raw-turn layer so
@@ -73,6 +93,10 @@ type Config struct {
 	// QueueSize is the capacity of the buffered job channel (defaults to 256).
 	QueueSize uint
 
+	// QueueByteBudget bounds the total retained bytes of queued-and-in-flight
+	// jobs. The count cap bounds slots; this bounds memory. Zero-value defaults.
+	QueueByteBudget int64
+
 	// Project is the git repository or project name to tag on stored nodes.
 	Project string
 
@@ -82,10 +106,16 @@ type Config struct {
 
 // Pool processes storage jobs asynchronously via a worker pool.
 type Pool struct {
-	config *Config
-	queue  chan Job
-	wg     sync.WaitGroup
-	logger *slog.Logger
+	config     *Config
+	queue      chan Job
+	wg         sync.WaitGroup
+	logger     *slog.Logger
+	byteBudget int64
+
+	// mu guards inFlightBytes, the reserved retained bytes of jobs admitted
+	// but not yet finished processing.
+	mu            sync.Mutex
+	inFlightBytes int64
 }
 
 // NewPool creates a new Storer and starts its worker goroutines.
@@ -98,14 +128,19 @@ func NewPool(c *Config) (*Pool, error) {
 		c.QueueSize = defaultJobQueueSize
 	}
 
+	if c.QueueByteBudget == 0 {
+		c.QueueByteBudget = defaultJobQueueByteBudget
+	}
+
 	if c.NumWorkers > uint(math.MaxInt) {
 		return nil, fmt.Errorf("NumWorkers %d exceeds max int", c.NumWorkers)
 	}
 
 	wp := &Pool{
-		config: c,
-		queue:  make(chan Job, c.QueueSize),
-		logger: c.Logger,
+		config:     c,
+		queue:      make(chan Job, c.QueueSize),
+		logger:     c.Logger,
+		byteBudget: c.QueueByteBudget,
 	}
 
 	wp.wg.Add(int(c.NumWorkers))
@@ -117,22 +152,67 @@ func NewPool(c *Config) (*Pool, error) {
 }
 
 // Enqueue submits a job for processing by the worker pool.
-// Returns true if enqueued, false if the queue is full, resulting in the job being dropped
+// Returns true if enqueued, false if rejected by either the byte budget or the
+// slot-count cap, resulting in the job being dropped. Call Admit to learn which.
 func (p *Pool) Enqueue(job Job) bool {
+	return p.Admit(job) == RejectNone
+}
+
+// Admit weighs a job against the retained-byte budget and the slot-count cap
+// and, when both admit it, hands it to the workers. The reserved weight is held
+// until the job finishes processing (released in worker). RejectNone means the
+// job was enqueued; the other reasons name the ceiling that declined it.
+func (p *Pool) Admit(job Job) RejectReason {
+	if !p.reserve(job.Weight) {
+		p.logger.Error("job not queued, byte budget exceeded, job dropped",
+			"provider", job.Provider,
+			"model", job.Req.Model,
+		)
+		return RejectByteBudget
+	}
+
 	select {
 	case p.queue <- job:
 		p.logger.Debug("job queued",
 			"provider", job.Provider,
 			"model", job.Req.Model,
 		)
-		return true
+		return RejectNone
 	default:
+		p.release(job.Weight)
 		p.logger.Error("job not queued, queue full, job dropped",
 			"provider", job.Provider,
 			"model", job.Req.Model,
 		)
+		return RejectQueueFull
+	}
+}
+
+// reserve claims a job's weight against the byte budget, admitting it only if
+// the in-flight total stays within budget. A non-positive weight is always
+// admitted, so callers that supply no estimate fall back to the slot cap.
+func (p *Pool) reserve(weight int) bool {
+	if weight <= 0 {
+		return true
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.inFlightBytes+int64(weight) > p.byteBudget {
 		return false
 	}
+	p.inFlightBytes += int64(weight)
+	return true
+}
+
+// release returns a job's reserved weight to the budget once it is no longer
+// retained.
+func (p *Pool) release(weight int) {
+	if weight <= 0 {
+		return
+	}
+	p.mu.Lock()
+	p.inFlightBytes -= int64(weight)
+	p.mu.Unlock()
 }
 
 // Len returns the current number of jobs buffered in the queue. It is a
@@ -157,6 +237,7 @@ func (p *Pool) worker(id uint) {
 
 	for job := range p.queue {
 		p.processJob(job)
+		p.release(job.Weight)
 	}
 
 	p.logger.Debug("storage worker stopped", "worker_id", id)
