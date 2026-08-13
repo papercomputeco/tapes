@@ -47,12 +47,18 @@ func (s *Server) mountSessions(router *oasfiber.Router) {
 			Description("Returns counts plus cost / token / duration / tool-call / completed-count "+
 				"totals for the window. The numbers are span-grain trace rollup sums (delta-only usage, "+
 				"agent time = sum of trace durations) so they agree with the session and trace views; "+
-				"turn_count counts traces. Filter the window with since/until.").
+				"turn_count counts traces. Filter the window with since/until, and narrow every total "+
+				"to one user with auth_subject — the same subject the /v1/sessions filter takes, so a "+
+				"personal surface can show totals that match the rows beside them.").
 			Tag("sessions").
 			QueryParam("since", oas.String(oas.Format("date-time")),
 				oas.ParamDescription("Only include records at or after this RFC3339 timestamp")).
 			QueryParam("until", oas.String(oas.Format("date-time")),
 				oas.ParamDescription("Only include records before or at this RFC3339 timestamp")).
+			QueryParam("auth_subject", oas.String(),
+				oas.ParamDescription("Narrow every total to sessions captured for this gateway-stamped "+
+					"JWT subject (exact match). Omitted, the totals are org-wide. A subject with no "+
+					"sessions in the window aggregates to zeros, not an error")).
 			JSONResponse(200, "Aggregate stats for the window", s.schema(StatsResponse{})).
 			JSONResponse(400, "Invalid query parameters", s.errorSchema()).
 			JSONResponse(500, "Failed to compute stats", s.errorSchema()))

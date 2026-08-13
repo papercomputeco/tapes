@@ -51,7 +51,15 @@ func (s *Server) handleStats(c *fiber.Ctx) error {
 		s.logger.Error("stats unavailable: driver is not a SpanStatsReader")
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to compute stats"})
 	}
-	stats, err := reader.AggregateSpanStats(c.Context(), singleTenantOrgID, since, until)
+	// auth_subject is a caller-supplied filter, not an identity claim: it
+	// narrows the totals within this tenant and grants nothing. The verified
+	// subject is stamped at ingest from the JWT (x-paper-auth-subject); this
+	// only chooses which of those rows to add up. Same parameter, same
+	// meaning, as the /v1/sessions filter — a personal surface that scopes
+	// its rows and its totals passes the one value to both.
+	//
+	// Absent, it is empty and every total stays org-wide.
+	stats, err := reader.AggregateSpanStats(c.Context(), singleTenantOrgID, since, until, c.Query("auth_subject"))
 	if err != nil {
 		s.logger.Error("aggregate span stats", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to compute stats"})
@@ -69,8 +77,9 @@ func (s *Server) handleStats(c *fiber.Ctx) error {
 }
 
 // parseStatsWindow reads the optional since/until time window from query
-// params. /v1/stats is a whole-window aggregate: it has no filter or
-// pagination parameters, only the time bounds.
+// params. /v1/stats has no pagination — it is one aggregate row — so the time
+// bounds and the auth_subject filter are the whole of its input; the subject
+// needs no parsing and is read at the call site.
 //
 // Validation errors are returned as plain Go errors so the calling handler
 // can map them to a 400 Bad Request response, instead of letting them

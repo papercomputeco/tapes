@@ -629,9 +629,9 @@ func (d *Driver) GetSpanRecord(ctx context.Context, orgID, traceID, spanID strin
 }
 
 // AggregateSpanStats sums the trace-grain rollups over a time window —
-// the span-layer aggregate behind /v1/stats. Implements
-// storage.SpanStatsReader.
-func (d *Driver) AggregateSpanStats(ctx context.Context, orgID string, since, until *time.Time) (storage.SpanStats, error) {
+// the span-layer aggregate behind /v1/stats. A non-empty authSubject narrows
+// every total to that subject's sessions. Implements storage.SpanStatsReader.
+func (d *Driver) AggregateSpanStats(ctx context.Context, orgID string, since, until *time.Time, authSubject string) (storage.SpanStats, error) {
 	if d == nil || d.conn == nil {
 		return storage.SpanStats{}, errors.New("postgres driver not open")
 	}
@@ -643,6 +643,12 @@ func (d *Driver) AggregateSpanStats(ctx context.Context, orgID string, since, un
 		OrgID:       org,
 		SinceFilter: nullTimePtr(since),
 		UntilFilter: nullTimePtr(until),
+		// Deliberately not nullStringValue: that treats whitespace as absent,
+		// and absent here means org-wide. A caller who sends a blank-looking
+		// subject should get zeros — "nobody by that name" — rather than
+		// silently widening to every user's totals on a personal surface.
+		// `!= ""` is also exactly how the /v1/sessions filter decides.
+		AuthSubjectFilter: pgtype.Text{String: authSubject, Valid: authSubject != ""},
 	})
 	if err != nil {
 		return storage.SpanStats{}, fmt.Errorf("aggregate span stats: %w", err)

@@ -135,6 +135,13 @@ type SpanStats struct {
 }
 
 // SpanStatsReader is the capability interface for span-layer stats.
+//
+// authSubject narrows every total in the returned SpanStats to sessions
+// captured for one gateway-stamped JWT subject; empty means the whole org, the
+// only behavior there used to be. It is a filter and not an authorization
+// boundary — the caller has already been scoped to a tenant, and this only
+// chooses which of that tenant's rows to add up, the same way the auth_subject
+// filter on ListSessionRecords does.
 type SpanStatsReader interface {
-	AggregateSpanStats(ctx context.Context, orgID string, since, until *time.Time) (SpanStats, error)
+	AggregateSpanStats(ctx context.Context, orgID string, since, until *time.Time, authSubject string) (SpanStats, error)
 }
