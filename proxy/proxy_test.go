@@ -208,6 +208,17 @@ var _ = Describe("Proxy capture byte budget", func() {
 	})
 })
 
+var _ = Describe("captureWeight", func() {
+	It("counts the request in both retained forms and the response once", func() {
+		// The job keeps the request raw (verbatim) and parsed (to derive),
+		// so it counts twice; the response is retained once. This is the
+		// proportional model the byte budget relies on — a serialized-size
+		// proxy for heap retention, not exact heap accounting.
+		Expect(captureWeight(1000, 300)).To(Equal(2*1000 + 300))
+		Expect(captureWeight(0, 0)).To(Equal(0))
+	})
+})
+
 var _ = Describe("Non-Streaming Proxy", func() {
 	var (
 		p        *Proxy

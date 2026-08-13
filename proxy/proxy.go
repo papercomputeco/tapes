@@ -247,6 +247,19 @@ func responseWeight(resp *llm.ChatResponse) int {
 	return len(b)
 }
 
+// captureWeight estimates the bytes a capture job holds against the queue byte
+// budget from admission until a worker drains it. The request is retained in
+// two forms — the raw bytes (kept verbatim for the raw-turn layer) and the
+// parsed ChatRequest (kept to derive) — both roughly the request's size, so it
+// counts twice; the response is retained once, as the parsed ChatResponse the
+// worker marshals, so its size counts once. These are serialized-size proxies
+// for heap retention, not exact Go heap measurements (which are not cheaply
+// obtainable), so the guard bounds queued memory to a small constant factor
+// rather than to an exact byte count — which is all a memory backstop needs.
+func captureWeight(rawRequestLen, responseBytes int) int {
+	return 2*rawRequestLen + responseBytes
+}
+
 func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL string, prov provider.Provider, agentName, threadID string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
 	// Build upstream URL
 	upstreamURL += path
@@ -314,14 +327,12 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL 
 				Req:        parsedReq,
 				Resp:       parsedResp,
 				RawRequest: body,
-				// Charge both halves the job retains against the queue byte
-				// budget — the request body (bounded by the 32 MB contract)
-				// and the response the worker marshals and stores. Weighing
-				// the request alone would let a response-heavy turn exceed the
-				// budget; omitting the weight entirely (the earlier bug) let
-				// proxy captures bypass it wholesale, unlike the ingest path
-				// which charges the full request+response envelope.
-				Weight:  len(body) + len(respBody),
+				// Charge every payload the job retains against the queue byte
+				// budget — request (raw + parsed) and response — so a burst of
+				// large turns applies backpressure instead of exhausting the
+				// proxy. Omitting the weight (the earlier bug) let proxy
+				// captures bypass the budget the ingest path already respects.
+				Weight:  captureWeight(len(body), len(respBody)),
 				Session: localCaptureSession(),
 			})
 		}
@@ -469,10 +480,11 @@ func (p *Proxy) handleSSEStreamViaCapture(r capture.Reducer, httpResp *http.Resp
 		Req:        parsedReq,
 		Resp:       resp,
 		RawRequest: rawRequest,
-		// Request + reduced-response bytes charged against the queue byte
-		// budget (see the non-streaming path). This path keeps no raw
-		// response buffer, so the reduced form is measured via responseWeight.
-		Weight:  len(rawRequest) + responseWeight(resp),
+		// Request (raw + parsed) + reduced-response bytes charged against the
+		// queue byte budget (see the non-streaming path). This path keeps no
+		// raw response buffer, so the reduced form is measured via
+		// responseWeight.
+		Weight:  captureWeight(len(rawRequest), responseWeight(resp)),
 		Session: localCaptureSession(),
 	})
 }
@@ -674,7 +686,7 @@ func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, 
 				Req:        parsedReq,
 				Resp:       finalResp,
 				RawRequest: rawRequest,
-				Weight:     len(rawRequest) + respBytes,
+				Weight:     captureWeight(len(rawRequest), respBytes),
 				Session:    localCaptureSession(),
 			})
 		}
