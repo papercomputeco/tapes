@@ -41,6 +41,12 @@ var (
 	// pool saturation, DAG write errors, storage unavailability. Returned as
 	// 502 Bad Gateway.
 	ErrDownstream = errors.New("downstream failure")
+
+	// ErrWorkerByteBudget is a worker-pool rejection caused by the retained-byte
+	// budget rather than the slot-count cap. It wraps ErrDownstream so the shed
+	// stays a 502; the distinct sentinel is what lets the two saturation modes
+	// land on separate write outcomes.
+	ErrWorkerByteBudget = fmt.Errorf("worker byte budget exceeded: %w", ErrDownstream)
 )
 
 // Server-trusted identity headers, populated by the upstream gateway
@@ -438,7 +444,7 @@ func (s *Server) handleIngest(c *fiber.Ctx) error {
 	}
 
 	start := time.Now()
-	if err := s.processTurn(&payload); err != nil {
+	if err := s.processTurn(&payload, bodySize); err != nil {
 		s.recordProcessTurnError(payload.Provider, err, bodySize)
 		return s.writeProcessTurnError(c, err)
 	}
@@ -841,6 +847,8 @@ func (s *Server) recordProcessTurnError(provider string, err error, bodyBytes in
 	switch {
 	case errors.Is(err, ErrEnvelope):
 		result = ResultRejectEnv
+	case errors.Is(err, ErrWorkerByteBudget):
+		result = ResultQueueByteBudget
 	case errors.Is(err, ErrDownstream):
 		result = ResultDownstreamErr
 	case errors.Is(err, ErrUnprocessable):
@@ -902,7 +910,7 @@ func validateReducedResponse(resp *llm.ChatResponse) error {
 // processTurn parses a raw turn payload and enqueues it for async DAG storage.
 // Returned errors wrap one of ErrEnvelope / ErrUnprocessable / ErrDownstream so
 // the caller can map to an HTTP status without re-parsing the message.
-func (s *Server) processTurn(turn *TurnPayload) error {
+func (s *Server) processTurn(turn *TurnPayload, weight int) error {
 	prov, ok := s.providers[turn.Provider]
 	if !ok {
 		return fmt.Errorf("%w: unsupported provider %q (supported: %v)",
@@ -940,14 +948,26 @@ func (s *Server) processTurn(turn *TurnPayload) error {
 		"session_harness_session_id", sessHarnessSessionID,
 	)
 
-	if ok := s.workerPool.Enqueue(worker.Job{
+	switch reason := s.workerPool.Admit(worker.Job{
 		Provider:  prov.Name(),
 		AgentName: turn.AgentName,
 		ThreadID:  turn.Meta.ThreadID,
 		Req:       parsedReq,
 		Resp:      &parsedResp,
 		Session:   turn.Session,
-	}); !ok {
+		Weight:    weight,
+	}); reason {
+	case worker.RejectNone:
+	case worker.RejectByteBudget:
+		s.logger.Error("ingest enqueue failed: worker byte budget exceeded",
+			"provider", prov.Name(),
+			"agent", turn.AgentName,
+			"model", parsedReq.Model,
+		)
+		// Snapshot depth even on a drop so the gauge reflects saturation.
+		s.metrics.SetQueueDepth(s.workerPool.Len())
+		return ErrWorkerByteBudget
+	case worker.RejectQueueFull:
 		s.logger.Error("ingest enqueue failed: worker queue full",
 			"provider", prov.Name(),
 			"agent", turn.AgentName,
