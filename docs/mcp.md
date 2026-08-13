@@ -1,4 +1,9 @@
-# MCP
+---
+title: MCP
+description: The read API's Model Context Protocol endpoint, the cassette tools it aggregates, and the core search tool.
+sidebar:
+  order: 12
+---
 
 The read API mounts a stateless, streamable HTTP Model Context Protocol endpoint at:
 

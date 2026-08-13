@@ -1,4 +1,16 @@
-# Telemetry
+---
+title: Telemetry
+description: What the server's CLI reports to PostHog, how to disable it, and why the client reports nothing.
+sidebar:
+  order: 14
+---
+
+This page is about the `tapes` CLI. The client,
+[`tapesctl`](https://github.com/papercomputeco/tapesctl), has no telemetry: no
+usage events, no PostHog client, and no environment variable to disable,
+because there is nothing to disable.
+
+## The server CLI
 
 Release builds can send CLI usage events to PostHog when built with a PostHog project key. A source build without that injected key creates no PostHog client.
 

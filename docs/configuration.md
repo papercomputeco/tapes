@@ -1,4 +1,15 @@
-# Configuration
+---
+title: Configuration
+description: How the server resolves its .tapes/ directory and settings, and how the client resolves its one server URL.
+sidebar:
+  order: 3
+---
+
+The server and the client keep separate configuration with different resolution
+rules. Read the section for the binary you are configuring; they do not share a
+precedence chain.
+
+## The server's configuration
 
 Tapes stores configuration and credentials in a `.tapes/` directory. Resolution order is:
 
@@ -17,7 +28,7 @@ tapes init --preset anthropic
 
 A project-local `.tapes/` takes precedence over the home directory. This is useful for per-project provider and database settings, but is also the first place to check when an expected global setting appears ignored.
 
-## Precedence
+### Precedence
 
 For commands that bind a setting, precedence is:
 
@@ -28,7 +39,7 @@ For commands that bind a setting, precedence is:
 
 Dots become underscores in environment names, for example `TAPES_PROXY_LISTEN` and `TAPES_STORAGE_POSTGRES_DSN`.
 
-## Manage settings
+### Manage settings
 
 ```bash
 tapes config list
@@ -62,7 +73,7 @@ Useful supported keys include:
 
 `cassettes = ["https://host/openapi"]` is a top-level array for operator-managed cassette OpenAPI URLs; it is not a dotted `config set` field. See [Cassettes](./cassettes.md) for the manifest, deployment responsibilities, and runtime behavior.
 
-## Example
+### Example
 
 ```toml
 version = 0
@@ -93,3 +104,43 @@ dimensions = 768
 ```
 
 Store provider secrets with `tapes auth openai` or `tapes auth anthropic`, or use the provider's environment variable. Do not put API keys in `config.toml`.
+
+## The client's configuration
+
+`tapesctl` keeps one file, `~/.tapes/config.toml`, and reads exactly one key
+from it:
+
+```toml
+# ~/.tapes/config.toml
+tapes-url = "http://localhost:8081"
+```
+
+Write it with:
+
+```bash
+tapesctl config set tapes-url http://localhost:8081
+tapesctl config get tapes-url
+tapesctl config path
+```
+
+Three differences from the server's rules are worth stating outright:
+
+- **There is no project-local layer.** The client always reads
+  `~/.tapes/config.toml`, whatever directory you run it from. A `.tapes/` in the
+  current directory configures the server and is invisible to the client.
+- **The chain has three links, not four.** A `--tapes-url` flag beats the
+  `TAPES_URL` environment variable, which beats the configured value. With none
+  of the three, a command that needs a server fails and names all three sources
+  rather than guessing a host.
+- **One URL covers two servers.** The read commands want the read API and the
+  capture commands want the ingest API, so whichever you configure, the other
+  needs `--tapes-url` on the command line. See
+  [Two ports, two jobs](./introduction.md#two-ports-two-jobs).
+
+`config set` edits the file in place, so comments, ordering, and keys the client
+does not know about survive it. `config get` lists only keys it knows *and* that
+are set, so empty output does not mean an empty file.
+
+The file sits beside `~/.tapes/logs`, `~/.tapes/skills`, and `~/.tapes/codex-app`
+rather than under `$XDG_CONFIG_HOME`, so one directory holds everything the
+client writes.

@@ -1,4 +1,9 @@
-# Inspecting and exporting data
+---
+title: Inspecting and exporting data
+description: Read captured sessions from the client, the built-in browser UI, an export bundle, or the HTTP read API directly.
+sidebar:
+  order: 10
+---
 
 ## Check the active setup
 
@@ -17,18 +22,28 @@ tapesctl sessions list --tapes-url http://localhost:8081
 tapesctl sessions list --limit 20
 tapesctl sessions get <session-id>
 tapesctl sessions traces <session-id>
+tapesctl sessions raw-turns <session-id>
 ```
 
-Each prints the server's JSON verbatim, so it composes with `jq`. `--tapes-url` falls back to `TAPES_URL`. A running read API is required; start one with `tapes serve`.
+Each prints the server's JSON verbatim, so it composes with `jq`. `--tapes-url` falls back to `TAPES_URL`, and then to the value from `tapesctl config set tapes-url`. A running read API is required; start one with `tapes serve`.
 
-## Browse interactively
+The `<session-id>` these take is the Tapes session id from `sessions list`. It
+is not the harness session id `tapesctl start` prints when it exits.
+
+## Browse in a browser
+
+The API binary can serve a small same-origin UI at `/`, in the style of
+Prometheus's built-in one. It is off by default:
 
 ```bash
-tapesctl sessions list
-tapesctl sessions get <session-id>
+tapes serve --api-web-ui
 ```
 
-Deck shows session aggregates and drills into traces and spans. See [Deck](./deck.md).
+Then open `http://localhost:8081/`. It lists sessions, browses a session's turns,
+shows the aggregate stats, and can trigger a derive run or a demo seed — the same
+`/v1/sessions`, `/v1/stats`, and `/v1/admin` responses the client uses. There is
+no frontend build step and no external scripts; equally, there is no search and
+no export, so use the client or the API for those.
 
 ## Export JSONL
 
@@ -44,6 +59,8 @@ Detail modes:
 
 - `spans` (default): trace records with full span trees and links;
 - `traces`: turn headers without spans or links.
+
+With `-o`, the byte count is written to stderr rather than stdout, so redirecting stdout stays clean. Without it, the bundle goes to stdout.
 
 A running read API is required. For a multi-session export, the API also provides `GET /v1/sessions/export`; consult its current OpenAPI parameters.
 

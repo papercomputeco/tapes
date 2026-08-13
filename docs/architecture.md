@@ -1,4 +1,9 @@
-# Architecture
+---
+title: Architecture
+description: How Tapes separates the immutable capture log from the derived session, trace, and span read model.
+sidebar:
+  order: 5
+---
 
 Tapes separates immutable capture from derived, query-oriented data.
 
@@ -18,7 +23,7 @@ sessions -> traces -> spans -----> pgvector span embeddings
         |                              |
         +----------> API :8081 <-------+
                          |
-               CLI / Deck / MCP clients
+                 CLI / MCP clients
 ```
 
 ## Capture: `raw_turns`

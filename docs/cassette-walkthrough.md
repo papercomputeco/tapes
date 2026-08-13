@@ -1,4 +1,9 @@
-# Running a cassette locally
+---
+title: Running a cassette locally
+description: Walk the hello-world cassette end to end on one machine, from compose up to driving its methods with the client.
+sidebar:
+  order: 7
+---
 
 This walkthrough proves the cassette path end to end on one machine, with
 nothing but this repository, Docker, and `tapesctl`: a standalone Tapes admits
@@ -111,8 +116,8 @@ subcommand):
 ```bash
 export TAPES_URL=http://localhost:8081
 
-tapesctl --help          # a `hello-world` command has appeared
-tapesctl hello-world --help
+tapesctl cassettes                 # `hello-world` has appeared
+tapesctl cassettes hello-world --help
 ```
 
 ```text
@@ -125,9 +130,12 @@ Those names are the cassette's own `operationId`s, kebab-cased, taken from the
 document Tapes cached — this binary has never heard of hello-world:
 
 ```bash
-tapesctl hello-world create-hello
-tapesctl hello-world get-hello
+tapesctl cassettes hello-world create-hello
+tapesctl cassettes hello-world get-hello
 ```
+
+Each method's help names the route it calls, which is the one thing a generated
+command name cannot tell you.
 
 The discovered surface is cached per server and revalidated with `ETag`, so
 `--help` stays instant and works offline once seen.

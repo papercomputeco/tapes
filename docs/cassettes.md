@@ -1,4 +1,9 @@
-# Cassettes
+---
+title: Cassettes
+description: The manifest, admission rules, and deployment responsibilities for a service that extends the Tapes read API.
+sidebar:
+  order: 6
+---
 
 > **Alpha/POC:** the current cassette contract is `cassette/v1alpha1`. It is
 > suitable for experiments and integrations, but its manifest and runtime

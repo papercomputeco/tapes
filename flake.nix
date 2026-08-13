@@ -32,7 +32,6 @@
             pkgs.git
 
             pkgs.hurl
-            pkgs.mdbook
           ];
 
           # Enable Go's experimental JSON v2 implementation

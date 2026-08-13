@@ -1,8 +1,17 @@
-# Skills
+---
+title: Skills
+description: Extract a reusable skill from captured sessions with an LLM, list what you have authored, and install one into an agent.
+sidebar:
+  order: 9
+---
 
 Tapes can extract reusable patterns from derived session transcripts with an LLM, store them under `~/.tapes/skills/`, and sync them into agent skill directories.
 
 A generated transcript follows the main conversation spine: turn-level prompts and responses from traces/spans, excluding harness shadow calls such as permission checks, title generation, and injected context.
+
+All three commands live in the client,
+[`tapesctl`](https://github.com/papercomputeco/tapesctl). `generate` reads
+session data from the read API; `list` and `sync` touch no server at all.
 
 ## Generate
 
@@ -20,6 +29,8 @@ tapesctl skill generate --search "gum glow charm" \
   --search-top 3 --name charm-cli-patterns
 ```
 
+Sessions named positionally take priority over `--search`.
+
 Other useful controls are:
 
 ```bash
@@ -28,7 +39,21 @@ tapesctl skill generate <session-id> --name morning-work \
   --type workflow --preview
 ```
 
-Skill types are `workflow`, `domain-knowledge`, and `prompt-template`. Generation defaults to the OpenAI provider; select `--provider openai|anthropic|ollama`, plus `--model` or `--api-key` when required. It may connect to the API with `--api-target` or use `--postgres` for a local in-process API.
+Skill types are `workflow`, `domain-knowledge`, and `prompt-template`.
+
+Two servers are involved and they are not the same one. `--tapes-url` addresses
+the read API that supplies the transcript. `--provider`, `--model`, and
+`--api-key` address the LLM that does the extraction:
+
+| Provider | Default model | Key read from | Key required |
+| --- | --- | --- | --- |
+| `openai` (default) | `gpt-4o-mini` | `OPENAI_API_KEY` | yes |
+| `anthropic` | `claude-haiku-4-5-20251001` | `ANTHROPIC_API_KEY` | yes |
+| `ollama` | `llama3.2` | either, if set | no |
+
+Prefer the environment variable over `--api-key`: a key passed on the command
+line is visible in the process list and in shell history for as long as the
+command runs.
 
 ## List
 
@@ -39,10 +64,8 @@ tapesctl skill list --type workflow
 
 ## Sync
 
-Authoring a skill reads session data, so `generate` and `list` live in `tapes`.
-Installing one into an agent's skills directory is a local file copy with no
-server involved, so it lives in the client,
-[`tapesctl`](https://github.com/papercomputeco/tapesctl).
+Installing a skill into an agent's skills directory is a local file copy with no
+server involved.
 
 By default, sync writes to the global, agent-neutral `~/.agents/skills/`:
 
