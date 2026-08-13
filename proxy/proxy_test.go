@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/papercomputeco/tapes/ingest"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/storage"
@@ -108,6 +110,64 @@ func makeOllamaResponseBody(model, role, content string) []byte {
 	Expect(err).NotTo(HaveOccurred())
 	return body
 }
+
+var _ = Describe("Proxy body limit", func() {
+	var (
+		p        *Proxy
+		driver   *captureDriver
+		upstream *httptest.Server
+	)
+
+	BeforeEach(func() {
+		upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write(makeOllamaResponseBody("test-model", "assistant", "ok"))
+		}))
+		p, driver = newTestProxy(upstream.URL)
+	})
+
+	AfterEach(func() {
+		if p != nil {
+			p.Close()
+		}
+		if upstream != nil {
+			upstream.Close()
+		}
+	})
+
+	It("forwards a request above Fiber's 4 MiB default body limit", func() {
+		// Pins the forwarding contract: no size gate below the shared
+		// capture ceiling. Fiber's default BodyLimit is 4 MiB — inert today
+		// because StreamRequestBody skips fasthttp's check, but this spec
+		// keeps forwarding safe if that coupling ever changes.
+		reqBody := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+			{Role: "user", Content: strings.Repeat("a", 6<<20)},
+		}, new(false))
+		Expect(len(reqBody)).To(BeNumerically(">", 4<<20))
+
+		req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewReader(reqBody))
+		resp, err := p.server.Test(req, 30_000)
+		Expect(err).NotTo(HaveOccurred())
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+
+		// The oversize-for-capture shed may drop the turn; forwarding is what
+		// this spec pins. Drain cleanly either way.
+		_ = driver
+	})
+
+	It("refuses only above the shared capture ceiling", func() {
+		// One byte past MaxIngestBodyBytes: the explicit BodyLimit binds
+		// there — above the 32 MiB contract, matching the gateway's buffer.
+		big := bytes.Repeat([]byte("a"), ingest.MaxIngestBodyBytes+1)
+		req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewReader(big))
+		resp, err := p.server.Test(req, 60_000)
+		Expect(err).NotTo(HaveOccurred())
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(http.StatusRequestEntityTooLarge))
+	})
+})
 
 var _ = Describe("Proxy capture byte budget", func() {
 	var (
