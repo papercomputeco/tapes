@@ -18,6 +18,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"
 
+	"github.com/papercomputeco/tapes/ingest"
 	"github.com/papercomputeco/tapes/pkg/capture"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/llm/provider"
@@ -85,6 +86,12 @@ func New(config Config, driver storage.Driver, log *slog.Logger) (*Proxy, error)
 		DisableStartupMessage: true,
 		// Enable streaming
 		StreamRequestBody: true,
+		// With StreamRequestBody enabled, fasthttp skips its max-body-size
+		// check entirely, so this limit is enforced by handleProxy's own
+		// guard rather than here. It is still set so that the bound holds
+		// if streaming is ever disabled — and so the config states the
+		// ceiling the handler actually enforces.
+		BodyLimit: ingest.MaxIngestBodyBytes,
 	})
 
 	// Add compression middleware to handle responses
@@ -164,8 +171,27 @@ func (p *Proxy) handleProxy(c *fiber.Ctx) error {
 	prov, upstreamURL := p.resolveProvider(agentName, providerName, path)
 	method := c.Method()
 
+	// Bound the buffered request explicitly. With StreamRequestBody enabled,
+	// fasthttp never applies its max-body-size check — Fiber's BodyLimit is
+	// inert on this server — and c.Body() materializes the whole stream, so
+	// without this guard one oversized request buffers without bound. The
+	// declared length rejects cheaply before any read; the post-read check
+	// catches chunked bodies that declare nothing. MaxIngestBodyBytes
+	// (~46.67 MiB) sits above the 32 MiB provider request contract the same
+	// way the gateway's connection buffer does, so the provider's edge — not
+	// the capture layer — stays the authority on over-limit requests.
+	if cl := c.Request().Header.ContentLength(); cl > ingest.MaxIngestBodyBytes {
+		// Rejecting on the declared length leaves the body unread; close the
+		// connection so the unread bytes are never parsed as a next request.
+		c.Context().SetConnectionClose()
+		return c.SendStatus(fiber.StatusRequestEntityTooLarge)
+	}
+
 	// Only process POST requests that look like chat/completion endpoints
 	body := c.Body()
+	if len(body) > ingest.MaxIngestBodyBytes {
+		return c.SendStatus(fiber.StatusRequestEntityTooLarge)
+	}
 	isChatRequest := method == "POST" && len(body) > 0
 
 	// Parse request using configured provider
