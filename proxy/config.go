@@ -20,6 +20,12 @@ type Config struct {
 
 	// Project is the git repository or project name to tag on captured turns.
 	Project string
+
+	// QueueByteBudget bounds the total retained request bytes of
+	// queued-and-in-flight capture jobs. Zero selects the worker pool's
+	// default. Exposed so the byte budget can be tuned (and exercised in
+	// tests) rather than hard-wired to the default.
+	QueueByteBudget int64
 }
 
 // AgentRoute defines proxy routing for a specific agent.

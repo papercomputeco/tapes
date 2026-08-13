@@ -91,9 +91,10 @@ func New(config Config, driver storage.Driver, log *slog.Logger) (*Proxy, error)
 	app.Use(compress.New())
 
 	wp, err := worker.NewPool(&worker.Config{
-		Driver:  driver,
-		Project: config.Project,
-		Logger:  log,
+		Driver:          driver,
+		Project:         config.Project,
+		Logger:          log,
+		QueueByteBudget: config.QueueByteBudget,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("could not create worker pool: %w", err)
@@ -295,7 +296,12 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL 
 				Req:        parsedReq,
 				Resp:       parsedResp,
 				RawRequest: body,
-				Session:    localCaptureSession(),
+				// Charge the request body against the queue byte budget:
+				// it is the bounded (32 MB contract) buffer the job retains
+				// live, so an unweighted enqueue here would let proxy-captured
+				// turns bypass the budget the ingest path already respects.
+				Weight:  len(body),
+				Session: localCaptureSession(),
 			})
 		}
 	}
@@ -442,7 +448,10 @@ func (p *Proxy) handleSSEStreamViaCapture(r capture.Reducer, httpResp *http.Resp
 		Req:        parsedReq,
 		Resp:       resp,
 		RawRequest: rawRequest,
-		Session:    localCaptureSession(),
+		// Request body charged against the queue byte budget (see the
+		// non-streaming path for the rationale).
+		Weight:  len(rawRequest),
+		Session: localCaptureSession(),
 	})
 }
 
@@ -635,7 +644,10 @@ func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, 
 				Req:        parsedReq,
 				Resp:       finalResp,
 				RawRequest: rawRequest,
-				Session:    localCaptureSession(),
+				// Request body charged against the queue byte budget (see the
+				// non-streaming path for the rationale).
+				Weight:  len(rawRequest),
+				Session: localCaptureSession(),
 			})
 		}
 	}

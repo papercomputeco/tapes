@@ -109,6 +109,79 @@ func makeOllamaResponseBody(model, role, content string) []byte {
 	return body
 }
 
+var _ = Describe("Proxy capture byte budget", func() {
+	var (
+		p        *Proxy
+		driver   *captureDriver
+		upstream *httptest.Server
+	)
+
+	BeforeEach(func() {
+		upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write(makeOllamaResponseBody("test-model", "assistant", "ok"))
+		}))
+		driver = newCaptureDriver()
+		var err error
+		p, err = New(
+			Config{
+				ListenAddr:   ":0",
+				UpstreamURL:  upstream.URL,
+				ProviderType: "ollama",
+				// Tight budget so a padded request body exceeds it while a
+				// minimal one fits — the boundary the per-site Job.Weight
+				// must charge for the budget to bind at all.
+				QueueByteBudget: 512,
+			},
+			driver,
+			tapeslogger.NewNoop(),
+		)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	AfterEach(func() {
+		if p != nil {
+			p.Close()
+		}
+		if upstream != nil {
+			upstream.Close()
+		}
+	})
+
+	It("charges the request body, so an over-budget turn is dropped while forwarding still succeeds", func() {
+		small := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+			{Role: "user", Content: "hi"},
+		}, new(false))
+		Expect(len(small)).To(BeNumerically("<", 512))
+
+		big := makeOllamaRequestBody("test-model", []ollamaTestMessage{
+			{Role: "user", Content: strings.Repeat("x", 1024)},
+		}, new(false))
+		Expect(len(big)).To(BeNumerically(">", 512))
+
+		// Both are forwarded and answered — capture degrades under budget
+		// pressure, forwarding never does.
+		for _, body := range [][]byte{small, big} {
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(body))))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			resp.Body.Close()
+		}
+
+		// Drain async capture, then assert only the in-budget turn landed.
+		// Before Job.Weight was set at the proxy enqueue sites, the padded
+		// turn was admitted at zero weight and captured too, bypassing the
+		// budget entirely.
+		p.Close()
+		p = nil
+
+		raws := driver.RawTurns()
+		Expect(raws).To(HaveLen(1))
+		Expect([]byte(raws[0].RawRequest)).To(Equal(small))
+	})
+})
+
 var _ = Describe("Non-Streaming Proxy", func() {
 	var (
 		p        *Proxy
