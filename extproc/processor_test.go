@@ -840,9 +840,11 @@ data: {"type":"response.completed","response":{"id":"resp_1","object":"response"
 
 	It("over-budget request: acks every chunk, records exactly one request_over_budget, and never POSTs to ingest", func() {
 		proc.Dispatcher().SetObserver(teeObserver{a: obs, b: proc.Metrics().AsObserver()})
-		// 7 × 2 MiB = 14 MiB, past requestCaptureBudget (~13.67 MiB).
-		chunk := bytes.Repeat([]byte("a"), 2<<20)
-		const chunks = 7
+		// 2 MiB chunks totalling just past requestCaptureBudget (~45.67 MiB),
+		// so the buffer trips over budget mid-stream while every chunk is acked.
+		const chunkSize = 2 << 20
+		chunk := bytes.Repeat([]byte("a"), chunkSize)
+		chunks := requestCaptureBudget/chunkSize + 1
 		toSend := make([]*extprocv3.ProcessingRequest, 0, chunks+3)
 		toSend = append(toSend, headerReq(map[string]string{
 			":method": "POST", ":path": "/v1/messages",
