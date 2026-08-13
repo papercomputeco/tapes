@@ -139,6 +139,7 @@ func TestZstdCodexRequestRoundTripsThroughDispatchTurn(t *testing.T) {
 	env := received.Load()
 	if env == nil {
 		t.Fatal("ingest never received the zstd Codex turn")
+		return
 	}
 	if env.Provider != "openai" {
 		t.Errorf("provider: got %q, want openai", env.Provider)
