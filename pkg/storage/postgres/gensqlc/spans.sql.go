@@ -22,6 +22,7 @@ WITH matched AS (
     WHERE t.org_id = $1
       AND ($2::timestamptz IS NULL OR t.started_at >= $2::timestamptz)
       AND ($3::timestamptz IS NULL OR t.started_at < $3::timestamptz)
+      AND ($4::text IS NULL OR s.auth_subject = $4::text)
 )
 SELECT
     COUNT(*)::bigint                                        AS turn_count,
@@ -40,14 +41,24 @@ SELECT
        AND sp.kind = 'tool'
        AND ($2::timestamptz IS NULL OR sp.started_at >= $2::timestamptz)
        AND ($3::timestamptz IS NULL OR sp.started_at < $3::timestamptz)
+       -- Uncorrelated on purpose: the subject's session ids depend only on the
+       -- parameter, so this is one hashed subplan (index-only on
+       -- sessions_org_subject_id_idx) rather than a lookup per tool span. A
+       -- correlated EXISTS here is the same O(spans) probe the comment above
+       -- says times out on a wide window.
+       AND ($4::text IS NULL
+            OR sp.session_id IN (SELECT s2.id FROM sessions s2
+                                 WHERE s2.org_id = $1
+                                   AND s2.auth_subject = $4::text))
     )::bigint                                               AS tool_calls
 FROM matched
 `
 
 type AggregateSpanStatsParams struct {
-	OrgID       pgtype.UUID
-	SinceFilter pgtype.Timestamptz
-	UntilFilter pgtype.Timestamptz
+	OrgID             pgtype.UUID
+	SinceFilter       pgtype.Timestamptz
+	UntilFilter       pgtype.Timestamptz
+	AuthSubjectFilter pgtype.Text
 }
 
 type AggregateSpanStatsRow struct {
@@ -79,8 +90,24 @@ type AggregateSpanStatsRow struct {
 // doesn't count as completed) rather than a correlated EXISTS per matched
 // trace — the per-row subquery is O(traces) index lookups and is the part
 // that times out on a wide (30d) window at scale.
+//
+// auth_subject_filter narrows every total to one gateway-stamped subject.
+// Attribution lives on sessions and nowhere else — neither projection table
+// carries a subject — so both legs reach it through session_id, and both must:
+// a filter the tool_calls subquery did not apply would report one user's turns
+// beside the whole org's tool volume.
+//
+// Filtering also tightens the LEFT JOIN to an inner match, and deliberately: a
+// trace whose session row is missing has no subject, so it belongs to no one
+// and cannot match. `s.auth_subject = @filter` is NULL for those rows, which
+// drops them. Unfiltered they still count, exactly as before.
 func (q *Queries) AggregateSpanStats(ctx context.Context, arg AggregateSpanStatsParams) (AggregateSpanStatsRow, error) {
-	row := q.db.QueryRow(ctx, aggregateSpanStats, arg.OrgID, arg.SinceFilter, arg.UntilFilter)
+	row := q.db.QueryRow(ctx, aggregateSpanStats,
+		arg.OrgID,
+		arg.SinceFilter,
+		arg.UntilFilter,
+		arg.AuthSubjectFilter,
+	)
 	var i AggregateSpanStatsRow
 	err := row.Scan(
 		&i.TurnCount,

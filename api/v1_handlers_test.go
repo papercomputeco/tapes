@@ -25,19 +25,21 @@ import (
 type statsStubDriver struct {
 	storage.Driver
 
-	stats     storage.SpanStats
-	statsErr  error
-	calls     int
-	lastOrg   string
-	lastSince *time.Time
-	lastUntil *time.Time
+	stats       storage.SpanStats
+	statsErr    error
+	calls       int
+	lastOrg     string
+	lastSince   *time.Time
+	lastUntil   *time.Time
+	lastSubject string
 }
 
-func (d *statsStubDriver) AggregateSpanStats(_ context.Context, orgID string, since, until *time.Time) (storage.SpanStats, error) {
+func (d *statsStubDriver) AggregateSpanStats(_ context.Context, orgID string, since, until *time.Time, authSubject string) (storage.SpanStats, error) {
 	d.calls++
 	d.lastOrg = orgID
 	d.lastSince = since
 	d.lastUntil = until
+	d.lastSubject = authSubject
 	return d.stats, d.statsErr
 }
 
@@ -87,6 +89,64 @@ var _ = Describe("v1 session handlers", func() {
 			Expect(drv.lastUntil).NotTo(BeNil())
 			Expect(drv.lastSince.UTC()).To(Equal(time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)))
 			Expect(drv.lastUntil.UTC()).To(Equal(time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC)))
+		})
+
+		It("threads auth_subject through to the reader", func() {
+			drv := &statsStubDriver{Driver: inmemory.NewDriver()}
+			server := newStatsServer(drv)
+
+			_ = decodeStats(server, "/v1/stats?auth_subject=user_01HXYZ")
+
+			Expect(drv.calls).To(Equal(1))
+			Expect(drv.lastSubject).To(Equal("user_01HXYZ"))
+		})
+
+		It("aggregates org-wide when auth_subject is absent", func() {
+			// The parameter is additive: every caller that never sends it —
+			// which is every caller that predates it — must keep getting the
+			// org-wide totals it always got.
+			drv := &statsStubDriver{Driver: inmemory.NewDriver()}
+			server := newStatsServer(drv)
+
+			_ = decodeStats(server, "/v1/stats?since=2026-04-01T00:00:00Z")
+
+			Expect(drv.calls).To(Equal(1))
+			Expect(drv.lastSubject).To(BeEmpty())
+		})
+
+		It("carries the subject alongside the window rather than instead of it", func() {
+			// The two narrow together. A handler that read the subject in
+			// place of the window (or dropped one when both are present)
+			// would report a lifetime total on a windowed surface.
+			drv := &statsStubDriver{Driver: inmemory.NewDriver()}
+			server := newStatsServer(drv)
+
+			_ = decodeStats(server,
+				"/v1/stats?since=2026-04-01T00:00:00Z&until=2026-04-02T00:00:00Z&auth_subject=user_both")
+
+			Expect(drv.lastSubject).To(Equal("user_both"))
+			Expect(drv.lastSince).NotTo(BeNil())
+			Expect(drv.lastUntil).NotTo(BeNil())
+			Expect(drv.lastSince.UTC()).To(Equal(time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)))
+			Expect(drv.lastUntil.UTC()).To(Equal(time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC)))
+		})
+
+		It("returns zeros for a subject with nothing to aggregate, not an error", func() {
+			// A tray opened by a user who has never run a session is the
+			// ordinary case, not a failure: the empty aggregate is a 200 with
+			// zeros. Erroring here would make a new user's tray look broken.
+			drv := &statsStubDriver{Driver: inmemory.NewDriver()}
+			body := decodeStats(newStatsServer(drv), "/v1/stats?auth_subject=user_with_no_sessions")
+
+			Expect(drv.lastSubject).To(Equal("user_with_no_sessions"))
+			Expect(body.SessionCount).To(BeZero())
+			Expect(body.TurnCount).To(BeZero())
+			Expect(body.CompletedCount).To(BeZero())
+			Expect(body.TotalCost).To(BeZero())
+			Expect(body.InputTokens).To(BeZero())
+			Expect(body.OutputTokens).To(BeZero())
+			Expect(body.TotalDurationMs).To(BeZero())
+			Expect(body.ToolCalls).To(BeZero())
 		})
 
 		It("returns zeros across every field for an empty aggregate", func() {
