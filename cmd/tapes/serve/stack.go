@@ -249,7 +249,17 @@ func (stack *Stack) Run(ctx context.Context) error {
 
 	stack.Logger.Info("starting api server", "api_addr", stack.APIListen)
 
-	ingestServer, err := ingest.New(ingest.Config{ //nolint:contextcheck
+	// contextcheck is right that this chain drops `ctx`: the ingest server's
+	// capture workers persist each turn under context.Background()
+	// (proxy/worker/pool.go, processJob), deliberately, so that a shutdown or
+	// a cancelled request cannot abandon a captured turn mid-persist. Capture
+	// durability outranks prompt cancellation here.
+	//
+	// nolintlint rides along because contextcheck's cross-package analysis
+	// resolves this chain only some of the time: on the runs where it does
+	// not, the directive reads as unused and reds the lint gate on a tree
+	// that has not changed. Suppressing both keeps the gate deterministic.
+	ingestServer, err := ingest.New(ingest.Config{ //nolint:contextcheck,nolintlint
 		ListenAddr: stack.IngestListen,
 		Project:    stack.Project,
 	}, driver, stack.Logger)
