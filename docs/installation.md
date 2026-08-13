@@ -1,4 +1,9 @@
-# Installation and local setup
+---
+title: Installation and local setup
+description: Install the server and the client, bootstrap the local PostgreSQL and Ollama dependencies, and start Tapes.
+sidebar:
+  order: 2
+---
 
 ## Install a release
 
@@ -16,6 +21,9 @@ captures sessions and reads them back, and is what you use day to day:
 curl -sSfL https://download.tapes.dev/tapesctl/install | bash
 tapesctl version
 ```
+
+Each `version` call is an install smoke test: it proves the binary is on your
+`PATH` and runs.
 
 ## Bootstrap local dependencies
 
@@ -62,12 +70,22 @@ curl http://localhost:8081/ping
 tapes status
 ```
 
+Point the client at the read API once, so the read commands need no flag:
+
+```bash
+tapesctl config set tapes-url http://localhost:8081
+```
+
 Seed representative capture data through the normal ingest and derive path:
 
 ```bash
-tapesctl seed --tapes-url http://localhost:8081
+tapesctl seed
 tapesctl sessions list
 ```
+
+Capture commands address the **ingest** port instead, and take it explicitly:
+`tapesctl start claude --tapes-url http://localhost:8082`. See
+[Agent integrations](./integrations.md).
 
 ## OpenAI embeddings
 

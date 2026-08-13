@@ -1,4 +1,9 @@
-# Search
+---
+title: Search
+description: Semantic search over the embedded span projection, from the client, the HTTP endpoint, and a split deployment.
+sidebar:
+  order: 8
+---
 
 Tapes performs semantic search over the embedded **span projection**. Each result is an individual main-conversation LLM span, with its session ID, trace ID, span ID, turn prompt, model, timestamp, similarity score, and text snippet.
 
@@ -11,6 +16,7 @@ The quickstart provides everything required:
 ```bash
 tapes local up
 tapes serve
+tapesctl config set tapes-url http://localhost:8081
 ```
 
 `tapes local up` configures PostgreSQL/pgvector and the Ollama `embeddinggemma` model. `tapes serve` derives captures and embeds eligible spans in the background by default.
@@ -28,12 +34,17 @@ Use quiet output to return unique session IDs in score order:
 tapesctl search "Charm CLI patterns" --quiet --top 3
 ```
 
-That output composes with skill generation:
+Quiet output is a pipe format rather than a verbosity setting: it prints one
+bare session id per line, which is the shape skill generation takes as
+positionals, so the two compose:
 
 ```bash
 tapesctl skill generate $(tapesctl search "Charm CLI" --quiet --top 1) \
   --name charm-patterns
 ```
+
+An empty result set is not an error. Non-quiet output says `No results found.`
+and exits 0; quiet output prints nothing and exits 0.
 
 ## API
 
@@ -62,7 +73,7 @@ The embed worker runs a bounded pass at startup and periodically thereafter. Its
 ## Troubleshooting
 
 1. Confirm the API is reachable with `tapes status`.
-2. Confirm sessions and derived spans exist with `tapesctl sessions list` and `tapesctl sessions list`.
+2. Confirm sessions exist with `tapesctl sessions list`, and that a session has derived spans with `tapesctl sessions traces <session-id>`.
 3. Confirm the embedding service is running; for Ollama, use `curl http://localhost:11434/api/tags`.
 4. Confirm `embedding.model` and `embedding.dimensions` match.
-5. In a split deployment, verify the embed worker is running. A configured but uninitialized search surface returns HTTP `503`.
+5. In a split deployment, verify the embed worker is running. A configured but uninitialized search surface returns HTTP `503`, and the response body names which of the two causes it is.

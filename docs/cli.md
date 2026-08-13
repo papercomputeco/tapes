@@ -1,4 +1,9 @@
-# CLI reference
+---
+title: CLI reference
+description: The server's commands, the split between tapes and tapesctl, and how to prove the capture ratchet.
+sidebar:
+  order: 11
+---
 
 `tapes` is the server. It runs the services, owns the database, and carries the operator tooling around them. Capturing a session and reading one back are client concerns and live in [`tapesctl`](https://github.com/papercomputeco/tapesctl) — see [The client CLI](#the-client-cli) below.
 
@@ -7,12 +12,14 @@ Run `tapes <command> --help` for the complete, version-matched flag list.
 | Command | Use |
 | --- | --- |
 | `tapes init [--preset ...]` | Create a local `.tapes/` configuration directory. |
-| `tapes local [up|status|down]` | Manage local PostgreSQL and Ollama dependencies. |
+| `tapes local [up\|status\|down]` | Manage local PostgreSQL and Ollama dependencies. |
 | `tapes serve` | Run proxy, read API, private ingest API, derive worker, and optional embed worker together. |
 | `tapes status` | Show active config, provider/upstream, API reachability, and capture summary. |
 | `tapes auth` | Store OpenAI or Anthropic credentials in `.tapes/credentials.toml`. |
-| `tapes config get|set|list` | Manage persistent scalar settings. |
+| `tapes config get\|set\|list` | Manage persistent scalar settings. |
+| `tapes backfill` | Replay existing capture artifacts into a deployment. |
 | `tapes raw equivalence` | Prove stored capture bytes re-reduce to the stored reduction. See [Proving the capture ratchet](#proving-the-capture-ratchet). |
+| `tapes dev` | Developer maintenance utilities. |
 | `tapes version` | Print version information. |
 
 ## Running services
@@ -52,14 +59,16 @@ curl -sSfL https://download.tapes.dev/tapesctl/install | bash
 ```
 
 ```bash
-tapesctl start claude --tapes-url http://localhost:8081
+tapesctl start claude --tapes-url http://localhost:8082
 tapesctl sessions list --tapes-url http://localhost:8081
 tapesctl export <session-id> --detail spans -o session.jsonl
 tapesctl seed --tapes-url http://localhost:8081
 tapesctl skill sync <name> --claude
 ```
 
-Every `tapesctl` command takes `--tapes-url`, falling back to `TAPES_URL`. Arguments after `--` go directly to the agent. See [Agent integrations](./integrations.md) and the [`tapesctl` README](https://github.com/papercomputeco/tapesctl) for the full surface.
+The capture commands (`start`, `capture`, `sync`) address the private ingest API on `:8082`; the read commands address the read API on `:8081`. A command that needs a server takes `--tapes-url`, falling back to `TAPES_URL` and then to `tapesctl config set tapes-url`. The flag is rendered in the help of commands that make no HTTP call at all — `config`, `skill list`, `skill sync`, `version`, `plugin uninstall` — because it propagates from the top level; those commands ignore it.
+
+Arguments after `--` go directly to the agent. See [Agent integrations](./integrations.md) and the [`tapesctl` README](https://github.com/papercomputeco/tapesctl) for the full surface.
 
 ## Proving the capture ratchet
 
@@ -117,4 +126,4 @@ Because both excluded fields are ones `raw` restores from the capture adapter's 
 
 Tapes no longer provides `chat` or `checkout` commands. It captures external agents; it does not host a chat client or expose history branching.
 
-The `start`, `export`, `seed`, `sessions`, and `skill sync` commands have moved to `tapesctl`; `tapes` keeps the server and the operator tooling.
+The `start`, `capture`, `export`, `seed`, `sessions`, `search`, and `skill` commands have moved to `tapesctl`; `tapes` keeps the server and the operator tooling. Span search itself stays server-side — only the client command moved.

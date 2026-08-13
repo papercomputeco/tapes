@@ -1,4 +1,9 @@
-# HTTP APIs
+---
+title: HTTP APIs
+description: The read API and the private ingest API — their routes, their seals, and the trust boundary between them.
+sidebar:
+  order: 13
+---
 
 Tapes publishes two separate contracts because reading derived telemetry and ingesting trusted captures have different trust models.
 
@@ -8,16 +13,19 @@ The default read API listens on `:8081`. It serves health, derived data, search,
 
 | Area | Routes |
 | --- | --- |
-| Health and contract | `GET /ping`, `GET /openapi`, `/swagger` |
-| Sessions | `/v1/sessions`, `/v1/sessions/{id}`, `/v1/sessions/{id}/traces`, `/v1/sessions/{id}/raw_turns`, `/v1/sessions/{id}/export` |
+| Health and contract | `GET /ping`, `GET /openapi`, `GET /swagger`, `GET /metrics` |
+| Browser UI | `GET /`, served only with `--api-web-ui` |
+| Sessions | `/v1/sessions`, `/v1/sessions/{id}`, `/v1/sessions/{id}/traces`, `/v1/sessions/{id}/raw_turns`, `/v1/sessions/{id}/export`, `/v1/sessions/export` |
 | Traces and spans | `/v1/traces`, `/v1/traces/{trace_id}`, `/v1/traces/{trace_id}/spans/{span_id}` |
 | Search and aggregates | `GET /v1/search/spans`, `GET /v1/stats` |
-| Skills | `/v1/skills` and session skill routes |
+| Skills | `/v1/skills`, `/v1/skills/{id}`, `/v1/skills/{id}/versions`, `/v1/skills/{id}/duplicate`, `/v1/skills/{id}/skill.md`, `/v1/skills/generate`, `/v1/sessions/{id}/skills` |
 | MCP | `/v1/mcp` |
 | Operator actions | `/v1/admin/derive/run`, `/v1/admin/seed/demo`, `/v1/admin/raw-turns/attribution-repair` |
 | Cassettes | `GET /v1/cassettes`, `GET /v1/cassettes/{name}/openapi.json`, `/v1/cassettes/{name}`, `/v1/cassettes/{name}/*` |
 
-The authoritative parameters, schemas, and methods are compiled from route registrations and served by the running API at `GET /openapi`; no generated contract is checked in. The aggregate includes admitted cassette operations. See [Cassettes](./cassettes.md) for their manifest and proxy contract. Notable current behavior:
+`GET /metrics` is Prometheus exposition, deliberately outside any auth group and not described in the contract. `GET /` is HTML, not API surface, and is not described either.
+
+The authoritative parameters, schemas, and methods are compiled from route registrations and served by the running API at `GET /openapi`. The aggregate includes admitted cassette operations. See [Cassettes](./cassettes.md) for their manifest and proxy contract. Notable current behavior:
 
 - session listing is cursor-paginated;
 - session and trace/span paths use UUID IDs;
@@ -26,6 +34,24 @@ The authoritative parameters, schemas, and methods are compiled from route regis
 - raw turns remain available at `/v1/sessions/{id}/raw_turns`.
 
 There is no `/v1/search`, `/v1/sessions/summary`, or hash-based session route.
+
+### Both contracts are sealed
+
+No generated OpenAPI document is checked in — a copy of what the server states
+exactly is a copy that can go stale. What *is* checked in is a seal: `api/CONTRACT`
+and `ingest/CONTRACT` each hold a `sha256` fingerprint of that surface's compiled
+document with prose stripped out.
+
+A test recompiles the document and compares. Move a route, a parameter, a schema,
+or a status code and the test fails until the new value is written into the
+`CONTRACT` file — which turns "this changes a published contract" into a line in
+the diff instead of something a reviewer has to notice. Editing a doc comment is
+deliberately not a contract event; text declared inline on a route registration
+is published surface and does move the seal.
+
+Consumers of these contracts live outside this repository, which is why the
+ingest surface in particular is sealed rather than merely tested: an unannounced
+change to it is one every capture adapter discovers in production.
 
 ### Attribution repair
 

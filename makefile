@@ -227,14 +227,6 @@ e2e-test: ## Runs end-to-end tests with Postgres and Ollama via Dagger
 	$(call print-target)
 	dagger call test-e-2-e
 
-.PHONY: docs-build
-docs-build: ## Builds the mdBook documentation
-	mdbook build docs
-
-.PHONY: docs-serve
-docs-serve: ## Serves the mdBook documentation with live reload
-	mdbook serve docs
-
 .PHONY: help
 .DEFAULT_GOAL := help
 help: ## Prints this help message
