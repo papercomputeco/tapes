@@ -56,6 +56,10 @@ func (d *exportStubDriver) GetSessionRecordByHarness(_ context.Context, _, _, _ 
 	return nil, nil
 }
 
+func (d *exportStubDriver) ListSessionRecordsByHarnessSessionID(_ context.Context, _, _ string) ([]storage.SessionRecord, error) {
+	return nil, nil
+}
+
 // UpdateSessionDisplayName satisfies the widened sessionsReader interface;
 // the export handlers never call it.
 func (d *exportStubDriver) UpdateSessionDisplayName(_ context.Context, _, _ string, _ *string) (int64, error) {

@@ -28,6 +28,12 @@ type sessionsReader interface {
 	ListSessionRecords(ctx context.Context, orgID string, opts storage.SessionListOpts) ([]storage.SessionRecord, error)
 	GetSessionRecord(ctx context.Context, orgID, id string) (*storage.SessionRecord, error)
 	GetSessionRecordByHarness(ctx context.Context, orgID string, harnessID string, harnessSessionID string) (*storage.SessionRecord, error)
+	// ListSessionRecordsByHarnessSessionID serves the lone-harness_session_id
+	// form of the /v1/sessions filter: an exact match on harness_session_id
+	// across all harnesses in the org. The id is unique within a harness, so
+	// the result carries at most one row per harness — in practice zero or
+	// one. No match is an empty slice, not an error.
+	ListSessionRecordsByHarnessSessionID(ctx context.Context, orgID string, harnessSessionID string) ([]storage.SessionRecord, error)
 	// UpdateSessionDisplayName sets (or, when name is nil or trims empty,
 	// clears) the user-editable session title. It writes the dedicated
 	// display_name column, not name, so a rename survives ingest re-sending
@@ -337,13 +343,13 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
 	}
 
-	// The harness natural-key filter is a point lookup that bypasses the
-	// paged-list path entirely. Route to it whenever either param is
+	// The harness natural-key filter is an exact-match lookup that bypasses
+	// the paged-list path entirely. Route to it whenever either param is
 	// non-empty — an empty value is treated as absent, since ingest
 	// guarantees no stored row carries an empty harness id, so an empty
-	// value could never address a row anyway. Both-or-neither validation
-	// (and cursor incompatibility) happens in the filter handler; requests
-	// without the params take the existing path untouched.
+	// value could never address a row anyway. Param validation (a lone
+	// harness_id, cursor incompatibility) happens in the filter handler;
+	// requests without the params take the existing path untouched.
 	if c.Query("harness_id") != "" || c.Query("harness_session_id") != "" {
 		return s.listSessionsByHarness(c, reader)
 	}
@@ -445,18 +451,23 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 }
 
 // listSessionsByHarness handles GET /v1/sessions when the harness
-// natural-key filter params are present. It validates that harness_id and
-// harness_session_id are supplied both-or-neither (400 on a lone param),
-// rejects cursor combined with the filter (400), then performs a single
-// org-scoped exact-match lookup via GetSessionRecordByHarness and returns
-// the standard SessionListResponse envelope with 0 or 1 items and no
-// next_cursor.
+// natural-key filter params are present. Both params are exact-match
+// filters: the pair is an org-scoped point lookup on the (harness_id,
+// harness_session_id) unique index, and harness_session_id alone matches
+// across all harnesses — the id is unique per harness, so even the lone
+// form returns at most one row per harness (in practice zero or one). A
+// lone harness_id is rejected (400): it names a harness, not a session,
+// and would be an unbounded, unpaginated list. Cursor combined with the
+// filter is rejected (400). Returns the standard SessionListResponse
+// envelope with the matching items and no next_cursor.
 func (s *Server) listSessionsByHarness(c *fiber.Ctx, reader sessionsReader) error {
 	harnessID := c.Query("harness_id")
 	harnessSessionID := c.Query("harness_session_id")
-	if harnessID == "" || harnessSessionID == "" {
+	if harnessSessionID == "" {
+		// harnessID is necessarily non-empty here: the router only enters
+		// this path when at least one of the two params is non-empty.
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{
-			Error: "harness_id and harness_session_id must be supplied together",
+			Error: "harness_id requires harness_session_id",
 		})
 	}
 	if c.Query("cursor") != "" {
@@ -466,15 +477,28 @@ func (s *Server) listSessionsByHarness(c *fiber.Ctx, reader sessionsReader) erro
 	}
 
 	orgID := singleTenantOrgID
+
+	// No match is a normal outcome on either branch: the list envelope's
+	// empty items form expresses it (never 404 — that's the :id endpoint's
+	// vocabulary).
+	items := []SessionItem{}
+	if harnessID == "" {
+		recs, err := reader.ListSessionRecordsByHarnessSessionID(c.Context(), orgID, harnessSessionID)
+		if err != nil {
+			s.logger.Error("list sessions by harness session id", "error", err)
+			return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
+		}
+		for _, rec := range recs {
+			items = append(items, sessionItemFromStorage(rec, time.Now()))
+		}
+		return c.JSON(SessionListResponse{Items: items})
+	}
+
 	sess, err := reader.GetSessionRecordByHarness(c.Context(), orgID, harnessID, harnessSessionID)
 	if err != nil {
 		s.logger.Error("get session by harness", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
 	}
-
-	// A nil record is a normal no-match: the list envelope's empty items
-	// form expresses it (never 404 — that's the :id endpoint's vocabulary).
-	items := []SessionItem{}
 	if sess != nil {
 		items = append(items, sessionItemFromStorage(*sess, time.Now()))
 	}

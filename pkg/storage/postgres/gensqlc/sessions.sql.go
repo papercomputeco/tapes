@@ -238,6 +238,73 @@ func (q *Queries) InsertSessionPlaceholder(ctx context.Context, arg InsertSessio
 	return id, err
 }
 
+const listSessionsByHarnessSessionID = `-- name: ListSessionsByHarnessSessionID :many
+SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns, tasks, kind_counts, display_name FROM sessions
+WHERE org_id = $1
+  AND harness_session_id = $2
+ORDER BY harness_id
+`
+
+type ListSessionsByHarnessSessionIDParams struct {
+	OrgID            pgtype.UUID
+	HarnessSessionID string
+}
+
+// Exact-match filter on harness_session_id alone, across every harness
+// in the org. The id is unique within a harness (sessions_harness_uq),
+// so this returns at most one row per harness that has seen it — in
+// practice zero or one. Ordered by harness_id so the cross-harness
+// collision case is deterministic.
+func (q *Queries) ListSessionsByHarnessSessionID(ctx context.Context, arg ListSessionsByHarnessSessionIDParams) ([]Session, error) {
+	rows, err := q.db.Query(ctx, listSessionsByHarnessSessionID, arg.OrgID, arg.HarnessSessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Session
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.AuthSubject,
+			&i.HarnessID,
+			&i.HarnessSessionID,
+			&i.Name,
+			&i.Cwd,
+			&i.HarnessVersion,
+			&i.ParentSessionID,
+			&i.StartedAt,
+			&i.LastSeenAt,
+			&i.EndedAt,
+			&i.HarnessMetadata,
+			&i.TotalInputTokens,
+			&i.TotalOutputTokens,
+			&i.TotalCostUsd,
+			&i.TurnCount,
+			&i.DerivedStatus,
+			&i.HasGitActivity,
+			&i.ToolResultCount,
+			&i.ToolErrorCount,
+			&i.DerivedTitle,
+			&i.DerivedModel,
+			&i.ModelUsage,
+			&i.TotalTokens,
+			&i.DurationNs,
+			&i.Tasks,
+			&i.KindCounts,
+			&i.DisplayName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setSessionParent = `-- name: SetSessionParent :exec
 UPDATE sessions
 SET parent_session_id = $1

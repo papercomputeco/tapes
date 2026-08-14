@@ -121,6 +121,17 @@ WHERE org_id = $1
   AND harness_id = $2
   AND harness_session_id = $3;
 
+-- name: ListSessionsByHarnessSessionID :many
+-- Exact-match filter on harness_session_id alone, across every harness
+-- in the org. The id is unique within a harness (sessions_harness_uq),
+-- so this returns at most one row per harness that has seen it — in
+-- practice zero or one. Ordered by harness_id so the cross-harness
+-- collision case is deterministic.
+SELECT * FROM sessions
+WHERE org_id = $1
+  AND harness_session_id = $2
+ORDER BY harness_id;
+
 -- name: InsertSessionPlaceholder :one
 -- Insert the minimal-fields placeholder row used when the envelope
 -- names a fork-parent whose own first turn hasn't landed yet. The
