@@ -23,7 +23,7 @@ func New(
 	// Project source directory.
 	//
 	// +defaultPath="/"
-	// +ignore=[".git", ".direnv", ".devenv", "build", "tmp", "tapes.dev/node_modules", "tapes.dev/.astro"]
+	// +ignore=[".git", ".direnv", ".devenv", "build", "tmp"]
 	source *dagger.Directory,
 ) *Tapes {
 	return &Tapes{
