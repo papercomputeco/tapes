@@ -12,7 +12,7 @@
   ·
   <a href="https://tapes.dev/">Download</a>
   ·
-  <a href="https://tapes.dev/guides/">Documentation</a>
+  <a href="https://tapes.dev/docs/">Documentation</a>
   ·
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
@@ -158,5 +158,5 @@ tapesctl start claude --tapes-url http://localhost:8081
 ```
 
 `tapesctl start` launches the agent under a just-in-time capture proxy and ships
-the turns to this server. See the [agent guides](https://tapes.dev/guides) for
+the turns to this server. See the [agent guides](https://tapes.dev/docs/) for
 Claude Code, OpenCode, and more.
