@@ -240,6 +240,103 @@ var _ = Describe("Driver.GetSessionRecordByHarness", func() {
 	})
 })
 
+var _ = Describe("Driver.ListSessionRecordsByHarnessSessionID", func() {
+	var (
+		driver   storage.Driver
+		pgDriver *postgres.Driver
+		ingester storage.SessionIngester
+		ctx      context.Context
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		dsn := testPostgresDSN
+		var err error
+
+		driver, err = postgres.NewDriver(ctx, dsn)
+		Expect(err).NotTo(HaveOccurred())
+
+		var ok bool
+		pgDriver, ok = driver.(*postgres.Driver)
+		Expect(ok).To(BeTrue())
+		_, err = pgDriver.DB().Exec(ctx, "TRUNCATE TABLE sessions CASCADE")
+		Expect(err).NotTo(HaveOccurred())
+
+		ingester, ok = driver.(storage.SessionIngester)
+		Expect(ok).To(BeTrue(), "postgres driver must satisfy SessionIngester")
+	})
+
+	AfterEach(func() {
+		if driver != nil {
+			driver.Close()
+		}
+	})
+
+	seedSession := func(orgID, harnessID, harnessSessionID, text string) string {
+		res, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
+			Session: &sessions.IngestEnvelope{
+				OrgID:            orgID,
+				AuthSubject:      "subject-lone-id",
+				HarnessID:        harnessID,
+				HarnessSessionID: harnessSessionID,
+			},
+			Nodes: sessionFixture(text),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.SessionID).NotTo(BeEmpty())
+		return res.SessionID
+	}
+
+	It("matches the exact harness_session_id without a harness_id, org-scoped", func() {
+		orgID := newTestOrgID()
+		otherOrg := newTestOrgID()
+		wanted := seedSession(orgID, "claude", "lone-sess-1", "the session we want")
+		seedSession(orgID, "claude", "lone-sess-other", "an unrelated session")
+		// Same harness identity under a different org must never surface.
+		seedSession(otherOrg, "claude", "lone-sess-1", "other org's session")
+
+		recs, err := pgDriver.ListSessionRecordsByHarnessSessionID(ctx, orgID, "lone-sess-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(recs).To(HaveLen(1))
+		Expect(recs[0].ID).To(Equal(wanted))
+		Expect(recs[0].HarnessID).To(Equal("claude"))
+		Expect(recs[0].HarnessSessionID).To(Equal("lone-sess-1"))
+	})
+
+	It("returns one row per harness when the id collides across harnesses, ordered by harness_id", func() {
+		orgID := newTestOrgID()
+		idClaude := seedSession(orgID, "claude", "lone-shared", "claude's turn")
+		idCodex := seedSession(orgID, "codex", "lone-shared", "codex's turn")
+		Expect(idClaude).NotTo(Equal(idCodex))
+
+		recs, err := pgDriver.ListSessionRecordsByHarnessSessionID(ctx, orgID, "lone-shared")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(idsOf(recs)).To(Equal([]string{idClaude, idCodex}),
+			"both harnesses' rows must return, ordered by harness_id")
+	})
+
+	It("returns an empty slice without error when nothing matches", func() {
+		orgID := newTestOrgID()
+		// Seed an unrelated session so the miss runs against real rows.
+		seedSession(orgID, "claude", "lone-present", "some other session")
+
+		recs, err := pgDriver.ListSessionRecordsByHarnessSessionID(ctx, orgID, "lone-absent")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(recs).To(BeEmpty())
+	})
+
+	It("does not match case-folded, trimmed, or prefix variants of the id", func() {
+		orgID := newTestOrgID()
+		seedSession(orgID, "claude", "Lone-Sess-ABC", "variant matching")
+
+		for _, variant := range []string{"lone-sess-abc", "LONE-SESS-ABC", " Lone-Sess-ABC ", "Lone-Sess"} {
+			recs, err := pgDriver.ListSessionRecordsByHarnessSessionID(ctx, orgID, variant)
+			Expect(err).NotTo(HaveOccurred(), variant)
+			Expect(recs).To(BeEmpty(), "%q must not match the stored id", variant)
+		}
+	})
+})
+
 var _ = Describe("Driver.ListSessionRecords (dynamic sort)", func() {
 	var (
 		driver   storage.Driver

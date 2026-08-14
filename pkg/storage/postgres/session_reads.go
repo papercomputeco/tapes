@@ -348,6 +348,37 @@ func (d *Driver) GetSessionRecordByHarness(
 	return &recs[0], nil
 }
 
+// ListSessionRecordsByHarnessSessionID returns every session in the org
+// whose harness_session_id exactly matches, across all harnesses. The id
+// is unique within a harness (sessions_harness_uq), so this returns at
+// most one row per harness that has seen it — in practice zero or one.
+// It serves the lone-harness_session_id form of the /v1/sessions filter;
+// the paired form stays on GetSessionRecordByHarness's point lookup.
+// No match is an empty slice, not an error.
+func (d *Driver) ListSessionRecordsByHarnessSessionID(
+	ctx context.Context,
+	orgID string,
+	harnessSessionID string,
+) ([]storage.SessionRecord, error) {
+	oid, err := orgIDFromString(orgID)
+	if err != nil {
+		return nil, fmt.Errorf("list session records by harness session id: %w", err)
+	}
+	rows, err := d.q.ListSessionsByHarnessSessionID(ctx, gensqlc.ListSessionsByHarnessSessionIDParams{
+		OrgID:            oid,
+		HarnessSessionID: harnessSessionID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list session records by harness session id: %w", err)
+	}
+	recs := make([]storage.SessionRecord, len(rows))
+	for i, row := range rows {
+		recs[i] = sessionRecordFromRow(row)
+	}
+	d.attachPreviews(ctx, recs)
+	return recs, nil
+}
+
 // sessionRecordFromRow converts a sqlc-generated Session row to
 // the storage-level SessionRecord type.
 func sessionRecordFromRow(row gensqlc.Session) storage.SessionRecord {

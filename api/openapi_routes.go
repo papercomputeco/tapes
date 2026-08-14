@@ -86,19 +86,22 @@ func (s *Server) mountSessions(router *oasfiber.Router) {
 				oas.ParamDescription("Only include sessions with a turn started before this RFC3339 "+
 					"timestamp (activity window, matches /v1/stats)")).
 			QueryParam("harness_id", oas.String(),
-				oas.ParamDescription("Filter to the single session with this harness id (exact match; "+
-					"requires harness_session_id, incompatible with cursor; limit is ignored when the "+
-					"filter is active)")).
+				oas.ParamDescription("Combined with harness_session_id, narrows the filter to the "+
+					"single session with this harness id (exact match). Rejected alone (400): a "+
+					"harness id names a harness, not a session. Incompatible with cursor, sort, "+
+					"direction, since, and until (400); limit is ignored when the filter is active")).
 			QueryParam("harness_session_id", oas.String(),
-				oas.ParamDescription("Filter to the single session with this harness session id (exact "+
-					"match; requires harness_id, incompatible with cursor; limit is ignored when the "+
-					"filter is active)")).
+				oas.ParamDescription("Filter to sessions with this harness session id (exact match). "+
+					"Alone it matches across all harnesses — the id is unique per harness, so at most "+
+					"one row per harness returns, in practice zero or one; with harness_id it is a "+
+					"single-harness point lookup. Incompatible with cursor, sort, direction, since, "+
+					"and until (400); limit is ignored when the filter is active")).
 			QueryParam("auth_subject", oas.String(),
 				oas.ParamDescription("Filter the paged list to sessions captured for this "+
 					"gateway-stamped JWT subject (exact match; ignored on the harness filter path)")).
 			JSONResponse(200, "One page of sessions", s.schema(SessionListResponse{})).
-			JSONResponse(400, "Invalid query parameters, a lone harness filter param, or cursor "+
-				"combined with the harness filter", s.errorSchema()).
+			JSONResponse(400, "Invalid query parameters, a lone harness_id, or cursor, sort, "+
+				"direction, since, or until combined with the harness filter", s.errorSchema()).
 			JSONResponse(500, "Failed to list sessions", s.errorSchema()).
 			JSONResponse(501, "Sessions not supported by this backend", s.errorSchema()))
 
