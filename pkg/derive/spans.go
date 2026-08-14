@@ -140,6 +140,11 @@ type SpanTurn struct {
 	// re-derive reprices history when the table updates.
 	TotalCostUSD float64
 
+	// ToolCalls counts the trace's tool spans, folded at derive time so
+	// /v1/stats can sum turn rollups instead of scanning the wide spans
+	// table per request (PCC-936).
+	ToolCalls int
+
 	Spans []*Span
 	Links []*SpanLink
 }
@@ -833,6 +838,7 @@ func (em *spanEmitter) finish() {
 				byKind[s.CallKind]++
 			}
 			if s.Kind == SpanKindTool {
+				turn.ToolCalls++
 				toolsBySession[turn.Session] = append(toolsBySession[turn.Session], s)
 			}
 			if s.Kind == SpanKindLLM && s.Usage != nil {

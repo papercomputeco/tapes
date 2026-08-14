@@ -259,6 +259,7 @@ func spanTurnContentHash(p gensqlc.UpsertSpanTurnParams) string {
 		i64(p.CacheReadTokens).
 		i64(p.CacheCreationTokens).
 		numeric(p.TotalCostUsd).
+		i64(p.ToolCalls).
 		str(p.Source).
 		str(p.Fidelity).
 		sum()

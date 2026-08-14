@@ -1,0 +1,2 @@
+ALTER TABLE span_turns_20260615
+    DROP COLUMN IF EXISTS tool_calls;

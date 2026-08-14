@@ -94,6 +94,27 @@ var _ = Describe("span emit over the corpus (cb9a87e5)", func() {
 
 		expectTurnPreviews(spans)
 	})
+
+	It("folds per-turn tool call counts into the trace rollup", func() {
+		set, _ := deriveAdvanced()
+		spans := derive.EmitSpans(set)
+
+		total := 0
+		for _, turn := range spans.Turns {
+			want := 0
+			for _, s := range turn.Spans {
+				if s.Kind == derive.SpanKindTool {
+					want++
+				}
+			}
+			Expect(turn.ToolCalls).To(Equal(want),
+				"turn %s tool rollup disagrees with its spans", turn.TraceID)
+			total += turn.ToolCalls
+		}
+		// Pinned: one tool span per tool_use in the corpus (matches
+		// the SpanKinds gate above).
+		Expect(total).To(Equal(97))
+	})
 })
 
 // expectTurnPreviews pins the derive-time turn-card folds: the header

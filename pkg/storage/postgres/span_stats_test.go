@@ -2,13 +2,12 @@ package postgres_test
 
 // The /v1/stats aggregate, and its subject filter.
 //
-// Attribution lives on sessions; the projection tables the aggregate reads
-// carry only a session_id. So "scope the stats to a user" is a join away from
-// every total, and the risk this file exists for is a filter that reaches some
-// of them: turn and token sums narrowed while tool_calls — computed by its own
-// subquery, over a different table — stays org-wide. A response like that does
-// not look wrong, it just reports one user's work beside everyone's tool
-// volume. Each spec below asserts every field, for that reason.
+// Attribution lives on sessions; the projection table the aggregate reads
+// carries only a session_id. So "scope the stats to a user" is a join away
+// from every total, and the risk this file exists for is a filter that
+// reaches some of them but not others. Every figure, tool_calls included,
+// now comes from the turn rollups in one CTE (PCC-936), so one predicate
+// scopes them all — and each spec below asserts every field to pin that.
 
 import (
 	"context"
@@ -87,7 +86,7 @@ var _ = Describe("Driver.AggregateSpanStats", func() {
 	// insertTurn writes one projection row directly. The deriver owns these
 	// in production; writing them here lets a spec state the exact totals it
 	// expects instead of reverse-engineering them from a fixture.
-	insertTurn := func(traceID, sessionID string, in, out int64, costUSD float64, dur time.Duration) {
+	insertTurn := func(traceID, sessionID string, in, out int64, costUSD float64, dur time.Duration, toolCalls int) {
 		var sid any
 		if sessionID == "" {
 			sid = nil // an unattributed trace: no session row, so no subject
@@ -97,9 +96,9 @@ var _ = Describe("Driver.AggregateSpanStats", func() {
 		_, err := pgDriver.DB().Exec(ctx, `
 			INSERT INTO span_turns_20260615
 			    (org_id, trace_id, session_id, started_at, duration_ns,
-			     total_input_tokens, total_output_tokens, total_cost_usd)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-			mustUUID(orgID), traceID, sid, base, dur.Nanoseconds(), in, out, costUSD)
+			     total_input_tokens, total_output_tokens, total_cost_usd, tool_calls)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			mustUUID(orgID), traceID, sid, base, dur.Nanoseconds(), in, out, costUSD, toolCalls)
 		Expect(err).NotTo(HaveOccurred())
 	}
 
@@ -128,11 +127,11 @@ var _ = Describe("Driver.AggregateSpanStats", func() {
 		bobSession = seedSubjectSession("user_bob", "bob-1")
 		markCompleted(aliceSession)
 
-		insertTurn("trace-alice-1", aliceSession, 100, 10, 1.5, 2*time.Second)
+		insertTurn("trace-alice-1", aliceSession, 100, 10, 1.5, 2*time.Second, 1)
 		insertToolSpan("trace-alice-1", "span-alice-tool-1", aliceSession)
 
-		insertTurn("trace-bob-1", bobSession, 200, 20, 2.5, 3*time.Second)
-		insertTurn("trace-bob-2", bobSession, 400, 40, 4.0, 5*time.Second)
+		insertTurn("trace-bob-1", bobSession, 200, 20, 2.5, 3*time.Second, 1)
+		insertTurn("trace-bob-2", bobSession, 400, 40, 4.0, 5*time.Second, 1)
 		insertToolSpan("trace-bob-1", "span-bob-tool-1", bobSession)
 		insertToolSpan("trace-bob-2", "span-bob-tool-2", bobSession)
 	})
@@ -162,8 +161,8 @@ var _ = Describe("Driver.AggregateSpanStats", func() {
 		Expect(stats.OutputTokens).To(Equal(int64(10)))
 		Expect(stats.TotalCostUSD).To(BeNumerically("~", 1.5, 0.0001))
 		Expect(stats.TotalDurationNS).To(Equal((2 * time.Second).Nanoseconds()))
-		// The one that a partial implementation gets wrong: tool_calls is a
-		// separate subquery over a separate table, and org-wide it is 3.
+		// tool_calls comes from the same matched CTE as everything else, so
+		// the subject filter scopes it too; org-wide it is 3.
 		Expect(stats.ToolCalls).To(Equal(1))
 	})
 
@@ -207,7 +206,7 @@ var _ = Describe("Driver.AggregateSpanStats", func() {
 		// nobody: it keeps counting in the org-wide totals it has always
 		// counted in, and joins no user's. The filter tightening the LEFT
 		// JOIN to an inner match is what makes the second half true.
-		insertTurn("trace-orphan", "", 1_000, 100, 9.0, 7*time.Second)
+		insertTurn("trace-orphan", "", 1_000, 100, 9.0, 7*time.Second, 0)
 
 		orgWide, err := pgDriver.AggregateSpanStats(ctx, orgID, nil, nil, "")
 		Expect(err).NotTo(HaveOccurred())
@@ -264,8 +263,8 @@ var _ = Describe("Driver.AggregateSpanStats", func() {
 		_, err = pgDriver.DB().Exec(ctx, `
 			INSERT INTO span_turns_20260615
 			    (org_id, trace_id, session_id, started_at, duration_ns,
-			     total_input_tokens, total_output_tokens, total_cost_usd)
-			VALUES ($1, 'trace-alice-elsewhere', $2, $3, 0, 5000, 500, 50.0)`,
+			     total_input_tokens, total_output_tokens, total_cost_usd, tool_calls)
+			VALUES ($1, 'trace-alice-elsewhere', $2, $3, 0, 5000, 500, 50.0, 1)`,
 			mustUUID(otherOrg), mustUUID(res.SessionID), base)
 		Expect(err).NotTo(HaveOccurred())
 		_, err = pgDriver.DB().Exec(ctx, `
