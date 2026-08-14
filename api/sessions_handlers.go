@@ -457,9 +457,11 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 // across all harnesses — the id is unique per harness, so even the lone
 // form returns at most one row per harness (in practice zero or one). A
 // lone harness_id is rejected (400): it names a harness, not a session,
-// and would be an unbounded, unpaginated list. Cursor combined with the
-// filter is rejected (400). Returns the standard SessionListResponse
-// envelope with the matching items and no next_cursor.
+// and would be an unbounded, unpaginated list. Cursor, sort, direction,
+// since, and until combined with the filter are rejected (400): they
+// belong to the paged-list path, and the lookup has no ordering or window
+// to apply them to. Returns the standard SessionListResponse envelope
+// with the matching items and no next_cursor.
 func (s *Server) listSessionsByHarness(c *fiber.Ctx, reader sessionsReader) error {
 	harnessID := c.Query("harness_id")
 	harnessSessionID := c.Query("harness_session_id")
@@ -473,6 +475,22 @@ func (s *Server) listSessionsByHarness(c *fiber.Ctx, reader sessionsReader) erro
 	if c.Query("cursor") != "" {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{
 			Error: "cursor cannot be combined with the harness filter",
+		})
+	}
+	// The paged-list options have nothing to act on here: the lookup's
+	// order is fixed and its window is the whole table. Refusing them
+	// loudly — naming each offender — beats silently discarding options
+	// the caller believes are in effect. This applies to the paired and
+	// lone forms alike.
+	var unsupported []string
+	for _, name := range []string{"sort", "direction", "since", "until"} {
+		if c.Query(name) != "" {
+			unsupported = append(unsupported, name)
+		}
+	}
+	if len(unsupported) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{
+			Error: strings.Join(unsupported, ", ") + " cannot be combined with the harness filter",
 		})
 	}
 

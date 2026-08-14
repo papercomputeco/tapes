@@ -347,6 +347,42 @@ var _ = Describe("harness natural-key filter on GET /v1/sessions", func() {
 		Expect(drv.loneIDCalls).To(BeZero(), "validation must precede any storage call")
 	})
 
+	It("returns 400 naming the params when paged-list options ride along with the paired filter", func() {
+		// sort/direction/since/until belong to the paged-list path; the
+		// harness lookup has no ordering or window to apply them to. They
+		// used to be silently discarded — the caller believed a sort was in
+		// effect when it wasn't — so the combination is refused loudly.
+		drv := &sessionsStubDriver{Driver: inmemory.NewDriver(), harnessRecord: &record}
+		server := newSessionsServer(drv)
+
+		_, errBody, status := getSessionList(server,
+			"/v1/sessions?harness_id=claude&harness_session_id=sess-xyz&sort=started_at&direction=asc", "")
+		Expect(status).To(Equal(fiber.StatusBadRequest))
+		// The error must name each offending param so the caller knows
+		// exactly what to drop.
+		Expect(errBody.Error).To(ContainSubstring("sort"))
+		Expect(errBody.Error).To(ContainSubstring("direction"))
+		Expect(drv.harnessCalls).To(BeZero(), "validation must precede any storage call")
+	})
+
+	It("returns 400 naming the params when paged-list options ride along with a lone harness_session_id", func() {
+		// Same refusal on the lone-id form: both harness-filter paths must
+		// treat the paged-list options identically.
+		drv := &sessionsStubDriver{
+			Driver:        inmemory.NewDriver(),
+			loneIDRecords: []storage.SessionRecord{record},
+		}
+		server := newSessionsServer(drv)
+
+		_, errBody, status := getSessionList(server,
+			"/v1/sessions?harness_session_id=sess-xyz&since=2026-06-01T00:00:00Z&until=2026-06-02T00:00:00Z", "")
+		Expect(status).To(Equal(fiber.StatusBadRequest))
+		Expect(errBody.Error).To(ContainSubstring("since"))
+		Expect(errBody.Error).To(ContainSubstring("until"))
+		Expect(errBody.Error).NotTo(ContainSubstring("sort"), "only the params actually supplied are named")
+		Expect(drv.loneIDCalls).To(BeZero(), "validation must precede any storage call")
+	})
+
 	It("returns 500 when the lone-id lookup fails", func() {
 		drv := &sessionsStubDriver{
 			Driver:    inmemory.NewDriver(),
@@ -481,19 +517,22 @@ var _ = Describe("harness natural-key filter on GET /v1/sessions", func() {
 		Expect(drv.listCalls).To(BeZero())
 	})
 
-	It("ignores sort params on the harness filter path", func() {
-		// The point lookup returns before sort parsing, so an otherwise-invalid
-		// sort key — which would 400 on the paged-list path — is ignored rather
-		// than validated when the filter is active. This locks the early-return
-		// ordering against a future reorder.
+	It("refuses sort on the harness filter path by presence, not validity", func() {
+		// The harness branch returns before sort parsing, so even a sort key
+		// that could never be valid is refused with the combination message,
+		// not "invalid sort field". This locks the early-return ordering
+		// against a future reorder: presence is the offense, validation
+		// never runs.
 		drv := &sessionsStubDriver{Driver: inmemory.NewDriver(), harnessRecord: &record}
 		server := newSessionsServer(drv)
 
-		body, _, status := getSessionList(server, "/v1/sessions?harness_id=claude&harness_session_id=sess-xyz&sort=bogus", "")
-		Expect(status).To(Equal(fiber.StatusOK), "the harness branch must return before sort parsing")
-		Expect(body.Items).To(HaveLen(1))
-		Expect(body.Items[0].ID).To(Equal(record.ID))
-		Expect(drv.harnessCalls).To(Equal(1))
+		_, errBody, status := getSessionList(server, "/v1/sessions?harness_id=claude&harness_session_id=sess-xyz&sort=bogus", "")
+		Expect(status).To(Equal(fiber.StatusBadRequest))
+		Expect(errBody.Error).To(ContainSubstring("sort"))
+		Expect(errBody.Error).To(ContainSubstring("harness filter"))
+		Expect(errBody.Error).NotTo(ContainSubstring("invalid sort field"),
+			"the combination is refused before the sort value is ever parsed")
+		Expect(drv.harnessCalls).To(BeZero())
 		Expect(drv.listCalls).To(BeZero())
 	})
 
