@@ -16,6 +16,7 @@ WITH matched AS (
     SELECT t.org_id, t.trace_id, t.session_id, t.duration_ns,
            t.total_input_tokens, t.total_output_tokens,
            t.cache_read_tokens, t.cache_creation_tokens, t.total_cost_usd,
+           t.tool_calls,
            s.derived_status
     FROM span_turns_20260615 t
     LEFT JOIN sessions s ON s.id = t.session_id
@@ -36,21 +37,7 @@ SELECT
     COALESCE(SUM(cache_read_tokens), 0)::bigint             AS cache_read_tokens,
     COALESCE(SUM(duration_ns), 0)::bigint                   AS total_duration_ns,
     COALESCE(SUM(total_cost_usd), 0)::numeric               AS total_cost_usd,
-    (SELECT COUNT(*) FROM spans_20260615 sp
-     WHERE sp.org_id = $1
-       AND sp.kind = 'tool'
-       AND ($2::timestamptz IS NULL OR sp.started_at >= $2::timestamptz)
-       AND ($3::timestamptz IS NULL OR sp.started_at < $3::timestamptz)
-       -- Uncorrelated on purpose: the subject's session ids depend only on the
-       -- parameter, so this is one hashed subplan (index-only on
-       -- sessions_org_subject_id_idx) rather than a lookup per tool span. A
-       -- correlated EXISTS here is the same O(spans) probe the comment above
-       -- says times out on a wide window.
-       AND ($4::text IS NULL
-            OR sp.session_id IN (SELECT s2.id FROM sessions s2
-                                 WHERE s2.org_id = $1
-                                   AND s2.auth_subject = $4::text))
-    )::bigint                                               AS tool_calls
+    COALESCE(SUM(tool_calls), 0)::bigint                    AS tool_calls
 FROM matched
 `
 
@@ -83,7 +70,12 @@ type AggregateSpanStatsRow struct {
 //	total_duration_ns = SUM of trace durations — agent time, not the
 //	                    wall-clock MAX-MIN window (idle time between
 //	                    turns no longer counts)
-//	tool_calls        = tool spans_20260615 started in the window
+//	tool_calls        = SUM of the turn rollups' tool span counts,
+//	                    windowed on the turn's started_at like every
+//	                    other figure here. Counting kind='tool' rows in
+//	                    spans_20260615 per request was the aggregate's
+//	                    dominant cost: ~20x the rows, wide JSONB
+//	                    payloads, and cold heap fetches (PCC-936)
 //
 // completed_count joins sessions once (LEFT JOIN, so a trace whose
 // session identity is missing keeps its turn/token totals and simply
@@ -93,9 +85,9 @@ type AggregateSpanStatsRow struct {
 //
 // auth_subject_filter narrows every total to one gateway-stamped subject.
 // Attribution lives on sessions and nowhere else — neither projection table
-// carries a subject — so both legs reach it through session_id, and both must:
-// a filter the tool_calls subquery did not apply would report one user's turns
-// beside the whole org's tool volume.
+// carries a subject — so it is reached through session_id, once, in the
+// matched CTE. Every figure including tool_calls comes from that CTE, so
+// one predicate scopes them all.
 //
 // Filtering also tightens the LEFT JOIN to an inner match, and deliberately: a
 // trace whose session row is missing has no subject, so it belongs to no one
@@ -228,7 +220,7 @@ func (q *Queries) GetSpan(ctx context.Context, arg GetSpanParams) (Spans20260615
 }
 
 const getSpanTurn = `-- name: GetSpanTurn :one
-SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview, source, content_hash, derive_seq, fidelity FROM span_turns_20260615
+SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview, source, content_hash, derive_seq, fidelity, tool_calls FROM span_turns_20260615
 WHERE org_id = $1 AND trace_id = $2
 `
 
@@ -262,6 +254,7 @@ func (q *Queries) GetSpanTurn(ctx context.Context, arg GetSpanTurnParams) (SpanT
 		&i.ContentHash,
 		&i.DeriveSeq,
 		&i.Fidelity,
+		&i.ToolCalls,
 	)
 	return i, err
 }
@@ -473,7 +466,7 @@ func (q *Queries) ListSpanLinksByTrace(ctx context.Context, arg ListSpanLinksByT
 }
 
 const listSpanTurns = `-- name: ListSpanTurns :many
-SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview, source, content_hash, derive_seq, fidelity FROM span_turns_20260615
+SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview, source, content_hash, derive_seq, fidelity, tool_calls FROM span_turns_20260615
 WHERE org_id = $1
   AND ($3::timestamptz IS NULL
        OR (started_at, trace_id) < ($3::timestamptz, $4::text))
@@ -524,6 +517,7 @@ func (q *Queries) ListSpanTurns(ctx context.Context, arg ListSpanTurnsParams) ([
 			&i.ContentHash,
 			&i.DeriveSeq,
 			&i.Fidelity,
+			&i.ToolCalls,
 		); err != nil {
 			return nil, err
 		}
@@ -537,7 +531,7 @@ func (q *Queries) ListSpanTurns(ctx context.Context, arg ListSpanTurnsParams) ([
 
 const listSpanTurnsBySession = `-- name: ListSpanTurnsBySession :many
 
-SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview, source, content_hash, derive_seq, fidelity FROM span_turns_20260615
+SELECT org_id, trace_id, session_id, user_prompt, synthetic, status, started_at, ended_at, duration_ns, total_input_tokens, total_output_tokens, total_cost_usd, main_input_tokens, main_output_tokens, cache_read_tokens, cache_creation_tokens, response_preview, source, content_hash, derive_seq, fidelity, tool_calls FROM span_turns_20260615
 WHERE session_id = $1
 ORDER BY started_at ASC, trace_id ASC
 `
@@ -574,6 +568,7 @@ func (q *Queries) ListSpanTurnsBySession(ctx context.Context, sessionID pgtype.U
 			&i.ContentHash,
 			&i.DeriveSeq,
 			&i.Fidelity,
+			&i.ToolCalls,
 		); err != nil {
 			return nil, err
 		}
@@ -1026,7 +1021,7 @@ INSERT INTO span_turns_20260615 (
     total_input_tokens, total_output_tokens,
     main_input_tokens, main_output_tokens,
     cache_read_tokens, cache_creation_tokens,
-    total_cost_usd, source,
+    total_cost_usd, source, tool_calls,
     content_hash, derive_seq, fidelity
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7,
@@ -1034,8 +1029,8 @@ INSERT INTO span_turns_20260615 (
     $11, $12,
     $13, $14,
     $15, $16,
-    $17, $18,
-    $19, $20, $21
+    $17, $18, $19,
+    $20, $21, $22
 )
 ON CONFLICT (org_id, trace_id) DO UPDATE SET
     session_id            = COALESCE(span_turns_20260615.session_id, EXCLUDED.session_id),
@@ -1054,6 +1049,7 @@ ON CONFLICT (org_id, trace_id) DO UPDATE SET
     cache_creation_tokens = EXCLUDED.cache_creation_tokens,
     total_cost_usd        = EXCLUDED.total_cost_usd,
     source                = EXCLUDED.source,
+    tool_calls            = EXCLUDED.tool_calls,
     content_hash          = EXCLUDED.content_hash,
     fidelity              = EXCLUDED.fidelity,
     -- Advance the cursor ONLY when the content actually changed. A derive
@@ -1087,6 +1083,7 @@ type UpsertSpanTurnParams struct {
 	CacheCreationTokens int64
 	TotalCostUsd        pgtype.Numeric
 	Source              string
+	ToolCalls           int64
 	ContentHash         string
 	DeriveSeq           int64
 	Fidelity            string
@@ -1115,6 +1112,7 @@ func (q *Queries) UpsertSpanTurn(ctx context.Context, arg UpsertSpanTurnParams) 
 		arg.CacheCreationTokens,
 		arg.TotalCostUsd,
 		arg.Source,
+		arg.ToolCalls,
 		arg.ContentHash,
 		arg.DeriveSeq,
 		arg.Fidelity,

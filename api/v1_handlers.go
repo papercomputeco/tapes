@@ -24,6 +24,9 @@ import (
 //     JSON consumer's 2^53 safe-integer range (~104 cumulative days), and
 //     sub-ms precision is meaningless for an aggregate agent-time figure.
 //   - TurnCount counts traces (user-visible turns).
+//   - ToolCalls is the SUM of the turn rollups' tool span counts,
+//     windowed on the turn's started_at like every other figure here
+//     rather than on each tool span's own timestamp (PCC-936).
 //   - CompletedCount counts distinct sessions whose denormalized
 //     derived_status is 'completed' (chain-aware, PCC-515).
 type StatsResponse struct {

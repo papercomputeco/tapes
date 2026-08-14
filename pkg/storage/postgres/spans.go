@@ -103,6 +103,7 @@ func writeSpanSet(
 			CacheCreationTokens: turn.CacheCreationTokens,
 			TotalCostUsd:        costNumeric,
 			Source:              turn.Source,
+			ToolCalls:           int64(turn.ToolCalls),
 			DeriveSeq:           deriveSeq,
 			Fidelity:            rollupFidelity(spanTiers),
 		}

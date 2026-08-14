@@ -9,7 +9,7 @@ INSERT INTO span_turns_20260615 (
     total_input_tokens, total_output_tokens,
     main_input_tokens, main_output_tokens,
     cache_read_tokens, cache_creation_tokens,
-    total_cost_usd, source,
+    total_cost_usd, source, tool_calls,
     content_hash, derive_seq, fidelity
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7,
@@ -17,8 +17,8 @@ INSERT INTO span_turns_20260615 (
     $11, $12,
     $13, $14,
     $15, $16,
-    $17, $18,
-    $19, $20, $21
+    $17, $18, $19,
+    $20, $21, $22
 )
 ON CONFLICT (org_id, trace_id) DO UPDATE SET
     session_id            = COALESCE(span_turns_20260615.session_id, EXCLUDED.session_id),
@@ -37,6 +37,7 @@ ON CONFLICT (org_id, trace_id) DO UPDATE SET
     cache_creation_tokens = EXCLUDED.cache_creation_tokens,
     total_cost_usd        = EXCLUDED.total_cost_usd,
     source                = EXCLUDED.source,
+    tool_calls            = EXCLUDED.tool_calls,
     content_hash          = EXCLUDED.content_hash,
     fidelity              = EXCLUDED.fidelity,
     -- Advance the cursor ONLY when the content actually changed. A derive
@@ -271,7 +272,12 @@ WHERE sessions.id = f.id;
 --   total_duration_ns = SUM of trace durations — agent time, not the
 --                       wall-clock MAX-MIN window (idle time between
 --                       turns no longer counts)
---   tool_calls        = tool spans_20260615 started in the window
+--   tool_calls        = SUM of the turn rollups' tool span counts,
+--                       windowed on the turn's started_at like every
+--                       other figure here. Counting kind='tool' rows in
+--                       spans_20260615 per request was the aggregate's
+--                       dominant cost: ~20x the rows, wide JSONB
+--                       payloads, and cold heap fetches (PCC-936)
 -- completed_count joins sessions once (LEFT JOIN, so a trace whose
 -- session identity is missing keeps its turn/token totals and simply
 -- doesn't count as completed) rather than a correlated EXISTS per matched
@@ -280,9 +286,9 @@ WHERE sessions.id = f.id;
 --
 -- auth_subject_filter narrows every total to one gateway-stamped subject.
 -- Attribution lives on sessions and nowhere else — neither projection table
--- carries a subject — so both legs reach it through session_id, and both must:
--- a filter the tool_calls subquery did not apply would report one user's turns
--- beside the whole org's tool volume.
+-- carries a subject — so it is reached through session_id, once, in the
+-- matched CTE. Every figure including tool_calls comes from that CTE, so
+-- one predicate scopes them all.
 --
 -- Filtering also tightens the LEFT JOIN to an inner match, and deliberately: a
 -- trace whose session row is missing has no subject, so it belongs to no one
@@ -292,6 +298,7 @@ WITH matched AS (
     SELECT t.org_id, t.trace_id, t.session_id, t.duration_ns,
            t.total_input_tokens, t.total_output_tokens,
            t.cache_read_tokens, t.cache_creation_tokens, t.total_cost_usd,
+           t.tool_calls,
            s.derived_status
     FROM span_turns_20260615 t
     LEFT JOIN sessions s ON s.id = t.session_id
@@ -312,21 +319,7 @@ SELECT
     COALESCE(SUM(cache_read_tokens), 0)::bigint             AS cache_read_tokens,
     COALESCE(SUM(duration_ns), 0)::bigint                   AS total_duration_ns,
     COALESCE(SUM(total_cost_usd), 0)::numeric               AS total_cost_usd,
-    (SELECT COUNT(*) FROM spans_20260615 sp
-     WHERE sp.org_id = sqlc.arg(org_id)
-       AND sp.kind = 'tool'
-       AND (sqlc.narg(since_filter)::timestamptz IS NULL OR sp.started_at >= sqlc.narg(since_filter)::timestamptz)
-       AND (sqlc.narg(until_filter)::timestamptz IS NULL OR sp.started_at < sqlc.narg(until_filter)::timestamptz)
-       -- Uncorrelated on purpose: the subject's session ids depend only on the
-       -- parameter, so this is one hashed subplan (index-only on
-       -- sessions_org_subject_id_idx) rather than a lookup per tool span. A
-       -- correlated EXISTS here is the same O(spans) probe the comment above
-       -- says times out on a wide window.
-       AND (sqlc.narg(auth_subject_filter)::text IS NULL
-            OR sp.session_id IN (SELECT s2.id FROM sessions s2
-                                 WHERE s2.org_id = sqlc.arg(org_id)
-                                   AND s2.auth_subject = sqlc.narg(auth_subject_filter)::text))
-    )::bigint                                               AS tool_calls
+    COALESCE(SUM(tool_calls), 0)::bigint                    AS tool_calls
 FROM matched;
 
 -- name: ListChangedSpanTurns :many

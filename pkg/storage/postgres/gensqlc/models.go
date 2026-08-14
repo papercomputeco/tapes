@@ -154,6 +154,7 @@ type SpanTurns20260615 struct {
 	ContentHash         string
 	DeriveSeq           int64
 	Fidelity            string
+	ToolCalls           int64
 }
 
 // Derived span projection schema version 2026-06-15.

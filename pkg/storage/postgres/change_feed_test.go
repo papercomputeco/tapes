@@ -91,6 +91,15 @@ var _ = Describe("content hashing", func() {
 		Expect(postgres.SpanTurnContentHashForTest(a)).NotTo(Equal(postgres.SpanTurnContentHashForTest(b)))
 	})
 
+	It("changes when only tool_calls changes", func() {
+		// The stats aggregate reads the rollup, so a corrected tool
+		// count is a change a consumer must see.
+		a := postgres.NewSpanTurnParamsForTest(pgtype.UUID{}, "t1", pgtype.UUID{}, "hello", 1, postgres.FidelityRaw)
+		b := postgres.NewSpanTurnParamsForTest(pgtype.UUID{}, "t1", pgtype.UUID{}, "hello", 1, postgres.FidelityRaw)
+		b.ToolCalls = 4
+		Expect(postgres.SpanTurnContentHashForTest(a)).NotTo(Equal(postgres.SpanTurnContentHashForTest(b)))
+	})
+
 	It("changes when only fidelity changes", func() {
 		// A row whose bytes went from stored to dropped has changed in the
 		// only way a fidelity-tracking consumer cares about, even though
