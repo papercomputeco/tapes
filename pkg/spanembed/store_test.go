@@ -264,6 +264,50 @@ var _ = Describe("Store", func() {
 			Expect(hits[0].Score).To(BeNumerically("~", 1.0, 1e-4))
 		})
 
+		It("lists a chunked span as one candidate and surfaces failure state, across pages", func() {
+			insertSpan("llm_a", "llm", "main", `[{"type":"text","text":"alpha content"}]`, "")
+			insertSpan("llm_b", "llm", "main", `[{"type":"text","text":"beta content"}]`, "")
+			store := newStore(3)
+
+			// Span A: three chunk rows sharing one hash+model must collapse
+			// to a single candidate. Span B: a recorded failure must surface
+			// on its candidate.
+			Expect(store.UpsertSpanChunks(ctx, spanembed.ChunkRecord{
+				OrgID: org, TraceID: traceA, SpanID: "llm_a", Model: "m", ContentHash: "ha",
+				Embeddings: [][]float32{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}},
+			})).To(Succeed())
+			Expect(store.RecordFailure(ctx, spanembed.FailureRecord{
+				OrgID: org, TraceID: traceA, SpanID: "llm_b", Model: "m",
+				ContentHash: "hb", Reason: "oversize",
+			})).To(Succeed())
+
+			candidates, err := store.ListCandidates(ctx, spanembed.Key{}, 100)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(candidates).To(HaveLen(2))
+			Expect(candidates[0].SpanID).To(Equal("llm_a"))
+			Expect(candidates[0].ExistingHash).To(Equal("ha"))
+			Expect(candidates[0].ExistingModel).To(Equal("m"))
+			Expect(candidates[0].ExistingFailHash).To(BeEmpty())
+			Expect(candidates[1].SpanID).To(Equal("llm_b"))
+			Expect(candidates[1].ExistingHash).To(BeEmpty())
+			Expect(candidates[1].ExistingFailHash).To(Equal("hb"))
+			Expect(candidates[1].ExistingFailModel).To(Equal("m"))
+
+			// Keyset pagination: a page of one, resumed from its key, yields
+			// exactly the remaining span.
+			page, err := store.ListCandidates(ctx, spanembed.Key{}, 1)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(page).To(HaveLen(1))
+			Expect(page[0].SpanID).To(Equal("llm_a"))
+			page, err = store.ListCandidates(ctx, page[0].Key(), 1)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(page).To(HaveLen(1))
+			Expect(page[0].SpanID).To(Equal("llm_b"))
+			page, err = store.ListCandidates(ctx, page[0].Key(), 1)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(page).To(BeEmpty())
+		})
+
 		It("prunes orphaned failure rows when the span no longer exists", func() {
 			store := newStore(3)
 			Expect(store.RecordFailure(ctx, spanembed.FailureRecord{

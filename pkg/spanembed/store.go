@@ -321,10 +321,20 @@ func (s *Store) ensureFailuresTable(ctx context.Context) error {
 
 // ListCandidates pages every main llm span (keyset-ordered) joined with its
 // current embedding state and any recorded failure. All of a span's chunk rows
-// share one content hash and model, so the embedding join collapses them to a
-// single row; the failure table is already one row per span. The caller decides
-// per candidate whether an embed is due — content hashing happens in Go, so the
-// query stays a cheap indexable join.
+// share one content hash and model, so the per-span aggregate collapses them to
+// a single row; the failure table is already one row per span. The caller
+// decides per candidate whether an embed is due — content hashing happens in
+// Go, so the query stays a cheap indexable join.
+//
+// The embedding lookup is a correlated LATERAL subquery, and that shape is
+// load-bearing. Postgres badly underestimates the row-value cursor comparison
+// (it assumes ~1 row whatever the cursor), so given a non-correlated
+// GROUP-BY-the-whole-embedding-table subquery it hash-joins against it and
+// materializes every remaining span — TOASTed payloads included — to return
+// one page. That is O(corpus) payload bytes per page, per pass, and it wedged
+// the largest tenant for days. The LATERAL form pins the only sane plan: walk
+// the spans PK in cursor order, probe the embedding PK per span, stop at
+// LIMIT.
 func (s *Store) ListCandidates(ctx context.Context, after Key, limit int) ([]Candidate, error) {
 	table := s.table.Sanitize()
 	query := fmt.Sprintf(`
@@ -332,13 +342,11 @@ func (s *Store) ListCandidates(ctx context.Context, after Key, limit int) ([]Can
 		       COALESCE(e.content_hash, ''), COALESCE(e.model, ''),
 		       COALESCE(f.content_hash, ''), COALESCE(f.model, '')
 		FROM spans_20260615 s
-		LEFT JOIN (
-			SELECT org_id, trace_id, span_id,
-			       max(content_hash) AS content_hash, max(model) AS model
-			FROM %s
-			GROUP BY org_id, trace_id, span_id
-		) e
-		  ON e.org_id = s.org_id AND e.trace_id = s.trace_id AND e.span_id = s.span_id
+		LEFT JOIN LATERAL (
+			SELECT max(content_hash) AS content_hash, max(model) AS model
+			FROM %s se
+			WHERE se.org_id = s.org_id AND se.trace_id = s.trace_id AND se.span_id = s.span_id
+		) e ON true
 		LEFT JOIN %s f
 		  ON f.org_id = s.org_id AND f.trace_id = s.trace_id AND f.span_id = s.span_id
 		WHERE s.kind = 'llm' AND s.call_kind = 'main'
