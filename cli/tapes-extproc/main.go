@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Paper Compute Co. All rights reserved.
+Copyright 2026 Paper Compute Co.
 
 tapes-extproc is a gRPC External Processor that observes LLM traffic flowing
 through Envoy AI Gateway and forwards completed request/response pairs to
