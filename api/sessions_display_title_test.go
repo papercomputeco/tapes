@@ -41,6 +41,21 @@ var _ = Describe("resolveSessionDisplayTitle", func() {
 		s := base
 		s.Preview = `{"channel_link":"https://example.com"}`
 		Expect(resolveSessionDisplayTitle(s)).To(Equal("clearing-exa"))
+		s.Preview = `["first", "second"]`
+		Expect(resolveSessionDisplayTitle(s)).To(Equal("clearing-exa"))
+	})
+
+	It("skips a JSON preview classified before it was truncated", func() {
+		s := base
+		s.Preview = `{"payload":"a truncated fragment`
+		s.PreviewIsJSON = true
+		Expect(resolveSessionDisplayTitle(s)).To(Equal("clearing-exa"))
+	})
+
+	It("keeps a Markdown plugin invocation as prose rather than mistaking it for JSON", func() {
+		s := base
+		s.Preview = "[@visualize](plugin://visualize@openai-bundled) Explore this dataset"
+		Expect(resolveSessionDisplayTitle(s)).To(Equal(s.Preview))
 	})
 
 	It("falls back to the harness id slice when nothing human is set", func() {

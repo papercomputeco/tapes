@@ -186,9 +186,10 @@ type SessionDetailResponse struct {
 //	-> Name (harness slug / coalesced) — last human-ish label
 //	-> a short harness_session_id slice, then the session id — never empty
 //
-// Preview is already scaffolding-stripped by the deriver; the JSON guard
-// mirrors the Console's prior client-side rule for attribution-gap sessions
-// whose first captured node is a tool_result rather than prose.
+// Preview is already scaffolding-stripped by the deriver. PreviewIsJSON is
+// classified from the full prompt before storage truncates the preview; the
+// local validity check also covers untruncated records constructed by other
+// storage implementations and tests.
 func resolveSessionDisplayTitle(s storage.SessionRecord) string {
 	if t := strings.TrimSpace(s.DisplayName); t != "" {
 		return t
@@ -196,7 +197,7 @@ func resolveSessionDisplayTitle(s storage.SessionRecord) string {
 	if t := strings.TrimSpace(s.DerivedTitle); t != "" {
 		return t
 	}
-	if t := strings.TrimSpace(s.Preview); t != "" && !looksLikeJSONPreview(t) {
+	if t := strings.TrimSpace(s.Preview); t != "" && !s.PreviewIsJSON && !looksLikeJSONPreview(t) {
 		return t
 	}
 	if t := strings.TrimSpace(s.Name); t != "" {
@@ -212,11 +213,17 @@ func resolveSessionDisplayTitle(s storage.SessionRecord) string {
 	return s.ID
 }
 
-// looksLikeJSONPreview is a cheap guard for previews that are really
-// tool-result payloads rather than user prose (a leading { or [).
+// looksLikeJSONPreview guards against previews that are really tool-result
+// payloads rather than user prose. The opening delimiter is only a fast path:
+// Markdown-style plugin invocations also begin with "[" (for example,
+// [@visualize](plugin://...)), so require the whole preview to be valid JSON
+// before suppressing it as a display-title candidate.
 func looksLikeJSONPreview(s string) bool {
 	t := strings.TrimLeft(s, " \t\r\n")
-	return strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[")
+	if !strings.HasPrefix(t, "{") && !strings.HasPrefix(t, "[") {
+		return false
+	}
+	return json.Valid([]byte(t))
 }
 
 // shortHarnessSessionID is the last-resort label: a 12-char slice of the

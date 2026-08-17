@@ -184,6 +184,13 @@ var previewWrapperTags = map[string]bool{
 	"command-args": true,
 }
 
+// leadingPluginInvocation matches the Markdown link that Codex App prepends
+// when the user explicitly invokes a plugin. It is harness routing metadata,
+// not part of the user's request, so human-facing previews omit it. Keep the
+// match anchored and scheme-specific: ordinary Markdown links and plugin links
+// quoted later in the request are user content and must survive unchanged.
+var leadingPluginInvocation = regexp.MustCompile(`^[ \t\r\n]*\[@[^\]\r\n]+\]\(plugin://[^)\r\n]+\)[ \t\r\n]*`)
+
 // PreviewText projects one content block's Text for a human-facing turn
 // preview: unwrap the content-bearing harness wrappers (keep their inner
 // text) and strip every other harness span whole, then normalize
@@ -203,6 +210,9 @@ func PreviewText(text string) string {
 		} else {
 			text = stripTaggedSpan(text, tag)
 		}
+	}
+	for leadingPluginInvocation.MatchString(text) {
+		text = leadingPluginInvocation.ReplaceAllString(text, "")
 	}
 	return normalizeWhitespace(text)
 }

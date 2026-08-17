@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -600,5 +601,19 @@ var _ = Describe("Driver.GetSessionRecord preview", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rec).NotTo(BeNil())
 		Expect(rec.Preview).To(BeEmpty())
+	})
+
+	It("classifies valid JSON before truncating its preview", func() {
+		orgID := newTestOrgID()
+		const id = "01900000-0000-7000-8000-0000000000c3"
+		insertSession(orgID, id, "sess-json-preview")
+		prompt := `{"payload":"` + strings.Repeat("x", 160) + `"}`
+		insertTurn(orgID, id, "trc-1", prompt, "", 0)
+
+		rec, err := pgDriver.GetSessionRecord(ctx, orgID, id)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rec).NotTo(BeNil())
+		Expect([]rune(rec.Preview)).To(HaveLen(120))
+		Expect(rec.PreviewIsJSON).To(BeTrue())
 	})
 })

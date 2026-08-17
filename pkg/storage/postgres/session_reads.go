@@ -171,8 +171,15 @@ func (d *Driver) attachPreviews(ctx context.Context, records []storage.SessionRe
 		return
 	}
 	for i := range records {
-		records[i].Preview = previews[records[i].ID]
+		preview := previews[records[i].ID]
+		records[i].Preview = preview.text
+		records[i].PreviewIsJSON = preview.isJSON
 	}
+}
+
+type sessionPreview struct {
+	text   string
+	isJSON bool
 }
 
 // getSessionPreviews fetches the first turn's user prompt for each
@@ -184,7 +191,7 @@ func (d *Driver) attachPreviews(ctx context.Context, records []storage.SessionRe
 // session_id) also sidesteps the legacy node path's cross-session
 // content-collapse, where a shared-content node could be attributed to
 // the wrong session.
-func (d *Driver) getSessionPreviews(ctx context.Context, sessions []storage.SessionRecord) (map[string]string, error) {
+func (d *Driver) getSessionPreviews(ctx context.Context, sessions []storage.SessionRecord) (map[string]sessionPreview, error) {
 	if len(sessions) == 0 {
 		return nil, nil
 	}
@@ -212,18 +219,19 @@ ORDER BY session_id, (synthetic = '' AND TRIM(user_prompt) <> '') DESC, started_
 	}
 	defer rows.Close()
 
-	out := make(map[string]string, len(sessions))
+	out := make(map[string]sessionPreview, len(sessions))
 	for rows.Next() {
 		var sessionID, userPrompt string
 		if err := rows.Scan(&sessionID, &userPrompt); err != nil {
 			continue
 		}
 		text := strings.TrimSpace(userPrompt)
+		isJSON := json.Valid([]byte(text))
 		if utf8.RuneCountInString(text) > sessionPreviewMaxRunes {
 			runes := []rune(text)
 			text = string(runes[:sessionPreviewMaxRunes])
 		}
-		out[sessionID] = text
+		out[sessionID] = sessionPreview{text: text, isJSON: isJSON}
 	}
 	return out, rows.Err()
 }
