@@ -30,6 +30,15 @@ Each prints the server's JSON verbatim, so it composes with `jq`. `--tapes-url` 
 The `<session-id>` these take is the Tapes session id from `sessions list`. It
 is not the harness session id `tapesctl start` prints when it exits.
 
+Session responses include `display_title`, the label clients should render. It
+prefers a user rename, then a generated title, then the first human prompt
+preview before falling back to harness identity. Prompt previews omit a leading
+Codex App plugin invocation such as `[@visualize](plugin://visualize@openai-bundled)`;
+the user's request remains as the human-facing title. Valid JSON object or array
+previews are treated as tool payloads and skipped rather than shown as titles.
+This classification uses the complete prompt, so JSON payloads remain skipped
+when their displayed preview is truncated.
+
 ## Browse in a browser
 
 The API binary can serve a small same-origin UI at `/`, in the style of

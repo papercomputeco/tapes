@@ -58,9 +58,10 @@ type SessionRecord struct {
 	// KindCounts the per-call_kind span tally (sessions.tasks /
 	// sessions.kind_counts), both JSONB served verbatim on the composite
 	// traces response. Nil until the session derives.
-	Tasks      json.RawMessage
-	KindCounts json.RawMessage
-	Preview    string // first user turn text, truncated; empty when unavailable
+	Tasks         json.RawMessage
+	KindCounts    json.RawMessage
+	Preview       string // first user turn text, truncated; empty when unavailable
+	PreviewIsJSON bool   // full prompt was valid JSON before preview truncation
 	// AuthSubject is the gateway-stamped JWT subject (the WorkOS user id)
 	// captured at ingest. Empty for rows captured before the edge began
 	// stamping the x-paper-auth-subject header.

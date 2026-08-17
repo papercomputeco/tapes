@@ -394,4 +394,20 @@ var _ = Describe("PreviewText", func() {
 		Expect(merkle.PreviewText("<command-args>truncated goal text")).
 			To(Equal("truncated goal text"))
 	})
+
+	It("strips leading plugin invocations while keeping the human request", func() {
+		Expect(merkle.PreviewText(
+			"[@visualize](plugin://visualize@openai-bundled) Turn this dataset into an interactive explorer")).
+			To(Equal("Turn this dataset into an interactive explorer"))
+		Expect(merkle.PreviewText(
+			"[@first](plugin://first@example) [@second](plugin://second@example) Compare both plugins")).
+			To(Equal("Compare both plugins"))
+	})
+
+	It("preserves ordinary Markdown links and plugin links outside the invocation prefix", func() {
+		Expect(merkle.PreviewText("Read [the docs](https://example.com) first")).
+			To(Equal("Read [the docs](https://example.com) first"))
+		Expect(merkle.PreviewText("Explain [@visualize](plugin://visualize@openai-bundled) syntax")).
+			To(Equal("Explain [@visualize](plugin://visualize@openai-bundled) syntax"))
+	})
 })
