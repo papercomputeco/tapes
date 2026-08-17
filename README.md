@@ -113,6 +113,13 @@ concerns, and they live in [`tapesctl`](https://github.com/papercomputeco/tapesc
 curl -sSfL https://download.tapes.dev/tapesctl/install | bash
 ```
 
+`tapesctl` never guesses a server. Name this one once so the read commands
+below work without repeating the flag:
+
+```bash
+tapesctl config set tapes-url http://localhost:8081
+```
+
 Start with demo data so every command below has something to show — this path
 works end to end before you wire up a real agent:
 
@@ -124,11 +131,6 @@ List captured sessions and their ids:
 
 ```bash
 tapesctl sessions list --tapes-url http://localhost:8081
-```
-
-Browse sessions and drill into a single session in the deck TUI:
-
-```bash
 ```
 
 Export a captured session as JSONL — the API's session→traces→spans projection
@@ -154,12 +156,16 @@ the proxy:
 
 ```bash
 tapes local down --wipe && tapes local up   # recreate the DB, clearing the demo
-tapesctl start claude --tapes-url http://localhost:8081
+tapesctl start claude --tapes-url http://localhost:8082
 ```
 
 `tapesctl start` launches the agent under a just-in-time capture proxy and ships
-the turns to this server. See the [agent guides](https://tapes.dev/docs/) for
-Claude Code, OpenCode, and more.
+the turns to this server. Capture addresses the private ingest API on `8082`,
+not the read API on `8081` — a capture pointed at the read port reports success
+and stores nothing. `start` launches `claude`, `codex`, and `pi`; the Codex
+desktop app launches itself and is captured with `tapesctl capture codex-app`.
+See [Agent integrations](https://tapes.dev/docs/integrations/) for the full
+matrix and the plugin each lane needs first.
 
 ## License
 
