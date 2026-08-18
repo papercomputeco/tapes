@@ -9,7 +9,7 @@ Tapes publishes two separate contracts because reading derived telemetry and ing
 
 ## Read API
 
-The default read API listens on `:8081`. It serves health, derived data, search, operator maintenance, MCP, and its own OpenAPI contract. Skills are served by the skills cassette under `/v1/cassettes/skills`.
+The default read API listens on `:8081`. It serves health, derived data, operator maintenance, MCP, and its own OpenAPI contract. Search and skills are served by their cassettes under `/v1/cassettes/search` and `/v1/cassettes/skills`.
 
 | Area | Routes |
 | --- | --- |
@@ -17,7 +17,7 @@ The default read API listens on `:8081`. It serves health, derived data, search,
 | Browser UI | `GET /`, served only with `--api-web-ui` |
 | Sessions | `/v1/sessions`, `/v1/sessions/{id}`, `/v1/sessions/{id}/traces`, `/v1/sessions/{id}/raw_turns` |
 | Traces and spans | `/v1/traces`, `/v1/traces/{trace_id}`, `/v1/traces/{trace_id}/spans/{span_id}` |
-| Search and aggregates | `GET /v1/search/spans`, `GET /v1/stats` |
+| Aggregates | `GET /v1/stats` |
 | MCP | `/v1/mcp` |
 | Operator actions | `/v1/admin/derive/run`, `/v1/admin/seed/demo`, `/v1/admin/raw-turns/attribution-repair` |
 | Cassettes | `GET /v1/cassettes`, `GET /v1/cassettes/{name}/openapi.json`, `/v1/cassettes/{name}`, `/v1/cassettes/{name}/*` |
@@ -29,7 +29,7 @@ The authoritative parameters, schemas, and methods are compiled from route regis
 - session listing is cursor-paginated;
 - session and trace/span paths use UUID IDs;
 - session content is read through traces and spans;
-- semantic search exists only at `/v1/search/spans`;
+- semantic search is served by the search cassette (`/v1/cassettes/search/spans`);
 - raw turns remain available at `/v1/sessions/{id}/raw_turns`.
 
 There is no `/v1/search`, `/v1/sessions/summary`, or hash-based session route.

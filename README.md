@@ -51,8 +51,9 @@ always yields the same sessions, traces, and spans.
 
 Reads happen over that derived surface: list and inspect sessions
 (`/v1/sessions`, cursor-paginated, with model/token/cost/turn-count folds),
-browse traces and spans (`/v1/traces`, `/v1/sessions/{id}/traces`), aggregate at
-span grain (`/v1/stats`), and run span-grain semantic search (`/v1/search/spans`).
+browse traces and spans (`/v1/traces`, `/v1/sessions/{id}/traces`), and aggregate
+at span grain (`/v1/stats`). Span-grain semantic search is served by the search
+cassette (`/v1/cassettes/search/spans`).
 The original capture is always available verbatim via
 `/v1/sessions/{id}/raw_turns`.
 
@@ -69,40 +70,25 @@ Install `tapes`:
 curl -fsSL https://download.tapes.dev/install | bash
 ```
 
-`tapes` stores sessions in PostgreSQL (with the `pgvector` extension) and uses an
-embedding provider to power `tapesctl search`. The quickest way to get a local
-Postgres — plus Ollama for embeddings — is the bundled Docker bootstrap (requires Docker):
+`tapes` stores sessions in PostgreSQL. The quickest way to get a local
+Postgres — plus Ollama as a local LLM upstream — is the bundled Docker
+bootstrap (requires Docker):
 
 ```bash
 tapes local up
 ```
 
-`tapes local up` pulls the default `embeddinggemma` model and writes the
-Postgres + Ollama connection settings into your `.tapes` config, so the
-commands below need no connection flags.
+`tapes local up` writes the Postgres + Ollama connection settings into your
+`.tapes` config, so the commands below need no connection flags.
 
 Then start Tapes. `tapes serve` runs the whole local pipeline together — the
 proxy (capture), the API, and the derive worker (which projects captured turns
 into sessions/traces/spans) — so anything you capture becomes browsable
-automatically. It also embeds spans for `tapesctl search` by default (disable with
-`--embed-spans=false`):
+automatically:
 
 ```bash
 tapes serve
 ```
-
-Prefer OpenAI embeddings? Store an API key and switch the embedding provider
-(`tapes local up` still provides the required Postgres; Ollama just goes unused):
-
-```bash
-tapes auth openai
-tapes config set embedding.provider openai
-tapes serve
-```
-
-You can also provide the key with `OPENAI_API_KEY` instead of `tapes auth openai`.
-When OpenAI is selected without a key, Tapes fails at startup with an authentication
-configuration error from the OpenAI embedder.
 
 ### Capturing and reading: `tapesctl`
 
@@ -142,14 +128,6 @@ that cassette. The full span tree is included by default; pass
 ```bash
 tapesctl export <session-id> --tapes-url http://localhost:8081 -o session.jsonl
 tapesctl export <session-id> --detail traces
-```
-
-Search across captured spans (individual main-conversation LLM spans, with
-their trace and turn context). `tapes serve` embeds spans by default, so this
-works out of the box:
-
-```bash
-tapesctl search "explain the retry logic"
 ```
 
 **Ready for the real thing?** Clear the demo data and point your own agent at

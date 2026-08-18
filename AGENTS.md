@@ -55,7 +55,7 @@ The system is made up of:
 - A derive worker (run via `tapes serve derive-worker`) that projects `raw_turns`
   into sessions/traces/spans.
 - An API server for querying and exporting over the derived surface
-  (`/v1/sessions`, `/v1/traces`, `/v1/stats`, `/v1/search/spans`,
+  (`/v1/sessions`, `/v1/traces`, `/v1/stats`,
   `/v1/sessions/{id}/raw_turns`).
 - A bundled CLI (`tapes`) for running the proxy, API, and workers, and for the
   operator tooling around them.
@@ -73,9 +73,9 @@ CLI surface notes for agents:
   Do not re-add them here.
 - `tapes chat` has been **removed**; tapes captures and derives, it does not host
   chat sessions.
-- Span search stays **server-side** (`/v1/search/spans` and the embed worker);
-  only the client command moved. Search and skill authoring are slated for
-  extraction into cassettes.
+- Span search, skills, and export are **cassettes** — separate services core
+  proxies under `/v1/cassettes/<name>`. Their routes, packages, and the embed
+  worker have been removed from core; do not re-add them here.
 - The deck TUI has been **removed with no CLI replacement** — the console owns
   the ROI/session-browsing surface.
 

@@ -125,15 +125,12 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 	}
 
 	// The MCP server reads cassette tools from the live registry on each
-	// stateless request. Core search remains optional while it moves to its own
-	// cassette.
+	// stateless request; every tool it exposes is cassette-advertised.
 	s.logger.Debug("creating mcp server")
 	mcpServer, err := mcp.NewServer(mcp.Config{
-		SpanSearcher: config.SpanSearcher,
-		Embedder:     config.Embedder,
-		Cassettes:    s.cassettes,
-		Client:       cassetteClient,
-		Logger:       log,
+		Cassettes: s.cassettes,
+		Client:    cassetteClient,
+		Logger:    log,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create MCP server: %w", err)
@@ -144,9 +141,8 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 	// the app and into the parser in one call.
 	//
 	// Registration order is still load-bearing, and the wrapper does not change
-	// it: Fiber matches in order, so a literal path must precede the
-	// parameterised route that would otherwise swallow it — the /v1/skills/:id
-	// sub-paths before the bare /v1/skills/:id. The route table in
+	// it: Fiber matches in order, so a literal path must precede any
+	// parameterised route that would otherwise swallow it. The route table in
 	// openapi_routes.go preserves that order.
 	router := oasfiber.Wrap(app, s.openapi, oasfiber.WithUndocumented(oasfiber.Fail))
 	s.mountV1(router)

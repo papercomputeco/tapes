@@ -92,15 +92,6 @@ func setViperDefaults(v *viper.Viper) {
 	v.SetDefault("client.proxy_target", d.Client.ProxyTarget)
 	v.SetDefault("client.api_target", d.Client.APITarget)
 
-	// Vector store
-	v.SetDefault("vector_store.target", d.VectorStore.Target)
-
-	// Embedding
-	v.SetDefault("embedding.provider", d.Embedding.Provider)
-	v.SetDefault("embedding.target", d.Embedding.Target)
-	v.SetDefault("embedding.model", d.Embedding.Model)
-	v.SetDefault("embedding.dimensions", d.Embedding.Dimensions)
-
 	// OpenCode
 	v.SetDefault("opencode.provider", d.OpenCode.Provider)
 	v.SetDefault("opencode.model", d.OpenCode.Model)

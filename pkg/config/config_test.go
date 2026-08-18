@@ -47,10 +47,6 @@ var _ = Describe("Configer config", func() {
 			Expect(cfg.API.Listen).To(Equal(defaults.API.Listen))
 			Expect(cfg.Client.ProxyTarget).To(Equal(defaults.Client.ProxyTarget))
 			Expect(cfg.Client.APITarget).To(Equal(defaults.Client.APITarget))
-			Expect(cfg.Embedding.Provider).To(Equal(defaults.Embedding.Provider))
-			Expect(cfg.Embedding.Target).To(Equal(defaults.Embedding.Target))
-			Expect(cfg.Embedding.Model).To(Equal(defaults.Embedding.Model))
-			Expect(cfg.Embedding.Dimensions).To(Equal(defaults.Embedding.Dimensions))
 		})
 
 		It("loads a valid config file", func() {
@@ -60,8 +56,8 @@ var _ = Describe("Configer config", func() {
 provider = "anthropic"
 upstream = "https://api.anthropic.com"
 
-[embedding]
-dimensions = 768
+[api]
+listen = ":9091"
 `
 			err := os.WriteFile(filepath.Join(tmpDir, "config.toml"), []byte(data), 0o600)
 			Expect(err).NotTo(HaveOccurred())
@@ -75,7 +71,7 @@ dimensions = 768
 			Expect(cfg.Version).To(Equal(0))
 			Expect(cfg.Proxy.Provider).To(Equal("anthropic"))
 			Expect(cfg.Proxy.Upstream).To(Equal("https://api.anthropic.com"))
-			Expect(cfg.Embedding.Dimensions).To(Equal(uint(768)))
+			Expect(cfg.API.Listen).To(Equal(":9091"))
 		})
 
 		It("rejects invalid resolved logging settings", func() {
@@ -109,15 +105,6 @@ listen = ":9091"
 [client]
 proxy_target = "http://myhost:9090"
 api_target = "http://myhost:9091"
-
-[vector_store]
-target = "http://localhost:8000"
-
-[embedding]
-provider = "ollama"
-target = "http://localhost:11434"
-model = "nomic-embed-text"
-dimensions = 1024
 `
 			err := os.WriteFile(filepath.Join(tmpDir, "config.toml"), []byte(data), 0o600)
 			Expect(err).NotTo(HaveOccurred())
@@ -135,11 +122,6 @@ dimensions = 1024
 			Expect(cfg.API.Listen).To(Equal(":9091"))
 			Expect(cfg.Client.ProxyTarget).To(Equal("http://myhost:9090"))
 			Expect(cfg.Client.APITarget).To(Equal("http://myhost:9091"))
-			Expect(cfg.VectorStore.Target).To(Equal("http://localhost:8000"))
-			Expect(cfg.Embedding.Provider).To(Equal("ollama"))
-			Expect(cfg.Embedding.Target).To(Equal("http://localhost:11434"))
-			Expect(cfg.Embedding.Model).To(Equal("nomic-embed-text"))
-			Expect(cfg.Embedding.Dimensions).To(Equal(uint(1024)))
 		})
 
 		It("returns error for malformed TOML", func() {
@@ -193,9 +175,6 @@ provider = "openai"
 					Provider: "anthropic",
 					Upstream: "https://api.anthropic.com",
 				},
-				Embedding: config.EmbeddingConfig{
-					Dimensions: 768,
-				},
 			}
 
 			c, err := config.NewConfiger(tmpDir)
@@ -213,7 +192,6 @@ provider = "openai"
 			Expect(err).NotTo(HaveOccurred())
 			Expect(loaded.Proxy.Provider).To(Equal("anthropic"))
 			Expect(loaded.Proxy.Upstream).To(Equal("https://api.anthropic.com"))
-			Expect(loaded.Embedding.Dimensions).To(Equal(uint(768)))
 		})
 
 		It("returns error for nil config", func() {
@@ -262,18 +240,6 @@ provider = "openai"
 			Expect(cfg.Proxy.Provider).To(Equal("anthropic"))
 		})
 
-		It("sets a uint config key", func() {
-			c, err := config.NewConfiger(tmpDir)
-			Expect(err).NotTo(HaveOccurred())
-
-			err = c.SetConfigValue("embedding.dimensions", "1024")
-			Expect(err).NotTo(HaveOccurred())
-
-			cfg, err := c.LoadConfig()
-			Expect(err).NotTo(HaveOccurred())
-			Expect(cfg.Embedding.Dimensions).To(Equal(uint(1024)))
-		})
-
 		It("returns error for unknown key", func() {
 			c, err := config.NewConfiger(tmpDir)
 			Expect(err).NotTo(HaveOccurred())
@@ -281,15 +247,6 @@ provider = "openai"
 			err = c.SetConfigValue("nonexistent_key", "value")
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("unknown config key"))
-		})
-
-		It("returns error for invalid uint value", func() {
-			c, err := config.NewConfiger(tmpDir)
-			Expect(err).NotTo(HaveOccurred())
-
-			err = c.SetConfigValue("embedding.dimensions", "not-a-number")
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("invalid value"))
 		})
 
 		It("sets client.proxy_target", func() {
@@ -439,18 +396,6 @@ listen = ":7070"
 			Expect(err).NotTo(HaveOccurred())
 			Expect(val).To(Equal("http://localhost:8081"))
 		})
-
-		It("gets a uint config value as string", func() {
-			c, err := config.NewConfiger(tmpDir)
-			Expect(err).NotTo(HaveOccurred())
-
-			err = c.SetConfigValue("embedding.dimensions", "512")
-			Expect(err).NotTo(HaveOccurred())
-
-			val, err := c.GetConfigValue("embedding.dimensions")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(val).To(Equal("512"))
-		})
 	})
 
 	Describe("ValidConfigKeys", func() {
@@ -464,12 +409,6 @@ listen = ":7070"
 				"api.listen",
 				"client.proxy_target",
 				"client.api_target",
-				"vector_store.provider",
-				"vector_store.target",
-				"embedding.provider",
-				"embedding.target",
-				"embedding.model",
-				"embedding.dimensions",
 				"opencode.provider",
 				"opencode.model",
 				"logging.level",
@@ -488,7 +427,6 @@ listen = ":7070"
 	Describe("IsValidConfigKey", func() {
 		It("returns true for valid keys", func() {
 			Expect(config.IsValidConfigKey("proxy.provider")).To(BeTrue())
-			Expect(config.IsValidConfigKey("embedding.dimensions")).To(BeTrue())
 			Expect(config.IsValidConfigKey("client.proxy_target")).To(BeTrue())
 			Expect(config.IsValidConfigKey("client.api_target")).To(BeTrue())
 			Expect(config.IsValidConfigKey("opencode.provider")).To(BeTrue())
@@ -506,7 +444,7 @@ listen = ":7070"
 		It("returns false for old flat key names", func() {
 			Expect(config.IsValidConfigKey("provider")).To(BeFalse())
 			Expect(config.IsValidConfigKey("upstream")).To(BeFalse())
-			Expect(config.IsValidConfigKey("embedding_dimensions")).To(BeFalse())
+			Expect(config.IsValidConfigKey("proxy_provider")).To(BeFalse())
 		})
 	})
 
@@ -531,15 +469,6 @@ listen = ":7070"
 				Client: config.ClientConfig{
 					ProxyTarget: "http://myhost:9090",
 					APITarget:   "http://myhost:9091",
-				},
-				VectorStore: config.VectorStoreConfig{
-					Target: "http://localhost:8000",
-				},
-				Embedding: config.EmbeddingConfig{
-					Provider:   "ollama",
-					Target:     "http://localhost:11434",
-					Model:      "nomic-embed-text",
-					Dimensions: 1024,
 				},
 				Logging: config.LoggingConfig{
 					Level:  "info",
@@ -572,10 +501,6 @@ var _ = Describe("PresetConfig", func() {
 		Expect(cfg.API.Listen).To(Equal(":8081"))
 		Expect(cfg.Client.ProxyTarget).To(Equal("http://localhost:8080"))
 		Expect(cfg.Client.APITarget).To(Equal("http://localhost:8081"))
-		Expect(cfg.Embedding.Provider).To(Equal("openai"))
-		Expect(cfg.Embedding.Target).To(Equal("https://api.openai.com"))
-		Expect(cfg.Embedding.Model).To(Equal("text-embedding-3-large"))
-		Expect(cfg.Embedding.Dimensions).To(Equal(uint(1024)))
 	})
 
 	It("returns anthropic preset with correct defaults", func() {
@@ -590,7 +515,7 @@ var _ = Describe("PresetConfig", func() {
 		Expect(cfg.Client.APITarget).To(Equal("http://localhost:8081"))
 	})
 
-	It("returns ollama preset with embedding defaults", func() {
+	It("returns ollama preset with correct defaults", func() {
 		cfg, err := config.PresetConfig("ollama")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cfg.Version).To(Equal(config.CurrentV))
@@ -600,10 +525,6 @@ var _ = Describe("PresetConfig", func() {
 		Expect(cfg.API.Listen).To(Equal(":8081"))
 		Expect(cfg.Client.ProxyTarget).To(Equal("http://localhost:8080"))
 		Expect(cfg.Client.APITarget).To(Equal("http://localhost:8081"))
-		Expect(cfg.Embedding.Provider).To(Equal("ollama"))
-		Expect(cfg.Embedding.Target).To(Equal("http://localhost:11434"))
-		Expect(cfg.Embedding.Model).To(Equal("embeddinggemma"))
-		Expect(cfg.Embedding.Dimensions).To(Equal(uint(768)))
 	})
 
 	It("is case-insensitive", func() {
@@ -624,38 +545,6 @@ var _ = Describe("PresetConfig", func() {
 	})
 })
 
-var _ = Describe("ResolveEmbeddingConfig", func() {
-	It("uses OpenAI defaults when provider inherits local embedding defaults", func() {
-		cfg := config.ResolveEmbeddingConfig("openai", "http://localhost:11434", "embeddinggemma", 768)
-		Expect(cfg.Provider).To(Equal("openai"))
-		Expect(cfg.Target).To(Equal("https://api.openai.com"))
-		Expect(cfg.Model).To(Equal("text-embedding-3-large"))
-		Expect(cfg.Dimensions).To(Equal(uint(1024)))
-	})
-
-	It("preserves explicit OpenAI dimensions", func() {
-		cfg := config.ResolveEmbeddingConfigWithOptions(
-			"openai",
-			"http://localhost:11434",
-			"embeddinggemma",
-			768,
-			config.ResolveEmbeddingConfigOptions{DimensionsSet: true},
-		)
-		Expect(cfg.Provider).To(Equal("openai"))
-		Expect(cfg.Target).To(Equal("https://api.openai.com"))
-		Expect(cfg.Model).To(Equal("text-embedding-3-large"))
-		Expect(cfg.Dimensions).To(Equal(uint(768)))
-	})
-
-	It("defaults Ollama to embeddinggemma at 768 dimensions", func() {
-		cfg := config.ResolveEmbeddingConfig("ollama", "", "", 0)
-		Expect(cfg.Provider).To(Equal("ollama"))
-		Expect(cfg.Target).To(Equal("http://localhost:11434"))
-		Expect(cfg.Model).To(Equal("embeddinggemma"))
-		Expect(cfg.Dimensions).To(Equal(uint(768)))
-	})
-})
-
 var _ = Describe("ValidPresetNames", func() {
 	It("returns the expected preset names", func() {
 		names := config.ValidPresetNames()
@@ -664,7 +553,7 @@ var _ = Describe("ValidPresetNames", func() {
 })
 
 var _ = Describe("ParseConfigTOML", func() {
-	It("parses valid TOML into a Config", func() {
+	It("parses valid TOML into a Config, tolerating retired sections", func() {
 		data := []byte(`version = 0
 
 [proxy]
@@ -681,7 +570,6 @@ dimensions = 512
 		Expect(cfg.Proxy.Provider).To(Equal("anthropic"))
 		Expect(cfg.Proxy.Upstream).To(Equal("https://api.anthropic.com"))
 		Expect(cfg.Proxy.Listen).To(Equal(":9090"))
-		Expect(cfg.Embedding.Dimensions).To(Equal(uint(512)))
 	})
 
 	It("returns error for invalid TOML", func() {
@@ -717,10 +605,6 @@ var _ = Describe("NewDefaultConfig", func() {
 		Expect(cfg.API.Listen).To(Equal(":8081"))
 		Expect(cfg.Client.ProxyTarget).To(Equal("http://localhost:8080"))
 		Expect(cfg.Client.APITarget).To(Equal("http://localhost:8081"))
-		Expect(cfg.Embedding.Provider).To(Equal("ollama"))
-		Expect(cfg.Embedding.Target).To(Equal("http://localhost:11434"))
-		Expect(cfg.Embedding.Model).To(Equal("embeddinggemma"))
-		Expect(cfg.Embedding.Dimensions).To(Equal(uint(768)))
 		Expect(cfg.Logging.Level).To(Equal("info"))
 		Expect(cfg.Logging.Format).To(Equal("auto"))
 		Expect(cfg.Logging.Color).To(Equal("auto"))
@@ -902,18 +786,18 @@ listen = ":5555"
 		Expect(f.DefValue).To(Equal(defaults.Client.APITarget))
 	})
 
-	It("AddUintFlag works for embedding-dimensions", func() {
+	It("AddUintFlag registers a uint flag from its FlagSet entry", func() {
 		fs := config.FlagSet{
-			config.FlagEmbeddingDims: {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Embedding dimensionality"},
+			"test-count": {Name: "test-count", ViperKey: "test.count", Description: "A uint tunable"},
 		}
 
 		cmd := &cobra.Command{Use: "test"}
-		var dims uint
-		config.AddUintFlag(cmd, fs, config.FlagEmbeddingDims, &dims)
+		var count uint
+		config.AddUintFlag(cmd, fs, "test-count", &count)
 
-		f := cmd.Flags().Lookup("embedding-dimensions")
+		f := cmd.Flags().Lookup("test-count")
 		Expect(f).NotTo(BeNil())
-		Expect(f.Usage).To(Equal("Embedding dimensionality"))
+		Expect(f.Usage).To(Equal("A uint tunable"))
 	})
 })
 
@@ -956,10 +840,6 @@ provider = "anthropic"
 		Expect(cfg.API.Listen).To(Equal(defaults.API.Listen))
 		Expect(cfg.Client.ProxyTarget).To(Equal(defaults.Client.ProxyTarget))
 		Expect(cfg.Client.APITarget).To(Equal(defaults.Client.APITarget))
-		Expect(cfg.Embedding.Provider).To(Equal(defaults.Embedding.Provider))
-		Expect(cfg.Embedding.Target).To(Equal(defaults.Embedding.Target))
-		Expect(cfg.Embedding.Model).To(Equal(defaults.Embedding.Model))
-		Expect(cfg.Embedding.Dimensions).To(Equal(defaults.Embedding.Dimensions))
 	})
 
 	It("does not overwrite explicitly set values", func() {
@@ -976,12 +856,6 @@ listen = ":9091"
 [client]
 proxy_target = "http://remote:9090"
 api_target = "http://remote:9091"
-
-[embedding]
-provider = "openai"
-target = "https://api.openai.com"
-model = "text-embedding-3-small"
-dimensions = 1536
 `
 		err := os.WriteFile(filepath.Join(tmpDir, "config.toml"), []byte(data), 0o600)
 		Expect(err).NotTo(HaveOccurred())
@@ -998,9 +872,5 @@ dimensions = 1536
 		Expect(cfg.API.Listen).To(Equal(":9091"))
 		Expect(cfg.Client.ProxyTarget).To(Equal("http://remote:9090"))
 		Expect(cfg.Client.APITarget).To(Equal("http://remote:9091"))
-		Expect(cfg.Embedding.Provider).To(Equal("openai"))
-		Expect(cfg.Embedding.Target).To(Equal("https://api.openai.com"))
-		Expect(cfg.Embedding.Model).To(Equal("text-embedding-3-small"))
-		Expect(cfg.Embedding.Dimensions).To(Equal(uint(1536)))
 	})
 })
