@@ -54,7 +54,7 @@ tapesctl config set tapes-url http://localhost:8081
 ```
 
 That writes `tapes-url` to `~/.tapes/config.toml`. A `--tapes-url` flag beats
-`TAPES_URL`, which beats the configured value; with none of the three, commands
+`TAPES_API_URL`, which beats the configured value; with none of the three, commands
 that need a server fail rather than guess a host.
 
 ### Seed and read
@@ -78,9 +78,9 @@ When ready to capture real work, launch a supported agent through the client,
 pointed at the **ingest** port:
 
 ```bash
-tapesctl start claude --tapes-url http://localhost:8082
+tapesctl start claude --ingest-url http://localhost:8082
 # or
-tapesctl start codex --tapes-url http://localhost:8082
+tapesctl start codex --ingest-url http://localhost:8082
 ```
 
 `tapesctl start` launches the agent under a just-in-time capture proxy, routes its provider traffic through it, and ships the captured turns to the server.

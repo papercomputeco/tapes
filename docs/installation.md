@@ -84,7 +84,7 @@ tapesctl sessions list
 ```
 
 Capture commands address the **ingest** port instead, and take it explicitly:
-`tapesctl start claude --tapes-url http://localhost:8082`. See
+`tapesctl start claude --ingest-url http://localhost:8082`. See
 [Agent integrations](./integrations.md).
 
 ## OpenAI embeddings

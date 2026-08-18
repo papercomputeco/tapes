@@ -107,19 +107,19 @@ Store provider secrets with `tapes auth openai` or `tapes auth anthropic`, or us
 
 ## The client's configuration
 
-`tapesctl` keeps one file, `~/.tapes/config.toml`, and reads exactly one key
-from it:
+`tapesctl` keeps API and ingest URLs in `~/.tapes/config.toml`:
 
 ```toml
 # ~/.tapes/config.toml
 tapes-url = "http://localhost:8081"
+ingest-url = "http://localhost:8082"
 ```
 
-Write it with:
+Write them with:
 
 ```bash
 tapesctl config set tapes-url http://localhost:8081
-tapesctl config get tapes-url
+tapesctl config set ingest-url http://localhost:8082
 tapesctl config path
 ```
 
@@ -128,14 +128,11 @@ Three differences from the server's rules are worth stating outright:
 - **There is no project-local layer.** The client always reads
   `~/.tapes/config.toml`, whatever directory you run it from. A `.tapes/` in the
   current directory configures the server and is invisible to the client.
-- **The chain has three links, not four.** A `--tapes-url` flag beats the
-  `TAPES_URL` environment variable, which beats the configured value. With none
-  of the three, a command that needs a server fails and names all three sources
-  rather than guessing a host.
-- **One URL covers two servers.** The read commands want the read API and the
-  capture commands want the ingest API, so whichever you configure, the other
-  needs `--tapes-url` on the command line. See
-  [Two ports, two jobs](./introduction.md#two-ports-two-jobs).
+- **The API default is explicit.** `--tapes-url`, `TAPES_API_URL`, and
+  `tapes-url` configure reads; absent all three it uses `http://localhost:8081`.
+- **Ingest has its own setting.** `--ingest-url`, `TAPES_INGEST_URL`, and
+  `ingest-url` configure capture; absent all three it uses
+  `http://localhost:8082`.
 
 `config set` edits the file in place, so comments, ordering, and keys the client
 does not know about survive it. `config get` lists only keys it knows *and* that

@@ -41,13 +41,13 @@ and skill generation — and is not part of capturing an agent.
 ## Claude Code
 
 ```bash
-tapesctl start claude --tapes-url http://localhost:8082
+tapesctl start claude --ingest-url http://localhost:8082
 ```
 
 `tapesctl` starts a loopback capture proxy, sets Claude Code's `ANTHROPIC_BASE_URL` to it, launches `claude`, and ships the captured turns to the server. Pass Claude flags after `--`:
 
 ```bash
-tapesctl start claude --tapes-url http://localhost:8082 -- --worktree
+tapesctl start claude --ingest-url http://localhost:8082 -- --worktree
 ```
 
 Claude sessions also produce transcripts on disk, which carry the subagent
@@ -55,7 +55,7 @@ structure the wire traffic alone cannot show. `start` tails them live. For a
 session no capture was running for, sweep them afterwards:
 
 ```bash
-tapesctl sync --tapes-url http://localhost:8082
+tapesctl sync --ingest-url http://localhost:8082
 ```
 
 `sync` sweeps the last seven days by default; `--since-days 0` sweeps
@@ -73,7 +73,7 @@ ANTHROPIC_BASE_URL=http://localhost:8080 claude
 The terminal CLI is launched like Claude:
 
 ```bash
-tapesctl start codex --tapes-url http://localhost:8082
+tapesctl start codex --ingest-url http://localhost:8082
 ```
 
 The ChatGPT desktop app launches itself, so it is captured through lifecycle
@@ -82,7 +82,7 @@ session in the app:
 
 ```bash
 tapesctl plugin install codex-app
-tapesctl capture codex-app --tapes-url http://localhost:8082
+tapesctl capture codex-app --ingest-url http://localhost:8082
 ```
 
 `plugin install codex-app` writes the handoff file and points the app's Codex
@@ -101,7 +101,7 @@ rather than a convenience:
 
 ```bash
 tapesctl plugin install pi
-tapesctl start pi --tapes-url http://localhost:8082
+tapesctl start pi --ingest-url http://localhost:8082
 ```
 
 `start pi` refuses to run when the extension is absent, before anything is bound
@@ -109,7 +109,7 @@ or launched. pi redirects several providers to one endpoint, so it is the one
 harness that takes `--schema`:
 
 ```bash
-tapesctl start pi --tapes-url http://localhost:8082 --schema openai
+tapesctl start pi --ingest-url http://localhost:8082 --schema openai
 ```
 
 `--schema` on `claude` or `codex` is an error rather than a silent no-op: each
