@@ -47,7 +47,7 @@ that costs you a whole session:
 | `8082` | private ingest API | `start`, `capture`, `sync` |
 
 `tapesctl` keeps the two endpoints separate and defaults them to these local
-ports. Override reads with `--api-url`, `TAPES_API_URL`, or `tapes-url`; override
+ports. Override reads with `--api-url`, `TAPES_API_URL`, or `api-url`; override
 capture with `--ingest-url`, `TAPES_INGEST_URL`, or `ingest-url`.
 
 ### Seed and read

@@ -111,14 +111,14 @@ Store provider secrets with `tapes auth openai` or `tapes auth anthropic`, or us
 
 ```toml
 # ~/.tapes/config.toml
-tapes-url = "http://localhost:8081"
+api-url = "http://localhost:8081"
 ingest-url = "http://localhost:8082"
 ```
 
 Write them with:
 
 ```bash
-tapesctl config set tapes-url http://localhost:8081
+tapesctl config set api-url http://localhost:8081
 tapesctl config set ingest-url http://localhost:8082
 tapesctl config path
 ```
@@ -129,7 +129,7 @@ Three differences from the server's rules are worth stating outright:
   `~/.tapes/config.toml`, whatever directory you run it from. A `.tapes/` in the
   current directory configures the server and is invisible to the client.
 - **The API default is explicit.** `--api-url`, `TAPES_API_URL`, and
-  `tapes-url` configure reads; absent all three it uses `http://localhost:8081`.
+  `api-url` configure reads; absent all three it uses `http://localhost:8081`.
 - **Ingest has its own setting.** `--ingest-url`, `TAPES_INGEST_URL`, and
   `ingest-url` configure capture; absent all three it uses
   `http://localhost:8082`.
