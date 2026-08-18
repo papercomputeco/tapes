@@ -141,7 +141,7 @@ The read API health endpoint is separate from the proxy and from ingest:
 ```bash
 curl http://localhost:8081/ping
 tapes status
-tapesctl sessions list --tapes-url http://localhost:8081
+tapesctl sessions list --api-url http://localhost:8081
 ```
 
 A captured session appears in that list. `start` prints the harness's own

@@ -18,14 +18,14 @@ This reports the selected `.tapes/` directory, provider and upstream, read API r
 Reading the data model is a client operation, so it lives in [`tapesctl`](https://github.com/papercomputeco/tapesctl):
 
 ```bash
-tapesctl sessions list --tapes-url http://localhost:8081
+tapesctl sessions list --api-url http://localhost:8081
 tapesctl sessions list --limit 20
 tapesctl sessions get <session-id>
 tapesctl sessions traces <session-id>
 tapesctl sessions raw-turns <session-id>
 ```
 
-Each prints the server's JSON verbatim, so it composes with `jq`. `--tapes-url` falls back to `TAPES_API_URL`, and then to the value from `tapesctl config set tapes-url`. A running read API is required; start one with `tapes serve`.
+Each prints the server's JSON verbatim, so it composes with `jq`. `--api-url` falls back to `TAPES_API_URL`, and then to the value from `tapesctl config set tapes-url`. A running read API is required; start one with `tapes serve`.
 
 The `<session-id>` these take is the Tapes session id from `sessions list`. It
 is not the harness session id `tapesctl start` prints when it exits.
@@ -65,7 +65,7 @@ has no export endpoint.
 ```bash
 tapesctl export <session-id> -o session.jsonl
 tapesctl export <session-id> --detail traces
-tapesctl export <session-id> --tapes-url http://localhost:8081
+tapesctl export <session-id> --api-url http://localhost:8081
 ```
 
 Detail modes:

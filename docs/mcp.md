@@ -49,7 +49,7 @@ The bundled local setup configures PostgreSQL and Ollama. Capture or seed data
 before browsing:
 
 ```bash
-tapesctl seed --tapes-url http://localhost:8081
+tapesctl seed --api-url http://localhost:8081
 ```
 
 ## Scope

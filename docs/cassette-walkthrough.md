@@ -110,7 +110,7 @@ cassette fall back to memory and say so.
 `tapesctl` reads the same discovery surface and generates a subcommand per
 cassette, with a method per OpenAPI operation. Because the nouns have to exist
 before the command line is parsed, point discovery at the server with the
-`TAPES_API_URL` environment variable (the `--tapes-url` flag also works, on any
+`TAPES_API_URL` environment variable (the `--api-url` flag also works, on any
 subcommand):
 
 ```bash

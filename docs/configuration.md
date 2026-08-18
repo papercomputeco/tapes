@@ -128,7 +128,7 @@ Three differences from the server's rules are worth stating outright:
 - **There is no project-local layer.** The client always reads
   `~/.tapes/config.toml`, whatever directory you run it from. A `.tapes/` in the
   current directory configures the server and is invisible to the client.
-- **The API default is explicit.** `--tapes-url`, `TAPES_API_URL`, and
+- **The API default is explicit.** `--api-url`, `TAPES_API_URL`, and
   `tapes-url` configure reads; absent all three it uses `http://localhost:8081`.
 - **Ingest has its own setting.** `--ingest-url`, `TAPES_INGEST_URL`, and
   `ingest-url` configure capture; absent all three it uses

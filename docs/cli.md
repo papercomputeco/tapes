@@ -60,13 +60,13 @@ curl -sSfL https://download.tapes.dev/tapesctl/install | bash
 
 ```bash
 tapesctl start claude --ingest-url http://localhost:8082
-tapesctl sessions list --tapes-url http://localhost:8081
+tapesctl sessions list --api-url http://localhost:8081
 tapesctl export <session-id> --detail spans -o session.jsonl
-tapesctl seed --tapes-url http://localhost:8081
+tapesctl seed --api-url http://localhost:8081
 tapesctl skill sync <name> --claude
 ```
 
-The capture commands (`start`, `capture`, `sync`) address the private ingest API on `:8082` through `--ingest-url` / `TAPES_INGEST_URL`; read commands use the read API on `:8081` through `--tapes-url` / `TAPES_API_URL`. Both ports are their local defaults.
+The capture commands (`start`, `capture`, `sync`) address the private ingest API on `:8082` through `--ingest-url` / `TAPES_INGEST_URL`; read commands use the read API on `:8081` through `--api-url` / `TAPES_API_URL`. Both ports are their local defaults.
 
 Arguments after `--` go directly to the agent. See [Agent integrations](./integrations.md) and the [`tapesctl` README](https://github.com/papercomputeco/tapesctl) for the full surface.
 

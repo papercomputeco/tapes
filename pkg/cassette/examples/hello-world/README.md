@@ -59,7 +59,7 @@ tapes serve --cassettes=http://127.0.0.1:9999/openapi
 ```
 
 `tapesctl` turns the discovered surface into commands
-(`TAPES_URL=http://localhost:8081 tapesctl cassettes hello-world get-hello`); the
+(`TAPES_API_URL=http://localhost:8081 tapesctl cassettes hello-world get-hello`); the
 [Running a cassette locally](../../../../docs/cassette-walkthrough.md)
 guide walks this whole directory end to end.
 

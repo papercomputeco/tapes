@@ -46,16 +46,9 @@ that costs you a whole session:
 | `8081` | read API | `sessions`, `traces`, `spans`, `search`, `export`, `seed` |
 | `8082` | private ingest API | `start`, `capture`, `sync` |
 
-`tapesctl` reads one configured server URL, so configure the read API — the one
-most commands want — and pass the ingest URL explicitly when capturing:
-
-```bash
-tapesctl config set tapes-url http://localhost:8081
-```
-
-That writes `tapes-url` to `~/.tapes/config.toml`. A `--tapes-url` flag beats
-`TAPES_API_URL`, which beats the configured value; with none of the three, commands
-that need a server fail rather than guess a host.
+`tapesctl` keeps the two endpoints separate and defaults them to these local
+ports. Override reads with `--api-url`, `TAPES_API_URL`, or `tapes-url`; override
+capture with `--ingest-url`, `TAPES_INGEST_URL`, or `ingest-url`.
 
 ### Seed and read
 
