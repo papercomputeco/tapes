@@ -5,7 +5,10 @@ package statuscmder
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -13,10 +16,40 @@ import (
 	"github.com/papercomputeco/tapes/pkg/cliui"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/dotdir"
-	"github.com/papercomputeco/tapes/pkg/skill"
 )
 
 const statsProbeTimeout = 3 * time.Second
+
+// captureStats is the slice of /v1/stats the readout surfaces. It doubles as
+// the reachability probe: a decoded response means the API is up.
+type captureStats struct {
+	SessionCount int     `json:"session_count"`
+	TurnCount    int     `json:"turn_count"`
+	TotalCost    float64 `json:"total_cost"`
+}
+
+// probeStats fetches GET /v1/stats from the configured API target. The
+// target is trimmed of trailing slashes so a "…/"-spelled config value
+// cannot turn the path into //v1/stats.
+func probeStats(ctx context.Context, apiTarget string) (*captureStats, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(apiTarget, "/")+"/v1/stats", nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("api returned status %d", resp.StatusCode)
+	}
+	var stats captureStats
+	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
+		return nil, fmt.Errorf("decoding stats: %w", err)
+	}
+	return &stats, nil
+}
 
 type statusCommander struct {
 	flags config.FlagSet
@@ -112,7 +145,7 @@ func (c *statusCommander) run(cmd *cobra.Command) error {
 	ctx, cancel := context.WithTimeout(cmd.Context(), statsProbeTimeout)
 	defer cancel()
 
-	stats, err := skill.NewAPIClient(c.apiTarget).Stats(ctx)
+	stats, err := probeStats(ctx, c.apiTarget)
 	if err != nil {
 		fmt.Fprintf(out, "  %s  %s %s\n\n",
 			cliui.KeyStyle.Render("API:       "),

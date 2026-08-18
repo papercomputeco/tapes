@@ -15,9 +15,7 @@ config file values.
 Keys use dotted notation matching the TOML section structure:
   proxy.provider, proxy.upstream, proxy.listen,
   api.listen, storage.postgres_dsn,
-  client.proxy_target, client.api_target,
-  vector_store.provider, vector_store.target,
-  embedding.provider, embedding.target, embedding.model, embedding.dimensions
+  client.proxy_target, client.api_target
 
 Use subcommands to get, set, or list configuration values:
   tapes config set <key> <value>    Set a configuration value
@@ -26,7 +24,7 @@ Use subcommands to get, set, or list configuration values:
 
 Examples:
   tapes config set proxy.provider anthropic
-  tapes config set embedding.model embeddinggemma
+  tapes config set api.listen :8081
   tapes config get proxy.provider
   tapes config list`
 

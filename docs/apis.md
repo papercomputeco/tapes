@@ -9,7 +9,7 @@ Tapes publishes two separate contracts because reading derived telemetry and ing
 
 ## Read API
 
-The default read API listens on `:8081`. It serves health, derived data, search, skills, operator maintenance, MCP, and its own OpenAPI contract.
+The default read API listens on `:8081`. It serves health, derived data, search, operator maintenance, MCP, and its own OpenAPI contract. Skills are served by the skills cassette under `/v1/cassettes/skills`.
 
 | Area | Routes |
 | --- | --- |
@@ -18,7 +18,6 @@ The default read API listens on `:8081`. It serves health, derived data, search,
 | Sessions | `/v1/sessions`, `/v1/sessions/{id}`, `/v1/sessions/{id}/traces`, `/v1/sessions/{id}/raw_turns` |
 | Traces and spans | `/v1/traces`, `/v1/traces/{trace_id}`, `/v1/traces/{trace_id}/spans/{span_id}` |
 | Search and aggregates | `GET /v1/search/spans`, `GET /v1/stats` |
-| Skills | `/v1/skills`, `/v1/skills/{id}`, `/v1/skills/{id}/versions`, `/v1/skills/{id}/duplicate`, `/v1/skills/{id}/skill.md`, `/v1/skills/generate`, `/v1/sessions/{id}/skills` |
 | MCP | `/v1/mcp` |
 | Operator actions | `/v1/admin/derive/run`, `/v1/admin/seed/demo`, `/v1/admin/raw-turns/attribution-repair` |
 | Cassettes | `GET /v1/cassettes`, `GET /v1/cassettes/{name}/openapi.json`, `/v1/cassettes/{name}`, `/v1/cassettes/{name}/*` |
