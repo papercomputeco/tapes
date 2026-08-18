@@ -47,7 +47,11 @@ no export, so use the client or the API for those.
 
 ## Export JSONL
 
-`tapesctl export` is a thin client for `GET /v1/sessions/{id}/export`. It streams the API's projection rather than maintaining a separate renderer or state store.
+`tapesctl export` is a thin client for the export cassette's
+`GET /v1/cassettes/export/sessions/{id}`. It streams the API's projection
+rather than maintaining a separate renderer or state store. Core no longer
+serves an export route of its own; a deployment without the export cassette
+has no export endpoint.
 
 ```bash
 tapesctl export <session-id> -o session.jsonl
@@ -62,7 +66,7 @@ Detail modes:
 
 With `-o`, the byte count is written to stderr rather than stdout, so redirecting stdout stays clean. Without it, the bundle goes to stdout.
 
-A running read API is required. For a multi-session export, the API also provides `GET /v1/sessions/export`; consult its current OpenAPI parameters.
+A running read API with the export cassette is required. For a multi-session export, the cassette also provides `GET /v1/cassettes/export/sessions`; consult its OpenAPI document for parameters.
 
 ## Inspect over HTTP
 

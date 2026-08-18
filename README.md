@@ -134,8 +134,9 @@ tapesctl sessions list --tapes-url http://localhost:8081
 ```
 
 Export a captured session as JSONL — the API's session→traces→spans projection
-verbatim. `tapesctl export` is a thin client of `GET /v1/sessions/{id}/export`,
-so it needs a running API. The full span tree is included by default; pass
+verbatim. `tapesctl export` is a thin client of the export cassette's
+`GET /v1/cassettes/export/sessions/{id}`, so it needs a running API serving
+that cassette. The full span tree is included by default; pass
 `--detail traces` for turn headers only:
 
 ```bash
