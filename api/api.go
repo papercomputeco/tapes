@@ -145,9 +145,9 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 	//
 	// Registration order is still load-bearing, and the wrapper does not change
 	// it: Fiber matches in order, so a literal path must precede the
-	// parameterised route that would otherwise swallow it — /v1/sessions/export
-	// before /v1/sessions/:id, and the /v1/skills/:id sub-paths before the bare
-	// /v1/skills/:id. The route table in openapi_routes.go preserves that order.
+	// parameterised route that would otherwise swallow it — the /v1/skills/:id
+	// sub-paths before the bare /v1/skills/:id. The route table in
+	// openapi_routes.go preserves that order.
 	router := oasfiber.Wrap(app, s.openapi, oasfiber.WithUndocumented(oasfiber.Fail))
 	s.mountV1(router)
 

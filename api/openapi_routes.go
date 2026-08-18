@@ -105,30 +105,6 @@ func (s *Server) mountSessions(router *oasfiber.Router) {
 			JSONResponse(500, "Failed to list sessions", s.errorSchema()).
 			JSONResponse(501, "Sessions not supported by this backend", s.errorSchema()))
 
-	router.Get("/v1/sessions/export", s.handleExportSessions,
-		oasfiber.Doc("exportSessions").
-			Summary("Export sessions in a time window as JSONL").
-			Description("Streams one JSON line per session in the given window, newest-first, as a "+
-				"downloadable attachment. Each line is the session object with its traces, each trace "+
-				"carrying its full spans — the same shape as GET /v1/sessions/{id}/traces with "+
-				"payload=full. detail=traces exports turn headers only (no spans or links). Defaults to "+
-				"the trailing 30 days. Not bounded by the /v1/sessions list cap — pages internally.").
-			Tag("sessions").
-			QueryParam("since", oas.String(oas.Format("date-time")),
-				oas.ParamDescription("Only include sessions with a turn started at or after this "+
-					"RFC3339 timestamp (activity window; default: now - 30 days)")).
-			QueryParam("until", oas.String(oas.Format("date-time")),
-				oas.ParamDescription("Only include sessions with a turn started before this RFC3339 "+
-					"timestamp (activity window)")).
-			QueryParam("detail", oas.String(oas.Enum("spans", "traces")),
-				oas.ParamDescription("Export granularity: spans (default, traces with full spans) or "+
-					"traces (turn headers only)")).
-			ContentResponse(200, "JSONL body, one JSON object per session with nested traces (and "+
-				"spans at detail=spans)", "application/x-ndjson", oas.String()).
-			JSONResponse(400, "Malformed since/until, or unrecognized detail", s.errorSchema()).
-			JSONResponse(500, "Failed to list or render sessions", s.errorSchema()).
-			JSONResponse(501, "Sessions not supported by this backend", s.errorSchema()))
-
 	router.Get("/v1/sessions/:id/traces", s.handleGetSessionTraces,
 		oasfiber.Doc("getSessionTraces").
 			Summary("Get a session's trace/span projection").
@@ -159,25 +135,6 @@ func (s *Server) mountSessions(router *oasfiber.Router) {
 			JSONResponse(404, "Session not found", s.errorSchema()).
 			JSONResponse(500, "Failed to list raw turns", s.errorSchema()).
 			JSONResponse(501, "Raw turns not supported by this backend", s.errorSchema()))
-
-	router.Get("/v1/sessions/:id/export", s.handleExportSession,
-		oasfiber.Doc("exportSession").
-			Summary("Export a session as JSONL").
-			Description("Returns the session as a single JSON line (downloadable attachment): the "+
-				"session object with its traces, each trace carrying its full spans — the same shape as "+
-				"GET /v1/sessions/{id}/traces with payload=full. detail=traces exports turn headers "+
-				"only (no spans or links).").
-			Tag("sessions").
-			PathParam("id", oas.String(), oas.ParamDescription("Session id (UUID)")).
-			QueryParam("detail", oas.String(oas.Enum("spans", "traces")),
-				oas.ParamDescription("Export granularity: spans (default, traces with full spans) or "+
-					"traces (turn headers only)")).
-			ContentResponse(200, "JSONL body, one session object with nested traces (and spans at "+
-				"detail=spans)", "application/x-ndjson", oas.String()).
-			JSONResponse(400, "Missing or malformed id, or unrecognized detail", s.errorSchema()).
-			JSONResponse(404, "Session not found", s.errorSchema()).
-			JSONResponse(500, "Failed to load or render the session", s.errorSchema()).
-			JSONResponse(501, "Sessions not supported by this backend", s.errorSchema()))
 
 	router.Get("/v1/sessions/:id", s.handleGetSession,
 		oasfiber.Doc("getSession").

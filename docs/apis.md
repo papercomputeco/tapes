@@ -15,7 +15,7 @@ The default read API listens on `:8081`. It serves health, derived data, search,
 | --- | --- |
 | Health and contract | `GET /ping`, `GET /openapi`, `GET /swagger`, `GET /metrics` |
 | Browser UI | `GET /`, served only with `--api-web-ui` |
-| Sessions | `/v1/sessions`, `/v1/sessions/{id}`, `/v1/sessions/{id}/traces`, `/v1/sessions/{id}/raw_turns`, `/v1/sessions/{id}/export`, `/v1/sessions/export` |
+| Sessions | `/v1/sessions`, `/v1/sessions/{id}`, `/v1/sessions/{id}/traces`, `/v1/sessions/{id}/raw_turns` |
 | Traces and spans | `/v1/traces`, `/v1/traces/{trace_id}`, `/v1/traces/{trace_id}/spans/{span_id}` |
 | Search and aggregates | `GET /v1/search/spans`, `GET /v1/stats` |
 | Skills | `/v1/skills`, `/v1/skills/{id}`, `/v1/skills/{id}/versions`, `/v1/skills/{id}/duplicate`, `/v1/skills/{id}/skill.md`, `/v1/skills/generate`, `/v1/sessions/{id}/skills` |
