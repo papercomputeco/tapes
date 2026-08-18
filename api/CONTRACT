@@ -13,4 +13,4 @@
 #
 # api/openapi_seal_test.go recompiles and compares. If it fails, it prints the
 # value to write here. Bump it in the same change that moved the contract.
-sha256:cf79e4b6f7f82c3fed437decdd1c14f7be20e43fad7ce7bbbc3de8ba2629f6eb
+sha256:a30ed9da0fae4764392d70e757926b7efb31e92487779a4b4b7ec5dc2b7856dd

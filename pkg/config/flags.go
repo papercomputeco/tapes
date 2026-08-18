@@ -45,11 +45,6 @@ const (
 	FlagProvider            = "provider"
 	FlagPostgres            = "postgres"
 	FlagProject             = "project"
-	FlagVectorStoreTgt      = "vector-store-target"
-	FlagEmbeddingProv       = "embedding-provider"
-	FlagEmbeddingTgt        = "embedding-target"
-	FlagEmbeddingModel      = "embedding-model"
-	FlagEmbeddingDims       = "embedding-dimensions"
 	FlagAPITarget           = "api-target"
 	FlagProxyTarget         = "proxy-target"
 	FlagTelemetryDisabled   = "telemetry-disabled"
@@ -75,14 +70,6 @@ const (
 	FlagDeriveWorkerMaxDeriveLag  = "derive-worker-max-derive-lag"
 	FlagDeriveWorkerMetricsListen = "derive-worker-metrics-listen"
 	FlagDeriveWorkerWaitForDB     = "derive-worker-wait-for-db"
-
-	// Embed worker (`tapes serve embed-worker`) tunables.
-	FlagEmbedWorkerInterval      = "embed-worker-interval"
-	FlagEmbedWorkerMetricsListen = "embed-worker-metrics-listen"
-	FlagEmbedWorkerWaitForDB     = "embed-worker-wait-for-db"
-	FlagEmbedWorkerBatchSize     = "embed-worker-batch-size"
-	FlagEmbedWorkerMaxTextBytes  = "embed-worker-max-text-bytes"
-	FlagEmbedWorkerOrg           = "embed-worker-org"
 )
 
 // AddStringFlag registers a string flag on cmd from the given FlagSet.

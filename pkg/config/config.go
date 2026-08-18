@@ -71,12 +71,6 @@ func ValidConfigKeys() []string {
 		"ingest.listen",
 		"client.proxy_target",
 		"client.api_target",
-		"vector_store.provider",
-		"vector_store.target",
-		"embedding.provider",
-		"embedding.target",
-		"embedding.model",
-		"embedding.dimensions",
 		"opencode.provider",
 		"opencode.model",
 		"logging.level",
@@ -204,7 +198,7 @@ func (c *Configer) SetConfigValue(key string, value string) error {
 	}
 
 	// Use viper to set the value and unmarshal back to the Config struct.
-	// This handles type coercion (e.g., string to uint for embedding.dimensions).
+	// This handles type coercion between the string form and the typed field.
 	v := viper.New()
 	setViperDefaults(v)
 	v.SetConfigType("toml")
@@ -281,7 +275,6 @@ func PresetConfig(name string) (*Config, error) {
 				ProxyTarget: "http://localhost:8080",
 				APITarget:   "http://localhost:8081",
 			},
-			Embedding: ResolveEmbeddingConfig("openai", "", "", 0),
 		}, nil
 
 	case "anthropic":
@@ -316,7 +309,6 @@ func PresetConfig(name string) (*Config, error) {
 				ProxyTarget: "http://localhost:8080",
 				APITarget:   "http://localhost:8081",
 			},
-			Embedding: ResolveEmbeddingConfig("ollama", "", "", 0),
 		}, nil
 
 	default:

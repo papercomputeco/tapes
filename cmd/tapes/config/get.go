@@ -18,7 +18,7 @@ the TOML section structure.
 
 Examples:
   tapes config get proxy.provider
-  tapes config get embedding.model`
+  tapes config get api.listen`
 
 const getShortDesc string = "Get a configuration value"
 

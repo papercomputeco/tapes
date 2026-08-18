@@ -3,29 +3,16 @@ package mcp
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"net/http"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/papercomputeco/tapes/api/cassetterunner"
-	"github.com/papercomputeco/tapes/pkg/embeddings"
-	"github.com/papercomputeco/tapes/pkg/spanembed"
 	"github.com/papercomputeco/tapes/pkg/utils"
 )
 
-// SpanSearcher performs vector-similarity search over span embeddings.
-type SpanSearcher interface {
-	Search(ctx context.Context, orgID string, embedding []float32, topK int) ([]spanembed.Hit, error)
-}
-
 type Config struct {
-	// SpanSearcher and Embedder optionally retain the legacy core search tool
-	// while search moves to a cassette. They must be supplied together.
-	SpanSearcher SpanSearcher
-	Embedder     embeddings.Embedder
-
 	// Cassettes is the live registry whose advertised tools are exposed.
 	Cassettes *cassetterunner.Registry
 
@@ -43,13 +30,6 @@ type Server struct {
 
 // NewServer creates a stateless MCP server over the current cassette registry.
 func NewServer(config Config) (*Server, error) {
-	if (config.SpanSearcher == nil) != (config.Embedder == nil) {
-		return nil, errors.New("span searcher and embedder must be configured together")
-	}
-	if config.SpanSearcher != nil && config.Logger == nil {
-		return nil, errors.New("logger is required when core search is configured")
-	}
-
 	client := config.Client
 	if client == nil {
 		client = cassetterunner.NewHTTPClient()
@@ -72,12 +52,6 @@ func (s *Server) serverForRequest(request *http.Request) *mcpsdk.Server {
 		},
 	)
 
-	if s.config.SpanSearcher != nil {
-		mcpsdk.AddTool(server, &mcpsdk.Tool{
-			Name:        searchToolName,
-			Description: searchDescription,
-		}, s.handleSearch)
-	}
 	if s.config.Cassettes == nil {
 		return server
 	}

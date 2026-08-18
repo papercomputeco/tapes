@@ -42,15 +42,11 @@ func (t *Tapes) TestE2E(ctx context.Context) (string, error) {
 				"--upstream", fmt.Sprintf("http://ollama:%d", ollamaPort),
 				"--provider", "ollama",
 				"--listen", ":8080",
-				"--vector-store-target", "",
 				"--project", "e2e-test",
 			},
 		})
 
 	// --- tapes API service ---
-	// The embedding flags configure the search read path (query
-	// embedding): they must match the model/dims the embed-spans
-	// backfill writes with, or the span vector comparison fails.
 	apiSvc := tapesBase.
 		WithExposedPort(8081).
 		AsService(dagger.ContainerAsServiceOpts{
@@ -58,16 +54,12 @@ func (t *Tapes) TestE2E(ctx context.Context) (string, error) {
 				"tapes", "serve", "api",
 				"--postgres", newPostgresDSN(),
 				"--listen", ":8081",
-				"--embedding-provider", "ollama",
-				"--embedding-target", fmt.Sprintf("http://ollama:%d", ollamaPort),
-				"--embedding-model", ollamaEmbedModel,
-				"--embedding-dimensions", ollamaEmbedDimensions,
 			},
 		})
 
 	// --- tapes ingest service (sidecar capture path) ---
-	// Feeds the raw layer the derive -> embed -> span-search legs
-	// operate on; the proxy path above does not write raw turns.
+	// Feeds the raw layer the derive leg operates on; the proxy path
+	// above does not write raw turns.
 	ingestSvc := tapesBase.
 		WithExposedPort(8082).
 		AsService(dagger.ContainerAsServiceOpts{
@@ -109,20 +101,10 @@ func (t *Tapes) TestE2E(ctx context.Context) (string, error) {
 		WithExec([]string{"hurl", "--test", ".dagger/e2e/03-verify-storage.hurl"}).
 
 		// Span pipeline round trip: ingest a turn into the raw layer,
-		// derive the span projection, embed eligible spans via Ollama
-		// (the one-shot backfill the e2e backfill uses), then search.
+		// then derive the span projection.
 		WithExec([]string{"hurl", "--test", "--very-verbose", ".dagger/e2e/05-ingest-turn.hurl"}).
 		WithExec([]string{"sleep", "3"}).
 		WithExec([]string{"hurl", "--test", ".dagger/e2e/06-derive-run.hurl"}).
-		WithExec([]string{
-			"/usr/local/bin/tapes", "dev", "embed-spans",
-			"--postgres", newPostgresDSN(),
-			"--embedding-provider", "ollama",
-			"--embedding-target", fmt.Sprintf("http://ollama:%d", ollamaPort),
-			"--embedding-model", ollamaEmbedModel,
-			"--embedding-dimensions", ollamaEmbedDimensions,
-		}).
-		WithExec([]string{"hurl", "--test", "--very-verbose", ".dagger/e2e/07-search-spans.hurl"}).
 
 		// Demo seed round trip: replay the bundled corpora through the
 		// ingest write path, derive, and browse the result — proving

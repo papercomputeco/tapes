@@ -10,7 +10,6 @@ import (
 
 	"github.com/papercomputeco/tapes/ingest"
 	"github.com/papercomputeco/tapes/pkg/config"
-	"github.com/papercomputeco/tapes/pkg/credentials"
 	"github.com/papercomputeco/tapes/pkg/git"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
@@ -24,14 +23,6 @@ type ingestCommander struct {
 	postgresDSN string
 	project     string
 
-	vectorStoreTarget string
-
-	embeddingProvider   string
-	embeddingTarget     string
-	embeddingModel      string
-	embeddingDimensions uint
-	embeddingAPIKey     string
-
 	logger *slog.Logger
 }
 
@@ -42,11 +33,6 @@ var ingestFlags = config.FlagSet{
 	config.FlagIngestListenStandalone: {Name: "listen", Shorthand: "l", ViperKey: "ingest.listen", Description: "Address for ingest server to listen on"},
 	config.FlagPostgres:               {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
 	config.FlagProject:                {Name: "project", ViperKey: "proxy.project", Description: "Project name to tag sessions (default: auto-detect from git)"},
-	config.FlagVectorStoreTgt:         {Name: "vector-store-target", ViperKey: "vector_store.target", Description: "pgvector connection string (defaults to storage.postgres_dsn when unset)"},
-	config.FlagEmbeddingProv:          {Name: "embedding-provider", ViperKey: "embedding.provider", Description: "Deprecated here; embeddings are written by the embed worker (tapes serve embed-worker)"},
-	config.FlagEmbeddingTgt:           {Name: "embedding-target", ViperKey: "embedding.target", Description: "Deprecated here; embeddings are written by the embed worker (tapes serve embed-worker)"},
-	config.FlagEmbeddingModel:         {Name: "embedding-model", ViperKey: "embedding.model", Description: "Deprecated here; embeddings are written by the embed worker (tapes serve embed-worker)"},
-	config.FlagEmbeddingDims:          {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Deprecated here; embeddings are written by the embed worker (tapes serve embed-worker)"},
 }
 
 const ingestLongDesc string = `Run the ingest server (sidecar mode).
@@ -58,10 +44,7 @@ capture the turns for the deriver.
 
 Endpoints:
   POST /v1/ingest        Accept a single conversation turn
-
-Embeddings are no longer written at ingest time: the embed worker family is
-the single writer (tapes serve embed-worker). The embedding flags remain
-accepted for deployment compatibility but have no effect here.`
+`
 
 const ingestShortDesc string = "Run the Tapes ingest server (sidecar mode)"
 
@@ -86,38 +69,11 @@ func NewIngestCmd() *cobra.Command {
 				config.FlagIngestListenStandalone,
 				config.FlagPostgres,
 				config.FlagProject,
-				config.FlagVectorStoreTgt,
-				config.FlagEmbeddingProv,
-				config.FlagEmbeddingTgt,
-				config.FlagEmbeddingModel,
-				config.FlagEmbeddingDims,
 			})
 
 			cmder.listen = v.GetString("ingest.listen")
 			cmder.postgresDSN = v.GetString("storage.postgres_dsn")
 			cmder.project = v.GetString("proxy.project")
-			cmder.vectorStoreTarget = v.GetString("vector_store.target")
-			embedding := config.ResolveEmbeddingConfigWithOptions(
-				v.GetString("embedding.provider"),
-				v.GetString("embedding.target"),
-				v.GetString("embedding.model"),
-				v.GetUint("embedding.dimensions"),
-				config.ResolveEmbeddingConfigOptions{
-					DimensionsSet: config.IsRegisteredFlagExplicitlySet(v, cmd, cmder.flags, config.FlagEmbeddingDims),
-				},
-			)
-			cmder.embeddingProvider = embedding.Provider
-			cmder.embeddingTarget = embedding.Target
-			cmder.embeddingModel = embedding.Model
-			cmder.embeddingDimensions = embedding.Dimensions
-			cmder.embeddingAPIKey, err = credentials.APIKeyForProvider(embedding.Provider, configDir)
-			if err != nil {
-				return fmt.Errorf("could not load embedding credentials: %w", err)
-			}
-			if cmder.vectorStoreTarget == "" && cmder.postgresDSN != "" {
-				cmder.vectorStoreTarget = cmder.postgresDSN
-			}
-
 			if cmder.project == "" {
 				cmder.project = git.RepoName(cmd.Context())
 			}
@@ -134,11 +90,6 @@ func NewIngestCmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagIngestListenStandalone, &cmder.listen)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagPostgres, &cmder.postgresDSN)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagProject, &cmder.project)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagVectorStoreTgt, &cmder.vectorStoreTarget)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingProv, &cmder.embeddingProvider)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingTgt, &cmder.embeddingTarget)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingModel, &cmder.embeddingModel)
-	config.AddUintFlag(cmd, cmder.flags, config.FlagEmbeddingDims, &cmder.embeddingDimensions)
 
 	return cmd
 }
@@ -153,17 +104,6 @@ func (c *ingestCommander) run() error {
 	cfg := ingest.Config{
 		ListenAddr: c.listen,
 		Project:    c.project,
-	}
-
-	// Ingest-time embedding is retired: the embed worker family is the
-	// single writer of embeddings (tapes serve embed-worker, or the
-	// tapes dev embed-spans backfill). The embedding flags remain
-	// accepted so existing deployments keep booting, but they no longer
-	// have any effect here.
-	if c.embeddingTarget != "" || c.embeddingModel != "" {
-		c.logger.Info("ingest-time embedding is retired; embeddings are written by the embed worker",
-			"see", "tapes serve embed-worker",
-		)
 	}
 
 	s, err := ingest.New(cfg, driver, c.logger)

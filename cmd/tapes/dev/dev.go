@@ -10,11 +10,10 @@ trace-fixtures never touches a database or a network: it replays corpus
 raw layers through the real deriver and API renderers, so its output is
 the live read surface by construction.
 
-dump-corpus, rederive, and embed-spans connect to a tapes Postgres
-database: dump-corpus exports raw_turns back into corpus files (the
-inverse of the fixture replay), rederive rebuilds the projection from
-raw (the direct-call form of POST /v1/admin/derive/run), and embed-spans
-backfills span embeddings.
+dump-corpus and rederive connect to a tapes Postgres database:
+dump-corpus exports raw_turns back into corpus files (the inverse of the
+fixture replay), and rederive rebuilds the projection from raw (the
+direct-call form of POST /v1/admin/derive/run).
 
 openapi compiles a published contract from the route registrations. The
 servers publish the same document at their own /openapi; this one adds the
@@ -34,6 +33,5 @@ func NewDevCmd() *cobra.Command {
 	cmd.AddCommand(newCheckOpenAPICmd())
 	cmd.AddCommand(newOpenAPICmd())
 	cmd.AddCommand(newRederiveCmd())
-	cmd.AddCommand(newEmbedSpansCmd())
 	return cmd
 }

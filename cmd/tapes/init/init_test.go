@@ -138,10 +138,6 @@ var _ = Describe("Init command execution", func() {
 			Expect(cfg.Proxy.Upstream).To(Equal("https://api.openai.com"))
 			Expect(cfg.Proxy.Listen).To(Equal(":8080"))
 			Expect(cfg.API.Listen).To(Equal(":8081"))
-			Expect(cfg.Embedding.Provider).To(Equal("openai"))
-			Expect(cfg.Embedding.Target).To(Equal("https://api.openai.com"))
-			Expect(cfg.Embedding.Model).To(Equal("text-embedding-3-large"))
-			Expect(cfg.Embedding.Dimensions).To(Equal(uint(1024)))
 		})
 
 		It("creates config.toml with anthropic preset", func() {
@@ -168,10 +164,6 @@ var _ = Describe("Init command execution", func() {
 			Expect(cfg.Version).To(Equal(config.CurrentV))
 			Expect(cfg.Proxy.Provider).To(Equal("ollama"))
 			Expect(cfg.Proxy.Upstream).To(Equal("http://localhost:11434"))
-			Expect(cfg.Embedding.Provider).To(Equal("ollama"))
-			Expect(cfg.Embedding.Target).To(Equal("http://localhost:11434"))
-			Expect(cfg.Embedding.Model).To(Equal("embeddinggemma"))
-			Expect(cfg.Embedding.Dimensions).To(Equal(uint(768)))
 		})
 
 		It("rejects unknown preset names", func() {
@@ -212,8 +204,6 @@ dimensions = 1536
 			Expect(cfg.Proxy.Provider).To(Equal("openai"))
 			Expect(cfg.Proxy.Upstream).To(Equal("https://api.openai.com/v1"))
 			Expect(cfg.Proxy.Listen).To(Equal(":9090"))
-			Expect(cfg.Embedding.Model).To(Equal("text-embedding-3-small"))
-			Expect(cfg.Embedding.Dimensions).To(Equal(uint(1536)))
 		})
 
 		It("returns error for non-200 HTTP response", func() {

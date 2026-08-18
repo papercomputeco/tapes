@@ -3,18 +3,16 @@ package config
 // Config represents the persistent tapes configuration stored as config.toml
 // in the .tapes/ directory. The TOML layout uses sections for logical grouping.
 type Config struct {
-	Version     int               `toml:"version"       mapstructure:"version"`
-	Storage     StorageConfig     `toml:"storage"       mapstructure:"storage"`
-	Proxy       ProxyConfig       `toml:"proxy"         mapstructure:"proxy"`
-	API         APIConfig         `toml:"api"           mapstructure:"api"`
-	Ingest      IngestConfig      `toml:"ingest"        mapstructure:"ingest"`
-	Client      ClientConfig      `toml:"client"        mapstructure:"client"`
-	VectorStore VectorStoreConfig `toml:"vector_store"  mapstructure:"vector_store"`
-	Embedding   EmbeddingConfig   `toml:"embedding"     mapstructure:"embedding"`
-	OpenCode    OpenCodeConfig    `toml:"opencode"      mapstructure:"opencode"`
-	Logging     LoggingConfig     `toml:"logging"       mapstructure:"logging"`
-	Telemetry   TelemetryConfig   `toml:"telemetry"     mapstructure:"telemetry"`
-	Update      UpdateConfig      `toml:"update"        mapstructure:"update"`
+	Version   int             `toml:"version"       mapstructure:"version"`
+	Storage   StorageConfig   `toml:"storage"       mapstructure:"storage"`
+	Proxy     ProxyConfig     `toml:"proxy"         mapstructure:"proxy"`
+	API       APIConfig       `toml:"api"           mapstructure:"api"`
+	Ingest    IngestConfig    `toml:"ingest"        mapstructure:"ingest"`
+	Client    ClientConfig    `toml:"client"        mapstructure:"client"`
+	OpenCode  OpenCodeConfig  `toml:"opencode"      mapstructure:"opencode"`
+	Logging   LoggingConfig   `toml:"logging"       mapstructure:"logging"`
+	Telemetry TelemetryConfig `toml:"telemetry"     mapstructure:"telemetry"`
+	Update    UpdateConfig    `toml:"update"        mapstructure:"update"`
 	// Cassettes contains exact OpenAPI document URLs for externally managed cassettes.
 	Cassettes []string `toml:"cassettes" mapstructure:"cassettes"`
 }
@@ -51,19 +49,6 @@ type ClientConfig struct {
 	APITarget   string `toml:"api_target,omitempty"   mapstructure:"api_target"`
 }
 
-// VectorStoreConfig holds vector store settings.
-type VectorStoreConfig struct {
-	Target string `toml:"target,omitempty"   mapstructure:"target"`
-}
-
-// EmbeddingConfig holds embedding provider settings.
-type EmbeddingConfig struct {
-	Provider   string `toml:"provider,omitempty"   mapstructure:"provider"`
-	Target     string `toml:"target,omitempty"     mapstructure:"target"`
-	Model      string `toml:"model,omitempty"      mapstructure:"model"`
-	Dimensions uint   `toml:"dimensions,omitempty" mapstructure:"dimensions"`
-}
-
 // OpenCodeConfig holds OpenCode agent settings for provider and model selection.
 type OpenCodeConfig struct {
 	Provider string `toml:"provider,omitempty" mapstructure:"provider"`
@@ -90,23 +75,17 @@ type UpdateConfig struct {
 // configKeySet is the authoritative set of all supported user-facing config keys.
 // Keys use dotted notation matching the TOML section structure.
 var configKeySet = map[string]bool{
-	"proxy.provider":        true,
-	"proxy.upstream":        true,
-	"proxy.listen":          true,
-	"proxy.project":         true,
-	"api.listen":            true,
-	"api.web_ui":            true,
-	"ingest.listen":         true,
-	"client.proxy_target":   true,
-	"client.api_target":     true,
-	"vector_store.provider": true,
-	"vector_store.target":   true,
-	"embedding.provider":    true,
-	"embedding.target":      true,
-	"embedding.model":       true,
-	"embedding.dimensions":  true,
-	"opencode.provider":     true,
-	"opencode.model":        true,
+	"proxy.provider":      true,
+	"proxy.upstream":      true,
+	"proxy.listen":        true,
+	"proxy.project":       true,
+	"api.listen":          true,
+	"api.web_ui":          true,
+	"ingest.listen":       true,
+	"client.proxy_target": true,
+	"client.api_target":   true,
+	"opencode.provider":   true,
+	"opencode.model":      true,
 
 	"logging.level":  true,
 	"logging.format": true,

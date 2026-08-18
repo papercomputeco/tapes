@@ -25,7 +25,6 @@ func (s *Server) mountV1(router *oasfiber.Router) {
 	s.mountHealth(router)
 	s.mountSessions(router)
 	s.mountTraces(router)
-	s.mountSearch(router)
 	s.mountAdmin(router)
 	s.mountMCP(router)
 }
@@ -221,24 +220,6 @@ func (s *Server) mountTraces(router *oasfiber.Router) {
 			JSONResponse(501, "Traces not supported by this backend", s.errorSchema()))
 }
 
-func (s *Server) mountSearch(router *oasfiber.Router) {
-	router.Get("/v1/search/spans", s.handleSearchSpansEndpoint,
-		oasfiber.Doc("searchSpans").
-			Summary("Semantic search over span embeddings").
-			Description("Embeds the query text and runs vector similarity over the embedded span "+
-				"projection (main llm spans, delta-only content). Each hit carries span, trace, and "+
-				"turn context.").
-			Tag("search").
-			QueryParam("query", oas.String(), oas.ParamRequired(),
-				oas.ParamDescription("Search query")).
-			QueryParam("top_k", oas.Integer(oas.Minimum(1), oas.Default(5)),
-				oas.ParamDescription("Maximum number of results to return")).
-			JSONResponse(200, "Search hits", s.schema(SpanSearchOutput{})).
-			JSONResponse(400, "Missing or invalid query parameters", s.errorSchema()).
-			JSONResponse(500, "Search execution failed", s.errorSchema()).
-			JSONResponse(503, "Span search is not configured or not yet initialized", s.errorSchema()))
-}
-
 func (s *Server) mountAdmin(router *oasfiber.Router) {
 	router.Post("/v1/admin/seed/demo", s.handleSeedDemo,
 		oasfiber.Doc("seedDemo").
@@ -303,8 +284,7 @@ func (s *Server) mountMCP(router *oasfiber.Router) {
 			Summary("Invoke the streamable MCP endpoint").
 			Description("Sends a JSON-RPC 2.0 request to the stateless Model Context Protocol "+
 				"endpoint mounted at /v1/mcp.\n\nTypical calls include initialize, tools/list, and "+
-				"tools/call. The server exposes tools advertised by installed cassettes, plus the "+
-				"legacy core search tool while search is configured in core.").
+				"tools/call. The server exposes the tools advertised by installed cassettes.").
 			Tag("mcp").
 			JSONBody("JSON-RPC 2.0 request", s.schema(MCPRequest{})).
 			JSONResponse(200, "JSON-RPC 2.0 response", s.schema(MCPResponse{})).

@@ -21,13 +21,11 @@ Valid keys:
   proxy.provider, proxy.upstream, proxy.listen,
   api.listen,
   client.proxy_target, client.api_target,
-  vector_store.provider, vector_store.target,
-  embedding.provider, embedding.target, embedding.model, embedding.dimensions
 
 Examples:
   tapes config set proxy.provider anthropic
   tapes config set proxy.upstream https://api.anthropic.com
-  tapes config set embedding.dimensions 768`
+  tapes config set api.listen :8081`
 
 const setShortDesc string = "Set a configuration value"
 

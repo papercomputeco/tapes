@@ -9,22 +9,8 @@ import (
 const (
 	ollamaPort = 11434
 
-	// ollamaModel is the small chat model for the proxy leg. Chat
-	// models cannot serve embeddings — Ollama's runner rejects
-	// embedding calls for models without the embedding capability —
-	// so the embed legs use a dedicated embedding model.
+	// ollamaModel is the small chat model for the proxy leg.
 	ollamaModel = "qwen3:0.6b"
-
-	// ollamaEmbedModel serves the span-embed and query-embed legs.
-	// all-minilm is the smallest capability-tagged embedding model
-	// Ollama publishes.
-	ollamaEmbedModel = "all-minilm"
-
-	// ollamaEmbedDimensions is all-minilm's embedding width. The embed
-	// pass and the API's query embedder must agree on this — the span
-	// vector table is created with exactly these dimensions and both
-	// fail fast on mismatch.
-	ollamaEmbedDimensions = "384"
 )
 
 func (t *Tapes) OllamaStack(ctx context.Context) (*dagger.Service, error) {
@@ -36,11 +22,9 @@ func (t *Tapes) OllamaStack(ctx context.Context) (*dagger.Service, error) {
 		return nil, fmt.Errorf("failed to start ollama service: %w", err)
 	}
 
-	// Pull the models using a sidecar container bound to the ollama service.
-	for _, model := range []string{ollamaModel, ollamaEmbedModel} {
-		if _, err := t.OllamaPullModel(ctx, model, ollamaSvc); err != nil {
-			return nil, fmt.Errorf("failed to pull ollama model %s: %w", model, err)
-		}
+	// Pull the model using a sidecar container bound to the ollama service.
+	if _, err := t.OllamaPullModel(ctx, ollamaModel, ollamaSvc); err != nil {
+		return nil, fmt.Errorf("failed to pull ollama model %s: %w", ollamaModel, err)
 	}
 
 	return ollamaSvc, nil

@@ -18,7 +18,6 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.2.0
 	github.com/onsi/ginkgo/v2 v2.27.4
 	github.com/onsi/gomega v1.39.0
-	github.com/pgvector/pgvector-go v0.3.0
 	github.com/posthog/posthog-go v1.10.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
@@ -34,7 +33,6 @@ require (
 )
 
 require (
-	entgo.io/ent v0.14.5 // indirect
 	github.com/Masterminds/semver/v3 v3.4.0 // indirect
 	github.com/alecthomas/chroma/v2 v2.14.0 // indirect
 	github.com/andybalholm/brotli v1.1.1 // indirect

@@ -10,10 +10,6 @@ const (
 	defaultClientProxyTarget = "http://localhost:8080"
 	defaultClientAPITarget   = "http://localhost:8081"
 
-	defaultEmbeddingModel      = "embeddinggemma"
-	defaultEmbeddingDimensions = 768
-	defaultEmbeddingTarget     = "http://localhost:11434"
-
 	defaultLogLevel  = "info"
 	defaultLogFormat = "auto"
 	defaultLogColor  = "auto"
@@ -39,13 +35,6 @@ func NewDefaultConfig() *Config {
 		Client: ClientConfig{
 			ProxyTarget: defaultClientProxyTarget,
 			APITarget:   defaultClientAPITarget,
-		},
-		VectorStore: VectorStoreConfig{},
-		Embedding: EmbeddingConfig{
-			Provider:   defaultProvider,
-			Target:     defaultUpstream,
-			Model:      defaultEmbeddingModel,
-			Dimensions: defaultEmbeddingDimensions,
 		},
 		Logging: LoggingConfig{
 			Level:  defaultLogLevel,

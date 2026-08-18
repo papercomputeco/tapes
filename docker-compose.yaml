@@ -30,10 +30,6 @@ services:
       serve
       --upstream http://ollama:11434
       --postgres postgres://tapes:tapes@postgres:5432/tapes?sslmode=disable
-      --vector-store-target postgres://tapes:tapes@postgres:5432/tapes?sslmode=disable
-      --embedding-provider ollama
-      --embedding-target http://ollama:11434
-      --embedding-model embeddinggemma
       --debug
     volumes:
       - tapes-data:/data

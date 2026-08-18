@@ -28,18 +28,16 @@ import (
 var verboseDocker bool
 
 const (
-	defaultPostgresImage  = "public.ecr.aws/g4e5l3z3/papercomputeco/postgres:17.7-pgduckdb-1.1.1"
-	defaultOllamaImage    = "ollama/ollama:latest"
-	defaultEmbeddingModel = "embeddinggemma"
-	ollamaEmbeddingModel  = defaultEmbeddingModel + ":latest"
-	localNetworkName      = "tapes-local"
-	postgresContainer     = "tapes-local-postgres"
-	ollamaContainer       = "tapes-local-ollama"
-	postgresDirName       = "postgres"
-	postgresDataPath      = "/tapes-postgres/data"
-	postgresUser          = "tapes"
-	postgresPass          = "tapes"
-	postgresDB            = "tapes"
+	defaultPostgresImage = "public.ecr.aws/g4e5l3z3/papercomputeco/postgres:17.7-pgduckdb-1.1.1"
+	defaultOllamaImage   = "ollama/ollama:latest"
+	localNetworkName     = "tapes-local"
+	postgresContainer    = "tapes-local-postgres"
+	ollamaContainer      = "tapes-local-ollama"
+	postgresDirName      = "postgres"
+	postgresDataPath     = "/tapes-postgres/data"
+	postgresUser         = "tapes"
+	postgresPass         = "tapes"
+	postgresDB           = "tapes"
 )
 
 type localCommander struct {
@@ -66,8 +64,8 @@ func NewLocalCmd() *cobra.Command {
 		Long: `Bootstrap a simple local Docker environment for tapes.
 
 This starts:
-  - Postgres for tapes storage + pgvector + pg_duckdb
-  - Ollama for local inference/embeddings
+  - Postgres for tapes storage + pg_duckdb
+  - Ollama for local inference
 
 When Ollama is already installed on the host, the existing install is used
 instead of a Docker container — native Ollama has direct GPU access, which a
@@ -196,16 +194,10 @@ func (c *localCommander) runUp() error {
 		if err := cliui.Step(os.Stdout, "Waiting for Ollama", waitForOllamaReady); err != nil {
 			return err
 		}
-		if err := ensureOllamaModel(ollamaEmbeddingModel); err != nil {
-			return err
-		}
 	case plan.needsStart:
-		fmt.Printf("  %s %s\n", cliui.WarnStyle.Render("●"), cliui.StepStyle.Render("Ollama is installed but not running — start it (ollama serve, or the Ollama app) and pull the embedding model: ollama pull "+ollamaEmbeddingModel))
+		fmt.Printf("  %s %s\n", cliui.WarnStyle.Render("●"), cliui.StepStyle.Render("Ollama is installed but not running — start it (ollama serve, or the Ollama app)"))
 	default:
 		fmt.Printf("  %s %s\n", cliui.SuccessMark, cliui.StepStyle.Render("Using existing Ollama at "+nativeURL))
-		if err := ensureNativeOllamaModel(ollamaEmbeddingModel); err != nil {
-			return err
-		}
 	}
 
 	dsn := fmt.Sprintf("postgres://%s:%s@localhost:%d/%s?sslmode=disable", postgresUser, postgresPass, c.postgresPort, postgresDB)
@@ -215,12 +207,11 @@ func (c *localCommander) runUp() error {
 	fmt.Printf("  %s %s\n", cliui.KeyStyle.Render("Data dir:"), cliui.ValueStyle.Render(postgresDir))
 	fmt.Printf("  %s %s\n\n", cliui.KeyStyle.Render("Ollama:  "), cliui.ValueStyle.Render(ollamaURL))
 
-	// Persist the resolved settings so tapes serve, the embed pass, and
-	// search all pick up the local Postgres + Ollama without re-specifying
-	// them. Non-fatal: on failure, fall back to printing what to set.
+	// Persist the resolved settings so tapes serve picks up the local
+	// Postgres + Ollama without re-specifying them. Non-fatal: on failure,
+	// fall back to printing what to set.
 	if configPath, err := c.writeLocalConfig(dsn, ollamaURL); err != nil {
 		fmt.Printf("  %s could not write config (%v); set these manually:\n", cliui.WarnStyle.Render("●"), err)
-		fmt.Printf("    tapes config set embedding.target %q\n\n", ollamaURL)
 		fmt.Printf("Next steps:\n")
 		fmt.Printf("  1. Run: tapes serve --postgres %q\n", dsn)
 	} else {
@@ -237,8 +228,7 @@ func (c *localCommander) runUp() error {
 }
 
 // writeLocalConfig persists the local-dev Postgres + Ollama settings into the
-// tapes config so downstream commands (serve, dev embed-spans, search) resolve
-// them automatically. It writes to the same .tapes/ directory the local data
+// tapes config so downstream commands (serve) resolve them automatically. It writes to the same .tapes/ directory the local data
 // lives in. Returns the config file path on success.
 func (c *localCommander) writeLocalConfig(dsn, ollamaURL string) (string, error) {
 	tapesDir, err := resolveLocalTapesDir(c.configDir)
@@ -257,11 +247,7 @@ func (c *localCommander) writeLocalConfig(dsn, ollamaURL string) (string, error)
 	}
 
 	cfg.Storage.PostgresDSN = dsn
-	cfg.VectorStore.Target = dsn
 	cfg.Proxy.Upstream = ollamaURL
-	cfg.Embedding.Provider = "ollama"
-	cfg.Embedding.Target = ollamaURL
-	cfg.Embedding.Model = defaultEmbeddingModel
 
 	if err := cfger.SaveConfig(cfg); err != nil {
 		return "", err
@@ -494,22 +480,6 @@ func waitForOllamaReady() error {
 		time.Sleep(1 * time.Second)
 	}
 	return fmt.Errorf("ollama container %q did not become ready within 60s", ollamaContainer)
-}
-
-func ensureOllamaModel(model string) error {
-	fmt.Printf("  %s %s\n", cliui.WarnStyle.Render("↓"), cliui.StepStyle.Render("Pulling Ollama model "+model))
-	return runDocker("exec", ollamaContainer, "ollama", "pull", model)
-}
-
-func ensureNativeOllamaModel(model string) error {
-	fmt.Printf("  %s %s\n", cliui.WarnStyle.Render("↓"), cliui.StepStyle.Render("Pulling Ollama model "+model))
-	cmd := exec.CommandContext(context.Background(), "ollama", "pull", model)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("ollama pull %s: %w", model, err)
-	}
-	return nil
 }
 
 func resolveLocalTapesDir(configDir string) (string, error) {
