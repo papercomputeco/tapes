@@ -37,11 +37,6 @@ type apiCommander struct {
 	cassetteSources []string
 	cassetteRefresh time.Duration
 
-	// skillModel overrides the chat model POST /v1/skills/generate uses.
-	// Empty keeps the generator's per-provider default (the embedding
-	// model is not a chat model, so the search config can't supply it).
-	skillModel string
-
 	logger *slog.Logger
 }
 
@@ -55,7 +50,6 @@ var apiFlags = config.FlagSet{
 	config.FlagEmbeddingTgt:        {Name: "embedding-target", ViperKey: "embedding.target", Description: "Embedding provider URL"},
 	config.FlagEmbeddingModel:      {Name: "embedding-model", ViperKey: "embedding.model", Description: "Embedding model name (e.g., text-embedding-3-large)"},
 	config.FlagEmbeddingDims:       {Name: "embedding-dimensions", ViperKey: "embedding.dimensions", Description: "Embedding dimensionality"},
-	config.FlagSkillModel:          {Name: "skill-model", ViperKey: "skill.model", Description: "Chat model for skill generation (defaults to the provider's chat model)"},
 	config.FlagCassettes:           {Name: "cassettes", ViperKey: "cassettes", Description: "Full cassette OpenAPI URLs (comma-separated or repeated)"},
 }
 
@@ -92,7 +86,6 @@ func newAPICmd(cmder *apiCommander) *cobra.Command {
 				config.FlagEmbeddingTgt,
 				config.FlagEmbeddingModel,
 				config.FlagEmbeddingDims,
-				config.FlagSkillModel,
 				config.FlagCassettes,
 			})
 			cmder.cassetteSources, err = config.GetRegisteredStringSlice(v, cmd, cmder.flags, config.FlagCassettes)
@@ -105,7 +98,6 @@ func newAPICmd(cmder *apiCommander) *cobra.Command {
 
 			cmder.listen = v.GetString("api.listen")
 			cmder.webUI = v.GetBool("api.web_ui")
-			cmder.skillModel = v.GetString("skill.model")
 			cmder.postgresDSN = v.GetString("storage.postgres_dsn")
 			cmder.vectorStoreTarget = v.GetString("vector_store.target")
 			if cmder.vectorStoreTarget == "" && cmder.postgresDSN != "" {
@@ -144,7 +136,6 @@ func newAPICmd(cmder *apiCommander) *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingTgt, &cmder.embeddingTarget)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagEmbeddingModel, &cmder.embeddingModel)
 	config.AddUintFlag(cmd, cmder.flags, config.FlagEmbeddingDims, &cmder.embeddingDimensions)
-	config.AddStringFlag(cmd, cmder.flags, config.FlagSkillModel, &cmder.skillModel)
 	config.AddStringSliceFlag(cmd, cmder.flags, config.FlagCassettes, &cmder.cassetteSources)
 	cmd.Flags().DurationVar(&cmder.cassetteRefresh, "cassette-refresh", 30*time.Second,
 		"How often to refresh cassette OpenAPI documents")
@@ -169,16 +160,6 @@ func (c *apiCommander) run(ctx context.Context) error {
 	apiConfig := api.Config{
 		ListenAddr:  c.listen,
 		EnableWebUI: c.webUI,
-		// Skill generation reuses the search/embedding credential — the same
-		// shared key resolved above for the embedder. The model is a separate
-		// knob (--skill-model / TAPES_SKILL_MODEL): the embedding model is not
-		// a chat model, so when unset the generator picks a chat-capable
-		// per-provider default. Empty values fall back to the generator's
-		// env/credentials resolution.
-		SkillLLMProvider: c.embeddingProvider,
-		SkillLLMModel:    c.skillModel,
-		SkillLLMAPIKey:   c.embeddingAPIKey,
-		SkillLLMBaseURL:  c.embeddingTarget,
 	}
 
 	if c.vectorStoreTarget != "" {

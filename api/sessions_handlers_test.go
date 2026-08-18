@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -606,7 +607,7 @@ var _ = Describe("DELETE /v1/sessions/:id", func() {
 		drv := &sessionsStubDriver{Driver: inmemory.NewDriver(), deletable: map[string]bool{validID: true}}
 		server := newServer(drv)
 
-		_, status := doJSON(server, http.MethodDelete, "/v1/sessions/"+validID, "", org, "")
+		_, status := doJSON(server, http.MethodDelete, "/v1/sessions/"+validID, "", org)
 		Expect(status).To(Equal(fiber.StatusNoContent))
 		Expect(drv.deleteCalls).To(Equal(1))
 		Expect(drv.lastDeleteOrg).To(Equal(org), "the delete must be scoped to the requested tenant")
@@ -618,7 +619,7 @@ var _ = Describe("DELETE /v1/sessions/:id", func() {
 		drv := &sessionsStubDriver{Driver: inmemory.NewDriver(), deletable: map[string]bool{}}
 		server := newServer(drv)
 
-		_, status := doJSON(server, http.MethodDelete, "/v1/sessions/"+validID, "", org, "")
+		_, status := doJSON(server, http.MethodDelete, "/v1/sessions/"+validID, "", org)
 		Expect(status).To(Equal(fiber.StatusNotFound))
 		Expect(drv.deleteCalls).To(Equal(1), "a well-formed id reaches storage; the miss surfaces as 404")
 	})
@@ -627,7 +628,7 @@ var _ = Describe("DELETE /v1/sessions/:id", func() {
 		drv := &sessionsStubDriver{Driver: inmemory.NewDriver(), deletable: map[string]bool{}}
 		server := newServer(drv)
 
-		body, status := doJSON(server, http.MethodDelete, "/v1/sessions/not-a-uuid", "", org, "")
+		body, status := doJSON(server, http.MethodDelete, "/v1/sessions/not-a-uuid", "", org)
 		Expect(status).To(Equal(fiber.StatusBadRequest))
 		Expect(body["error"]).To(ContainSubstring("UUID"))
 		Expect(drv.deleteCalls).To(BeZero(), "the parse failure must short-circuit before the driver call")
@@ -637,7 +638,7 @@ var _ = Describe("DELETE /v1/sessions/:id", func() {
 		drv := &sessionsStubDriver{Driver: inmemory.NewDriver(), deleteErr: errStubDelete}
 		server := newServer(drv)
 
-		_, status := doJSON(server, http.MethodDelete, "/v1/sessions/"+validID, "", org, "")
+		_, status := doJSON(server, http.MethodDelete, "/v1/sessions/"+validID, "", org)
 		Expect(status).To(Equal(fiber.StatusInternalServerError))
 	})
 
@@ -649,7 +650,7 @@ var _ = Describe("DELETE /v1/sessions/:id", func() {
 		Expect(hasWriter).To(BeFalse(), "precondition: the bare inmemory driver must not implement sessionsWriter")
 
 		server := newServer(base)
-		_, status := doJSON(server, http.MethodDelete, "/v1/sessions/"+validID, "", org, "")
+		_, status := doJSON(server, http.MethodDelete, "/v1/sessions/"+validID, "", org)
 		Expect(status).To(Equal(fiber.StatusNotImplemented))
 	})
 })
@@ -833,3 +834,30 @@ var _ = Describe("sessionItemFromStorage liveness", func() {
 		})).To(BeFalse())
 	})
 })
+
+// doJSON issues a request (optionally with the org header) and returns the
+// decoded body map (on 2xx) plus the status code.
+func doJSON(server *Server, method, path, body, org string) (map[string]any, int) {
+	var rdr io.Reader
+	if body != "" {
+		rdr = bytes.NewBufferString(body)
+	}
+	req, err := http.NewRequestWithContext(context.Background(), method, path, rdr)
+	Expect(err).NotTo(HaveOccurred())
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if org != "" {
+		req.Header.Set(legacyOrgIDHeader, org)
+	}
+	resp, err := server.app.Test(req)
+	Expect(err).NotTo(HaveOccurred())
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	Expect(err).NotTo(HaveOccurred())
+	var out map[string]any
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &out)
+	}
+	return out, resp.StatusCode
+}

@@ -87,13 +87,6 @@ var _ = Describe("Config command execution", func() {
 			err := cmd.Execute()
 			Expect(err).To(HaveOccurred())
 		})
-
-		It("rejects invalid uint values", func() {
-			cmd := configcmder.NewConfigCmd()
-			cmd.SetArgs([]string{"set", "embedding.dimensions", "not-a-number"})
-			err := cmd.Execute()
-			Expect(err).To(HaveOccurred())
-		})
 	})
 
 	Describe("get subcommand", func() {

@@ -43,14 +43,4 @@ type Config struct {
 	// admission, and the newest entry is what the discovery document
 	// advertises as current. Empty means DefaultContractVersions().
 	ContractVersions []cassette.ContractVersion
-
-	// SkillLLM* configure the LLM used by POST /v1/skills/generate. They are
-	// populated from the search/embedding credential so skill extraction
-	// reuses the same shared key the platform already mounts for search —
-	// no separate provider key. An empty Provider/APIKey falls back to the
-	// generator's env/credentials resolution at call time.
-	SkillLLMProvider string
-	SkillLLMModel    string
-	SkillLLMAPIKey   string
-	SkillLLMBaseURL  string
 }
