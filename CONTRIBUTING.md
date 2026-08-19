@@ -53,7 +53,7 @@ Seeding is a client operation, so it lives in
 and derived just like live sessions, so it shows up in `tapesctl sessions list`:
 
 ```bash
-tapesctl seed --tapes-url http://localhost:8081
+tapesctl seed --api-url http://localhost:8081
 ```
 
 To reset demo data, use a fresh database behind the API server.
@@ -72,7 +72,7 @@ To reset demo data, use a fresh database behind the API server.
   - `make build-local` sets this automatically
 - `make format`/`make check`/`make test` require Docker for Dagger
 - Demo seeding docs
-  - Use `tapesctl seed --tapes-url http://localhost:8081` to seed demo sessions
+  - Use `tapesctl seed --api-url http://localhost:8081` to seed demo sessions
   - Use a fresh Postgres database behind the API when reseeding
 
 ## Example commands
@@ -85,8 +85,8 @@ make build-local
 ./build/tapes local
 
 # Seed demo data through a running API (tapesctl), then browse it in the deck UI
-tapesctl seed --tapes-url http://localhost:8081
-tapesctl sessions list --tapes-url http://localhost:8081
+tapesctl seed --api-url http://localhost:8081
+tapesctl sessions list --api-url http://localhost:8081
 
 # Run tests with the Postgres service provisioned by Dagger
 make test

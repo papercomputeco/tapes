@@ -110,11 +110,11 @@ cassette fall back to memory and say so.
 `tapesctl` reads the same discovery surface and generates a subcommand per
 cassette, with a method per OpenAPI operation. Because the nouns have to exist
 before the command line is parsed, point discovery at the server with the
-`TAPES_URL` environment variable (the `--tapes-url` flag also works, on any
+`TAPES_API_URL` environment variable (the `--api-url` flag also works, on any
 subcommand):
 
 ```bash
-export TAPES_URL=http://localhost:8081
+export TAPES_API_URL=http://localhost:8081
 
 tapesctl cassettes                 # `hello-world` has appeared
 tapesctl cassettes hello-world --help
@@ -162,14 +162,14 @@ docker run -d --name hw-derive --network tapes-hello-world_default \
 Run a harness under capture, pointed at the ingest server:
 
 ```bash
-tapesctl start --tapes-url http://localhost:8082 claude -- -p "Reply with exactly: ok"
+tapesctl start --ingest-url http://localhost:8082 claude -- -p "Reply with exactly: ok"
 ```
 
 After the derive worker's debounce (about twenty seconds), the session, its
 trace, and its spans are readable from the same API that serves the cassette:
 
 ```bash
-tapesctl sessions list          # TAPES_URL still points at :8081
+tapesctl sessions list          # TAPES_API_URL still points at :8081
 curl -s "localhost:8081/v1/sessions?limit=5" | jq '.items[].display_title'
 ```
 

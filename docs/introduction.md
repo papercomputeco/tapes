@@ -46,16 +46,9 @@ that costs you a whole session:
 | `8081` | read API | `sessions`, `traces`, `spans`, `search`, `export`, `seed` |
 | `8082` | private ingest API | `start`, `capture`, `sync` |
 
-`tapesctl` reads one configured server URL, so configure the read API — the one
-most commands want — and pass the ingest URL explicitly when capturing:
-
-```bash
-tapesctl config set tapes-url http://localhost:8081
-```
-
-That writes `tapes-url` to `~/.tapes/config.toml`. A `--tapes-url` flag beats
-`TAPES_URL`, which beats the configured value; with none of the three, commands
-that need a server fail rather than guess a host.
+`tapesctl` keeps the two endpoints separate and defaults them to these local
+ports. Override reads with `--api-url`, `TAPES_API_URL`, or `api-url`; override
+capture with `--ingest-url`, `TAPES_INGEST_URL`, or `ingest-url`.
 
 ### Seed and read
 
@@ -78,9 +71,9 @@ When ready to capture real work, launch a supported agent through the client,
 pointed at the **ingest** port:
 
 ```bash
-tapesctl start claude --tapes-url http://localhost:8082
+tapesctl start claude --ingest-url http://localhost:8082
 # or
-tapesctl start codex --tapes-url http://localhost:8082
+tapesctl start codex --ingest-url http://localhost:8082
 ```
 
 `tapesctl start` launches the agent under a just-in-time capture proxy, routes its provider traffic through it, and ships the captured turns to the server.

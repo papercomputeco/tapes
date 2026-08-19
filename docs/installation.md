@@ -70,11 +70,8 @@ curl http://localhost:8081/ping
 tapes status
 ```
 
-Point the client at the read API once, so the read commands need no flag:
-
-```bash
-tapesctl config set tapes-url http://localhost:8081
-```
+The client defaults reads to this API and capture to the ingest service on
+`http://localhost:8082`.
 
 Seed representative capture data through the normal ingest and derive path:
 
@@ -83,9 +80,8 @@ tapesctl seed
 tapesctl sessions list
 ```
 
-Capture commands address the **ingest** port instead, and take it explicitly:
-`tapesctl start claude --tapes-url http://localhost:8082`. See
-[Agent integrations](./integrations.md).
+Capture commands address the **ingest** port instead. Override its local default
+with `--ingest-url` or `TAPES_INGEST_URL`. See [Agent integrations](./integrations.md).
 
 ## OpenAI embeddings
 

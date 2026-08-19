@@ -99,24 +99,20 @@ concerns, and they live in [`tapesctl`](https://github.com/papercomputeco/tapesc
 curl -sSfL https://download.tapes.dev/tapesctl/install | bash
 ```
 
-`tapesctl` never guesses a server. Name this one once so the read commands
-below work without repeating the flag:
-
-```bash
-tapesctl config set tapes-url http://localhost:8081
-```
+`tapesctl` defaults reads to `http://localhost:8081` and capture to
+`http://localhost:8082`; flags, environment variables, and config override them.
 
 Start with demo data so every command below has something to show — this path
 works end to end before you wire up a real agent:
 
 ```bash
-tapesctl seed --tapes-url http://localhost:8081
+tapesctl seed --api-url http://localhost:8081
 ```
 
 List captured sessions and their ids:
 
 ```bash
-tapesctl sessions list --tapes-url http://localhost:8081
+tapesctl sessions list --api-url http://localhost:8081
 ```
 
 Export a captured session as JSONL — the API's session→traces→spans projection
@@ -126,7 +122,7 @@ that cassette. The full span tree is included by default; pass
 `--detail traces` for turn headers only:
 
 ```bash
-tapesctl export <session-id> --tapes-url http://localhost:8081 -o session.jsonl
+tapesctl export <session-id> --api-url http://localhost:8081 -o session.jsonl
 tapesctl export <session-id> --detail traces
 ```
 
@@ -135,7 +131,7 @@ the proxy:
 
 ```bash
 tapes local down --wipe && tapes local up   # recreate the DB, clearing the demo
-tapesctl start claude --tapes-url http://localhost:8082
+tapesctl start claude --ingest-url http://localhost:8082
 ```
 
 `tapesctl start` launches the agent under a just-in-time capture proxy and ships
