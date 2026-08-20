@@ -18,6 +18,7 @@ var (
 	contractVersionPattern = regexp.MustCompile(`^v[1-9][0-9]*$`)
 	identifierPattern      = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 	settingKeyPattern      = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`)
+	environmentNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	prefixSegmentPattern   = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 	digestPattern          = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 )
@@ -106,9 +107,12 @@ func (m *Manifest) Validate(supported []cassette.ContractVersion) error {
 		} else {
 			seenSettings[setting.Key] = index
 		}
+		if setting.Env != "" && !environmentNamePattern.MatchString(setting.Env) {
+			add(prefix+".env", "must be a portable environment variable name")
+		}
 		environmentKey := setting.EnvVar()
 		if previous, exists := seenEnvironment[environmentKey]; exists {
-			add(prefix+".key", fmt.Sprintf("projects to the same environment variable as config[%d].key", previous))
+			add(prefix+".env", fmt.Sprintf("resolves to the same environment variable as config[%d]", previous))
 		} else {
 			seenEnvironment[environmentKey] = index
 		}

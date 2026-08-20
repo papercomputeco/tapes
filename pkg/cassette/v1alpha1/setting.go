@@ -32,7 +32,10 @@ var settingTypeNames = []string{
 // Setting declares one cassette configuration value. The deployment system
 // supplies values; tapes publishes the schema but does not configure processes.
 type Setting struct {
-	Key         string      `json:"key"`
+	Key string `json:"key"`
+
+	// Env overrides the environment variable derived from Key.
+	Env         string      `json:"env,omitempty"`
 	Type        SettingType `json:"type"`
 	Required    bool        `json:"required,omitempty"`
 	Default     any         `json:"default,omitempty"`
@@ -49,6 +52,7 @@ type Setting struct {
 func (setting *Setting) UnmarshalJSON(data []byte) error {
 	type settingJSON struct {
 		Key         string          `json:"key"`
+		Env         string          `json:"env"`
 		Type        SettingType     `json:"type"`
 		Required    bool            `json:"required"`
 		Default     json.RawMessage `json:"default"`
@@ -75,6 +79,7 @@ func (setting *Setting) UnmarshalJSON(data []byte) error {
 
 	*setting = Setting{
 		Key:         decoded.Key,
+		Env:         decoded.Env,
 		Type:        decoded.Type,
 		Required:    decoded.Required,
 		Secret:      decoded.Secret,
@@ -103,7 +108,11 @@ func (settingType SettingType) valid() bool {
 	}
 }
 
-// EnvVar returns the conventional environment variable for this setting.
+// EnvVar returns the declared environment variable, or derives one from the key.
 func (setting *Setting) EnvVar() string {
-	return "CASSETTE_" + strings.ToUpper(strings.NewReplacer(".", "_", "-", "_").Replace(setting.Key))
+	if setting.Env != "" {
+		return setting.Env
+	}
+
+	return strings.ToUpper(strings.ReplaceAll(setting.Key, ".", "_"))
 }

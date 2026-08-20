@@ -65,7 +65,7 @@ func run(logger *slog.Logger) error {
 
 	name := envOrDefault("CASSETTE_NAME", defaultName)
 	listen := envOrDefault("CASSETTE_LISTEN", defaultListen)
-	greeting := envOrDefault("CASSETTE_GREETING", defaultGreeting)
+	greeting := envOrDefault("GREETING", defaultGreeting)
 
 	store, err := openStore(ctx, os.Getenv("TAPES_DATABASE_URL"), name)
 	if err != nil {

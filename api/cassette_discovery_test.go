@@ -26,7 +26,7 @@ const discoveryManifest = `{
   "tables": [{"name": "summary"}],
   "config": [
     {"key": "llm.model", "type": "string", "default": "claude"},
-    {"key": "llm.api_key", "type": "string", "required": true, "secret": true}
+    {"key": "llm.api_key", "env": "OPENAI_API_KEY", "type": "string", "required": true, "secret": true}
   ]
 }`
 
@@ -87,8 +87,10 @@ var _ = Describe("cassette discovery", func() {
 		settings := buildCassetteDiscovery(registry, "v1", nil).Cassettes[0].Config
 		Expect(settings).To(HaveLen(2))
 		Expect(settings[0].Key).To(Equal("llm.model"))
+		Expect(settings[0].Env).To(Equal("LLM_MODEL"))
 		Expect(settings[0].Default).To(Equal("claude"))
 		Expect(settings[1].Key).To(Equal("llm.api_key"))
+		Expect(settings[1].Env).To(Equal("OPENAI_API_KEY"))
 		Expect(settings[1].Required).To(BeTrue())
 		Expect(settings[1].Secret).To(BeTrue())
 		Expect(settings[1].Default).To(BeNil())

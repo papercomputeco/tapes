@@ -48,7 +48,10 @@ type DiscoveryDepends struct {
 
 // DiscoverySetting is one configuration key as a schema, never as a value.
 type DiscoverySetting struct {
-	Key         string `json:"key"`
+	Key string `json:"key"`
+
+	// Env is the environment variable the deployment supplies for this setting.
+	Env         string `json:"env"`
 	Type        string `json:"type"`
 	Required    bool   `json:"required"`
 	Secret      bool   `json:"secret"`
@@ -136,6 +139,7 @@ func discoveryEntry(instance *cassetterunner.Instance, status tapesoapi.Status) 
 		setting := manifest.Config[index]
 		published := DiscoverySetting{
 			Key:         setting.Key,
+			Env:         setting.EnvVar(),
 			Type:        string(setting.Type),
 			Required:    setting.Required,
 			Secret:      setting.Secret,

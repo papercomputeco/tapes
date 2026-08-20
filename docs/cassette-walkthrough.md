@@ -71,7 +71,7 @@ curl -s localhost:8081/v1/cassettes | jq
       "route_prefix": "/v1/cassettes/hello-world",
       "openapi_path": "/v1/cassettes/hello-world/openapi.json",
       "openapi_status": "fresh",
-      "manifest_digest": "sha256:8171d476..."
+      "manifest_digest": "sha256:…"
     }
   ],
   "problems": []

@@ -50,7 +50,7 @@ services:
     environment:
       CASSETTE_NAME: hello-world
       CASSETTE_LISTEN: 0.0.0.0:9999
-      CASSETTE_GREETING: ${CASSETTE_GREETING:-Hello}
+      GREETING: ${GREETING:-Hello}
       # The credential the deployment provisioned in provision.sql, under the
       # role name the manifest derives. Tapes neither creates this role nor
       # injects this value: the cassette declares what it needs and the thing
