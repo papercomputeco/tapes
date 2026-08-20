@@ -3,7 +3,9 @@
 # -----------------------------------------------------------------------------
 # Build stage
 # -----------------------------------------------------------------------------
-FROM golang:1.26-bookworm AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS builder
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /src
 
@@ -16,6 +18,8 @@ COPY . .
 
 ARG LDFLAGS="-s -w"
 RUN CGO_ENABLED=0 \
+    GOOS=${TARGETOS:-linux} \
+    GOARCH=${TARGETARCH} \
     GOEXPERIMENT="jsonv2" \
     go build \
     -ldflags="${LDFLAGS} -extldflags '-static'" \
@@ -27,16 +31,12 @@ RUN CGO_ENABLED=0 \
 # -----------------------------------------------------------------------------
 FROM alpine:3.20
 
-RUN apk add --no-cache ca-certificates
-
-# Create non-root user
-RUN addgroup -g 1000 tapes && \
-    adduser -u 1000 -G tapes -s /bin/sh -D tapes
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 WORKDIR /app
 
 COPY --from=builder /bin/tapes /app/tapes
 
-USER tapes
+USER 1000:1000
 EXPOSE 8080
 ENTRYPOINT ["/app/tapes"]

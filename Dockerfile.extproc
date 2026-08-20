@@ -7,7 +7,7 @@
 # process rather than becoming another `tapes serve` subcommand.
 
 # Build the tapes-extproc binary
-FROM golang:1.26 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 ARG LDFLAGS="-s -w"
