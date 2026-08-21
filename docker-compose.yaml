@@ -66,6 +66,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
 
   export:
     image: public.ecr.aws/g4e5l3z3/papercomputeco/export-cassette:latest
