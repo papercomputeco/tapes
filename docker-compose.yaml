@@ -23,6 +23,23 @@ services:
       - "127.0.0.1:11434:11434"
     volumes:
       - ~/.ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # Pulls the default embedding model into the host's ~/.ollama directory (the
+  # volume bind-mounted into the ollama service), so semantic search works out of
+  # the box after `docker compose up`. Once cached, re-running is a cheap no-op.
+  ollama-pull:
+    image: ollama/ollama
+    command: pull embeddinggemma
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
 
   skills:
     image: public.ecr.aws/g4e5l3z3/papercomputeco/skills-cassette:latest
