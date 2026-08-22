@@ -57,6 +57,35 @@ var _ = Describe("versioned cassette metadata", func() {
 		Expect(err).To(MatchError(`expected kind "cassette/v1alpha1", got "cassette/v1"`))
 	})
 
+	It("resolves default and explicit environment variable names", func() {
+		manifest, err := v1alpha1.Parse([]byte(validMetadata))
+		Expect(err).NotTo(HaveOccurred())
+		derived := mustCanonical(manifest)
+		manifest.Config[0].Env = "LLM_MODEL"
+		Expect(mustCanonical(manifest)).To(Equal(derived))
+
+		manifest.Config[1].Env = "SUMMARY_BATCH_SIZE"
+		Expect(manifest.Config[0].EnvVar()).To(Equal("LLM_MODEL"))
+		Expect(manifest.Config[1].EnvVar()).To(Equal("SUMMARY_BATCH_SIZE"))
+		Expect(string(mustCanonical(manifest))).To(ContainSubstring(`"env":"SUMMARY_BATCH_SIZE"`))
+	})
+
+	It("validates explicit environment variable names and resolved uniqueness", func() {
+		manifest, err := v1alpha1.Parse([]byte(validMetadata))
+		Expect(err).NotTo(HaveOccurred())
+		manifest.Config = []v1alpha1.Setting{
+			{Key: "one", Env: "SHARED", Type: v1alpha1.SettingTypeString},
+			{Key: "shared", Type: v1alpha1.SettingTypeString},
+			{Key: "bad", Env: "NOT-PORTABLE", Type: v1alpha1.SettingTypeString},
+		}
+
+		err = manifest.Validate([]cassette.ContractVersion{"v1"})
+		Expect(err).To(MatchError(And(
+			ContainSubstring("config[1].env: resolves to the same environment variable as config[0]"),
+			ContainSubstring("config[2].env: must be a portable environment variable name"),
+		)))
+	})
+
 	It("retains canonicalization, digest stability, and redaction", func() {
 		manifest, err := v1alpha1.Parse([]byte(validMetadata))
 		Expect(err).NotTo(HaveOccurred())

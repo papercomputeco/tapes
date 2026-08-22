@@ -150,4 +150,8 @@ var _ = Describe("the hello-world example manifest", func() {
 	It("declares the port its image exposes", func() {
 		Expect(parsed.(*v1alpha1.Manifest).Cassette.Port).To(Equal(9999))
 	})
+
+	It("derives the greeting environment variable from its config key", func() {
+		Expect(parsed.(*v1alpha1.Manifest).Config[0].EnvVar()).To(Equal("GREETING"))
+	})
 })

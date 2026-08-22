@@ -198,7 +198,7 @@ func validateMetadataKeys(data []byte) error {
 		return err
 	}
 	return checkArrayObjects(root["config"], "config", []string{
-		"key", "type", "required", "default", "secret", "description", "enum", "min", "max",
+		"key", "env", "type", "required", "default", "secret", "description", "enum", "min", "max",
 	})
 }
 
@@ -347,6 +347,7 @@ func canonicalDepends(depends Depends) map[string]any {
 
 func canonicalSetting(setting Setting) map[string]any {
 	value := map[string]any{
+		"env":  setting.EnvVar(),
 		"key":  setting.Key,
 		"type": setting.Type,
 	}

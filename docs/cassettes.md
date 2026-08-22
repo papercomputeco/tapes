@@ -296,18 +296,23 @@ max = 500
 
 [[config]]
 key = "llm.api_key"
+env = "OPENAI_API_KEY"
 type = "string"
 required = true
 secret = true
 ```
 
-Keys consist of dotted lowercase snake-case segments. They must be unique both
-as keys and after conversion to the conventional environment name:
+Keys consist of dotted lowercase snake-case segments. By default, their
+environment variable names are uppercased with dots converted to underscores:
 
 ```text
-llm.model   -> CASSETTE_LLM_MODEL
-batch_size  -> CASSETTE_BATCH_SIZE
+llm.model   -> LLM_MODEL
+batch_size  -> BATCH_SIZE
 ```
+
+Set `env` to use an existing environment variable instead, such as
+`OPENAI_API_KEY`. Explicit names must be portable environment variable names.
+Settings must be unique both by key and by their resolved environment variable.
 
 Supported types are:
 
@@ -320,11 +325,12 @@ Supported types are:
 | `json` | A string whose contents are valid JSON | The manifest value is a string, not an inline TOML object. |
 
 A secret setting cannot have a default. Tapes publishes this schema, never
-runtime values, and does not inject environment variables. The `CASSETTE_...`
-name is a convention for the deployment and cassette to implement.
+runtime values, and does not inject environment variables. The deployment and
+cassette implement the resolved `env` mapping.
 
-The current discovery response projects each setting's key, type, required and
-secret flags, default, and description. Constraints such as `enum`, `min`, and
+The current discovery response projects each setting's key, resolved environment
+variable, type, required and secret flags, default, and description. Constraints
+such as `enum`, `min`, and
 `max` remain in the manifest but are not projected into discovery, so deployment
 tooling that needs the full configuration schema should read the manifest.
 

@@ -87,7 +87,7 @@ publishes for the copy it fetched over HTTP:
 
 ```sh
 curl -s localhost:8081/v1/cassettes | jq -r '.cassettes[0].manifest_digest'
-# sha256:8171d476...  the digest of cassette.toml
+# sha256:…  the digest of cassette.toml
 ```
 
 If those disagree for the same installation identity, the running cassette is
@@ -135,7 +135,7 @@ The deployment supplies environment values. Tapes only publishes their schema.
 
 | Variable | Meaning |
 |---|---|
-| `CASSETTE_GREETING` | Declared by `x-tapes-cassette.config` |
+| `GREETING` | Derived from the `greeting` key declared by `x-tapes-cassette.config` |
 | `CASSETTE_NAME` | Identity: route, schema, and served prefix all derive from it |
 | `CASSETTE_LISTEN` | Process listen address |
 | `TAPES_DATABASE_URL` | Pre-provisioned cassette database credential |
