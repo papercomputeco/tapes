@@ -18,19 +18,6 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/github/stars/papercomputeco/tapes">
-
-  ·
-  <a target="_blank" href="https://github.com/papercomputeco/tapes/releases/latest">
-    <img src="https://img.shields.io/github/v/release/papercomputeco/tapes?style=flat-square">
-  </a>
-  ·
-  <a target="_blank" href="https://github.com/papercomputeco/tapes/actions/workflows/ci.yaml">
-    <img src="https://img.shields.io/github/actions/workflow/status/papercomputeco/tapes/ci.yaml?style=flat-square">
-  </a>
-</p>
-
-<p align="center">
   <a target="_blank" href="https://discord.gg/T6Y4XkmmV5">
     <img src="https://dcbadge.limes.pink/api/server/https://discord.gg/T6Y4XkmmV5">
   </a>
