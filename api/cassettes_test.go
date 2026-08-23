@@ -1,13 +1,17 @@
 package api
 
 import (
+	"bufio"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -230,6 +234,194 @@ var _ = Describe("The cassette surface", func() {
 			var decoded map[string]string
 			Expect(json.Unmarshal(body, &decoded)).To(Succeed())
 			Expect(decoded["path"]).To(Equal("/plain/thing"))
+		})
+	})
+
+	// A cassette may hold a response open for as long as it likes — the session
+	// chat cassette streams an agent's answer for the length of a conversation —
+	// so core has to relay a body it has not finished receiving. Everything here
+	// is about that: not whether the bytes arrive, but whether they arrive
+	// before the cassette is done producing them.
+	Describe("streaming a cassette's response", func() {
+		// listen puts the server on a real socket. app.Test serves the whole
+		// connection before it returns a response, so it can only ever observe a
+		// finished body — which is exactly the distinction these specs exist to
+		// draw. Only a real client reading a real socket can see a first event
+		// arrive while the cassette still holds the stream open.
+		listen := func(target *Server) string {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			Expect(err).NotTo(HaveOccurred())
+			go func() {
+				defer GinkgoRecover()
+				_ = target.RunWithListener(listener)
+			}()
+			DeferCleanup(func() { _ = target.Shutdown() })
+
+			return "http://" + listener.Addr().String()
+		}
+
+		// eventStream installs a cassette that sends one event, waits to be
+		// released, then sends a second and ends. The wait is the whole
+		// instrument: a proxy that buffers cannot deliver the first event until
+		// the handler returns, and the handler cannot return until a reader that
+		// has already seen the first event releases it.
+		eventStream := func(name cassette.Name) chan struct{} {
+			released := make(chan struct{})
+			upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "text/event-stream")
+				writer.WriteHeader(http.StatusOK)
+				_, _ = io.WriteString(writer, "data: first\n\n")
+				writer.(http.Flusher).Flush()
+				<-released
+				_, _ = io.WriteString(writer, "data: second\n\n")
+				writer.(http.Flusher).Flush()
+			}))
+			DeferCleanup(upstream.Close)
+			Expect(server.cassettes.Put(&cassetterunner.Instance{
+				Name: name, URL: upstream.URL,
+				Anchors: cassette.Anchors{Health: "/ping", OpenAPI: "/openapi", Prefix: "api"},
+			})).To(Succeed())
+
+			return released
+		}
+
+		It("delivers an event before the cassette has finished the response", func(ctx SpecContext) {
+			released := eventStream("live")
+			origin := listen(server)
+
+			request, err := http.NewRequestWithContext(ctx, http.MethodGet, origin+"/v1/cassettes/live/events", nil)
+			Expect(err).NotTo(HaveOccurred())
+			request.Header.Set("Accept", "text/event-stream")
+
+			response, err := http.DefaultClient.Do(request)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(response.Body.Close)
+			Expect(response.StatusCode).To(Equal(http.StatusOK))
+			Expect(response.Header.Get("Content-Type")).To(Equal("text/event-stream"),
+				"the cassette's own content type reaches the client")
+
+			reader := bufio.NewReader(response.Body)
+			first, err := reader.ReadString('\n')
+			Expect(err).NotTo(HaveOccurred())
+			Expect(first).To(Equal("data: first\n"),
+				"a buffering proxy could not have produced this line yet")
+
+			// Only now can the cassette write its second event, which proves the
+			// first one crossed core while the response was still open.
+			close(released)
+
+			rest, err := io.ReadAll(reader)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(rest)).To(ContainSubstring("data: second"))
+		}, SpecTimeout(20*time.Second))
+
+		It("releases the upstream request when the client leaves an idle stream", func(ctx SpecContext) {
+			// The disconnect must not need another event to be noticed. This
+			// cassette goes quiet after its first event, so the only way its
+			// handler can end is core cancelling the proxied request itself.
+			cancelled := make(chan struct{})
+			quiet := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.Header().Set("Content-Type", "text/event-stream")
+				writer.WriteHeader(http.StatusOK)
+				_, _ = io.WriteString(writer, "data: first\n\n")
+				writer.(http.Flusher).Flush()
+				<-request.Context().Done()
+				close(cancelled)
+			}))
+			DeferCleanup(quiet.Close)
+			Expect(server.cassettes.Put(&cassetterunner.Instance{
+				Name: "quiet", URL: quiet.URL,
+				Anchors: cassette.Anchors{Health: "/ping", OpenAPI: "/openapi", Prefix: "api"},
+			})).To(Succeed())
+			origin := listen(server)
+
+			request, err := http.NewRequestWithContext(ctx, http.MethodGet, origin+"/v1/cassettes/quiet/events", nil)
+			Expect(err).NotTo(HaveOccurred())
+			request.Header.Set("Accept", "text/event-stream")
+
+			response, err := http.DefaultClient.Do(request)
+			Expect(err).NotTo(HaveOccurred())
+
+			reader := bufio.NewReader(response.Body)
+			first, err := reader.ReadString('\n')
+			Expect(err).NotTo(HaveOccurred())
+			Expect(first).To(Equal("data: first\n"),
+				"the stream is live before the client walks out on it")
+
+			// The client leaves a stream that is sending nothing.
+			Expect(response.Body.Close()).To(Succeed())
+
+			Eventually(cancelled).Within(10*time.Second).Should(BeClosed(),
+				"core must cancel the upstream itself; no further event exists to carry the disconnect")
+		}, SpecTimeout(20*time.Second))
+
+		It("does not compress an event stream the client would accept gzipped", func(ctx SpecContext) {
+			released := eventStream("plain")
+			close(released)
+			origin := listen(server)
+
+			request, err := http.NewRequestWithContext(ctx, http.MethodGet, origin+"/v1/cassettes/plain/events", nil)
+			Expect(err).NotTo(HaveOccurred())
+			request.Header.Set("Accept", "text/event-stream")
+			// Explicit, because the transport's own transparent gzip would
+			// otherwise decode the answer and hide the thing being asserted.
+			request.Header.Set("Accept-Encoding", "gzip")
+
+			response, err := http.DefaultClient.Do(request)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(response.Body.Close)
+
+			Expect(response.Header.Get("Content-Encoding")).To(BeEmpty(),
+				"gzip replaces the body stream with a buffering wrapper, undoing the streaming above")
+
+			body, err := io.ReadAll(response.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(body)).To(ContainSubstring("data: first"))
+		}, SpecTimeout(20*time.Second))
+
+		It("still compresses an ordinary JSON response", func(ctx SpecContext) {
+			// The compression carve-out is scoped to clients that ask for an
+			// event stream by name. A JSON answer fetched by an ordinary client
+			// must keep the gzip it always had — this spec is what holds that
+			// carve-out narrow.
+			sized := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(writer, `{"padding": %q}`, strings.Repeat("x", 4096))
+			}))
+			DeferCleanup(sized.Close)
+			Expect(server.cassettes.Put(&cassetterunner.Instance{
+				Name: "sized", URL: sized.URL,
+				Anchors: cassette.Anchors{Health: "/ping", OpenAPI: "/openapi", Prefix: "api"},
+			})).To(Succeed())
+			origin := listen(server)
+
+			request, err := http.NewRequestWithContext(ctx, http.MethodGet, origin+"/v1/cassettes/sized/report", nil)
+			Expect(err).NotTo(HaveOccurred())
+			// Explicit, so the transport does not decode the answer and hide
+			// the encoding being asserted.
+			request.Header.Set("Accept-Encoding", "gzip")
+
+			response, err := http.DefaultClient.Do(request)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(response.Body.Close)
+			Expect(response.StatusCode).To(Equal(http.StatusOK))
+			Expect(response.Header.Get("Content-Encoding")).To(Equal("gzip"),
+				"only an event stream escapes compression; everything else keeps it")
+
+			decoder, err := gzip.NewReader(response.Body)
+			Expect(err).NotTo(HaveOccurred())
+			body, err := io.ReadAll(decoder)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(body)).To(ContainSubstring(`"padding"`))
+		}, SpecTimeout(20*time.Second))
+
+		It("keeps the framing of a cassette that declared its length", func() {
+			response, body := get("/v1/cassettes/summary/reports/7")
+
+			Expect(response.StatusCode).To(Equal(http.StatusOK))
+			Expect(response.TransferEncoding).To(BeEmpty(),
+				"an ordinary JSON answer is still sent as one sized body, not chunked")
+			Expect(response.ContentLength).To(Equal(int64(len(body))))
 		})
 	})
 

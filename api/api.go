@@ -3,8 +3,10 @@ package api
 import (
 	"fmt"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"
@@ -45,6 +47,28 @@ type Server struct {
 	// there is no other source for the published contract — which is why a
 	// route cannot be served here without being described.
 	openapi *tapesoapi.Parser
+}
+
+// acceptsEventStream reports whether the client asked for a server-sent event
+// stream, which is the one response shape compression must keep its hands off.
+//
+// It is not a preference. fasthttp compresses a streamed body by replacing the
+// stream with one of its own StreamReaders, and that wrapper carries the
+// buffering the cassette proxy exists to avoid — so gzipping an event stream
+// re-buffers the very response core just went to some trouble to hand over a
+// chunk at a time. Content type would be the better signal, but Fiber settles
+// compression before the handler runs and therefore before any response has a
+// type; what a client says it wants is the only thing known this early, and a
+// client that reads an event stream says so.
+func acceptsEventStream(c *fiber.Ctx) bool {
+	for accept := range strings.SplitSeq(c.Get(fiber.HeaderAccept), ",") {
+		if media, _, err := mime.ParseMediaType(strings.TrimSpace(accept)); err == nil &&
+			media == "text/event-stream" {
+			return true
+		}
+	}
+
+	return false
 }
 
 // NewServer creates a new API server.
@@ -109,7 +133,7 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 	// that honors Accept-Encoding — the console's server functions
 	// included. Compression is the single highest-leverage byte saver
 	// on the read surface.
-	app.Use(compress.New())
+	app.Use(compress.New(compress.Config{Next: acceptsEventStream}))
 
 	// /metrics is intentionally outside any auth group — Alloy scrapes
 	// in-cluster and there is no caller identity to verify. It is registered
