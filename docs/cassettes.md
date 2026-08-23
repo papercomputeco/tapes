@@ -357,8 +357,25 @@ the OpenAPI document. Do not change the manifest name served by an already
 resolved source URL; the source is pinned to its first admitted identity.
 
 Cassette requests receive `X-Tapes-Cassette: <name>` and standard forwarded
-headers. The current proxy buffers complete requests and responses. Treat the
-POC surface as JSON request/response APIs; streaming is not currently supported.
+headers.
+
+Request bodies are read whole; response bodies are streamed. A cassette may hold
+a response open for as long as it needs to, and each write reaches the client as
+the cassette makes it rather than when the response ends — so server-sent event
+streams and other long-lived responses work through `/v1/cassettes/<name>`. A
+response that declares a `Content-Length` keeps it and is framed as one sized
+body; anything else is sent chunked.
+
+Two consequences are worth knowing:
+
+- **Ask for an event stream by name.** Send `Accept: text/event-stream` when
+  reading one. Tapes compresses responses by default, and compressing a stream
+  re-buffers it; that header is what tells Tapes to leave the stream alone, and
+  it must come from the client because the decision is made before the cassette
+  has answered.
+- **Backpressure belongs to the client.** A client that reads slowly slows the
+  cassette rather than accumulating in the Tapes process, so a cassette that
+  streams should expect writes to block.
 
 ## MCP tool advertisement
 
@@ -522,4 +539,5 @@ Before handing a cassette to an operator:
 - provision database access outside Tapes and run cassette-owned migrations;
 - test direct health/OpenAPI access, discovery, the cached spec, the aggregate
   spec, and at least one proxied request; and
-- avoid streaming endpoints until the proxy gains streaming support.
+- describe a streaming endpoint with its real media type (`text/event-stream`),
+  and document that its clients must send a matching `Accept` header.

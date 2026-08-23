@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"time"
 
-	"github.com/gofiber/adaptor/v2"
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/papercomputeco/tapes/api/cassetterunner"
@@ -191,15 +192,33 @@ func (s *Server) handleCassetteProxy(c *fiber.Ctx) error {
 // canonical public prefix for the prefix the cassette actually serves. The
 // cassette never learns that /v1/cassettes exists.
 //
-// Bodies are buffered rather than streamed, because the fasthttp adaptor reads
-// a request and writes a response in whole. That is fine for the JSON request
-// and response a cassette API is, and it is the constraint to revisit first if
-// a cassette ever needs to stream.
+// The response is streamed, not buffered: a cassette may hold a response open
+// indefinitely — a server-sent event stream is the reason this matters — and a
+// proxy that waits for the end delivers nothing at all for those. Request
+// bodies are still read whole, which is what a cassette call is: the streaming
+// direction is the answer, not the ask.
 func (s *Server) proxyToCassette(c *fiber.Ctx, instance *cassetterunner.Instance, forwarded string) error {
 	target, err := url.Parse(instance.URL)
 	if err != nil {
 		return cassetteProblem(c, fiber.StatusBadGateway, "bad_target",
 			fmt.Sprintf("cassette %q has an unusable endpoint: %v", instance.Name, err))
+	}
+
+	// The proxy outlives this handler: it is still writing the response body
+	// after the handler returns. So the request it holds is a detached copy,
+	// cancelled by this function's own machinery rather than by the request's
+	// context — a context fasthttp recycles underneath a live stream would
+	// cancel it mid-conversation. The cancel has two triggers: fasthttp closing
+	// the body stream (a finished response, or a disconnect it noticed while
+	// writing), and the connection watch below, which is what notices a client
+	// that left a stream too quiet to fail a write.
+	upstream, cancel := context.WithCancel(context.Background())
+	inbound, err := detachRequest(upstream, c)
+	if err != nil {
+		cancel()
+
+		return cassetteProblem(c, fiber.StatusBadGateway, "bad_request",
+			fmt.Sprintf("could not forward this request to cassette %q: %v", instance.Name, err))
 	}
 
 	proxy := &httputil.ReverseProxy{
@@ -227,7 +246,59 @@ func (s *Server) proxyToCassette(c *fiber.Ctx, instance *cassetterunner.Instance
 		},
 	}
 
-	return adaptor.HTTPHandler(proxy)(c)
+	reader, writer := io.Pipe()
+	relay := newCassetteResponseWriter(writer)
+	go func() {
+		// Order matters on the way out: settle the status first so a proxy that
+		// unwound without writing one cannot leave await blocked, then close the
+		// pipe so fasthttp sees the end of the body. The cancel is last-resort
+		// hygiene here — the proxy is finished with the upstream either way.
+		defer writer.Close()
+		defer relay.finish()
+		defer cancel()
+
+		proxy.ServeHTTP(relay, inbound)
+	}()
+
+	status, header := relay.await()
+	c.Status(status)
+	size := -1
+	for key, values := range header {
+		switch http.CanonicalHeaderKey(key) {
+		// fasthttp frames the body itself from the size handed to
+		// SetBodyStream, so echoing the upstream's framing would either
+		// contradict it or duplicate it.
+		case fiber.HeaderContentLength:
+			if declared, err := strconv.Atoi(values[0]); err == nil && declared >= 0 {
+				size = declared
+			}
+		case fiber.HeaderTransferEncoding:
+		default:
+			for _, value := range values {
+				c.Response().Header.Add(key, value)
+			}
+		}
+	}
+
+	// A cassette that declared its length keeps it, so an ordinary JSON call is
+	// framed exactly as it was before this was a stream. Everything else goes
+	// out chunked, which is the only framing available for a body whose end is
+	// not yet known.
+	c.Context().Response.SetBodyStream(&cassetteBodyStream{PipeReader: reader, cancel: cancel}, size)
+
+	// fasthttp pulls the body: while a stream is idle it is blocked reading the
+	// pipe, where a client hanging up makes no sound — the disconnect would
+	// surface only on the next event, and an abandoned quiet stream would hold
+	// its cassette connection until then. For an event stream the connection
+	// carries no further requests, so it is dedicated to this response and
+	// watched directly; the watch is what cancels the upstream with no event's
+	// help. Ordinary sized responses finish promptly and need neither.
+	if acceptsEventStream(c) {
+		c.Context().SetConnectionClose()
+		go watchClientGone(c.Context().Conn(), cancel)
+	}
+
+	return nil
 }
 
 // cassetteProblem writes a machine-readable error. The code is stable and the
