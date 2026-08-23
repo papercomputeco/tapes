@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 
@@ -36,6 +37,35 @@ type Identity struct {
 	Homepage    string           `json:"homepage,omitempty"`
 	Image       string           `json:"image,omitempty"`
 	Port        int              `json:"port,omitempty"`
+
+	// Audience names the clients that should offer this cassette to a person —
+	// "console", "paperctl", "tapesctl". It is presentation, not authorization:
+	// core routes every installed cassette for anyone who can reach it, and a
+	// client that ignores this field is not bypassing a control. What it buys is
+	// a client not having to carry its own list of which cassettes belong in its
+	// menu, which is the thing that goes stale.
+	//
+	// Omitted means every client, because that is what every manifest written
+	// before this field existed meant. An audience is therefore only worth
+	// declaring to *narrow* the set.
+	//
+	// The values are not a closed set. A cassette must be able to name a client
+	// that shipped after the tapes release it validates against, so this checks
+	// the shape of a name and not its membership — the cost being that a typo
+	// reads as an unknown client rather than an error.
+	Audience []string `json:"audience,omitempty"`
+}
+
+// ServesAudience reports whether a client called name should offer this
+// cassette. The rule that an undeclared audience means everyone lives here so
+// that no caller reimplements it — a client testing len(Audience) itself would
+// hide every cassette that predates the field.
+func (identity Identity) ServesAudience(name string) bool {
+	if len(identity.Audience) == 0 {
+		return true
+	}
+
+	return slices.Contains(identity.Audience, name)
 }
 
 // Depends declares the tapes contract and views read by a cassette.
@@ -185,7 +215,8 @@ func validateMetadataKeys(data []byte) error {
 	if err := checkObjectKeys(root, "", "kind", "cassette", "depends", "api", "tables", "config", "x-source-digest"); err != nil {
 		return err
 	}
-	if err := checkNestedObject(root["cassette"], "cassette", "name", "version", "display_name", "description", "license", "homepage", "image", "port"); err != nil {
+	if err := checkNestedObject(root["cassette"], "cassette",
+		"name", "version", "display_name", "description", "license", "homepage", "image", "port", "audience"); err != nil {
 		return err
 	}
 	if err := checkNestedObject(root["depends"], "depends", "core", "views"); err != nil {
@@ -330,6 +361,14 @@ func canonicalIdentity(identity Identity) map[string]any {
 	if identity.Port != 0 {
 		value["port"] = identity.Port
 	}
+	// Sorted, like every other set-like array here, so that declaring the same
+	// audience in a different order is the same cassette by digest. Absent stays
+	// absent: a manifest written before this field keeps the digest it had.
+	if len(identity.Audience) > 0 {
+		audience := append([]string(nil), identity.Audience...)
+		sort.Strings(audience)
+		value["audience"] = audience
+	}
 
 	return value
 }
@@ -405,6 +444,7 @@ func (m *Manifest) Redact() *Manifest {
 	}
 
 	redacted := *m
+	redacted.Cassette.Audience = append([]string(nil), m.Cassette.Audience...)
 	redacted.Depends.Views = append([]string(nil), m.Depends.Views...)
 	redacted.Tables = append([]Table(nil), m.Tables...)
 	redacted.Config = make([]Setting, len(m.Config))

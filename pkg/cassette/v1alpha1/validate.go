@@ -20,6 +20,7 @@ var (
 	settingKeyPattern      = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`)
 	prefixSegmentPattern   = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 	digestPattern          = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	audiencePattern        = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
 )
 
 // Validate checks the manifest's intrinsic constraints and verifies that its
@@ -72,6 +73,19 @@ func (m *Manifest) Validate(supported []cassette.ContractVersion) error {
 			add(field, fmt.Sprintf("duplicates depends.views[%d]", previous))
 		} else {
 			seenViews[view] = index
+		}
+	}
+
+	seenAudience := make(map[string]int, len(m.Cassette.Audience))
+	for index, client := range m.Cassette.Audience {
+		field := fmt.Sprintf("cassette.audience[%d]", index)
+		if !audiencePattern.MatchString(client) {
+			add(field, "must be a lowercase client name of at most 63 bytes")
+		}
+		if previous, exists := seenAudience[client]; exists {
+			add(field, fmt.Sprintf("duplicates cassette.audience[%d]", previous))
+		} else {
+			seenAudience[client] = index
 		}
 	}
 
