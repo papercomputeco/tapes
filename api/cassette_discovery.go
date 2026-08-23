@@ -27,10 +27,16 @@ type Discovery struct {
 // client boot into a megabyte of mostly-unchanged bytes. The digest is enough
 // to know whether the fetch is worth making.
 type DiscoveryEntry struct {
-	Name           string             `json:"name"`
-	Version        string             `json:"version,omitempty"`
-	DisplayName    string             `json:"display_name,omitempty"`
-	Description    string             `json:"description,omitempty"`
+	Name        string `json:"name"`
+	Version     string `json:"version,omitempty"`
+	DisplayName string `json:"display_name,omitempty"`
+	Description string `json:"description,omitempty"`
+
+	// Audience is the clients that should offer this cassette, empty meaning
+	// all of them. Published because the filtering happens in the client, and a
+	// client cannot filter on a field it never receives.
+	Audience []string `json:"audience"`
+
 	RoutePrefix    string             `json:"route_prefix"`
 	Depends        *DiscoveryDepends  `json:"depends,omitempty"`
 	Tables         []string           `json:"tables"`
@@ -101,6 +107,7 @@ func discoveryEntry(instance *cassetterunner.Instance, status tapesoapi.Status) 
 	entry := DiscoveryEntry{
 		Name:           string(instance.Name),
 		RoutePrefix:    instance.Prefix(),
+		Audience:       []string{},
 		Tables:         []string{},
 		Config:         []DiscoverySetting{},
 		OpenAPIPath:    cassetteSpecPath(instance.Name),
@@ -115,6 +122,9 @@ func discoveryEntry(instance *cassetterunner.Instance, status tapesoapi.Status) 
 	entry.Version = string(manifest.Cassette.Version)
 	entry.DisplayName = manifest.Cassette.DisplayName
 	entry.Description = manifest.Cassette.Description
+	if len(manifest.Cassette.Audience) > 0 {
+		entry.Audience = manifest.Cassette.Audience
+	}
 	entry.Depends = &DiscoveryDepends{
 		Core:  string(manifest.Depends.Core),
 		Views: manifest.Depends.Views,

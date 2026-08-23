@@ -180,7 +180,36 @@ There is not yet a dedicated `tapes cassette validate` command.
 | `cassette.homepage` | no | Absolute `http` or `https` URL. |
 | `cassette.image` | no | Image reference for deployment tooling, without leading or trailing whitespace. If set, `port` is required. Tapes does not pull or run it. |
 | `cassette.port` | no | Listener port from 1 through 65535. If set, `image` is required. |
+| `cassette.audience` | no | Client names that should offer this cassette, each a lowercase name of at most 63 bytes. Omitted means every client. See below. |
 | `x-source-digest` | no | Optional source provenance in `sha256:<64 lowercase hex characters>` form. Tapes checks the shape but does not fetch or verify a source artifact. |
+
+### Audience
+
+`cassette.audience` names the clients that should offer a cassette to a person:
+
+```toml
+[cassette]
+audience = ["console", "paperctl"]
+```
+
+The known client names are `console`, `paperctl`, and `tapesctl`, but the set is
+not closed — a cassette must be able to name a client that shipped after the
+Tapes release it validates against, so Tapes checks the shape of each name and
+not its membership. The cost of that choice is that a misspelled name reads as
+an unknown client rather than an error.
+
+Two things it is not:
+
+- **It is not authorization.** Tapes routes every installed cassette for anyone
+  who can reach it. A client that ignores the field is not bypassing a control,
+  and a cassette that needs a caller kept out must enforce that itself.
+- **It is not a default.** Omitting `audience` means *every* client, because
+  that is what every manifest written before the field existed meant. Declare an
+  audience only to narrow the set.
+
+Discovery publishes the value as `audience` on each entry, empty for a cassette
+that declares none, so a client can filter its own menu without carrying a list
+of which cassettes belong in it.
 
 The name is shared across several namespaces:
 

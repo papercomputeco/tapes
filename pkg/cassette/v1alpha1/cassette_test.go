@@ -146,6 +146,88 @@ var _ = Describe("versioned cassette metadata", func() {
 	})
 })
 
+var _ = Describe("the audience a cassette declares", func() {
+	// withAudience splices an audience into the shared valid manifest, so these
+	// specs differ from the baseline in exactly the field under test.
+	withAudience := func(audience string) []byte {
+		return []byte(`{
+  "kind":"cassette/v1alpha1",
+  "cassette":{"name":"summary","version":"0.3.1","audience":` + audience + `},
+  "depends":{"core":"v1"},
+  "api":{"health":"/ping","openapi":"/openapi"}
+}`)
+	}
+
+	parsed := func(audience string) *v1alpha1.Manifest {
+		manifest, err := v1alpha1.Parse(withAudience(audience))
+		Expect(err).NotTo(HaveOccurred())
+
+		return manifest
+	}
+
+	It("serves every client when it declares none", func() {
+		manifest, err := v1alpha1.Parse([]byte(validMetadata))
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(manifest.Cassette.Audience).To(BeEmpty())
+		for _, client := range []string{"console", "paperctl", "tapesctl", "something-new"} {
+			Expect(manifest.Cassette.ServesAudience(client)).To(BeTrue(),
+				"an undeclared audience has to mean everyone, or every manifest written "+
+					"before the field existed would vanish from every client")
+		}
+	})
+
+	It("serves only the clients it names once it names any", func() {
+		manifest := parsed(`["console","paperctl"]`)
+		Expect(manifest.Validate([]cassette.ContractVersion{"v1"})).To(Succeed())
+
+		Expect(manifest.Cassette.ServesAudience("console")).To(BeTrue())
+		Expect(manifest.Cassette.ServesAudience("paperctl")).To(BeTrue())
+		Expect(manifest.Cassette.ServesAudience("tapesctl")).To(BeFalse())
+	})
+
+	It("accepts a client name no release of tapes has heard of", func() {
+		manifest := parsed(`["some-future-client"]`)
+
+		Expect(manifest.Validate([]cassette.ContractVersion{"v1"})).To(Succeed(),
+			"membership is deliberately open: a cassette must be able to name a client "+
+				"that shipped after the tapes it validates against")
+	})
+
+	It("rejects a malformed or repeated client name", func() {
+		Expect(parsed(`["Console"]`).Validate([]cassette.ContractVersion{"v1"})).
+			To(MatchError(ContainSubstring("cassette.audience[0]")))
+		Expect(parsed(`[""]`).Validate([]cassette.ContractVersion{"v1"})).
+			To(MatchError(ContainSubstring("cassette.audience[0]")))
+		Expect(parsed(`["console","console"]`).Validate([]cassette.ContractVersion{"v1"})).
+			To(MatchError(ContainSubstring("duplicates cassette.audience[0]")))
+	})
+
+	It("gives the same digest however the audience is ordered", func() {
+		forward, err := parsed(`["console","paperctl"]`).Digest()
+		Expect(err).NotTo(HaveOccurred())
+		backward, err := parsed(`["paperctl","console"]`).Digest()
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(forward).To(Equal(backward))
+	})
+
+	It("keeps an undeclared audience out of the canonical form entirely", func() {
+		// This is what makes the field safe to add to a schema already in use:
+		// a manifest that says nothing about audience canonicalizes exactly as
+		// it did before the field existed, so its digest — the identity core and
+		// a registry compare on — does not move underneath it.
+		manifest, err := v1alpha1.Parse([]byte(validMetadata))
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(string(mustCanonical(manifest))).NotTo(ContainSubstring("audience"))
+	})
+
+	It("carries a declared audience into the canonical form", func() {
+		Expect(string(mustCanonical(parsed(`["console"]`)))).To(ContainSubstring(`"audience":["console"]`))
+	})
+})
+
 var _ = Describe("cassette names and prefix metadata", func() {
 	It("derives every database name", func() {
 		name, err := cassette.ParseName("summary")

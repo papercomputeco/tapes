@@ -76,6 +76,32 @@ var _ = Describe("cassette discovery", func() {
 		Expect(entry.OpenAPIPath).To(Equal("/v1/cassettes/summary/openapi.json"))
 		Expect(entry.OpenAPIStatus).To(Equal(tapesoapi.Fresh))
 		Expect(entry.ManifestDigest).To(HavePrefix("sha256:"))
+		Expect(entry.Audience).To(BeEmpty(),
+			"a cassette that declares no audience is offered by every client")
+	})
+
+	// Discovery is where a client learns which cassettes belong in its own menu,
+	// so the audience has to survive the projection. A field that exists on the
+	// manifest but never reaches the wire would leave every client filtering on
+	// nothing and showing everything.
+	It("publishes the audience a cassette declares", func() {
+		narrowed, err := v1alpha1.Parse([]byte(`{
+  "kind": "cassette/v1alpha1",
+  "cassette": {"name": "summary", "version": "0.3.1", "audience": ["console", "paperctl"]},
+  "depends": {"core": "v1"},
+  "api": {}
+}`))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(narrowed.Validate(DefaultContractVersions())).To(Succeed())
+
+		registry = cassetterunner.NewRegistry()
+		one := discoveryInstance("summary")
+		one.Manifest = narrowed
+		Expect(registry.Put(one)).To(Succeed())
+
+		document := buildCassetteDiscovery(registry, "v1", nil)
+
+		Expect(document.Cassettes[0].Audience).To(ConsistOf("console", "paperctl"))
 	})
 
 	It("qualifies tables with the schema a client writes in a query", func() {
