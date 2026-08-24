@@ -10,6 +10,7 @@ import (
 	"compress/gzip"
 	"math/rand"
 
+	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/zstd"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -31,6 +32,15 @@ func zstdCompressed(b []byte) []byte {
 	w, err := zstd.NewWriter(&buf)
 	Expect(err).NotTo(HaveOccurred())
 	_, err = w.Write(b)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(w.Close()).To(Succeed())
+	return buf.Bytes()
+}
+
+func brotliCompressed(b []byte) []byte {
+	var buf bytes.Buffer
+	w := brotli.NewWriter(&buf)
+	_, err := w.Write(b)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(w.Close()).To(Succeed())
 	return buf.Bytes()
@@ -73,6 +83,27 @@ var _ = Describe("DecodeContentEncoding", func() {
 	It("decodes zstd", func() {
 		out, stats := decode(zstdCompressed([]byte(plain)), "zstd")
 		Expect(string(out)).To(Equal(plain))
+		Expect(stats.Truncated).To(BeFalse())
+	})
+
+	It("decodes br", func() {
+		out, stats := decode(brotliCompressed([]byte(plain)), "br")
+		Expect(string(out)).To(Equal(plain))
+		Expect(stats.Truncated).To(BeFalse())
+	})
+
+	It("passes a truncated br body through silently — the reader cannot see the cut", func() {
+		// andybalholm/brotli reports a clean EOF on a stream cut
+		// mid-block, so a truncated br body decodes to a prefix with no
+		// Truncated report. Pinned as observed behavior (contested in the
+		// corpus: contested-br-cut-mid-stream) rather than papered over —
+		// if the library starts reporting the cut, this test and the
+		// corpus case flip to the salvage rule together.
+		body := bytes.Repeat([]byte(plain), 4000)
+		full := brotliCompressed(body)
+		out, stats := decode(full[:len(full)*3/4], "br")
+		Expect(out).NotTo(BeEmpty())
+		Expect(bytes.HasPrefix(body, out)).To(BeTrue())
 		Expect(stats.Truncated).To(BeFalse())
 	})
 
@@ -139,7 +170,7 @@ var _ = Describe("DecodeContentEncoding", func() {
 		// here on its own (its reader consumes the header eagerly) while zstd
 		// returned success with zero bytes, so a body lost in flight was loud
 		// under one coding and silent under the other.
-		for _, enc := range []string{"gzip", "x-gzip", "zstd", "GZIP", " zstd "} {
+		for _, enc := range []string{"gzip", "x-gzip", "zstd", "br", "GZIP", " zstd "} {
 			_, _, err := capture.DecodeContentEncoding(nil, enc)
 			Expect(err).To(HaveOccurred(), "encoding %q", enc)
 			Expect(err.Error()).To(ContainSubstring("empty body"), "encoding %q", enc)
@@ -152,7 +183,7 @@ var _ = Describe("DecodeContentEncoding", func() {
 		// empty-body guard ran first, an unreadable coding would be reported
 		// as an unreadable stream — the two failure classes the corpus keeps
 		// apart, collapsed by argument order.
-		_, _, err := capture.DecodeContentEncoding(nil, "br")
+		_, _, err := capture.DecodeContentEncoding(nil, "deflate")
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("unsupported encoding"))
 		Expect(err.Error()).NotTo(ContainSubstring("empty body"))

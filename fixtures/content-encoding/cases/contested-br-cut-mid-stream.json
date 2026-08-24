@@ -1,0 +1,16 @@
+{
+  "name": "contested-br-cut-mid-stream",
+  "category": "salvage",
+  "description": "A br stream cut at three quarters of its length decodes cleanly to a prefix: the reference decoder cannot see the cut.",
+  "encoding": "br",
+  "body": { "build": { "plaintext": { "repeat_utf8": { "text": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}", "count": 8000 } }, "layers": ["br"], "truncate": { "keep_head_ratio": [3, 4] } } },
+  "expect": { "outcome": "decoded", "decoded": { "nonempty_prefix_of_plaintext": true } },
+  "grounding": "The salvage rule requires the decoder to report the cut, and for br the reference decoder does not: andybalholm/brotli returns a clean EOF on a stream truncated mid-block, so partial output is indistinguishable from a complete body. Recorded as observed rather than promoted to the salvage rule.",
+  "contested": {
+    "question": "A truncated br stream decodes silently to a prefix in the reference implementation — the exact silent-truncation failure the salvage rule exists to make loud for gzip and zstd. Does the Rust consumer's brotli decoder report the cut?",
+    "decision": "Record the reference's observed behavior. br truncation goes unreported until a decoder that can see the cut exists on both sides; the case then flips to outcome salvaged and joins the per-coding salvage rules.",
+    "open": "Rust consumer: report what your brotli decoder does with this input. If it errors or reports truncation, this is a genuine cross-language divergence to resolve in the reference (as contested-empty-body-under-zstd was, PCC-1134).",
+    "suspected_bug": "Upstream limitation, not a policy choice: the Go reader maps input-exhausted-mid-block to io.EOF once any output was produced (only a cut before the first byte of output surfaces as unexpected EOF)."
+  },
+  "notes": "PCC-1276. A cut early enough to produce no output does error (unexpected EOF, nothing produced), which lands in the salvage-refused-when-nothing-produced rule's class; this case pins the mid-stream cut, which does not."
+}

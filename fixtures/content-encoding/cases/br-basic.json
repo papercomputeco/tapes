@@ -1,0 +1,9 @@
+{
+  "name": "br-basic",
+  "category": "supported",
+  "description": "A single br layer decodes back to the plaintext.",
+  "encoding": "br",
+  "body": { "build": { "plaintext": { "utf8": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" }, "layers": ["br"] } },
+  "expect": { "outcome": "decoded", "decoded": { "equals_plaintext": true } },
+  "grounding": "Anthropic's API serves Claude Code responses brotli-compressed (first captured 2026-08-24). Until br had a decoder, the raw-only lane 422'd every such turn and read-time raw recovery failed permanently (PCC-1276) — the same class of gap PCC-1126 was for zstd."
+}

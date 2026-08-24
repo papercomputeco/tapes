@@ -32,6 +32,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -156,10 +157,29 @@ func decodeOneLayer(body []byte, encoding string) ([]byte, DecodeStats, error) {
 		defer zr.Close()
 		return readCapped(zr, "zstd")
 
+	case "br":
+		// br graduated from the unsupported arm when Anthropic's API began
+		// serving Claude Code responses brotli-compressed (first captured
+		// 2026-08-24, PCC-1276). Brotli declares no window size that could
+		// be bounded up front the way zstd's is, so readCapped's output
+		// cap is the whole bomb guard here, exactly as it is for gzip.
+		//
+		// One departure from gzip and zstd, observed rather than chosen:
+		// this reader reports a clean EOF on a stream cut mid-block, so a
+		// truncated br body decodes silently to a prefix instead of
+		// reaching the salvage rule. Pinned as contested-br-cut-mid-stream
+		// in the fixture corpus.
+		if err := refuseEmpty(body, "br"); err != nil {
+			return nil, DecodeStats{}, err
+		}
+		return readCapped(brotli.NewReader(bytes.NewReader(body)), "br")
+
 	default:
-		// deflate and br land here deliberately: no capture path emits
-		// them, and a decoder for an encoding nothing produces is
-		// untested code that only exists to be wrong later.
+		// deflate lands here deliberately: no capture path emits it, and
+		// a decoder for an encoding nothing produces is untested code that
+		// only exists to be wrong later. br sat in this arm on the same
+		// reasoning until Anthropic started emitting it — see the case
+		// above.
 		return nil, DecodeStats{}, fmt.Errorf("unsupported encoding %q", encoding)
 	}
 }

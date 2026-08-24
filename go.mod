@@ -5,6 +5,7 @@ go 1.26.1
 require (
 	charm.land/lipgloss/v2 v2.0.0
 	github.com/BurntSushi/toml v1.6.0
+	github.com/andybalholm/brotli v1.1.1
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0
 	github.com/gofiber/adaptor/v2 v2.2.1
@@ -35,7 +36,6 @@ require (
 require (
 	github.com/Masterminds/semver/v3 v3.4.0 // indirect
 	github.com/alecthomas/chroma/v2 v2.14.0 // indirect
-	github.com/andybalholm/brotli v1.1.1 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
