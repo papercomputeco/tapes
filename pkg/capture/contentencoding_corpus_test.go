@@ -37,6 +37,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/zstd"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -174,6 +175,11 @@ func applyLayer(body []byte, layer string) []byte {
 		w, err := zstd.NewWriter(&buf)
 		Expect(err).NotTo(HaveOccurred())
 		_, err = w.Write(body)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(w.Close()).To(Succeed())
+	case "br":
+		w := brotli.NewWriter(&buf)
+		_, err := w.Write(body)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(w.Close()).To(Succeed())
 	default:
@@ -487,6 +493,9 @@ var _ = Describe("content-encoding corpus", func() {
 			{"zstd", "zstd-basic", func(c encodingCase) bool {
 				return usesCoding(c, "zstd") && len(layersOf(c)) == 1 && c.Expect.Outcome == "decoded"
 			}},
+			{"br", "br-basic", func(c encodingCase) bool {
+				return usesCoding(c, "br") && len(layersOf(c)) == 1 && c.Expect.Outcome == "decoded"
+			}},
 			{"every member of a concatenated gzip stream", "gzip-concatenated-members", func(c encodingCase) bool {
 				return usesCoding(c, "gzip") && membersOf(c) > 1 && c.Expect.Outcome == "decoded" &&
 					c.Expect.Decoded != nil && c.Expect.Decoded.EqualsPlaintext
@@ -511,6 +520,11 @@ var _ = Describe("content-encoding corpus", func() {
 			}},
 			{"salvage of a zstd stream cut mid-stream", "salvage-zstd-cut-mid-stream", func(c encodingCase) bool {
 				return c.Expect.Outcome == "salvaged" && usesCoding(c, "zstd")
+			}},
+			{"a br stream cut mid-stream decoding silently to a prefix", "contested-br-cut-mid-stream", func(c encodingCase) bool {
+				return usesCoding(c, "br") && c.Expect.Outcome == "decoded" &&
+					c.Expect.Decoded != nil && c.Expect.Decoded.NonemptyPrefixOfPlaintext &&
+					len(c.Contested) > 0
 			}},
 			{"salvage refused when the stream produced nothing", "salvage-refused-when-nothing-produced", func(c encodingCase) bool {
 				return c.Category == "salvage" && c.Expect.Outcome == "error" &&
@@ -563,6 +577,10 @@ var _ = Describe("content-encoding corpus", func() {
 				return emptyBody(c) && usesCoding(c, "zstd") &&
 					c.Expect.Outcome == "error" && c.Expect.Error.Class == "undecodable" &&
 					len(c.Contested) > 0
+			}},
+			{"an empty body refused under br", "error-empty-body-under-br", func(c encodingCase) bool {
+				return emptyBody(c) && usesCoding(c, "br") &&
+					c.Expect.Outcome == "error" && c.Expect.Error.Class == "undecodable"
 			}},
 		}
 

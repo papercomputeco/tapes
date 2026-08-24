@@ -1,0 +1,9 @@
+{
+  "name": "error-empty-body-under-br",
+  "category": "error",
+  "description": "An empty body under br is refused, the same answer gzip and zstd give.",
+  "encoding": "br",
+  "body": { "bytes_b64": "" },
+  "expect": { "outcome": "error", "error": { "class": "undecodable", "message_contains": ["empty body"], "detail": "the uniform empty-body rule (PCC-1134), inherited by a coding on the day it becomes supported" } },
+  "grounding": "The empty-body rule exists precisely because it must not depend on which decoder the header named (PCC-1134), so a newly supported coding is pinned under it on arrival rather than left to drift."
+}
