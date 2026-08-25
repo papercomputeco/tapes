@@ -1,0 +1,26 @@
+kind = "cassette/v1alpha1"
+
+[cassette]
+name = "prompt"
+version = "0.1.0"
+display_name = "Prompt"
+description = "Returns the first captured user prompt for a tapes session."
+license = "Apache-2.0"
+homepage = "https://github.com/papercomputeco/prompt-cassette"
+image = "tapes/prompt-cassette:0.1.0"
+port = 9999
+
+[depends]
+core = "v1"
+views = []
+
+[api]
+health = "/ping"
+openapi = "/openapi"
+prefix_path = "api"
+
+[[config]]
+key = "tapes_base_url"
+type = "string"
+default = "http://127.0.0.1:8081"
+description = "Base URL of the tapes core API."
