@@ -2,9 +2,14 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres/gensqlc"
 )
@@ -76,6 +81,12 @@ func (d *Driver) PutRawTurn(ctx context.Context, rec storage.RawTurnRecord) (boo
 		// surfaces as storage.ErrInvalidContent (→ 4xx) rather than a generic
 		// downstream fault (→ 502).
 		return false, fmt.Errorf("insert raw turn: %w", asContentError(err))
+	}
+
+	if source == storage.RawTurnSourceTranscript && rec.HarnessSessionID != "" {
+		if err := upsertTranscriptSession(ctx, qtx, orgID, rec); err != nil {
+			return false, err
+		}
 	}
 
 	if rec.HarnessSessionID != "" {
@@ -184,4 +195,96 @@ func metaOrEmptyObject(meta []byte) []byte {
 		return []byte("{}")
 	}
 	return meta
+}
+
+func upsertTranscriptSession(ctx context.Context, qtx *gensqlc.Queries, orgID pgtype.UUID, rec storage.RawTurnRecord) error {
+	var envelope sessions.IngestEnvelope
+	if len(rec.SessionEnvelope) == 0 {
+		return errors.New("upsert transcript session: missing session envelope")
+	}
+	if err := json.Unmarshal(rec.SessionEnvelope, &envelope); err != nil {
+		return fmt.Errorf("decode transcript session envelope: %w", err)
+	}
+
+	now := time.Now().UTC()
+	startedAt, lastSeenAt := transcriptTimeRange(rec.RawRequest, now)
+	startedTS := pgtype.Timestamptz{Time: startedAt, Valid: true}
+	lastSeenTS := pgtype.Timestamptz{Time: lastSeenAt, Valid: true}
+	parentID, err := resolveParentSessionID(ctx, qtx, &envelope, orgID, lastSeenTS)
+	if err != nil {
+		return fmt.Errorf("resolve transcript parent session: %w", err)
+	}
+	id, err := newAppUUID()
+	if err != nil {
+		return fmt.Errorf("mint transcript session uuid: %w", err)
+	}
+	metadata := []byte(envelope.HarnessMetadata)
+	if len(metadata) == 0 {
+		metadata = []byte("{}")
+	}
+	_, err = qtx.UpsertSessionFromTranscript(ctx, gensqlc.UpsertSessionFromTranscriptParams{
+		ID: id, OrgID: orgID, AuthSubject: envelope.AuthSubject,
+		HarnessID: envelope.HarnessIDOrUnknown(), HarnessSessionID: rec.HarnessSessionID,
+		Name: nullStringValue(envelope.Name), Cwd: nullStringValue(envelope.Cwd),
+		HarnessVersion: nullStringValue(envelope.HarnessVersion), ParentSessionID: parentID,
+		StartedAt: startedTS, LastSeenAt: lastSeenTS, HarnessMetadata: metadata,
+	})
+	if err != nil {
+		return fmt.Errorf("upsert transcript session: %w", err)
+	}
+	return nil
+}
+
+// transcriptTimeRange widens over every valid on-disk timestamp. Invalid and
+// unsupported records remain raw but cannot distort chronology; when no valid
+// timestamp exists, ingest time anchors both ends.
+func transcriptTimeRange(records json.RawMessage, fallback time.Time) (time.Time, time.Time) {
+	var rows []json.RawMessage
+	if json.Unmarshal(records, &rows) != nil {
+		return fallback, fallback
+	}
+	var earliest, latest time.Time
+	include := func(at time.Time) {
+		if at.IsZero() {
+			return
+		}
+		if earliest.IsZero() || at.Before(earliest) {
+			earliest = at
+		}
+		if latest.IsZero() || at.After(latest) {
+			latest = at
+		}
+	}
+	for _, raw := range rows {
+		var row struct {
+			Timestamp json.RawMessage `json:"timestamp"`
+			Payload   json.RawMessage `json:"payload"`
+		}
+		if json.Unmarshal(raw, &row) != nil {
+			continue
+		}
+
+		var timestamp string
+		if json.Unmarshal(row.Timestamp, &timestamp) == nil {
+			at, err := time.Parse(time.RFC3339Nano, timestamp)
+			if err == nil {
+				include(at)
+			}
+		}
+
+		var payload struct {
+			OccurredAtMS json.RawMessage `json:"occurred_at_ms"`
+		}
+		if json.Unmarshal(row.Payload, &payload) != nil {
+			continue
+		}
+		var occurredAtMS int64
+		if json.Unmarshal(payload.OccurredAtMS, &occurredAtMS) == nil && occurredAtMS > 0 {
+			include(time.UnixMilli(occurredAtMS).UTC())
+		}
+	}
+	if earliest.IsZero() {
+		return fallback, fallback
+	}
+	return earliest, latest
 }

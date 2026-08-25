@@ -87,6 +87,11 @@ type SpanSource struct {
 	// cannot carry this: checks share deduped prefix nodes, and a
 	// shared node holds only the last writer's edge.
 	Anchor string
+
+	// TurnIdentity optionally separates a transcript trace's stable user-turn
+	// identity from its assistant-message call identity. Wire calls leave it
+	// empty and retain their existing request-id based IDs.
+	TurnIdentity string
 }
 
 // maxReportedMissing caps the per-report sample lists (parse failures,
@@ -125,6 +130,9 @@ type RederiveReport struct {
 	// Reconcile reports the transcript↔wire fusion when transcript
 	// rows are present in the raw layer.
 	Reconcile *ReconcileStats `json:"reconcile,omitempty"`
+
+	// TranscriptProjection reports fallback coverage and explicit omissions.
+	TranscriptProjection *TranscriptProjectionStats `json:"transcript_projection,omitempty"`
 }
 
 // rawMetaFields is the minimal meta decode the deriver needs: original
@@ -234,6 +242,61 @@ type Deriver struct {
 	turns    []*attachTurn
 	toolUses []*toolUseRef
 	toolSeen map[string]struct{}
+
+	// wireMainCalls is session-scoped and deliberately separate from
+	// Report.CallKinds: transcript fallback calls also report as KindMain, but
+	// only a successfully parsed wire conversation call in the SAME session is
+	// authoritative enough to suppress fallback.
+	wireMainCalls map[SessionKey]int
+
+	// titlePriority makes source precedence explicit. Wire title-generation is
+	// authoritative over transcript metadata; chronology resolves ties within a
+	// source as calls are added in stable timestamp order.
+	titlePriority map[SessionKey]int
+}
+
+// TranscriptTurn is one normalized transcript-backed LLM call. Its chain is
+// constructed from the selected causal transcript path, while this envelope
+// carries the call/thread identities and raw-row provenance that do not belong
+// in content-addressed nodes.
+type TranscriptTurn struct {
+	Chain        []*merkle.Node
+	Session      SessionKey
+	RawTurnID    int64
+	RequestID    string
+	TurnIdentity string
+	CapturedAt   time.Time
+	ThreadID     string
+	Anchor       string
+}
+
+type chainTurn struct {
+	chain        []*merkle.Node
+	session      SessionKey
+	rawTurnID    int64
+	requestID    string
+	turnIdentity string
+	capturedAt   time.Time
+	threadID     string
+	source       string
+	anchor       string
+	wire         bool
+	judgedAction string
+	title        string
+	codexThread  *CodexThreadMeta
+}
+
+const (
+	titlePriorityTranscript = 1
+	titlePriorityWire       = 2
+)
+
+func (dv *Deriver) setSessionTitle(key SessionKey, title string, priority int) {
+	if title == "" || priority < dv.titlePriority[key] {
+		return
+	}
+	dv.set.SessionTitles[key] = title
+	dv.titlePriority[key] = priority
 }
 
 // NewDeriver creates a streaming deriver. Feed turns with AddTurn in
@@ -251,13 +314,31 @@ func NewDeriver(project string) (*Deriver, error) {
 	set.Report.CallKinds = map[string]int{}
 	set.Report.NodeKinds = map[string]int{}
 	return &Deriver{
-		project:   project,
-		providers: providers,
-		byHash:    map[string]*DerivedNode{},
-		set:       set,
-		sessions:  map[SessionKey]struct{}{},
-		toolSeen:  map[string]struct{}{},
+		project:       project,
+		providers:     providers,
+		byHash:        map[string]*DerivedNode{},
+		set:           set,
+		sessions:      map[SessionKey]struct{}{},
+		toolSeen:      map[string]struct{}{},
+		wireMainCalls: map[SessionKey]int{},
+		titlePriority: map[SessionKey]int{},
 	}, nil
+}
+
+// ProbeTurn classifies one raw turn without changing derived output. It is
+// used by transcript preparation's first pass to discover session-local wire
+// main calls before retained wire and transcript calls are chronologically
+// interleaved. The parsed chain is released immediately.
+func (dv *Deriver) ProbeTurn(rec *storage.RawTurnRecord) {
+	if dv == nil || rec == nil || rec.Source == storage.RawTurnSourceTranscript {
+		return
+	}
+	chain, rawOnly, err := rederiveChain(dv.providers, rec, dv.project)
+	if rawOnly || err != nil || len(chain) == 0 || chain[len(chain)-1].Kind != KindMain {
+		return
+	}
+	key := SessionKey{HarnessID: rec.HarnessID, HarnessSessionID: rec.HarnessSessionID}
+	dv.wireMainCalls[key]++
 }
 
 // AddTurn parses, classifies, and chains one raw turn, folding its
@@ -280,40 +361,100 @@ func (dv *Deriver) AddTurn(rec *storage.RawTurnRecord) {
 	dv.set.Report.ParsedTurns++
 
 	kind := chain[len(chain)-1].Kind
-	dv.set.Report.CallKinds[kind]++
-	capturedAt := CapturedAt(rec)
+	var title string
+	if kind == KindTitleGen {
+		var resp llm.ChatResponse
+		if json.Unmarshal(rec.Response, &resp) == nil {
+			title = SessionTitle(kind, &resp)
+		}
+	}
+	var action string
+	if kind == KindCheckStage1 || kind == KindCheckStage2 {
+		// The judged action needs the parsed request; extract it now,
+		// before the request is released.
+		if req, err := dv.providers[rec.Provider].ParseRequest(rec.RawRequest); err == nil {
+			action = judgedAction(req)
+		}
+	}
+	threadID := threadIDFromMeta(rec.Meta)
+	var codexThread *CodexThreadMeta
+	if rec.HarnessID == harnessCodex && threadID != "" {
+		codexThread = codexThreadMetaFromEnvelope(rec.SessionEnvelope)
+	}
+	dv.addChainTurn(chainTurn{
+		chain: chain,
+		session: SessionKey{
+			HarnessID:        rec.HarnessID,
+			HarnessSessionID: rec.HarnessSessionID,
+		},
+		rawTurnID: rec.ID, requestID: rec.RequestID, capturedAt: CapturedAt(rec),
+		threadID: threadID, source: rec.Source,
+		wire:         rec.Source != storage.RawTurnSourceTranscript,
+		judgedAction: action, title: title, codexThread: codexThread,
+	})
+}
 
-	key := SessionKey{HarnessID: rec.HarnessID, HarnessSessionID: rec.HarnessSessionID}
-	if _, ok := dv.sessions[key]; !ok && key.HarnessSessionID != "" {
-		dv.sessions[key] = struct{}{}
-		dv.set.Sessions = append(dv.set.Sessions, key)
+// AddTranscriptTurn folds one normalized transcript call through the same
+// chain seam as AddTurn. RawTurns/ParsedTurns continue to count immutable raw
+// rows rather than synthetic calls; transcript call/node coverage is reported
+// by CallKinds, NodeKinds, and TranscriptProjectionStats.
+func (dv *Deriver) AddTranscriptTurn(turn TranscriptTurn) {
+	if len(turn.Chain) == 0 {
+		return
+	}
+	dv.addChainTurn(chainTurn{
+		chain: turn.Chain, session: turn.Session, rawTurnID: turn.RawTurnID,
+		requestID: turn.RequestID, turnIdentity: turn.TurnIdentity,
+		capturedAt: turn.CapturedAt, threadID: turn.ThreadID,
+		source: storage.RawTurnSourceTranscript, anchor: turn.Anchor,
+	})
+}
+
+// addChainTurn is the single fold seam for parsed wire calls and normalized
+// transcript calls. It owns session coverage, content-hash dedup, New flags,
+// tool registration, attach-turn registration, report counts, and SpanSource
+// creation, so every call reaches Finish through the same state machine.
+func (dv *Deriver) addChainTurn(input chainTurn) {
+	if len(input.chain) == 0 {
+		return
+	}
+	kind := input.chain[len(input.chain)-1].Kind
+	if input.wire && kind == KindMain {
+		dv.wireMainCalls[input.session]++
+	}
+	dv.set.Report.CallKinds[kind]++
+
+	if _, ok := dv.sessions[input.session]; !ok && input.session.HarnessSessionID != "" {
+		dv.sessions[input.session] = struct{}{}
+		dv.set.Sessions = append(dv.set.Sessions, input.session)
+	}
+	if input.title != "" {
+		dv.setSessionTitle(input.session, input.title, titlePriorityWire)
 	}
 
-	turn := &attachTurn{kind: kind, index: len(dv.turns), threadID: threadIDFromMeta(rec.Meta)}
-	if rec.HarnessID == harnessCodex && turn.threadID != "" {
-		if meta := codexThreadMetaFromEnvelope(rec.SessionEnvelope); meta != nil {
-			if dv.set.CodexThreads == nil {
-				dv.set.CodexThreads = map[SessionKey]map[string]CodexThreadMeta{}
-			}
-			byThread := dv.set.CodexThreads[key]
-			if byThread == nil {
-				byThread = map[string]CodexThreadMeta{}
-				dv.set.CodexThreads[key] = byThread
-			}
-			// first capture wins, matching node dedup semantics
-			if _, ok := byThread[turn.threadID]; !ok {
-				byThread[turn.threadID] = *meta
-			}
+	turn := &attachTurn{
+		kind: kind, index: len(dv.turns), threadID: input.threadID,
+		judgedAction: input.judgedAction,
+	}
+	if input.codexThread != nil {
+		if dv.set.CodexThreads == nil {
+			dv.set.CodexThreads = map[SessionKey]map[string]CodexThreadMeta{}
+		}
+		byThread := dv.set.CodexThreads[input.session]
+		if byThread == nil {
+			byThread = map[string]CodexThreadMeta{}
+			dv.set.CodexThreads[input.session] = byThread
+		}
+		// First capture wins, matching node dedup semantics.
+		if _, ok := byThread[input.threadID]; !ok {
+			byThread[input.threadID] = *input.codexThread
 		}
 	}
 	source := &SpanSource{
-		RawTurnID:  rec.ID,
-		RequestID:  rec.RequestID,
-		CapturedAt: capturedAt,
-		Kind:       kind,
-		ThreadID:   turn.threadID,
-		Session:    key,
-		Source:     rec.Source,
+		RawTurnID: input.rawTurnID, RequestID: input.requestID,
+		CapturedAt: input.capturedAt, Kind: kind, ThreadID: input.threadID,
+		Session: input.session, Source: input.source, Anchor: input.anchor,
+		TurnIdentity: input.turnIdentity,
 	}
 	turn.source = source
 
@@ -331,7 +472,13 @@ func (dv *Deriver) AddTurn(rec *storage.RawTurnRecord) {
 	// Params() per call); clone its System once per call, keyed by pointer
 	// identity, rather than re-cloning the system prompt for every node.
 	var srcParams, clonedParams *llm.RequestParams
-	for _, node := range chain {
+	for _, node := range input.chain {
+		capturedAt := input.capturedAt
+		if !node.CreatedAt.IsZero() {
+			// Transcript normalization carries record-level chronology on each
+			// node; wire TurnChain nodes are zero and inherit the call start.
+			capturedAt = node.CreatedAt
+		}
 		retained, dup := dv.byHash[node.Hash]
 		if !dup {
 			if rp := node.Request; rp != srcParams {
@@ -339,7 +486,7 @@ func (dv *Deriver) AddTurn(rec *storage.RawTurnRecord) {
 			}
 			node.CloneRetained(clonedParams)
 			node.CreatedAt = capturedAt
-			retained = &DerivedNode{Node: node, Session: key, CapturedAt: capturedAt}
+			retained = &DerivedNode{Node: node, Session: input.session, CapturedAt: capturedAt}
 			dv.byHash[node.Hash] = retained
 			dv.set.Nodes = append(dv.set.Nodes, retained)
 			dv.set.Report.NodeKinds[node.Kind]++
@@ -362,30 +509,10 @@ func (dv *Deriver) AddTurn(rec *storage.RawTurnRecord) {
 			}
 			dv.toolSeen[b.ToolUseID] = struct{}{}
 			dv.toolUses = append(dv.toolUses, &toolUseRef{
-				id:       b.ToolUseID,
-				name:     b.ToolName,
-				threadID: turn.threadID,
-				webTool:  b.ToolName == "WebFetch" || b.ToolName == "WebSearch" || b.ToolName == "web_search" || b.ToolName == "web_fetch",
-				atTurn:   turn.index,
-				rendered: renderToolUse(b.ToolName, b.ToolInput),
+				id: b.ToolUseID, name: b.ToolName, threadID: turn.threadID,
+				webTool: b.ToolName == "WebFetch" || b.ToolName == "WebSearch" || b.ToolName == "web_search" || b.ToolName == "web_fetch",
+				atTurn:  turn.index, rendered: renderToolUse(b.ToolName, b.ToolInput),
 			})
-		}
-	}
-
-	if kind == KindTitleGen {
-		var resp llm.ChatResponse
-		if json.Unmarshal(rec.Response, &resp) == nil {
-			if title := SessionTitle(kind, &resp); title != "" {
-				dv.set.SessionTitles[key] = title
-			}
-		}
-	}
-
-	if kind == KindCheckStage1 || kind == KindCheckStage2 {
-		// The judged action needs the parsed request; extract it now,
-		// before the request is released.
-		if req, err := dv.providers[rec.Provider].ParseRequest(rec.RawRequest); err == nil {
-			turn.judgedAction = judgedAction(req)
 		}
 	}
 

@@ -10,6 +10,8 @@
 package derive
 
 import (
+	"time"
+
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/llm/provider/openai"
 	"github.com/papercomputeco/tapes/pkg/merkle"
@@ -43,16 +45,35 @@ type CallContext struct {
 }
 
 func TurnChain(call CallContext, req *llm.ChatRequest, resp *llm.ChatResponse) []*merkle.Node {
+	return turnChain(call, req, resp, chainOptions{
+		kind:             ClassifyCall(req, resp),
+		classifyInjected: true,
+		request:          req.Params(),
+	})
+}
+
+// chainOptions lets transcript normalization reuse the canonical message and
+// response node constructor without pretending a transcript carried a wire
+// request envelope. Transcript records already classify context individually
+// and carry per-record timestamps, so their caller supplies those details and
+// keeps context on its observed causal spine.
+type chainOptions struct {
+	kind             string
+	classifyInjected bool
+	request          *llm.RequestParams
+	messageKinds     []string
+	capturedAt       []time.Time
+}
+
+func turnChain(call CallContext, req *llm.ChatRequest, resp *llm.ChatResponse, opts chainOptions) []*merkle.Node {
 	if req == nil || resp == nil {
 		return nil
 	}
 
-	kind := ClassifyCall(req, resp)
-	params := req.Params()
 	chain := make([]*merkle.Node, 0, len(req.Messages)+1)
 	var parent *merkle.Node
 
-	for _, msg := range req.Messages {
+	for i, msg := range req.Messages {
 		bucket := merkle.Bucket{
 			Type:      "message",
 			Role:      msg.Role,
@@ -63,21 +84,29 @@ func TurnChain(call CallContext, req *llm.ChatRequest, resp *llm.ChatResponse) [
 		}
 		node := merkle.NewNode(bucket, parent, merkle.NodeOptions{
 			Project: call.Project,
-			Request: params,
+			Request: opts.request,
 		})
 		node.ThreadID = call.ThreadID
-		if injectedKind := ClassifyInjected(msg); injectedKind != "" {
-			// Side branch: keep the node, mark it, do NOT advance the
-			// spine. On the conversation spine this stops injected
-			// drift from forking the chain; on shadow calls it stops
-			// a shared context block (every permission check opens
-			// with the same <user_claude_md> blob) from fusing
-			// otherwise-independent calls into one fan.
-			node.Kind = injectedKind
-			chain = append(chain, node)
-			continue
+		if i < len(opts.capturedAt) {
+			node.CreatedAt = opts.capturedAt[i]
 		}
-		node.Kind = kind
+		if opts.classifyInjected {
+			if injectedKind := ClassifyInjected(msg); injectedKind != "" {
+				// Side branch: keep the node, mark it, do NOT advance the
+				// spine. On the conversation spine this stops injected
+				// drift from forking the chain; on shadow calls it stops
+				// a shared context block (every permission check opens
+				// with the same <user_claude_md> blob) from fusing
+				// otherwise-independent calls into one fan.
+				node.Kind = injectedKind
+				chain = append(chain, node)
+				continue
+			}
+		}
+		node.Kind = opts.kind
+		if i < len(opts.messageKinds) && opts.messageKinds[i] != "" {
+			node.Kind = opts.messageKinds[i]
+		}
 		chain = append(chain, node)
 		parent = node
 	}
@@ -108,11 +137,14 @@ func TurnChain(call CallContext, req *llm.ChatRequest, resp *llm.ChatResponse) [
 			StopReason: resp.StopReason,
 			Usage:      resp.Usage,
 			Project:    call.Project,
-			Request:    params,
+			Request:    opts.request,
 		},
 	)
-	responseNode.Kind = kind
+	responseNode.Kind = opts.kind
 	responseNode.ThreadID = call.ThreadID
+	if len(opts.capturedAt) > len(req.Messages) {
+		responseNode.CreatedAt = opts.capturedAt[len(req.Messages)]
+	}
 	chain = append(chain, responseNode)
 	return chain
 }

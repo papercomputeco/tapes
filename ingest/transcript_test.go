@@ -251,7 +251,7 @@ var _ = Describe("POST /v1/ingest/transcript", func() {
 		Expect(rec.Source).To(Equal(storage.RawTurnSourceTranscript))
 		Expect(rec.HarnessID).To(Equal("codex"))
 		Expect(rec.HarnessSessionID).To(Equal(rootSession), "anchors key to the ROOT session, never the child thread")
-		Expect(rec.RequestID).To(HavePrefix("transcript:" + rootSession + ":" + childThread + ":"))
+		Expect(rec.RequestID).To(HavePrefix("transcript:v2:"))
 
 		var meta struct {
 			Transcript  bool   `json:"transcript"`
@@ -333,6 +333,52 @@ var _ = Describe("POST /v1/ingest/transcript", func() {
 		file, err := derive.ParseTranscriptFile(&rec)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(file.Kind).To(Equal("interacted"))
+	})
+
+	It("tags main vs agent identity and scopes dedup by harness and lifecycle", func() {
+		bodyFor := func(harnessID, agentID, kind string) []byte {
+			payload := ingest.TranscriptPayload{
+				Session: &sessions.IngestEnvelope{
+					OrgID: payloadOrg, HarnessID: harnessID, HarnessSessionID: sessionID,
+				},
+				AgentID: agentID,
+				Kind:    kind,
+				Records: mustJSON([]map[string]string{{"type": "user", "uuid": "same"}}),
+			}
+			body, err := json.Marshal(payload)
+			Expect(err).NotTo(HaveOccurred())
+			return body
+		}
+		postAndID := func(body []byte) string {
+			resp := post(body, nil)
+			defer resp.Body.Close()
+			Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
+			return driver.lastRecord().RequestID
+		}
+
+		mainID := postAndID(bodyFor("claude", "", ""))
+		agentNamedMainID := postAndID(bodyFor("claude", "main", ""))
+		otherHarnessID := postAndID(bodyFor("codex", "", ""))
+		interactedID := postAndID(bodyFor("claude", "", "interacted"))
+		Expect(map[string]struct{}{
+			mainID: {}, agentNamedMainID: {}, otherHarnessID: {}, interactedID: {},
+		}).To(HaveLen(4))
+		Expect(agentNamedMainID).NotTo(Equal(mainID))
+		Expect(otherHarnessID).NotTo(Equal(mainID))
+		Expect(interactedID).NotTo(Equal(mainID))
+
+		// Empty and started are the same spawn lifecycle for compatibility
+		// with anchors that predate the explicit started marker.
+		resp := post(bodyFor("claude", "", "started"), nil)
+		defer resp.Body.Close()
+		var ack struct {
+			Deduped bool `json:"deduped"`
+		}
+		Expect(json.NewDecoder(resp.Body).Decode(&ack)).To(Succeed())
+		Expect(ack.Deduped).To(BeTrue())
+		count, err := driver.CountRawTurns(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(count).To(Equal(int64(4)))
 	})
 
 	It("dedups an unchanged re-push even when the asserted org differs", func() {

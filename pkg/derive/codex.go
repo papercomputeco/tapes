@@ -3,6 +3,8 @@ package derive
 import (
 	"encoding/json"
 	"strings"
+
+	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
 // Codex subagent (thread-spawn) reconciliation — PCC-1021.
@@ -40,9 +42,9 @@ import (
 //	  "records":     [ <the verbatim kind:"started" rollout JSONL line, exactly one> ]
 //	}
 //
-// The endpoint mints the raw row verbatim: source='transcript',
-// request_id "transcript:<root sid>:<child thread id>:<sha256(records)[:8]>",
-// meta {transcript:true, agent_id, agent_type, description, tool_use_id,
+// The endpoint mints the raw row verbatim: source='transcript', a v2 request_id
+// hashing harness/session, tagged agent identity, lifecycle, and records content,
+// plus meta {transcript:true, agent_id, agent_type, description, tool_use_id,
 // records:1}. Field semantics:
 //
 //   - session.harness_session_id MUST be the root session id — the id
@@ -235,7 +237,7 @@ func reconcileCodexSpawns(set *DerivedSet, files []*TranscriptFile, stats *Recon
 	}
 	joins := map[SessionKey]*spawnJoin{}
 	for _, src := range set.SpanSources {
-		if src.Session.HarnessID != harnessCodex {
+		if src.Source != storage.RawTurnSourceWire || src.Session.HarnessID != harnessCodex {
 			continue
 		}
 		j := joins[src.Session]
@@ -271,7 +273,7 @@ func reconcileCodexSpawns(set *DerivedSet, files []*TranscriptFile, stats *Recon
 		set.SpawnLabels = map[string]SpawnLabel{}
 	}
 	for _, src := range set.SpanSources {
-		if src.Session.HarnessID != harnessCodex || src.ThreadID == "" {
+		if src.Source != storage.RawTurnSourceWire || src.Session.HarnessID != harnessCodex || src.ThreadID == "" {
 			continue
 		}
 		meta := set.CodexThreads[src.Session][src.ThreadID]

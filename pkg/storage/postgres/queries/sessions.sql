@@ -52,6 +52,33 @@ SET last_seen_at     = sqlc.arg(now),
     parent_session_id = COALESCE(sqlc.narg(parent_session_id), sessions.parent_session_id)
 RETURNING *;
 
+-- name: UpsertSessionFromTranscript :one
+-- Transcript uploads may arrive long after a historical session ran. Merge the
+-- harness identity while widening its observed range from valid on-disk record
+-- timestamps (the caller supplies ingest time when none parse). ended_at is
+-- deliberately untouched: a transcript upload proves observation, not closure.
+INSERT INTO sessions (
+    id, org_id, auth_subject, harness_id, harness_session_id,
+    name, cwd, harness_version, parent_session_id,
+    started_at, last_seen_at, harness_metadata
+) VALUES (
+    sqlc.arg(id), sqlc.arg(org_id), sqlc.arg(auth_subject),
+    sqlc.arg(harness_id), sqlc.arg(harness_session_id),
+    sqlc.narg(name), sqlc.narg(cwd), sqlc.narg(harness_version),
+    sqlc.narg(parent_session_id), sqlc.arg(started_at),
+    sqlc.arg(last_seen_at), sqlc.arg(harness_metadata)
+)
+ON CONFLICT (org_id, harness_id, harness_session_id) DO UPDATE
+SET auth_subject      = COALESCE(NULLIF(EXCLUDED.auth_subject, ''), sessions.auth_subject),
+    started_at        = LEAST(sessions.started_at, EXCLUDED.started_at),
+    last_seen_at      = GREATEST(sessions.last_seen_at, EXCLUDED.last_seen_at),
+    harness_metadata  = sessions.harness_metadata || sqlc.arg(harness_metadata),
+    name              = COALESCE(sqlc.narg(name), sessions.name),
+    cwd               = COALESCE(sqlc.narg(cwd), sessions.cwd),
+    harness_version   = COALESCE(sqlc.narg(harness_version), sessions.harness_version),
+    parent_session_id = COALESCE(sqlc.narg(parent_session_id), sessions.parent_session_id)
+RETURNING *;
+
 -- name: UpsertSessionForAttributionRepair :one
 -- Materialize the corrected session identity and expand its liveness range
 -- from the repaired raw turn. LEAST/GREATEST make retries and out-of-order

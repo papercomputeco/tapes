@@ -92,6 +92,19 @@ func mergeRederiveReport(dst, src *derive.RederiveReport) {
 		dst.Reconcile.ConversationJoined += src.Reconcile.ConversationJoined
 		dst.Reconcile.ConversationTotal += src.Reconcile.ConversationTotal
 	}
+	if src.TranscriptProjection != nil {
+		if dst.TranscriptProjection == nil {
+			dst.TranscriptProjection = &derive.TranscriptProjectionStats{OmittedTypes: map[string]int{}}
+		}
+		dst.TranscriptProjection.Files += src.TranscriptProjection.Files
+		dst.TranscriptProjection.Records += src.TranscriptProjection.Records
+		dst.TranscriptProjection.ProjectedRecords += src.TranscriptProjection.ProjectedRecords
+		dst.TranscriptProjection.OmittedRecords += src.TranscriptProjection.OmittedRecords
+		dst.TranscriptProjection.SuppressedByWire = dst.TranscriptProjection.SuppressedByWire || src.TranscriptProjection.SuppressedByWire
+		for kind, count := range src.TranscriptProjection.OmittedTypes {
+			dst.TranscriptProjection.OmittedTypes[kind] += count
+		}
+	}
 }
 
 func appendBounded(dst, src []string, limit int) []string {
@@ -150,27 +163,9 @@ func (d *Driver) RederiveSession(ctx context.Context, project, orgID, harnessID,
 	}
 	sort.SliceStable(wire, func(i, j int) bool { return wire[i].capturedAt.Before(wire[j].capturedAt) })
 
-	dv, err := derive.NewDeriver(project)
-	if err != nil {
-		return nil, fmt.Errorf("create deriver: %w", err)
-	}
-	for _, entry := range wire {
-		row, err := d.q.GetRawTurn(ctx, entry.id)
-		if err != nil {
-			return nil, fmt.Errorf("fetch raw turn %d: %w", entry.id, err)
-		}
-		rec := rawTurnRecordFromEffectiveRow(row)
-		recoverReduction(ctx, d.reducers, d.logger, &rec)
-		dv.AddTurn(&rec)
-	}
-	set := dv.Finish()
-	requestedKey := derive.SessionKey{HarnessID: harnessID, HarnessSessionID: harnessSessionID}
-	covered := slices.Contains(set.Sessions, requestedKey)
-	if !covered {
-		set.Sessions = append(set.Sessions, requestedKey)
-	}
-
-	// Fuse the causal/fork skeleton from the session's transcript rows.
+	// Load the causal/fork skeleton from the session's transcript rows.
+	// Transcript fallback calls must enter dv before Finish so they share wire's
+	// dedup, attach, and SpanSource fold; reconciliation still runs afterwards.
 	// The rows come out of a map, so sort by raw id first: on no-thread-id
 	// chains the reconciler's overlap tie-break is first-wins, and a
 	// nondeterministic file order would flip which parent_tool_use_id is
@@ -195,7 +190,7 @@ func (d *Driver) RederiveSession(ctx context.Context, project, orgID, harnessID,
 	var transcriptIDs []int64
 	for group, ids := range transcriptGroups {
 		sort.SliceStable(ids, func(i, j int) bool { return ids[i] > ids[j] }) // newest first
-		if group.kind != "" {
+		if !group.spawn {
 			// Explicitly-marked non-spawn lifecycle rows (interacted
 			// re-entries): the newest per (agent, kind) stays visible to
 			// reconciliation, which counts it and keeps it inert.
@@ -234,6 +229,63 @@ func (d *Driver) RederiveSession(ctx context.Context, project, orgID, harnessID,
 			return nil, err
 		}
 		files = append(files, file)
+	}
+	// Probe wire kinds without retaining their O(history) chains. Fallback
+	// suppression must be known before calls are merged, and is session-scoped
+	// even though this storage path normally rebuilds one session at a time.
+	probe, err := derive.NewDeriver(project)
+	if err != nil {
+		return nil, fmt.Errorf("create transcript probe: %w", err)
+	}
+	loadWire := func(entry rawTurnIndexEntry) (storage.RawTurnRecord, error) {
+		row, err := d.q.GetRawTurn(ctx, entry.id)
+		if err != nil {
+			return storage.RawTurnRecord{}, fmt.Errorf("fetch raw turn %d: %w", entry.id, err)
+		}
+		rec := rawTurnRecordFromEffectiveRow(row)
+		recoverReduction(ctx, d.reducers, d.logger, &rec)
+		return rec, nil
+	}
+	if len(files) > 0 {
+		for _, entry := range wire {
+			rec, err := loadWire(entry)
+			if err != nil {
+				return nil, err
+			}
+			probe.ProbeTurn(&rec)
+		}
+	}
+	prepared := derive.PrepareTranscriptFallback(probe, files)
+
+	dv, err := derive.NewDeriver(project)
+	if err != nil {
+		return nil, fmt.Errorf("create deriver: %w", err)
+	}
+	dv.ApplyTranscriptProjection(prepared)
+
+	// Both inputs are already stably sorted. Merge by call/input start so
+	// first-wins node metadata, attach indices, compaction seams, and shadow
+	// placement all observe real chronology. Wire wins exact timestamp ties.
+	wireAt, transcriptAt := 0, 0
+	for wireAt < len(wire) || transcriptAt < len(prepared.Turns) {
+		if transcriptAt < len(prepared.Turns) &&
+			(wireAt == len(wire) || prepared.Turns[transcriptAt].CapturedAt.Before(wire[wireAt].capturedAt)) {
+			dv.AddTranscriptTurn(prepared.Turns[transcriptAt])
+			transcriptAt++
+			continue
+		}
+		rec, err := loadWire(wire[wireAt])
+		if err != nil {
+			return nil, err
+		}
+		dv.AddTurn(&rec)
+		wireAt++
+	}
+	set := dv.Finish()
+	requestedKey := derive.SessionKey{HarnessID: harnessID, HarnessSessionID: harnessSessionID}
+	covered := slices.Contains(set.Sessions, requestedKey)
+	if !covered {
+		set.Sessions = append(set.Sessions, requestedKey)
 	}
 	set.Report.Reconcile = derive.ReconcileTranscripts(set, files)
 
@@ -346,9 +398,12 @@ func (d *Driver) writeDerivedSet(ctx context.Context, orgKey string, set *derive
 // grew) supersede each other, while rows for the same agent with a
 // different lifecycle kind — a started spawn anchor vs. the interacted
 // re-entries that target the same child thread — are different files
-// and must never shadow one another.
+// and must never shadow one another. main is a tag, not an agent-name
+// sentinel, so a legal subagent named "main" remains a separate file.
 type transcriptGroup struct {
+	main  bool
 	agent string
+	spawn bool
 	kind  string
 }
 
@@ -363,12 +418,11 @@ func transcriptGroupOf(meta []byte) transcriptGroup {
 		Kind    string `json:"kind"`
 	}
 	_ = json.Unmarshal(meta, &m)
-	group := transcriptGroup{agent: m.AgentID, kind: m.Kind}
-	if group.agent == "" {
-		group.agent = "main"
-	}
-	if group.kind == "started" {
-		group.kind = ""
+	group := transcriptGroup{main: m.AgentID == "", agent: m.AgentID}
+	if m.Kind == "" || m.Kind == "started" {
+		group.spawn = true
+	} else {
+		group.kind = m.Kind
 	}
 	return group
 }

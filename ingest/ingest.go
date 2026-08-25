@@ -555,13 +555,7 @@ func (s *Server) handleTranscriptIngest(c *fiber.Ctx) error {
 		})
 	}
 
-	agentKey := payload.AgentID
-	if agentKey == "" {
-		agentKey = "main"
-	}
-	sum := sha256.Sum256(payload.Records)
-	requestID := fmt.Sprintf("transcript:%s:%s:%s",
-		payload.Session.HarnessSessionID, agentKey, hex.EncodeToString(sum[:8]))
+	requestID := transcriptRequestID(&payload)
 
 	meta, err := json.Marshal(transcriptMeta{
 		Transcript:  true,
@@ -617,6 +611,44 @@ func (s *Server) handleTranscriptIngest(c *fiber.Ctx) error {
 		Records: len(records),
 		AgentID: payload.AgentID,
 	})
+}
+
+// transcriptRequestID mints the content-version dedup identity. Everything is
+// hashed as one structured value so delimiters and sentinels cannot alias: in
+// particular the main file is distinct from a legal agent_id "main". Empty and
+// "started" are the same legacy spawn lifecycle; other lifecycle kinds version
+// independently. Existing pre-v2 rows may cause one harmless append after an
+// upgrade, after which retries dedupe on the v2 key and latest-version selection
+// collapses the old and new copies.
+func transcriptRequestID(payload *TranscriptPayload) string {
+	recordsHash := sha256.Sum256(payload.Records)
+	identity := struct {
+		Version          int    `json:"version"`
+		HarnessID        string `json:"harness_id"`
+		HarnessSessionID string `json:"harness_session_id"`
+		SpawnLifecycle   bool   `json:"spawn_lifecycle"`
+		LifecycleKind    string `json:"lifecycle_kind,omitempty"`
+		Main             bool   `json:"main"`
+		AgentID          string `json:"agent_id,omitempty"`
+		RecordsHash      string `json:"records_hash"`
+	}{
+		Version: 2, HarnessID: payload.Session.HarnessIDOrUnknown(),
+		HarnessSessionID: payload.Session.HarnessSessionID,
+		Main:             payload.AgentID == "", AgentID: payload.AgentID,
+		RecordsHash: hex.EncodeToString(recordsHash[:]),
+	}
+	if payload.Kind == "" || payload.Kind == "started" {
+		identity.SpawnLifecycle = true
+	} else {
+		identity.LifecycleKind = payload.Kind
+	}
+	data, err := json.Marshal(identity)
+	if err != nil {
+		// json.Marshal cannot fail for this scalar-only struct shape.
+		panic(fmt.Sprintf("encode transcript request identity: %v", err))
+	}
+	sum := sha256.Sum256(data)
+	return "transcript:v2:" + hex.EncodeToString(sum[:])
 }
 
 // resolveGatewayIdentity overrides the envelope's identity fields with

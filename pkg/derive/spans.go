@@ -1,8 +1,12 @@
 package derive
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -11,6 +15,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
 	"github.com/papercomputeco/tapes/pkg/sessions"
+	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
 // Span emit — the derived projection. EmitSpans re-walks the capture
@@ -39,6 +44,8 @@ const (
 const (
 	roleUser           = "user"
 	roleTool           = "tool"
+	roleSystem         = "system"
+	roleAssistant      = "assistant"
 	blockText          = "text"
 	blockToolUse       = "tool_use"
 	blockServerToolUse = "server_tool_use"
@@ -363,6 +370,12 @@ func (em *spanEmitter) threadCalls(pending []*SpanSource) {
 func (em *spanEmitter) mainCall(src *SpanSource) {
 	turn := em.curTrace[src.Session]
 	prompt := freshGenuinePrompt(src)
+	if prompt == nil && src.Source == storage.RawTurnSourceTranscript && src.TurnIdentity != "" {
+		// A chronologically earlier shadow call may share the transcript's root
+		// prompt hash. New must remain the shared dedup result (false), while the
+		// transcript's explicit user-turn identity still opens the real trace.
+		prompt = transcriptGenuinePrompt(src)
+	}
 	if turn == nil || prompt != nil {
 		turn = em.openTrace(src, prompt)
 	}
@@ -385,7 +398,7 @@ func (em *spanEmitter) threadCall(src *SpanSource) {
 			turn = em.ensureTrace(src)
 		}
 		agent = &Span{
-			SpanID:    "agent_" + src.ThreadID,
+			SpanID:    transcriptSpanIdentity(src, "agent", src.ThreadID, "agent_"+src.ThreadID),
 			Kind:      SpanKindAgent,
 			Name:      "subagent",
 			Status:    "ok",
@@ -475,11 +488,11 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 		node := dn.Node
 		if strings.HasPrefix(node.Kind, "injected:") {
 			if i > lastFreshAssistant {
-				em.eventSpan(turn, parent, node.Kind, node.Hash, src.CapturedAt, node.Bucket.Content)
+				em.eventSpan(src, turn, parent, node.Kind, node.Hash, dn.CapturedAt, node.Bucket.Content)
 			}
 			continue
 		}
-		if node.Bucket.Role == "system" {
+		if node.Bucket.Role == roleSystem {
 			// mid-spine system-role inserts (task reminders, CLAUDE.md
 			// re-injections, post-compaction replays) are harness
 			// context, not user input — same family as injected:*,
@@ -489,7 +502,7 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 			// keep meaning "llm calls" for main. Candidate for a real
 			// classifier kind (injected:replay) later.
 			if i > lastFreshAssistant {
-				em.eventSpan(turn, parent, KindInjectedSystemInsert, node.Hash, src.CapturedAt, node.Bucket.Content)
+				em.eventSpan(src, turn, parent, KindInjectedSystemInsert, node.Hash, dn.CapturedAt, node.Bucket.Content)
 			}
 			continue
 		}
@@ -500,13 +513,13 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 			if b.Type != blockToolResult {
 				continue
 			}
-			if ts := em.fillToolResult(src.Session, &b, src.CapturedAt); ts != nil {
+			if ts := em.fillToolResult(src.Session, &b, dn.CapturedAt); ts != nil {
 				feeds = append(feeds, ts)
 			}
 		}
 	}
 
-	span := em.llmSpan(src, parent.SpanID, freshInput(src))
+	span := em.llmSpan(src, parent.SpanID, conversationInput(src))
 	em.addSpan(turn, span)
 	for _, ts := range feeds {
 		em.link(turn, &SpanLink{
@@ -533,6 +546,8 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 			continue
 		}
 		ts := &Span{
+			// Transcript projection namespaces tool ids before this shared
+			// emitter; wire blocks retain their provider-native identity.
 			SpanID:       b.ToolUseID,
 			ParentSpanID: parent.SpanID,
 			Kind:         SpanKindTool,
@@ -545,6 +560,9 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 		em.addSpan(turn, ts)
 		em.toolSpans[tk] = ts
 		em.toolTurn[tk] = turn
+		// Keep the emitted identity alias for feed-link lookup. It is identical
+		// to tk today, but preserving the alias makes that invariant explicit.
+		em.toolTurn[toolKey(src.Session, ts.SpanID)] = turn
 		em.link(turn, &SpanLink{
 			FromTraceID: turn.TraceID, FromSpanID: span.SpanID, FromIO: "output",
 			ToTraceID: turn.TraceID, ToSpanID: ts.SpanID, ToIO: "input",
@@ -657,8 +675,9 @@ func (em *spanEmitter) fillToolResult(session SessionKey, b *llm.ContentBlock, a
 }
 
 func (em *spanEmitter) openTrace(src *SpanSource, prompt *DerivedNode) *SpanTurn {
+	identity := traceIdentity(src)
 	turn := &SpanTurn{
-		TraceID:   "trc_" + callIdentity(src),
+		TraceID:   "trc_" + identity,
 		Session:   src.Session,
 		Source:    src.Source,
 		StartedAt: src.CapturedAt,
@@ -668,7 +687,7 @@ func (em *spanEmitter) openTrace(src *SpanSource, prompt *DerivedNode) *SpanTurn
 		turn.UserPrompt = promptText(prompt.Node)
 	}
 	root := &Span{
-		SpanID:    "agent_main_" + callIdentity(src),
+		SpanID:    "agent_main_" + identity,
 		Kind:      SpanKindAgent,
 		Name:      "main",
 		Status:    "ok",
@@ -756,9 +775,10 @@ func (em *spanEmitter) llmSpan(src *SpanSource, parentID string, input []llm.Con
 	return span
 }
 
-func (em *spanEmitter) eventSpan(turn *SpanTurn, parent *Span, kind, hash string, at time.Time, content []llm.ContentBlock) {
+func (em *spanEmitter) eventSpan(src *SpanSource, turn *SpanTurn, parent *Span, kind, hash string, at time.Time, content []llm.ContentBlock) {
+	legacyID := "evt_" + hash[:16]
 	em.addSpan(turn, &Span{
-		SpanID:       "evt_" + hash[:16],
+		SpanID:       transcriptSpanIdentity(src, "event", hash, legacyID),
 		ParentSpanID: parent.SpanID,
 		Kind:         SpanKindEvent,
 		Name:         kind,
@@ -917,10 +937,10 @@ func (em *spanEmitter) finish() {
 // main thread. It is the status leaf: the response the session ended on.
 func (em *spanEmitter) terminalMainSpan(key SessionKey) *Span {
 	traces := em.timeline[key]
-	for i := len(traces) - 1; i >= 0; i-- {
-		spans := traces[i].Spans
-		for j := len(spans) - 1; j >= 0; j-- {
-			s := spans[j]
+	for _, v := range slices.Backward(traces) {
+		spans := v.Spans
+		for _, v := range slices.Backward(spans) {
+			s := v
 			if s.Kind == SpanKindLLM && s.CallKind == KindMain && s.ThreadID == "" {
 				return s
 			}
@@ -959,8 +979,8 @@ func (em *spanEmitter) foldModelUsage(fold map[SessionKey]map[string]*ModelUsage
 // ends on tool_use or was interrupted simply previews the last text
 // the spine produced.
 func responsePreview(turn *SpanTurn) string {
-	for i := len(turn.Spans) - 1; i >= 0; i-- {
-		s := turn.Spans[i]
+	for _, v := range slices.Backward(turn.Spans) {
+		s := v
 		if s.Kind != SpanKindLLM || s.CallKind != KindMain || s.ThreadID != "" {
 			continue
 		}
@@ -1003,6 +1023,43 @@ func callIdentity(src *SpanSource) string {
 	return fmt.Sprintf("%s_%d", src.Chain[len(src.Chain)-1].Node.Hash[:16], src.RawTurnID)
 }
 
+func traceIdentity(src *SpanSource) string {
+	if src.TurnIdentity != "" {
+		return src.TurnIdentity
+	}
+	return callIdentity(src)
+}
+
+// transcriptSpanIdentity namespaces transcript-only span identities without
+// moving established wire IDs. Trace identity is already namespaced by the
+// transcript source's call/turn identity; this also protects independently
+// generated agent, tool, and event IDs in org-scoped projection tables.
+func transcriptSpanIdentity(src *SpanSource, domain, local, wireIdentity string) string {
+	if src.Source != storage.RawTurnSourceTranscript {
+		return wireIdentity
+	}
+	identity := struct {
+		Version          int    `json:"version"`
+		HarnessID        string `json:"harness_id"`
+		HarnessSessionID string `json:"harness_session_id"`
+		Domain           string `json:"domain"`
+		Main             bool   `json:"main"`
+		AgentID          string `json:"agent_id,omitempty"`
+		Local            string `json:"local"`
+	}{
+		Version: 1, HarnessID: src.Session.HarnessID,
+		HarnessSessionID: src.Session.HarnessSessionID, Domain: domain,
+		Main: src.ThreadID == "", AgentID: src.ThreadID, Local: local,
+	}
+	data, err := json.Marshal(identity)
+	if err != nil {
+		// json.Marshal cannot fail for this scalar-only struct shape.
+		panic(fmt.Sprintf("encode transcript span identity: %v", err))
+	}
+	sum := sha256.Sum256(data)
+	return "tx" + domain + "_" + hex.EncodeToString(sum[:16])
+}
+
 // lastFreshAssistantIdx is the resume/compaction boundary (#29): the
 // index in src.Chain[:len-1] (the request, response leaf excluded) of
 // the LAST node that both reads as first-captured (src.New) and is an
@@ -1022,7 +1079,7 @@ func callIdentity(src *SpanSource) string {
 func lastFreshAssistantIdx(src *SpanSource) int {
 	last := -1
 	for i := range src.Chain[:len(src.Chain)-1] {
-		if src.New[i] && src.Chain[i].Node.Bucket.Role == "assistant" {
+		if src.New[i] && src.Chain[i].Node.Bucket.Role == roleAssistant {
 			last = i
 		}
 	}
@@ -1105,6 +1162,45 @@ func freshInput(src *SpanSource) []llm.ContentBlock {
 		}
 	}
 	return out
+}
+
+func transcriptGenuinePrompt(src *SpanSource) *DerivedNode {
+	var prompt *DerivedNode
+	for _, dn := range src.Chain[:len(src.Chain)-1] {
+		node := dn.Node
+		if node.Bucket.Role == roleAssistant {
+			prompt = nil
+			continue
+		}
+		if node.Bucket.Role != roleUser || strings.HasPrefix(node.Kind, "injected:") {
+			continue
+		}
+		genuine := true
+		for _, block := range node.Bucket.Content {
+			if block.Type == blockToolResult {
+				genuine = false
+				break
+			}
+		}
+		if genuine {
+			prompt = dn
+		}
+	}
+	return prompt
+}
+
+func conversationInput(src *SpanSource) []llm.ContentBlock {
+	input := freshInput(src)
+	if len(input) > 0 || src.Source != storage.RawTurnSourceTranscript || src.TurnIdentity == "" {
+		return input
+	}
+	prompt := transcriptGenuinePrompt(src)
+	if prompt == nil {
+		return nil
+	}
+	return slices.DeleteFunc(append([]llm.ContentBlock(nil), prompt.Node.Bucket.Content...), func(block llm.ContentBlock) bool {
+		return block.Type == blockToolResult
+	})
 }
 
 // threadAnchor resolves the spawning tool_use a thread forked from. The

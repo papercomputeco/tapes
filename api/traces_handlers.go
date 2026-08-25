@@ -63,13 +63,10 @@ type TraceItem struct {
 	// collapsed turn cards, so summary consumers never need spans.
 	ResponsePreview string `json:"response_preview,omitempty"`
 	Status          string `json:"status"`
-	// Source is the capture origin of the turn's rows ("wire" |
-	// "transcript"), promoted from raw_turns.source. Per-trace, so a
-	// session can mix live wire capture and transcript backfill. Today
-	// every trace is "wire": transcripts only reconcile fork/parent edges
-	// during derivation, they never form a trace on their own. "transcript"
-	// becomes real when a session is reconstructed purely from a transcript
-	// file with no proxy capture (an OSS backfill path).
+	// Source is the projection provenance ("wire" | "transcript"). A
+	// transcript-only session uses fallback until one usable wire call exists;
+	// then its complete projection is wire-derived and transcripts only
+	// reconcile structure. Spans inherit this trace-level provenance.
 	Source     string     `json:"source"`
 	StartedAt  time.Time  `json:"started_at"`
 	EndedAt    *time.Time `json:"ended_at,omitempty"`
