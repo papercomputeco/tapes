@@ -1,0 +1,11 @@
+# Use OpenAI for span embeddings while leaving the rest of the stack unchanged.
+# The shortened 768-dimensional output matches the default embeddinggemma schema,
+# so switching providers does not require replacing the pgvector column.
+services:
+  search:
+    environment:
+      CASSETTE_EMBEDDING_PROVIDER: openai
+      CASSETTE_EMBEDDING_TARGET: https://api.openai.com
+      CASSETTE_EMBEDDING_MODEL: text-embedding-3-large
+      CASSETTE_EMBEDDING_DIMENSIONS: "768"
+      CASSETTE_EMBEDDING_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY before starting the stack}

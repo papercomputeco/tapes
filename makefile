@@ -19,6 +19,27 @@ EXTPROC_IMAGE ?= tapes-extproc:dev
 POSTHOG_API_KEY ?=
 POSTHOG_ENDPOINT ?= https://us.i.posthog.com
 
+OLLAMA ?= docker
+EMBEDDINGS ?= ollama
+ifneq ($(OLLAMA),docker)
+ifneq ($(OLLAMA),host)
+$(error OLLAMA must be "docker" or "host")
+endif
+endif
+ifneq ($(EMBEDDINGS),ollama)
+ifneq ($(EMBEDDINGS),openai)
+$(error EMBEDDINGS must be "ollama" or "openai")
+endif
+endif
+
+COMPOSE_FILES := -f docker-compose.yaml
+ifeq ($(OLLAMA),host)
+COMPOSE_FILES += -f docker-compose.host-ollama.yaml
+endif
+ifeq ($(EMBEDDINGS),openai)
+COMPOSE_FILES += -f docker-compose.openai-embeddings.yaml
+endif
+
 LDFLAGS := -s -w \
 	-X 'github.com/papercomputeco/tapes/pkg/utils.Version=$(VERSION)' \
 	-X 'github.com/papercomputeco/tapes/pkg/utils.Sha=$(COMMIT)' \
@@ -159,8 +180,12 @@ build-push-tapes-images: ## Builds and publishes the multi-arch tapes container 
 			--commit=${COMMIT}
 
 .PHONY: up
-up:
-	docker compose up --build
+up: ## Starts the Compose stack (OLLAMA=host and/or EMBEDDINGS=openai select overrides)
+	docker compose $(COMPOSE_FILES) up --build
+
+.PHONY: down
+down: ## Stops the Compose stack without deleting its volumes
+	docker compose -f docker-compose.yaml down
 
 .PHONY: clean
 clean: ## Removes the "build" directory with built artifacts
