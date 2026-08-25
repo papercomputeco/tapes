@@ -83,9 +83,59 @@ tapesctl sessions list
 Capture commands address the **ingest** port instead. Override its local default
 with `--ingest-url` or `TAPES_INGEST_URL`. See [Agent integrations](./integrations.md).
 
+## Use host Ollama with Docker Compose
+
+On macOS, [Docker Desktop container GPU support is limited to Windows with the
+WSL2 backend](https://docs.docker.com/desktop/features/gpu/), while native
+[Ollama accelerates Apple GPUs through Metal](https://docs.ollama.com/gpu#metal-apple-gpus).
+The repository includes an override that keeps the application stack in Compose
+but sends inference and embedding requests to native Ollama:
+
+If a plain Compose stack is already running, stop it first so its Ollama
+container releases port `11434`:
+
+```bash
+make down
+# Start the Ollama app, or run `ollama serve`, then:
+make up OLLAMA=host
+```
+
+This selects `docker-compose.host-ollama.yaml`; the equivalent direct Compose
+command is:
+
+```bash
+docker compose -f docker-compose.yaml -f docker-compose.host-ollama.yaml up --build
+```
+
+The override also pulls `embeddinggemma` into the host server. Stop this stack
+with `make down`. On Linux, native Ollama must listen on an address containers
+can reach; for example, start it with
+`OLLAMA_HOST=0.0.0.0:11434 ollama serve`. The override maps
+`host.docker.internal` to Docker's host gateway.
+
+To run the containerized Ollama stack instead, continue to use plain
+`docker compose up --build`.
+
 ## OpenAI embeddings
 
-Local PostgreSQL is still required, but Ollama need not be used for embeddings:
+Local PostgreSQL is still required, but Ollama need not be used for embeddings.
+For the Compose stack, export a key and select the OpenAI override:
+
+```bash
+export OPENAI_API_KEY=sk-...
+make up EMBEDDINGS=openai
+```
+
+This uses `text-embedding-3-large` shortened to 768 dimensions, preserving the
+default pgvector schema. Changing models causes a one-time re-embedding pass and
+incurs OpenAI API usage. Combine OpenAI embeddings with host Ollama for the
+proxy and skills cassette when desired:
+
+```bash
+make up OLLAMA=host EMBEDDINGS=openai
+```
+
+Without Compose, configure the server directly:
 
 ```bash
 tapes auth openai

@@ -1,0 +1,45 @@
+# Use this override to run inference through Ollama on the host while keeping the
+# rest of the stack in Compose. This is especially useful with Docker Desktop,
+# where a macOS Ollama container cannot use the host GPU.
+x-host-ollama: &host-ollama
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+services:
+  # Keep the base service available behind an explicit profile, but do not start
+  # it as part of the host-Ollama stack.
+  ollama:
+    profiles: [docker-ollama]
+
+  # This remains a lightweight client container and pulls the embedding model
+  # into the host Ollama server.
+  ollama-pull:
+    <<: *host-ollama
+    environment:
+      OLLAMA_HOST: http://host.docker.internal:11434
+    depends_on: !reset []
+
+  skills:
+    <<: *host-ollama
+    environment:
+      CASSETTE_LLM_BASE_URL: http://host.docker.internal:11434
+
+  search:
+    <<: *host-ollama
+    environment:
+      CASSETTE_EMBEDDING_TARGET: http://host.docker.internal:11434
+
+  tapes:
+    <<: *host-ollama
+    command: >-
+      serve
+      --provider ollama
+      --upstream http://host.docker.internal:11434
+      --postgres postgres://tapes:tapes@postgres:5432/tapes?sslmode=disable
+      --cassettes http://skills:9998/openapi,http://search:9998/openapi,http://export:9998/openapi
+      --cassette-refresh 10s
+      --log-level=debug
+    depends_on:
+      ollama:
+        condition: service_started
+        required: false
