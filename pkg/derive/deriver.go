@@ -278,7 +278,44 @@ func (dv *Deriver) AddTurn(rec *storage.RawTurnRecord) {
 		return
 	}
 	dv.set.Report.ParsedTurns++
+	dv.addChainTurn(rec, chain)
+}
 
+// AddTranscriptTurn folds one synthetic transcript-derived turn into the
+// derived set, reusing the same dedup/chaining bookkeeping as AddTurn so a
+// transcript-only session projects identically to a wire-captured one (with
+// Source == "transcript"). Provenance rides the transcript raw row's id.
+func (dv *Deriver) AddTranscriptTurn(session SessionKey, rawTurnID int64, turn TranscriptTurn) {
+	if len(turn.Chain) == 0 {
+		return
+	}
+	dv.set.Report.RawTurns++
+
+	meta := struct {
+		ThreadID   string `json:"thread_id,omitempty"`
+		CapturedAt string `json:"captured_at,omitempty"`
+	}{ThreadID: turn.ThreadID}
+	if !turn.CapturedAt.IsZero() {
+		meta.CapturedAt = turn.CapturedAt.Format(time.RFC3339Nano)
+	}
+	metaJSON, _ := json.Marshal(meta)
+
+	rec := &storage.RawTurnRecord{
+		ID:               rawTurnID,
+		RequestID:        turn.RequestID,
+		Source:           storage.RawTurnSourceTranscript,
+		HarnessID:        session.HarnessID,
+		HarnessSessionID: session.HarnessSessionID,
+		Meta:             metaJSON,
+	}
+	dv.set.Report.ParsedTurns++
+	dv.addChainTurn(rec, turn.Chain)
+}
+
+// addChainTurn is the shared tail of AddTurn and AddTranscriptTurn: it
+// classifies the already-built chain, folds its nodes into the deduped
+// set, and records the SpanSource the emit stage consumes.
+func (dv *Deriver) addChainTurn(rec *storage.RawTurnRecord, chain []*merkle.Node) {
 	kind := chain[len(chain)-1].Kind
 	dv.set.Report.CallKinds[kind]++
 	capturedAt := CapturedAt(rec)

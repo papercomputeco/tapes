@@ -610,6 +610,26 @@ func (s *Server) handleTranscriptIngest(c *fiber.Ctx) error {
 			Error: fmt.Sprintf("%s: %v", ErrDownstream, err),
 		})
 	}
+
+	// Materialize the session identity so a transcript whose wire capture
+	// never ran still resolves to a sessions row (the transcript-only
+	// backfill path). Runs even when the row deduped: the user's "0 stored,
+	// N deduped" re-sync is exactly what heals a session that is missing
+	// its identity row. Best-effort — the raw row is already durable, and a
+	// re-sync is idempotent, so a failed upsert must not turn an accepted
+	// transcript into a retry loop.
+	if ingester, ok := s.driver.(storage.TranscriptSessionIngester); ok {
+		if _, err := ingester.IngestTranscriptSession(c.Context(), storage.IngestTranscriptSessionRequest{
+			Session: payload.Session,
+		}); err != nil {
+			s.logger.Warn("transcript session identity not created",
+				"harness", payload.Session.HarnessIDOrUnknown(),
+				"session", payload.Session.HarnessSessionID,
+				"error", err,
+			)
+		}
+	}
+
 	s.metrics.ObserveWrite(transcriptWriteProvider, ResultAccepted, bodySize)
 	return c.Status(fiber.StatusAccepted).JSON(transcriptAcceptedResponse{
 		Status:  "accepted",

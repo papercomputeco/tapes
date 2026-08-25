@@ -72,3 +72,40 @@ type IngestTurnResult struct {
 	// natural key).
 	SessionID string
 }
+
+// TranscriptSessionIngester is an optional capability for a Driver: it
+// resolves (or creates) the sessions row for a transcript-only session,
+// carrying the identity fields the transcript envelope supplies. Unlike
+// SessionIngester it consumes no node chain and folds no status — every
+// derived rollup is owned by the derive pass, which is what turns the
+// transcript's records into traces/spans.
+//
+// This exists so a session whose transcripts were synced but whose wire
+// capture never ran still materializes as a session. Only drivers that
+// host the sessions table implement it (Postgres does; in-memory does
+// not). Callers MUST type-assert before invoking it, exactly like
+// SessionIngester.
+type TranscriptSessionIngester interface {
+	// IngestTranscriptSession resolves/UPSERTs the sessions row for the
+	// transcript's natural key (org_id, harness_id, harness_session_id)
+	// with identity fields only. It persists no nodes, no counters, and
+	// no status — those are the deriver's.
+	IngestTranscriptSession(ctx context.Context, req IngestTranscriptSessionRequest) (IngestTranscriptSessionResult, error)
+}
+
+// IngestTranscriptSessionRequest carries the identity a transcript
+// envelope supplies for its session.
+type IngestTranscriptSessionRequest struct {
+	// Session is the transcript's session envelope. Its
+	// HarnessSessionID is required at the ingest boundary, so the
+	// natural key is always concrete.
+	Session *sessions.IngestEnvelope
+}
+
+// IngestTranscriptSessionResult reports what the call resolved.
+type IngestTranscriptSessionResult struct {
+	// SessionID is the resolved/created sessions row id as a 36-char
+	// canonical UUID string. Stable across retries (idempotent on
+	// natural key).
+	SessionID string
+}

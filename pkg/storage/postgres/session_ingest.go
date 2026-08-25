@@ -32,6 +32,10 @@ var nilOrgID = pgtype.UUID{Bytes: [16]byte{}, Valid: true}
 // assertion in proxy/worker would just fall through without flagging.
 var _ storage.SessionIngester = (*Driver)(nil)
 
+// Compile-time guarantee that the Postgres driver also hosts transcript
+// session identity (the transcript-only backfill path).
+var _ storage.TranscriptSessionIngester = (*Driver)(nil)
+
 // IngestTurn implements storage.SessionIngester for the Postgres
 // driver. The session-tracking flow runs in a single transaction:
 // resolve / UPSERT a sessions row (keyed by the envelope's natural key
@@ -133,6 +137,64 @@ func (d *Driver) IngestTurn(ctx context.Context, req storage.IngestTurnRequest) 
 	}
 
 	return storage.IngestTurnResult{
+		SessionID: uuidString(sessionRow.ID),
+	}, nil
+}
+
+// IngestTranscriptSession implements storage.TranscriptSessionIngester
+// for the Postgres driver. It materializes the sessions row for a
+// transcript whose wire capture never ran, carrying identity fields
+// only: no parent FK, no counters, no status — the derive pass owns every
+// rollup. This is the write that lets `tapesctl sync`'d transcripts (or
+// `tapes backfill transcripts`) become browsable sessions.
+//
+// Idempotent on the natural key. On conflict the mutable fields merge
+// with the same UpsertSession semantics IngestTurn uses, so a transcript
+// arriving before or after its session's wire capture converges to one
+// identity row.
+func (d *Driver) IngestTranscriptSession(ctx context.Context, req storage.IngestTranscriptSessionRequest) (storage.IngestTranscriptSessionResult, error) {
+	if d == nil || d.conn == nil {
+		return storage.IngestTranscriptSessionResult{}, errors.New("postgres driver not open")
+	}
+	envelope := req.Session
+	if envelope == nil || envelope.HarnessSessionID == "" {
+		return storage.IngestTranscriptSessionResult{}, errors.New("ingest transcript session: no harness_session_id")
+	}
+
+	orgID, err := orgIDFromEnvelope(envelope)
+	if err != nil {
+		return storage.IngestTranscriptSessionResult{}, fmt.Errorf("decode org_id: %w", err)
+	}
+
+	sessionUUID, err := newAppUUID()
+	if err != nil {
+		return storage.IngestTranscriptSessionResult{}, fmt.Errorf("mint session uuid: %w", err)
+	}
+
+	metadata := []byte(envelope.HarnessMetadata)
+	if len(metadata) == 0 {
+		metadata = []byte("{}")
+	}
+
+	now := time.Now().UTC()
+	sessionRow, err := d.q.UpsertSession(ctx, gensqlc.UpsertSessionParams{
+		ID:               sessionUUID,
+		OrgID:            orgID,
+		AuthSubject:      envelope.AuthSubject,
+		HarnessID:        envelope.HarnessIDOrUnknown(),
+		HarnessSessionID: envelope.HarnessSessionID,
+		Name:             nullStringValue(envelope.Name),
+		Cwd:              nullStringValue(envelope.Cwd),
+		HarnessVersion:   nullStringValue(envelope.HarnessVersion),
+		ParentSessionID:  pgtype.UUID{},
+		Now:              pgtype.Timestamptz{Time: now, Valid: true},
+		HarnessMetadata:  metadata,
+	})
+	if err != nil {
+		return storage.IngestTranscriptSessionResult{}, fmt.Errorf("upsert session: %w", err)
+	}
+
+	return storage.IngestTranscriptSessionResult{
 		SessionID: uuidString(sessionRow.ID),
 	}, nil
 }

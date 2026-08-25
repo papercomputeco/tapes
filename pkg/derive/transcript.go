@@ -37,6 +37,11 @@ type TranscriptFile struct {
 	// that predates the meta field.
 	Kind string
 
+	// Records are the transcript's JSONL records, retained verbatim so
+	// the transcript-only derive path can reconstruct the conversation
+	// as wire-shaped turns. Populated by ParseTranscriptFile.
+	Records []transcriptRecord
+
 	// signatures are the projected-content signatures of every block
 	// in the transcript — the join key against wire-derived nodes.
 	signatures map[string]struct{}
@@ -61,6 +66,7 @@ type transcriptRecord struct {
 	UUID       string `json:"uuid"`
 	ParentUUID string `json:"parentUuid"`
 	Type       string `json:"type"`
+	Timestamp  string `json:"timestamp"`
 	Payload    struct {
 		Type string `json:"type"`
 		Kind string `json:"kind"`
@@ -137,6 +143,7 @@ func ParseTranscriptFile(rec *storage.RawTurnRecord) (*TranscriptFile, error) {
 		Description: m.Description,
 		ToolUseID:   m.ToolUseID,
 		Kind:        m.Kind,
+		Records:     records,
 		signatures:  map[string]struct{}{},
 	}
 	for _, r := range records {

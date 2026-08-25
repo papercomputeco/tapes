@@ -61,6 +61,12 @@ tapesctl sync --ingest-url http://localhost:8082
 `sync` sweeps the last seven days by default; `--since-days 0` sweeps
 everything. Re-pushing is safe — the server deduplicates.
 
+Synced transcripts now backfill the session even when its wire capture never
+ran: the server reconstructs the conversation from the transcript and projects
+it with `source: transcript` (no token/cost figures — the transcript carries the
+conversation, not the provider usage). A transcript whose wire capture did run
+is unchanged: the transcript still only supplies the subagent fork structure.
+
 For a manually managed, fixed-port proxy instead of the just-in-time one:
 
 ```bash

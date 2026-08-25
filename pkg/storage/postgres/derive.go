@@ -150,6 +150,8 @@ func (d *Driver) RederiveSession(ctx context.Context, project, orgID, harnessID,
 	}
 	sort.SliceStable(wire, func(i, j int) bool { return wire[i].capturedAt.Before(wire[j].capturedAt) })
 
+	requestedKey := derive.SessionKey{HarnessID: harnessID, HarnessSessionID: harnessSessionID}
+
 	dv, err := derive.NewDeriver(project)
 	if err != nil {
 		return nil, fmt.Errorf("create deriver: %w", err)
@@ -163,34 +165,32 @@ func (d *Driver) RederiveSession(ctx context.Context, project, orgID, harnessID,
 		recoverReduction(ctx, d.reducers, d.logger, &rec)
 		dv.AddTurn(&rec)
 	}
-	set := dv.Finish()
-	requestedKey := derive.SessionKey{HarnessID: harnessID, HarnessSessionID: harnessSessionID}
-	covered := slices.Contains(set.Sessions, requestedKey)
-	if !covered {
-		set.Sessions = append(set.Sessions, requestedKey)
-	}
 
 	// Fuse the causal/fork skeleton from the session's transcript rows.
 	// The rows come out of a map, so sort by raw id first: on no-thread-id
 	// chains the reconciler's overlap tie-break is first-wins, and a
 	// nondeterministic file order would flip which parent_tool_use_id is
-	// stamped across re-derives.
+	// stamped across re-derives. The same files are the source for the
+	// transcript-only reconstruction below, so they are loaded before
+	// Finish rather than after.
 	parsedFiles := map[int64]*derive.TranscriptFile{}
-	loadFile := func(id int64) (*derive.TranscriptFile, error) {
+	fileReceived := map[int64]time.Time{}
+	loadFile := func(id int64) (*derive.TranscriptFile, time.Time, error) {
 		if file, ok := parsedFiles[id]; ok {
-			return file, nil
+			return file, fileReceived[id], nil
 		}
 		row, err := d.q.GetRawTurn(ctx, id)
 		if err != nil {
-			return nil, fmt.Errorf("fetch transcript row %d: %w", id, err)
+			return nil, time.Time{}, fmt.Errorf("fetch transcript row %d: %w", id, err)
 		}
 		rec := rawTurnRecordFromEffectiveRow(row)
 		file, err := derive.ParseTranscriptFile(&rec)
 		if err != nil {
-			return nil, fmt.Errorf("parse transcript row %d: %w", id, err)
+			return nil, time.Time{}, fmt.Errorf("parse transcript row %d: %w", id, err)
 		}
 		parsedFiles[id] = file
-		return file, nil
+		fileReceived[id] = rec.ReceivedAt
+		return file, rec.ReceivedAt, nil
 	}
 	var transcriptIDs []int64
 	for group, ids := range transcriptGroups {
@@ -212,7 +212,7 @@ func (d *Driver) RederiveSession(ctx context.Context, project, orgID, harnessID,
 		// silently vanishing.
 		keptNonSpawn := false
 		for _, id := range ids {
-			file, err := loadFile(id)
+			file, _, err := loadFile(id)
 			if err != nil {
 				return nil, err
 			}
@@ -227,14 +227,56 @@ func (d *Driver) RederiveSession(ctx context.Context, project, orgID, harnessID,
 		}
 	}
 	sort.SliceStable(transcriptIDs, func(i, j int) bool { return transcriptIDs[i] < transcriptIDs[j] })
+
+	type transcriptSource struct {
+		file       *derive.TranscriptFile
+		rawTurnID  int64
+		receivedAt time.Time
+	}
 	var files []*derive.TranscriptFile
+	var transcriptSources []transcriptSource
 	for _, id := range transcriptIDs {
-		file, err := loadFile(id)
+		file, receivedAt, err := loadFile(id)
 		if err != nil {
 			return nil, err
 		}
 		files = append(files, file)
+		transcriptSources = append(transcriptSources, transcriptSource{
+			file:       file,
+			rawTurnID:  id,
+			receivedAt: receivedAt,
+		})
 	}
+
+	// Transcript-only backfill: with no wire capture there are no nodes
+	// yet, so reconstruct the conversation directly from the transcript
+	// records (Source == "transcript") before Finish. Chronological order
+	// preserves trace boundaries and fork anchoring in the emit stage.
+	if len(wire) == 0 {
+		type turnSource struct {
+			turn      derive.TranscriptTurn
+			rawTurnID int64
+		}
+		var turns []turnSource
+		for _, src := range transcriptSources {
+			for _, t := range derive.TranscriptTurns(src.file, project, src.receivedAt) {
+				turns = append(turns, turnSource{turn: t, rawTurnID: src.rawTurnID})
+			}
+		}
+		sort.SliceStable(turns, func(i, j int) bool {
+			return turns[i].turn.CapturedAt.Before(turns[j].turn.CapturedAt)
+		})
+		for _, ts := range turns {
+			dv.AddTranscriptTurn(requestedKey, ts.rawTurnID, ts.turn)
+		}
+	}
+
+	set := dv.Finish()
+	covered := slices.Contains(set.Sessions, requestedKey)
+	if !covered {
+		set.Sessions = append(set.Sessions, requestedKey)
+	}
+
 	set.Report.Reconcile = derive.ReconcileTranscripts(set, files)
 
 	if err := d.writeDerivedSet(ctx, uuidString(org), set); err != nil {
