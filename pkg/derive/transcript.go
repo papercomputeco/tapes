@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"encoding/json/jsontext"
 	"strings"
+	"time"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/merkle"
@@ -27,6 +28,11 @@ type TranscriptFile struct {
 	Description string
 	ToolUseID   string
 
+	// RawTurnID identifies the selected immutable transcript version. It is
+	// provenance for directly transcript-backed LLM spans only; projected IDs
+	// never depend on it, so appending a grown file does not move existing IDs.
+	RawTurnID int64
+
 	// Kind qualifies Codex sub_agent_activity anchor rows: "" or
 	// "started" is spawn evidence (join input); "interacted" is a
 	// re-entry record (send_message / followup_task) banked for future
@@ -40,6 +46,11 @@ type TranscriptFile struct {
 	// signatures are the projected-content signatures of every block
 	// in the transcript — the join key against wire-derived nodes.
 	signatures map[string]struct{}
+
+	// records retain the decoded transcript for fallback projection. They are
+	// immutable derivation input from the selected raw row and are not exposed.
+	records    []transcriptRecord
+	receivedAt time.Time
 }
 
 // SpawnEvidence reports whether this file may participate in the
@@ -58,16 +69,40 @@ func (f *TranscriptFile) SpawnEvidence() bool {
 // sub_agent_activity anchor records (see subAgentActivityKind);
 // Claude transcript lines never populate them.
 type transcriptRecord struct {
-	UUID       string `json:"uuid"`
-	ParentUUID string `json:"parentUuid"`
-	Type       string `json:"type"`
-	Payload    struct {
+	UUID        string `json:"uuid"`
+	ParentUUID  string `json:"parentUuid"`
+	LeafUUID    string `json:"leafUuid"`
+	Type        string `json:"type"`
+	Timestamp   string `json:"timestamp"`
+	IsSidechain bool   `json:"isSidechain"`
+	IsMeta      bool   `json:"isMeta"`
+
+	// decoded is set only after the entire JSON object decodes. Go's JSON
+	// decoder may populate fields before reporting a later type error; keeping
+	// this explicit bit prevents those partial values from becoming spans.
+	decoded bool
+
+	AITitle     string `json:"aiTitle"`
+	AgentName   string `json:"agentName"`
+	Summary     string `json:"summary"`
+	CustomTitle string `json:"customTitle"`
+
+	Subtype               string          `json:"subtype"`
+	Content               json.RawMessage `json:"content"`
+	HookAdditionalContext json.RawMessage `json:"hookAdditionalContext"`
+	Attachment            json.RawMessage `json:"attachment"`
+
+	Payload struct {
 		Type string `json:"type"`
 		Kind string `json:"kind"`
 	} `json:"payload"`
 	Message struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
+		ID         string          `json:"id"`
+		Role       string          `json:"role"`
+		Model      string          `json:"model"`
+		Content    json.RawMessage `json:"content"`
+		StopReason string          `json:"stop_reason"`
+		Usage      transcriptUsage `json:"usage"`
 	} `json:"message"`
 }
 
@@ -125,9 +160,32 @@ func ParseTranscriptFile(rec *storage.RawTurnRecord) (*TranscriptFile, error) {
 			return nil, err
 		}
 	}
-	var records []transcriptRecord
-	if err := json.Unmarshal(rec.RawRequest, &records); err != nil {
+	var rawRecords []json.RawMessage
+	if err := json.Unmarshal(rec.RawRequest, &rawRecords); err != nil {
 		return nil, err
+	}
+	records := make([]transcriptRecord, 0, len(rawRecords))
+	for _, raw := range rawRecords {
+		// Decode into a temporary and publish it only on complete success. The
+		// standard decoder can otherwise leave a known record half-populated
+		// when a later field has the wrong shape.
+		var decoded transcriptRecord
+		if err := json.Unmarshal(raw, &decoded); err == nil {
+			decoded.decoded = true
+			records = append(records, decoded)
+			continue
+		}
+
+		// Retain only an omission label, never any partially decoded payload.
+		// The verbatim object remains in raw_turns for a future parser.
+		var head struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal(raw, &head)
+		if head.Type == "" {
+			head.Type = "unknown"
+		}
+		records = append(records, transcriptRecord{Type: head.Type})
 	}
 
 	file := &TranscriptFile{
@@ -137,9 +195,15 @@ func ParseTranscriptFile(rec *storage.RawTurnRecord) (*TranscriptFile, error) {
 		Description: m.Description,
 		ToolUseID:   m.ToolUseID,
 		Kind:        m.Kind,
+		RawTurnID:   rec.ID,
 		signatures:  map[string]struct{}{},
+		records:     records,
+		receivedAt:  rec.ReceivedAt,
 	}
 	for _, r := range records {
+		if !r.decoded {
+			continue
+		}
 		// Version-skew guard: an ingest build older than the meta kind
 		// field drops paperd's kind marker, and an interacted row would
 		// then masquerade as spawn evidence. The record content itself

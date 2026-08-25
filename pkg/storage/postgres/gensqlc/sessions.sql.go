@@ -665,3 +665,96 @@ func (q *Queries) UpsertSessionForAttributionRepair(ctx context.Context, arg Ups
 	)
 	return i, err
 }
+
+const upsertSessionFromTranscript = `-- name: UpsertSessionFromTranscript :one
+INSERT INTO sessions (
+    id, org_id, auth_subject, harness_id, harness_session_id,
+    name, cwd, harness_version, parent_session_id,
+    started_at, last_seen_at, harness_metadata
+) VALUES (
+    $1, $2, $3,
+    $4, $5,
+    $6, $7, $8,
+    $9, $10,
+    $11, $12
+)
+ON CONFLICT (org_id, harness_id, harness_session_id) DO UPDATE
+SET auth_subject      = COALESCE(NULLIF(EXCLUDED.auth_subject, ''), sessions.auth_subject),
+    started_at        = LEAST(sessions.started_at, EXCLUDED.started_at),
+    last_seen_at      = GREATEST(sessions.last_seen_at, EXCLUDED.last_seen_at),
+    harness_metadata  = sessions.harness_metadata || $12,
+    name              = COALESCE($6, sessions.name),
+    cwd               = COALESCE($7, sessions.cwd),
+    harness_version   = COALESCE($8, sessions.harness_version),
+    parent_session_id = COALESCE($9, sessions.parent_session_id)
+RETURNING id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns, tasks, kind_counts, display_name
+`
+
+type UpsertSessionFromTranscriptParams struct {
+	ID               pgtype.UUID
+	OrgID            pgtype.UUID
+	AuthSubject      string
+	HarnessID        string
+	HarnessSessionID string
+	Name             pgtype.Text
+	Cwd              pgtype.Text
+	HarnessVersion   pgtype.Text
+	ParentSessionID  pgtype.UUID
+	StartedAt        pgtype.Timestamptz
+	LastSeenAt       pgtype.Timestamptz
+	HarnessMetadata  []byte
+}
+
+// Transcript uploads may arrive long after a historical session ran. Merge the
+// harness identity while widening its observed range from valid on-disk record
+// timestamps (the caller supplies ingest time when none parse). ended_at is
+// deliberately untouched: a transcript upload proves observation, not closure.
+func (q *Queries) UpsertSessionFromTranscript(ctx context.Context, arg UpsertSessionFromTranscriptParams) (Session, error) {
+	row := q.db.QueryRow(ctx, upsertSessionFromTranscript,
+		arg.ID,
+		arg.OrgID,
+		arg.AuthSubject,
+		arg.HarnessID,
+		arg.HarnessSessionID,
+		arg.Name,
+		arg.Cwd,
+		arg.HarnessVersion,
+		arg.ParentSessionID,
+		arg.StartedAt,
+		arg.LastSeenAt,
+		arg.HarnessMetadata,
+	)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.AuthSubject,
+		&i.HarnessID,
+		&i.HarnessSessionID,
+		&i.Name,
+		&i.Cwd,
+		&i.HarnessVersion,
+		&i.ParentSessionID,
+		&i.StartedAt,
+		&i.LastSeenAt,
+		&i.EndedAt,
+		&i.HarnessMetadata,
+		&i.TotalInputTokens,
+		&i.TotalOutputTokens,
+		&i.TotalCostUsd,
+		&i.TurnCount,
+		&i.DerivedStatus,
+		&i.HasGitActivity,
+		&i.ToolResultCount,
+		&i.ToolErrorCount,
+		&i.DerivedTitle,
+		&i.DerivedModel,
+		&i.ModelUsage,
+		&i.TotalTokens,
+		&i.DurationNs,
+		&i.Tasks,
+		&i.KindCounts,
+		&i.DisplayName,
+	)
+	return i, err
+}

@@ -1,5 +1,7 @@
 package derive
 
+import "github.com/papercomputeco/tapes/pkg/storage"
+
 // Reconciliation fuses the two sources of truth: the wire capture is
 // the complete call inventory, the harness transcript is the
 // authoritative causal/fork skeleton. The join key is projected
@@ -44,10 +46,39 @@ type ReconcileStats struct {
 // re-runnable like everything else in the deriver.
 func ReconcileTranscripts(set *DerivedSet, files []*TranscriptFile) *ReconcileStats {
 	stats := &ReconcileStats{TranscriptFiles: len(files)}
-	reconcileTranscriptChains(set, files, stats)
+	subagents := map[string]struct{}{}
+	for _, f := range files {
+		if f.SpawnEvidence() && f.AgentID != "" && f.ToolUseID != "" {
+			subagents[f.ToolUseID] = struct{}{}
+		}
+	}
+	stats.SubagentForks = len(subagents)
+
+	// A transcript fallback already supplied the projected chain; joining it
+	// against the same file would report perfect wire coverage and stamp its own
+	// fork metadata back onto itself. Only sessions with an authoritative wire
+	// main call participate in the transcript↔wire chain join.
+	authoritative := map[SessionKey]struct{}{}
+	fallback := map[SessionKey]struct{}{}
+	for _, src := range set.SpanSources {
+		if src.Kind != KindMain {
+			continue
+		}
+		switch src.Source {
+		case storage.RawTurnSourceWire:
+			authoritative[src.Session] = struct{}{}
+		case storage.RawTurnSourceTranscript:
+			fallback[src.Session] = struct{}{}
+		}
+	}
+	for session := range fallback {
+		delete(authoritative, session)
+	}
+	reconcileTranscriptChains(set, files, authoritative, stats)
+
 	// Codex thread spawns anchor per CALL, not per chain root, and the
 	// agent_path fallback needs no transcript rows at all — so this
-	// stage runs unconditionally (see codex.go).
+	// stage runs unconditionally for wire calls (see codex.go).
 	reconcileCodexSpawns(set, files, stats)
 	return stats
 }
@@ -58,8 +89,8 @@ func ReconcileTranscripts(set *DerivedSet, files []*TranscriptFile) *ReconcileSt
 // shaped exactly like fork evidence, but joining one here would stamp a
 // send_message/followup_task call id as a chain's fork edge (their
 // target can even be the ROOT thread). They are not join candidates.
-func reconcileTranscriptChains(set *DerivedSet, files []*TranscriptFile, stats *ReconcileStats) {
-	if len(files) == 0 || len(set.Nodes) == 0 {
+func reconcileTranscriptChains(set *DerivedSet, files []*TranscriptFile, authoritative map[SessionKey]struct{}, stats *ReconcileStats) {
+	if len(files) == 0 || len(set.Nodes) == 0 || len(authoritative) == 0 {
 		return
 	}
 
@@ -87,6 +118,9 @@ func reconcileTranscriptChains(set *DerivedSet, files []*TranscriptFile, stats *
 	}
 
 	for _, root := range roots {
+		if _, ok := authoritative[root.Session]; !ok {
+			continue
+		}
 		candidates := bySession[root.Session]
 		if len(candidates) == 0 {
 			continue
@@ -174,12 +208,4 @@ func reconcileTranscriptChains(set *DerivedSet, files []*TranscriptFile, stats *
 		}
 		stats.ForkedChains++
 	}
-
-	subagents := map[string]struct{}{}
-	for _, f := range files {
-		if f.SpawnEvidence() && f.AgentID != "" && f.ToolUseID != "" {
-			subagents[f.ToolUseID] = struct{}{}
-		}
-	}
-	stats.SubagentForks = len(subagents)
 }

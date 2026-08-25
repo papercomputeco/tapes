@@ -197,7 +197,7 @@ func responsesToolRoutingEnabled(req *llm.ChatRequest) bool {
 // turns of the same conversation (an MCP server connects, a mode
 // toggles), so TurnChain keeps them off the hashed spine.
 func ClassifyInjected(msg llm.Message) string {
-	if msg.Role != "user" && msg.Role != "system" {
+	if msg.Role != roleUser && msg.Role != roleSystem {
 		return ""
 	}
 	var text strings.Builder
