@@ -1,0 +1,43 @@
+name: tapes-prompt-cassette
+
+services:
+  postgres:
+    image: public.ecr.aws/g4e5l3z3/papercomputeco/postgres:17.7-pgduckdb-1.1.1
+    environment:
+      POSTGRES_DB: tapes
+      POSTGRES_USER: tapes
+      POSTGRES_PASSWORD: tapes
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U tapes -d tapes"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  prompt:
+    build: .
+    environment:
+      CASSETTE_TAPES_BASE_URL: http://tapes:8081
+    ports:
+      - "127.0.0.1:9999:9999"
+
+  tapes:
+    image: public.ecr.aws/g4e5l3z3/papercomputeco/tapes:latest
+    command: >-
+      serve
+      --api-listen 0.0.0.0:8081
+      --ingest-listen 0.0.0.0:8082
+      --postgres postgres://tapes:tapes@postgres:5432/tapes?sslmode=disable
+      --cassettes http://prompt:9999/openapi
+      --cassette-refresh 10s
+      --embed-spans=false
+    ports:
+      - "127.0.0.1:8081:8081"
+      - "127.0.0.1:8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
