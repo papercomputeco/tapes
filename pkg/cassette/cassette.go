@@ -77,4 +77,10 @@ type GrantPlan struct {
 	OwnSchema bool     `json:"own_schema"`
 	Selects   []string `json:"selects,omitempty"`
 	Tables    []string `json:"tables,omitempty"`
+
+	// CoreSelects are the views this cassette publishes for core's read role
+	// to SELECT — the reverse direction of Selects. Declaration only, exactly
+	// like the rest of the plan: the deployment renders and applies the
+	// grant, and tapes never verifies the view exists.
+	CoreSelects []string `json:"core_selects,omitempty"`
 }

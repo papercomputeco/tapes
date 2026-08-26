@@ -24,6 +24,9 @@ type Manifest struct {
 	API          APIAnchors      `json:"api"`
 	Tables       []Table         `json:"tables,omitempty"`
 	Config       []Setting       `json:"config,omitempty"`
+	Publishes    *Publishes      `json:"publishes,omitempty"`
+	Entities     []Entity        `json:"entities,omitempty"`
+	Hooks        *Hooks          `json:"hooks,omitempty"`
 	SourceDigest cassette.Digest `json:"x-source-digest,omitempty"`
 }
 
@@ -72,6 +75,103 @@ func (identity Identity) ServesAudience(name string) bool {
 type Depends struct {
 	Core  cassette.ContractVersion `json:"core"`
 	Views []string                 `json:"views,omitempty"`
+
+	// Published names views other cassettes publish (schema-qualified, e.g.
+	// "notes_v1.attachments") that this cassette reads. It is the consumer
+	// side of the publishes mechanism, for genuinely static, same-license
+	// dependencies — a deployment-configured consumer declares nothing here
+	// and receives its view names as configuration instead. Like depends.views
+	// this is a declaration only: the deployment owns the SELECT grant.
+	Published []string `json:"published,omitempty"`
+}
+
+// Publishes declares what a cassette contributes back to core's read surface:
+// views it maintains for others to join, and filter params it claims on core
+// endpoints. This is the reverse direction of Depends — the mechanism that
+// lets a cassette-owned fact become queryable inside core's own list SQL
+// without core learning the cassette's semantics.
+type Publishes struct {
+	// Views are the schema-qualified views this cassette creates and
+	// maintains. Core admits the declaration without verifying the view
+	// exists or touching grants; provisioning SELECT for core's read role is
+	// deployment-owned, symmetric with depends.views.
+	Views []string `json:"views,omitempty"`
+
+	// Filters are the query params this cassette claims on core surfaces.
+	Filters []FilterClaim `json:"filters,omitempty"`
+}
+
+// FilterClaim claims one query param on one core surface and carries
+// everything core needs to execute the filter generically: which published
+// view to probe, which rows of it satisfy the claim, and how to normalize
+// supplied values before binding them. Core applies exactly this declaration
+// and never cassette-specific grammar or semantics.
+type FilterClaim struct {
+	// Param is the claimed query param name. First claim wins per surface: a
+	// second cassette claiming an already-held param is refused at admission.
+	Param string `json:"param"`
+
+	// Surface names the core endpoint family the param extends ("sessions").
+	Surface string `json:"surface"`
+
+	// View is the published view the filter probes; it must be declared in
+	// publishes.views. The name reaches core's SQL as an identifier, which is
+	// why its grammar is strict and core quotes it when rendering.
+	View string `json:"view"`
+
+	// Match tells core which rows of the view satisfy the claim.
+	Match FilterMatch `json:"match"`
+
+	// Normalize is the ordered list of verbs core applies to each supplied
+	// value before binding it (vocabulary: trim, nfc, casefold). Order is
+	// semantic — the verbs run in declared order — so canonicalization
+	// preserves it rather than sorting.
+	Normalize []string `json:"normalize,omitempty"`
+}
+
+// FilterMatch narrows the published view to the rows that satisfy a claim:
+// rows whose primitive_type equals PrimitiveType and whose ValueColumn equals
+// the normalized filter value, joined on the surface's own id.
+type FilterMatch struct {
+	PrimitiveType string `json:"primitive_type"`
+	ValueColumn   string `json:"value_column"`
+}
+
+// Entity is one entity type a cassette offers for others to reference — the
+// declaration side of the runtime entity registry. Core aggregates admitted
+// declarations with its own core-native set into discovery; consumers learn
+// the vocabulary from that surface rather than compiling in a list.
+type Entity struct {
+	// Type is the entity's stable type token ("skill").
+	Type string `json:"type"`
+
+	// IDKind names the shape of the entity's ids ("uuid", "string").
+	IDKind string `json:"id_kind"`
+
+	// DisplayName is the human-readable singular name.
+	DisplayName string `json:"display_name,omitempty"`
+
+	// Relations are declared links to other entity types. They are metadata
+	// for future aggregation views; nothing consumes them yet.
+	Relations []EntityRelation `json:"relations,omitempty"`
+}
+
+// EntityRelation declares a directed relation from the declaring entity type
+// to another.
+type EntityRelation struct {
+	To   string `json:"to"`
+	Kind string `json:"kind"`
+}
+
+// Hooks are paths on the cassette's own listener that core calls on events
+// the cassette cares about. Delivery is best-effort: a hook that fails is
+// logged and never affects admission, and polling bounds the staleness of
+// anything a missed hook would have refreshed.
+type Hooks struct {
+	// RegistryChanged is POSTed whenever the admitted entity/claim set
+	// changes, so a consumer of discovery can re-crawl immediately instead of
+	// waiting out its polling interval.
+	RegistryChanged string `json:"registry_changed,omitempty"`
 }
 
 // APIAnchors are paths on the running cassette's listener.
@@ -148,6 +248,10 @@ func Parse(data []byte) (*Manifest, error) {
 	return &manifest, nil
 }
 
+// typeKey is hoisted because the JSON key recurs across the schema
+// (settings, entities) and the linter insists on one spelling.
+const typeKey = "type"
+
 func rejectDuplicateMetadataKeys(data []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
@@ -212,14 +316,15 @@ func validateMetadataKeys(data []byte) error {
 	if err := json.Unmarshal(data, &root); err != nil {
 		return fmt.Errorf("decode cassette metadata: %w", err)
 	}
-	if err := checkObjectKeys(root, "", "kind", "cassette", "depends", "api", "tables", "config", "x-source-digest"); err != nil {
+	if err := checkObjectKeys(root, "", "kind", "cassette", "depends", "api", "tables", "config",
+		"publishes", "entities", "hooks", "x-source-digest"); err != nil {
 		return err
 	}
 	if err := checkNestedObject(root["cassette"], "cassette",
 		"name", "version", "display_name", "description", "license", "homepage", "image", "port", "audience"); err != nil {
 		return err
 	}
-	if err := checkNestedObject(root["depends"], "depends", "core", "views"); err != nil {
+	if err := checkNestedObject(root["depends"], "depends", "core", "views", "published"); err != nil {
 		return err
 	}
 	if err := checkNestedObject(root["api"], "api", "health", "openapi", "prefix_path"); err != nil {
@@ -228,9 +333,82 @@ func validateMetadataKeys(data []byte) error {
 	if err := checkArrayObjects(root["tables"], "tables", []string{"name"}); err != nil {
 		return err
 	}
+	if err := checkPublishesKeys(root["publishes"]); err != nil {
+		return err
+	}
+	if err := checkEntitiesKeys(root["entities"]); err != nil {
+		return err
+	}
+	if err := checkNestedObject(root["hooks"], "hooks", "registry_changed"); err != nil {
+		return err
+	}
 	return checkArrayObjects(root["config"], "config", []string{
-		"key", "type", "required", "default", "secret", "description", "enum", "min", "max",
+		"key", typeKey, "required", "default", "secret", "description", "enum", "min", "max",
 	})
+}
+
+// checkPublishesKeys walks the publishes section, whose filters carry a nested
+// match object that the flat checkArrayObjects cannot reach.
+func checkPublishesKeys(raw json.RawMessage) error {
+	if len(raw) == 0 || string(raw) == jsonNull {
+		return nil
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil {
+		return fmt.Errorf("decode cassette metadata publishes object: %w", err)
+	}
+	if err := checkObjectKeys(object, "publishes", "views", "filters"); err != nil {
+		return err
+	}
+	if len(object["filters"]) == 0 || string(object["filters"]) == jsonNull {
+		return nil
+	}
+	var filters []json.RawMessage
+	if err := json.Unmarshal(object["filters"], &filters); err != nil {
+		return fmt.Errorf("decode cassette metadata publishes.filters array: %w", err)
+	}
+	for index, item := range filters {
+		path := fmt.Sprintf("publishes.filters[%d]", index)
+		var filter map[string]json.RawMessage
+		if err := json.Unmarshal(item, &filter); err != nil {
+			return fmt.Errorf("decode cassette metadata %s object: %w", path, err)
+		}
+		if err := checkObjectKeys(filter, path, "param", "surface", "view", "match", "normalize"); err != nil {
+			return err
+		}
+		if err := checkNestedObject(filter["match"], path+".match", "primitive_type", "value_column"); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// checkEntitiesKeys walks the entities array, whose items carry a nested
+// relations array that the flat checkArrayObjects cannot reach.
+func checkEntitiesKeys(raw json.RawMessage) error {
+	if len(raw) == 0 || string(raw) == jsonNull {
+		return nil
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return fmt.Errorf("decode cassette metadata entities array: %w", err)
+	}
+	for index, item := range items {
+		path := fmt.Sprintf("entities[%d]", index)
+		var entity map[string]json.RawMessage
+		if err := json.Unmarshal(item, &entity); err != nil {
+			return fmt.Errorf("decode cassette metadata %s object: %w", path, err)
+		}
+		if err := checkObjectKeys(entity, path, typeKey, "id_kind", "display_name", "relations"); err != nil {
+			return err
+		}
+		if err := checkArrayObjects(entity["relations"], path+".relations", []string{"to", "kind"}); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func checkNestedObject(raw json.RawMessage, path string, allowed ...string) error {
@@ -337,6 +515,19 @@ func (m *Manifest) MarshalCanonical() ([]byte, error) {
 		}
 		root["config"] = canonical
 	}
+	// The dynamic-registration sections are digest-relevant: a claim or entity
+	// change is an identity change, because core and discovery consumers key
+	// their behavior on what these declare. Absent stays absent, so a manifest
+	// written before the sections existed keeps the digest it had.
+	if m.Publishes != nil && (len(m.Publishes.Views) > 0 || len(m.Publishes.Filters) > 0) {
+		root["publishes"] = canonicalPublishes(*m.Publishes)
+	}
+	if len(m.Entities) > 0 {
+		root["entities"] = canonicalEntities(m.Entities)
+	}
+	if m.Hooks != nil && m.Hooks.RegistryChanged != "" {
+		root["hooks"] = map[string]any{"registry_changed": m.Hooks.RegistryChanged}
+	}
 
 	var output bytes.Buffer
 	encoder := json.NewEncoder(&output)
@@ -380,14 +571,86 @@ func canonicalDepends(depends Depends) map[string]any {
 		sort.Strings(views)
 		value["views"] = views
 	}
+	if len(depends.Published) > 0 {
+		published := append([]string(nil), depends.Published...)
+		sort.Strings(published)
+		value["published"] = published
+	}
 
 	return value
 }
 
+func canonicalPublishes(publishes Publishes) map[string]any {
+	value := map[string]any{}
+	if len(publishes.Views) > 0 {
+		views := append([]string(nil), publishes.Views...)
+		sort.Strings(views)
+		value["views"] = views
+	}
+	if len(publishes.Filters) > 0 {
+		filters := append([]FilterClaim(nil), publishes.Filters...)
+		sort.Slice(filters, func(i, j int) bool {
+			if filters[i].Surface != filters[j].Surface {
+				return filters[i].Surface < filters[j].Surface
+			}
+
+			return filters[i].Param < filters[j].Param
+		})
+		canonical := make([]map[string]any, 0, len(filters))
+		for _, filter := range filters {
+			entry := map[string]any{
+				"param":   filter.Param,
+				"surface": filter.Surface,
+				"view":    filter.View,
+				"match": map[string]any{
+					"primitive_type": filter.Match.PrimitiveType,
+					"value_column":   filter.Match.ValueColumn,
+				},
+			}
+			// Normalize verbs run in declared order — sorting them would
+			// change what core executes, so declaration order IS canonical.
+			if len(filter.Normalize) > 0 {
+				entry["normalize"] = append([]string(nil), filter.Normalize...)
+			}
+			canonical = append(canonical, entry)
+		}
+		value["filters"] = canonical
+	}
+
+	return value
+}
+
+func canonicalEntities(entities []Entity) []map[string]any {
+	sorted := append([]Entity(nil), entities...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Type < sorted[j].Type })
+	canonical := make([]map[string]any, 0, len(sorted))
+	for _, entity := range sorted {
+		entry := map[string]any{
+			typeKey:   entity.Type,
+			"id_kind": entity.IDKind,
+		}
+		putString(entry, "display_name", entity.DisplayName)
+		if len(entity.Relations) > 0 {
+			relations := append([]EntityRelation(nil), entity.Relations...)
+			sort.Slice(relations, func(i, j int) bool {
+				if relations[i].To != relations[j].To {
+					return relations[i].To < relations[j].To
+				}
+
+				return relations[i].Kind < relations[j].Kind
+			})
+			entry["relations"] = relations
+		}
+		canonical = append(canonical, entry)
+	}
+
+	return canonical
+}
+
 func canonicalSetting(setting Setting) map[string]any {
 	value := map[string]any{
-		"key":  setting.Key,
-		"type": setting.Type,
+		"key":   setting.Key,
+		typeKey: setting.Type,
 	}
 	if setting.Required {
 		value["required"] = true
@@ -446,7 +709,26 @@ func (m *Manifest) Redact() *Manifest {
 	redacted := *m
 	redacted.Cassette.Audience = append([]string(nil), m.Cassette.Audience...)
 	redacted.Depends.Views = append([]string(nil), m.Depends.Views...)
+	redacted.Depends.Published = append([]string(nil), m.Depends.Published...)
 	redacted.Tables = append([]Table(nil), m.Tables...)
+	if m.Publishes != nil {
+		publishes := Publishes{
+			Views:   append([]string(nil), m.Publishes.Views...),
+			Filters: append([]FilterClaim(nil), m.Publishes.Filters...),
+		}
+		for index := range publishes.Filters {
+			publishes.Filters[index].Normalize = append([]string(nil), m.Publishes.Filters[index].Normalize...)
+		}
+		redacted.Publishes = &publishes
+	}
+	redacted.Entities = append([]Entity(nil), m.Entities...)
+	for index := range redacted.Entities {
+		redacted.Entities[index].Relations = append([]EntityRelation(nil), m.Entities[index].Relations...)
+	}
+	if m.Hooks != nil {
+		hooks := *m.Hooks
+		redacted.Hooks = &hooks
+	}
 	redacted.Config = make([]Setting, len(m.Config))
 	for index, setting := range m.Config {
 		redacted.Config[index] = setting

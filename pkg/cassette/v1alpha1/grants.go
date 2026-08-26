@@ -25,8 +25,18 @@ func (m *Manifest) GrantPlan() cassette.GrantPlan {
 	for _, view := range m.Depends.Views {
 		plan.Selects = append(plan.Selects, contractSchema+"."+view)
 	}
+	// depends.published views are already schema-qualified: they name another
+	// cassette's published schema, not the tapes contract schema.
+	plan.Selects = append(plan.Selects, m.Depends.Published...)
 	for _, table := range m.Tables {
 		plan.Tables = append(plan.Tables, table.Name)
+	}
+	// The views this cassette publishes are the reverse grant: core's read
+	// role needs SELECT on them for claimed filters to execute. Declaration
+	// only, like everything else in the plan — the deployment renders it.
+	if m.Publishes != nil && len(m.Publishes.Views) > 0 {
+		plan.CoreSelects = append([]string(nil), m.Publishes.Views...)
+		sort.Strings(plan.CoreSelects)
 	}
 	sort.Strings(plan.Selects)
 	sort.Strings(plan.Tables)
