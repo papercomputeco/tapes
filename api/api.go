@@ -91,6 +91,11 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 
 	contracts := resolveContractVersions(config.ContractVersions)
 	cassetteClient := cassetterunner.NewHTTPClient()
+	// The parser exists before the runner so admission can consult the route
+	// table: the reserved params for publishes claims derive from the very
+	// parser the routes below register into. Evaluation is lazy — admission
+	// happens on refresh, well after mountV1 has filled the parser in.
+	openapi := NewOpenAPIParser(docs)
 	runner := cassetterunner.NewRunner(cassetterunner.Config{
 		Contracts: contracts,
 		Logger:    log,
@@ -98,8 +103,9 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 		// The aggregate document is versioned with the contract discovery
 		// advertises, so /openapi and /v1/cassettes cannot disagree about
 		// which surface a client is looking at.
-		Version: string(currentContractVersion(contracts)),
-		Client:  cassetteClient,
+		Version:        string(currentContractVersion(contracts)),
+		Client:         cassetteClient,
+		ReservedParams: cassetterunner.ReservedParamsFromParser(openapi, claimableSurfacePaths),
 	})
 	s := &Server{
 		config:         config,
@@ -111,7 +117,7 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 		cassettes:      runner.Registry(),
 		cassetteSpecs:  runner,
 		contracts:      contracts,
-		openapi:        NewOpenAPIParser(docs),
+		openapi:        openapi,
 	}
 
 	// Correlation is the outermost request middleware so every downstream log,
