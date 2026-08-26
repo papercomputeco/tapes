@@ -357,6 +357,109 @@ secret flags, default, and description. Constraints such as `enum`, `min`, and
 `max` remain in the manifest but are not projected into discovery, so deployment
 tooling that needs the full configuration schema should read the manifest.
 
+### Published views and filter claims
+
+A cassette can also contribute *back* to core's read surface. The `publishes`
+section declares views the cassette creates and maintains for others to join,
+and filter query params it claims on core endpoints:
+
+```toml
+[publishes]
+views = ["notes_v1.attachments"]
+
+[[publishes.filters]]
+param = "note"                    # claimed query param
+surface = "sessions"              # core surface it extends (GET /v1/sessions)
+view = "notes_v1.attachments"     # published view the filter probes
+match = { primitive_type = "session", value_column = "value" }
+normalize = ["trim", "nfc", "casefold"]
+```
+
+While the claim is admitted, `GET /v1/sessions?note=x` executes as an SQL
+`EXISTS` probe against the published view inside core's own paginated list
+query: rows whose `primitive_type` is `session`, whose `primitive_id` equals
+the session id (as text), and whose declared `match.value_column` equals the
+supplied value after the declared normalization verbs run in order. Repeating
+the param ANDs the predicates, and params claimed by different cassettes
+compose the same way: every supplied claimed param filters, ANDed. Core
+applies exactly the declared normalization (`trim`,
+`nfc`, `casefold`) and never cassette-specific validation, so a value that
+could never match returns an honest empty page rather than an error.
+
+Rules, checked at admission with no database access:
+
+- View names are strict identifiers: `schema.view`, lowercase snake, at most
+  63 bytes per segment. The `public`, `tapes*`, and `pg_*` schemas are
+  reserved. A claim's `view` must be declared in `publishes.views`.
+- `surface` must be a surface this core accepts claims on (currently
+  `sessions`), and `param` must not collide with a core-owned query param on
+  that surface. The reserved set is derived from core's own route table, so
+  it tracks the actual contract rather than a hand-maintained list.
+- **First claim wins.** A second cassette claiming an already-held param has
+  its whole document refused, exactly like any other admission violation, and
+  a violating refresh keeps the holder's previously admitted claims.
+
+Degradation is contract, not accident:
+
+- **Unclaimed → invisible.** When no admitted cassette claims a param, core
+  ignores it entirely: the response is byte-identical to the same request
+  without the param, indistinguishable from any unknown parameter.
+- **Claimed-but-broken → loud.** When a claim is admitted but the filter
+  cannot be evaluated at query time (view missing, grant revoked), the
+  filtered request fails with a 500. Core never silently returns unfiltered
+  results as if the filter had been applied.
+
+Like `depends.views`, `publishes` is a declaration only: core does not verify
+the view exists and never touches grants. The deployment owns granting core's
+read role SELECT on the published view; the derived grant plan carries those
+views under `core_selects`. The consumer direction also exists in the
+contract: a cassette with a genuinely static, same-license dependency on
+another cassette's published view can declare it under `depends.published`
+(schema-qualified names), which lands in its own `selects`. A consumer that
+must stay decoupled from any particular publisher should take its view names
+as deployment configuration instead.
+
+### Entity advertisement
+
+A cassette that offers entities other cassettes may reference declares them:
+
+```toml
+[[entities]]
+type = "note"
+id_kind = "uuid"
+display_name = "Note"
+# optional declared relations — metadata for future aggregation views:
+# relations = [{ to = "session", kind = "attached_to" }]
+```
+
+Core represents its own primitives (`session`) in the same shape and
+publishes the aggregate — core-native plus every admitted cassette's
+declarations — as the discovery document's `entities` list. The set updates
+as cassettes are admitted and withdrawn, and a re-registration with a changed
+manifest replaces that cassette's declarations. Entity declarations are
+digest-relevant manifest content: changing one changes the manifest digest.
+
+The registry is an advisory catalog, never a write gate. A consumer that
+learns entity types from discovery should accept any shape-valid type whether
+or not it is currently listed, so a just-registered cassette's entities work
+immediately rather than after the next catalog refresh.
+
+### Registry-change hooks
+
+A cassette that consumes discovery can declare a hook endpoint:
+
+```toml
+[hooks]
+registry_changed = "/hooks/registry-changed"
+```
+
+Whenever the admitted entity/claim set changes — a cassette admitted,
+withdrawn, or re-admitted with a changed manifest — core POSTs each admitted
+cassette's declared endpoint on that cassette's own listener, with an empty
+body. Delivery is best-effort: failures are logged and never affect
+admission. Treat the hook as a hint to re-crawl discovery immediately, and
+keep conditional-GET polling as the freshness backstop for missed hooks.
+
 ## OpenAPI admission rules
 
 Before publishing a cassette, Tapes:

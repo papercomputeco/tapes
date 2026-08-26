@@ -18,6 +18,13 @@ type Discovery struct {
 	ContractVersion string                     `json:"contract_version"`
 	Cassettes       []DiscoveryEntry           `json:"cassettes"`
 	Problems        []cassetterunner.Rejection `json:"problems"`
+
+	// Entities is the aggregated entity registry:
+	// core-native declarations plus every admitted cassette's [[entities]].
+	// It updates as cassettes are admitted and withdrawn, and a consumer
+	// keeping a catalog should treat it as advisory — shape-valid entity
+	// types are usable whether or not they are currently listed.
+	Entities []cassetterunner.AdvertisedEntity `json:"entities"`
 }
 
 // DiscoveryEntry describes one served cassette.
@@ -88,6 +95,7 @@ func buildCassetteDiscovery(
 		ContractVersion: contractVersion,
 		Cassettes:       make([]DiscoveryEntry, 0, len(instances)),
 		Problems:        registry.Rejections(),
+		Entities:        registry.Entities(),
 	}
 	for _, instance := range instances {
 		document.Cassettes = append(document.Cassettes, discoveryEntry(instance, status(instance.Name)))

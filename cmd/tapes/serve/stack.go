@@ -161,7 +161,9 @@ func (stack *Stack) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("could not build new api server: %w", err)
 	}
-	apiServer.SetCassetteSources(stack.CassetteSources)
+	// Same contextcheck,nolintlint dance as the ingest server below:
+	// SetSources' hook dispatch owns its bounded context by design.
+	apiServer.SetCassetteSources(stack.CassetteSources) //nolint:contextcheck,nolintlint
 
 	stack.Logger.Info("starting api server", "api_addr", stack.APIListen)
 
