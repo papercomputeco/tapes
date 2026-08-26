@@ -99,6 +99,15 @@ type SessionListOpts struct {
 	Since       *time.Time
 	Until       *time.Time
 	AuthSubject string
+
+	// ClaimedFilters are the claim-derived published-view filters, one per
+	// claimed param the request supplied (empty when none was). Values
+	// arrive already normalized per each claim's declared profile; every
+	// value of every filter renders one EXISTS predicate against that
+	// filter's own view and value column, all ANDed inside the same
+	// paginating query. Rendering the whole set is the contract: a supplied
+	// claimed param that never reached SQL would be silent unfiltering.
+	ClaimedFilters []PublishedFilter
 }
 
 // SessionSortField is the validated column a sessions-list page is ordered by.
