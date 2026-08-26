@@ -617,3 +617,409 @@ var _ = Describe("Driver.GetSessionRecord preview", func() {
 		Expect(rec.PreviewIsJSON).To(BeTrue())
 	})
 })
+
+var _ = Describe("Driver.ListSessionRecords (published-view filter)", func() {
+	var (
+		driver   storage.Driver
+		pgDriver *postgres.Driver
+		ingester storage.SessionIngester
+		ctx      context.Context
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		var err error
+		driver, err = postgres.NewDriver(ctx, testPostgresDSN)
+		Expect(err).NotTo(HaveOccurred())
+
+		var ok bool
+		pgDriver, ok = driver.(*postgres.Driver)
+		Expect(ok).To(BeTrue())
+		_, err = pgDriver.DB().Exec(ctx, "TRUNCATE TABLE sessions CASCADE")
+		Expect(err).NotTo(HaveOccurred())
+
+		ingester, ok = driver.(storage.SessionIngester)
+		Expect(ok).To(BeTrue(), "postgres driver must satisfy SessionIngester")
+
+		// The fixture published view core's generic mechanism is exercised
+		// against. Its column DDL — (primitive_type text, primitive_id text,
+		// value text) — is textually identical to the publishing cassette's
+		// own view-shape contract pin; the fixture here and that pin are the
+		// two halves of one contract, so a drift in the published shape fails
+		// the cassette repo's pin and keeps this fixture honest. Core tests
+		// deliberately never depend on any real cassette.
+		for _, statement := range []string{
+			`CREATE SCHEMA IF NOT EXISTS testpub`,
+			`CREATE TABLE IF NOT EXISTS testpub.fixture_attachments (
+				primitive_type text NOT NULL,
+				primitive_id   text NOT NULL,
+				value          text NOT NULL
+			)`,
+			`TRUNCATE testpub.fixture_attachments`,
+			`CREATE OR REPLACE VIEW testpub.attachments AS
+				SELECT a.primitive_type, a.primitive_id, a.value
+				FROM testpub.fixture_attachments a`,
+		} {
+			_, err = pgDriver.DB().Exec(ctx, statement)
+			Expect(err).NotTo(HaveOccurred(), statement)
+		}
+	})
+
+	AfterEach(func() {
+		if driver != nil {
+			driver.Close()
+		}
+	})
+
+	seedSession := func(orgID, harnessSessionID, subject string) string {
+		res, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
+			Session: &sessions.IngestEnvelope{
+				OrgID:            orgID,
+				AuthSubject:      subject,
+				HarnessID:        "claude",
+				HarnessSessionID: harnessSessionID,
+			},
+			Nodes: sessionFixture("turn for " + harnessSessionID),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.SessionID).NotTo(BeEmpty())
+		return res.SessionID
+	}
+
+	attach := func(primitiveID, value string) {
+		_, err := pgDriver.DB().Exec(ctx,
+			"INSERT INTO testpub.fixture_attachments (primitive_type, primitive_id, value) VALUES ('session', $1, $2)",
+			primitiveID, value)
+		Expect(err).NotTo(HaveOccurred())
+	}
+
+	filterFor := func(values ...string) *storage.PublishedFilter {
+		view, err := storage.ParsePublishedViewName("testpub.attachments")
+		Expect(err).NotTo(HaveOccurred())
+		column, err := storage.ParsePublishedColumnName("value")
+		Expect(err).NotTo(HaveOccurred())
+		return &storage.PublishedFilter{View: view, TypeValue: "session", Column: column, Values: values}
+	}
+
+	filtersFor := func(values ...string) []storage.PublishedFilter {
+		return []storage.PublishedFilter{*filterFor(values...)}
+	}
+
+	// A second published view whose value lives in a column named tag — the
+	// non-default shape the declared match.value_column exists for.
+	ensureFlavorsView := func() {
+		for _, statement := range []string{
+			`CREATE TABLE IF NOT EXISTS testpub.fixture_flavors (
+				primitive_type text NOT NULL,
+				primitive_id   text NOT NULL,
+				tag            text NOT NULL
+			)`,
+			`TRUNCATE testpub.fixture_flavors`,
+			`CREATE OR REPLACE VIEW testpub.flavors AS
+				SELECT f.primitive_type, f.primitive_id, f.tag
+				FROM testpub.fixture_flavors f`,
+		} {
+			_, err := pgDriver.DB().Exec(ctx, statement)
+			Expect(err).NotTo(HaveOccurred(), statement)
+		}
+	}
+
+	attachFlavor := func(primitiveID, tag string) {
+		_, err := pgDriver.DB().Exec(ctx,
+			"INSERT INTO testpub.fixture_flavors (primitive_type, primitive_id, tag) VALUES ('session', $1, $2)",
+			primitiveID, tag)
+		Expect(err).NotTo(HaveOccurred())
+	}
+
+	flavorFilterFor := func(values ...string) storage.PublishedFilter {
+		view, err := storage.ParsePublishedViewName("testpub.flavors")
+		Expect(err).NotTo(HaveOccurred())
+		column, err := storage.ParsePublishedColumnName("tag")
+		Expect(err).NotTo(HaveOccurred())
+		return storage.PublishedFilter{View: view, TypeValue: "session", Column: column, Values: values}
+	}
+
+	It("filters the paged list through an EXISTS on the published view", func() {
+		orgID := newTestOrgID()
+		tagged1 := seedSession(orgID, "pf-tagged-1", "subject-pf")
+		tagged2 := seedSession(orgID, "pf-tagged-2", "subject-pf")
+		plain := seedSession(orgID, "pf-plain", "subject-pf")
+		attach(tagged1, "alpha")
+		attach(tagged2, "alpha")
+		// An attachment for a different primitive type must never leak into
+		// the session filter even when its id collides.
+		_, err := pgDriver.DB().Exec(ctx,
+			"INSERT INTO testpub.fixture_attachments (primitive_type, primitive_id, value) VALUES ('other_thing', $1, $2)",
+			plain, "alpha")
+		Expect(err).NotTo(HaveOccurred())
+
+		filtered, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{
+			Limit: 10, ClaimedFilters: filtersFor("alpha"),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(idsOf(filtered)).To(ConsistOf(tagged1, tagged2))
+		// The filtered page keeps the default sort contract intact.
+		Expect(filtered[0].LastSeenAt).To(BeTemporally(">=", filtered[1].LastSeenAt))
+		Expect(filtered[0].SortVal).NotTo(BeEmpty())
+
+		all, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{Limit: 10})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(all).To(HaveLen(3), "no filter, no predicate — the mechanism costs nothing unless invoked")
+	})
+
+	It("ANDs repeated values of a claimed param", func() {
+		orgID := newTestOrgID()
+		onlyA := seedSession(orgID, "pf-only-a", "subject-pf")
+		onlyB := seedSession(orgID, "pf-only-b", "subject-pf")
+		both := seedSession(orgID, "pf-both", "subject-pf")
+		attach(onlyA, "alpha")
+		attach(onlyB, "beta")
+		attach(both, "alpha")
+		attach(both, "beta")
+
+		filtered, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{
+			Limit: 10, ClaimedFilters: filtersFor("alpha", "beta"),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(idsOf(filtered)).To(ConsistOf(both),
+			"every returned session must carry all supplied values")
+	})
+
+	It("composes the claimed filter with window, subject, sort, and keyset cursor in one query", func() {
+		orgID := newTestOrgID()
+		now := time.Now().UTC()
+		plantTurn := func(sessionID, traceID string, startedAt time.Time) {
+			_, err := pgDriver.DB().Exec(ctx, `
+				INSERT INTO span_turns_20260615 (org_id, trace_id, session_id, started_at)
+				VALUES ($1::uuid, $2, $3::uuid, $4::timestamptz)`,
+				orgID, traceID, sessionID, startedAt)
+			Expect(err).NotTo(HaveOccurred())
+		}
+		setCost := func(sessionID string, cost float64) {
+			_, err := pgDriver.DB().Exec(ctx,
+				"UPDATE sessions SET total_cost_usd = $1 WHERE id = $2::uuid", cost, sessionID)
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		cheap := seedSession(orgID, "pf-cheap", "subject-pf")
+		attach(cheap, "alpha")
+		plantTurn(cheap, "trc-cheap", now.Add(-time.Hour))
+		setCost(cheap, 0.10)
+
+		pricey := seedSession(orgID, "pf-pricey", "subject-pf")
+		attach(pricey, "alpha")
+		plantTurn(pricey, "trc-pricey", now.Add(-2*time.Hour))
+		setCost(pricey, 0.30)
+
+		otherSubject := seedSession(orgID, "pf-other-subject", "subject-other")
+		attach(otherSubject, "alpha")
+		plantTurn(otherSubject, "trc-other-subject", now.Add(-time.Hour))
+		setCost(otherSubject, 0.20)
+
+		outOfWindow := seedSession(orgID, "pf-out-of-window", "subject-pf")
+		attach(outOfWindow, "alpha")
+		plantTurn(outOfWindow, "trc-out-of-window", now.Add(-48*time.Hour))
+		setCost(outOfWindow, 0.05)
+
+		untagged := seedSession(orgID, "pf-untagged", "subject-pf")
+		plantTurn(untagged, "trc-untagged", now.Add(-time.Hour))
+		setCost(untagged, 0.20)
+
+		since := now.Add(-24 * time.Hour)
+		base := storage.SessionListOpts{
+			Sort:           storage.SortTotalCost,
+			Dir:            storage.SortAsc,
+			Limit:          1,
+			Since:          &since,
+			AuthSubject:    "subject-pf",
+			ClaimedFilters: filtersFor("alpha"),
+		}
+
+		page1, err := pgDriver.ListSessionRecords(ctx, orgID, base)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(idsOf(page1)).To(Equal([]string{cheap}))
+		Expect(page1[0].SortVal).NotTo(BeEmpty())
+
+		next := base
+		next.CursorVal = &page1[0].SortVal
+		next.CursorID = &page1[0].ID
+		page2, err := pgDriver.ListSessionRecords(ctx, orgID, next)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(idsOf(page2)).To(Equal([]string{pricey}),
+			"the keyset must advance under the claimed filter without repeats or drops")
+
+		last := next
+		last.CursorVal = &page2[0].SortVal
+		last.CursorID = &page2[0].ID
+		page3, err := pgDriver.ListSessionRecords(ctx, orgID, last)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(page3).To(BeEmpty(),
+			"only the in-window, subject-matching, filter-matching sessions paginate")
+	})
+
+	It("quotes published view identifiers and binds all values as named args", func() {
+		// The hostile side first: nothing that fails the grammar can even
+		// become a PublishedViewName, so nothing hostile can reach the one
+		// quoting helper.
+		for _, hostile := range []string{
+			`bad"name.view`,
+			`testpub.attach"; DROP TABLE sessions; --`,
+			"unqualified",
+			"Testpub.attachments",
+			"test-pub.attachments",
+			"testpub.attachments.extra",
+			strings.Repeat("a", 64) + ".attachments",
+			"",
+		} {
+			_, err := storage.ParsePublishedViewName(hostile)
+			Expect(err).To(HaveOccurred(), "%q must not parse into an identifier position", hostile)
+		}
+
+		view, err := storage.ParsePublishedViewName("testpub.attachments")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(view.Quoted()).To(Equal(`"testpub"."attachments"`),
+			"the one quoting helper renders both segments double-quoted")
+
+		// The value column is the same kind of remote input reaching the same
+		// identifier position, so it gets the same treatment: nothing that
+		// fails the grammar can even become a PublishedColumnName.
+		for _, hostileColumn := range []string{
+			`value"; DROP TABLE sessions; --`,
+			`va"lue`,
+			"Value",
+			"va lue",
+			"value.extra",
+			strings.Repeat("a", 64),
+			"",
+		} {
+			_, err := storage.ParsePublishedColumnName(hostileColumn)
+			Expect(err).To(HaveOccurred(), "%q must not parse into an identifier position", hostileColumn)
+		}
+		column, err := storage.ParsePublishedColumnName("value")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(column.Quoted()).To(Equal(`"value"`),
+			"the one quoting helper renders the column double-quoted")
+
+		// The value side: SQL metacharacters travel as bound named args, so a
+		// hostile value is an empty result, never an executed statement.
+		orgID := newTestOrgID()
+		tagged := seedSession(orgID, "pf-quoting", "subject-pf")
+		attach(tagged, "alpha")
+		for _, hostileValue := range []string{
+			`x' OR '1'='1`,
+			`alpha"; DROP TABLE sessions; --`,
+			`alpha' UNION SELECT 1,1,1 --`,
+		} {
+			records, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{
+				Limit: 10, ClaimedFilters: filtersFor(hostileValue),
+			})
+			Expect(err).NotTo(HaveOccurred(), "a hostile value binds; it does not error")
+			Expect(records).To(BeEmpty(), "and it matches nothing")
+		}
+		var count int
+		Expect(pgDriver.DB().QueryRow(ctx, "SELECT count(*) FROM sessions").Scan(&count)).To(Succeed())
+		Expect(count).To(Equal(1), "the sessions table survives every hostile value")
+	})
+
+	It("probes the claim-declared value column, never a hardcoded one", func() {
+		ensureFlavorsView()
+		orgID := newTestOrgID()
+		sweet := seedSession(orgID, "pf-col-sweet", "subject-pf")
+		plain := seedSession(orgID, "pf-col-plain", "subject-pf")
+		attachFlavor(sweet, "sweet")
+
+		flavorFilter := flavorFilterFor("sweet")
+		records, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{
+			Limit: 10, ClaimedFilters: []storage.PublishedFilter{flavorFilter},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(idsOf(records)).To(Equal([]string{sweet}),
+			"the declared column must reach the probe; a hardcoded pv.value would error or match nothing")
+
+		matched, err := pgDriver.MatchesPublishedFilter(ctx, &flavorFilter, sweet)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(matched).To(BeTrue(), "the point lookup probes the same declared column")
+		matched, err = pgDriver.MatchesPublishedFilter(ctx, &flavorFilter, plain)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(matched).To(BeFalse())
+	})
+
+	It("ANDs filters from distinct claims inside one paginated query", func() {
+		ensureFlavorsView()
+		orgID := newTestOrgID()
+		both := seedSession(orgID, "pf-and-both", "subject-pf")
+		onlyAttached := seedSession(orgID, "pf-and-attached", "subject-pf")
+		onlyFlavor := seedSession(orgID, "pf-and-flavor", "subject-pf")
+		attach(both, "alpha")
+		attach(onlyAttached, "alpha")
+		attachFlavor(both, "sweet")
+		attachFlavor(onlyFlavor, "sweet")
+
+		records, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{
+			Limit:          10,
+			ClaimedFilters: append(filtersFor("alpha"), flavorFilterFor("sweet")),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(idsOf(records)).To(Equal([]string{both}),
+			"every supplied claim filters; a session missing either predicate must not appear")
+	})
+
+	It("errors on a filter whose value column was never parsed", func() {
+		orgID := newTestOrgID()
+		seedSession(orgID, "pf-zero-col", "subject-pf")
+		view, err := storage.ParsePublishedViewName("testpub.attachments")
+		Expect(err).NotTo(HaveOccurred())
+		_, err = pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{
+			Limit:          10,
+			ClaimedFilters: []storage.PublishedFilter{{View: view, TypeValue: "session", Values: []string{"alpha"}}},
+		})
+		Expect(err).To(MatchError(ContainSubstring("value column")),
+			"a zero column is an evaluation failure, never a hardcoded default")
+	})
+
+	It("errors instead of returning unfiltered rows when the view cannot be evaluated", func() {
+		// The storage half of the claimed-but-broken contract: a filter that
+		// cannot be evaluated is an error, never silently-unfiltered rows.
+		orgID := newTestOrgID()
+		seedSession(orgID, "pf-broken", "subject-pf")
+		_, err := pgDriver.DB().Exec(ctx, "DROP VIEW testpub.attachments")
+		Expect(err).NotTo(HaveOccurred())
+
+		records, err := pgDriver.ListSessionRecords(ctx, orgID, storage.SessionListOpts{
+			Limit: 10, ClaimedFilters: filtersFor("alpha"),
+		})
+		Expect(err).To(HaveOccurred())
+		Expect(records).To(BeEmpty(), "no rows may accompany the failure")
+	})
+
+	It("evaluates the published filter for a point lookup in SQL", func() {
+		// MatchesPublishedFilter serves the harness natural-key path: the
+		// predicate still runs as an indexed EXISTS in SQL — there is just no
+		// list query to compose it into.
+		orgID := newTestOrgID()
+		tagged := seedSession(orgID, "pf-point-tagged", "subject-pf")
+		plain := seedSession(orgID, "pf-point-plain", "subject-pf")
+		attach(tagged, "alpha")
+
+		matched, err := pgDriver.MatchesPublishedFilter(ctx, filterFor("alpha"), tagged)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(matched).To(BeTrue())
+
+		matched, err = pgDriver.MatchesPublishedFilter(ctx, filterFor("alpha"), plain)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(matched).To(BeFalse())
+
+		matched, err = pgDriver.MatchesPublishedFilter(ctx, filterFor("alpha", "beta"), tagged)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(matched).To(BeFalse(), "AND semantics apply to the point lookup too")
+
+		matched, err = pgDriver.MatchesPublishedFilter(ctx, nil, tagged)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(matched).To(BeTrue(), "no filter matches everything")
+
+		_, err = pgDriver.DB().Exec(ctx, "DROP VIEW testpub.attachments")
+		Expect(err).NotTo(HaveOccurred())
+		_, err = pgDriver.MatchesPublishedFilter(ctx, filterFor("alpha"), tagged)
+		Expect(err).To(HaveOccurred(), "broken is loud on the point path as well")
+	})
+})

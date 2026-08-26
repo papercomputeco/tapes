@@ -102,6 +102,44 @@ func (d *Driver) ListSessionRecords(
 		named["auth_subject"] = opts.AuthSubject
 		where = append(where, "auth_subject = @auth_subject::text")
 	}
+
+	// Claimed filter params render as one EXISTS probe per value per claim
+	// against each claim's published view, all ANDed — the same shape as the
+	// window EXISTS
+	// above, so ORDER BY and the keyset cursor are untouched. Values arrive
+	// already normalized (the handler applies the claim's declared profile);
+	// no folding happens here, which is what keeps each probe an exact-match
+	// index access.
+	//
+	// Not an injection surface, same doctrine as the sort column: the view
+	// and value-column identifiers are opaque parsed names — constructible
+	// only through their validating parsers — rendered each by its one
+	// quoting helper, and every value binds as a pgx named arg. No raw
+	// manifest string reaches an identifier position.
+	for fi := range opts.ClaimedFilters {
+		pf := &opts.ClaimedFilters[fi]
+		if pf.View.IsZero() {
+			// A zero view can only mean a claim that failed to parse; that is
+			// an evaluation failure, never "no filter" (silent filter-dropping
+			// is the one forbidden degradation).
+			return nil, errors.New("list session records: published filter has no view")
+		}
+		if pf.Column.IsZero() {
+			// Same rule for the value column: it is claim-declared input, so
+			// a zero value means an unparsed claim, never a default.
+			return nil, errors.New("list session records: published filter has no value column")
+		}
+		typeKey := fmt.Sprintf("pf_type_%d", fi)
+		named[typeKey] = pf.TypeValue
+		for vi, value := range pf.Values {
+			key := fmt.Sprintf("pf_val_%d_%d", fi, vi)
+			named[key] = value
+			where = append(where, fmt.Sprintf(
+				"EXISTS (SELECT 1 FROM %s pv WHERE pv.primitive_type = @%s::text"+
+					" AND pv.primitive_id = sessions.id::text AND pv.%s = @%s::text)",
+				pf.View.Quoted(), typeKey, pf.Column.Quoted(), key))
+		}
+	}
 	if opts.CursorVal != nil && opts.CursorID != nil {
 		named["cursor_val"] = *opts.CursorVal
 		named["cursor_id"] = *opts.CursorID
@@ -234,6 +272,49 @@ ORDER BY session_id, (synthetic = '' AND TRIM(user_prompt) <> '') DESC, started_
 		out[sessionID] = sessionPreview{text: text, isJSON: isJSON}
 	}
 	return out, rows.Err()
+}
+
+// MatchesPublishedFilter reports whether one primitive id carries every value
+// of the filter in the published view. It serves the point-lookup paths (the
+// harness natural-key filter) where there is no list query to compose the
+// predicate into: the evaluation still happens in SQL — one indexed EXISTS
+// probe per value — never by fetching and filtering rows in Go. The same
+// injection doctrine applies: the identifier comes from the opaque
+// PublishedViewName's one quoting helper, every value binds.
+func (d *Driver) MatchesPublishedFilter(
+	ctx context.Context,
+	filter *storage.PublishedFilter,
+	primitiveID string,
+) (bool, error) {
+	if filter == nil {
+		return true, nil
+	}
+	if filter.View.IsZero() {
+		return false, errors.New("matches published filter: filter has no view")
+	}
+	if filter.Column.IsZero() {
+		return false, errors.New("matches published filter: filter has no value column")
+	}
+	q := fmt.Sprintf(
+		"SELECT EXISTS (SELECT 1 FROM %s pv WHERE pv.primitive_type = @pf_type::text"+
+			" AND pv.primitive_id = @pf_id::text AND pv.%s = @pf_val::text)",
+		filter.View.Quoted(), filter.Column.Quoted())
+	for _, value := range filter.Values {
+		var matched bool
+		err := d.conn.QueryRow(ctx, q, pgx.NamedArgs{
+			"pf_type": filter.TypeValue,
+			"pf_id":   primitiveID,
+			"pf_val":  value,
+		}).Scan(&matched)
+		if err != nil {
+			return false, fmt.Errorf("matches published filter: %w", err)
+		}
+		if !matched {
+			return false, nil
+		}
+	}
+
+	return true, nil
 }
 
 // GetSessionRecord returns a single session by its UUID, or nil if not found.
