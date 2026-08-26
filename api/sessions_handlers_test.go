@@ -8,12 +8,16 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/papercomputeco/tapes/api/cassetterunner"
+	"github.com/papercomputeco/tapes/pkg/cassette"
+	"github.com/papercomputeco/tapes/pkg/cassette/v1alpha1"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/merkle"
@@ -82,6 +86,25 @@ type sessionsStubDriver struct {
 	lastUpdateOrgID    string
 	lastUpdateID       string
 	lastUpdateName     *string
+
+	// Claimed published-filter stubbing: what ListSessionRecords received
+	// (empty when no claimed param reached storage), and the point-lookup
+	// matcher's canned answer.
+	lastClaimedFilters []storage.PublishedFilter
+	matcherResult      bool
+	matcherErr         error
+	matcherCalls       int
+	lastMatcherFilter  *storage.PublishedFilter
+	lastMatcherID      string
+}
+
+// MatchesPublishedFilter records the call and returns the canned match,
+// mirroring the real driver's SQL-side point evaluation.
+func (d *sessionsStubDriver) MatchesPublishedFilter(_ context.Context, filter *storage.PublishedFilter, primitiveID string) (bool, error) {
+	d.matcherCalls++
+	d.lastMatcherFilter = filter
+	d.lastMatcherID = primitiveID
+	return d.matcherResult, d.matcherErr
 }
 
 // errStubDelete is the canned failure the stub returns to exercise the
@@ -111,6 +134,7 @@ func (d *sessionsStubDriver) ListSessionRecords(_ context.Context, orgID string,
 	d.lastCursorID = opts.CursorID
 	d.lastSort = opts.Sort
 	d.lastDir = opts.Dir
+	d.lastClaimedFilters = opts.ClaimedFilters
 	return d.listRecords, d.listErr
 }
 
@@ -861,3 +885,453 @@ func doJSON(server *Server, method, path, body, org string) (map[string]any, int
 	}
 	return out, resp.StatusCode
 }
+
+// claimTestManifest parses a v1alpha1 manifest that publishes the neutral
+// fixture view (testpub.attachments) and claims the vintage param on the
+// sessions surface. normalizeJSON is spliced verbatim after the match object
+// ("" for a claim with no declared profile).
+func claimTestManifest(normalizeJSON string) *v1alpha1.Manifest {
+	doc := `{
+	  "kind":"cassette/v1alpha1",
+	  "cassette":{"name":"testpub","version":"1.0.0"},
+	  "depends":{"core":"v1"},
+	  "api":{"health":"/ping","openapi":"/openapi"},
+	  "publishes":{
+	    "views":["testpub.attachments"],
+	    "filters":[{
+	      "param":"vintage",
+	      "surface":"sessions",
+	      "view":"testpub.attachments",
+	      "match":{"primitive_type":"session","value_column":"value"}` + normalizeJSON + `
+	    }]
+	  }
+	}`
+	parsed, err := v1alpha1.Parse([]byte(doc))
+	Expect(err).NotTo(HaveOccurred())
+	Expect(parsed.Validate([]cassette.ContractVersion{"v1"})).To(Succeed())
+	return parsed
+}
+
+// fullNormalizeJSON is the fully-declared profile: the three verbs, in
+// the order the key derivation applies them.
+const fullNormalizeJSON = `,"normalize":["trim","nfc","casefold"]`
+
+// installSessionsClaim admits a claim-holding cassette instance directly on
+// the server's registry — these specs are about what the handler does with an
+// admitted claim, not about how admission happened (that is the runner's
+// suite).
+func installSessionsClaim(server *Server, manifest *v1alpha1.Manifest) {
+	GinkgoHelper()
+	Expect(server.cassettes.Put(&cassetterunner.Instance{
+		Name:     "testpub",
+		Manifest: manifest,
+		URL:      "http://127.0.0.1:9999",
+		Anchors:  cassette.Anchors{Health: "/ping", OpenAPI: "/openapi", Prefix: "api"},
+	})).To(Succeed())
+}
+
+// installNamedClaim admits an additional claim-holding cassette under its own
+// name, for specs exercising several distinct admitted claims at once.
+func installNamedClaim(server *Server, name string, manifest *v1alpha1.Manifest) {
+	GinkgoHelper()
+	Expect(server.cassettes.Put(&cassetterunner.Instance{
+		Name:     cassette.Name(name),
+		Manifest: manifest,
+		URL:      "http://127.0.0.1:9999",
+		Anchors:  cassette.Anchors{Health: "/ping", OpenAPI: "/openapi", Prefix: "api"},
+	})).To(Succeed())
+}
+
+// flavorClaimManifest publishes a second fixture view under its own schema
+// and claims the flavor param with a non-default value column — the shape of
+// both review gaps at once: a second active claim on the surface, matching
+// against a column that is not literally named value.
+func flavorClaimManifest() *v1alpha1.Manifest {
+	doc := `{
+	  "kind":"cassette/v1alpha1",
+	  "cassette":{"name":"otherpub","version":"1.0.0"},
+	  "depends":{"core":"v1"},
+	  "api":{"health":"/ping","openapi":"/openapi"},
+	  "publishes":{
+	    "views":["otherpub.flavors"],
+	    "filters":[{
+	      "param":"flavor",
+	      "surface":"sessions",
+	      "view":"otherpub.flavors",
+	      "match":{"primitive_type":"session","value_column":"tag"}
+	    }]
+	  }
+	}`
+	parsed, err := v1alpha1.Parse([]byte(doc))
+	Expect(err).NotTo(HaveOccurred())
+	Expect(parsed.Validate([]cassette.ContractVersion{"v1"})).To(Succeed())
+	return parsed
+}
+
+// getRawSessionList issues GET path and returns the raw body bytes and status
+// — raw because the fail-open contract is literally byte-identity, and a
+// decoded struct would hide the very differences the assertion is about.
+func getRawSessionList(server *Server, path string) ([]byte, int) {
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
+	Expect(err).NotTo(HaveOccurred())
+	resp, err := server.app.Test(req)
+	Expect(err).NotTo(HaveOccurred())
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	Expect(err).NotTo(HaveOccurred())
+	return raw, resp.StatusCode
+}
+
+var _ = Describe("claimed filter params on GET /v1/sessions", func() {
+	var record storage.SessionRecord
+
+	newSessionsServer := func(driver storage.Driver) *Server {
+		server, err := NewServer(Config{ListenAddr: ":0"}, driver, tapeslogger.NewNoop())
+		Expect(err).NotTo(HaveOccurred())
+		return server
+	}
+
+	BeforeEach(func() {
+		started := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+		ended := started.Add(10 * time.Minute)
+		record = storage.SessionRecord{
+			ID:               "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+			HarnessID:        "claude",
+			HarnessSessionID: "sess-xyz",
+			StartedAt:        started,
+			LastSeenAt:       ended,
+			EndedAt:          &ended,
+			DerivedStatus:    "completed",
+		}
+	})
+
+	It("ignores the param byte-identically when no admitted cassette claims it", func() {
+		// Against an empty registry first.
+		drv := &sessionsStubDriver{Driver: inmemory.NewDriver(), listRecords: []storage.SessionRecord{record}}
+		server := newSessionsServer(drv)
+
+		plain, status := getRawSessionList(server, "/v1/sessions")
+		Expect(status).To(Equal(fiber.StatusOK))
+		withParam, status := getRawSessionList(server, "/v1/sessions?vintage=alpha&vintage=beta")
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(withParam).To(Equal(plain),
+			"unclaimed, the param must be invisible: full-body byte identity, not shape equality")
+		Expect(drv.lastClaimedFilters).To(BeEmpty(), "no claim, no filter reaches storage")
+
+		// And against a registry holding a cassette that claims nothing.
+		nonClaiming, err := v1alpha1.Parse([]byte(`{
+		  "kind":"cassette/v1alpha1",
+		  "cassette":{"name":"testpub","version":"1.0.0"},
+		  "depends":{"core":"v1"},
+		  "api":{"health":"/ping","openapi":"/openapi"}
+		}`))
+		Expect(err).NotTo(HaveOccurred())
+		drv2 := &sessionsStubDriver{Driver: inmemory.NewDriver(), listRecords: []storage.SessionRecord{record}}
+		server2 := newSessionsServer(drv2)
+		installSessionsClaim(server2, nonClaiming)
+
+		plain2, status := getRawSessionList(server2, "/v1/sessions")
+		Expect(status).To(Equal(fiber.StatusOK))
+		withParam2, status := getRawSessionList(server2, "/v1/sessions?vintage=alpha")
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(withParam2).To(Equal(plain2),
+			"a cassette with no claim must leave the param exactly as unclaimed")
+		Expect(drv2.lastClaimedFilters).To(BeEmpty())
+	})
+
+	It("returns 500 when a claimed filter cannot be evaluated and never unfiltered results", func() {
+		drv := &sessionsStubDriver{
+			Driver:      inmemory.NewDriver(),
+			listRecords: []storage.SessionRecord{record},
+			listErr:     errors.New(`relation "testpub.attachments" does not exist`),
+		}
+		server := newSessionsServer(drv)
+		installSessionsClaim(server, claimTestManifest(fullNormalizeJSON))
+
+		raw, status := getRawSessionList(server, "/v1/sessions?vintage=alpha")
+		Expect(status).To(Equal(fiber.StatusInternalServerError),
+			"claimed-but-broken is loud; only an unclaimed param fails open")
+		Expect(string(raw)).NotTo(ContainSubstring(record.ID),
+			"no session rows may accompany the failure — unfiltered results are the forbidden degradation")
+		Expect(drv.lastClaimedFilters).NotTo(BeEmpty(),
+			"the failure must come from evaluating the filter, not from dropping it")
+	})
+
+	It("applies the manifest-declared normalization profile before binding filter values", func() {
+		drv := &sessionsStubDriver{Driver: inmemory.NewDriver(), listRecords: []storage.SessionRecord{record}}
+		server := newSessionsServer(drv)
+		installSessionsClaim(server, claimTestManifest(fullNormalizeJSON))
+
+		query := url.Values{}
+		query.Add("vintage", "  BUG  ") // trim then casefold
+		query.Add("vintage", "Été")   // decomposed; nfc composes, casefold folds
+		_, status := getRawSessionList(server, "/v1/sessions?"+query.Encode())
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(drv.lastClaimedFilters).To(HaveLen(1))
+		Expect(drv.lastClaimedFilters[0].Values).To(Equal([]string{"bug", "été"}),
+			"the declared verbs run in declared order: trim, nfc, casefold")
+		Expect(drv.lastClaimedFilters[0].TypeValue).To(Equal("session"))
+		Expect(drv.lastClaimedFilters[0].View.String()).To(Equal("testpub.attachments"))
+		Expect(drv.lastClaimedFilters[0].Column.String()).To(Equal("value"),
+			"the claim-declared value column travels with its filter")
+
+		// A claim that declares no profile passes values raw: core applies
+		// only declared normalizations, never its own idea of hygiene.
+		drv2 := &sessionsStubDriver{Driver: inmemory.NewDriver(), listRecords: []storage.SessionRecord{record}}
+		server2 := newSessionsServer(drv2)
+		installSessionsClaim(server2, claimTestManifest(""))
+
+		rawQuery := url.Values{}
+		rawQuery.Add("vintage", "  BUG  ")
+		_, status = getRawSessionList(server2, "/v1/sessions?"+rawQuery.Encode())
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(drv2.lastClaimedFilters[0].Values).To(Equal([]string{"  BUG  "}))
+	})
+
+	It("returns 200 empty items for unmatchable filter values when claimed", func() {
+		drv := &sessionsStubDriver{Driver: inmemory.NewDriver()}
+		server := newSessionsServer(drv)
+		installSessionsClaim(server, claimTestManifest(fullNormalizeJSON))
+
+		body, _, status := getSessionList(server,
+			"/v1/sessions?vintage="+url.QueryEscape("NoSuch,,weird ~ value"), "")
+		Expect(status).To(Equal(fiber.StatusOK),
+			"a value that could never match is an empty page, never an error")
+		Expect(body.Items).NotTo(BeNil())
+		Expect(body.Items).To(BeEmpty())
+		Expect(body.NextCursor).To(BeEmpty())
+		Expect(drv.lastClaimedFilters).NotTo(BeEmpty(),
+			"honest-empty comes from the filter matching nothing, not from skipping it")
+	})
+
+	It("applies every admitted claim whose param the request supplies, never just the first", func() {
+		drv := &sessionsStubDriver{Driver: inmemory.NewDriver(), listRecords: []storage.SessionRecord{record}}
+		server := newSessionsServer(drv)
+		installSessionsClaim(server, claimTestManifest(fullNormalizeJSON))
+		installNamedClaim(server, "otherpub", flavorClaimManifest())
+
+		_, status := getRawSessionList(server, "/v1/sessions?vintage=%20Alpha%20&flavor=sweet")
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(drv.lastClaimedFilters).To(HaveLen(2),
+			"both supplied claimed params must reach storage; dropping either is silent unfiltering")
+		// ClaimsFor returns cassette-name order: otherpub before testpub.
+		Expect(drv.lastClaimedFilters[0].View.String()).To(Equal("otherpub.flavors"))
+		Expect(drv.lastClaimedFilters[0].Column.String()).To(Equal("tag"),
+			"each filter carries its own claim's declared value column")
+		Expect(drv.lastClaimedFilters[0].Values).To(Equal([]string{"sweet"}),
+			"a claim with no declared profile passes its values raw")
+		Expect(drv.lastClaimedFilters[1].View.String()).To(Equal("testpub.attachments"))
+		Expect(drv.lastClaimedFilters[1].Column.String()).To(Equal("value"))
+		Expect(drv.lastClaimedFilters[1].Values).To(Equal([]string{"alpha"}),
+			"each claim folds its own values per its own declared profile")
+
+		// One param alone still produces exactly its own filter.
+		_, status = getRawSessionList(server, "/v1/sessions?flavor=sweet")
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(drv.lastClaimedFilters).To(HaveLen(1))
+		Expect(drv.lastClaimedFilters[0].View.String()).To(Equal("otherpub.flavors"))
+	})
+
+	It("binds the cursor to the combined, param-qualified filter set across claims", func() {
+		first := record
+		first.SortVal = "2026-06-01 12:10:00+00"
+		second := record
+		second.ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+		second.SortVal = "2026-06-01 12:09:00+00"
+		drv := &sessionsStubDriver{
+			Driver:      inmemory.NewDriver(),
+			listRecords: []storage.SessionRecord{first, second},
+		}
+		server := newSessionsServer(drv)
+		installSessionsClaim(server, claimTestManifest(fullNormalizeJSON))
+		installNamedClaim(server, "otherpub", flavorClaimManifest())
+
+		body, _, status := getSessionList(server, "/v1/sessions?vintage=alpha&flavor=sweet&limit=1", "")
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(body.NextCursor).NotTo(BeEmpty())
+		minted, err := decodeSessionsCursor(body.NextCursor)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(minted.Filters).To(Equal([]string{"flavor=sweet", "vintage=alpha"}),
+			"the binding is the combined set, sorted so it is canonical")
+
+		// Dropping either claimed param invalidates the boundary.
+		_, errBody, status := getSessionList(server, "/v1/sessions?vintage=alpha&cursor="+body.NextCursor, "")
+		Expect(status).To(Equal(fiber.StatusBadRequest))
+		Expect(errBody.Error).To(ContainSubstring("cursor"))
+
+		// The same combined set paginates on.
+		body2, _, status := getSessionList(server, "/v1/sessions?vintage=alpha&flavor=sweet&cursor="+body.NextCursor, "")
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(body2.Items).NotTo(BeEmpty())
+	})
+
+	It("rejects a cursor minted under a different filter set", func() {
+		first := record
+		first.SortVal = "2026-06-01 12:10:00+00"
+		second := record
+		second.ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+		second.SortVal = "2026-06-01 12:09:00+00"
+		drv := &sessionsStubDriver{
+			Driver:      inmemory.NewDriver(),
+			listRecords: []storage.SessionRecord{first, second},
+		}
+		server := newSessionsServer(drv)
+		installSessionsClaim(server, claimTestManifest(fullNormalizeJSON))
+
+		// Mint through the real endpoint so the binding is the one the
+		// handler actually writes.
+		body, _, status := getSessionList(server, "/v1/sessions?vintage=alpha&limit=1", "")
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(body.NextCursor).NotTo(BeEmpty())
+		minted, err := decodeSessionsCursor(body.NextCursor)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(minted.Filters).To(Equal([]string{"vintage=alpha"}),
+			"the cursor binds the folded, sorted, param-qualified filter set")
+		mintCalls := drv.listCalls
+
+		// A different filter set is rejected through the same cursor-context
+		// path, before any storage call.
+		_, errBody, status := getSessionList(server, "/v1/sessions?vintage=beta&cursor="+body.NextCursor, "")
+		Expect(status).To(Equal(fiber.StatusBadRequest))
+		Expect(errBody.Error).To(ContainSubstring("cursor"))
+		Expect(drv.listCalls).To(Equal(mintCalls), "the mismatch must be rejected before any storage call")
+
+		// So is presenting a filter-bound cursor with no claimed filter at all.
+		_, errBody, status = getSessionList(server, "/v1/sessions?cursor="+body.NextCursor, "")
+		Expect(status).To(Equal(fiber.StatusBadRequest))
+		Expect(errBody.Error).To(ContainSubstring("cursor"))
+
+		// The same set paginates on.
+		body2, _, status := getSessionList(server, "/v1/sessions?vintage=alpha&cursor="+body.NextCursor, "")
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(body2.Items).NotTo(BeEmpty())
+		Expect(drv.lastCursorVal).NotTo(BeNil())
+	})
+
+	It("applies the claimed predicate to the harness point lookup instead of rejecting it", func() {
+		drv := &sessionsStubDriver{
+			Driver:        inmemory.NewDriver(),
+			harnessRecord: &record,
+			matcherResult: false,
+		}
+		server := newSessionsServer(drv)
+		installSessionsClaim(server, claimTestManifest(fullNormalizeJSON))
+
+		body, _, status := getSessionList(server,
+			"/v1/sessions?harness_id=claude&harness_session_id=sess-xyz&vintage=alpha", "")
+		Expect(status).To(Equal(fiber.StatusOK), "the combination is filtered, never rejected")
+		Expect(body.Items).NotTo(BeNil())
+		Expect(body.Items).To(BeEmpty(), "a non-matching looked-up row yields empty items")
+		Expect(drv.matcherCalls).To(Equal(1), "the predicate evaluates through the SQL matcher")
+		Expect(drv.lastMatcherID).To(Equal(record.ID))
+		Expect(drv.lastMatcherFilter.Values).To(Equal([]string{"alpha"}))
+
+		drv.matcherResult = true
+		body, _, status = getSessionList(server,
+			"/v1/sessions?harness_id=claude&harness_session_id=sess-xyz&vintage=alpha", "")
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(body.Items).To(HaveLen(1))
+		Expect(body.Items[0].ID).To(Equal(record.ID))
+
+		// The matcher failing is claimed-but-broken: loud on this path too.
+		drv.matcherErr = errors.New("view gone")
+		_, _, status = getSessionList(server,
+			"/v1/sessions?harness_id=claude&harness_session_id=sess-xyz&vintage=alpha", "")
+		Expect(status).To(Equal(fiber.StatusInternalServerError))
+	})
+
+	It("evaluates every active claim on the harness point lookup", func() {
+		drv := &sessionsStubDriver{Driver: inmemory.NewDriver(), harnessRecord: &record, matcherResult: true}
+		server := newSessionsServer(drv)
+		installSessionsClaim(server, claimTestManifest(fullNormalizeJSON))
+		installNamedClaim(server, "otherpub", flavorClaimManifest())
+
+		body, _, status := getSessionList(server,
+			"/v1/sessions?harness_id=claude&harness_session_id=sess-xyz&vintage=alpha&flavor=sweet", "")
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(body.Items).To(HaveLen(1))
+		Expect(drv.matcherCalls).To(Equal(2),
+			"one SQL point probe per active claim — both must be evaluated")
+		Expect(drv.lastMatcherFilter.View.String()).To(Equal("testpub.attachments"),
+			"the second filter (cassette-name order) is the last one evaluated")
+	})
+
+	It("leaves the unfiltered query plan and results unchanged when no claim param is sent", func() {
+		claimed := &sessionsStubDriver{Driver: inmemory.NewDriver(), listRecords: []storage.SessionRecord{record}}
+		claimedServer := newSessionsServer(claimed)
+		installSessionsClaim(claimedServer, claimTestManifest(fullNormalizeJSON))
+
+		unclaimed := &sessionsStubDriver{Driver: inmemory.NewDriver(), listRecords: []storage.SessionRecord{record}}
+		unclaimedServer := newSessionsServer(unclaimed)
+
+		claimedBody, status := getRawSessionList(claimedServer, "/v1/sessions")
+		Expect(status).To(Equal(fiber.StatusOK))
+		baseline, status := getRawSessionList(unclaimedServer, "/v1/sessions")
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(claimedBody).To(Equal(baseline),
+			"claims active but not invoked must cost nothing: pre-feature baseline behavior")
+		Expect(claimed.lastClaimedFilters).To(BeEmpty(),
+			"storage receives no filter — no view access on the unfiltered path")
+	})
+})
+
+// normalizationCorpus is the shared normalization test-vector corpus (CC-10).
+// The publishing cassette's key derivation must produce byte-identical
+// results for these same vectors; if either implementation drifts, its copy
+// of this corpus fails. Keep the vectors in sync with the publishing cassette's copy.
+var normalizationCorpus = []struct {
+	name string
+	raw  string
+	key  string
+}{
+	// Basic casing and trimming.
+	{"ascii lowercase is untouched", "bug", "bug"},
+	{"ascii uppercase folds", "Bug", "bug"},
+	{"shortcode text folds around the colons", ":bug: BUG", ":bug: bug"},
+	{"surrounding whitespace trims", "  padded  ", "padded"},
+	{"interior whitespace is preserved", "two  spaces", "two  spaces"},
+	{"unicode whitespace trims", " nbsp ", "nbsp"},
+
+	// Emoji and symbols: never cased, never folded away.
+	{"emoji is preserved verbatim", "\U0001F525 HOT", "\U0001F525 hot"},
+	{"emoji variation selector is preserved", "❤️", "❤️"},
+	{"bare heart stays distinct from the emoji presentation", "❤", "❤"},
+
+	// NFC: combining sequences compose to one canonical form.
+	{"combining acute composes", "Café", "café"},
+	{"precomposed and combining forms derive one key", "Café", "café"},
+
+	// Simple casefold edge cases.
+	{"kelvin sign folds to k", "K", "k"},
+	{"long s folds to s", "ſ", "s"},
+	{"final sigma folds to sigma", "οδος", "οδοσ"},
+	{"capital sigma folds to sigma", "ΟΔΟΣ", "οδοσ"},
+	{"micro sign folds to greek mu", "µ", "μ"},
+	{"sharp s is preserved (simple fold, not full)", "straße", "straße"},
+	{"capital sharp s folds to sharp s", "STRAẞE", "straße"},
+
+	// Turkic dotted/dotless i: conservative profile keeps them distinct.
+	{"dotted capital I folds to itself", "İstanbul", "İstanbul"},
+	{"dotless i folds to itself", "ı", "ı"},
+	{"ascii I folds to ascii i", "I", "i"},
+
+	// Compatibility variants deliberately remain distinct values (Q13).
+	{"ligature fi is not decomposed", "ﬁle", "ﬁle"},
+	{"full-width letters case-fold but stay full-width", "ＦＵＬＬ", "ｆｕｌｌ"},
+}
+
+var _ = Describe("normalization verbs for claimed filter values", func() {
+	It("matches the shared corpus byte-for-byte in declared order", func() {
+		for _, vector := range normalizationCorpus {
+			normalized, err := applyNormalizeVerbs([]string{"trim", "nfc", "casefold"}, vector.raw)
+			Expect(err).NotTo(HaveOccurred(), vector.name)
+			Expect(normalized).To(Equal(vector.key), vector.name)
+		}
+	})
+
+	It("refuses a verb outside the admitted vocabulary", func() {
+		_, err := applyNormalizeVerbs([]string{"trim", "lowercase"}, "x")
+		Expect(err).To(MatchError(ContainSubstring("lowercase")),
+			"an unknown verb is a claim core cannot execute, never a silent skip")
+	})
+})

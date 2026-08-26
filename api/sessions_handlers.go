@@ -6,13 +6,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/storage"
@@ -46,6 +50,190 @@ type sessionsReader interface {
 // 501 for drivers that don't.
 type sessionsWriter interface {
 	DeleteSession(ctx context.Context, orgID, id string) (bool, error)
+}
+
+// publishedFilterMatcher is the capability the harness point-lookup path uses
+// to evaluate an active claimed filter against a single looked-up row. The
+// predicate still runs in SQL (an indexed EXISTS per value) — there is simply
+// no list query on that path to compose it into. A driver without the
+// capability cannot evaluate a claimed filter, which is loud by contract,
+// never silently unfiltered.
+type publishedFilterMatcher interface {
+	MatchesPublishedFilter(ctx context.Context, filter *storage.PublishedFilter, primitiveID string) (bool, error)
+}
+
+// sessionsSurface is this endpoint family's name in the cassette claim
+// vocabulary: a manifest's publishes.filters[].surface targeting the sessions
+// list claims params here.
+const sessionsSurface = "sessions"
+
+// claimableSurfacePaths anchors each claimable surface to the core route
+// whose documented query params are reserved against publishes claims. Only
+// the anchoring is stated here — the reserved param set itself derives from
+// the live route table at admission time, so it tracks the actual contract.
+var claimableSurfacePaths = map[string]string{sessionsSurface: "/v1/sessions"}
+
+// The normalization-verb vocabulary. Admission validates claims against the
+// same three spellings (pkg/cassette/v1alpha1); these constants are the
+// executor's side of that contract.
+const (
+	normalizeVerbTrim     = "trim"
+	normalizeVerbNFC      = "nfc"
+	normalizeVerbCasefold = "casefold"
+)
+
+// applyNormalizeVerbs applies a claim's declared normalization verbs to one
+// filter value, in declared order. Core executes exactly the declared profile
+// and never cassette-specific rules — which is the whole reason it can filter
+// on data whose semantics it does not know. Admission validates the verb
+// vocabulary, so an unknown verb here means an admitted claim this build
+// cannot execute: claimed-but-broken, and the caller must fail loudly.
+func applyNormalizeVerbs(verbs []string, value string) (string, error) {
+	for _, verb := range verbs {
+		switch verb {
+		case normalizeVerbTrim:
+			value = strings.TrimSpace(value)
+		case normalizeVerbNFC:
+			value = norm.NFC.String(value)
+		case normalizeVerbCasefold:
+			value = casefoldSimple(value)
+		default:
+			return "", fmt.Errorf("unknown normalize verb %q", verb)
+		}
+	}
+
+	return value, nil
+}
+
+// casefoldSimple is the "casefold" normalization verb: Unicode *simple* case
+// folding, applied rune by rune so the fold never changes rune count.
+//
+// The profile is deliberately conservative and MUST stay byte-identical to
+// the publishing cassette's key derivation — a filter value that folds
+// differently here than the stored key folded there silently matches nothing.
+// The shared test-vector corpus (see the normalization-verb specs) pins the
+// two implementations against each other. One-to-many full foldings (straße
+// vs STRASSE) are deliberately not applied, and compatibility variants
+// (full-width forms, ligatures) and emoji variation selectors remain
+// distinct.
+//
+// Go's unicode.ToLower implements the simple lowercase mappings, which equal
+// the simple case foldings (CaseFolding.txt statuses C and S) for every
+// character except the handful below:
+//
+//   - the fold of a few lowercase characters is a *different* lowercase
+//     character (µ→μ, ſ→s, ς→σ, ι-prosgegrammeni→ι), where ToLower is the
+//     identity; and
+//   - Turkic dotted İ (U+0130) simple-folds to itself (its fold entries are
+//     Turkic/Full only), where ToLower would map it to "i" and silently
+//     merge İ-values with i-values.
+//
+// Dotless ı (U+0131) folds to itself under both, so İ/ı stay distinct from
+// I/i.
+func casefoldSimple(s string) string {
+	var folded strings.Builder
+	folded.Grow(len(s))
+	for _, r := range s {
+		folded.WriteRune(foldRuneSimple(r))
+	}
+
+	return folded.String()
+}
+
+// foldRuneExceptions are the simple case foldings unicode.ToLower does not
+// perform (source is already lowercase, fold target differs).
+var foldRuneExceptions = map[rune]rune{
+	'µ': 'μ', // MICRO SIGN → GREEK SMALL LETTER MU
+	'ſ': 's', // LATIN SMALL LETTER LONG S → s
+	'ς': 'σ', // GREEK SMALL LETTER FINAL SIGMA → SIGMA
+	'ι': 'ι', // GREEK PROSGEGRAMMENI → GREEK SMALL LETTER IOTA
+}
+
+func foldRuneSimple(r rune) rune {
+	if folded, ok := foldRuneExceptions[r]; ok {
+		return folded
+	}
+	if r == 'İ' { // LATIN CAPITAL LETTER I WITH DOT ABOVE: fold is identity
+		return r
+	}
+
+	return unicode.ToLower(r)
+}
+
+// queryParamValues returns every occurrence of one query param, in order.
+// Fiber's c.Query collapses repeats to a single value; a claimed filter's
+// repeats are AND, so every occurrence matters.
+func queryParamValues(c *fiber.Ctx, name string) []string {
+	raw := c.Context().QueryArgs().PeekMulti(name)
+	if len(raw) == 0 {
+		return nil
+	}
+	values := make([]string, len(raw))
+	for i, value := range raw {
+		values[i] = string(value)
+	}
+
+	return values
+}
+
+// claimedPublishedFilters consults the admitted claim index for this surface
+// and, for every claimed param the request supplied, folds that claim's
+// values per its declared profile into a generic PublishedFilter for storage
+// to render. Evaluating the whole active set is itself the contract: a
+// supplied claimed param that never reached storage would be silent
+// unfiltering, the one forbidden degradation — so filters compose across
+// claims (ANDed), in cassette-name order.
+//
+// The consult order is the contract (CC-2/CC-3): the index is an in-memory
+// registry read, and a param nobody claims is never parsed at all — which is
+// what makes the unclaimed response byte-identical to the param's absence. A
+// non-nil error means an admitted claim could not be prepared; that is
+// claimed-but-broken and the request must fail, never proceed unfiltered.
+//
+// The second return is the cursor's filter-context binding: one param=value
+// entry per folded value — param-qualified so two claims folding to equal
+// values stay distinct — sorted into a canonical set. A keyset boundary is
+// only meaningful within the row set that minted it, so the cursor carries
+// the claimed-filter set exactly as it carries sort and direction.
+func (s *Server) claimedPublishedFilters(c *fiber.Ctx) ([]storage.PublishedFilter, []string, error) {
+	var filters []storage.PublishedFilter
+	var bound []string
+	for _, claim := range s.cassettes.ClaimsFor(sessionsSurface) {
+		raw := queryParamValues(c, claim.Param)
+		if len(raw) == 0 {
+			continue
+		}
+		values := make([]string, 0, len(raw))
+		for _, value := range raw {
+			normalized, err := applyNormalizeVerbs(claim.Normalize, value)
+			if err != nil {
+				return nil, nil, fmt.Errorf("claimed param %q: %w", claim.Param, err)
+			}
+			values = append(values, normalized)
+			bound = append(bound, claim.Param+"="+normalized)
+		}
+		view, err := storage.ParsePublishedViewName(claim.View)
+		if err != nil {
+			return nil, nil, fmt.Errorf("claimed param %q: %w", claim.Param, err)
+		}
+		// The declared value column travels the same opaque-identifier road
+		// as the view name: parsed here, rendered only by storage's one
+		// quoting helper. A claim whose column cannot parse is
+		// claimed-but-broken, never a hardcoded default.
+		column, err := storage.ParsePublishedColumnName(claim.ValueColumn)
+		if err != nil {
+			return nil, nil, fmt.Errorf("claimed param %q: %w", claim.Param, err)
+		}
+		filters = append(filters, storage.PublishedFilter{
+			View:      view,
+			TypeValue: claim.PrimitiveType,
+			Column:    column,
+			Values:    values,
+		})
+	}
+	sort.Strings(bound)
+
+	return filters, bound, nil
 }
 
 const (
@@ -304,6 +492,13 @@ type sessionsCursor struct {
 	Dir  string `json:"dir,omitempty"`
 	Val  string `json:"val,omitempty"`
 	ID   string `json:"id"`
+
+	// Filters is the folded, sorted claimed-filter value set the cursor was
+	// minted under, absent when no claimed filter was active. It binds the
+	// cursor to its row set the same way Sort/Dir do: a keyset boundary is
+	// only meaningful within the filtered set that minted it, so presenting
+	// it with a different set is rejected, not reinterpreted.
+	Filters []string `json:"filters,omitempty"`
 }
 
 func encodeSessionsCursor(c sessionsCursor) string {
@@ -347,6 +542,18 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
 	}
 
+	// Claimed filter params are consulted before anything else parses, from
+	// in-memory admitted state only: with no claim held, the param is never
+	// read at all, which is what keeps the unclaimed response byte-identical
+	// to the param's absence. An error preparing an admitted claim is
+	// claimed-but-broken and fails the request — proceeding unfiltered is
+	// the one forbidden degradation.
+	claimedFilters, filterSet, err := s.claimedPublishedFilters(c)
+	if err != nil {
+		s.logger.Error("prepare claimed filter", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
+	}
+
 	// The harness natural-key filter is an exact-match lookup that bypasses
 	// the paged-list path entirely. Route to it whenever either param is
 	// non-empty — an empty value is treated as absent, since ingest
@@ -355,7 +562,7 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 	// harness_id, cursor incompatibility) happens in the filter handler;
 	// requests without the params take the existing path untouched.
 	if c.Query("harness_id") != "" || c.Query("harness_session_id") != "" {
-		return s.listSessionsByHarness(c, reader)
+		return s.listSessionsByHarness(c, reader, claimedFilters)
 	}
 
 	limit := defaultSessionsLimit
@@ -391,6 +598,14 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 		if cur.Sort != string(sortField) || cur.Dir != string(dir) {
 			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "cursor does not match sort/direction"})
 		}
+		// The same sort-context rule extends to the claimed-filter set: a
+		// boundary minted under one filter set silently skips or repeats rows
+		// under another, so a mismatch is a malformed request, not a
+		// transition. Both sides are folded and sorted, so equality is
+		// canonical.
+		if !slices.Equal(cur.Filters, filterSet) {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "cursor does not match claimed filters"})
+		}
 		// An empty boundary value only round-trips through the keyset for a text
 		// column (''::text is valid); for numeric/timestamptz columns it would
 		// cast as ''::bigint and 500 mid-scan. Reject it as the malformed client
@@ -423,6 +638,10 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 	// subject is stamped at ingest from the JWT (x-paper-auth-subject) and
 	// is what gets stored; this only chooses which of those rows to show.
 	opts.AuthSubject = c.Query("auth_subject")
+	// The claimed filters (empty when no claimed param was supplied) ride
+	// into the same query that sorts and paginates; storage renders every
+	// one as EXISTS probes, never as a post-fetch filter.
+	opts.ClaimedFilters = claimedFilters
 	// Fetch one extra item to detect whether a next page exists.
 	opts.Limit = limit + 1
 	sessions, err := reader.ListSessionRecords(c.Context(), orgID, opts)
@@ -436,10 +655,11 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 		sessions = sessions[:limit]
 		last := sessions[len(sessions)-1]
 		nextCursor = encodeSessionsCursor(sessionsCursor{
-			Sort: string(sortField),
-			Dir:  string(dir),
-			Val:  last.SortVal,
-			ID:   last.ID,
+			Sort:    string(sortField),
+			Dir:     string(dir),
+			Val:     last.SortVal,
+			ID:      last.ID,
+			Filters: filterSet,
 		})
 	}
 
@@ -466,7 +686,7 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 // belong to the paged-list path, and the lookup has no ordering or window
 // to apply them to. Returns the standard SessionListResponse envelope
 // with the matching items and no next_cursor.
-func (s *Server) listSessionsByHarness(c *fiber.Ctx, reader sessionsReader) error {
+func (s *Server) listSessionsByHarness(c *fiber.Ctx, reader sessionsReader, claimedFilters []storage.PublishedFilter) error {
 	harnessID := c.Query("harness_id")
 	harnessSessionID := c.Query("harness_session_id")
 	if harnessSessionID == "" {
@@ -500,6 +720,41 @@ func (s *Server) listSessionsByHarness(c *fiber.Ctx, reader sessionsReader) erro
 
 	orgID := singleTenantOrgID
 
+	// Every active claimed filter applies to the looked-up rows rather than
+	// rejecting the combination (a non-matching row yields empty items). The
+	// predicate still evaluates in SQL through the matcher capability — one
+	// indexed EXISTS per value — never by re-implementing the comparison in
+	// Go. A driver that cannot evaluate an admitted claim is
+	// claimed-but-broken: loud, never silently unfiltered.
+	keepMatching := func(recs []storage.SessionRecord) ([]storage.SessionRecord, error) {
+		if len(claimedFilters) == 0 {
+			return recs, nil
+		}
+		matcher, ok := s.driver.(publishedFilterMatcher)
+		if !ok {
+			return nil, errors.New("claimed filter not supported by this backend")
+		}
+		kept := make([]storage.SessionRecord, 0, len(recs))
+		for _, rec := range recs {
+			matched := true
+			for fi := range claimedFilters {
+				ok, err := matcher.MatchesPublishedFilter(c.Context(), &claimedFilters[fi], rec.ID)
+				if err != nil {
+					return nil, err
+				}
+				if !ok {
+					matched = false
+					break
+				}
+			}
+			if matched {
+				kept = append(kept, rec)
+			}
+		}
+
+		return kept, nil
+	}
+
 	// No match is a normal outcome on either branch: the list envelope's
 	// empty items form expresses it (never 404 — that's the :id endpoint's
 	// vocabulary).
@@ -508,6 +763,11 @@ func (s *Server) listSessionsByHarness(c *fiber.Ctx, reader sessionsReader) erro
 		recs, err := reader.ListSessionRecordsByHarnessSessionID(c.Context(), orgID, harnessSessionID)
 		if err != nil {
 			s.logger.Error("list sessions by harness session id", "error", err)
+			return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
+		}
+		recs, err = keepMatching(recs)
+		if err != nil {
+			s.logger.Error("apply claimed filter to harness lookup", "error", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
 		}
 		for _, rec := range recs {
@@ -522,7 +782,14 @@ func (s *Server) listSessionsByHarness(c *fiber.Ctx, reader sessionsReader) erro
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
 	}
 	if sess != nil {
-		items = append(items, sessionItemFromStorage(*sess, time.Now()))
+		matched, err := keepMatching([]storage.SessionRecord{*sess})
+		if err != nil {
+			s.logger.Error("apply claimed filter to harness lookup", "error", err)
+			return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
+		}
+		for _, rec := range matched {
+			items = append(items, sessionItemFromStorage(rec, time.Now()))
+		}
 	}
 	return c.JSON(SessionListResponse{Items: items})
 }

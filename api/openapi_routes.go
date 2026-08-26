@@ -66,7 +66,10 @@ func (s *Server) mountSessions(router *oasfiber.Router) {
 			Summary("List sessions").
 			Description("Returns one row per harness session from the sessions table, "+
 				"cursor-paginated. Default order is last_active (last_seen_at) desc; override with the "+
-				"sort and direction query params.").
+				"sort and direction query params. Admitted cassettes may claim additional filter "+
+				"query params on this surface (published-view filters; see the cassettes doc): a "+
+				"claimed param filters server-side with repeats ANDed, while the same param with no "+
+				"admitted claim is ignored exactly like any unknown parameter.").
 			Tag("sessions").
 			QueryParam("limit", oas.Integer(oas.Minimum(1)),
 				oas.ParamDescription("Maximum number of sessions to return (default 50, max 200)")).
