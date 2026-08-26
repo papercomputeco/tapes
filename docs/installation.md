@@ -83,56 +83,61 @@ tapesctl sessions list
 Capture commands address the **ingest** port instead. Override its local default
 with `--ingest-url` or `TAPES_INGEST_URL`. See [Agent integrations](./integrations.md).
 
-## Use host Ollama with Docker Compose
+## Run the complete Docker Compose stack
+
+The repository's default Compose file puts PostgreSQL, Ollama, Tapes, and the
+bundled cassettes in containers. It is the simplest way to see the entire local
+system working:
+
+```bash
+docker compose up --build
+```
+
+This convenience has a tradeoff: Docker Desktop cannot give an Ollama container
+access to an Apple GPU, so background span embedding can continue consuming CPU
+after capture has finished. The repository includes two standalone Compose
+recipes when that matters.
+
+## Use native Ollama
 
 On macOS, [Docker Desktop container GPU support is limited to Windows with the
 WSL2 backend](https://docs.docker.com/desktop/features/gpu/), while native
 [Ollama accelerates Apple GPUs through Metal](https://docs.ollama.com/gpu#metal-apple-gpus).
-The repository includes an override that keeps the application stack in Compose
-but sends inference and embedding requests to native Ollama:
-
-If a plain Compose stack is already running, stop it first so its Ollama
-container releases port `11434`:
+After starting Ollama on the host, run the native recipe:
 
 ```bash
-make down
-# Start the Ollama app, or run `ollama serve`, then:
-make up OLLAMA=host
+cd compose/native-ollama
+docker compose up --build
 ```
 
-This selects `docker-compose.host-ollama.yaml`; the equivalent direct Compose
-command is:
+This runs the rest of the stack in Docker, checks that host Ollama is reachable,
+and pulls `embeddinggemma` before background embedding starts. The recipe's
+`README.md` contains preflight checks and Linux host binding requirements.
+
+## Use OpenAI for background embeddings
+
+To avoid sustained local embedding work without running native Ollama, use the
+OpenAI embeddings recipe:
 
 ```bash
-docker compose -f docker-compose.yaml -f docker-compose.host-ollama.yaml up --build
+cd compose/openai-embeddings
+cp .env.example .env
+# Set OPENAI_API_KEY in .env, then:
+docker compose up --build
 ```
 
-The override also pulls `embeddinggemma` into the host server. Stop this stack
-with `make down`. On Linux, native Ollama must listen on an address containers
-can reach; for example, start it with
-`OLLAMA_HOST=0.0.0.0:11434 ollama serve`. The override maps
-`host.docker.internal` to Docker's host gateway.
+Only background span embeddings use OpenAI. Containerized Ollama remains
+available for synchronous local work such as skill generation. The recipe uses
+`text-embedding-3-large` shortened to 768 dimensions, preserving the default
+pgvector schema. Changing models causes a one-time re-embedding pass and incurs
+OpenAI API usage. The recipe's `README.md` covers key handling and operational
+details.
 
-To run the containerized Ollama stack instead, continue to use plain
-`docker compose up --build`.
-
-## OpenAI embeddings
-
-Local PostgreSQL is still required, but Ollama need not be used for embeddings.
-For the Compose stack, export a key and select the OpenAI override:
+Stop one recipe before switching to another because they share the `tapes`
+Compose project name and host ports:
 
 ```bash
-export OPENAI_API_KEY=sk-...
-make up EMBEDDINGS=openai
-```
-
-This uses `text-embedding-3-large` shortened to 768 dimensions, preserving the
-default pgvector schema. Changing models causes a one-time re-embedding pass and
-incurs OpenAI API usage. Combine OpenAI embeddings with host Ollama for the
-proxy and skills cassette when desired:
-
-```bash
-make up OLLAMA=host EMBEDDINGS=openai
+docker compose down
 ```
 
 Without Compose, configure the server directly:

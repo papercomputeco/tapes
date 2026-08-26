@@ -7,6 +7,7 @@
 /tapes
 /config.toml
 /credentials.toml
+/compose/openai-embeddings/.env
 /tapes.db
 /tapes.db~
 /tapes.demo.sqlite
