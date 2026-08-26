@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/papercomputeco/tapes/pkg/cassette"
+	"github.com/papercomputeco/tapes/pkg/cassette/manifest"
 	"github.com/papercomputeco/tapes/pkg/cassette/v1alpha1"
 )
 
@@ -270,3 +272,295 @@ func mustCanonical(manifest *v1alpha1.Manifest) []byte {
 	Expect(err).NotTo(HaveOccurred())
 	return canonical
 }
+
+// publishesMetadata is the shared JSON form of a manifest declaring the three
+// dynamic-registration sections: a published view with a filter claim, an
+// advertised entity, and a registry-change hook. The names are deliberately
+// neutral (a "notes" cassette) — the mechanism under test is generic.
+const publishesMetadata = `{
+  "kind":"cassette/v1alpha1",
+  "cassette":{"name":"notes","version":"0.1.0"},
+  "depends":{"core":"v1","published":["other_v1.attachments"]},
+  "api":{"health":"/ping","openapi":"/openapi"},
+  "publishes":{
+    "views":["notes_v1.attachments"],
+    "filters":[{
+      "param":"note",
+      "surface":"sessions",
+      "view":"notes_v1.attachments",
+      "match":{"primitive_type":"session","value_column":"value"},
+      "normalize":["trim","nfc","casefold"]
+    }]
+  },
+  "entities":[{"type":"note","id_kind":"uuid","display_name":"Note",
+    "relations":[{"to":"session","kind":"attached_to"}]}],
+  "hooks":{"registry_changed":"/hooks/registry-changed"}
+}`
+
+// publishesTOML is the authored-TOML encoding of publishesMetadata. The two
+// must produce one canonical digest, or an orchestrator and core would be
+// looking at two documents that merely resemble each other.
+const publishesTOML = `
+kind = "cassette/v1alpha1"
+
+[cassette]
+name = "notes"
+version = "0.1.0"
+
+[depends]
+core = "v1"
+published = ["other_v1.attachments"]
+
+[api]
+health = "/ping"
+openapi = "/openapi"
+
+[publishes]
+views = ["notes_v1.attachments"]
+
+[[publishes.filters]]
+param = "note"
+surface = "sessions"
+view = "notes_v1.attachments"
+match = { primitive_type = "session", value_column = "value" }
+normalize = ["trim", "nfc", "casefold"]
+
+[[entities]]
+type = "note"
+id_kind = "uuid"
+display_name = "Note"
+relations = [{ to = "session", kind = "attached_to" }]
+
+[hooks]
+registry_changed = "/hooks/registry-changed"
+`
+
+var _ = Describe("the publishes section a cassette declares", func() {
+	parsePublishes := func(data string) *v1alpha1.Manifest {
+		GinkgoHelper()
+		parsed, err := v1alpha1.Parse([]byte(data))
+		Expect(err).NotTo(HaveOccurred())
+		return parsed
+	}
+
+	It("parses and canonicalizes a publishes section into the manifest digest", func() {
+		fromJSON := parsePublishes(publishesMetadata)
+		Expect(fromJSON.Validate([]cassette.ContractVersion{"v1"})).To(Succeed())
+		Expect(fromJSON.Publishes).NotTo(BeNil())
+		Expect(fromJSON.Publishes.Views).To(Equal([]string{"notes_v1.attachments"}))
+		Expect(fromJSON.Publishes.Filters).To(HaveLen(1))
+		claim := fromJSON.Publishes.Filters[0]
+		Expect(claim.Param).To(Equal("note"))
+		Expect(claim.Surface).To(Equal("sessions"))
+		Expect(claim.View).To(Equal("notes_v1.attachments"))
+		Expect(claim.Match.PrimitiveType).To(Equal("session"))
+		Expect(claim.Match.ValueColumn).To(Equal("value"))
+		Expect(claim.Normalize).To(Equal([]string{"trim", "nfc", "casefold"}),
+			"normalization verbs apply in declared order, so canonicalization must not sort them")
+		Expect(fromJSON.Depends.Published).To(Equal([]string{"other_v1.attachments"}))
+
+		// TOML and JSON are two encodings of one document, not two documents.
+		fromTOML, err := manifest.ParseTOML([]byte(publishesTOML))
+		Expect(err).NotTo(HaveOccurred())
+		tomlDigest, err := fromTOML.Digest()
+		Expect(err).NotTo(HaveOccurred())
+		jsonDigest, err := fromJSON.Digest()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(tomlDigest).To(Equal(jsonDigest))
+
+		// The canonical form round-trips through its own JSON.
+		canonical := mustCanonical(fromJSON)
+		var decoded v1alpha1.Manifest
+		Expect(json.Unmarshal(canonical, &decoded)).To(Succeed())
+		Expect(mustCanonical(&decoded)).To(Equal(canonical))
+
+		// A claim change is an identity change: core admits claims by digest,
+		// so a cassette that claims a different param is a different cassette.
+		changed := parsePublishes(publishesMetadata)
+		changed.Publishes.Filters[0].Param = "tag"
+		changedDigest, err := changed.Digest()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(changedDigest).NotTo(Equal(jsonDigest))
+
+		// And a manifest that declares none of this keeps the digest it had
+		// before the sections existed.
+		Expect(string(mustCanonical(parsePublishes(validMetadata)))).NotTo(
+			ContainSubstring("publishes"))
+	})
+
+	It("derives the core-role published-view grants and consumer selects", func() {
+		parsed := parsePublishes(publishesMetadata)
+		plan := parsed.GrantPlan()
+		Expect(plan.CoreSelects).To(Equal([]string{"notes_v1.attachments"}),
+			"deployment tooling renders SELECT on the published view for core's read role")
+		Expect(plan.Selects).To(ContainElement("other_v1.attachments"),
+			"depends.published views are read by the cassette like contract views")
+	})
+
+	It("refuses malformed view names and params at admission", func() {
+		mutate := func(change func(*v1alpha1.Manifest)) error {
+			parsed := parsePublishes(publishesMetadata)
+			change(parsed)
+			return parsed.Validate([]cassette.ContractVersion{"v1"})
+		}
+
+		Expect(mutate(func(m *v1alpha1.Manifest) {
+			m.Publishes.Views[0] = "Notes_v1.attachments"
+			m.Publishes.Filters[0].View = "Notes_v1.attachments"
+		})).To(MatchError(ContainSubstring("publishes.views[0]")), "uppercase view schema")
+
+		Expect(mutate(func(m *v1alpha1.Manifest) {
+			m.Publishes.Views[0] = "attachments"
+			m.Publishes.Filters[0].View = "attachments"
+		})).To(MatchError(ContainSubstring("publishes.views[0]")), "unqualified view name")
+
+		long := strings.Repeat("a", 64)
+		Expect(mutate(func(m *v1alpha1.Manifest) {
+			m.Publishes.Views[0] = long + ".attachments"
+			m.Publishes.Filters[0].View = long + ".attachments"
+		})).To(MatchError(ContainSubstring("publishes.views[0]")), "overlong schema segment")
+
+		Expect(mutate(func(m *v1alpha1.Manifest) {
+			m.Publishes.Views[0] = "tapes_v1.attachments"
+			m.Publishes.Filters[0].View = "tapes_v1.attachments"
+		})).To(MatchError(ContainSubstring("publishes.views[0]")),
+			"a cassette must not publish into core's contract schema")
+
+		Expect(mutate(func(m *v1alpha1.Manifest) {
+			m.Publishes.Filters[0].Param = "Bad-Param"
+		})).To(MatchError(ContainSubstring("publishes.filters[0].param")), "bad param grammar")
+
+		Expect(mutate(func(m *v1alpha1.Manifest) {
+			m.Publishes.Filters[0].Surface = "spanners"
+		})).To(MatchError(ContainSubstring("publishes.filters[0].surface")), "unknown surface")
+
+		Expect(mutate(func(m *v1alpha1.Manifest) {
+			m.Publishes.Filters[0].Normalize = []string{"trim", "lowercase"}
+		})).To(MatchError(ContainSubstring("publishes.filters[0].normalize[1]")),
+			"unknown normalize verb")
+
+		Expect(mutate(func(m *v1alpha1.Manifest) {
+			m.Publishes.Filters[0].View = "elsewhere_v1.attachments"
+		})).To(MatchError(ContainSubstring("publishes.filters[0].view")),
+			"a claim must join a view this manifest actually publishes")
+
+		Expect(mutate(func(m *v1alpha1.Manifest) {
+			m.Publishes.Filters = append(m.Publishes.Filters, m.Publishes.Filters[0])
+		})).To(MatchError(ContainSubstring("duplicates")),
+			"one manifest cannot claim the same (param, surface) twice")
+
+		Expect(mutate(func(m *v1alpha1.Manifest) {
+			m.Publishes.Filters[0].Match.PrimitiveType = "9bad"
+		})).To(MatchError(ContainSubstring("publishes.filters[0].match.primitive_type")))
+
+		Expect(mutate(func(m *v1alpha1.Manifest) {
+			m.Publishes.Filters[0].Match.ValueColumn = ""
+		})).To(MatchError(ContainSubstring("publishes.filters[0].match.value_column")))
+
+		Expect(mutate(func(m *v1alpha1.Manifest) {
+			m.Publishes.Filters[0].Match.ValueColumn = `value"; DROP TABLE sessions; --`
+		})).To(MatchError(ContainSubstring("publishes.filters[0].match.value_column")),
+			"a hostile column name dies at admission, before it can near an identifier position")
+
+		Expect(mutate(func(m *v1alpha1.Manifest) {
+			m.Publishes.Filters[0].Match.ValueColumn = "Value"
+		})).To(MatchError(ContainSubstring("publishes.filters[0].match.value_column")),
+			"column grammar is lower-snake, the same as every published identifier")
+
+		Expect(mutate(func(m *v1alpha1.Manifest) {
+			m.Publishes.Filters[0].Match.ValueColumn = strings.Repeat("a", 64)
+		})).To(MatchError(ContainSubstring("publishes.filters[0].match.value_column")),
+			"overlong column segment")
+
+		Expect(mutate(func(m *v1alpha1.Manifest) {
+			m.Depends.Published[0] = "tapes_v1.sessions"
+		})).To(MatchError(ContainSubstring("depends.published[0]")),
+			"contract views are depends.views territory, not published views")
+
+		Expect(mutate(func(m *v1alpha1.Manifest) {
+			m.Hooks.RegistryChanged = "http://host/hook"
+		})).To(MatchError(ContainSubstring("hooks.registry_changed")),
+			"a hook is a path on the cassette's own listener, never a URL")
+	})
+
+	It("rejects unknown fields inside the new sections", func() {
+		_, err := v1alpha1.Parse([]byte(`{"kind":"cassette/v1alpha1","publishes":{"surprise":true}}`))
+		Expect(err).To(MatchError(ContainSubstring(`unknown field "publishes.surprise"`)))
+		_, err = v1alpha1.Parse([]byte(
+			`{"kind":"cassette/v1alpha1","publishes":{"filters":[{"param":"x","surprise":true}]}}`))
+		Expect(err).To(MatchError(ContainSubstring(`unknown field "publishes.filters[0].surprise"`)))
+		_, err = v1alpha1.Parse([]byte(
+			`{"kind":"cassette/v1alpha1","publishes":{"filters":[{"match":{"surprise":true}}]}}`))
+		Expect(err).To(MatchError(ContainSubstring(`unknown field "publishes.filters[0].match.surprise"`)))
+		_, err = v1alpha1.Parse([]byte(`{"kind":"cassette/v1alpha1","entities":[{"surprise":true}]}`))
+		Expect(err).To(MatchError(ContainSubstring(`unknown field "entities[0].surprise"`)))
+		_, err = v1alpha1.Parse([]byte(
+			`{"kind":"cassette/v1alpha1","entities":[{"type":"note","relations":[{"surprise":true}]}]}`))
+		Expect(err).To(MatchError(ContainSubstring(`unknown field "entities[0].relations[0].surprise"`)))
+		_, err = v1alpha1.Parse([]byte(`{"kind":"cassette/v1alpha1","hooks":{"surprise":true}}`))
+		Expect(err).To(MatchError(ContainSubstring(`unknown field "hooks.surprise"`)))
+	})
+})
+
+var _ = Describe("the entities a cassette advertises", func() {
+	It("parses and canonicalizes entity declarations into the manifest digest", func() {
+		fromJSON, err := v1alpha1.Parse([]byte(publishesMetadata))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fromJSON.Validate([]cassette.ContractVersion{"v1"})).To(Succeed())
+		Expect(fromJSON.Entities).To(HaveLen(1))
+		Expect(fromJSON.Entities[0].Type).To(Equal("note"))
+		Expect(fromJSON.Entities[0].IDKind).To(Equal("uuid"))
+		Expect(fromJSON.Entities[0].DisplayName).To(Equal("Note"))
+		Expect(fromJSON.Entities[0].Relations).To(Equal([]v1alpha1.EntityRelation{
+			{To: "session", Kind: "attached_to"},
+		}))
+
+		fromTOML, err := manifest.ParseTOML([]byte(publishesTOML))
+		Expect(err).NotTo(HaveOccurred())
+		tomlDigest, err := fromTOML.Digest()
+		Expect(err).NotTo(HaveOccurred())
+		jsonDigest, err := fromJSON.Digest()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(tomlDigest).To(Equal(jsonDigest),
+			"the TOML and JSON entity declarations must be one document by digest")
+
+		// An entity change is digest-relevant: discovery consumers key their
+		// registry refresh on it.
+		changed, err := v1alpha1.Parse([]byte(publishesMetadata))
+		Expect(err).NotTo(HaveOccurred())
+		changed.Entities[0].Type = "annotation"
+		changedDigest, err := changed.Digest()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(changedDigest).NotTo(Equal(jsonDigest))
+
+		// Declaration order is not identity.
+		reordered, err := v1alpha1.Parse([]byte(publishesMetadata))
+		Expect(err).NotTo(HaveOccurred())
+		reordered.Entities = append(reordered.Entities, v1alpha1.Entity{Type: "annotation", IDKind: "string"})
+		forward, err := reordered.Digest()
+		Expect(err).NotTo(HaveOccurred())
+		reordered.Entities[0], reordered.Entities[1] = reordered.Entities[1], reordered.Entities[0]
+		backward, err := reordered.Digest()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(backward).To(Equal(forward))
+
+		// Malformed declarations refuse validation.
+		invalid, err := v1alpha1.Parse([]byte(publishesMetadata))
+		Expect(err).NotTo(HaveOccurred())
+		invalid.Entities[0].Type = "Bad-Type"
+		Expect(invalid.Validate([]cassette.ContractVersion{"v1"})).To(MatchError(
+			ContainSubstring("entities[0].type")))
+
+		invalid, err = v1alpha1.Parse([]byte(publishesMetadata))
+		Expect(err).NotTo(HaveOccurred())
+		invalid.Entities[0].IDKind = "UUID!"
+		Expect(invalid.Validate([]cassette.ContractVersion{"v1"})).To(MatchError(
+			ContainSubstring("entities[0].id_kind")))
+
+		invalid, err = v1alpha1.Parse([]byte(publishesMetadata))
+		Expect(err).NotTo(HaveOccurred())
+		invalid.Entities = append(invalid.Entities, v1alpha1.Entity{Type: "note", IDKind: "uuid"})
+		Expect(invalid.Validate([]cassette.ContractVersion{"v1"})).To(MatchError(
+			ContainSubstring("duplicates")))
+	})
+})

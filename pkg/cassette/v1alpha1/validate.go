@@ -21,7 +21,25 @@ var (
 	prefixSegmentPattern   = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 	digestPattern          = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	audiencePattern        = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
+
+	// qualifiedViewPattern is the grammar for a published view name. It is
+	// deliberately strict — schema-qualified, lowercase snake, at most 63
+	// bytes per segment — because this identifier crosses the trust boundary:
+	// a manifest is remote input, and the name eventually reaches core's SQL
+	// in an identifier position (quoted, but validated here first; CC-5).
+	qualifiedViewPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}\.[a-z][a-z0-9_]{0,62}$`)
 )
+
+// knownFilterSurfaces are the core surfaces a filter claim may extend. The
+// vocabulary is closed on purpose: a claim on a surface this build does not
+// serve could never execute, and refusing it at validation is the operator-
+// visible admission problem the mechanism promises.
+var knownFilterSurfaces = []string{"sessions"}
+
+// knownNormalizeVerbs is the value-normalization vocabulary core implements.
+// A claim declaring a verb outside it is refused: core applies exactly the
+// declared verbs, so an unknown one is a filter core cannot execute.
+var knownNormalizeVerbs = []string{"trim", "nfc", "casefold"}
 
 // Validate checks the manifest's intrinsic constraints and verifies that its
 // declared tapes contract is in supported.
@@ -76,6 +94,21 @@ func (m *Manifest) Validate(supported []cassette.ContractVersion) error {
 		}
 	}
 
+	seenPublished := make(map[string]int, len(m.Depends.Published))
+	for index, view := range m.Depends.Published {
+		field := fmt.Sprintf("depends.published[%d]", index)
+		if !qualifiedViewPattern.MatchString(view) {
+			add(field, "must be a schema-qualified lower-snake view name (schema.view, each segment at most 63 bytes)")
+		} else if reason := reservedPublishedSchema(view); reason != "" {
+			add(field, reason)
+		}
+		if previous, exists := seenPublished[view]; exists {
+			add(field, fmt.Sprintf("duplicates depends.published[%d]", previous))
+		} else {
+			seenPublished[view] = index
+		}
+	}
+
 	seenAudience := make(map[string]int, len(m.Cassette.Audience))
 	for index, client := range m.Cassette.Audience {
 		field := fmt.Sprintf("cassette.audience[%d]", index)
@@ -93,6 +126,11 @@ func (m *Manifest) Validate(supported []cassette.ContractVersion) error {
 	validateAPIPath("api.openapi", m.API.OpenAPI, add)
 	validatePrefixPath(m.API.Prefix, add)
 	validatePackaging(m.Cassette, add)
+	validatePublishes(m.Publishes, add)
+	validateEntities(m.Entities, add)
+	if m.Hooks != nil && m.Hooks.RegistryChanged != "" {
+		validateAPIPath("hooks.registry_changed", m.Hooks.RegistryChanged, add)
+	}
 
 	seenTables := make(map[string]int, len(m.Tables))
 	for index, table := range m.Tables {
@@ -199,6 +237,119 @@ func validatePackaging(identity Identity, add func(string, string)) {
 	}
 	if identity.Port != 0 && identity.Image == "" {
 		add("cassette.image", "is required when cassette.port is set")
+	}
+}
+
+// reservedPublishedSchema reports why a published view's schema segment is off
+// limits, or the empty string when it is fine. The reservations mirror the
+// cassette-name rules: a published view lives in the same database core does,
+// so the collisions worth refusing are the ones Postgres or core has already
+// taken.
+func reservedPublishedSchema(view string) string {
+	schema, _, _ := strings.Cut(view, ".")
+	switch {
+	case schema == "public":
+		return "must not use the public schema"
+	case schema == "tapes" || strings.HasPrefix(schema, "tapes_"):
+		return "must not use core's reserved tapes schemas"
+	case strings.HasPrefix(schema, "pg_"):
+		return "must not use the Postgres-reserved pg_ prefix"
+	}
+
+	return ""
+}
+
+// validatePublishes checks the published-view declarations and filter claims.
+// Grammar only — collision with core-owned params and cross-cassette claims
+// is admission-time state the runner owns, not an intrinsic manifest fact.
+func validatePublishes(publishes *Publishes, add func(string, string)) {
+	if publishes == nil {
+		return
+	}
+
+	declared := make(map[string]int, len(publishes.Views))
+	for index, view := range publishes.Views {
+		field := fmt.Sprintf("publishes.views[%d]", index)
+		if !qualifiedViewPattern.MatchString(view) {
+			add(field, "must be a schema-qualified lower-snake view name (schema.view, each segment at most 63 bytes)")
+
+			continue
+		}
+		if reason := reservedPublishedSchema(view); reason != "" {
+			add(field, reason)
+
+			continue
+		}
+		if previous, exists := declared[view]; exists {
+			add(field, fmt.Sprintf("duplicates publishes.views[%d]", previous))
+		} else {
+			declared[view] = index
+		}
+	}
+
+	seenClaims := make(map[string]int, len(publishes.Filters))
+	for index := range publishes.Filters {
+		filter := &publishes.Filters[index]
+		prefix := fmt.Sprintf("publishes.filters[%d]", index)
+		if !identifierPattern.MatchString(filter.Param) {
+			add(prefix+".param", "must be a lower-snake query param name of at most 63 bytes")
+		}
+		if !slices.Contains(knownFilterSurfaces, filter.Surface) {
+			add(prefix+".surface", "must be one of "+strings.Join(knownFilterSurfaces, ", "))
+		}
+		if _, ok := declared[filter.View]; !ok {
+			add(prefix+".view", "must name a view declared in publishes.views")
+		}
+		if !identifierPattern.MatchString(filter.Match.PrimitiveType) {
+			add(prefix+".match.primitive_type", "must be a lower-snake entity type of at most 63 bytes")
+		}
+		if !identifierPattern.MatchString(filter.Match.ValueColumn) {
+			add(prefix+".match.value_column", "must be a lower-snake column name of at most 63 bytes")
+		}
+		for verbIndex, verb := range filter.Normalize {
+			if !slices.Contains(knownNormalizeVerbs, verb) {
+				add(fmt.Sprintf("%s.normalize[%d]", prefix, verbIndex),
+					"must be one of "+strings.Join(knownNormalizeVerbs, ", "))
+			}
+		}
+		key := filter.Surface + "\x00" + filter.Param
+		if previous, exists := seenClaims[key]; exists {
+			add(prefix+".param", fmt.Sprintf("duplicates publishes.filters[%d]", previous))
+		} else {
+			seenClaims[key] = index
+		}
+	}
+}
+
+// validateEntities checks the advertised entity declarations. The id_kind
+// vocabulary is deliberately open (shape-checked, not membership-checked),
+// mirroring the audience field: a cassette must be able to describe an id
+// shape this build has not heard of.
+func validateEntities(entities []Entity, add func(string, string)) {
+	seen := make(map[string]int, len(entities))
+	for index := range entities {
+		entity := &entities[index]
+		prefix := fmt.Sprintf("entities[%d]", index)
+		if !identifierPattern.MatchString(entity.Type) {
+			add(prefix+".type", "must be a lower-snake entity type of at most 63 bytes")
+		}
+		if !identifierPattern.MatchString(entity.IDKind) {
+			add(prefix+".id_kind", "must be a lower-snake id kind such as uuid or string")
+		}
+		if previous, exists := seen[entity.Type]; exists {
+			add(prefix+".type", fmt.Sprintf("duplicates entities[%d].type", previous))
+		} else {
+			seen[entity.Type] = index
+		}
+		for relationIndex, relation := range entity.Relations {
+			relationPrefix := fmt.Sprintf("%s.relations[%d]", prefix, relationIndex)
+			if !identifierPattern.MatchString(relation.To) {
+				add(relationPrefix+".to", "must be a lower-snake entity type of at most 63 bytes")
+			}
+			if !identifierPattern.MatchString(relation.Kind) {
+				add(relationPrefix+".kind", "must be a lower-snake relation kind of at most 63 bytes")
+			}
+		}
 	}
 }
 
