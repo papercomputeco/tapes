@@ -119,7 +119,12 @@ func (c *apiCommander) run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("could not build new api server: %w", err)
 	}
-	server.SetCassetteSources(c.cassetteSources)
+	// contextcheck notices SetSources' withdrawal path dispatches
+	// registry-change hooks under its own bounded context. Deliberate: source
+	// configuration is lifecycle plumbing, not a request, and each hook POST
+	// carries its own timeout. nolintlint rides along because contextcheck's
+	// cross-package analysis resolves this chain only some of the time.
+	server.SetCassetteSources(c.cassetteSources) //nolint:contextcheck,nolintlint
 	if len(c.cassetteSources) > 0 {
 		server.StartCassetteSpecRefresh(ctx, c.cassetteRefresh)
 	}

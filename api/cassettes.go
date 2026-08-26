@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -111,9 +113,35 @@ func (s *Server) runCassetteSpecRefresh(ctx context.Context, interval time.Durat
 }
 
 // handleCassetteDiscovery publishes what is installed here, and what failed.
+//
+// The response carries a strong ETag over the encoded document and honors
+// If-None-Match, because discovery is the surface registry consumers poll:
+// a cassette keeping an entity catalog fresh issues conditional GETs against
+// this document's version and re-crawls only when it moves. The digest is
+// computed over the exact bytes served, so the ETag changes exactly when the
+// admitted set — cassettes, problems, claims-bearing manifests, entities —
+// changes.
 func (s *Server) handleCassetteDiscovery(c *fiber.Ctx) error {
-	return c.JSON(buildCassetteDiscovery(
-		s.cassettes, string(currentContractVersion(s.contracts)), s.cassetteSpecs.Status))
+	document := buildCassetteDiscovery(
+		s.cassettes, string(currentContractVersion(s.contracts)), s.cassetteSpecs.Status)
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		s.logger.Error("encode cassette discovery", "error", err)
+		return cassetteProblem(c, fiber.StatusInternalServerError, "encoding_failed",
+			"could not encode the discovery document")
+	}
+
+	sum := sha256.Sum256(encoded)
+	etag := `"sha256:` + hex.EncodeToString(sum[:]) + `"`
+	c.Set(fiber.HeaderETag, etag)
+	c.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	if c.Get(fiber.HeaderIfNoneMatch) == etag {
+		c.Status(fiber.StatusNotModified)
+
+		return nil
+	}
+
+	return c.Send(encoded)
 }
 
 // handleCassetteSpec returns one cassette's document from core's cache.

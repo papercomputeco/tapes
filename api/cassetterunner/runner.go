@@ -17,17 +17,24 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/papercomputeco/tapes/pkg/cassette"
 	"github.com/papercomputeco/tapes/pkg/cassette/manifest"
+	"github.com/papercomputeco/tapes/pkg/cassette/v1alpha1"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/tapesoapi"
 )
 
 // defaultFetchTimeout bounds a single cassette spec fetch.
 const defaultFetchTimeout = 10 * time.Second
+
+// registryHookTimeout bounds one registry-change hook POST. Hooks are hints,
+// not transactions: a cassette that cannot take one quickly gets the change
+// from its polling fallback instead of holding up the refresh pass.
+const registryHookTimeout = 5 * time.Second
 
 // SpecCache is the published-document surface the API server reads.
 //
@@ -65,6 +72,14 @@ type Config struct {
 	// decides whether it can serve that. An empty set admits nothing, which is
 	// the honest failure for a runner never told what its core serves.
 	Contracts []cassette.ContractVersion
+
+	// ReservedParams reports the query params core itself owns on a claimable
+	// surface, for refusing publishes claims that collide with core's own
+	// contract. It is a function rather than a map so the owning server can
+	// derive the set lazily from its live route table — admission happens on
+	// refresh, well after routes are mounted. A nil function reserves
+	// nothing, which is right for a runner whose core claims no surfaces.
+	ReservedParams func(surface string) []string
 
 	// Title and Version describe the merged document served at /openapi.
 	// Version should be the contract core advertises, so the aggregate and the
@@ -114,6 +129,7 @@ type Runner struct {
 	client    *http.Client
 	logger    *slog.Logger
 	contracts []cassette.ContractVersion
+	reserved  func(surface string) []string
 	title     string
 	version   string
 
@@ -154,6 +170,7 @@ func NewRunner(config Config) *Runner {
 		client:    client,
 		logger:    log,
 		contracts: append([]cassette.ContractVersion(nil), config.Contracts...),
+		reserved:  config.ReservedParams,
 		title:     title,
 		version:   config.Version,
 	}
@@ -194,6 +211,7 @@ func (runner *Runner) SetSources(sources []string) {
 	runner.sources = next
 	runner.mutex.Unlock()
 
+	withdrawn := false
 	for index, state := range previous {
 		_, urlStillConfigured := configured[state.url]
 		if retained[index] || urlStillConfigured {
@@ -207,8 +225,16 @@ func (runner *Runner) SetSources(sources []string) {
 		// Removal is the reverse of publication: hide the routable instance
 		// before dropping its document, preserving the invariant that every
 		// cassette visible through discovery and proxy lookup has a spec.
-		runner.registry.remove(state.name, state.url)
+		if runner.registry.remove(state.name, state.url) {
+			withdrawn = true
+		}
 		runner.specs.evictSource(state.name, state.url)
+	}
+	if withdrawn {
+		// Withdrawal changes the admitted entity/claim set as surely as
+		// admission does, and the remaining hook-declaring cassettes need to
+		// hear about it.
+		runner.notifyRegistryChanged(context.Background())
 	}
 }
 
@@ -307,6 +333,7 @@ func (runner *Runner) refreshSource(ctx context.Context, index int) error {
 	// A reader that sees a cassette in the registry must be able to fetch its
 	// spec; the reverse gap — a document cached for a cassette nobody can
 	// name — is invisible, so it is the safe side to fail on.
+	previous, replaced := runner.registry.Get(name)
 	runner.specs.publish(name, published, state.url)
 	if err := runner.registry.Put(instance); err != nil {
 		runner.specs.evict(name)
@@ -316,6 +343,13 @@ func (runner *Runner) refreshSource(ctx context.Context, index int) error {
 
 	runner.resolveSource(index, name, result.etag)
 	runner.registry.ClearRejection(state.url)
+
+	// The digest is the identity of the manifest, and the claim and entity
+	// declarations are digest-relevant — so "the admitted registry changed"
+	// is exactly "a cassette appeared or its digest moved".
+	if !replaced || previous.Digest != instance.Digest {
+		runner.notifyRegistryChanged(ctx)
+	}
 
 	return nil
 }
@@ -333,8 +367,70 @@ func (runner *Runner) admit(document *tapesoapi.Document) (cassette.Manifest, er
 	if err := declared.Validate(runner.contracts); err != nil {
 		return nil, err
 	}
+	if err := runner.checkClaims(declared); err != nil {
+		return nil, err
+	}
 
 	return declared, nil
+}
+
+// checkClaims refuses a document whose filter claims collide with a
+// core-owned param on the target surface or with a claim held by a different
+// admitted cassette. First claim wins: the whole document is refused, never
+// just the offending claim, and a violating refresh keeps the prior admitted
+// state exactly as any other refused refresh does.
+//
+// The check is deliberately local — the reserved set and the claim index are
+// both in-memory reads, O(#claims) work with no database or network access —
+// so admission stays as cheap with claims as without them.
+func (runner *Runner) checkClaims(declared cassette.Manifest) error {
+	name := declared.CassetteName()
+	for _, claim := range manifestClaims(name, declared) {
+		if runner.reserved != nil && slices.Contains(runner.reserved(claim.Surface), claim.Param) {
+			return fmt.Errorf("publishes claim %q on surface %q collides with a core-owned query param",
+				claim.Param, claim.Surface)
+		}
+		for _, held := range runner.registry.ClaimsFor(claim.Surface) {
+			if held.Param == claim.Param && held.Cassette != name {
+				return fmt.Errorf("publishes claim %q on surface %q is already held by cassette %q",
+					claim.Param, claim.Surface, held.Cassette)
+			}
+		}
+	}
+
+	return nil
+}
+
+// notifyRegistryChanged POSTs the registry-change hook of every admitted
+// cassette that declares one. Delivery is best-effort by contract: a hook
+// failure is logged and never affects admission, because the hook is only a
+// hint to re-crawl discovery now instead of at the next polling interval.
+func (runner *Runner) notifyRegistryChanged(ctx context.Context) {
+	for _, instance := range runner.registry.Instances() {
+		versioned, ok := instance.Manifest.(*v1alpha1.Manifest)
+		if !ok || versioned.Hooks == nil || versioned.Hooks.RegistryChanged == "" {
+			continue
+		}
+		endpoint := instance.URL + versioned.Hooks.RegistryChanged
+		callCtx, cancel := context.WithTimeout(ctx, registryHookTimeout)
+		request, err := http.NewRequestWithContext(callCtx, http.MethodPost, endpoint, http.NoBody)
+		if err == nil {
+			var response *http.Response
+			if response, err = runner.client.Do(request); err == nil {
+				_ = response.Body.Close()
+				if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+					err = fmt.Errorf("hook answered %s", response.Status)
+				}
+			}
+		}
+		cancel()
+		if err != nil {
+			runner.logger.Warn("registry-change hook failed",
+				"cassette", instance.Name,
+				"error", err,
+			)
+		}
+	}
 }
 
 // checkPriority refuses a source that would take a name an earlier configured
