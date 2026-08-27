@@ -44,7 +44,7 @@ jobs:
   # without the PR going red.
   extproc:
     name: Extproc Test (ext_proc adapter / wire-capture fidelity)
-    runs-on: depot-ubuntu-24.04
+    runs-on: depot-ubuntu-24.04-4
 
     steps:
       - name: Checkout repository
@@ -66,7 +66,7 @@ jobs:
   # away; publishing happens from release.yaml.
   extproc-image:
     name: Extproc Image
-    runs-on: depot-ubuntu-24.04
+    runs-on: depot-ubuntu-24.04-4
 
     steps:
       - name: Checkout repository
@@ -85,7 +85,7 @@ jobs:
 
   test-e2e:
     name: E2E Test (proxy / ingest / derive / span search)
-    runs-on: depot-ubuntu-24.04
+    runs-on: depot-ubuntu-24.04-4
 
     steps:
       - name: Checkout repository
@@ -104,7 +104,7 @@ jobs:
 
   build:
     name: Build
-    runs-on: depot-ubuntu-24.04
+    runs-on: depot-ubuntu-24.04-4
 
     steps:
       - name: Checkout repository
