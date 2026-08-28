@@ -106,6 +106,9 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 		Version:        string(currentContractVersion(contracts)),
 		Client:         cassetteClient,
 		ReservedParams: cassetterunner.ReservedParamsFromParser(openapi, claimableSurfacePaths),
+		// Filter claims arm only against views this server's own driver can
+		// read; a driver without the probe capability arms everything.
+		ProbeClaim: publishedViewProbe(driver),
 	})
 	s := &Server{
 		config:         config,

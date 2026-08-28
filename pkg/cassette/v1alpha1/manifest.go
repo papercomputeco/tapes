@@ -92,9 +92,12 @@ type Depends struct {
 // without core learning the cassette's semantics.
 type Publishes struct {
 	// Views are the schema-qualified views this cassette creates and
-	// maintains. Core admits the declaration without verifying the view
-	// exists or touching grants; provisioning SELECT for core's read role is
-	// deployment-owned, symmetric with depends.views.
+	// maintains. Core admits the declaration without database access and
+	// never touches grants; provisioning SELECT for core's read role is
+	// deployment-owned, symmetric with depends.views. A filter claim against
+	// a published view only takes effect once core has probed the view as
+	// readable with its own role — a separate arming pass, re-run on every
+	// refresh, never part of admission.
 	Views []string `json:"views,omitempty"`
 
 	// Filters are the query params this cassette claims on core surfaces.
