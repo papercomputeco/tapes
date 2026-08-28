@@ -238,6 +238,56 @@ var _ = Describe("The cassette surface", func() {
 		})
 	})
 
+	// The cassette side of these specs is a real ServeMux with a wildcard
+	// pattern, because PathValue is where mis-encoding becomes visible: a
+	// mux decodes each segment exactly once, so a proxy that re-escapes an
+	// already-escaped path hands the handler literal %XX sequences instead
+	// of the value the client named.
+	Describe("percent-encoded path segments", func() {
+		var (
+			escaped string
+			segment string
+		)
+
+		BeforeEach(func() {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/encoder/things/{name}", func(writer http.ResponseWriter, request *http.Request) {
+				escaped = request.URL.EscapedPath()
+				segment = request.PathValue("name")
+				writer.WriteHeader(http.StatusNoContent)
+			})
+			encoder := httptest.NewServer(mux)
+			DeferCleanup(encoder.Close)
+
+			Expect(server.cassettes.Put(&cassetterunner.Instance{
+				Name: "encoder", URL: encoder.URL, Anchors: cassette.Anchors{OpenAPI: "/openapi", Prefix: "api"},
+			})).To(Succeed())
+		})
+
+		It("forwards an escaped space byte-for-byte", func() {
+			response, _ := get("/v1/cassettes/encoder/things/My%20cool%20name")
+			Expect(response.StatusCode).To(Equal(http.StatusNoContent))
+			Expect(escaped).To(Equal("/api/encoder/things/My%20cool%20name"),
+				"the outgoing escaped path must be the inbound one with only the prefix swapped")
+			Expect(segment).To(Equal("My cool name"))
+		})
+
+		It("forwards a multibyte segment byte-for-byte", func() {
+			response, _ := get("/v1/cassettes/encoder/things/%F0%9F%8E%B8")
+			Expect(response.StatusCode).To(Equal(http.StatusNoContent))
+			Expect(escaped).To(Equal("/api/encoder/things/%F0%9F%8E%B8"))
+			Expect(segment).To(Equal("\U0001F3B8"))
+		})
+
+		It("keeps an escaped slash inside its segment", func() {
+			response, _ := get("/v1/cassettes/encoder/things/a%2Fb")
+			Expect(response.StatusCode).To(Equal(http.StatusNoContent))
+			Expect(escaped).To(Equal("/api/encoder/things/a%2Fb"),
+				"an escaped slash is data inside a segment, not a path separator")
+			Expect(segment).To(Equal("a/b"))
+		})
+	})
+
 	// A cassette may hold a response open for as long as it likes — the session
 	// chat cassette streams an agent's answer for the length of a conversation —
 	// so core has to relay a body it has not finished receiving. Everything here

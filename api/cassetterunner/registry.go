@@ -187,6 +187,11 @@ func (registry *Registry) routes() []route {
 
 // Lookup resolves a canonical public path to a cassette and the path to
 // forward on that cassette's own listener.
+//
+// path is in its escaped (wire) form and stays that way: the forwarded path
+// feeds RewriteProxyRequest, which needs the client's own bytes to preserve
+// them hop to hop. Prefixes are plain ASCII with nothing to escape, so
+// matching on the escaped path is equivalent to matching on the decoded one.
 func (registry *Registry) Lookup(path string) (*Instance, string, bool) {
 	for _, entry := range registry.routes() {
 		if !segmentPrefix(entry.prefix, path) {
