@@ -916,23 +916,31 @@ func claimTestManifest(normalizeJSON string) *v1alpha1.Manifest {
 // the order the key derivation applies them.
 const fullNormalizeJSON = `,"normalize":["trim","nfc","casefold"]`
 
-// installSessionsClaim admits a claim-holding cassette instance directly on
-// the server's registry — these specs are about what the handler does with an
-// admitted claim, not about how admission happened (that is the runner's
-// suite).
+// installSessionsClaim admits and arms a claim-holding cassette instance
+// directly on the server's registry — these specs are about what the handler
+// does with an armed claim, not about how admission or arming happened (both
+// are the runner's suite).
 func installSessionsClaim(server *Server, manifest *v1alpha1.Manifest) {
 	GinkgoHelper()
-	Expect(server.cassettes.Put(&cassetterunner.Instance{
-		Name:     "testpub",
-		Manifest: manifest,
-		URL:      "http://127.0.0.1:9999",
-		Anchors:  cassette.Anchors{Health: "/ping", OpenAPI: "/openapi", Prefix: "api"},
-	})).To(Succeed())
+	installNamedClaim(server, "testpub", manifest)
 }
 
-// installNamedClaim admits an additional claim-holding cassette under its own
-// name, for specs exercising several distinct admitted claims at once.
+// installNamedClaim admits and arms an additional claim-holding cassette
+// under its own name, for specs exercising several distinct armed claims at
+// once. Arming mirrors the runner's successful-probe outcome: only armed
+// claims reach the request path at all.
 func installNamedClaim(server *Server, name string, manifest *v1alpha1.Manifest) {
+	GinkgoHelper()
+	installUnarmedClaim(server, name, manifest)
+	for _, claim := range cassetterunner.ManifestClaims(cassette.Name(name), manifest) {
+		server.cassettes.ArmClaim(claim)
+	}
+}
+
+// installUnarmedClaim admits a claim-holding cassette without arming its
+// claims: the exact state the runner leaves an instance in when the
+// published-view probe fails.
+func installUnarmedClaim(server *Server, name string, manifest *v1alpha1.Manifest) {
 	GinkgoHelper()
 	Expect(server.cassettes.Put(&cassetterunner.Instance{
 		Name:     cassette.Name(name),

@@ -1,11 +1,15 @@
 package cassetterunner_test
 
 import (
+	"errors"
+	"fmt"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/papercomputeco/tapes/api/cassetterunner"
 	"github.com/papercomputeco/tapes/pkg/cassette"
+	"github.com/papercomputeco/tapes/pkg/cassette/v1alpha1"
 )
 
 // instance builds a minimal registrable cassette. Tests that care about a field
@@ -173,3 +177,104 @@ var errUnparsable = &cassette.ValidationError{
 	Subject:  "cassette http://sidecar.invalid/openapi",
 	Problems: []cassette.Problem{{Field: "kind", Message: "is required"}},
 }
+
+var _ = Describe("filter-claim arming state", func() {
+	var reg *cassetterunner.Registry
+
+	// claimingManifest publishes one view and claims the note param against
+	// it, so specs can vary the probed fields by varying the view.
+	claimingManifest := func(view string) *v1alpha1.Manifest {
+		GinkgoHelper()
+		parsed, err := v1alpha1.Parse(fmt.Appendf(nil, `{
+		  "kind":"cassette/v1alpha1",
+		  "cassette":{"name":"notes","version":"1.0.0"},
+		  "depends":{"core":"v1"},
+		  "api":{"health":"/ping","openapi":"/openapi"},
+		  "publishes":{
+		    "views":[%[1]q],
+		    "filters":[{
+		      "param":"note",
+		      "surface":"sessions",
+		      "view":%[1]q,
+		      "match":{"primitive_type":"session","value_column":"value"}
+		    }]
+		  }
+		}`, view))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(parsed.Validate([]cassette.ContractVersion{"v1"})).To(Succeed())
+
+		return parsed
+	}
+
+	putClaiming := func(manifest *v1alpha1.Manifest) cassetterunner.ActiveClaim {
+		GinkgoHelper()
+		one := instance("notes")
+		one.Manifest = manifest
+		Expect(reg.Put(one)).To(Succeed())
+		claims := cassetterunner.ManifestClaims("notes", manifest)
+		Expect(claims).To(HaveLen(1))
+
+		return claims[0]
+	}
+
+	BeforeEach(func() {
+		reg = cassetterunner.NewRegistry()
+	})
+
+	It("withholds an admitted claim from ClaimsFor until it is armed", func() {
+		claim := putClaiming(claimingManifest("notes_v1.attachments"))
+
+		Expect(reg.ClaimsFor("sessions")).To(BeEmpty(),
+			"admission records ownership; only arming makes a claim executable")
+		Expect(reg.ArmClaim(claim)).To(BeTrue(),
+			"the first arm is an effective-claim-set change")
+		Expect(reg.ClaimsFor("sessions")).To(HaveLen(1))
+		Expect(reg.ArmClaim(claim)).To(BeFalse(),
+			"re-arming an armed claim changes nothing")
+	})
+
+	It("files a claim rejection on disarm and clears it on arm", func() {
+		claim := putClaiming(claimingManifest("notes_v1.attachments"))
+
+		Expect(reg.DisarmClaim(claim, errors.New("view missing"))).To(BeFalse(),
+			"a never-armed claim does not change the effective set by staying un-armed")
+		Expect(reg.Rejections()).To(ConsistOf(cassetterunner.Rejection{
+			Subject: `cassette notes: claim "note"`,
+			Reason:  "view missing",
+		}))
+
+		Expect(reg.DisarmClaim(claim, errors.New("grant revoked"))).To(BeFalse())
+		Expect(reg.Rejections()).To(HaveLen(1),
+			"a claim retried every refresh must not grow the discovery document without bound")
+		Expect(reg.Rejections()[0].Reason).To(Equal("grant revoked"),
+			"the reason tracks the latest probe verdict")
+
+		Expect(reg.ArmClaim(claim)).To(BeTrue())
+		Expect(reg.Rejections()).To(BeEmpty(),
+			"an armed claim has nothing to report")
+
+		Expect(reg.DisarmClaim(claim, errors.New("view dropped"))).To(BeTrue(),
+			"armed to un-armed is an effective-claim-set change")
+		Expect(reg.Rejections()).To(HaveLen(1))
+	})
+
+	It("keeps armed state across a re-registration with unchanged claims", func() {
+		claim := putClaiming(claimingManifest("notes_v1.attachments"))
+		Expect(reg.ArmClaim(claim)).To(BeTrue())
+
+		putClaiming(claimingManifest("notes_v1.attachments"))
+
+		Expect(reg.ClaimsFor("sessions")).To(HaveLen(1),
+			"a steady-state re-registration is not an arming event and must not disarm anything")
+	})
+
+	It("requires a fresh probe verdict when a claim's probed fields change", func() {
+		claim := putClaiming(claimingManifest("notes_v1.attachments"))
+		Expect(reg.ArmClaim(claim)).To(BeTrue())
+
+		putClaiming(claimingManifest("notes_v1.renamed"))
+
+		Expect(reg.ClaimsFor("sessions")).To(BeEmpty(),
+			"the earlier probe proved a different view; the moved claim starts unproved")
+	})
+})

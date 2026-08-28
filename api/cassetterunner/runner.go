@@ -14,6 +14,7 @@ package cassetterunner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -35,6 +36,12 @@ const defaultFetchTimeout = 10 * time.Second
 // not transactions: a cassette that cannot take one quickly gets the change
 // from its polling fallback instead of holding up the refresh pass.
 const registryHookTimeout = 5 * time.Second
+
+// claimProbeTimeout bounds one published-view probe during the arming pass.
+// The deadline is per probe rather than shared across the pass so one hung
+// view cannot eat the budget and disarm later, healthy views. A var rather
+// than a const so tests can shrink it.
+var claimProbeTimeout = 5 * time.Second
 
 // SpecCache is the published-document surface the API server reads.
 //
@@ -81,6 +88,24 @@ type Config struct {
 	// nothing, which is right for a runner whose core claims no surfaces.
 	ReservedParams func(surface string) []string
 
+	// ProbeClaim verifies that core can actually read one claim-declared
+	// published view — nil for readable, the underlying error otherwise.
+	// The runner arms a filter claim only after a successful probe, and
+	// re-probes on every refresh pass, so a view created or a grant fixed
+	// after admission arms the claim with no re-admission required.
+	//
+	// Errors are inspected: an attempt that produced no verdict — the store
+	// could not be asked at all — must be wrapped in *TransientProbeError
+	// (errors.As is used, so wrapping deeper is fine). Any other error is
+	// treated as the store's definitive refusal and may move arming state.
+	//
+	// It is a function rather than a storage interface for the same reason
+	// ReservedParams is: the owning server adapts its own driver, and this
+	// package stays free of storage. A nil function arms every admitted
+	// claim, which preserves the pre-probe behavior for cores whose driver
+	// cannot host published views.
+	ProbeClaim func(ctx context.Context, view, valueColumn string) error
+
 	// Title and Version describe the merged document served at /openapi.
 	// Version should be the contract core advertises, so the aggregate and the
 	// discovery document cannot disagree about which surface this is.
@@ -97,6 +122,23 @@ type Config struct {
 	// records, which keeps standalone runner use safe.
 	Logger *slog.Logger
 }
+
+// TransientProbeError marks a ProbeClaim attempt that produced no verdict:
+// the injected probe could not reach the store at all. The arming pass
+// retains a claim's prior state on such an error — an armed claim stays
+// armed, an un-armed claim keeps its recorded reason — because disarming on
+// a blip would silently unfilter successful responses, and if the store were
+// really down the filtered queries themselves would fail loudly anyway.
+type TransientProbeError struct {
+	Err error
+}
+
+func (transient *TransientProbeError) Error() string {
+	return "published view probe was inconclusive: " + transient.Err.Error()
+}
+
+// Unwrap exposes the underlying failure for errors.Is/As.
+func (transient *TransientProbeError) Unwrap() error { return transient.Err }
 
 // sourceState is one configured OpenAPI URL and what resolving it produced.
 type sourceState struct {
@@ -130,6 +172,7 @@ type Runner struct {
 	logger    *slog.Logger
 	contracts []cassette.ContractVersion
 	reserved  func(surface string) []string
+	probe     func(ctx context.Context, view, valueColumn string) error
 	title     string
 	version   string
 
@@ -171,6 +214,7 @@ func NewRunner(config Config) *Runner {
 		logger:    log,
 		contracts: append([]cassette.ContractVersion(nil), config.Contracts...),
 		reserved:  config.ReservedParams,
+		probe:     config.ProbeClaim,
 		title:     title,
 		version:   config.Version,
 	}
@@ -253,8 +297,93 @@ func (runner *Runner) Refresh(ctx context.Context) []error {
 			errs = append(errs, err)
 		}
 	}
+	runner.armClaims(ctx)
 
 	return errs
+}
+
+// armClaims is the per-refresh arming pass: every admitted instance's filter
+// claims are probed against the store and armed or disarmed accordingly.
+//
+// It runs over admitted state after the source loop rather than inside
+// admission, for two reasons. Admission stays no-I/O — a manifest is judged
+// on what it declares, never on the current shape of the database. And a
+// source whose document revalidates to a 304 never reaches admit at all, yet
+// its views can break or heal between passes; probing here means arming
+// self-heals on the refresh cadence with no document change required. A
+// probe failure is a per-claim rejection, not a source error: the document
+// stays admitted and the claim keeps its param.
+func (runner *Runner) armClaims(ctx context.Context) {
+	changed := false
+	probed := make(map[string]error)
+	for _, instance := range runner.registry.Instances() {
+		for _, claim := range ManifestClaims(instance.Name, instance.Manifest) {
+			err := runner.probeClaim(ctx, claim, probed)
+			if err == nil {
+				if runner.registry.ArmClaim(claim) {
+					changed = true
+					runner.logger.Info("armed filter claim",
+						"cassette", claim.Cassette,
+						"param", claim.Param,
+						"view", claim.View,
+					)
+				}
+
+				continue
+			}
+			var transient *TransientProbeError
+			if errors.As(err, &transient) {
+				// No verdict, so no state may move: an armed claim stays
+				// armed rather than silently unfiltering over a blip, and an
+				// un-armed claim keeps its definitive recorded reason rather
+				// than having it overwritten by a timeout. Arming itself
+				// always waits for a definitive success.
+				runner.logger.Warn("filter claim probe inconclusive; retaining prior state",
+					"cassette", claim.Cassette,
+					"param", claim.Param,
+					"view", claim.View,
+					"error", err,
+				)
+
+				continue
+			}
+			reason := fmt.Errorf("filter claim %q on surface %q is not armed: published view %s is not readable: %w",
+				claim.Param, claim.Surface, claim.View, err)
+			if runner.registry.DisarmClaim(claim, reason) {
+				changed = true
+				runner.logger.Warn("disarmed filter claim",
+					"cassette", claim.Cassette,
+					"param", claim.Param,
+					"view", claim.View,
+					"error", err,
+				)
+			}
+		}
+	}
+	if changed {
+		// An arm/disarm transition changes the effective claim set exactly
+		// as admission or withdrawal does, and hook-declaring cassettes
+		// asked to hear about that.
+		runner.notifyRegistryChanged(ctx)
+	}
+}
+
+// probeClaim resolves one claim's probe verdict, deduplicating by view and
+// column within the pass so several claims over one view cost one round trip.
+func (runner *Runner) probeClaim(ctx context.Context, claim ActiveClaim, probed map[string]error) error {
+	if runner.probe == nil {
+		return nil
+	}
+	key := claim.View + "\x1f" + claim.ValueColumn
+	if err, done := probed[key]; done {
+		return err
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, claimProbeTimeout)
+	err := runner.probe(probeCtx, claim.View, claim.ValueColumn)
+	cancel()
+	probed[key] = err
+
+	return err
 }
 
 // refreshSource resolves one configured source: fetch, admit, republish,
@@ -342,7 +471,10 @@ func (runner *Runner) refreshSource(ctx context.Context, index int) error {
 	}
 
 	runner.resolveSource(index, name, result.etag)
-	runner.registry.ClearRejection(state.url)
+	// The subject must match what failSource files under, which is the
+	// redacted spelling — clearing under the raw URL would strand a
+	// rejection for any source whose safe form differs.
+	runner.registry.ClearRejection(safeSource(state.url))
 
 	// The digest is the identity of the manifest, and the claim and entity
 	// declarations are digest-relevant — so "the admitted registry changed"
@@ -382,15 +514,20 @@ func (runner *Runner) admit(document *tapesoapi.Document) (cassette.Manifest, er
 //
 // The check is deliberately local — the reserved set and the claim index are
 // both in-memory reads, O(#claims) work with no database or network access —
-// so admission stays as cheap with claims as without them.
+// so admission stays as cheap with claims as without them. Readability of
+// the claimed view is deliberately not checked here either: that needs
+// database access, so it belongs to the arming pass (armClaims), which runs
+// after admission on every refresh. The collision check reads the admitted
+// claim index rather than the armed one, because an un-armed claim still
+// owns its param.
 func (runner *Runner) checkClaims(declared cassette.Manifest) error {
 	name := declared.CassetteName()
-	for _, claim := range manifestClaims(name, declared) {
+	for _, claim := range ManifestClaims(name, declared) {
 		if runner.reserved != nil && slices.Contains(runner.reserved(claim.Surface), claim.Param) {
 			return fmt.Errorf("publishes claim %q on surface %q collides with a core-owned query param",
 				claim.Param, claim.Surface)
 		}
-		for _, held := range runner.registry.ClaimsFor(claim.Surface) {
+		for _, held := range runner.registry.admittedClaimsFor(claim.Surface) {
 			if held.Param == claim.Param && held.Cassette != name {
 				return fmt.Errorf("publishes claim %q on surface %q is already held by cassette %q",
 					claim.Param, claim.Surface, held.Cassette)

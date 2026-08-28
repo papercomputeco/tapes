@@ -1,7 +1,9 @@
 package cassetterunner
 
 import (
+	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/papercomputeco/tapes/pkg/cassette"
 	"github.com/papercomputeco/tapes/pkg/cassette/v1alpha1"
@@ -21,10 +23,12 @@ type ActiveClaim struct {
 	Normalize     []string
 }
 
-// manifestClaims lifts a manifest's filter claims into their flattened form.
+// ManifestClaims lifts a manifest's filter claims into their flattened form.
 // The type switch is the version-aware edge, the same one discovery performs:
-// a schema that does not declare claims simply holds none.
-func manifestClaims(name cassette.Name, declared cassette.Manifest) []ActiveClaim {
+// a schema that does not declare claims simply holds none. It is exported so
+// a server that installed an instance directly can name the same claims the
+// runner would derive — arming state is keyed off this exact flattening.
+func ManifestClaims(name cassette.Name, declared cassette.Manifest) []ActiveClaim {
 	versioned, ok := declared.(*v1alpha1.Manifest)
 	if !ok || versioned.Publishes == nil {
 		return nil
@@ -45,17 +49,56 @@ func manifestClaims(name cassette.Name, declared cassette.Manifest) []ActiveClai
 	return claims
 }
 
-// ClaimsFor returns the filter-param claims held by admitted cassettes on one
-// core surface, in cassette-name order.
+// claimKey identifies one claim for arming state: the ownership coordinates
+// plus every field the probe verified. Normalize verbs are deliberately
+// excluded — they change how supplied values fold, not whether the view is
+// readable — so a normalization-only manifest edit keeps its armed state.
+func claimKey(claim ActiveClaim) string {
+	return strings.Join([]string{
+		string(claim.Cassette), claim.Surface, claim.Param,
+		claim.View, claim.PrimitiveType, claim.ValueColumn,
+	}, "\x1f")
+}
+
+// claimSubject is the stable, claim-qualified subject an un-armed claim's
+// rejection is filed under. Param-scoped rather than view-scoped so the
+// operator-facing problem survives a manifest repointing the claim at a new
+// view: the question being answered is "why does this param do nothing".
+func claimSubject(claim ActiveClaim) string {
+	return fmt.Sprintf("cassette %s: claim %q", claim.Cassette, claim.Param)
+}
+
+// ClaimsFor returns the armed filter-param claims held by admitted cassettes
+// on one core surface, in cassette-name order.
 //
-// The lookup reads only in-memory admitted state under the registry's own
-// lock — no I/O of any kind — which is what makes a per-request consult
-// affordable and correct at once: claims flip on admit/withdraw with no route
-// change, and a request between refreshes sees exactly the admitted set.
+// The lookup reads only in-memory state under the registry's own lock — no
+// I/O of any kind — which is what makes a per-request consult affordable and
+// correct at once: claims flip on admit/withdraw/arm/disarm with no route
+// change, and a request between refreshes sees exactly the currently armed
+// set. Un-armed claims are withheld, so the request path treats their params
+// exactly as it treats unclaimed ones.
 func (registry *Registry) ClaimsFor(surface string) []ActiveClaim {
+	admitted := registry.admittedClaimsFor(surface)
+	claims := admitted[:0]
+	registry.mutex.RLock()
+	for _, claim := range admitted {
+		if _, armed := registry.armed[claimKey(claim)]; armed {
+			claims = append(claims, claim)
+		}
+	}
+	registry.mutex.RUnlock()
+
+	return claims
+}
+
+// admittedClaimsFor returns every admitted claim on one surface, armed or
+// not. Admission's first-claim-wins check consults this rather than
+// ClaimsFor because arming gates execution, never ownership: a claim whose
+// view is currently unreadable still holds its param.
+func (registry *Registry) admittedClaimsFor(surface string) []ActiveClaim {
 	claims := make([]ActiveClaim, 0)
 	for _, instance := range registry.Instances() {
-		for _, claim := range manifestClaims(instance.Name, instance.Manifest) {
+		for _, claim := range ManifestClaims(instance.Name, instance.Manifest) {
 			if claim.Surface == surface {
 				claims = append(claims, claim)
 			}
