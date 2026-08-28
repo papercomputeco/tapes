@@ -442,6 +442,33 @@ dependency on another cassette's published view can declare it under `depends.pu
 must stay decoupled from any particular publisher should take its view names
 as deployment configuration instead.
 
+The grant surface around a published schema carries its own discipline, owned
+by the publisher and the deployment:
+
+- **Views only.** A published schema exists to be read through schema-wide
+  grants, so only views belong in it: a base table created there would be
+  exposed by the same grants. The publisher enforces this — core admits
+  declarations, it does not inspect the schema's contents.
+- **Definer-rights views, deliberately.** A published view executes with its
+  owner's rights. That is the mechanism that lets a consumer read the
+  contract without holding any rights on the publisher's private schema —
+  so `security_invoker` must never be applied to a published view: it would
+  re-evaluate the view with each consumer's rights and break every consumer.
+  Because the body runs as its owner, keep it narrow: enumerate columns
+  explicitly (never `SELECT *`, which would also drift the promised column
+  list) and avoid function calls in the view body.
+- **The read-access trust boundary.** Consumers reach published schemas
+  through a deployment-provided readers group; membership is a deployment
+  decision, not a manifest one. Today any platform component in that group
+  may read any published schema — a documented platform-internal trust
+  decision. Per-schema reader groups are the planned least-privilege
+  tightening.
+- **Publisher grant obligations.** The schema owner grants `USAGE` on the
+  schema and `SELECT` on its views to the deployment's reader roles, with
+  matching `ALTER DEFAULT PRIVILEGES` so later-created views are covered
+  too. Guard the grants so an absent role is skipped rather than fatal, and
+  keep them idempotent so they can run at every boot.
+
 ### Entity advertisement
 
 A cassette that offers entities other cassettes may reference declares them:
