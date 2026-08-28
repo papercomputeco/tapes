@@ -1,10 +1,13 @@
 package cassetterunner_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -296,5 +299,284 @@ var _ = Describe("registry-change hooks", func() {
 		beforeWithdraw := hookCalls.Load()
 		runtime.SetSources([]string{hooked.URL + "/openapi"})
 		Expect(hookCalls.Load()).To(BeNumerically(">", beforeWithdraw))
+	})
+})
+
+// claimProbe is a scriptable stand-in for the storage-side published-view
+// probe: it records what it was asked to verify and answers with whatever
+// error the spec has staged, so arming can be exercised without a database.
+type claimProbe struct {
+	mu    sync.Mutex
+	err   error
+	calls []string
+}
+
+func (probe *claimProbe) fn(_ context.Context, view, column string) error {
+	probe.mu.Lock()
+	defer probe.mu.Unlock()
+	probe.calls = append(probe.calls, view+" "+column)
+
+	return probe.err
+}
+
+func (probe *claimProbe) set(err error) {
+	probe.mu.Lock()
+	defer probe.mu.Unlock()
+	probe.err = err
+}
+
+func (probe *claimProbe) observed() []string {
+	probe.mu.Lock()
+	defer probe.mu.Unlock()
+
+	return append([]string(nil), probe.calls...)
+}
+
+var _ = Describe("published-view arming for filter claims", func() {
+	newProbedRuntime := func(registry *cassetterunner.Registry, probe *claimProbe) *cassetterunner.Runner {
+		return cassetterunner.NewRunner(cassetterunner.Config{
+			Registry:   registry,
+			Contracts:  servedContracts(),
+			ProbeClaim: probe.fn,
+		})
+	}
+
+	It("leaves a failing-probe claim un-armed: unclaimed on the request path, reported to the operator", func(ctx SpecContext) {
+		source := newMutableSource(claimDocument("notes", "note", "note"))
+		defer source.Close()
+		probe := &claimProbe{}
+		probe.set(errors.New("relation does not exist"))
+		registry := cassetterunner.NewRegistry()
+		runtime := newProbedRuntime(registry, probe)
+		runtime.SetSources([]string{source.URL + "/openapi"})
+
+		Expect(runtime.Refresh(ctx)).To(BeEmpty(),
+			"an unreadable view is a claim problem, not a source failure: the document stays admitted")
+		Expect(registry.Instances()).To(HaveLen(1))
+		Expect(registry.ClaimsFor("sessions")).To(BeEmpty(),
+			"an un-armed claim must be invisible to the request path, exactly like an unclaimed param")
+		Expect(probe.observed()).To(ContainElement("notes_v1.attachments value"),
+			"the probe receives the claim-declared view and value column")
+
+		rejections := registry.Rejections()
+		Expect(rejections).To(HaveLen(1))
+		Expect(rejections[0].Subject).To(Equal(`cassette notes: claim "note"`),
+			"the rejection subject is claim-qualified and dedupe-stable across retries")
+		Expect(rejections[0].Reason).To(ContainSubstring("notes_v1.attachments"))
+		Expect(rejections[0].Reason).To(ContainSubstring("relation does not exist"))
+	})
+
+	It("arms a claim whose probe succeeds and files nothing", func(ctx SpecContext) {
+		source := newMutableSource(claimDocument("notes", "note", "note"))
+		defer source.Close()
+		probe := &claimProbe{}
+		registry := cassetterunner.NewRegistry()
+		runtime := newProbedRuntime(registry, probe)
+		runtime.SetSources([]string{source.URL + "/openapi"})
+
+		Expect(runtime.Refresh(ctx)).To(BeEmpty())
+		claims := registry.ClaimsFor("sessions")
+		Expect(claims).To(HaveLen(1))
+		Expect(claims[0].Param).To(Equal("note"))
+		Expect(registry.Rejections()).To(BeEmpty())
+	})
+
+	It("re-probes on every refresh and arms a healed claim even when the document 304s", func(ctx SpecContext) {
+		source := newMutableSource(claimDocument("notes", "note", "note"))
+		defer source.Close()
+		etag := `"v1"`
+		source.etag.Store(&etag)
+		probe := &claimProbe{}
+		probe.set(errors.New("permission denied"))
+		registry := cassetterunner.NewRegistry()
+		runtime := newProbedRuntime(registry, probe)
+		runtime.SetSources([]string{source.URL + "/openapi"})
+
+		Expect(runtime.Refresh(ctx)).To(BeEmpty())
+		Expect(registry.ClaimsFor("sessions")).To(BeEmpty())
+		Expect(registry.Rejections()).To(HaveLen(1))
+
+		// The grant lands; the document has not changed, so the next pass
+		// revalidates to a 304 — arming must not depend on re-admission.
+		probe.set(nil)
+		Expect(runtime.Refresh(ctx)).To(BeEmpty())
+		Expect(runtime.Status("notes")).To(Equal(tapesoapi.Fresh),
+			"the second pass revalidated rather than re-admitting")
+		Expect(registry.ClaimsFor("sessions")).To(HaveLen(1),
+			"arming self-heals on the refresh cadence, with no document change required")
+		Expect(registry.Rejections()).To(BeEmpty())
+	})
+
+	It("disarms an armed claim when its probe starts failing and notifies hooks on the transition only", func(ctx SpecContext) {
+		var hookCalls atomic.Int32
+		mux := http.NewServeMux()
+		mux.HandleFunc("/openapi", func(writer http.ResponseWriter, _ *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(claimDocument("notes", "note", "note")))
+		})
+		mux.HandleFunc("/hooks/registry-changed", func(writer http.ResponseWriter, _ *http.Request) {
+			hookCalls.Add(1)
+			writer.WriteHeader(http.StatusNoContent)
+		})
+		hooked := httptest.NewServer(mux)
+		defer hooked.Close()
+
+		probe := &claimProbe{}
+		registry := cassetterunner.NewRegistry()
+		runtime := newProbedRuntime(registry, probe)
+		runtime.SetSources([]string{hooked.URL + "/openapi"})
+
+		Expect(runtime.Refresh(ctx)).To(BeEmpty())
+		Expect(registry.ClaimsFor("sessions")).To(HaveLen(1))
+		settled := hookCalls.Load()
+
+		Expect(runtime.Refresh(ctx)).To(BeEmpty())
+		Expect(hookCalls.Load()).To(Equal(settled),
+			"a claim that stays armed is not a registry change")
+
+		probe.set(errors.New("view dropped"))
+		Expect(runtime.Refresh(ctx)).To(BeEmpty())
+		Expect(registry.ClaimsFor("sessions")).To(BeEmpty())
+		Expect(hookCalls.Load()).To(BeNumerically(">", settled),
+			"disarming changes the effective claim set as surely as withdrawal does")
+
+		afterDisarm := hookCalls.Load()
+		Expect(runtime.Refresh(ctx)).To(BeEmpty())
+		Expect(hookCalls.Load()).To(Equal(afterDisarm),
+			"a claim that stays un-armed is not a new change either")
+	})
+
+	It("keeps first-claim-wins ownership while the holder is un-armed", func(ctx SpecContext) {
+		first := newMutableSource(claimDocument("notes", "note", "note"))
+		second := newMutableSource(claimDocument("marks", "note", "mark"))
+		defer first.Close()
+		defer second.Close()
+		probe := &claimProbe{}
+		probe.set(errors.New("relation does not exist"))
+		registry := cassetterunner.NewRegistry()
+		runtime := newProbedRuntime(registry, probe)
+		runtime.SetSources([]string{first.URL + "/openapi", second.URL + "/openapi"})
+
+		errs := runtime.Refresh(ctx)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("already held"),
+			"arming gates execution, never ownership: an un-armed claim still holds its param")
+		Expect(registry.ClaimsFor("sessions")).To(BeEmpty())
+	})
+
+	It("requires a fresh probe after a withdrawn cassette is re-admitted", func(ctx SpecContext) {
+		source := newMutableSource(claimDocument("notes", "note", "note"))
+		defer source.Close()
+		probe := &claimProbe{}
+		registry := cassetterunner.NewRegistry()
+		runtime := newProbedRuntime(registry, probe)
+		runtime.SetSources([]string{source.URL + "/openapi"})
+		Expect(runtime.Refresh(ctx)).To(BeEmpty())
+		Expect(registry.ClaimsFor("sessions")).To(HaveLen(1))
+
+		runtime.SetSources([]string{})
+		Expect(registry.Instances()).To(BeEmpty())
+
+		// The world changed while the cassette was gone; the old verdict
+		// must not leak into the re-admission.
+		probe.set(errors.New("relation does not exist"))
+		runtime.SetSources([]string{source.URL + "/openapi"})
+		Expect(runtime.Refresh(ctx)).To(BeEmpty())
+		Expect(registry.Instances()).To(HaveLen(1))
+		Expect(registry.ClaimsFor("sessions")).To(BeEmpty(),
+			"withdrawal drops arming state, so re-admission starts from an unproved claim")
+	})
+
+	It("retains an armed claim across a transient probe failure, without rejection or hook noise", func(ctx SpecContext) {
+		var hookCalls atomic.Int32
+		mux := http.NewServeMux()
+		mux.HandleFunc("/openapi", func(writer http.ResponseWriter, _ *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(claimDocument("notes", "note", "note")))
+		})
+		mux.HandleFunc("/hooks/registry-changed", func(writer http.ResponseWriter, _ *http.Request) {
+			hookCalls.Add(1)
+			writer.WriteHeader(http.StatusNoContent)
+		})
+		hooked := httptest.NewServer(mux)
+		defer hooked.Close()
+
+		probe := &claimProbe{}
+		registry := cassetterunner.NewRegistry()
+		runtime := newProbedRuntime(registry, probe)
+		runtime.SetSources([]string{hooked.URL + "/openapi"})
+		Expect(runtime.Refresh(ctx)).To(BeEmpty())
+		Expect(registry.ClaimsFor("sessions")).To(HaveLen(1))
+		settled := hookCalls.Load()
+
+		// The store never answered: no verdict, so no state may move. A
+		// disarm here would silently unfilter successful responses over a
+		// blip — if the store were really down, the filtered queries
+		// themselves would fail loudly anyway.
+		probe.set(&cassetterunner.TransientProbeError{Err: errors.New("context deadline exceeded")})
+		Expect(runtime.Refresh(ctx)).To(BeEmpty())
+		Expect(registry.ClaimsFor("sessions")).To(HaveLen(1),
+			"only a definitive verdict from the store may disarm an armed claim")
+		Expect(registry.Rejections()).To(BeEmpty(),
+			"an inconclusive probe files nothing")
+		Expect(hookCalls.Load()).To(Equal(settled),
+			"no state moved, so there is no registry change to announce")
+	})
+
+	It("keeps a definitive rejection unchanged across a transient probe failure", func(ctx SpecContext) {
+		source := newMutableSource(claimDocument("notes", "note", "note"))
+		defer source.Close()
+		probe := &claimProbe{}
+		probe.set(errors.New("relation does not exist"))
+		registry := cassetterunner.NewRegistry()
+		runtime := newProbedRuntime(registry, probe)
+		runtime.SetSources([]string{source.URL + "/openapi"})
+
+		Expect(runtime.Refresh(ctx)).To(BeEmpty())
+		Expect(registry.ClaimsFor("sessions")).To(BeEmpty())
+		Expect(registry.Rejections()).To(HaveLen(1))
+		Expect(registry.Rejections()[0].Reason).To(ContainSubstring("relation does not exist"))
+
+		probe.set(&cassetterunner.TransientProbeError{Err: errors.New("dial tcp: connection refused")})
+		Expect(runtime.Refresh(ctx)).To(BeEmpty())
+		Expect(registry.ClaimsFor("sessions")).To(BeEmpty(),
+			"arming always requires a definitive success")
+		Expect(registry.Rejections()).To(HaveLen(1))
+		Expect(registry.Rejections()[0].Reason).To(ContainSubstring("relation does not exist"),
+			"the operator keeps the actionable verdict, not the blip that followed it")
+		Expect(registry.Rejections()[0].Reason).NotTo(ContainSubstring("connection refused"))
+	})
+
+	It("never arms a claim on a transient probe failure", func(ctx SpecContext) {
+		source := newMutableSource(claimDocument("notes", "note", "note"))
+		defer source.Close()
+		probe := &claimProbe{}
+		probe.set(&cassetterunner.TransientProbeError{Err: errors.New("context deadline exceeded")})
+		registry := cassetterunner.NewRegistry()
+		runtime := newProbedRuntime(registry, probe)
+		runtime.SetSources([]string{source.URL + "/openapi"})
+
+		Expect(runtime.Refresh(ctx)).To(BeEmpty())
+		Expect(registry.Instances()).To(HaveLen(1))
+		Expect(registry.ClaimsFor("sessions")).To(BeEmpty(),
+			"a claim that was never proved readable stays un-armed until the store says yes")
+		Expect(registry.Rejections()).To(BeEmpty(),
+			"a blip is not a verdict, so nothing is filed against the claim")
+	})
+
+	It("arms every claim when core has no probe to consult", func(ctx SpecContext) {
+		source := newMutableSource(claimDocument("notes", "note", "note"))
+		defer source.Close()
+		registry := cassetterunner.NewRegistry()
+		runtime := cassetterunner.NewRunner(cassetterunner.Config{
+			Registry:  registry,
+			Contracts: servedContracts(),
+		})
+		runtime.SetSources([]string{source.URL + "/openapi"})
+
+		Expect(runtime.Refresh(ctx)).To(BeEmpty())
+		Expect(registry.ClaimsFor("sessions")).To(HaveLen(1),
+			"a core whose driver cannot probe keeps the pre-arming behavior: every admitted claim executes")
+		Expect(registry.Rejections()).To(BeEmpty())
 	})
 })

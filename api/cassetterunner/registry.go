@@ -19,6 +19,14 @@ type Registry struct {
 	instances  map[cassette.Name]*Instance
 	order      []cassette.Name
 	rejections []Rejection
+
+	// armed is the set of filter claims whose published view survived the
+	// most recent probe, keyed by claimKey. It is state rather than a
+	// derivation because readability is a fact about the database, not the
+	// manifest: ClaimsFor withholds anything not in this set, so an
+	// un-armed claim is invisible to the request path while remaining
+	// admitted for ownership.
+	armed map[string]struct{}
 }
 
 // NewRegistry returns an empty cassette registry.
@@ -26,6 +34,7 @@ func NewRegistry() *Registry {
 	return &Registry{
 		instances:  make(map[cassette.Name]*Instance),
 		rejections: make([]Rejection, 0),
+		armed:      make(map[string]struct{}),
 	}
 }
 
@@ -47,12 +56,76 @@ func (registry *Registry) Put(instance *Instance) error {
 	if err := registry.check(instance); err != nil {
 		return err
 	}
-	if _, exists := registry.instances[instance.Name]; !exists {
+	previous, exists := registry.instances[instance.Name]
+	if exists {
+		registry.pruneClaimState(previous, instance)
+	} else {
 		registry.order = append(registry.order, instance.Name)
 	}
 	registry.instances[instance.Name] = instance
 
 	return nil
+}
+
+// pruneClaimState drops arming state and claim rejections that belonged to
+// the previous manifest and are absent from the replacement. Claims carried
+// over identically keep their armed state, so a steady-state re-registration
+// is not an effective-claim-set change; a claim whose probe-relevant fields
+// moved starts un-armed and must be proved against its new view. Runs under
+// the write lock.
+func (registry *Registry) pruneClaimState(previous, next *Instance) {
+	nextKeys := make(map[string]struct{})
+	nextSubjects := make(map[string]struct{})
+	for _, claim := range ManifestClaims(next.Name, next.Manifest) {
+		nextKeys[claimKey(claim)] = struct{}{}
+		nextSubjects[claimSubject(claim)] = struct{}{}
+	}
+	for _, claim := range ManifestClaims(previous.Name, previous.Manifest) {
+		if _, kept := nextKeys[claimKey(claim)]; !kept {
+			delete(registry.armed, claimKey(claim))
+		}
+		if _, kept := nextSubjects[claimSubject(claim)]; !kept {
+			registry.clearRejection(claimSubject(claim))
+		}
+	}
+}
+
+// ArmClaim marks one admitted claim executable and clears the rejection
+// filed while it was un-armed. The verdict itself belongs to the caller —
+// the registry only stores it. It reports whether the effective claim set
+// changed, so a caller can notify hook-declaring cassettes on real
+// transitions only.
+func (registry *Registry) ArmClaim(claim ActiveClaim) bool {
+	registry.mutex.Lock()
+	defer registry.mutex.Unlock()
+
+	registry.clearRejection(claimSubject(claim))
+	key := claimKey(claim)
+	if _, armed := registry.armed[key]; armed {
+		return false
+	}
+	registry.armed[key] = struct{}{}
+
+	return true
+}
+
+// DisarmClaim marks one claim not executable and files why under the
+// claim's stable subject, replacing any earlier reason. The request path
+// then treats the claimed param exactly as unclaimed — fail-open by
+// contract — while discovery's problems list carries the reason. It reports
+// whether the effective claim set changed.
+func (registry *Registry) DisarmClaim(claim ActiveClaim, reason error) bool {
+	registry.mutex.Lock()
+	defer registry.mutex.Unlock()
+
+	registry.setRejection(claimSubject(claim), reason)
+	key := claimKey(claim)
+	if _, armed := registry.armed[key]; !armed {
+		return false
+	}
+	delete(registry.armed, key)
+
+	return true
 }
 
 // remove drops name only when it is still owned by source. The ownership check
@@ -65,6 +138,13 @@ func (registry *Registry) remove(name cassette.Name, source string) bool {
 	instance, exists := registry.instances[name]
 	if !exists || instance.Source != source {
 		return false
+	}
+	// Arming state and claim rejections die with the instance: a withdrawn
+	// cassette must not stale-arm a later re-admission, and its problems
+	// are no longer anyone's to fix.
+	for _, claim := range ManifestClaims(instance.Name, instance.Manifest) {
+		delete(registry.armed, claimKey(claim))
+		registry.clearRejection(claimSubject(claim))
 	}
 	delete(registry.instances, name)
 	for index, ordered := range registry.order {
@@ -115,6 +195,14 @@ func (registry *Registry) SetRejection(subject string, err error) {
 	registry.mutex.Lock()
 	defer registry.mutex.Unlock()
 
+	registry.setRejection(subject, err)
+}
+
+// setRejection is SetRejection under an already-held write lock.
+func (registry *Registry) setRejection(subject string, err error) {
+	if err == nil {
+		return
+	}
 	for index := range registry.rejections {
 		if registry.rejections[index].Subject == subject {
 			registry.rejections[index].Reason = err.Error()
@@ -130,6 +218,11 @@ func (registry *Registry) ClearRejection(subject string) {
 	registry.mutex.Lock()
 	defer registry.mutex.Unlock()
 
+	registry.clearRejection(subject)
+}
+
+// clearRejection is ClearRejection under an already-held write lock.
+func (registry *Registry) clearRejection(subject string) {
 	for index := range registry.rejections {
 		if registry.rejections[index].Subject == subject {
 			registry.rejections = append(registry.rejections[:index], registry.rejections[index+1:]...)
