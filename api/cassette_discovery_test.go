@@ -164,3 +164,48 @@ var _ = Describe("cassetteSpecPath", func() {
 		Expect(cassetteSpecPath("summary")).To(Equal("/v1/cassettes/summary/openapi.json"))
 	})
 })
+
+var _ = Describe("un-armed filter claims in discovery", func() {
+	const claimingManifest = `{
+	  "kind": "cassette/v1alpha1",
+	  "cassette": {"name": "testpub", "version": "1.0.0"},
+	  "depends": {"core": "v1"},
+	  "api": {},
+	  "publishes": {
+	    "views": ["testpub.attachments"],
+	    "filters": [{
+	      "param": "vintage",
+	      "surface": "sessions",
+	      "view": "testpub.attachments",
+	      "match": {"primitive_type": "session", "value_column": "value"}
+	    }]
+	  }
+	}`
+
+	It("reports an admitted-but-un-armed claim under problems and drops it on arming", func() {
+		manifest, err := v1alpha1.Parse([]byte(claimingManifest))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(manifest.Validate(DefaultContractVersions())).To(Succeed())
+
+		registry := cassetterunner.NewRegistry()
+		one := discoveryInstance("testpub")
+		one.Manifest = manifest
+		Expect(registry.Put(one)).To(Succeed())
+
+		claims := cassetterunner.ManifestClaims("testpub", manifest)
+		Expect(claims).To(HaveLen(1))
+		registry.DisarmClaim(claims[0], errors.New(`published view "testpub.attachments" is not readable`))
+
+		document := buildCassetteDiscovery(registry, "v1", nil)
+		Expect(document.Cassettes).To(HaveLen(1),
+			"the cassette itself stays admitted and discoverable")
+		Expect(document.Problems).To(HaveLen(1),
+			"an inert claimed param is an operator-facing problem, not a log line")
+		Expect(document.Problems[0].Subject).To(Equal(`cassette testpub: claim "vintage"`))
+		Expect(document.Problems[0].Reason).To(ContainSubstring("not readable"))
+
+		registry.ArmClaim(claims[0])
+		Expect(buildCassetteDiscovery(registry, "v1", nil).Problems).To(BeEmpty(),
+			"arming clears the report, symmetric with a source that recovers")
+	})
+})

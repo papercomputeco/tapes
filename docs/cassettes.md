@@ -399,22 +399,45 @@ Rules, checked at admission with no database access:
   its whole document refused, exactly like any other admission violation, and
   a violating refresh keeps the holder's previously admitted claims.
 
+Admission alone does not put a claim into effect. Core **arms** each admitted
+claim by probing the published view with its own database role — one
+`WHERE FALSE` round trip verifying that the view exists, that core may
+`SELECT` from it, and that it carries the contract columns plus the
+claim-declared `match.value_column`. The probe reruns on every refresh pass,
+including passes where the cassette's document is unchanged, so arming
+self-heals: create the view or fix the grant, and the claim arms on the next
+pass with no re-admission required. Only an answer from the database moves
+arming state: a probe that never reaches it (a timeout, a refused
+connection) changes nothing — an armed claim stays armed, an un-armed claim
+keeps its recorded reason, and arming itself always waits for a definitive
+success. If core genuinely cannot reach the database, the filtered queries
+fail loudly on their own; a blip must never silently flip filtering
+semantics.
+
 Degradation is contract, not accident:
 
 - **Unclaimed → invisible.** When no admitted cassette claims a param, core
   ignores it entirely: the response is byte-identical to the same request
   without the param, indistinguishable from any unknown parameter.
-- **Claimed-but-broken → loud.** When a claim is admitted but the filter
-  cannot be evaluated at query time (view missing, grant revoked), the
-  filtered request fails with a 500. Core never silently returns unfiltered
-  results as if the filter had been applied.
+- **Admitted but un-armed → invisible, and reported.** Until its probe
+  succeeds, a claimed param behaves exactly as if it were unclaimed — the
+  response stays byte-identical to the same request without the param — and
+  the claim is reported under `problems[]` in `GET /v1/cassettes`, filed per
+  claim so an operator can see which param is inert and why. The claim still
+  counts for first-claim-wins: arming gates execution, never ownership.
+- **Armed-then-broken → loud.** When an armed claim cannot be evaluated at
+  query time (the view dropped or the grant revoked since the last refresh
+  pass), the filtered request fails with a 500. Core never silently returns
+  unfiltered results as if the filter had been applied.
 
-Like `depends.views`, `publishes` is a declaration only: core does not verify
-the view exists and never touches grants. The deployment owns granting core's
-read role SELECT on the published view; the derived grant plan carries those
-views under `core_selects`. The consumer direction also exists in the
-contract: a cassette with a genuinely static, same-license dependency on
-another cassette's published view can declare it under `depends.published`
+Like `depends.views`, `publishes` is a declaration only: core never touches
+grants. The deployment owns granting core's read role SELECT on the published
+view; the derived grant plan carries those views under `core_selects`. What
+core does verify — with its own role, at arming time rather than admission
+time — is that the granted view is actually readable, because that is
+precisely what the claim asks core to execute. The consumer direction also
+exists in the contract: a cassette with a genuinely static, same-license
+dependency on another cassette's published view can declare it under `depends.published`
 (schema-qualified names), which lands in its own `selects`. A consumer that
 must stay decoupled from any particular publisher should take its view names
 as deployment configuration instead.

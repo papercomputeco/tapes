@@ -1281,6 +1281,36 @@ var _ = Describe("claimed filter params on GET /v1/sessions", func() {
 		Expect(claimed.lastClaimedFilters).To(BeEmpty(),
 			"storage receives no filter — no view access on the unfiltered path")
 	})
+
+	It("ignores the param byte-identically while an admitted claim is un-armed", func() {
+		// The runner arms a claim only after its published-view probe
+		// succeeds; an instance whose probe failed sits admitted but
+		// un-armed. On the request path that must be indistinguishable from
+		// the claim not existing: fail-open, byte-identical, no storage
+		// contact — the absent-cassette semantic.
+		drv := &sessionsStubDriver{Driver: inmemory.NewDriver(), listRecords: []storage.SessionRecord{record}}
+		server := newSessionsServer(drv)
+		installUnarmedClaim(server, "testpub", claimTestManifest(fullNormalizeJSON))
+
+		plain, status := getRawSessionList(server, "/v1/sessions")
+		Expect(status).To(Equal(fiber.StatusOK))
+		withParam, status := getRawSessionList(server, "/v1/sessions?vintage=alpha&vintage=beta")
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(withParam).To(Equal(plain),
+			"un-armed behaves as unclaimed: full-body byte identity, never a 500 and never a filter")
+		Expect(drv.lastClaimedFilters).To(BeEmpty(),
+			"no armed claim, no filter reaches storage")
+
+		// Arming the same admitted claim flips the very same request into a
+		// filtered one, with no re-admission in between.
+		for _, claim := range cassetterunner.ManifestClaims("testpub", claimTestManifest(fullNormalizeJSON)) {
+			server.cassettes.ArmClaim(claim)
+		}
+		_, status = getRawSessionList(server, "/v1/sessions?vintage=alpha")
+		Expect(status).To(Equal(fiber.StatusOK))
+		Expect(drv.lastClaimedFilters).To(HaveLen(1),
+			"the armed claim filters: arming is the only gate that moved")
+	})
 })
 
 // normalizationCorpus is the shared normalization test-vector corpus (CC-10).

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/papercomputeco/tapes/api/cassetterunner"
 	"github.com/papercomputeco/tapes/pkg/cassette"
+	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/tapesoapi/oasfiber"
 )
 
@@ -55,6 +57,46 @@ func (s *Server) mountCassettes(router *oasfiber.Router) {
 	// generated client a wildcard it cannot call.
 	app.All("/v1/cassettes/:name", s.handleCassetteProxy)
 	app.All("/v1/cassettes/:name/*", s.handleCassetteProxy)
+}
+
+// publishedViewProbe adapts the driver's optional probe capability into the
+// claim-arming seam the runner takes, keeping the runner storage-free. A
+// driver without the capability yields nil, which the runner reads as "arm
+// everything" — the pre-probe behavior, still right for backends that cannot
+// host published views. The claim strings pass through the same validating
+// parsers the request path uses, so only grammar-checked identifiers ever
+// reach the store.
+func publishedViewProbe(driver storage.Driver) func(ctx context.Context, view, valueColumn string) error {
+	prober, ok := driver.(storage.PublishedViewProber)
+	if !ok {
+		return nil
+	}
+
+	return func(ctx context.Context, view, valueColumn string) error {
+		parsedView, err := storage.ParsePublishedViewName(view)
+		if err != nil {
+			return err
+		}
+		parsedColumn, err := storage.ParsePublishedColumnName(valueColumn)
+		if err != nil {
+			return err
+		}
+		if err := prober.ProbePublishedView(ctx, parsedView, parsedColumn); err != nil {
+			// The store's no-verdict marker becomes the runner's, so the
+			// arming pass can retain prior state without this package's
+			// storage types leaking into cassetterunner. Grammar failures
+			// above stay definitive: a malformed declaration cannot heal on
+			// retry, and retention would hide it forever.
+			var transient *storage.TransientProbeError
+			if errors.As(err, &transient) {
+				return &cassetterunner.TransientProbeError{Err: err}
+			}
+
+			return err
+		}
+
+		return nil
+	}
 }
 
 // SetCassetteSources configures exact full OpenAPI document URLs on this
