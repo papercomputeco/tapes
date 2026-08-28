@@ -216,9 +216,10 @@ func (s *Server) handleCassetteProxy(c *fiber.Ctx) error {
 
 // proxyToCassette reverse-proxies one request to a cassette's own listener.
 //
-// forwarded is the path on that listener: the registry has already swapped the
-// canonical public prefix for the prefix the cassette actually serves. The
-// cassette never learns that /v1/cassettes exists.
+// forwarded is the path on that listener, still in the escaped form the client
+// sent it: the registry has already swapped the canonical public prefix for
+// the prefix the cassette actually serves. The cassette never learns that
+// /v1/cassettes exists.
 //
 // The response is streamed, not buffered: a cassette may hold a response open
 // indefinitely — a server-sent event stream is the reason this matters — and a

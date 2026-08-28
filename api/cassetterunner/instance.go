@@ -76,7 +76,9 @@ func (instance *Instance) LocalPrefix() string {
 }
 
 // Local maps a path on the public surface onto the cassette's own listener by
-// swapping the canonical public prefix for the cassette's local one.
+// swapping the canonical public prefix for the cassette's local one. Escaped
+// paths pass through in their escaped form: both prefixes are plain ASCII, so
+// the swap never touches a percent-encoded byte.
 func (instance *Instance) Local(path string) string {
 	return instance.LocalPrefix() + strings.TrimPrefix(path, instance.Prefix())
 }
