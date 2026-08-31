@@ -124,6 +124,13 @@ type AdvertisedEntity struct {
 // consumer that annotates or links entities need not treat core's specially.
 var CoreEntities = []AdvertisedEntity{
 	{Type: "session", IDKind: "uuid", DisplayName: "Session"},
+	// Traces and spans are the derived read model's primitives. Their ids
+	// are deterministic content-derived strings (stable across re-derive),
+	// so an annotating consumer can key rows off them; a span's canonical
+	// external id is "<trace_id>/<span_id>" since span identity is
+	// composite within a trace.
+	{Type: "trace", IDKind: "string", DisplayName: "Trace"},
+	{Type: "span", IDKind: "string", DisplayName: "Span"},
 }
 
 // Entities returns the current aggregated entity set: the core-native

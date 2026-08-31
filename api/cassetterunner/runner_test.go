@@ -196,20 +196,24 @@ var _ = Describe("entity aggregation into discovery", func() {
 		runtime := newRuntime(registry)
 
 		before := registry.Entities()
-		Expect(before).To(HaveLen(1), "core-native entities exist before any cassette does")
+		Expect(before).To(HaveLen(3), "core-native entities exist before any cassette does")
 		Expect(before[0].Type).To(Equal("session"))
 		Expect(before[0].IDKind).To(Equal("uuid"))
 		Expect(before[0].Cassette).To(BeEmpty(), "core is not a cassette")
+		Expect(before[1].Type).To(Equal("trace"))
+		Expect(before[1].IDKind).To(Equal("string"))
+		Expect(before[2].Type).To(Equal("span"))
+		Expect(before[2].IDKind).To(Equal("string"))
 
 		runtime.SetSources([]string{source.URL + "/openapi"})
 		Expect(runtime.Refresh(ctx)).To(BeEmpty())
 
 		after := registry.Entities()
-		Expect(after).To(HaveLen(2))
+		Expect(after).To(HaveLen(4))
 		Expect(after[0].Type).To(Equal("session"))
-		Expect(after[1].Type).To(Equal("note"))
-		Expect(after[1].IDKind).To(Equal("uuid"))
-		Expect(after[1].Cassette).To(Equal("notes"))
+		Expect(after[3].Type).To(Equal("note"))
+		Expect(after[3].IDKind).To(Equal("uuid"))
+		Expect(after[3].Cassette).To(Equal("notes"))
 	})
 
 	It("drops a withdrawn cassette's entities from discovery", func(ctx SpecContext) {
@@ -220,12 +224,12 @@ var _ = Describe("entity aggregation into discovery", func() {
 		runtime := newRuntime(registry)
 		runtime.SetSources([]string{source.URL + "/openapi"})
 		Expect(runtime.Refresh(ctx)).To(BeEmpty())
-		Expect(registry.Entities()).To(HaveLen(2))
+		Expect(registry.Entities()).To(HaveLen(4))
 
 		runtime.SetSources([]string{})
 
 		remaining := registry.Entities()
-		Expect(remaining).To(HaveLen(1), "withdrawal removes the cassette's entities, mirroring claims")
+		Expect(remaining).To(HaveLen(3), "withdrawal removes the cassette's entities, mirroring claims")
 		Expect(remaining[0].Type).To(Equal("session"))
 	})
 
@@ -243,9 +247,9 @@ var _ = Describe("entity aggregation into discovery", func() {
 		Expect(runtime.Refresh(ctx)).To(BeEmpty())
 
 		entities := registry.Entities()
-		Expect(entities).To(HaveLen(2), "the old declaration set is replaced, not appended to")
-		Expect(entities[1].Type).To(Equal("annotation"))
-		Expect(entities[1].Cassette).To(Equal("notes"))
+		Expect(entities).To(HaveLen(4), "the old declaration set is replaced, not appended to")
+		Expect(entities[3].Type).To(Equal("annotation"))
+		Expect(entities[3].Cassette).To(Equal("notes"))
 	})
 })
 

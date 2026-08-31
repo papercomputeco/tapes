@@ -726,12 +726,14 @@ var _ = Describe("discovery entity aggregation and conditional GET", func() {
 
 		var document Discovery
 		Expect(json.Unmarshal(body, &document)).To(Succeed())
-		Expect(document.Entities).To(HaveLen(2))
+		Expect(document.Entities).To(HaveLen(4))
 		Expect(document.Entities[0].Type).To(Equal("session"))
 		Expect(document.Entities[0].IDKind).To(Equal("uuid"))
 		Expect(document.Entities[0].Cassette).To(BeEmpty(), "core-native entities carry no cassette")
-		Expect(document.Entities[1].Type).To(Equal("note"))
-		Expect(document.Entities[1].Cassette).To(Equal("notes"))
+		Expect(document.Entities[1].Type).To(Equal("trace"))
+		Expect(document.Entities[2].Type).To(Equal("span"))
+		Expect(document.Entities[3].Type).To(Equal("note"))
+		Expect(document.Entities[3].Cassette).To(Equal("notes"))
 
 		// Conditional revalidation: an unchanged registry answers 304.
 		revalidated, revalidatedBody := getDiscovery(server, etag)
@@ -751,6 +753,6 @@ var _ = Describe("discovery entity aggregation and conditional GET", func() {
 		Expect(changed.Header.Get("ETag")).NotTo(Equal(etag))
 		var refreshed Discovery
 		Expect(json.Unmarshal(changedBody, &refreshed)).To(Succeed())
-		Expect(refreshed.Entities).To(HaveLen(3))
+		Expect(refreshed.Entities).To(HaveLen(5))
 	})
 })
