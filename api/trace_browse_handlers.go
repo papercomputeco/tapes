@@ -130,7 +130,10 @@ func (s *Server) handleGetTrace(c *fiber.Ctx) error {
 	if turn == nil {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "trace not found"})
 	}
-	return c.JSON(BuildTraceDetail(*turn, spans, links, payloadModeFromQuery(c.Query("payload"))))
+	return c.JSON(StandaloneTraceDetail{
+		SessionID:   turn.SessionID,
+		TraceDetail: BuildTraceDetail(*turn, spans, links, payloadModeFromQuery(c.Query("payload"))),
+	})
 }
 
 // BuildTraceDetail renders one turn with its spans and links. Exported
@@ -150,6 +153,18 @@ func BuildTraceDetail(turn storage.SpanTurnRecord, spans []storage.SpanRecord, l
 		detail.Links = append(detail.Links, spanLinkItem(l))
 	}
 	return detail
+}
+
+// StandaloneTraceDetail is the standalone trace lookup's response: a
+// TraceDetail plus the owning session, which THIS caller — unlike the
+// session-scoped composite's — does not already know and needs to
+// navigate. A dedicated type (rather than an optional field on
+// TraceDetail) lets generated clients see the guarantee as required
+// here, while the composite schema advertises no field its payloads
+// never emit.
+type StandaloneTraceDetail struct {
+	SessionID string `json:"session_id" oas:"required"`
+	TraceDetail
 }
 
 // handleGetSpan handles GET /v1/traces/:trace_id/spans/:span_id.
