@@ -217,7 +217,7 @@ func (s *Server) mountTraces(router *oasfiber.Router) {
 			QueryParam("payload", oas.String(oas.Enum("full", "preview")),
 				oas.ParamDescription("Span payload mode: full (default) or preview (strings truncated; "+
 					"fetch the span endpoint for full payloads)")).
-			JSONResponse(200, "The trace", s.schema(TraceDetail{})).
+			JSONResponse(200, "The trace", s.schema(StandaloneTraceDetail{})).
 			JSONResponse(404, "Trace not found", s.errorSchema()).
 			JSONResponse(500, "Failed to load trace", s.errorSchema()).
 			JSONResponse(501, "Traces not supported by this backend", s.errorSchema()))
