@@ -317,3 +317,27 @@ func metricsBucketBoundaries(txt, metric string) []string {
 	}
 	return les
 }
+
+var _ = Describe("model family labelling", func() {
+	// Both halves must agree: modelFamily derives the label, and
+	// normalizeModelFamily gates it against the bounded Prometheus allowlist.
+	// A family produced by one but missing from the other silently collapses
+	// to "other", so these pin the pair together.
+	It("splits Fable 5.1 from Fable 5 and keeps both through the allowlist", func() {
+		for raw, want := range map[string]string{
+			"claude-fable-5-1":          "claude-fable-5-1",
+			"claude-fable-5-1-20260101": "claude-fable-5-1",
+			"claude-fable-5":            "claude-fable-5",
+			"claude-fable-5-20260101":   "claude-fable-5",
+		} {
+			Expect(modelFamily(raw)).To(Equal(want), "modelFamily(%q)", raw)
+			Expect(normalizeModelFamily(modelFamily(raw))).To(Equal(want),
+				"allowlist dropped %q to other", raw)
+		}
+	})
+
+	It("keeps an unknown model out of the allowlist", func() {
+		Expect(modelFamily("some-unreleased-model")).To(Equal("other"))
+		Expect(modelFamily("")).To(Equal("unknown"))
+	})
+})

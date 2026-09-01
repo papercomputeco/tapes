@@ -133,6 +133,32 @@ var _ = Describe("NormalizeModel", func() {
 			Expect(sessions.NormalizeModel(api+"-20260101")).To(Equal(key), "dated API form %q", api+"-20260101")
 		}
 	})
+	It("resolves Fable 5.1 pricing, including its off-multiplier cache read", func() {
+		// Fable 5.1 costs the same per token as Fable 5 but reads cache at
+		// 0.025x input ($0.25/MTok) rather than the 0.10x every other Anthropic
+		// row uses. Nothing else pins cache rates, so a future pass that
+		// "corrects" the table back to the family multiplier would quadruple
+		// the read price with no failing test. This is that test.
+		pricing := sessions.DefaultPricing()
+		for _, p := range []struct {
+			api                             string
+			input, output, read, cacheWrite float64
+		}{
+			{"claude-fable-5.1", 10.00, 50.00, 0.25, 12.50},
+			{"claude-fable-5-1", 10.00, 50.00, 0.25, 12.50},
+			{"claude-fable-5-1[1m]", 10.00, 50.00, 0.25, 12.50},
+			{"claude-fable-5-1-20260101", 10.00, 50.00, 0.25, 12.50},
+			// The predecessor keeps the 0.10x read rate; the two must not converge.
+			{"claude-fable-5", 10.00, 50.00, 1.00, 12.50},
+		} {
+			price, ok := sessions.PricingForModel(pricing, p.api)
+			Expect(ok).To(BeTrue(), "PricingForModel(%q)", p.api)
+			Expect(price.Input).To(BeNumerically("==", p.input), "input $/MTok for %q", p.api)
+			Expect(price.Output).To(BeNumerically("==", p.output), "output $/MTok for %q", p.api)
+			Expect(price.CacheRead).To(BeNumerically("==", p.read), "cache-read $/MTok for %q", p.api)
+			Expect(price.CacheWrite).To(BeNumerically("==", p.cacheWrite), "cache-write $/MTok for %q", p.api)
+		}
+	})
 	It("resolves GPT-5.6 tier pricing and cache multipliers", func() {
 		pricing := sessions.DefaultPricing()
 		for _, p := range []struct {
