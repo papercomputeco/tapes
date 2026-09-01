@@ -6,7 +6,7 @@ on:
 
 jobs:
   release:
-    runs-on: depot-ubuntu-24.04
+    runs-on: depot-ubuntu-24.04-8
     permissions:
       contents: write
       id-token: write

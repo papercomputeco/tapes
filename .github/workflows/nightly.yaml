@@ -46,7 +46,7 @@ jobs:
   build:
     needs: check
     if: needs.check.outputs.should_build == 'true'
-    runs-on: depot-ubuntu-24.04
+    runs-on: depot-ubuntu-24.04-8
     steps:
       - uses: actions/checkout@v4
 
