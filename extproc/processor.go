@@ -1082,6 +1082,12 @@ func safeModel(model string) string {
 func modelFamily(model string) string {
 	model = strings.ToLower(strings.TrimSpace(model))
 	switch {
+	// 5.1 before 5: HasPrefix("claude-fable-5-1", "claude-fable-5") is true,
+	// so the broader case would swallow it. Split because the two price cache
+	// reads differently ($0.25 vs $1.00 /MTok), and a cost-by-family panel
+	// that merges them is wrong rather than merely coarse.
+	case strings.HasPrefix(model, "claude-fable-5-1"):
+		return "claude-fable-5-1"
 	case strings.HasPrefix(model, "claude-fable-5"):
 		return "claude-fable-5"
 	case strings.HasPrefix(model, "claude-opus-4"):

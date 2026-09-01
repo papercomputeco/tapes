@@ -10,13 +10,16 @@ import (
 
 // DefaultPricing returns hardcoded pricing per million tokens for supported models.
 //
-// Last verified: 2026-07-24
+// Last verified: 2026-09-01
 // Sources:
 //   - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
 //   - OpenAI:    https://platform.openai.com/docs/pricing
 //   - DeepSeek:  https://api-docs.deepseek.com/quick_start/pricing
 //
 // Anthropic cache multipliers: CacheWrite = 1.25x input, CacheRead = 0.10x input.
+// Exception: claude-fable-5.1 reads at 0.025x ($0.25/MTok) — a quarter of
+// claude-fable-5's rate at an identical per-token price. Read the published
+// number per model; do not derive cache rates from the family multiplier.
 // OpenAI cache: CacheWrite = 1x input and CacheRead = 0.50x input for older models;
 // GPT-5.6+ uses CacheWrite = 1.25x input and CacheRead = 0.10x input.
 //
@@ -25,6 +28,7 @@ func DefaultPricing() PricingTable {
 	return PricingTable{
 		// Anthropic
 		"claude-opus-5":     {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25},
+		"claude-fable-5.1":  {Input: 10.00, Output: 50.00, CacheRead: 0.25, CacheWrite: 12.50},
 		"claude-fable-5":    {Input: 10.00, Output: 50.00, CacheRead: 1.00, CacheWrite: 12.50},
 		"claude-opus-4.8":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25},
 		"claude-opus-4.7":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25},
