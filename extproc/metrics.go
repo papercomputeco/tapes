@@ -527,7 +527,7 @@ func normalizeModelFamily(modelFamily string) string {
 	// Keep this allowlist intentionally bounded for Prometheus cardinality.
 	// Add new first-party model families here as they become routable.
 	switch modelFamily {
-	case "claude-fable-5-1", "claude-fable-5", "claude-opus-4", "claude-sonnet-5", "claude-sonnet-4", "claude-haiku-4-5", "claude-3-7-sonnet", "claude-3-5-sonnet", "gpt-5", labelUnknown, labelOther:
+	case "claude-fable-5-1", "claude-fable-5", "claude-opus-5", "claude-opus-4", "claude-sonnet-5", "claude-sonnet-4", "claude-haiku-4-6", "claude-haiku-4-5", "claude-3-7-sonnet", "claude-3-5-sonnet", "gpt-5", labelUnknown, labelOther:
 		return modelFamily
 	case "":
 		return labelUnknown
