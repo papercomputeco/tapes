@@ -336,6 +336,26 @@ var _ = Describe("model family labelling", func() {
 		}
 	})
 
+	It("gives every currently-priced flagship its own family", func() {
+		// Regression guard for the whole class: claude-opus-4 does not
+		// prefix-match claude-opus-5, so a new major silently lands in
+		// "other" and disappears from cost-by-family panels. Opus 5 sat
+		// that way from its July 2026 release until this test.
+		for raw, want := range map[string]string{
+			"claude-opus-5":             "claude-opus-5",
+			"claude-opus-5[1m]":         "claude-opus-5",
+			"claude-opus-4-8":           "claude-opus-4",
+			"claude-sonnet-5":           "claude-sonnet-5",
+			"claude-haiku-4-6":          "claude-haiku-4-6",
+			"claude-haiku-4-5":          "claude-haiku-4-5",
+			"claude-haiku-4-5-20251001": "claude-haiku-4-5",
+		} {
+			Expect(modelFamily(raw)).To(Equal(want), "modelFamily(%q)", raw)
+			Expect(normalizeModelFamily(modelFamily(raw))).To(Equal(want),
+				"allowlist dropped %q to other", raw)
+		}
+	})
+
 	It("keeps an unknown model out of the allowlist", func() {
 		Expect(modelFamily("some-unreleased-model")).To(Equal("other"))
 		Expect(modelFamily("")).To(Equal("unknown"))

@@ -1090,12 +1090,18 @@ func modelFamily(model string) string {
 		return "claude-fable-5-1"
 	case strings.HasPrefix(model, "claude-fable-5"):
 		return "claude-fable-5"
+	// claude-opus-4 does not prefix-match claude-opus-5, so without its own
+	// case the current flagship falls through to "other".
+	case strings.HasPrefix(model, "claude-opus-5"):
+		return "claude-opus-5"
 	case strings.HasPrefix(model, "claude-opus-4"):
 		return "claude-opus-4"
 	case strings.HasPrefix(model, "claude-sonnet-5"):
 		return "claude-sonnet-5"
 	case strings.HasPrefix(model, "claude-sonnet-4"):
 		return "claude-sonnet-4"
+	case strings.HasPrefix(model, "claude-haiku-4-6"):
+		return "claude-haiku-4-6"
 	case strings.HasPrefix(model, "claude-haiku-4-5"):
 		return "claude-haiku-4-5"
 	case strings.HasPrefix(model, "claude-3-7-sonnet"):
