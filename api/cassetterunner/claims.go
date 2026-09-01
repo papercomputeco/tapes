@@ -127,8 +127,18 @@ var CoreEntities = []AdvertisedEntity{
 	// Traces and spans are the derived read model's primitives. Their ids
 	// are deterministic content-derived strings (stable across re-derive),
 	// so an annotating consumer can key rows off them; a span's canonical
-	// external id is "<trace_id>/<span_id>" since span identity is
-	// composite within a trace.
+	// external id is "<trace_id>~<span_id>" since span identity is
+	// composite within a trace. The separator is "~" deliberately: both
+	// components embed provider-verbatim ids full of "_"/"-", and "~" is
+	// RFC 3986 unreserved — no encoder produces an escaped form for a
+	// path normalizer to rewrite (an escaped "/" does not survive
+	// gateway escaped-slash handling). The id is primarily an OPAQUE
+	// round-trip handle: attachment-style consumers must store and
+	// replay it whole, never reconstruct it. Splitting (on the FIRST
+	// "~") is a display/navigation convenience only — provider-verbatim
+	// components are not formally barred from containing "~", so the
+	// split is best-effort by declared contract, not a parsing
+	// guarantee.
 	{Type: "trace", IDKind: "string", DisplayName: "Trace"},
 	{Type: "span", IDKind: "string", DisplayName: "Span"},
 }
