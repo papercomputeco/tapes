@@ -10,7 +10,7 @@ import (
 
 // DefaultPricing returns hardcoded pricing per million tokens for supported models.
 //
-// Last verified: 2026-09-01
+// Last verified: 2026-09-03
 // Sources:
 //   - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
 //   - OpenAI:    https://platform.openai.com/docs/pricing
@@ -49,6 +49,7 @@ func DefaultPricing() PricingTable {
 		"claude-3-haiku":    {Input: 0.25, Output: 1.25, CacheRead: 0.03, CacheWrite: 0.30},
 
 		// OpenAI
+		"gpt-6-astra":       {Input: 10.00, Output: 50.00, CacheRead: 1.00, CacheWrite: 12.50},
 		"gpt-4o":            {Input: 2.50, Output: 10.00, CacheRead: 1.25, CacheWrite: 2.50},
 		"gpt-4o-mini":       {Input: 0.15, Output: 0.60, CacheRead: 0.075, CacheWrite: 0.15},
 		"gpt-4.1":           {Input: 2.00, Output: 8.00, CacheRead: 0.50, CacheWrite: 2.00},

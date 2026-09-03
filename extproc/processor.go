@@ -1108,6 +1108,8 @@ func modelFamily(model string) string {
 		return "claude-3-7-sonnet"
 	case strings.HasPrefix(model, "claude-3-5-sonnet"):
 		return "claude-3-5-sonnet"
+	case strings.HasPrefix(model, "gpt-6-astra"):
+		return "gpt-6-astra"
 	case strings.HasPrefix(model, "gpt-5"):
 		return "gpt-5"
 	case model == "":
