@@ -159,6 +159,17 @@ var _ = Describe("NormalizeModel", func() {
 			Expect(price.CacheWrite).To(BeNumerically("==", p.cacheWrite), "cache-write $/MTok for %q", p.api)
 		}
 	})
+	It("resolves GPT-6 Astra pricing and dated IDs", func() {
+		pricing := sessions.DefaultPricing()
+		for _, api := range []string{"gpt-6-astra", "gpt-6-astra-2026-09-03"} {
+			price, ok := sessions.PricingForModel(pricing, api)
+			Expect(ok).To(BeTrue(), "PricingForModel(%q)", api)
+			Expect(price.Input).To(BeNumerically("==", 10.00), "input $/MTok for %q", api)
+			Expect(price.Output).To(BeNumerically("==", 50.00), "output $/MTok for %q", api)
+			Expect(price.CacheRead).To(BeNumerically("==", 1.00), "cache-read $/MTok for %q", api)
+			Expect(price.CacheWrite).To(BeNumerically("==", 12.50), "cache-write $/MTok for %q", api)
+		}
+	})
 	It("resolves GPT-5.6 tier pricing and cache multipliers", func() {
 		pricing := sessions.DefaultPricing()
 		for _, p := range []struct {

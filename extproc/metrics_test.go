@@ -342,6 +342,8 @@ var _ = Describe("model family labelling", func() {
 		// "other" and disappears from cost-by-family panels. Opus 5 sat
 		// that way from its July 2026 release until this test.
 		for raw, want := range map[string]string{
+			"gpt-6-astra":               "gpt-6-astra",
+			"gpt-6-astra-2026-09-03":    "gpt-6-astra",
 			"claude-opus-5":             "claude-opus-5",
 			"claude-opus-5[1m]":         "claude-opus-5",
 			"claude-opus-4-8":           "claude-opus-4",
