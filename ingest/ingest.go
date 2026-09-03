@@ -655,8 +655,8 @@ func transcriptRequestID(payload *TranscriptPayload) string {
 // the server-trusted gateway headers when present. The transcript
 // client (paperd) cannot fill org_id itself — it holds a WorkOS org id,
 // not the platform org UUID the store keys on — so the payload value is
-// only trusted for direct in-cluster / override callers such as
-// `tapes backfill transcripts`. Anything arriving through the gateway
+// only trusted for direct in-cluster callers that reach ingest without
+// the edge in front of them. Anything arriving through the gateway
 // gets its identity from the edge-verified JWT, exactly like the
 // wire-capture path (tapes-extproc reads the same headers into the
 // session envelope at capture time). The override runs BEFORE envelope
