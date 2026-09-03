@@ -83,6 +83,23 @@ tapesctl sessions list
 Capture commands address the **ingest** port instead. Override its local default
 with `--ingest-url` or `TAPES_INGEST_URL`. See [Agent integrations](./integrations.md).
 
+## Bring in the sessions you already have
+
+You do not have to start from an empty server. `tapesctl sync` walks the Claude
+Code transcripts already on disk under `~/.claude/projects` and pushes the last
+seven days of them to the ingest port:
+
+```bash
+tapesctl sync --ingest-url http://localhost:8082
+tapesctl sessions list
+```
+
+It is safe to run again: the server keeps one copy per file version. Sessions
+pushed this way derive in the background, so the list may take a moment to
+fill in. Pass `--since-days 0` to sweep everything. See
+[Capture](/docs/tapesctl/capture/#the-sweep) for what a transcript-only session
+does and does not contain.
+
 ## Run the complete Docker Compose stack
 
 The repository's default Compose file puts PostgreSQL, Ollama, Tapes, and the
