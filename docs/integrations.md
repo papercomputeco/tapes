@@ -5,16 +5,18 @@ sidebar:
   order: 4
 ---
 
-Tapes captures an agent in one of two ways. The client launches the agent under
-a just-in-time capture proxy that dies with the process, or — for an agent that
-launches itself — the client binds the address the agent was installed against
-and captures whatever runs in that window.
+Tapes captures an agent in one of three ways. The client launches the agent
+under a just-in-time capture proxy that dies with the process. For an agent
+that launches itself, the client binds the address the agent was installed
+against and captures whatever runs in that window. For Cursor, the client
+records the structured output the agent's own print mode emits.
 
 | Harness | Lane | Plugin needed first |
 | --- | --- | --- |
 | `claude` | `tapesctl start claude` | none |
 | `codex` | `tapesctl start codex` | none |
 | `pi` | `tapesctl start pi` | `tapesctl plugin install pi` |
+| `cursor` | `tapesctl start cursor` | none |
 | `codex-app` | `tapesctl capture codex-app` | `tapesctl plugin install codex-app` |
 
 Capture commands address the **private ingest API**, `:8082` by default — not
@@ -114,6 +116,28 @@ tapesctl start pi --ingest-url http://localhost:8082 --schema openai
 
 `--schema` on `claude` or `codex` is an error rather than a silent no-op: each
 speaks exactly one schema, taken from the harness.
+
+## Cursor
+
+Cursor's CLI, the `agent` binary, has no provider base-URL setting, so it is
+captured from its `stream-json` output instead of through a proxy:
+
+```bash
+tapesctl start cursor --ingest-url http://localhost:8082 -- --trust "summarize this repo"
+```
+
+`start cursor` copies the stream to your terminal, saves it, and uploads it as
+a transcript when the run ends. It never adds `--trust`, so in an untrusted
+directory Cursor refuses and the run exits with Cursor's status. If the upload
+fails, the file stays under `~/.tapes/transcripts/cursor`. Sweep it later:
+
+```bash
+tapesctl sync cursor --ingest-url http://localhost:8082
+```
+
+Turn counts come from derived traces, which include prompts, assistant
+responses, and tool calls. Cursor capture does not report token usage.
+Use `--since-days 0` to retry recordings older than seven days.
 
 ## Ollama and generic clients
 
