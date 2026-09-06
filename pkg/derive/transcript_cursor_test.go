@@ -136,6 +136,76 @@ var _ = Describe("Cursor CLI transcript fallback", func() {
 		}
 	})
 
+	DescribeTable("retains completed tool output without another assistant message", func(terminal map[string]any) {
+		records := officialStream()[:5]
+		if terminal != nil {
+			records = append(records, terminal)
+		}
+
+		set, stats, err := deriveWithTranscriptFallback(nil, parseCursorFile(60, records))
+		Expect(err).NotTo(HaveOccurred())
+		spans := derive.EmitSpans(set)
+		Expect(spans.Turns).To(HaveLen(1))
+
+		var tool *derive.Span
+		llmCount := 0
+		for _, span := range spans.Turns[0].Spans {
+			switch span.Kind {
+			case derive.SpanKindLLM:
+				llmCount++
+			case derive.SpanKindTool:
+				tool = span
+			}
+		}
+		Expect(tool).NotTo(BeNil())
+		Expect(tool.Output).To(ConsistOf(And(
+			HaveField("Type", "tool_result"),
+			HaveField("IsError", false),
+			HaveField("ToolOutput", ContainSubstring(`"content":"# Project"`)),
+		)))
+		Expect(llmCount).To(Equal(1))
+		Expect(spans.Turns[0].ResponsePreview).To(Equal("Working"))
+		Expect(stats.OmittedTypes).NotTo(HaveKey("cursor:trailing-tool-result"))
+		Expect(spans.Turns[0].Links).NotTo(ContainElement(HaveField("Kind", derive.LinkFeeds)))
+		Expect(derive.EmitSpans(set)).To(Equal(spans))
+	},
+		Entry("at a successful terminal result", map[string]any{
+			"type": "result", "subtype": "success", "is_error": false, "result": "Working",
+			"session_id": cursorSessionID,
+		}),
+		Entry("at an empty terminal result", map[string]any{
+			"type": "result", "subtype": "success", "is_error": false, "result": "",
+			"session_id": cursorSessionID,
+		}),
+		Entry("at a failed terminal result", map[string]any{
+			"type": "result", "subtype": "error", "is_error": true, "result": "run failed",
+			"session_id": cursorSessionID,
+		}),
+		Entry("at end of file", nil),
+	)
+
+	It("preserves completed tool output and span ids when a later assistant arrives", func() {
+		records := officialStream()
+		prefix, _, err := deriveWithTranscriptFallback(nil, parseCursorFile(61, records[:5]))
+		Expect(err).NotTo(HaveOccurred())
+		prefixSpans := derive.EmitSpans(prefix)
+		grown, _, err := deriveWithTranscriptFallback(nil, parseCursorFile(62, records[:7]))
+		Expect(err).NotTo(HaveOccurred())
+		grownSpans := derive.EmitSpans(grown)
+
+		for _, id := range traceAndSpanIDs(prefixSpans) {
+			Expect(traceAndSpanIDs(grownSpans)).To(ContainElement(id))
+		}
+		for _, spans := range []*derive.SpanSet{prefixSpans, grownSpans} {
+			Expect(spans.Turns).To(HaveLen(1))
+			Expect(spans.Turns[0].Spans).To(ContainElement(And(
+				HaveField("Kind", derive.SpanKindTool),
+				HaveField("Output", ConsistOf(HaveField("ToolOutput", ContainSubstring(`"content":"# Project"`)))),
+			)))
+		}
+		Expect(grownSpans.Turns[0].Links).To(ContainElement(HaveField("Kind", derive.LinkFeeds)))
+	})
+
 	It("keeps an assistant event that carries model_call_id, as the live build emits before a tool call", func() {
 		records := []map[string]any{
 			{"type": "system", "subtype": "init", "model": "cursor-model", "session_id": cursorSessionID},
@@ -265,7 +335,7 @@ var _ = Describe("Cursor CLI transcript fallback", func() {
 		)), "a result delivered after an interjection flush must still reach its tool span")
 	})
 
-	It("decodes documented function-shape tools, refuses duplicate completions, and counts trailing results", func() {
+	It("decodes documented function-shape tools and keeps the first completed result", func() {
 		records := []map[string]any{
 			{"type": "system", "subtype": "init", "model": "cursor-model", "session_id": cursorSessionID},
 			{
@@ -295,10 +365,7 @@ var _ = Describe("Cursor CLI transcript fallback", func() {
 		Expect(err).NotTo(HaveOccurred())
 		spans := derive.EmitSpans(set)
 
-		Expect(stats.OmittedTypes).To(And(
-			HaveKeyWithValue("cursor:duplicate-tool-completed", 1),
-			HaveKeyWithValue("cursor:trailing-tool-result", 1),
-		))
+		Expect(stats.OmittedTypes).To(Equal(map[string]int{"cursor:duplicate-tool-completed": 1}))
 		var tool *derive.Span
 		for _, turn := range spans.Turns {
 			for _, span := range turn.Spans {
@@ -310,6 +377,7 @@ var _ = Describe("Cursor CLI transcript fallback", func() {
 		}
 		Expect(tool).NotTo(BeNil())
 		Expect(tool.Name).To(Equal("browser"), "function-shape tools carry their real name")
+		Expect(tool.Output).To(ConsistOf(HaveField("ToolOutput", "page loaded")))
 		Expect(tool.Input).To(ConsistOf(HaveField("ToolInput", HaveKeyWithValue("url", "https://example.com"))))
 	})
 

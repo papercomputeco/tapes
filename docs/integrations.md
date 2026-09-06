@@ -136,7 +136,8 @@ tapesctl sync cursor --ingest-url http://localhost:8082
 ```
 
 Turn counts come from derived traces, which include prompts, assistant
-responses, and tool calls. Cursor capture does not report token usage.
+responses, and tool calls. Tool outputs are retained even when no assistant
+response follows them. Cursor capture does not report token usage.
 Use `--since-days 0` to retry recordings older than seven days.
 
 ## Ollama and generic clients

@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
+	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
 const (
@@ -212,11 +214,6 @@ func projectCursorTranscriptFile(project string, file *TranscriptFile, stats *Tr
 				}
 				flushAssistant()
 			}
-			for _, message := range pending {
-				if message.message.Role == roleTool {
-					stats.omit("cursor:trailing-tool-result")
-				}
-			}
 			stats.ProjectedRecords++
 
 		default:
@@ -224,6 +221,24 @@ func projectCursorTranscriptFile(project string, file *TranscriptFile, stats *Tr
 		}
 	}
 	flushAssistant()
+	if len(turns) > 0 {
+		last := &turns[len(turns)-1]
+		parent := last.Chain[len(last.Chain)-1]
+		for _, message := range pending {
+			if message.message.Role != roleTool {
+				continue
+			}
+			node := merkle.NewNode(merkle.Bucket{
+				Type: "message", Role: roleTool, Content: message.message.Content,
+				Provider: storage.RawTurnSourceTranscript, AgentName: harnessCursor,
+			}, parent, merkle.NodeOptions{Project: project})
+			node.Kind = KindMain
+			node.CreatedAt = message.capturedAt
+			node.ThreadID = file.AgentID
+			last.TrailingToolResults = append(last.TrailingToolResults, node)
+			parent = node
+		}
+	}
 	return turns
 }
 

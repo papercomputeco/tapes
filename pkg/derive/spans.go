@@ -569,6 +569,13 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 			Kind: LinkEmits,
 		})
 	}
+	for _, result := range src.TrailingToolResults {
+		for _, block := range result.Node.Bucket.Content {
+			if block.Type == blockToolResult {
+				em.fillToolResult(src.Session, &block, result.CapturedAt)
+			}
+		}
+	}
 }
 
 // spawnToolInput normalizes a spawn_agent tool_use block for its tool
