@@ -7,6 +7,7 @@ import (
 
 	"github.com/gofiber/adaptor/v2"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/utils"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -95,10 +96,74 @@ func (m *Metrics) Middleware() fiber.Handler {
 			route = "unmatched"
 		}
 
-		m.requests.WithLabelValues(route, c.Method(), strconv.Itoa(resolveStatus(c, err))).Inc()
-		m.duration.WithLabelValues(route, c.Method()).Observe(time.Since(start).Seconds())
+		// c.Method() is a zero-copy view over the fasthttp request-header
+		// buffer: Fiber sets c.method through utils.UnsafeString unless the
+		// app is configured Immutable, and this one is not. fasthttp keeps
+		// that buffer across requests — reset only slices it to zero length
+		// (h.method = h.method[:0]) and the next parse appends over it in
+		// place — so a string retained past the handler keeps its ORIGINAL
+		// length while the bytes underneath it change. A Prometheus label is
+		// retained for the life of the process, which makes it exactly such a
+		// string: a "DELETE" recorded here reads back "GETETE" once a 3-byte
+		// GET lands on the recycled buffer. Distinct children then render
+		// identical label sets and the whole registry stops gathering with
+		// "was collected before with the same name and label values" — a 500
+		// on /metrics that never heals short of a restart.
+		//
+		// It stayed invisible while every route here was GET, because "GET"
+		// overwritten by "GET" is a no-op. Routes registered with app.All are
+		// what put other methods into live traffic, and because the RequestCtx
+		// pool is shared server-wide the damage is not confined to them: a ctx
+		// that served a cassette PATCH poisons whatever GET route it is
+		// recycled onto next.
+		//
+		// Interning rather than copying. The switch compares content, and at
+		// this point in the request the buffer still holds this request's real
+		// method, so the match is always correct; what comes back is a
+		// compile-time constant in read-only memory that no buffer can reach.
+		// That fixes the aliasing without adding an allocation to every
+		// request, and bounds the label to a fixed set as a side effect. The
+		// default is unreachable in practice — Fiber answers an unregistered
+		// method with a 400 in app.handler before middleware runs — but it
+		// copies rather than retaining a view, so the invariant holds even if
+		// that ever changes.
+		//
+		// route and status need none of this: route is the router's registered
+		// template rather than request memory, and status is formatted fresh.
+		method := methodLabel(c.Method())
+
+		m.requests.WithLabelValues(route, method, strconv.Itoa(resolveStatus(c, err))).Inc()
+		m.duration.WithLabelValues(route, method).Observe(time.Since(start).Seconds())
 
 		return err
+	}
+}
+
+// methodLabel maps a request method onto an immortal string safe to retain as
+// a Prometheus label. See the note in Middleware for why a view of the live
+// request buffer cannot be retained.
+func methodLabel(method string) string {
+	switch method {
+	case fiber.MethodGet:
+		return fiber.MethodGet
+	case fiber.MethodPost:
+		return fiber.MethodPost
+	case fiber.MethodPut:
+		return fiber.MethodPut
+	case fiber.MethodDelete:
+		return fiber.MethodDelete
+	case fiber.MethodPatch:
+		return fiber.MethodPatch
+	case fiber.MethodHead:
+		return fiber.MethodHead
+	case fiber.MethodOptions:
+		return fiber.MethodOptions
+	case fiber.MethodTrace:
+		return fiber.MethodTrace
+	case fiber.MethodConnect:
+		return fiber.MethodConnect
+	default:
+		return utils.CopyString(method)
 	}
 }
 

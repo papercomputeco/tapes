@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"testing"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/recover"
@@ -13,6 +14,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/valyala/fasthttp"
 
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
@@ -183,6 +185,65 @@ var _ = Describe("API server Prometheus metrics", func() {
 				"unmatched")).To(Equal(1))
 			Expect(counterValue(server.metrics.Registry(),
 				"unmatched", http.MethodGet, "404")).To(Equal(3.0))
+		})
+
+		It("interns the method label rather than allocating one per request", func() {
+			// Immortality is only half the requirement. The label is recorded
+			// on every request, so buying it with an allocation would trade a
+			// correctness bug for steady heap pressure on the hot path —
+			// hence a switch onto compile-time constants rather than a copy.
+			for _, method := range []string{
+				fiber.MethodGet, fiber.MethodPost,
+				fiber.MethodDelete, fiber.MethodPatch,
+			} {
+				allocs := testing.AllocsPerRun(100, func() {
+					methodLabelSink = methodLabel(method)
+				})
+				Expect(allocs).To(BeZero(),
+					"methodLabel(%q) must not allocate", method)
+			}
+		})
+
+		It("copies the method label so a recycled request buffer cannot rewrite it", func() {
+			// Fiber hands out c.Method() as a zero-copy view over the fasthttp
+			// request-header bytes. Retaining that view as a Prometheus label
+			// lets a later request rewrite an already-recorded label in place:
+			// three bytes of "GET" landing on a retained "DELETE" leaves the
+			// label reading "GETETE". Two children then render the same
+			// labelset and Gather() fails for the whole registry, which is a
+			// permanent 500 on /metrics.
+			//
+			// Driving app.Handler() against ONE reused *fasthttp.RequestCtx is
+			// what makes this deterministic: SetMethod writes the second method
+			// over the first one's bytes, exactly as the pooled server does
+			// between requests on a kept-alive connection.
+			m, app := newTestApp()
+			app.Delete("/probe", func(c *fiber.Ctx) error {
+				return c.SendStatus(fiber.StatusNoContent)
+			})
+			app.Get("/probe", func(c *fiber.Ctx) error {
+				return c.SendStatus(fiber.StatusOK)
+			})
+
+			handler := app.Handler()
+			ctx := &fasthttp.RequestCtx{}
+			ctx.Request.SetRequestURI("/probe")
+
+			ctx.Request.Header.SetMethod(fiber.MethodDelete)
+			handler(ctx)
+			ctx.Request.Header.SetMethod(fiber.MethodGet)
+			handler(ctx)
+
+			// The gather is the real assertion: an aliased label collides and
+			// fails the whole registry rather than just misreporting one row.
+			_, err := m.Registry().Gather()
+			Expect(err).NotTo(HaveOccurred(),
+				"a mutated method label collides on gather and 500s /metrics")
+
+			Expect(counterValue(m.Registry(), "/probe", fiber.MethodDelete, "204")).
+				To(Equal(1.0), "the DELETE row must still read DELETE")
+			Expect(counterValue(m.Registry(), "/probe", fiber.MethodGet, "200")).
+				To(Equal(1.0))
 		})
 	})
 
@@ -384,3 +445,8 @@ func metricsScrape(s *Server) (string, error) {
 	// Trim trailing newline noise so callers can ContainSubstring cleanly.
 	return strings.TrimRight(string(b), "\n"), nil
 }
+
+// methodLabelSink defeats dead-store elimination in the allocation spec above:
+// without a live use the compiler is free to drop the call entirely and the
+// measurement would read zero for the wrong reason.
+var methodLabelSink string
