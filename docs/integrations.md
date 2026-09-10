@@ -68,6 +68,36 @@ tapes serve --provider anthropic --upstream https://api.anthropic.com
 ANTHROPIC_BASE_URL=http://localhost:8080 claude
 ```
 
+## Gateway capture protocols
+
+The Tapes extproc adapter captures Anthropic Messages, OpenAI Responses, and
+OpenAI Chat Completions (`/v1/chat/completions`). Chat Completions supports JSON
+and SSE responses, text/refusals, streamed function-call arguments (including
+parallel calls), tool-result history, completion usage and cached input tokens.
+It keeps the provider's model ID after any gateway routing rewrite.
+Explicit Chat Completions tool exchanges are derived as conversation calls
+even when non-streaming, so tool results link back to their function calls.
+
+Responses and Chat Completions use distinct shared reducers. The captured
+request selects the format (`input` versus `messages`), including when ingest
+reduces raw-only turns or the derive read path recovers a missing reduction.
+Deploy the updated Tapes ingest/derive image before enabling raw-only capture
+with the updated extproc image; `dual` retains the adapter's reduction as well
+as the original wire bytes.
+
+A stream missing `[DONE]`, a finish reason, or valid frames is retained as
+partial, not represented as a completed answer. Invalid function arguments
+remain attached to the tool call without a partially decoded object; valid
+argument numbers retain their JSON precision. Choice zero is the canonical
+answer; additional choices are preserved in response metadata rather than
+merged. If zero is absent, only the indexed alternatives are retained and the
+response is marked partial. Null optional fields are treated as absent.
+Audio and custom-tool streaming deltas are not yet normalized; they are marked
+partial and require the raw lane for full-fidelity replay. Request parameters
+are forwarded unchanged; this adds capture, not API translation or execution.
+
+The wire contract follows the [OpenAI Chat Completions reference](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create).
+
 ## Codex
 
 The terminal CLI is launched like Claude:

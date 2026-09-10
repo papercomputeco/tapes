@@ -145,7 +145,7 @@ var _ = Describe("Responses API request parsing", func() {
 		req, err := provider.ParseRequest([]byte(`{"model": "gpt-4o", "input": null}`))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(req.Messages).To(BeEmpty())
-		Expect(req.Extra).NotTo(HaveKey("endpoint"))
+		Expect(req.Extra).To(HaveKeyWithValue("endpoint", "chat_completions"))
 	})
 
 	It("still parses Chat Completions requests unchanged", func() {
@@ -155,7 +155,7 @@ var _ = Describe("Responses API request parsing", func() {
 		}`))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(req.Messages).To(HaveLen(1))
-		Expect(req.Extra).NotTo(HaveKey("endpoint"))
+		Expect(req.Extra).To(HaveKeyWithValue("endpoint", "chat_completions"))
 	})
 })
 

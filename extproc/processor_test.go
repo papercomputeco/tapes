@@ -229,15 +229,13 @@ var _ = Describe("Processor state machine", func() {
 			Expect(ok).To(BeFalse())
 		})
 
-		It("serves openai only on the responses endpoint", func() {
+		It("serves openai Responses and Chat Completions endpoints", func() {
 			_, ok := proc.reducerFor("openai", "responses")
 			Expect(ok).To(BeTrue())
 
-			// Chat Completions must keep the pre-Codex behavior: no
-			// reducer, default BUFFERED mode, unknown_provider drop.
-			// The Responses reducer cannot parse chat.completion frames.
+			// The shared dispatcher selects a distinct Chat Completions parser.
 			_, ok = proc.reducerFor("openai", "chat_completions")
-			Expect(ok).To(BeFalse())
+			Expect(ok).To(BeTrue())
 
 			_, ok = proc.reducerFor("openai", "other")
 			Expect(ok).To(BeFalse())

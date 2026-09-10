@@ -386,6 +386,27 @@ var _ = Describe("recovering a failed reduction [postgres]", func() {
 			"content blocks recovered from the stored bytes")
 	})
 
+	It("recovers a Chat Completions turn using its stored request format", func() {
+		store, ok := any(driver).(storage.RawTurnStore)
+		Expect(ok).To(BeTrue())
+		_, err := store.PutRawTurn(ctx, storage.RawTurnRecord{
+			OrgID: recoveryOrgID, Source: storage.RawTurnSourceWire, Provider: "openai",
+			HarnessID: "unknown", HarnessSessionID: "chat-recover", RequestID: "chat-recover-1",
+			RawRequest:          json.RawMessage(`{"model":"poc-cheap","messages":[]}`),
+			Response:            json.RawMessage(`{}`),
+			RawResponse:         []byte(`{"object":"chat.completion","model":"poc-cheap","choices":[{"index":0,"message":{"role":"assistant","content":"recovered chat"},"finish_reason":"stop"}]}`),
+			RawResponseEncoding: "identity", Meta: json.RawMessage(`{"content_type":"application/json"}`),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		rows, err := driver.RawTurnsForDeriveForTest(ctx, orgID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rows).To(HaveLen(1))
+		var resp llm.ChatResponse
+		Expect(json.Unmarshal(rows[0].Response, &resp)).To(Succeed())
+		Expect(resp.Model).To(Equal("poc-cheap"))
+		Expect(resp.Message.Content[0].Text).To(Equal("recovered chat"))
+	})
+
 	// A healthy turn must not pay for this. The query returns no raw bytes when
 	// the reduction has content, so recovery cannot fire and cannot rewrite a
 	// reduction the adapter already produced — an adapter saw the live stream

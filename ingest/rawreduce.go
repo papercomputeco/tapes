@@ -43,7 +43,7 @@ import (
 // ollama traffic cannot move to raw until one exists.
 var rawReducers = map[string]capture.Reducer{
 	capture.ProviderAnthropic: capture.NewAnthropicReducer(),
-	capture.ProviderOpenAI:    capture.NewOpenAIResponsesReducer(),
+	capture.ProviderOpenAI:    capture.NewOpenAIReducer(),
 }
 
 // ReducerForProvider returns the server-side reducer for a provider name, and
@@ -81,10 +81,8 @@ type StoredRawTurn struct {
 	// Provider keys the reducer table.
 	Provider string
 
-	// RawRequest is the original provider request body. Both current
-	// reducers discard it; it is passed through because the Reducer contract
-	// admits enriching a response from request context, and a reducer that
-	// started doing so should see the same input on both paths.
+	// RawRequest is the original provider request body. OpenAI uses its shape
+	// to select the Responses or Chat Completions reducer, identically to live capture.
 	RawRequest json.RawMessage
 
 	// RawResponse is the upstream response body exactly as it arrived,

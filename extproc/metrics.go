@@ -505,7 +505,7 @@ func normalizeReason(reason string) string {
 func normalizeEndpointLabel(endpoint string) string {
 	endpoint = strings.TrimSpace(strings.ToLower(endpoint))
 	switch endpoint {
-	case "messages", "messages_count_tokens", "chat_completions", "responses", "ollama_chat", labelOther:
+	case "messages", "messages_count_tokens", endpointChatCompletions, "responses", "ollama_chat", labelOther:
 		return endpoint
 	default:
 		return labelUnknown

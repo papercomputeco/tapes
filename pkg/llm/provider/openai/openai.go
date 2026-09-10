@@ -119,11 +119,11 @@ func (o *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 		Stream:      req.Stream,
 		Tools:       req.Tools,
 		RawRequest:  payload,
+		Extra:       map[string]any{"endpoint": "chat_completions"},
 	}
 
 	// Preserve OpenAI-specific fields
 	if req.FrequencyPenalty != nil || req.PresencePenalty != nil || req.ResponseFormat != nil {
-		result.Extra = make(map[string]any)
 		if req.FrequencyPenalty != nil {
 			result.Extra["frequency_penalty"] = *req.FrequencyPenalty
 		}

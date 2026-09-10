@@ -161,6 +161,26 @@ func ClassifyCall(req *llm.ChatRequest, resp *llm.ChatResponse) string {
 		return KindMain
 	}
 
+	// Chat Completions tool exchanges can be non-streaming, and a result
+	// request need not repeat tool definitions. Explicit tool blocks are
+	// conversation evidence even without the harness-specific streaming tell.
+	if req.Extra["endpoint"] == "chat_completions" {
+		if resp != nil {
+			for _, block := range resp.Message.Content {
+				if block.Type == blockToolUse {
+					return KindMain
+				}
+			}
+		}
+		for _, message := range req.Messages {
+			for _, block := range message.Content {
+				if block.Type == blockToolResult {
+					return KindMain
+				}
+			}
+		}
+	}
+
 	return KindUnknown
 }
 

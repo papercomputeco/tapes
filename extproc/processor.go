@@ -157,7 +157,7 @@ func NewProcessor(cfg Config) (*Processor, error) {
 		rawResponseMode: cfg.RawResponseMode,
 		reducers: map[string]capture.Reducer{
 			capture.ProviderAnthropic: capture.NewAnthropicReducer(),
-			capture.ProviderOpenAI:    capture.NewOpenAIResponsesReducer(),
+			capture.ProviderOpenAI:    capture.NewOpenAIReducer(),
 		},
 	}, nil
 }
@@ -167,11 +167,9 @@ func NewProcessor(cfg Config) (*Processor, error) {
 func (p *Processor) Metrics() *Metrics { return p.metrics }
 
 // reducerFor returns the reducer able to consume this turn's wire format.
-// Eligibility is a positive (provider, endpoint) allowlist: each reducer
-// parses exactly one wire format, so a provider's reducer must never be
-// handed another endpoint's bytes — the OpenAI Responses reducer cannot
-// parse Chat Completions frames, and the Anthropic Messages reducer only
-// understands Messages turns. Ineligible turns keep the pre-capture
+// Eligibility is a positive (provider, endpoint) allowlist. OpenAI dispatches
+// Responses and Chat Completions to separate parsers using the request shape;
+// the Anthropic reducer only understands Messages. Ineligible turns keep the pre-capture
 // behavior: default BUFFERED Envoy mode and an unknown_provider drop.
 // Used to gate behavior that only makes sense when we can actually
 // consume the upstream bytes.
@@ -192,7 +190,7 @@ func reducerHandlesEndpoint(provider, endpoint string) bool {
 	case capture.ProviderAnthropic:
 		return endpoint == endpointMessages
 	case capture.ProviderOpenAI:
-		return endpoint == endpointResponses
+		return endpoint == endpointResponses || endpoint == endpointChatCompletions
 	default:
 		return false
 	}
@@ -996,8 +994,9 @@ func isTurnRequestPath(path string) bool {
 // classifyEndpoint labels that reducerHandlesEndpoint keys capture
 // eligibility on.
 const (
-	endpointMessages  = "messages"
-	endpointResponses = "responses"
+	endpointMessages        = "messages"
+	endpointResponses       = "responses"
+	endpointChatCompletions = "chat_completions"
 )
 
 func classifyEndpoint(path string) string {
@@ -1007,7 +1006,7 @@ func classifyEndpoint(path string) string {
 	case pathHasCleanSuffix(path, "/v1/messages"):
 		return endpointMessages
 	case pathHasCleanSuffix(path, "/v1/chat/completions"):
-		return "chat_completions"
+		return endpointChatCompletions
 	case pathHasCleanSuffix(path, "/v1/responses"), pathHasCleanSuffix(path, "/codex/responses"):
 		return endpointResponses
 	case pathHasCleanSuffix(path, "/api/chat"):

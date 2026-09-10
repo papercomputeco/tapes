@@ -49,7 +49,7 @@ import (
 func newRecoveryReducers() map[string]capture.Reducer {
 	return map[string]capture.Reducer{
 		capture.ProviderAnthropic: capture.NewAnthropicReducer(),
-		capture.ProviderOpenAI:    capture.NewOpenAIResponsesReducer(),
+		capture.ProviderOpenAI:    capture.NewOpenAIReducer(),
 	}
 }
 
