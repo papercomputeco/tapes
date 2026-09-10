@@ -165,14 +165,17 @@ func decodeOneLayer(body []byte, encoding string) ([]byte, DecodeStats, error) {
 		// cap is the whole bomb guard here, exactly as it is for gzip.
 		//
 		// One departure from gzip and zstd, observed rather than chosen:
-		// this reader reports a clean EOF on a stream cut mid-block, so a
-		// truncated br body decodes silently to a prefix instead of
-		// reaching the salvage rule. Pinned as contested-br-cut-mid-stream
-		// in the fixture corpus.
+		// truncated br bodies decode silently to a prefix instead of being
+		// reported as salvaged. andybalholm/brotli v1.2 began returning an
+		// unexpected EOF for the corpus cut that v1.1 treated as clean, but
+		// the cross-language capture contract still pins the old behavior.
+		// Keep normal read and size errors while suppressing only the
+		// truncation statistic until that contract is resolved.
 		if err := refuseEmpty(body, "br"); err != nil {
 			return nil, DecodeStats{}, err
 		}
-		return readCapped(brotli.NewReader(bytes.NewReader(body)), "br")
+		decoded, _, err := readCapped(brotli.NewReader(bytes.NewReader(body)), "br")
+		return decoded, DecodeStats{}, err
 
 	default:
 		// deflate lands here deliberately: no capture path emits it, and

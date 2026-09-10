@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 
+	"github.com/gofiber/fiber/v3"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -75,7 +76,7 @@ var _ = Describe("Anthropic streaming proxy (capture-backed)", func() {
 	It("forwards chunks verbatim and lands a canonical ChatResponse via pkg/capture", func() {
 		reqBody := `{"model":"claude-3-5-sonnet-20241022","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
 
-		resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(reqBody)), -1)
+		resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(reqBody)), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 		Expect(err).NotTo(HaveOccurred())
 		defer resp.Body.Close()
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
@@ -113,7 +114,7 @@ var _ = Describe("Anthropic streaming proxy (capture-backed)", func() {
 		req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(reqBody))
 		req.Header.Set("X-Claude-Code-Agent-Id", "agent_sub_7")
 
-		resp, err := p.server.Test(req, -1)
+		resp, err := p.server.Test(req, fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 		Expect(err).NotTo(HaveOccurred())
 		defer resp.Body.Close()
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
@@ -134,7 +135,7 @@ var _ = Describe("Anthropic streaming proxy (capture-backed)", func() {
 	It("omits the thread id for a main-thread turn", func() {
 		reqBody := `{"model":"claude-3-5-sonnet-20241022","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
 
-		resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(reqBody)), -1)
+		resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(reqBody)), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 		Expect(err).NotTo(HaveOccurred())
 		defer resp.Body.Close()
 		_, err = io.ReadAll(resp.Body)
@@ -185,7 +186,7 @@ var _ = Describe("Anthropic non-streaming proxy (capture-backed)", func() {
 		req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(reqBody))
 		req.Header.Set("X-Claude-Code-Agent-Id", "agent_sub_9")
 
-		resp, err := p.server.Test(req, -1)
+		resp, err := p.server.Test(req, fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 		Expect(err).NotTo(HaveOccurred())
 		defer resp.Body.Close()
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))

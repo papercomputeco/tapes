@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/compress"
-	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/compress"
+	"github.com/gofiber/fiber/v3/middleware/recover"
 
 	"github.com/papercomputeco/tapes/api/cassetterunner"
 	"github.com/papercomputeco/tapes/api/mcp"
@@ -60,7 +60,7 @@ type Server struct {
 // compression before the handler runs and therefore before any response has a
 // type; what a client says it wants is the only thing known this early, and a
 // client that reads an event stream says so.
-func acceptsEventStream(c *fiber.Ctx) bool {
+func acceptsEventStream(c fiber.Ctx) bool {
 	for accept := range strings.SplitSeq(c.Get(fiber.HeaderAccept), ",") {
 		if media, _, err := mime.ParseMediaType(strings.TrimSpace(accept)); err == nil &&
 			media == "text/event-stream" {
@@ -85,9 +85,7 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 // serves carries route and operation prose but not per-field prose.
 func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tapesoapi.TypeDocs) (*Server, error) {
 	var err error
-	app := fiber.New(fiber.Config{
-		DisableStartupMessage: true,
-	})
+	app := fiber.New(fiber.Config{})
 
 	contracts := resolveContractVersions(config.ContractVersions)
 	cassetteClient := cassetterunner.NewHTTPClient()
@@ -204,7 +202,7 @@ func (s *Server) Run() error {
 	s.logger.Info("starting API server",
 		"listen", s.config.ListenAddr,
 	)
-	return s.app.Listen(s.config.ListenAddr)
+	return s.app.Listen(s.config.ListenAddr, fiber.ListenConfig{DisableStartupMessage: true})
 }
 
 // RunWithListener starts the API server using the provided listener.
@@ -212,7 +210,7 @@ func (s *Server) RunWithListener(listener net.Listener) error {
 	s.logger.Info("starting API server",
 		"listen", listener.Addr().String(),
 	)
-	return s.app.Listener(listener)
+	return s.app.Listener(listener, fiber.ListenConfig{DisableStartupMessage: true})
 }
 
 // Shutdown gracefully shuts down the API server.

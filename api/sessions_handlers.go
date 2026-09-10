@@ -14,7 +14,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"golang.org/x/text/unicode/norm"
 
@@ -163,8 +163,8 @@ func foldRuneSimple(r rune) rune {
 // queryParamValues returns every occurrence of one query param, in order.
 // Fiber's c.Query collapses repeats to a single value; a claimed filter's
 // repeats are AND, so every occurrence matters.
-func queryParamValues(c *fiber.Ctx, name string) []string {
-	raw := c.Context().QueryArgs().PeekMulti(name)
+func queryParamValues(c fiber.Ctx, name string) []string {
+	raw := c.RequestCtx().QueryArgs().PeekMulti(name)
 	if len(raw) == 0 {
 		return nil
 	}
@@ -195,7 +195,7 @@ func queryParamValues(c *fiber.Ctx, name string) []string {
 // values stay distinct — sorted into a canonical set. A keyset boundary is
 // only meaningful within the row set that minted it, so the cursor carries
 // the claimed-filter set exactly as it carries sort and direction.
-func (s *Server) claimedPublishedFilters(c *fiber.Ctx) ([]storage.PublishedFilter, []string, error) {
+func (s *Server) claimedPublishedFilters(c fiber.Ctx) ([]storage.PublishedFilter, []string, error) {
 	var filters []storage.PublishedFilter
 	var bound []string
 	for _, claim := range s.cassettes.ClaimsFor(sessionsSurface) {
@@ -536,7 +536,7 @@ func decodeSessionsCursor(token string) (sessionsCursor, error) {
 }
 
 // handleListSessions handles GET /v1/sessions.
-func (s *Server) handleListSessions(c *fiber.Ctx) error {
+func (s *Server) handleListSessions(c fiber.Ctx) error {
 	reader, ok := s.driver.(sessionsReader)
 	if !ok {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
@@ -644,7 +644,7 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 	opts.ClaimedFilters = claimedFilters
 	// Fetch one extra item to detect whether a next page exists.
 	opts.Limit = limit + 1
-	sessions, err := reader.ListSessionRecords(c.Context(), orgID, opts)
+	sessions, err := reader.ListSessionRecords(c.RequestCtx(), orgID, opts)
 	if err != nil {
 		s.logger.Error("list sessions", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
@@ -686,7 +686,7 @@ func (s *Server) handleListSessions(c *fiber.Ctx) error {
 // belong to the paged-list path, and the lookup has no ordering or window
 // to apply them to. Returns the standard SessionListResponse envelope
 // with the matching items and no next_cursor.
-func (s *Server) listSessionsByHarness(c *fiber.Ctx, reader sessionsReader, claimedFilters []storage.PublishedFilter) error {
+func (s *Server) listSessionsByHarness(c fiber.Ctx, reader sessionsReader, claimedFilters []storage.PublishedFilter) error {
 	harnessID := c.Query("harness_id")
 	harnessSessionID := c.Query("harness_session_id")
 	if harnessSessionID == "" {
@@ -738,7 +738,7 @@ func (s *Server) listSessionsByHarness(c *fiber.Ctx, reader sessionsReader, clai
 		for _, rec := range recs {
 			matched := true
 			for fi := range claimedFilters {
-				ok, err := matcher.MatchesPublishedFilter(c.Context(), &claimedFilters[fi], rec.ID)
+				ok, err := matcher.MatchesPublishedFilter(c.RequestCtx(), &claimedFilters[fi], rec.ID)
 				if err != nil {
 					return nil, err
 				}
@@ -760,7 +760,7 @@ func (s *Server) listSessionsByHarness(c *fiber.Ctx, reader sessionsReader, clai
 	// vocabulary).
 	items := []SessionItem{}
 	if harnessID == "" {
-		recs, err := reader.ListSessionRecordsByHarnessSessionID(c.Context(), orgID, harnessSessionID)
+		recs, err := reader.ListSessionRecordsByHarnessSessionID(c.RequestCtx(), orgID, harnessSessionID)
 		if err != nil {
 			s.logger.Error("list sessions by harness session id", "error", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
@@ -776,7 +776,7 @@ func (s *Server) listSessionsByHarness(c *fiber.Ctx, reader sessionsReader, clai
 		return c.JSON(SessionListResponse{Items: items})
 	}
 
-	sess, err := reader.GetSessionRecordByHarness(c.Context(), orgID, harnessID, harnessSessionID)
+	sess, err := reader.GetSessionRecordByHarness(c.RequestCtx(), orgID, harnessID, harnessSessionID)
 	if err != nil {
 		s.logger.Error("get session by harness", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
@@ -795,7 +795,7 @@ func (s *Server) listSessionsByHarness(c *fiber.Ctx, reader sessionsReader, clai
 }
 
 // handleGetSession handles GET /v1/sessions/:id.
-func (s *Server) handleGetSession(c *fiber.Ctx) error {
+func (s *Server) handleGetSession(c fiber.Ctx) error {
 	reader, ok := s.driver.(sessionsReader)
 	if !ok {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
@@ -812,7 +812,7 @@ func (s *Server) handleGetSession(c *fiber.Ctx) error {
 	}
 
 	orgID := singleTenantOrgID
-	sess, err := reader.GetSessionRecord(c.Context(), orgID, id)
+	sess, err := reader.GetSessionRecord(c.RequestCtx(), orgID, id)
 	if err != nil {
 		s.logger.Error("get session", "id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session"})
@@ -827,7 +827,7 @@ func (s *Server) handleGetSession(c *fiber.Ctx) error {
 }
 
 // handleDeleteSession handles DELETE /v1/sessions/:id.
-func (s *Server) handleDeleteSession(c *fiber.Ctx) error {
+func (s *Server) handleDeleteSession(c fiber.Ctx) error {
 	writer, ok := s.driver.(sessionsWriter)
 	if !ok {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
@@ -844,7 +844,7 @@ func (s *Server) handleDeleteSession(c *fiber.Ctx) error {
 	}
 
 	orgID := singleTenantOrgID
-	deleted, err := writer.DeleteSession(c.Context(), orgID, id)
+	deleted, err := writer.DeleteSession(c.RequestCtx(), orgID, id)
 	if err != nil {
 		s.logger.Error("delete session", "id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to delete session"})
@@ -878,7 +878,7 @@ var _ = sessionUpdateRequest{}
 // org-scoped predicate carried in storage (CC-2), and on success re-reads
 // GetSessionRecord to return the updated session summary so the client can
 // write its cache through (CC-6/CC-7 on the frontend side).
-func (s *Server) handleUpdateSession(c *fiber.Ctx) error {
+func (s *Server) handleUpdateSession(c fiber.Ctx) error {
 	reader, ok := s.driver.(sessionsReader)
 	if !ok {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
@@ -925,7 +925,7 @@ func (s *Server) handleUpdateSession(c *fiber.Ctx) error {
 	}
 
 	orgID := singleTenantOrgID
-	rowsAffected, err := reader.UpdateSessionDisplayName(c.Context(), orgID, id, normalized)
+	rowsAffected, err := reader.UpdateSessionDisplayName(c.RequestCtx(), orgID, id, normalized)
 	if err != nil {
 		s.logger.Error("update session display name", "id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to update session"})
@@ -934,7 +934,7 @@ func (s *Server) handleUpdateSession(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
 	}
 
-	sess, err := reader.GetSessionRecord(c.Context(), orgID, id)
+	sess, err := reader.GetSessionRecord(c.RequestCtx(), orgID, id)
 	if err != nil {
 		s.logger.Error("get session", "id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to update session"})
@@ -947,3 +947,5 @@ func (s *Server) handleUpdateSession(c *fiber.Ctx) error {
 		Session: sessionItemFromStorage(*sess, time.Now()),
 	})
 }
+
+// fiber:context-methods migrated

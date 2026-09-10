@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -43,9 +43,9 @@ var _ = Describe("request ID middleware", func() {
 
 			var contextRequestID string
 			var contextLogger *slog.Logger
-			server.app.Get("/request-id-probe", func(c *fiber.Ctx) error {
-				contextRequestID = tapeslogger.RequestIDFromContext(c.UserContext())
-				contextLogger = tapeslogger.RequestLoggerFromContext(c.UserContext())
+			server.app.Get("/request-id-probe", func(c fiber.Ctx) error {
+				contextRequestID = tapeslogger.RequestIDFromContext(c.Context())
+				contextLogger = tapeslogger.RequestLoggerFromContext(c.Context())
 				contextLogger.Info("handled probe")
 				return c.SendStatus(http.StatusNoContent)
 			})
@@ -78,3 +78,5 @@ var _ = Describe("request ID middleware", func() {
 		Expect(generated).To(HaveLen(6), "separate invalid or missing attempts need unique IDs")
 	})
 })
+
+// fiber:context-methods migrated

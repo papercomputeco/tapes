@@ -1,8 +1,8 @@
 package api
 
-import "github.com/gofiber/fiber/v2"
+import "github.com/gofiber/fiber/v3"
 
 // handlePing returns a simple health check response.
-func (s *Server) handlePing(c *fiber.Ctx) error {
+func (s *Server) handlePing(c fiber.Ctx) error {
 	return c.JSON("pong")
 }

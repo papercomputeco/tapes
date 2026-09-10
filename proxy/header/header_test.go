@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -27,7 +27,7 @@ var _ = Describe("SetUpstreamRequestHeaders", func() {
 	It("forwards standard headers to the upstream request", func() {
 		var got http.Header
 
-		app.Post("/test", func(c *fiber.Ctx) error {
+		app.Post("/test", func(c fiber.Ctx) error {
 			req, _ := http.NewRequest(http.MethodPost, "http://upstream/test", nil)
 			hh.SetUpstreamRequestHeaders(c, req)
 			got = req.Header
@@ -51,7 +51,7 @@ var _ = Describe("SetUpstreamRequestHeaders", func() {
 	It("strips the Connection header", func() {
 		var got http.Header
 
-		app.Post("/test", func(c *fiber.Ctx) error {
+		app.Post("/test", func(c fiber.Ctx) error {
 			req, _ := http.NewRequest(http.MethodPost, "http://upstream/test", nil)
 			hh.SetUpstreamRequestHeaders(c, req)
 			got = req.Header
@@ -71,7 +71,7 @@ var _ = Describe("SetUpstreamRequestHeaders", func() {
 	It("strips the Host header", func() {
 		var got http.Header
 
-		app.Post("/test", func(c *fiber.Ctx) error {
+		app.Post("/test", func(c fiber.Ctx) error {
 			req, _ := http.NewRequest(http.MethodPost, "http://upstream/test", nil)
 			hh.SetUpstreamRequestHeaders(c, req)
 			got = req.Header
@@ -91,7 +91,7 @@ var _ = Describe("SetUpstreamRequestHeaders", func() {
 	It("strips Accept-Encoding so Go's http.Transport negotiates its own", func() {
 		var got http.Header
 
-		app.Post("/test", func(c *fiber.Ctx) error {
+		app.Post("/test", func(c fiber.Ctx) error {
 			req, _ := http.NewRequest(http.MethodPost, "http://upstream/test", nil)
 			hh.SetUpstreamRequestHeaders(c, req)
 			got = req.Header
@@ -128,7 +128,7 @@ var _ = Describe("SetClientResponseHeaders", func() {
 	})
 
 	It("forwards standard upstream response headers to the client", func() {
-		app.Get("/test", func(c *fiber.Ctx) error {
+		app.Get("/test", func(c fiber.Ctx) error {
 			resp := &http.Response{
 				Header: http.Header{
 					"Content-Type":   {"application/json"},
@@ -151,7 +151,7 @@ var _ = Describe("SetClientResponseHeaders", func() {
 	})
 
 	It("strips the Connection header", func() {
-		app.Get("/test", func(c *fiber.Ctx) error {
+		app.Get("/test", func(c fiber.Ctx) error {
 			resp := &http.Response{
 				Header: http.Header{
 					"Connection": {"keep-alive"},
@@ -170,7 +170,7 @@ var _ = Describe("SetClientResponseHeaders", func() {
 	})
 
 	It("strips the Transfer-Encoding header", func() {
-		app.Get("/test", func(c *fiber.Ctx) error {
+		app.Get("/test", func(c fiber.Ctx) error {
 			resp := &http.Response{
 				Header: http.Header{
 					"Transfer-Encoding": {"chunked"},
@@ -189,7 +189,7 @@ var _ = Describe("SetClientResponseHeaders", func() {
 	})
 
 	It("strips Content-Encoding since the proxy body is always decompressed", func() {
-		app.Get("/test", func(c *fiber.Ctx) error {
+		app.Get("/test", func(c fiber.Ctx) error {
 			resp := &http.Response{
 				Header: http.Header{
 					"Content-Encoding": {"gzip"},
@@ -211,7 +211,7 @@ var _ = Describe("SetClientResponseHeaders", func() {
 	})
 
 	It("strips Content-Length since Fiber recomputes it after compression", func() {
-		app.Get("/test", func(c *fiber.Ctx) error {
+		app.Get("/test", func(c fiber.Ctx) error {
 			resp := &http.Response{
 				Header: http.Header{
 					"Content-Length": {"1234"},
@@ -235,7 +235,7 @@ var _ = Describe("SetClientResponseHeaders", func() {
 	})
 
 	It("joins multi-value response headers with commas", func() {
-		app.Get("/test", func(c *fiber.Ctx) error {
+		app.Get("/test", func(c fiber.Ctx) error {
 			resp := &http.Response{
 				Header: http.Header{
 					"X-Multi": {"value1", "value2"},
@@ -269,7 +269,7 @@ var _ = Describe("ThreadID", func() {
 	resolve := func(hdrs map[string]string) string {
 		var got string
 
-		app.Post("/test", func(c *fiber.Ctx) error {
+		app.Post("/test", func(c fiber.Ctx) error {
 			got = ThreadID(c)
 			return c.SendStatus(fiber.StatusOK)
 		})

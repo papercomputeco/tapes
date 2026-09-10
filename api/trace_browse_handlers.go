@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
@@ -71,7 +71,7 @@ func traceItemFromTurn(turn storage.SpanTurnRecord, spanCount int) TraceItem {
 }
 
 // handleListTraceSummaries handles GET /v1/traces?session_id=.
-func (s *Server) handleListTraceSummaries(c *fiber.Ctx) error {
+func (s *Server) handleListTraceSummaries(c fiber.Ctx) error {
 	sessions, ok := s.driver.(sessionsReader)
 	if !ok {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
@@ -88,7 +88,7 @@ func (s *Server) handleListTraceSummaries(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "session_id must be a valid UUID"})
 	}
 	orgID := singleTenantOrgID
-	sess, err := sessions.GetSessionRecord(c.Context(), orgID, sessionID)
+	sess, err := sessions.GetSessionRecord(c.RequestCtx(), orgID, sessionID)
 	if err != nil {
 		s.logger.Error("get session for trace summaries", "session_id", sessionID, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session"})
@@ -96,7 +96,7 @@ func (s *Server) handleListTraceSummaries(c *fiber.Ctx) error {
 	if sess == nil {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
 	}
-	rows, err := reader.ListTraceSummaries(c.Context(), sessionID)
+	rows, err := reader.ListTraceSummaries(c.RequestCtx(), sessionID)
 	if err != nil {
 		s.logger.Error("list trace summaries", "session_id", sessionID, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list traces"})
@@ -116,13 +116,13 @@ func BuildTraceList(rows []storage.TraceSummaryRecord) TraceListResponse {
 }
 
 // handleGetTrace handles GET /v1/traces/:trace_id.
-func (s *Server) handleGetTrace(c *fiber.Ctx) error {
+func (s *Server) handleGetTrace(c fiber.Ctx) error {
 	reader, ok := s.driver.(spanModelReader)
 	if !ok {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "span traces not supported by this backend"})
 	}
 	traceID := c.Params("trace_id")
-	turn, spans, links, err := reader.GetTraceDetail(c.Context(), singleTenantOrgID, traceID)
+	turn, spans, links, err := reader.GetTraceDetail(c.RequestCtx(), singleTenantOrgID, traceID)
 	if err != nil {
 		s.logger.Error("get trace", "trace_id", traceID, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to get trace"})
@@ -168,13 +168,13 @@ type StandaloneTraceDetail struct {
 }
 
 // handleGetSpan handles GET /v1/traces/:trace_id/spans/:span_id.
-func (s *Server) handleGetSpan(c *fiber.Ctx) error {
+func (s *Server) handleGetSpan(c fiber.Ctx) error {
 	reader, ok := s.driver.(spanModelReader)
 	if !ok {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "span traces not supported by this backend"})
 	}
 	traceID, spanID := c.Params("trace_id"), c.Params("span_id")
-	rec, err := reader.GetSpanRecord(c.Context(), singleTenantOrgID, traceID, spanID)
+	rec, err := reader.GetSpanRecord(c.RequestCtx(), singleTenantOrgID, traceID, spanID)
 	if err != nil {
 		s.logger.Error("get span", "trace_id", traceID, "span_id", spanID, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to get span"})
@@ -187,7 +187,7 @@ func (s *Server) handleGetSpan(c *fiber.Ctx) error {
 }
 
 // handleListSessionRawTurns handles GET /v1/sessions/:id/raw_turns.
-func (s *Server) handleListSessionRawTurns(c *fiber.Ctx) error {
+func (s *Server) handleListSessionRawTurns(c fiber.Ctx) error {
 	sessions, ok := s.driver.(sessionsReader)
 	if !ok {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
@@ -201,7 +201,7 @@ func (s *Server) handleListSessionRawTurns(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id must be a valid UUID"})
 	}
 	orgID := singleTenantOrgID
-	sess, err := sessions.GetSessionRecord(c.Context(), orgID, id)
+	sess, err := sessions.GetSessionRecord(c.RequestCtx(), orgID, id)
 	if err != nil {
 		s.logger.Error("get session for raw turns", "id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session"})
@@ -209,7 +209,7 @@ func (s *Server) handleListSessionRawTurns(c *fiber.Ctx) error {
 	if sess == nil {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
 	}
-	rows, err := reader.ListRawTurnHeaders(c.Context(), orgID, sess.HarnessID, sess.HarnessSessionID)
+	rows, err := reader.ListRawTurnHeaders(c.RequestCtx(), orgID, sess.HarnessID, sess.HarnessSessionID)
 	if err != nil {
 		s.logger.Error("list raw turn headers", "session_id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list raw turns"})
@@ -225,3 +225,5 @@ func (s *Server) handleListSessionRawTurns(c *fiber.Ctx) error {
 	}
 	return c.JSON(RawTurnListResponse{Items: items})
 }
+
+// fiber:context-methods migrated

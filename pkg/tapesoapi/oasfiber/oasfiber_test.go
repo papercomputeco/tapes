@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -20,7 +20,7 @@ func TestOASFiber(t *testing.T) {
 	RunSpecs(t, "oasfiber Suite")
 }
 
-func noop(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNoContent) }
+func noop(c fiber.Ctx) error { return c.SendStatus(fiber.StatusNoContent) }
 
 var _ = Describe("Wrap", func() {
 	var (
@@ -30,7 +30,7 @@ var _ = Describe("Wrap", func() {
 	)
 
 	BeforeEach(func() {
-		app = fiber.New(fiber.Config{DisableStartupMessage: true})
+		app = fiber.New(fiber.Config{})
 		parser = oas.NewParser(oas.WithInfo(oas.Info{Title: "Test", Version: "1.0.0"}))
 		router = oasfiber.Wrap(app, parser)
 	})
@@ -59,7 +59,7 @@ var _ = Describe("Wrap", func() {
 		Expect(router.Err()).NotTo(HaveOccurred())
 
 		// The route is really registered: this is a wrapper, not a substitute.
-		response, err := app.Test(httpGet("/v1/things"), -1)
+		response, err := app.Test(httpGet("/v1/things"), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(response.StatusCode).To(Equal(fiber.StatusNoContent))
 
@@ -181,7 +181,7 @@ var _ = Describe("Wrap", func() {
 
 var _ = Describe("Scan", func() {
 	It("stubs a route registered behind the wrapper's back", func() {
-		app := fiber.New(fiber.Config{DisableStartupMessage: true})
+		app := fiber.New(fiber.Config{})
 		parser := oas.NewParser(oas.WithInfo(oas.Info{Title: "Test", Version: "1.0.0"}))
 
 		router := oasfiber.Wrap(app, parser)
@@ -203,7 +203,7 @@ var _ = Describe("Scan", func() {
 	})
 
 	It("can report without contributing", func() {
-		app := fiber.New(fiber.Config{DisableStartupMessage: true})
+		app := fiber.New(fiber.Config{})
 		parser := oas.NewParser(oas.WithInfo(oas.Info{Title: "Test", Version: "1.0.0"}))
 		app.Get("/v1/undescribed", noop)
 
@@ -217,7 +217,7 @@ var _ = Describe("Scan", func() {
 	})
 
 	It("does not stub the HEAD fiber registers alongside every GET", func() {
-		app := fiber.New(fiber.Config{DisableStartupMessage: true})
+		app := fiber.New(fiber.Config{})
 		parser := oas.NewParser()
 		app.Get("/v1/thing", noop)
 
@@ -229,7 +229,7 @@ var _ = Describe("Scan", func() {
 
 var _ = Describe("Server", func() {
 	It("serves the compiled document and revalidates on its fingerprint", func() {
-		app := fiber.New(fiber.Config{DisableStartupMessage: true})
+		app := fiber.New(fiber.Config{})
 		parser := oas.NewParser(oas.WithInfo(oas.Info{Title: "Test", Version: "1.0.0"}))
 		router := oasfiber.Wrap(app, parser)
 		router.Get("/v1/thing", noop, oasfiber.Doc("thing"))
@@ -237,7 +237,7 @@ var _ = Describe("Server", func() {
 		documents := oasfiber.NewServer(parser, oas.WithLint())
 		documents.Mount(app, "/openapi.json", "/openapi.yaml")
 
-		response, err := app.Test(httpGet("/openapi.json"), -1)
+		response, err := app.Test(httpGet("/openapi.json"), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(response.StatusCode).To(Equal(http.StatusOK))
 		body, err := io.ReadAll(response.Body)
@@ -251,7 +251,7 @@ var _ = Describe("Server", func() {
 		// revalidates on it re-fetches exactly when its surface changed.
 		conditional := httpGet("/openapi.json")
 		conditional.Header.Set(fiber.HeaderIfNoneMatch, etag)
-		cached, err := app.Test(conditional, -1)
+		cached, err := app.Test(conditional, fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cached.StatusCode).To(Equal(http.StatusNotModified))
 	})

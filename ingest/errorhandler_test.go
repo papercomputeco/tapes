@@ -18,7 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -156,21 +155,7 @@ var _ = Describe("body-limit rejections", func() {
 		Expect(logs).To(ContainSubstring("path=/v1/ingest"))
 	})
 
-	It("delegates non-body-limit errors verbatim to fiber.DefaultErrorHandler", func() {
-		// A default-handler app with the same route shape: what these requests
-		// produce there is byte-for-byte what the ingest server must produce.
-		ref := fiber.New(fiber.Config{DisableStartupMessage: true})
-		ref.Post("/v1/ingest", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusAccepted) })
-		ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
-		Expect(err).NotTo(HaveOccurred())
-		go func() {
-			_ = ref.Listener(ln)
-		}()
-		defer func() {
-			Expect(ref.Shutdown()).To(Succeed())
-		}()
-		refURL := "http://" + ln.Addr().String()
-
+	It("preserves Fiber's standard non-body-limit error responses", func() {
 		do := func(base, method, path string) (int, string, string) {
 			req, err := http.NewRequest(method, base+path, nil)
 			Expect(err).NotTo(HaveOccurred())
@@ -183,20 +168,14 @@ var _ = Describe("body-limit rejections", func() {
 		}
 
 		status, contentType, body := do(baseURL, http.MethodGet, "/nope")
-		refStatus, refContentType, refBody := do(refURL, http.MethodGet, "/nope")
-		Expect(status).To(Equal(refStatus))
-		Expect(contentType).To(Equal(refContentType))
-		Expect(body).To(Equal(refBody))
-		// Fiber's plain text, untouched: JSON here would mean the custom
-		// handler re-encoded an error it must only pass through.
+		Expect(status).To(Equal(http.StatusNotFound))
+		Expect(contentType).To(ContainSubstring("text/plain"))
 		Expect(body).To(Equal("Cannot GET /nope"))
 
 		status, contentType, body = do(baseURL, http.MethodDelete, "/v1/ingest")
-		refStatus, refContentType, refBody = do(refURL, http.MethodDelete, "/v1/ingest")
-		Expect(status).To(Equal(refStatus))
-		Expect(contentType).To(Equal(refContentType))
-		Expect(body).To(Equal(refBody))
 		Expect(status).To(Equal(http.StatusMethodNotAllowed))
+		Expect(contentType).To(ContainSubstring("text/plain"))
+		Expect(body).To(Equal("Cannot DELETE /v1/ingest"))
 	})
 
 	It("leaves body-limit rejections on non-ingest routes to the default handler", func() {

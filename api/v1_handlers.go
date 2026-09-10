@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/storage"
@@ -41,7 +41,7 @@ type StatsResponse struct {
 }
 
 // handleStats handles GET /v1/stats.
-func (s *Server) handleStats(c *fiber.Ctx) error {
+func (s *Server) handleStats(c fiber.Ctx) error {
 	since, until, err := parseStatsWindow(c)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
@@ -62,7 +62,7 @@ func (s *Server) handleStats(c *fiber.Ctx) error {
 	// its rows and its totals passes the one value to both.
 	//
 	// Absent, it is empty and every total stays org-wide.
-	stats, err := reader.AggregateSpanStats(c.Context(), singleTenantOrgID, since, until, c.Query("auth_subject"))
+	stats, err := reader.AggregateSpanStats(c.RequestCtx(), singleTenantOrgID, since, until, c.Query("auth_subject"))
 	if err != nil {
 		s.logger.Error("aggregate span stats", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to compute stats"})
@@ -87,7 +87,7 @@ func (s *Server) handleStats(c *fiber.Ctx) error {
 // Validation errors are returned as plain Go errors so the calling handler
 // can map them to a 400 Bad Request response, instead of letting them
 // surface from the storage driver as a 500.
-func parseStatsWindow(c *fiber.Ctx) (since, until *time.Time, err error) {
+func parseStatsWindow(c fiber.Ctx) (since, until *time.Time, err error) {
 	if raw := c.Query("since"); raw != "" {
 		t, perr := time.Parse(time.RFC3339, raw)
 		if perr != nil {
@@ -106,3 +106,5 @@ func parseStatsWindow(c *fiber.Ctx) (since, until *time.Time, err error) {
 
 	return since, until, nil
 }
+
+// fiber:context-methods migrated

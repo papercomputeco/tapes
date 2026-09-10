@@ -33,7 +33,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
+	staticmw "github.com/gofiber/fiber/v3/middleware/static"
 
 	oas "github.com/papercomputeco/tapes/pkg/tapesoapi"
 )
@@ -158,7 +159,7 @@ func (r *Router) Err() error {
 func (r *Router) Group(prefix string, handlers ...fiber.Handler) *Router {
 	return &Router{
 		app:    r.app,
-		router: r.router.Group(prefix, handlers...),
+		router: r.router.Group(prefix, handlersAsAny(handlers)...),
 		parser: r.parser,
 		errs:   r.errs,
 		options: routerOptions{
@@ -245,7 +246,8 @@ func (r *Router) Add(method, path string, doc *DocBuilder, handlers ...fiber.Han
 func (r *Router) add(
 	method, path string, doc *DocBuilder, location string, handlers ...fiber.Handler,
 ) *Router {
-	r.router.Add(method, path, handlers...)
+	converted := handlersAsAny(handlers)
+	r.router.Add([]string{method}, path, converted[0], converted[1:]...)
 	r.describe(method, path, doc, location)
 
 	return r
@@ -253,10 +255,22 @@ func (r *Router) add(
 
 // Static mounts a static file handler. Static assets are not API surface, so
 // nothing is contributed.
-func (r *Router) Static(prefix, root string, config ...fiber.Static) *Router {
-	r.router.Static(prefix, root, config...)
+func (r *Router) Static(prefix, root string, config ...staticmw.Config) *Router {
+	route := prefix
+	if !strings.HasSuffix(route, "*") {
+		route += "*"
+	}
+	r.router.Get(route, staticmw.New(root, config...))
 
 	return r
+}
+
+func handlersAsAny(handlers []fiber.Handler) []any {
+	converted := make([]any, len(handlers))
+	for i, handler := range handlers {
+		converted[i] = handler
+	}
+	return converted
 }
 
 func firstDoc(docs []*DocBuilder) *DocBuilder {

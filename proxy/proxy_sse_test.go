@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 
+	"github.com/gofiber/fiber/v3"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -101,7 +102,7 @@ var _ = Describe("SSE Streaming Proxy", func() {
 				{Role: "user", Content: "Say hello"},
 			}, new(true))
 
-			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), -1)
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 
@@ -125,7 +126,7 @@ var _ = Describe("SSE Streaming Proxy", func() {
 				{Role: "user", Content: "Say hello"},
 			}, new(true))
 
-			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), -1)
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 
@@ -144,7 +145,7 @@ var _ = Describe("SSE Streaming Proxy", func() {
 				{Role: "user", Content: "Say hello"},
 			}, new(true))
 
-			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), -1)
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 			Expect(err).NotTo(HaveOccurred())
 			resp.Body.Close()
 
@@ -173,7 +174,7 @@ var _ = Describe("SSE Streaming Proxy", func() {
 			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody)))
 			req.Header.Set("X-Claude-Code-Agent-Id", "agent_sub_legacy")
 
-			resp, err := p.server.Test(req, -1)
+			resp, err := p.server.Test(req, fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 			Expect(err).NotTo(HaveOccurred())
 			resp.Body.Close()
 
@@ -212,7 +213,7 @@ var _ = Describe("SSE Streaming Proxy", func() {
 				{Role: "user", Content: "Hi"},
 			}, new(true))
 
-			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), -1)
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 
@@ -260,7 +261,7 @@ var _ = Describe("SSE Streaming Proxy", func() {
 				{Role: "user", Content: "hi"},
 			}, new(true))
 
-			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), -1)
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 
@@ -304,7 +305,7 @@ var _ = Describe("SSE Streaming Proxy", func() {
 				{Role: "user", Content: "test"},
 			}, new(true))
 
-			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), -1)
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 

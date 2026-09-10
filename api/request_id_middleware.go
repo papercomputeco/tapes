@@ -3,7 +3,7 @@ package api
 import (
 	"log/slog"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
@@ -15,7 +15,7 @@ const (
 )
 
 func requestIDMiddleware(log *slog.Logger) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		requestID := canonicalRequestID(c.Get(requestIDHeader))
 		requestLog := log.With("request_id", requestID)
 
@@ -23,7 +23,7 @@ func requestIDMiddleware(log *slog.Logger) fiber.Handler {
 		// handler can read, forward, or log it.
 		c.Request().Header.Set(requestIDHeader, requestID)
 		c.Set(requestIDHeader, requestID)
-		c.SetUserContext(tapeslogger.WithRequest(c.Context(), requestID, requestLog))
+		c.SetContext(tapeslogger.WithRequest(c.RequestCtx(), requestID, requestLog))
 
 		return c.Next()
 	}
@@ -38,3 +38,5 @@ func canonicalRequestID(candidate string) string {
 	}
 	return uuid.NewString()
 }
+
+// fiber:context-methods migrated

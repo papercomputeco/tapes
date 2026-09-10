@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gofiber/adaptor/v2"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/adaptor"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/llm/provider"
@@ -281,9 +281,8 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs oas.
 	metrics := NewMetrics()
 
 	app := fiber.New(fiber.Config{
-		DisableStartupMessage: true,
-		BodyLimit:             MaxIngestBodyBytes,
-		ErrorHandler:          newBodyLimitErrorHandler(log, metrics),
+		BodyLimit:    MaxIngestBodyBytes,
+		ErrorHandler: newBodyLimitErrorHandler(log, metrics),
 	})
 
 	wp, err := worker.NewPool(&worker.Config{
@@ -339,7 +338,7 @@ func (s *Server) Run() error {
 	s.logger.Info("starting ingest server",
 		"listen", s.config.ListenAddr,
 	)
-	return s.server.Listen(s.config.ListenAddr)
+	return s.server.Listen(s.config.ListenAddr, fiber.ListenConfig{DisableStartupMessage: true})
 }
 
 // RunWithListener starts the ingest server using the provided listener.
@@ -347,7 +346,7 @@ func (s *Server) RunWithListener(listener net.Listener) error {
 	s.logger.Info("starting ingest server",
 		"listen", listener.Addr().String(),
 	)
-	return s.server.Listener(listener)
+	return s.server.Listener(listener, fiber.ListenConfig{DisableStartupMessage: true})
 }
 
 // Close gracefully shuts down the server and waits for the worker pool to drain.
@@ -356,7 +355,7 @@ func (s *Server) Close() error {
 	return s.server.Shutdown()
 }
 
-func (s *Server) handlePing(c *fiber.Ctx) error {
+func (s *Server) handlePing(c fiber.Ctx) error {
 	return c.JSON(pingResponse{Status: "ok"})
 }
 
@@ -370,7 +369,7 @@ func decodeEnvelopeField(raw json.RawMessage, dst any) error {
 	return json.Unmarshal(raw, dst)
 }
 
-func (s *Server) handleIngest(c *fiber.Ctx) error {
+func (s *Server) handleIngest(c fiber.Ctx) error {
 	bodySize := len(c.Body())
 
 	rejectEnvelope := func(reason string, err error) error {
@@ -389,7 +388,7 @@ func (s *Server) handleIngest(c *fiber.Ctx) error {
 	// verbatim slices the raw row stores and, via the sub-decodes below, the
 	// typed payload.
 	var body ingestBody
-	if err := c.BodyParser(&body); err != nil {
+	if err := c.Bind().Body(&body); err != nil {
 		return rejectEnvelope("envelope", err)
 	}
 
@@ -428,7 +427,7 @@ func (s *Server) handleIngest(c *fiber.Ctx) error {
 	// on which capture path produced it. This runs before the raw-layer write
 	// so the reduction lands on the same row as the bytes it came from, and
 	// before processTurn so the derived path sees a populated response.
-	reduced := s.reduceRawOnly(c.Context(), &payload)
+	reduced := s.reduceRawOnly(c.RequestCtx(), &payload)
 
 	// Persist the immutable raw envelope BEFORE parsing: a turn that
 	// fails provider parsing (422) is still captured, so a future
@@ -443,7 +442,7 @@ func (s *Server) handleIngest(c *fiber.Ctx) error {
 		if len(reduced) > 0 {
 			raw.Response = reduced
 		}
-		s.persistRawTurn(c.Context(), &payload, raw)
+		s.persistRawTurn(c.RequestCtx(), &payload, raw)
 	}
 
 	start := time.Now()
@@ -518,7 +517,7 @@ const transcriptWriteProvider = "transcript"
 // version per (session, agent, lifecycle kind): an interacted re-entry
 // row shares its target agent's id, so it versions separately from the
 // started spawn anchor instead of superseding it.
-func (s *Server) handleTranscriptIngest(c *fiber.Ctx) error {
+func (s *Server) handleTranscriptIngest(c fiber.Ctx) error {
 	if s.rawStore == nil {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{
 			Error: "transcript ingest requires the raw-turn layer (Postgres driver)",
@@ -528,7 +527,7 @@ func (s *Server) handleTranscriptIngest(c *fiber.Ctx) error {
 	bodySize := len(c.Body())
 
 	var payload TranscriptPayload
-	if err := c.BodyParser(&payload); err != nil {
+	if err := c.Bind().Body(&payload); err != nil {
 		s.metrics.ObserveWrite(transcriptWriteProvider, ResultRejectEnv, bodySize)
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{
 			Error: fmt.Sprintf("%s: %s", ErrEnvelope, err),
@@ -576,7 +575,7 @@ func (s *Server) handleTranscriptIngest(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: err.Error()})
 	}
 
-	inserted, err := s.rawStore.PutRawTurn(c.Context(), storage.RawTurnRecord{
+	inserted, err := s.rawStore.PutRawTurn(c.RequestCtx(), storage.RawTurnRecord{
 		OrgID:            payload.Session.OrgID,
 		Source:           storage.RawTurnSourceTranscript,
 		HarnessID:        payload.Session.HarnessIDOrUnknown(),
@@ -662,7 +661,7 @@ func transcriptRequestID(payload *TranscriptPayload) string {
 // session envelope at capture time). The override runs BEFORE envelope
 // validation so a malformed gateway-supplied org rejects loudly at the
 // HTTP boundary instead of corrupting attribution downstream.
-func resolveGatewayIdentity(c *fiber.Ctx, session *sessions.IngestEnvelope) {
+func resolveGatewayIdentity(c fiber.Ctx, session *sessions.IngestEnvelope) {
 	if session == nil {
 		return
 	}
@@ -899,7 +898,7 @@ func (s *Server) recordProcessTurnError(provider string, err error, bodyBytes in
 // writeProcessTurnError maps an error returned by processTurn to the matching
 // HTTP status code. This is the mechanism that splits 400 / 422 / 502 so
 // operators can distinguish failure classes at a glance.
-func (s *Server) writeProcessTurnError(c *fiber.Ctx, err error) error {
+func (s *Server) writeProcessTurnError(c fiber.Ctx, err error) error {
 	status := fiber.StatusUnprocessableEntity
 	reason := "unprocessable"
 	switch {
@@ -1037,3 +1036,5 @@ func (s *Server) processTurn(turn *TurnPayload, weight int) error {
 	s.metrics.SetQueueDepth(s.workerPool.Len())
 	return nil
 }
+
+// fiber:context-methods migrated

@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 // Handler manages headers between proxy connections.
@@ -87,7 +87,7 @@ const (
 // for a main-thread call (or a harness with no known mapping). Fiber's Get is
 // case-insensitive, so the constants are written in the lowercase HTTP/2 form
 // that matches a packet capture.
-func ThreadID(c *fiber.Ctx) string {
+func ThreadID(c fiber.Ctx) string {
 	for _, name := range ThreadIDHeaders {
 		if v := strings.TrimSpace(c.Get(name)); v != "" {
 			return v
@@ -153,19 +153,19 @@ var skipResponse = map[string]struct{}{
 // SetUpstreamRequestHeaders copies request headers from the Fiber context to
 // the outgoing http.Request, filtering headers that the proxy should not forward
 // to the upstream API.
-func (h *Handler) SetUpstreamRequestHeaders(c *fiber.Ctx, req *http.Request) {
-	c.Request().Header.VisitAll(func(key, value []byte) {
+func (h *Handler) SetUpstreamRequestHeaders(c fiber.Ctx, req *http.Request) {
+	for key, value := range c.Request().Header.All() {
 		k := string(key)
 		if _, skip := skipRequest[k]; !skip {
 			req.Header.Set(k, string(value))
 		}
-	})
+	}
 }
 
 // SetClientResponseHeaders copies response headers from the upstream API
 // http.Response to the Fiber context, filtering headers that the proxy should
 // not forward back down to the client.
-func (h *Handler) SetClientResponseHeaders(c *fiber.Ctx, resp *http.Response) {
+func (h *Handler) SetClientResponseHeaders(c fiber.Ctx, resp *http.Response) {
 	for k, v := range resp.Header {
 		if _, skip := skipResponse[k]; !skip {
 			c.Set(k, strings.Join(v, ", "))

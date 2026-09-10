@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 
+	"github.com/gofiber/fiber/v3"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -49,7 +50,7 @@ var _ = Describe("GET /openapi", func() {
 	// smaller and stranger half of the origin.
 	fetch := func(server *Server) map[string]any {
 		request := httptest.NewRequest(http.MethodGet, "/openapi", nil)
-		response, err := server.app.Test(request, -1)
+		response, err := server.app.Test(request, fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 		Expect(err).NotTo(HaveOccurred())
 		defer response.Body.Close()
 

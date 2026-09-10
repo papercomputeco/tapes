@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 // cassetteResponseWriter is the http.ResponseWriter a cassette's reverse proxy
@@ -135,25 +135,27 @@ func watchClientGone(conn net.Conn, cancel context.CancelFunc) {
 // done — its own doc comment says the result must not outlive the handler. That
 // is precisely what this request does, because the proxy holding it is still
 // streaming a response back. Every field is therefore copied, not referenced.
-func detachRequest(ctx context.Context, c *fiber.Ctx) (*http.Request, error) {
+func detachRequest(ctx context.Context, c fiber.Ctx) (*http.Request, error) {
 	body := make([]byte, len(c.Body()))
 	copy(body, c.Body())
 
 	request, err := http.NewRequestWithContext(ctx,
-		string(c.Context().Method()), string(c.Context().RequestURI()), bytes.NewReader(body))
+		string(c.RequestCtx().Method()), string(c.RequestCtx().RequestURI()), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 
-	c.Request().Header.VisitAll(func(key, value []byte) {
+	for key, value := range c.Request().Header.All() {
 		request.Header.Add(string(key), string(value))
-	})
+	}
 
 	// What SetXForwarded reads to tell the cassette who the client asked and
 	// over what, which is the only identity a cassette gets about the origin.
-	request.Host = string(c.Context().Host())
-	request.RemoteAddr = c.Context().RemoteAddr().String()
-	request.TLS = c.Context().TLSConnectionState()
+	request.Host = string(c.RequestCtx().Host())
+	request.RemoteAddr = c.RequestCtx().RemoteAddr().String()
+	request.TLS = c.RequestCtx().TLSConnectionState()
 
 	return request, nil
 }
+
+// fiber:context-methods migrated

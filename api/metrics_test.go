@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/recover"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"
@@ -218,10 +218,10 @@ var _ = Describe("API server Prometheus metrics", func() {
 			// over the first one's bytes, exactly as the pooled server does
 			// between requests on a kept-alive connection.
 			m, app := newTestApp()
-			app.Delete("/probe", func(c *fiber.Ctx) error {
+			app.Delete("/probe", func(c fiber.Ctx) error {
 				return c.SendStatus(fiber.StatusNoContent)
 			})
-			app.Get("/probe", func(c *fiber.Ctx) error {
+			app.Get("/probe", func(c fiber.Ctx) error {
 				return c.SendStatus(fiber.StatusOK)
 			})
 
@@ -255,7 +255,7 @@ var _ = Describe("API server Prometheus metrics", func() {
 			// Use a bare test app so the route registration here does not
 			// pollute the suite-level Server with /_test/* paths.
 			m, app := newTestApp()
-			app.Get("/_test/panic", func(c *fiber.Ctx) error {
+			app.Get("/_test/panic", func(c fiber.Ctx) error {
 				panic("boom")
 			})
 
@@ -276,7 +276,7 @@ var _ = Describe("API server Prometheus metrics", func() {
 			// what Fiber's own ErrorHandler does — so the metrics row
 			// agrees with the actual response status the client sees.
 			m, app := newTestApp()
-			app.Get("/_test/wrapped", func(c *fiber.Ctx) error {
+			app.Get("/_test/wrapped", func(c fiber.Ctx) error {
 				return fmt.Errorf("validation failed: %w", fiber.ErrBadRequest)
 			})
 
@@ -292,32 +292,12 @@ var _ = Describe("API server Prometheus metrics", func() {
 		})
 
 		It("keeps unmatched-route attribution intact even when a literal '/' route is registered", func() {
-			// Defensive contract test, intentionally fragile.
-			//
-			// Today the unmatched bucket relies on isRouterNotFound: an
-			// unmatched URL leaves c.Route().Path pointing at the
-			// metrics-middleware mount path (which is "/"), and we
-			// reassign route to "unmatched" only because the router
-			// emits a 404 *fiber.Error. If a future change either
-			//
-			//   (a) removes the isRouterNotFound branch in Middleware,
-			//       or
-			//   (b) registers a real handler at literal "/" while
-			//       leaving the unmatched detection in place,
-			//
-			// real "/" traffic and unmatched-router-fallthrough traffic
-			// could both label-encode as route="/" and the unmatched
-			// sentinel would silently disappear. This spec exercises
-			// case (b): a real "/" handler IS registered, and the
-			// assertion is that unmatched URLs still land on
-			// route="unmatched", NOT on route="/" with status="404".
-			//
-			// If this test ever fails, the contract is broken — read
-			// the comment in api/metrics.go around isRouterNotFound and
-			// decide whether to widen the unmatched detection or accept
-			// the new behavior. Don't paper over the assertion.
+			// Fiber v3's Matched distinguishes a real route from middleware-only
+			// fallthrough. A literal "/" route must therefore retain its own
+			// metric while an unknown path still uses the bounded-cardinality
+			// "unmatched" sentinel.
 			m, app := newTestApp()
-			app.Get("/", func(c *fiber.Ctx) error { return c.SendString("home") })
+			app.Get("/", func(c fiber.Ctx) error { return c.SendString("home") })
 
 			// Hit the real "/" handler — should land on route="/" 200.
 			homeReq, err := http.NewRequestWithContext(
@@ -345,13 +325,10 @@ var _ = Describe("API server Prometheus metrics", func() {
 		})
 
 		It("buckets a handler-emitted fiber.ErrNotFound on the registered route template, not unmatched", func() {
-			// isRouterNotFound must distinguish the framework's catchall
-			// 404 (fresh *fiber.Error with message "Cannot METHOD /path")
-			// from a handler returning the package singleton fiber.ErrNotFound.
-			// The first should bucket as unmatched; the second should keep
-			// its route template label so the route dimension survives.
+			// Matched remains true when a registered handler returns
+			// fiber.ErrNotFound, so the route template must survive.
 			m, app := newTestApp()
-			app.Get("/_test/notfound", func(c *fiber.Ctx) error {
+			app.Get("/_test/notfound", func(c fiber.Ctx) error {
 				return fiber.ErrNotFound
 			})
 
@@ -374,7 +351,7 @@ var _ = Describe("API server Prometheus metrics", func() {
 			// singleton, so wrapped not-founds are also identified as
 			// handler-emitted and keep their route dimension.
 			m, app := newTestApp()
-			app.Get("/_test/wrapped-notfound", func(c *fiber.Ctx) error {
+			app.Get("/_test/wrapped-notfound", func(c fiber.Ctx) error {
 				return fmt.Errorf("session lookup: %w", fiber.ErrNotFound)
 			})
 

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 
 	"github.com/papercomputeco/tapes/pkg/derive"
 	"github.com/papercomputeco/tapes/pkg/llm"
@@ -25,10 +25,10 @@ type seedDemoRequest struct {
 // exercises the full raw → derive → span pipeline. The operation is
 // idempotent: re-seeding dedupes at the raw layer and the derive pass
 // upserts the same projection.
-func (s *Server) handleSeedDemo(c *fiber.Ctx) error {
+func (s *Server) handleSeedDemo(c fiber.Ctx) error {
 	var req seedDemoRequest
 	if len(c.Body()) > 0 {
-		if err := c.BodyParser(&req); err != nil {
+		if err := c.Bind().Body(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "invalid payload: " + err.Error()})
 		}
 	}
@@ -37,7 +37,7 @@ func (s *Server) handleSeedDemo(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "overwrite is no longer supported; seeding is idempotent against the raw layer"})
 	}
 
-	report, err := seed.Run(c.Context(), s.driver, s.logger, singleTenantOrgID)
+	report, err := seed.Run(c.RequestCtx(), s.driver, s.logger, singleTenantOrgID)
 	if err != nil {
 		if errors.Is(err, seed.ErrUnsupportedDriver) {
 			return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: err.Error()})
@@ -72,13 +72,13 @@ type deriveRunResponse struct {
 // data-model iteration cheap — a classifier or projection change
 // redeploys, re-runs, and every captured session reclassifies without
 // re-capture.
-func (s *Server) handleDeriveRun(c *fiber.Ctx) error {
+func (s *Server) handleDeriveRun(c fiber.Ctx) error {
 	runner, ok := s.driver.(deriveRunner)
 	if !ok {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "driver does not host the raw-turn layer"})
 	}
 
-	reports, err := runner.RederiveFromRaw(c.Context(), "")
+	reports, err := runner.RederiveFromRaw(c.RequestCtx(), "")
 	if err != nil {
 		s.logger.Error("derive run", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: err.Error()})
@@ -96,20 +96,20 @@ type rawTurnAttributionRepairer interface {
 // contract for this route lives beside its registration in openapi_routes.go;
 // the request and result schemas come from the storage types the handler
 // actually decodes and returns.
-func (s *Server) handleRawTurnAttributionRepair(c *fiber.Ctx) error {
+func (s *Server) handleRawTurnAttributionRepair(c fiber.Ctx) error {
 	repairer, ok := s.driver.(rawTurnAttributionRepairer)
 	if !ok {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "driver does not support raw-turn attribution repair"})
 	}
 	var req storage.RawTurnAttributionRepairRequest
-	if err := c.BodyParser(&req); err != nil {
+	if err := c.Bind().Body(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "invalid payload: " + err.Error()})
 	}
 	if err := validateRawTurnAttributionRepairRequest(req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
 	}
 	req.OrgID = singleTenantOrgID
-	result, err := repairer.RepairRawTurnAttribution(c.Context(), "", req)
+	result, err := repairer.RepairRawTurnAttribution(c.RequestCtx(), "", req)
 	if err != nil {
 		switch {
 		case errors.Is(err, storage.ErrRawTurnNotFound):
@@ -153,3 +153,5 @@ func validateRawTurnAttributionRepairRequest(req storage.RawTurnAttributionRepai
 	}
 	return nil
 }
+
+// fiber:context-methods migrated

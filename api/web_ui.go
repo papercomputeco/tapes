@@ -3,7 +3,7 @@ package api
 import (
 	_ "embed"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 // tapesWebUIHTML is intentionally a tiny, Prometheus-style UI served directly
@@ -13,6 +13,6 @@ import (
 //go:embed web_ui.html
 var tapesWebUIHTML string
 
-func (s *Server) handleWebUI(c *fiber.Ctx) error {
+func (s *Server) handleWebUI(c fiber.Ctx) error {
 	return c.Type("html").SendString(tapesWebUIHTML)
 }

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofiber/fiber/v3"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -147,7 +148,7 @@ var _ = Describe("Proxy body limit", func() {
 		Expect(len(reqBody)).To(BeNumerically(">", 4<<20))
 
 		req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewReader(reqBody))
-		resp, err := p.server.Test(req, 30_000)
+		resp, err := p.server.Test(req, fiber.TestConfig{Timeout: time.Duration(30_000) * time.Millisecond})
 		Expect(err).NotTo(HaveOccurred())
 		defer resp.Body.Close()
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
@@ -162,7 +163,7 @@ var _ = Describe("Proxy body limit", func() {
 		// there — above the 32 MiB contract, matching the gateway's buffer.
 		big := bytes.Repeat([]byte("a"), ingest.MaxIngestBodyBytes+1)
 		req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewReader(big))
-		resp, err := p.server.Test(req, 60_000)
+		resp, err := p.server.Test(req, fiber.TestConfig{Timeout: time.Duration(60_000) * time.Millisecond})
 		Expect(err).NotTo(HaveOccurred())
 		defer resp.Body.Close()
 		Expect(resp.StatusCode).To(Equal(http.StatusRequestEntityTooLarge))
@@ -573,7 +574,7 @@ var _ = Describe("Streaming Proxy", func() {
 				{Role: "user", Content: "What is 2+2?"},
 			}, new(true))
 
-			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), -1)
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 
@@ -595,7 +596,7 @@ var _ = Describe("Streaming Proxy", func() {
 				{Role: "user", Content: "What is 2+2?"},
 			}, new(true))
 
-			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), -1)
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 			Expect(err).NotTo(HaveOccurred())
 			resp.Body.Close()
 
@@ -636,7 +637,7 @@ var _ = Describe("Streaming Proxy", func() {
 				{Role: "user", Content: "hello"},
 			}, new(true))
 
-			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), -1)
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 
@@ -680,7 +681,7 @@ var _ = Describe("Streaming Proxy", func() {
 				{Role: "user", Content: "What is 2+2?"},
 			}, new(true))
 
-			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), -1)
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 			Expect(err).NotTo(HaveOccurred())
 			resp.Body.Close()
 
@@ -748,7 +749,7 @@ var _ = Describe("Streaming Detection", func() {
 				{Role: "user", Content: "hello"},
 			}, new(true))
 
-			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), -1)
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 			Expect(err).NotTo(HaveOccurred())
 			resp.Body.Close()
 
@@ -790,7 +791,7 @@ var _ = Describe("Streaming Detection", func() {
 				{Role: "user", Content: "hello"},
 			}, nil)
 
-			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), -1)
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(string(reqBody))), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 			Expect(err).NotTo(HaveOccurred())
 			resp.Body.Close()
 
@@ -1284,7 +1285,7 @@ data: {"type":"message_stop"}
 		It("stamps TotalDurationNs on the captured streamed response", func() {
 			reqBody := `{"model":"claude-3-5-sonnet-20241022","max_tokens":8,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
 
-			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(reqBody)), -1)
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(reqBody)), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
 			Expect(err).NotTo(HaveOccurred())
 			resp.Body.Close()
 

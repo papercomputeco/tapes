@@ -1,7 +1,7 @@
 package api
 
 import (
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 // scalarHTML loads the Scalar API reference viewer from a CDN. Keeping the
@@ -35,7 +35,7 @@ const scalarHTML = `<!doctype html>
 // route that documents the document is circular, and a generated client has no
 // use for an operation whose response is HTML.
 func (s *Server) mountReference(app *fiber.App) {
-	app.Get("/swagger", func(c *fiber.Ctx) error {
+	app.Get("/swagger", func(c fiber.Ctx) error {
 		return c.Type("html").SendString(scalarHTML)
 	})
 }

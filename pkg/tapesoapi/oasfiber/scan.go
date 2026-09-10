@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 
 	oas "github.com/papercomputeco/tapes/pkg/tapesoapi"
 )

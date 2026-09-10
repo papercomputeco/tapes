@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
 	oas "github.com/papercomputeco/tapes/pkg/tapesoapi"
@@ -91,9 +91,9 @@ func (s *Server) OpenAPIParser() *oas.Parser { return s.openapi }
 // and the required fields are exact, because they are reflected from the same
 // Go types the handler decodes into. Per-field prose is present only if this
 // binary was handed a source tree, which a deployed one is not.
-func (s *Server) handleOpenAPI(c *fiber.Ctx) error {
+func (s *Server) handleOpenAPI(c fiber.Ctx) error {
 	s.contractOnce.Do(func() {
-		compiled, err := s.openapi.Compile(c.UserContext(), oas.WithTarget(oas.V30))
+		compiled, err := s.openapi.Compile(c.Context(), oas.WithTarget(oas.V30))
 		if err != nil {
 			s.contractErr = err
 
@@ -173,3 +173,5 @@ func (s *Server) schema(value any) *oas.Schema { return s.openapi.Schema(value) 
 
 // errorSchema is the shared failure body for this surface.
 func (s *Server) errorSchema() *oas.Schema { return s.openapi.Schema(llm.ErrorResponse{}) }
+
+// fiber:context-methods migrated

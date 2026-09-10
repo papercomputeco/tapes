@@ -22,7 +22,7 @@ import (
 	"runtime"
 	"sort"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -63,7 +63,7 @@ var _ = Describe("ThreadID over the shared thread corpus", func() {
 		defer app.Shutdown()
 
 		var got string
-		app.Post("/test", func(c *fiber.Ctx) error {
+		app.Post("/test", func(c fiber.Ctx) error {
 			got = ThreadID(c)
 			return c.SendStatus(fiber.StatusOK)
 		})

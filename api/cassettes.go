@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 
 	"github.com/papercomputeco/tapes/api/cassetterunner"
 	"github.com/papercomputeco/tapes/pkg/cassette"
@@ -163,7 +163,7 @@ func (s *Server) runCassetteSpecRefresh(ctx context.Context, interval time.Durat
 // computed over the exact bytes served, so the ETag changes exactly when the
 // admitted set — cassettes, problems, claims-bearing manifests, entities —
 // changes.
-func (s *Server) handleCassetteDiscovery(c *fiber.Ctx) error {
+func (s *Server) handleCassetteDiscovery(c fiber.Ctx) error {
 	document := buildCassetteDiscovery(
 		s.cassettes, string(currentContractVersion(s.contracts)), s.cassetteSpecs.Status)
 	encoded, err := json.Marshal(document)
@@ -191,7 +191,7 @@ func (s *Server) handleCassetteDiscovery(c *fiber.Ctx) error {
 // It is served from memory rather than proxied to the cassette on purpose: a
 // client must be able to read the surface of a cassette that is currently down,
 // which is exactly when it most needs to know what the surface was.
-func (s *Server) handleCassetteSpec(c *fiber.Ctx) error {
+func (s *Server) handleCassetteSpec(c fiber.Ctx) error {
 	name, err := cassette.ParseName(c.Params("name"))
 	if err != nil {
 		return cassetteProblem(c, fiber.StatusNotFound, "unknown_cassette", err.Error())
@@ -233,8 +233,8 @@ func (s *Server) handleCassetteSpec(c *fiber.Ctx) error {
 // cassette mounted a second ago belongs in the answer. Compile does no I/O and
 // is deterministic, so the cost is CPU over a tree already in memory, and two
 // requests a millisecond apart return byte-identical documents.
-func (s *Server) handleCassetteAggregate(c *fiber.Ctx) error {
-	document, err := s.cassetteSpecs.Document(c.UserContext(), s.openapi)
+func (s *Server) handleCassetteAggregate(c fiber.Ctx) error {
+	document, err := s.cassetteSpecs.Document(c.Context(), s.openapi)
 	if err != nil {
 		return cassetteProblem(c, fiber.StatusInternalServerError, "aggregate_failed", err.Error())
 	}
@@ -246,7 +246,7 @@ func (s *Server) handleCassetteAggregate(c *fiber.Ctx) error {
 
 // handleCassetteProxy forwards a request under /v1/cassettes/<name> to the
 // cassette that owns it.
-func (s *Server) handleCassetteProxy(c *fiber.Ctx) error {
+func (s *Server) handleCassetteProxy(c fiber.Ctx) error {
 	instance, forwarded, ok := s.cassettes.Lookup(c.Path())
 	if !ok {
 		return cassetteProblem(c, fiber.StatusNotFound, "unknown_cassette",
@@ -268,7 +268,7 @@ func (s *Server) handleCassetteProxy(c *fiber.Ctx) error {
 // proxy that waits for the end delivers nothing at all for those. Request
 // bodies are still read whole, which is what a cassette call is: the streaming
 // direction is the answer, not the ask.
-func (s *Server) proxyToCassette(c *fiber.Ctx, instance *cassetterunner.Instance, forwarded string) error {
+func (s *Server) proxyToCassette(c fiber.Ctx, instance *cassetterunner.Instance, forwarded string) error {
 	target, err := url.Parse(instance.URL)
 	if err != nil {
 		return cassetteProblem(c, fiber.StatusBadGateway, "bad_target",
@@ -355,7 +355,7 @@ func (s *Server) proxyToCassette(c *fiber.Ctx, instance *cassetterunner.Instance
 	// framed exactly as it was before this was a stream. Everything else goes
 	// out chunked, which is the only framing available for a body whose end is
 	// not yet known.
-	c.Context().Response.SetBodyStream(&cassetteBodyStream{PipeReader: reader, cancel: cancel}, size)
+	c.RequestCtx().Response.SetBodyStream(&cassetteBodyStream{PipeReader: reader, cancel: cancel}, size)
 
 	// fasthttp pulls the body: while a stream is idle it is blocked reading the
 	// pipe, where a client hanging up makes no sound — the disconnect would
@@ -365,8 +365,8 @@ func (s *Server) proxyToCassette(c *fiber.Ctx, instance *cassetterunner.Instance
 	// watched directly; the watch is what cancels the upstream with no event's
 	// help. Ordinary sized responses finish promptly and need neither.
 	if acceptsEventStream(c) {
-		c.Context().SetConnectionClose()
-		go watchClientGone(c.Context().Conn(), cancel)
+		c.RequestCtx().SetConnectionClose()
+		go watchClientGone(c.RequestCtx().Conn(), cancel)
 	}
 
 	return nil
@@ -375,6 +375,8 @@ func (s *Server) proxyToCassette(c *fiber.Ctx, instance *cassetterunner.Instance
 // cassetteProblem writes a machine-readable error. The code is stable and the
 // message is not, which is the split a client needs to branch on a failure
 // without parsing prose.
-func cassetteProblem(c *fiber.Ctx, status int, code, message string) error {
+func cassetteProblem(c fiber.Ctx, status int, code, message string) error {
 	return c.Status(status).JSON(map[string]string{"error": code, "message": message})
 }
+
+// fiber:context-methods migrated

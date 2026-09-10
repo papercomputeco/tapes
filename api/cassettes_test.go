@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gofiber/fiber/v3"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -95,7 +96,7 @@ var _ = Describe("The cassette surface", func() {
 
 	// do issues a request against the API server and returns the response.
 	do := func(target *Server, request *http.Request) (*http.Response, []byte) {
-		response, err := target.app.Test(request, 5000)
+		response, err := target.app.Test(request, fiber.TestConfig{Timeout: time.Duration(5000) * time.Millisecond})
 		Expect(err).NotTo(HaveOccurred())
 		body, err := io.ReadAll(response.Body)
 		Expect(err).NotTo(HaveOccurred())

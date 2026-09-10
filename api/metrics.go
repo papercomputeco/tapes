@@ -5,9 +5,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/gofiber/adaptor/v2"
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/utils"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/adaptor"
+	"github.com/gofiber/utils/v2"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -74,25 +74,20 @@ func (m *Metrics) Registry() *prometheus.Registry { return m.registry }
 // Register this OUTSIDE recover.New() (i.e. via app.Use before recover) —
 // see resolveStatus for why.
 func (m *Metrics) Middleware() fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		m.inflight.Inc()
 		defer m.inflight.Dec()
 
 		start := time.Now()
 		err := c.Next()
 
-		// Route().Path is the registered template (e.g. /v1/sessions/:hash);
-		// we fall back to a sentinel when Fiber's router never advanced past
-		// the middleware's own "/" entry, so unknown URLs don't each become
-		// their own series. Fiber v2 keeps c.route pointing at the last
-		// matched route — which for an unhandled request is this very
-		// middleware (path "/") — rather than nilling it, so we can't rely
-		// on an empty path. Detecting an unmatched request via the
-		// framework-emitted 404 fiber.Error is the contract that survives
-		// across Fiber versions: a real handler returning fiber.ErrNotFound
-		// is rare and harmless to bucket with router 404s here.
+		// Route().Path is the registered template (e.g. /v1/sessions/:hash).
+		// Fiber v3 exposes Matched specifically to distinguish a real route
+		// from middleware-only fallthrough. Use it instead of inspecting the
+		// returned error: both router misses and handlers may return the shared
+		// fiber.ErrNotFound value, while only the former has Matched false.
 		route := c.Route().Path
-		if route == "" || isRouterNotFound(err) {
+		if route == "" || !c.Matched() {
 			route = "unmatched"
 		}
 
@@ -186,7 +181,7 @@ func methodLabel(method string) string {
 // (e.g. fmt.Errorf("...: %w", fiber.ErrBadRequest)) is still recognized
 // — Fiber's own ErrorHandler does the same, so the metrics row should
 // agree with what the client actually sees.
-func resolveStatus(c *fiber.Ctx, err error) int {
+func resolveStatus(c fiber.Ctx, err error) int {
 	if err == nil {
 		return c.Response().StatusCode()
 	}
@@ -195,28 +190,6 @@ func resolveStatus(c *fiber.Ctx, err error) int {
 		return e.Code
 	}
 	return fiber.StatusInternalServerError
-}
-
-// isRouterNotFound reports whether err is the synthetic 404 the Fiber router
-// itself emits when no registered route matches the request. We use this to
-// detect "unmatched" so the cardinality of the requests counter stays bounded
-// by the number of registered routes, not by attacker-controlled URLs.
-//
-// A naive "any 404 *fiber.Error is unmatched" would silently misclassify
-// any handler that returns fiber.ErrNotFound (or wraps it) — those would
-// drop their route dimension and show up as `route="unmatched"`. Distinguish
-// the two via errors.Is: handler-returned fiber.ErrNotFound (and wraps of
-// it) match the package singleton; the router emits a freshly-allocated
-// *fiber.Error with message "Cannot METHOD /path" which does not. So we
-// treat err as router-emitted iff it's a 404 fiber.Error that does NOT
-// match the singleton — handler-emitted fiber.ErrNotFound buckets on its
-// registered route template instead of collapsing to unmatched.
-func isRouterNotFound(err error) bool {
-	var e *fiber.Error
-	if !errors.As(err, &e) || e.Code != fiber.StatusNotFound {
-		return false
-	}
-	return !errors.Is(err, fiber.ErrNotFound)
 }
 
 // Handler returns a Fiber handler that serves Prometheus text exposition

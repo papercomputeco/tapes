@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
@@ -203,7 +203,7 @@ type SessionTracesResponse struct {
 const ProjectionSchema = "2026-06-15"
 
 // handleGetSessionTraces handles GET /v1/sessions/:id/traces.
-func (s *Server) handleGetSessionTraces(c *fiber.Ctx) error {
+func (s *Server) handleGetSessionTraces(c fiber.Ctx) error {
 	sessions, ok := s.driver.(sessionsReader)
 	if !ok {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
@@ -222,7 +222,7 @@ func (s *Server) handleGetSessionTraces(c *fiber.Ctx) error {
 	}
 
 	orgID := singleTenantOrgID
-	sess, err := sessions.GetSessionRecord(c.Context(), orgID, id)
+	sess, err := sessions.GetSessionRecord(c.RequestCtx(), orgID, id)
 	if err != nil {
 		s.logger.Error("get session for traces", "id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session"})
@@ -231,7 +231,7 @@ func (s *Server) handleGetSessionTraces(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
 	}
 
-	turns, spans, links, err := reader.ListSessionSpanModel(c.Context(), id)
+	turns, spans, links, err := reader.ListSessionSpanModel(c.RequestCtx(), id)
 	if err != nil {
 		s.logger.Error("list span model", "session_id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session traces"})
@@ -425,3 +425,5 @@ func decodeBlocks(raw json.RawMessage) []llm.ContentBlock {
 	}
 	return blocks
 }
+
+// fiber:context-methods migrated

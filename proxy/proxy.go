@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/compress"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/compress"
 
 	"github.com/papercomputeco/tapes/ingest"
 	"github.com/papercomputeco/tapes/pkg/capture"
@@ -82,8 +82,6 @@ func New(config Config, driver storage.Driver, log *slog.Logger) (*Proxy, error)
 	}
 
 	app := fiber.New(fiber.Config{
-		// Disable startup message for cleaner logs
-		DisableStartupMessage: true,
 		// Enable streaming
 		StreamRequestBody: true,
 		// With StreamRequestBody enabled, fasthttp skips its max-body-size
@@ -138,7 +136,7 @@ func (p *Proxy) Run() error {
 		"upstream", p.config.UpstreamURL,
 	)
 
-	return p.server.Listen(p.config.ListenAddr)
+	return p.server.Listen(p.config.ListenAddr, fiber.ListenConfig{DisableStartupMessage: true})
 }
 
 // RunWithListener starts the proxy server using the provided listener.
@@ -148,7 +146,7 @@ func (p *Proxy) RunWithListener(listener net.Listener) error {
 		"upstream", p.config.UpstreamURL,
 	)
 
-	return p.server.Listener(listener)
+	return p.server.Listener(listener, fiber.ListenConfig{DisableStartupMessage: true})
 }
 
 // Close gracefully shuts down the proxy and waits for the worker pool to drain
@@ -159,7 +157,7 @@ func (p *Proxy) Close() error {
 
 // handleProxy is a transparent proxy handler that forwards requests to upstream
 // and captures conversation turns to the raw_turns log.
-func (p *Proxy) handleProxy(c *fiber.Ctx) error {
+func (p *Proxy) handleProxy(c fiber.Ctx) error {
 	startTime := time.Now()
 
 	// Get the request path and method
@@ -183,7 +181,7 @@ func (p *Proxy) handleProxy(c *fiber.Ctx) error {
 	if cl := c.Request().Header.ContentLength(); cl > ingest.MaxIngestBodyBytes {
 		// Rejecting on the declared length leaves the body unread; close the
 		// connection so the unread bytes are never parsed as a next request.
-		c.Context().SetConnectionClose()
+		c.RequestCtx().SetConnectionClose()
 		return c.SendStatus(fiber.StatusRequestEntityTooLarge)
 	}
 
@@ -286,7 +284,7 @@ func captureWeight(rawRequestLen, responseBytes int) int {
 	return 2*rawRequestLen + responseBytes
 }
 
-func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL string, prov provider.Provider, agentName, threadID string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
+func (p *Proxy) handleNonStreamingProxy(c fiber.Ctx, path, method, upstreamURL string, prov provider.Provider, agentName, threadID string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
 	// Build upstream URL
 	upstreamURL += path
 
@@ -296,7 +294,7 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL 
 		reqBody = bytes.NewReader(body)
 	}
 
-	httpReq, err := http.NewRequestWithContext(c.Context(), method, upstreamURL, reqBody)
+	httpReq, err := http.NewRequestWithContext(c.RequestCtx(), method, upstreamURL, reqBody)
 	if err != nil {
 		p.logger.Error("failed to create upstream request", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "internal error"})
@@ -369,7 +367,7 @@ func (p *Proxy) handleNonStreamingProxy(c *fiber.Ctx, path, method, upstreamURL 
 }
 
 // handleStreamingProxy handles streaming requests.
-func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path, upstreamURL string, prov provider.Provider, agentName, threadID string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
+func (p *Proxy) handleStreamingProxy(c fiber.Ctx, path, upstreamURL string, prov provider.Provider, agentName, threadID string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
 	// Build upstream URL
 	upstreamURL += path
 
@@ -422,7 +420,7 @@ func (p *Proxy) handleStreamingProxy(c *fiber.Ctx, path, upstreamURL string, pro
 
 	// Set the pipe reader as the body stream with unknown size (-1),
 	// which triggers chunked transfer encoding in fasthttp.
-	c.Context().Response.SetBodyStream(pr, -1)
+	c.RequestCtx().Response.SetBodyStream(pr, -1)
 
 	return nil
 }
@@ -976,3 +974,5 @@ func isOpenAIAuthPath(path string) bool {
 	}
 	return false
 }
+
+// fiber:context-methods migrated
