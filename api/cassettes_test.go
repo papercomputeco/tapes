@@ -96,7 +96,7 @@ var _ = Describe("The cassette surface", func() {
 
 	// do issues a request against the API server and returns the response.
 	do := func(target *Server, request *http.Request) (*http.Response, []byte) {
-		response, err := target.app.Test(request, fiber.TestConfig{Timeout: time.Duration(5000) * time.Millisecond})
+		response, err := target.app.Test(request, fiber.TestConfig{Timeout: 5 * time.Second})
 		Expect(err).NotTo(HaveOccurred())
 		body, err := io.ReadAll(response.Body)
 		Expect(err).NotTo(HaveOccurred())

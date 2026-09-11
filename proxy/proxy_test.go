@@ -148,7 +148,7 @@ var _ = Describe("Proxy body limit", func() {
 		Expect(len(reqBody)).To(BeNumerically(">", 4<<20))
 
 		req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewReader(reqBody))
-		resp, err := p.server.Test(req, fiber.TestConfig{Timeout: time.Duration(30_000) * time.Millisecond})
+		resp, err := p.server.Test(req, fiber.TestConfig{Timeout: 30 * time.Second})
 		Expect(err).NotTo(HaveOccurred())
 		defer resp.Body.Close()
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
@@ -163,7 +163,7 @@ var _ = Describe("Proxy body limit", func() {
 		// there — above the 32 MiB contract, matching the gateway's buffer.
 		big := bytes.Repeat([]byte("a"), ingest.MaxIngestBodyBytes+1)
 		req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewReader(big))
-		resp, err := p.server.Test(req, fiber.TestConfig{Timeout: time.Duration(60_000) * time.Millisecond})
+		resp, err := p.server.Test(req, fiber.TestConfig{Timeout: 60 * time.Second})
 		Expect(err).NotTo(HaveOccurred())
 		defer resp.Body.Close()
 		Expect(resp.StatusCode).To(Equal(http.StatusRequestEntityTooLarge))

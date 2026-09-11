@@ -225,5 +225,3 @@ func (s *Server) handleListSessionRawTurns(c fiber.Ctx) error {
 	}
 	return c.JSON(RawTurnListResponse{Items: items})
 }
-
-// fiber:context-methods migrated

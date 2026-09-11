@@ -425,5 +425,3 @@ func decodeBlocks(raw json.RawMessage) []llm.ContentBlock {
 	}
 	return blocks
 }
-
-// fiber:context-methods migrated

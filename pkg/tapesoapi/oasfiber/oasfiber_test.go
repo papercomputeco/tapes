@@ -30,7 +30,7 @@ var _ = Describe("Wrap", func() {
 	)
 
 	BeforeEach(func() {
-		app = fiber.New(fiber.Config{})
+		app = fiber.New()
 		parser = oas.NewParser(oas.WithInfo(oas.Info{Title: "Test", Version: "1.0.0"}))
 		router = oasfiber.Wrap(app, parser)
 	})
@@ -181,7 +181,7 @@ var _ = Describe("Wrap", func() {
 
 var _ = Describe("Scan", func() {
 	It("stubs a route registered behind the wrapper's back", func() {
-		app := fiber.New(fiber.Config{})
+		app := fiber.New()
 		parser := oas.NewParser(oas.WithInfo(oas.Info{Title: "Test", Version: "1.0.0"}))
 
 		router := oasfiber.Wrap(app, parser)
@@ -203,7 +203,7 @@ var _ = Describe("Scan", func() {
 	})
 
 	It("can report without contributing", func() {
-		app := fiber.New(fiber.Config{})
+		app := fiber.New()
 		parser := oas.NewParser(oas.WithInfo(oas.Info{Title: "Test", Version: "1.0.0"}))
 		app.Get("/v1/undescribed", noop)
 
@@ -217,7 +217,7 @@ var _ = Describe("Scan", func() {
 	})
 
 	It("does not stub the HEAD fiber registers alongside every GET", func() {
-		app := fiber.New(fiber.Config{})
+		app := fiber.New()
 		parser := oas.NewParser()
 		app.Get("/v1/thing", noop)
 
@@ -229,7 +229,7 @@ var _ = Describe("Scan", func() {
 
 var _ = Describe("Server", func() {
 	It("serves the compiled document and revalidates on its fingerprint", func() {
-		app := fiber.New(fiber.Config{})
+		app := fiber.New()
 		parser := oas.NewParser(oas.WithInfo(oas.Info{Title: "Test", Version: "1.0.0"}))
 		router := oasfiber.Wrap(app, parser)
 		router.Get("/v1/thing", noop, oasfiber.Doc("thing"))

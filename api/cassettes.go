@@ -378,5 +378,3 @@ func (s *Server) proxyToCassette(c fiber.Ctx, instance *cassetterunner.Instance,
 func cassetteProblem(c fiber.Ctx, status int, code, message string) error {
 	return c.Status(status).JSON(map[string]string{"error": code, "message": message})
 }
-
-// fiber:context-methods migrated

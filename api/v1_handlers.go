@@ -106,5 +106,3 @@ func parseStatsWindow(c fiber.Ctx) (since, until *time.Time, err error) {
 
 	return since, until, nil
 }
-
-// fiber:context-methods migrated

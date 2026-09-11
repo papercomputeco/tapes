@@ -974,5 +974,3 @@ func isOpenAIAuthPath(path string) bool {
 	}
 	return false
 }
-
-// fiber:context-methods migrated

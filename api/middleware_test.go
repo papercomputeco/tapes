@@ -78,5 +78,3 @@ var _ = Describe("request ID middleware", func() {
 		Expect(generated).To(HaveLen(6), "separate invalid or missing attempts need unique IDs")
 	})
 })
-
-// fiber:context-methods migrated

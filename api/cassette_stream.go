@@ -157,5 +157,3 @@ func detachRequest(ctx context.Context, c fiber.Ctx) (*http.Request, error) {
 
 	return request, nil
 }
-
-// fiber:context-methods migrated

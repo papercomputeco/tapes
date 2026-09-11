@@ -126,5 +126,3 @@ func (s *Server) Mount(app *fiber.App, jsonPath, yamlPath string) {
 		app.Get(yamlPath, s.YAML())
 	}
 }
-
-// fiber:context-methods migrated

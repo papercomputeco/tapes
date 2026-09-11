@@ -947,5 +947,3 @@ func (s *Server) handleUpdateSession(c fiber.Ctx) error {
 		Session: sessionItemFromStorage(*sess, time.Now()),
 	})
 }
-
-// fiber:context-methods migrated

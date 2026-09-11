@@ -38,5 +38,3 @@ func canonicalRequestID(candidate string) string {
 	}
 	return uuid.NewString()
 }
-
-// fiber:context-methods migrated

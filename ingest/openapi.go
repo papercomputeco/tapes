@@ -173,5 +173,3 @@ func (s *Server) schema(value any) *oas.Schema { return s.openapi.Schema(value) 
 
 // errorSchema is the shared failure body for this surface.
 func (s *Server) errorSchema() *oas.Schema { return s.openapi.Schema(llm.ErrorResponse{}) }
-
-// fiber:context-methods migrated

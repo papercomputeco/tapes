@@ -85,7 +85,7 @@ func NewServer(config Config, driver storage.Driver, log *slog.Logger) (*Server,
 // serves carries route and operation prose but not per-field prose.
 func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tapesoapi.TypeDocs) (*Server, error) {
 	var err error
-	app := fiber.New(fiber.Config{})
+	app := fiber.New()
 
 	contracts := resolveContractVersions(config.ContractVersions)
 	cassetteClient := cassetterunner.NewHTTPClient()

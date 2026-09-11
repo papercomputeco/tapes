@@ -1036,5 +1036,3 @@ func (s *Server) processTurn(turn *TurnPayload, weight int) error {
 	s.metrics.SetQueueDepth(s.workerPool.Len())
 	return nil
 }
-
-// fiber:context-methods migrated
