@@ -104,6 +104,12 @@ type transcriptRecord struct {
 		StopReason string          `json:"stop_reason"`
 		Usage      transcriptUsage `json:"usage"`
 	} `json:"message"`
+
+	Model    string          `json:"model"`
+	CallID   string          `json:"call_id"`
+	ToolCall json.RawMessage `json:"tool_call"`
+	Result   json.RawMessage `json:"result"`
+	IsError  bool            `json:"is_error"`
 }
 
 // subAgentActivityKind returns the sub_agent_activity lifecycle kind a

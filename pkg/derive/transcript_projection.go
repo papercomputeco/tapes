@@ -378,6 +378,9 @@ type transcriptMessage struct {
 }
 
 func projectTranscriptFile(project string, file *TranscriptFile, stats *TranscriptProjectionStats, anchor string) ([]TranscriptTurn, string) {
+	if file.isCursor() {
+		return projectCursorTranscriptFile(project, file, stats, anchor), ""
+	}
 	active := activeTranscriptPath(file)
 	groups := map[string]*assistantGroup{}
 	firstAssistant := map[string]int{}
