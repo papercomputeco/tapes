@@ -176,3 +176,24 @@ func (cache *specCache) documents() map[string]*tapesoapi.Document {
 
 	return documents
 }
+
+// sourceStatus reports how current the document a *particular source*
+// published is, and the digest of that document.
+//
+// It is the source-scoped counterpart of status and spec, and evidence uses it
+// instead of those because a cassette name is not a unique key: two configured
+// sources can claim one name, and only the priority winner's document is
+// cached. Answering by name alone would report the winner's freshness and
+// digest for the loser as well. A source that does not own the cached entry
+// owns no document, which is Missing with no digest.
+func (cache *specCache) sourceStatus(name cassette.Name, source string) (tapesoapi.Status, cassette.Digest) {
+	cache.mutex.RLock()
+	defer cache.mutex.RUnlock()
+
+	cached := cache.entries[name]
+	if cached == nil || cached.document == nil || cached.source != source {
+		return tapesoapi.Missing, ""
+	}
+
+	return cached.status, cached.digest
+}

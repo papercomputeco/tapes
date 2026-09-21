@@ -161,6 +161,25 @@ type sourceState struct {
 	// problem is the last rejection logged for this source. Keeping it with the
 	// source state prevents startup retries from repeating the same warning.
 	problem string
+
+	// admission is what the most recent pass over this source produced. It is
+	// the reload-vs-rejection discriminator an operator — or a controller
+	// checking that a configuration actually took — cannot get from the
+	// registry alone: a cassette withdrawn from the registry and a cassette
+	// whose document was refused look identical from outside.
+	admission Admission
+
+	// admittedAt is when this source's *current* admission began. It survives
+	// a successful re-resolution, so it reads as "admitted since", and moves
+	// only when a source is admitted out of some other state. A source that
+	// has never been admitted leaves it zero.
+	admittedAt time.Time
+
+	// observedAt is when problem was last seen, restamped on every failing
+	// pass rather than only on a change of reason. A reader needs to know a
+	// rejection is current rather than a leftover from a pass that has since
+	// succeeded, and only the *last* observation answers that.
+	observedAt time.Time
 }
 
 // Runner resolves configured cassette sources into a registry and keeps their
@@ -181,10 +200,23 @@ type Runner struct {
 	// lock across that would block every reader for the length of a timeout.
 	refreshMutex sync.Mutex
 
-	// mutex guards the source catalog only. The registry and the spec cache
-	// guard themselves.
+	// mutex guards the source catalog and the identity of the list it came
+	// from. The registry and the spec cache guard themselves, with their own
+	// leaf locks: this one may be held across a call into either, and neither
+	// is ever held across a call back into this one.
+	//
+	// Reconfiguration and evidence both need the catalog and those two to
+	// agree, so SetSources withdraws under the write lock and EvidenceSnapshot
+	// reads all three under the read lock.
+	//
+	// The identity lives here, under the same lock as the catalog it
+	// describes, so evidence cannot report a digest and count from one
+	// configuration beside per-source state from another. Recording it beside
+	// the catalog instead of above it is what makes that impossible rather
+	// than merely unlikely.
 	mutex   sync.RWMutex
 	sources []sourceState
+	loaded  SourceListIdentity
 }
 
 // NewRunner returns a runner that admits cassettes depending on any of the
@@ -235,6 +267,15 @@ func (runner *Runner) SetSources(sources []string) {
 	runner.refreshMutex.Lock()
 	defer runner.refreshMutex.Unlock()
 
+	// Computed before the lock is taken: it is a hash over the caller's slice
+	// and nothing else, and the critical section below is read by every
+	// evidence request.
+	identity := SourceListIdentity{
+		Digest:   SourceListDigest(sources),
+		Count:    len(sources),
+		LoadedAt: time.Now(),
+	}
+
 	runner.mutex.Lock()
 	previous := runner.sources
 	retained := make([]bool, len(previous))
@@ -242,7 +283,10 @@ func (runner *Runner) SetSources(sources []string) {
 	next := make([]sourceState, len(sources))
 	for nextIndex, source := range sources {
 		configured[source] = struct{}{}
-		next[nextIndex].url = source
+		// A source nobody has visited yet is unresolved, not admitted: the
+		// zero Admission would otherwise claim a state no pass has proved.
+		// A retained source keeps whatever its last pass established.
+		next[nextIndex] = sourceState{url: source, admission: AdmissionUnresolved}
 		for previousIndex := range previous {
 			if !retained[previousIndex] && previous[previousIndex].url == source {
 				next[nextIndex] = previous[previousIndex]
@@ -253,8 +297,20 @@ func (runner *Runner) SetSources(sources []string) {
 		}
 	}
 	runner.sources = next
-	runner.mutex.Unlock()
+	runner.loaded = identity
 
+	// Withdrawal stays inside the same critical section that swapped the
+	// catalog. A source leaves the catalog, the registry, and the spec cache
+	// as one step, so an evidence reader holding the read lock cannot observe
+	// the half-withdrawn state in between — an entry still carrying the old
+	// catalog's admitted admission and route beside the empty digests and
+	// Missing status its already-dropped registry and cache entries report.
+	// That is a state the deployment was never in, and a convergence check
+	// reading it would draw a conclusion from evidence that never existed.
+	//
+	// The registry and the spec cache are leaf locks: nothing acquires this
+	// one while holding either, so taking them under the write lock here
+	// matches the order EvidenceSnapshot uses and cannot deadlock.
 	withdrawn := false
 	for index, state := range previous {
 		_, urlStillConfigured := configured[state.url]
@@ -274,6 +330,8 @@ func (runner *Runner) SetSources(sources []string) {
 		}
 		runner.specs.evictSource(state.name, state.url)
 	}
+	runner.mutex.Unlock()
+
 	if withdrawn {
 		// Withdrawal changes the admitted entity/claim set as surely as
 		// admission does, and the remaining hook-declaring cassettes need to
@@ -393,7 +451,7 @@ func (runner *Runner) refreshSource(ctx context.Context, index int) error {
 
 	origin, err := sourceOrigin(state.url)
 	if err != nil {
-		return runner.failSource(index, err)
+		return runner.failSource(index, AdmissionUnresolved, err)
 	}
 
 	etag := state.etag
@@ -413,7 +471,8 @@ func (runner *Runner) refreshSource(ctx context.Context, index int) error {
 
 	result, err := runner.fetch(ctx, state.url, etag)
 	if err != nil {
-		return runner.failSource(index, fmt.Errorf("cassette source %s: %w", safeSource(state.url), err))
+		return runner.failSource(index, AdmissionUnresolved,
+			fmt.Errorf("cassette source %s: %w", safeSource(state.url), err))
 	}
 	if result.notModified && currentlyPublished {
 		runner.markSourceFresh(index)
@@ -421,27 +480,33 @@ func (runner *Runner) refreshSource(ctx context.Context, index int) error {
 		return nil
 	}
 	if result.document == nil {
-		return runner.failSource(index,
+		// Nothing was fetched and nothing is published, so there is no
+		// document to have refused: this source is unresolved.
+		return runner.failSource(index, AdmissionUnresolved,
 			fmt.Errorf("cassette source %s answered 304 without a currently published document", safeSource(state.url)))
 	}
 
+	// Past this point a document is in hand, so every remaining failure is a
+	// refusal of something core actually read — rejected, not unresolved.
 	declared, err := runner.admit(result.document)
 	if err != nil {
-		return runner.failSource(index, fmt.Errorf("cassette source %s: %w", safeSource(state.url), err))
+		return runner.failSource(index, AdmissionRejected,
+			fmt.Errorf("cassette source %s: %w", safeSource(state.url), err))
 	}
 
 	name := declared.CassetteName()
 	if state.resolved && state.name != name {
-		return runner.failSource(index, fmt.Errorf("cassette source %s changed name from %q to %q",
-			safeSource(state.url), state.name, name))
+		return runner.failSource(index, AdmissionRejected,
+			fmt.Errorf("cassette source %s changed name from %q to %q",
+				safeSource(state.url), state.name, name))
 	}
 	if err := runner.checkPriority(name, state.url, index); err != nil {
-		return runner.failSource(index, err)
+		return runner.failSource(index, AdmissionRejected, err)
 	}
 
 	digest, err := declared.Digest()
 	if err != nil {
-		return runner.failSource(index, err)
+		return runner.failSource(index, AdmissionRejected, err)
 	}
 	instance := &Instance{
 		Name:     name,
@@ -454,7 +519,7 @@ func (runner *Runner) refreshSource(ctx context.Context, index int) error {
 
 	published, err := republish(ctx, result.document, instance)
 	if err != nil {
-		return runner.failSource(index, err)
+		return runner.failSource(index, AdmissionRejected, err)
 	}
 	instance.MCPTools = published.tools
 
@@ -467,7 +532,7 @@ func (runner *Runner) refreshSource(ctx context.Context, index int) error {
 	if err := runner.registry.Put(instance); err != nil {
 		runner.specs.evict(name)
 
-		return runner.failSource(index, err)
+		return runner.failSource(index, AdmissionRejected, err)
 	}
 
 	runner.resolveSource(index, name, result.etag)
@@ -626,6 +691,7 @@ func (runner *Runner) resolveSource(index int, name cassette.Name, etag string) 
 	runner.sources[index].etag = etag
 	runner.sources[index].resolved = true
 	runner.sources[index].problem = ""
+	runner.admitLocked(index, state)
 	runner.mutex.Unlock()
 
 	if !state.resolved || state.problem != "" {
@@ -638,17 +704,27 @@ func (runner *Runner) resolveSource(index int, name cassette.Name, etag string) 
 
 // failSource records a source problem: against the cassette whose document it
 // published, if it had one, and against the source itself for the operator.
-func (runner *Runner) failSource(index int, err error) error {
+//
+// admission classifies the failure. A document core read and refused is
+// rejected; a source it could not read at all is unresolved. The caller draws
+// the line, because only it knows whether a document was ever in hand.
+func (runner *Runner) failSource(index int, admission Admission, err error) error {
 	state := runner.source(index)
 	if state.name != "" {
 		runner.specs.markStale(state.name, state.url, err.Error())
 	}
 	runner.registry.SetRejection(safeSource(state.url), err)
 
+	runner.mutex.Lock()
+	runner.sources[index].problem = err.Error()
+	runner.sources[index].admission = admission
+	runner.sources[index].observedAt = time.Now()
+	runner.mutex.Unlock()
+
+	// The log stays deduplicated on the reason even though the record above is
+	// not: a source failing the same way every 30s is one operator event, but
+	// a reader asking "is this rejection current" needs every observation.
 	if state.problem != err.Error() {
-		runner.mutex.Lock()
-		runner.sources[index].problem = err.Error()
-		runner.mutex.Unlock()
 		runner.logger.Warn("cassette OpenAPI source rejected",
 			"source", safeSource(state.url),
 			"error", err,
@@ -658,16 +734,33 @@ func (runner *Runner) failSource(index int, err error) error {
 	return err
 }
 
+// admitLocked moves a source into the admitted state, stamping admittedAt only
+// on a real transition so the timestamp reads as "admitted since" rather than
+// "last refreshed at". Runs under the write lock.
+func (runner *Runner) admitLocked(index int, previous sourceState) {
+	runner.sources[index].admission = AdmissionAdmitted
+	runner.sources[index].observedAt = time.Time{}
+	if previous.admission != AdmissionAdmitted || previous.admittedAt.IsZero() {
+		runner.sources[index].admittedAt = time.Now()
+	}
+}
+
 // markSourceFresh clears a source's problem after a successful revalidation.
 func (runner *Runner) markSourceFresh(index int) {
 	state := runner.source(index)
 	runner.specs.markFresh(state.name, state.url)
 	runner.registry.ClearRejection(safeSource(state.url))
 
+	// A 304 is an admission too. A source whose last pass was refused can
+	// recover through revalidation — its document is still cached and still
+	// registered — so the admission record has to move here as well, or a
+	// recovered cassette would read as permanently rejected.
+	runner.mutex.Lock()
+	runner.sources[index].problem = ""
+	runner.admitLocked(index, state)
+	runner.mutex.Unlock()
+
 	if state.problem != "" {
-		runner.mutex.Lock()
-		runner.sources[index].problem = ""
-		runner.mutex.Unlock()
 		runner.logger.Info("refreshed cassette OpenAPI source",
 			"source", safeSource(state.url),
 			"cassette", state.name,
@@ -689,6 +782,66 @@ func (runner *Runner) Spec(name cassette.Name) ([]byte, cassette.Digest, bool) {
 // there is nothing wrong or nothing known.
 func (runner *Runner) Problem(name cassette.Name) string {
 	return runner.specs.problem(name)
+}
+
+// EvidenceSnapshot reports the identity of the configured source list and what
+// resolving each of its members produced, in configured order.
+//
+// The identity, the catalog, and the per-source registry and cache answers are
+// all read under one acquisition of the read lock, so the result cannot
+// straddle a SetSources that lands halfway through: a reader must never see a
+// digest and count from the new configuration beside sources from the old one,
+// nor a source still described as admitted beside the empty digests and
+// Missing status left by the withdrawal that already dropped it. Both are
+// states the deployment was never in, and a convergence check that trusted
+// either would pass on evidence that never existed.
+//
+// Holding the lock across the registry and spec-cache reads is what buys that:
+// SetSources withdraws under the same lock, so a withdrawal is either wholly
+// before this snapshot or wholly after it. A concurrent refresh pass still
+// publishes without it, which is the freshness a reader is asking about — its
+// per-cassette answers are consistent with whichever pass last wrote them.
+func (runner *Runner) EvidenceSnapshot() SourceListEvidence {
+	runner.mutex.RLock()
+	defer runner.mutex.RUnlock()
+
+	evidence := make([]SourceEvidence, 0, len(runner.sources))
+	for _, state := range runner.sources {
+		// The subject is the redacted spelling the registry files rejections
+		// under, so a credential in a configured URL cannot reach a reader
+		// through this path either.
+		entry := SourceEvidence{
+			Source:     safeSource(state.url),
+			Name:       state.name,
+			Admission:  state.admission,
+			AdmittedAt: state.admittedAt,
+		}
+		if entry.Admission == "" {
+			entry.Admission = AdmissionUnresolved
+		}
+		if state.problem != "" {
+			entry.Rejection = &Rejection{Subject: entry.Source, Reason: state.problem}
+			entry.ObservedAt = state.observedAt
+		}
+		if state.name != "" {
+			entry.RoutePrefix = PublicNamespace + "/" + string(state.name)
+
+			// Every identity below is looked up by *source*, never by name
+			// alone. A cassette name can be claimed by more than one
+			// configured source, and the loser of a priority tiebreak stays
+			// recorded under that same name: a by-name read would hand it the
+			// winner's digests and freshness, crediting a rejected source with
+			// the document core is actually serving. A source that owns
+			// nothing reports nothing — no digest, and a Missing status.
+			if instance, ok := runner.registry.Get(state.name); ok && instance.Source == state.url {
+				entry.ManifestDigest = instance.Digest
+			}
+			entry.OpenAPIStatus, entry.OpenAPIDigest = runner.specs.sourceStatus(state.name, state.url)
+		}
+		evidence = append(evidence, entry)
+	}
+
+	return SourceListEvidence{SourceList: runner.loaded, Sources: evidence}
 }
 
 // compile-time proof that a Runner is what the API server wants.

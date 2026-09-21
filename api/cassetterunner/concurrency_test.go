@@ -9,6 +9,7 @@ import (
 
 	"github.com/papercomputeco/tapes/api/cassetterunner"
 	"github.com/papercomputeco/tapes/pkg/cassette"
+	"github.com/papercomputeco/tapes/pkg/tapesoapi"
 )
 
 // The runner is refreshed on a ticker while request handlers read it, so every
@@ -125,6 +126,73 @@ var _ = Describe("concurrent access", func() {
 		}()
 
 		group.Wait()
+	})
+
+	// A withdrawal touches three places — the source catalog, the registry, and
+	// the spec cache — and evidence reads all three. If they are not captured
+	// together, a reader can be handed an entry that says a source is admitted
+	// and mounted while reporting no digests and a Missing status, which is a
+	// state the deployment was never in. A convergence check reading that would
+	// conclude something about a configuration that never existed.
+	It("never reports a source as admitted without the document that admitted it", func(ctx SpecContext) {
+		second := newMutableSource(sourceDocument("reports"))
+		DeferCleanup(second.Close)
+
+		both := []string{source.URL + "/openapi", second.URL + "/openapi"}
+		first := []string{source.URL + "/openapi"}
+
+		reconfigured := make(chan struct{})
+
+		var group sync.WaitGroup
+		group.Add(1)
+		go func() {
+			defer GinkgoRecover()
+			defer group.Done()
+			defer close(reconfigured)
+			for range 30 {
+				// Admit both, then withdraw the second: the catalog entry the
+				// reader may already have copied is admitted, and the registry
+				// and cache entries backing it are about to disappear.
+				runner.SetSources(both)
+				runner.Refresh(ctx)
+				runner.SetSources(first)
+			}
+		}()
+
+		group.Add(1)
+		go func() {
+			defer GinkgoRecover()
+			defer group.Done()
+			for {
+				select {
+				case <-reconfigured:
+					return
+				default:
+				}
+
+				for _, entry := range runner.EvidenceSnapshot().Sources {
+					if entry.Admission != cassetterunner.AdmissionAdmitted {
+						continue
+					}
+					Expect(entry.Name).NotTo(BeEmpty(),
+						"an admitted source names the cassette it produced")
+					Expect(entry.ManifestDigest).NotTo(BeEmpty(),
+						"an admitted source owns the registry entry its manifest digest comes from")
+					Expect(entry.OpenAPIDigest).NotTo(BeEmpty(),
+						"an admitted source owns a cached document")
+					Expect(entry.OpenAPIStatus).NotTo(Equal(tapesoapi.Missing),
+						"a source whose document is gone is not admitted")
+				}
+			}
+		}()
+
+		group.Wait()
+
+		// The withdrawn source is gone from the evidence entirely, not left
+		// behind as an admitted entry pointing at nothing.
+		evidence := runner.EvidenceSnapshot()
+		Expect(evidence.Sources).To(HaveLen(1))
+		Expect(evidence.Sources[0].Source).To(Equal(source.URL + "/openapi"))
 	})
 
 	It("survives sources being reconfigured under a reader", func(ctx SpecContext) {
