@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/papercomputeco/tapes/api"
+	"github.com/papercomputeco/tapes/cmd/tapes/serve/internallisten"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
@@ -129,9 +130,29 @@ func (c *apiCommander) run(ctx context.Context) error {
 		server.StartCassetteSpecRefresh(ctx, c.cassetteRefresh)
 	}
 
+	internalServer, err := internallisten.New(server, internallisten.Config(), c.logger)
+	if err != nil {
+		return err
+	}
+
 	c.logger.Info("starting API server",
 		"listen", c.listen,
 	)
 
-	return server.Run()
+	// The API server's result is forwarded whether or not it is an error, so a
+	// graceful shutdown still ends the command the way it did when this was a
+	// direct return. The internal listener only speaks up when it fails: its
+	// own graceful stop is not a reason to stop serving the API.
+	errChan := make(chan error, 2)
+	go func() { errChan <- server.Run() }()
+	if internalServer != nil {
+		defer func() { _ = internalServer.Shutdown() }()
+		go func() {
+			if err := internalServer.Run(); err != nil {
+				errChan <- fmt.Errorf("internal listener error: %w", err)
+			}
+		}()
+	}
+
+	return <-errChan
 }

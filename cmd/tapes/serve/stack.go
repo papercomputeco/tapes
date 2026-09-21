@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/papercomputeco/tapes/api"
+	"github.com/papercomputeco/tapes/cmd/tapes/serve/internallisten"
 	"github.com/papercomputeco/tapes/ingest"
 	"github.com/papercomputeco/tapes/pkg/cassette"
 	"github.com/papercomputeco/tapes/pkg/config"
@@ -167,6 +168,17 @@ func (stack *Stack) Run(ctx context.Context) error {
 
 	stack.Logger.Info("starting api server", "api_addr", stack.APIListen)
 
+	// Built before anything starts listening: a listener that was asked for
+	// and cannot be built safely must stop startup, not surface later as a
+	// deployment that looks healthy while answering evidence to anyone.
+	internalServer, err := internallisten.New(apiServer, internallisten.Config(), stack.Logger)
+	if err != nil {
+		return err
+	}
+	if internalServer != nil {
+		defer func() { _ = internalServer.Shutdown() }()
+	}
+
 	// contextcheck is right that this chain drops `ctx`: the ingest server's
 	// capture workers persist each turn under context.Background()
 	// (proxy/worker/pool.go, processJob), deliberately, so that a shutdown or
@@ -202,7 +214,7 @@ func (stack *Stack) Run(ctx context.Context) error {
 	deriveW := deriveworker.NewWorker(deriveCfg, driver, stack.Logger)
 	stack.Logger.Info("starting derive worker (in-process)", "debounce", deriveCfg.Debounce)
 
-	errChan := make(chan error, 4)
+	errChan := make(chan error, 5)
 
 	go func() {
 		if err := p.Run(); err != nil {
@@ -221,6 +233,14 @@ func (stack *Stack) Run(ctx context.Context) error {
 			errChan <- fmt.Errorf("ingest server error: %w", err)
 		}
 	}()
+
+	if internalServer != nil {
+		go func() {
+			if err := internalServer.Run(); err != nil {
+				errChan <- fmt.Errorf("internal listener error: %w", err)
+			}
+		}()
+	}
 
 	go func() {
 		if err := deriveW.Run(ctx); err != nil {

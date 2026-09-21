@@ -73,6 +73,51 @@ Useful supported keys include:
 
 `cassettes = ["https://host/openapi"]` is a top-level array for operator-managed cassette OpenAPI URLs; it is not a dotted `config set` field. See [Cassettes](./cassettes.md) for the manifest, deployment responsibilities, and runtime behavior.
 
+### The internal listener
+
+The API server can run a second listener carrying one endpoint, `GET
+/internal/readiness/evidence`. It reports what this process loaded and what
+admitting that configuration produced: the instance's identity, a digest of the
+cassette source list in effect, and each source's admission result with its
+manifest and OpenAPI digests. It publishes no configuration value and no
+secret.
+
+It answers a question the read API cannot. `/ping` returns `pong`
+unconditionally, and cassette discovery resolves asynchronously after the
+process is already serving, so a healthy probe does not mean the cassettes are
+admitted yet. An orchestrator that needs to know a configuration actually took
+has to ask each serving instance, and has to be told admission results rather
+than intent.
+
+It is a separate listener rather than a path on the API server because a
+deployment may put a gateway in front of the API that rewrites a public path
+prefix onto its root — which would make any path added there publicly
+reachable. Expose this one as a container port and keep it off the Service.
+
+| Variable | Purpose |
+| --- | --- |
+| `TAPES_INTERNAL_LISTEN` | Internal listener address. Unset, no listener runs. Use `:8092`. |
+| `TAPES_INTERNAL_TOKEN` | Bearer token every request must present. |
+
+Both are read from the environment only — never from `config.toml` and never
+from a flag, because a token in a config file outlives the process that needed
+it and one in a flag is readable from the host's process table. Setting
+`TAPES_INTERNAL_LISTEN` without `TAPES_INTERNAL_TOKEN` fails startup rather
+than serving the endpoint unauthenticated. A request without the token gets a
+`401` with no body.
+
+The instance block is filled in from the environment too, and each field is
+simply absent when unset. In Kubernetes these come from the downward API:
+
+| Variable | Field |
+| --- | --- |
+| `TAPES_POD_NAME` | `metadata.name` |
+| `TAPES_POD_UID` | `metadata.uid` |
+| `TAPES_POD_IP` | `status.podIP` |
+| `TAPES_NODE_NAME` | `spec.nodeName` |
+| `TAPES_REPLICA_SET` | owning ReplicaSet name, when the deployment can supply it |
+| `TAPES_IMAGE_DIGEST` | the running image's digest |
+
 ### Example
 
 ```toml
