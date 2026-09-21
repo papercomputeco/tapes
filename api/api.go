@@ -43,6 +43,11 @@ type Server struct {
 	// document are answering from the same set.
 	contracts []cassette.ContractVersion
 
+	// instance identifies this process on the internal evidence endpoint. It
+	// is built once, at construction, because it is an identity: a process
+	// does not become a different pod partway through its life.
+	instance EvidenceInstance
+
 	// loadedMutex guards loaded, which SetCassetteSources may replace at any
 	// point in this server's life — the source list is not fixed at
 	// construction, and a reader of the loaded identity runs concurrently
@@ -127,6 +132,7 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 		cassetteSpecs:  runner,
 		contracts:      contracts,
 		openapi:        openapi,
+		instance:       instanceIdentity(),
 	}
 
 	// Correlation is the outermost request middleware so every downstream log,
