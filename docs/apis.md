@@ -88,6 +88,20 @@ The ingest server appends to immutable `raw_turns`; it does not provide the read
 
 The capture proxy defaults to `:8080`. It exposes provider-compatible request paths, not the Tapes read contract. Clients send LLM traffic to the proxy; they send inspection/search requests to `:8081`.
 
+## Internal listener
+
+Optional, off unless `TAPES_INTERNAL_LISTEN` names an address, and documented
+to use `:8092`. It carries exactly one endpoint, `GET
+/internal/readiness/evidence`, which reports what this process loaded and what
+admitting that configuration produced — instance identity, a digest of the
+cassette source list in effect, and each source's admission result. It is not
+part of the read API's sealed contract and does not appear in its OpenAPI
+document, deliberately: a deployment that puts a gateway in front of the read
+API may rewrite a public path prefix onto its root, which would make any path
+added there publicly reachable. Expose this as a container port and keep it off
+the Service. Every request must present `TAPES_INTERNAL_TOKEN` as a bearer
+token. See [Configuration](./configuration.md).
+
 ## CORS and exposure
 
 Do not infer a production security boundary from local listen defaults or generated OpenAPI. Choose network exposure, TLS, authentication, tenant headers, and access control for the deployment environment. Tapes documentation intentionally does not prescribe a hosting redirect or public deployment topology.
