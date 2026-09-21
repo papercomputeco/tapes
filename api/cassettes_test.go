@@ -757,3 +757,60 @@ var _ = Describe("discovery entity aggregation and conditional GET", func() {
 		Expect(refreshed.Entities).To(HaveLen(5))
 	})
 })
+
+var _ = Describe("the loaded cassette source list", func() {
+	newServer := func() *Server {
+		built, err := NewServer(Config{ListenAddr: ":0"}, inmemory.NewDriver(), tapeslogger.NewNoop())
+		Expect(err).NotTo(HaveOccurred())
+
+		return built
+	}
+
+	It("records nothing until it has been told what to serve", func() {
+		loaded := newServer().loadedSourceList()
+		Expect(loaded.digest).To(BeEmpty())
+		Expect(loaded.count).To(BeZero())
+		Expect(loaded.loadedAt).To(BeZero())
+	})
+
+	It("distinguishes serving nothing from never having been configured", func() {
+		server := newServer()
+		server.SetCassetteSources(nil)
+
+		loaded := server.loadedSourceList()
+		Expect(loaded.digest).To(HavePrefix("sha256:"))
+		Expect(loaded.count).To(BeZero())
+		Expect(loaded.loadedAt).NotTo(BeZero())
+	})
+
+	// The digest has to move on a reconfiguration that never restarts the
+	// process, because that is precisely the case a pod template cannot
+	// witness: the identity is reported by the thing that loaded it.
+	It("moves when the list changes without a restart", func() {
+		server := newServer()
+		server.SetCassetteSources([]string{"http://one/openapi"})
+		first := server.loadedSourceList()
+
+		server.SetCassetteSources([]string{"http://one/openapi", "http://two/openapi"})
+		second := server.loadedSourceList()
+
+		Expect(second.digest).NotTo(Equal(first.digest))
+		Expect(second.count).To(Equal(2))
+		Expect(second.loadedAt).To(BeTemporally(">=", first.loadedAt))
+	})
+
+	It("is stable for the same list and sensitive to its order", func() {
+		Expect(cassetterunner.SourceListDigest([]string{"http://one/openapi", "http://two/openapi"})).
+			To(Equal(cassetterunner.SourceListDigest([]string{"http://one/openapi", "http://two/openapi"})))
+		Expect(cassetterunner.SourceListDigest([]string{"http://two/openapi", "http://one/openapi"})).
+			NotTo(Equal(cassetterunner.SourceListDigest([]string{"http://one/openapi", "http://two/openapi"})),
+				"configured order decides which source wins a name, so a reorder is a real change")
+	})
+
+	// A separator a URL cannot contain is what keeps two different lists from
+	// hashing the same bytes.
+	It("cannot be confused by a list whose members concatenate alike", func() {
+		Expect(cassetterunner.SourceListDigest([]string{"http://a/openapi", "http://b/openapi"})).
+			NotTo(Equal(cassetterunner.SourceListDigest([]string{"http://a/openapihttp://b/openapi"})))
+	})
+})

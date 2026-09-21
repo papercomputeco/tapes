@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/compress"
@@ -41,6 +42,13 @@ type Server struct {
 	// is fixed at construction so cassette admission and the discovery
 	// document are answering from the same set.
 	contracts []cassette.ContractVersion
+
+	// loadedMutex guards loaded, which SetCassetteSources may replace at any
+	// point in this server's life — the source list is not fixed at
+	// construction, and a reader of the loaded identity runs concurrently
+	// with whatever reconfigures it.
+	loadedMutex sync.RWMutex
+	loaded      loadedSources
 
 	// openapi is the live description of this server's own surface, populated
 	// by the same calls that register the routes. GET /openapi compiles it —

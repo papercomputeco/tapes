@@ -99,12 +99,68 @@ func publishedViewProbe(driver storage.Driver) func(ctx context.Context, view, v
 	}
 }
 
+// loadedSources is the identity of the cassette source list this process is
+// actually running with.
+//
+// It is the *loaded* identity, not the intended one. Nothing here is read back
+// from a deployment's configuration, a pod template, or a file: it is computed
+// from the list this process was handed, at the moment it was handed it. That
+// is what makes a process running yesterday's configuration detectable by
+// something that knows what today's should be — inferring the same answer from
+// the pod template would only prove what was asked for.
+type loadedSources struct {
+	// digest identifies the list. See cassetterunner.SourceListDigest for how.
+	digest string
+
+	// count is how many sources the list held. It is not derivable from the
+	// digest, and it is the cheap sanity check on a digest mismatch: a
+	// different count says the list changed shape, an equal count with a
+	// different digest says its contents moved.
+	count int
+
+	// loadedAt is when this list was installed. It is zero until the first
+	// SetCassetteSources call, which is the honest report for a server that
+	// has never been told what to serve — distinct from one told to serve
+	// nothing, whose empty list has a digest and a timestamp like any other.
+	loadedAt time.Time
+}
+
 // SetCassetteSources configures exact full OpenAPI document URLs on this
-// server's lifetime-owned runner.
+// server's lifetime-owned runner, and records the identity of what it was
+// handed.
+//
+// The identity is recorded unconditionally, including for a server whose spec
+// cache is not a runner: what this process was configured with is a fact about
+// the process, not about whether something downstream acted on it.
+//
+// A runner records the same identity for itself, under the lock that guards
+// its source catalog, and that is the copy evidence publishes. The two records
+// exist because they answer to different owners: this one outlives any
+// particular spec cache, while only the runner's can be read atomically with
+// the per-source state it describes. Nothing reconciles them — they are
+// computed from the same argument by the same function — and a reader is never
+// shown both.
 func (s *Server) SetCassetteSources(sources []string) {
+	s.loadedMutex.Lock()
+	s.loaded = loadedSources{
+		digest:   cassetterunner.SourceListDigest(sources),
+		count:    len(sources),
+		loadedAt: time.Now(),
+	}
+	s.loadedMutex.Unlock()
+
 	if runner, ok := s.cassetteSpecs.(*cassetterunner.Runner); ok {
 		runner.SetSources(sources)
 	}
+}
+
+// loadedSourceList returns the identity of the source list this server is
+// running with.
+func (s *Server) loadedSourceList() loadedSources {
+	s.loadedMutex.RLock()
+	defer s.loadedMutex.RUnlock()
+
+	return s.loaded
 }
 
 // RefreshCassetteSpecs refreshes this server's cassette OpenAPI cache once.
