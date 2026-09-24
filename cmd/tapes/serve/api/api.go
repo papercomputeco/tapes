@@ -11,6 +11,7 @@ import (
 
 	"github.com/papercomputeco/tapes/api"
 	"github.com/papercomputeco/tapes/cmd/tapes/serve/internallisten"
+	"github.com/papercomputeco/tapes/internal/memlimit"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
@@ -99,6 +100,17 @@ func newAPICmd(cmder *apiCommander) *cobra.Command {
 
 func (c *apiCommander) run(ctx context.Context) error {
 	c.logger = logger.FromContext(ctx)
+
+	// Bound the transient allocation overshoot of a large session read to
+	// the container budget: a session's traces or export bundle is built
+	// in one response, and the per-request churn lets the heap roughly
+	// double before GC runs, so serving a large session can spike past the
+	// memory limit and get the server OOM-killed even though its live set
+	// fits. A cgroup-derived soft limit GC-paces the peak back toward the
+	// live set. Applied before the server exists so every allocation is
+	// paced. No-op when GOMEMLIMIT is set or no cgroup limit exists.
+	memlimit.ApplySoftMemoryLimit(c.logger)
+
 	if len(c.cassetteSources) > 0 {
 		c.logger.Info("configured cassette OpenAPI sources",
 			"count", len(c.cassetteSources),

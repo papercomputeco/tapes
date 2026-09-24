@@ -118,6 +118,31 @@ simply absent when unset. In Kubernetes these come from the downward API:
 | `TAPES_REPLICA_SET` | owning ReplicaSet name, when the deployment can supply it |
 | `TAPES_IMAGE_DIGEST` | the running image's digest |
 
+### Memory in a container
+
+`tapes serve api` and `tapes serve derive-worker` each set a soft heap limit
+at startup, derived from the container's cgroup memory limit: 90% of the
+cgroup value becomes the Go runtime's `GOMEMLIMIT`, and the rest is headroom
+for stacks, the database driver, and the runtime itself. A large session
+allocates transiently far above its live set — the worker re-parses the whole
+conversation per turn, the API builds the session's traces or export bundle in
+one response — and under the default GC pacing that spike can cross the
+container limit and get the process OOM-killed even though its steady state
+fits. The soft limit makes the GC pace against the budget instead, trading
+some GC CPU for a bounded heap.
+
+There is no setting for this. It tracks whatever memory limit the
+orchestrator already gives the container, so there is nothing to keep in
+sync. Two things turn it off:
+
+- setting `GOMEMLIMIT` in the environment, which the process honors as-is —
+  including `GOMEMLIMIT=off`, which is an explicit opt-out;
+- running without a cgroup memory limit (local development, an unconstrained
+  container, a non-Linux host), where the Go default stays in place.
+
+Each process logs what it did at startup: `soft memory limit applied` with
+the cgroup and soft values, or `honoring GOMEMLIMIT from environment`.
+
 ### Example
 
 ```toml

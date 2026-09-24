@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/papercomputeco/tapes/internal/memlimit"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/derive/worker"
 	"github.com/papercomputeco/tapes/pkg/git"
@@ -163,7 +164,7 @@ func (c *deriveWorkerCommander) run(ctx context.Context) error {
 	// the worker OOM-killed. A cgroup-derived soft limit GC-paces the peak
 	// back toward the live set. No-op when GOMEMLIMIT is set or no cgroup
 	// limit exists.
-	worker.ApplySoftMemoryLimit(c.logger)
+	memlimit.ApplySoftMemoryLimit(c.logger)
 
 	if c.postgresDSN == "" {
 		return errors.New("derive worker requires a postgres DSN (--postgres or storage.postgres_dsn)")

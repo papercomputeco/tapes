@@ -11,6 +11,7 @@ import (
 	"github.com/papercomputeco/tapes/api"
 	"github.com/papercomputeco/tapes/cmd/tapes/serve/internallisten"
 	"github.com/papercomputeco/tapes/ingest"
+	"github.com/papercomputeco/tapes/internal/memlimit"
 	"github.com/papercomputeco/tapes/pkg/cassette"
 	"github.com/papercomputeco/tapes/pkg/config"
 	deriveworker "github.com/papercomputeco/tapes/pkg/derive/worker"
@@ -129,6 +130,10 @@ func (stack *Stack) Resolve(cmd *cobra.Command, flags config.FlagSet) error {
 // The caller owns the signal handling: cancelling ctx stops the workers, and
 // the servers are torn down by the deferred closes on the way out.
 func (stack *Stack) Run(ctx context.Context) error {
+	// One process hosts the API alongside the proxy and ingest, so the
+	// soft memory limit is applied once here, as `tapes serve api` does.
+	memlimit.ApplySoftMemoryLimit(stack.Logger)
+
 	driver, err := postgres.NewDriver(ctx, stack.PostgresDSN)
 	if err != nil {
 		return err
