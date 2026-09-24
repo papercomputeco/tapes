@@ -546,9 +546,8 @@ func (d *Driver) ListSessionLinks(ctx context.Context, sessionID string) ([]stor
 }
 
 // ListTraceSpans returns one trace's spans in presentation order (seq
-// ASC, matching ListSessionSpanModel restricted to the trace) — the same
-// per-trace read GetTraceDetail performs, without the turn/link
-// round-trips. Implements storage.SpanModelReader.
+// ASC, matching ListSessionSpanModel restricted to the trace), with full
+// payloads. Implements storage.SpanModelReader.
 func (d *Driver) ListTraceSpans(ctx context.Context, orgID, traceID string) ([]storage.SpanRecord, error) {
 	if d == nil || d.conn == nil {
 		return nil, errors.New("postgres driver not open")
@@ -568,26 +567,63 @@ func (d *Driver) ListTraceSpans(ctx context.Context, orgID, traceID string) ([]s
 	return spans, nil
 }
 
-// GetTraceDetail returns one turn with its spans and links. In preview
-// mode the spans are read through the preview select list — stored
-// previews, no payload columns — so the per-trace preview read costs what
-// the composite's does. Implements storage.SpanModelReader.
-func (d *Driver) GetTraceDetail(ctx context.Context, orgID, traceID string, mode storage.PayloadMode) (*storage.SpanTurnRecord, []storage.SpanRecord, []storage.SpanLinkRecord, error) {
+// countSpansByTrace is the span_count the standalone trace header
+// carries — the same count ListTraceSummariesBySession folds into every
+// session-detail row, for one trace. Hand-written beside the iterators
+// rather than generated: it scans a single scalar, and the header read it
+// serves must never touch a span row.
+const countSpansByTrace = `SELECT count(*) FROM spans_20260615 WHERE org_id = $1 AND trace_id = $2`
+
+// GetTraceSummary returns one turn header with its span count and no
+// spans — what the streaming trace page writes before its first span is
+// read. nil when the trace does not exist. Implements
+// storage.SpanModelReader.
+func (d *Driver) GetTraceSummary(ctx context.Context, orgID, traceID string) (*storage.TraceSummaryRecord, error) {
 	if d == nil || d.conn == nil {
-		return nil, nil, nil, errors.New("postgres driver not open")
+		return nil, errors.New("postgres driver not open")
 	}
 	org, err := orgIDFromString(orgKeyForLookup(orgID))
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("decode org_id: %w", err)
+		return nil, fmt.Errorf("decode org_id: %w", err)
 	}
 	row, err := d.q.GetSpanTurn(ctx, gensqlc.GetSpanTurnParams{OrgID: org, TraceID: traceID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil, nil, nil
+		return nil, nil
 	}
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("get span turn: %w", err)
+		return nil, fmt.Errorf("get span turn: %w", err)
 	}
-	turn := spanTurnRecordFromColumns(spanTurnColumns{
+	var count int64
+	if err := d.conn.QueryRow(ctx, countSpansByTrace, org, traceID).Scan(&count); err != nil {
+		return nil, fmt.Errorf("count spans by trace: %w", err)
+	}
+	return &storage.TraceSummaryRecord{
+		SpanTurnRecord: spanTurnRecordFromTurnRow(row),
+		SpanCount:      int(count),
+	}, nil
+}
+
+// ListTraceLinks returns the dataflow links touching one trace on either
+// end. Implements storage.SpanModelReader.
+func (d *Driver) ListTraceLinks(ctx context.Context, orgID, traceID string) ([]storage.SpanLinkRecord, error) {
+	if d == nil || d.conn == nil {
+		return nil, errors.New("postgres driver not open")
+	}
+	org, err := orgIDFromString(orgKeyForLookup(orgID))
+	if err != nil {
+		return nil, fmt.Errorf("decode org_id: %w", err)
+	}
+	linkRows, err := d.q.ListSpanLinksByTrace(ctx, gensqlc.ListSpanLinksByTraceParams{OrgID: org, FromTraceID: traceID})
+	if err != nil {
+		return nil, fmt.Errorf("list span links by trace: %w", err)
+	}
+	return spanLinkRecordsFromRows(linkRows), nil
+}
+
+// spanTurnRecordFromTurnRow converts a whole span_turns row (the
+// GetSpanTurn shape) to its flat record.
+func spanTurnRecordFromTurnRow(row gensqlc.SpanTurns20260615) storage.SpanTurnRecord {
+	return spanTurnRecordFromColumns(spanTurnColumns{
 		traceID: row.TraceID, userPrompt: row.UserPrompt,
 		responsePreview: row.ResponsePreview,
 		synthetic:       row.Synthetic, status: row.Status, source: row.Source,
@@ -598,43 +634,21 @@ func (d *Driver) GetTraceDetail(ctx context.Context, orgID, traceID string, mode
 		cacheRead: row.CacheReadTokens, cacheCreation: row.CacheCreationTokens,
 		cost: row.TotalCostUsd,
 	})
+}
 
-	var spans []storage.SpanRecord
-	if mode == storage.PayloadPreview {
-		// The same rows in the same order (the iterator's ORDER BY is
-		// ListSpansByTrace's), through the select list that leaves the
-		// payload untouched.
-		spans = []storage.SpanRecord{}
-		for rec, err := range d.IterateTraceSpans(ctx, orgID, traceID, storage.SpanCursor{}, mode) {
-			if err != nil {
-				return nil, nil, nil, fmt.Errorf("list preview spans by trace: %w", err)
-			}
-			spans = append(spans, rec)
-		}
-	} else {
-		spanRows, err := d.q.ListSpansByTrace(ctx, gensqlc.ListSpansByTraceParams{OrgID: org, TraceID: traceID})
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("list spans by trace: %w", err)
-		}
-		spans = make([]storage.SpanRecord, 0, len(spanRows))
-		for _, r := range spanRows {
-			spans = append(spans, spanRecordFromRow(r))
-		}
-	}
-
-	linkRows, err := d.q.ListSpanLinksByTrace(ctx, gensqlc.ListSpanLinksByTraceParams{OrgID: org, FromTraceID: traceID})
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("list span links by trace: %w", err)
-	}
-	links := make([]storage.SpanLinkRecord, 0, len(linkRows))
-	for _, r := range linkRows {
+// spanLinkRecordsFromRows converts span_links rows to their flat records,
+// in the order the query returned them. Never nil: an edge-less trace
+// serves an empty list.
+func spanLinkRecordsFromRows(rows []gensqlc.SpanLinks20260615) []storage.SpanLinkRecord {
+	links := make([]storage.SpanLinkRecord, 0, len(rows))
+	for _, r := range rows {
 		links = append(links, storage.SpanLinkRecord{
 			FromTraceID: r.FromTraceID, FromSpanID: r.FromSpanID, FromIO: r.FromIo,
 			ToTraceID: r.ToTraceID, ToSpanID: r.ToSpanID, ToIO: r.ToIo,
 			Kind: r.Kind,
 		})
 	}
-	return &turn, spans, links, nil
+	return links
 }
 
 // GetSpanRecord returns one span with full payloads. Implements

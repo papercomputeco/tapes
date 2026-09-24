@@ -45,7 +45,9 @@ type pagedSpanModel struct {
 	spans   map[string][]storage.SpanRecord
 	// iterate, when set, replaces spans with a lazy per-trace generator —
 	// how a driver that never holds a whole trace looks from the handler.
-	iterate func(ctx context.Context, traceID string) iter.Seq2[storage.SpanRecord, error]
+	// It receives the resumption cursor so a paged walk can start where
+	// the previous page stopped.
+	iterate func(ctx context.Context, traceID string, after storage.SpanCursor) iter.Seq2[storage.SpanRecord, error]
 }
 
 func (d *pagedSpanModel) GetSessionRecord(_ context.Context, _, id string) (*storage.SessionRecord, error) {
@@ -76,7 +78,7 @@ func (d *pagedSpanModel) ListSessionLinks(_ context.Context, sessionID string) (
 // nil and only the stored previews populated.
 func (d *pagedSpanModel) IterateTraceSpans(ctx context.Context, _, traceID string, after storage.SpanCursor, mode storage.PayloadMode) iter.Seq2[storage.SpanRecord, error] {
 	if d.iterate != nil {
-		return d.iterate(ctx, traceID)
+		return d.iterate(ctx, traceID, after)
 	}
 	return func(yield func(storage.SpanRecord, error) bool) {
 		for _, sp := range d.spans[traceID] {
@@ -94,27 +96,27 @@ func (d *pagedSpanModel) IterateTraceSpans(ctx context.Context, _, traceID strin
 	}
 }
 
-// GetTraceDetail serves one trace whole, with the same per-mode column
-// discipline as IterateTraceSpans. Links are the ones touching the trace.
-func (d *pagedSpanModel) GetTraceDetail(_ context.Context, _, traceID string, mode storage.PayloadMode) (*storage.SpanTurnRecord, []storage.SpanRecord, []storage.SpanLinkRecord, error) {
+// GetTraceSummary serves one turn header with its span count and no
+// spans — the payload-free half the trace page loads before it commits.
+func (d *pagedSpanModel) GetTraceSummary(_ context.Context, _, traceID string) (*storage.TraceSummaryRecord, error) {
 	for _, t := range d.turns {
-		if t.TraceID != traceID {
-			continue
+		if t.TraceID == traceID {
+			turn := t
+			return &turn, nil
 		}
-		turn := t.SpanTurnRecord
-		spans := make([]storage.SpanRecord, 0, len(d.spans[traceID]))
-		for _, sp := range d.spans[traceID] {
-			spans = append(spans, recordForMode(sp, mode))
-		}
-		var links []storage.SpanLinkRecord
-		for _, l := range d.links {
-			if l.FromTraceID == traceID || l.ToTraceID == traceID {
-				links = append(links, l)
-			}
-		}
-		return &turn, spans, links, nil
 	}
-	return nil, nil, nil, nil
+	return nil, nil
+}
+
+// ListTraceLinks serves the links touching one trace on either end.
+func (d *pagedSpanModel) ListTraceLinks(_ context.Context, _, traceID string) ([]storage.SpanLinkRecord, error) {
+	var links []storage.SpanLinkRecord
+	for _, l := range d.links {
+		if l.FromTraceID == traceID || l.ToTraceID == traceID {
+			links = append(links, l)
+		}
+	}
+	return links, nil
 }
 
 // recordForMode strips what the mode's select list would not have read.
@@ -490,7 +492,7 @@ var _ = Describe("GET /v1/sessions/:id/traces pagination", func() {
 		// to keep them. The heap is sampled from inside the reader — after
 		// a GC, so garbage awaiting collection does not pass for growth.
 		var peak int64
-		driver.iterate = func(ctx context.Context, traceID string) iter.Seq2[storage.SpanRecord, error] {
+		driver.iterate = func(ctx context.Context, traceID string, _ storage.SpanCursor) iter.Seq2[storage.SpanRecord, error] {
 			return func(yield func(storage.SpanRecord, error) bool) {
 				for i := range spanCount {
 					if i%500 == 0 {
@@ -535,7 +537,7 @@ var _ = Describe("GET /v1/sessions/:id/traces pagination", func() {
 		driver.turns[0].SpanCount = 1 << 30
 		// An endless trace: only the context can end this stream.
 		exited := make(chan struct{})
-		driver.iterate = func(ctx context.Context, traceID string) iter.Seq2[storage.SpanRecord, error] {
+		driver.iterate = func(ctx context.Context, traceID string, _ storage.SpanCursor) iter.Seq2[storage.SpanRecord, error] {
 			return func(yield func(storage.SpanRecord, error) bool) {
 				defer close(exited)
 				for i := 0; ; i++ {

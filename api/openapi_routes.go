@@ -223,9 +223,16 @@ func (s *Server) mountTraces(router *oasfiber.Router) {
 
 	router.Get("/v1/traces/:trace_id", s.handleGetTrace,
 		oasfiber.Doc("getTrace").
-			Summary("Get one trace with spans and links").
-			Description("Returns one user-visible turn: its spans nested by parent_span_id and its "+
-				"dataflow links (links touching other traces included).").
+			Summary("Get one trace with spans and links (paged)").
+			Description("Returns one page of a user-visible turn: its header, the next `limit` spans "+
+				"in presentation order (seq), and its dataflow links (links touching other traces "+
+				"included). The header and links are whole on every page; only `spans` is paged. "+
+				"When more spans remain the page ends with `next_cursor` — pass it back as `cursor` "+
+				"to continue; its absence marks the trace's last span. A page also closes at the "+
+				"next span boundary once it has emitted roughly 8 MiB before compression, so a "+
+				"page shorter than `limit` does not mean the end. The body is streamed as spans are "+
+				"read: the status is committed before the first span, so a mid-page failure "+
+				"truncates the document rather than returning an error.").
 			Tag("traces").
 			PathParam("trace_id", oas.String(), oas.ParamDescription("Trace id")).
 			QueryParam("payload", oas.String(oas.Enum("full", "preview")),
@@ -234,7 +241,14 @@ func (s *Server) mountTraces(router *oasfiber.Router) {
 					"payload=preview; a span derived before previews were stored is served with "+
 					"empty input/output and payload=preview_pending until backfilled. Fetch the "+
 					"span endpoint for full payloads.")).
-			JSONResponse(200, "The trace", s.schema(StandaloneTraceDetail{})).
+			QueryParam("limit", oas.Integer(oas.Minimum(1)),
+				oas.ParamDescription("Maximum number of spans in the page (default 200, max 1000); a "+
+					"page may close short of it on its byte budget")).
+			QueryParam("cursor", oas.String(),
+				oas.ParamDescription("Opaque pagination cursor returned as next_cursor by a previous "+
+					"page of the same trace")).
+			JSONResponse(200, "One page of the trace's spans, with its header and links", s.schema(StandaloneTraceDetail{})).
+			JSONResponse(400, "Malformed limit or cursor, or a cursor minted for another trace", s.errorSchema()).
 			JSONResponse(404, "Trace not found", s.errorSchema()).
 			JSONResponse(500, "Failed to load trace", s.errorSchema()).
 			JSONResponse(501, "Traces not supported by this backend", s.errorSchema()))

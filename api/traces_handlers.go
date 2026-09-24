@@ -191,6 +191,12 @@ type TraceDetail struct {
 	Trace  TraceItem      `json:"trace"`
 	Spans  []SpanItem     `json:"spans"`
 	Links  []SpanLinkItem `json:"links,omitempty"`
+	// NextCursor continues the STANDALONE /v1/traces/{id} walk from the
+	// last span of this page (pass it as `cursor`). Absent once the page
+	// reached the trace's last span, and always absent on the copies the
+	// composite embeds — there a trace is served whole, so the field
+	// never appears on that wire.
+	NextCursor string `json:"next_cursor,omitempty"`
 }
 
 // SessionTracesResponse is the composite session view on the span

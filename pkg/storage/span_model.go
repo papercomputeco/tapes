@@ -163,19 +163,23 @@ type SpanModelReader interface {
 	// error, and payload-mode contract as IterateSessionSpans.
 	IterateTraceSpans(ctx context.Context, orgID, traceID string, after SpanCursor, mode PayloadMode) iter.Seq2[SpanRecord, error]
 	ListTraceSummaries(ctx context.Context, sessionID string) ([]TraceSummaryRecord, error)
+	// GetTraceSummary returns one turn header with its span count — the
+	// payload-free half of a trace, which the standalone trace page
+	// writes ahead of its first span. Returns nil when no such trace
+	// exists in the org.
+	GetTraceSummary(ctx context.Context, orgID, traceID string) (*TraceSummaryRecord, error)
+	// ListTraceLinks returns the dataflow links touching one trace on
+	// either end. Never nil: an edge-less trace lists an empty set.
+	ListTraceLinks(ctx context.Context, orgID, traceID string) ([]SpanLinkRecord, error)
 	// ListSessionLinks returns a session's dataflow links alone — the
 	// payload-free half of ListSessionSpanModel. It backs the per-trace
 	// streaming export, which loads the light turn headers and links whole
 	// but reads the heavy spans one trace at a time.
 	ListSessionLinks(ctx context.Context, sessionID string) ([]SpanLinkRecord, error)
-	// ListTraceSpans returns one trace's spans in presentation order — the
-	// same per-trace read GetTraceDetail performs, without the turn/link
-	// round-trips. It backs the per-trace streaming export.
+	// ListTraceSpans returns one trace's spans whole, in presentation
+	// order (the order IterateTraceSpans streams them), with full payloads.
+	// It backs the per-trace streaming export.
 	ListTraceSpans(ctx context.Context, orgID, traceID string) ([]SpanRecord, error)
-	// GetTraceDetail returns one turn with its spans and links. mode
-	// selects the span payload columns as it does for the iterators: in
-	// PayloadPreview the spans carry stored previews and nil payloads.
-	GetTraceDetail(ctx context.Context, orgID, traceID string, mode PayloadMode) (*SpanTurnRecord, []SpanRecord, []SpanLinkRecord, error)
 	GetSpanRecord(ctx context.Context, orgID, traceID, spanID string) (*SpanRecord, error)
 	ListRawTurnHeaders(ctx context.Context, orgID, harnessID, harnessSessionID string) ([]RawTurnHeader, error)
 }

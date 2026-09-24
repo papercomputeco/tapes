@@ -61,6 +61,34 @@ where they previously assumed one response was everything. Because the
 status is committed before the first span is read, a failure mid-page
 truncates the body rather than producing an error response.
 
+### Trace detail is paged and streamed
+
+`GET /v1/traces/{trace_id}` pages the same way, over spans instead of
+traces. A page is the trace's header plus its next `limit` spans in
+presentation order (`seq`; default 200, maximum 1000; a larger value is
+clamped, and anything that is not a positive integer is rejected with
+`400`). It closes early at the next span boundary once it has emitted
+roughly 8 MiB before compression — the same budget the composite uses —
+so a page may hold a single span.
+
+Every page carries the whole envelope: `session_id`, `schema`, the `trace`
+header (its `span_count` is the trace's whole count, not the page's), and
+the `links` touching the trace are complete on each one; only `spans` is
+paged. When more spans remain the page ends with `next_cursor`; pass it
+back as `cursor` to continue. Its absence is what marks the trace's last
+span — a page shorter than `limit` does not. A cursor is opaque and bound
+to the trace it was minted for; presenting it on another trace is a
+`400`. The field never appears on the trace copies embedded in the
+composite, where a trace is served whole.
+
+The body is written as it is read, in both payload modes: the server
+holds the payload-free header and links, then streams each span through
+as its row is scanned, so memory stays bounded by one span regardless of
+the trace's length. A page that holds the whole trace is byte-identical to
+the document the endpoint used to return whole, so clients that parse the
+body as one document keep working; they only need to follow `next_cursor`
+where they previously assumed one response was everything.
+
 ### Span payload modes
 
 `GET /v1/sessions/{id}/traces` and `GET /v1/traces/{trace_id}` take

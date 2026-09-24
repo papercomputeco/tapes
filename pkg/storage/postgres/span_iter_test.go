@@ -395,13 +395,22 @@ var _ = Describe("span iterators", func() {
 		})
 
 		It("serves stored previews on trace detail", func() {
+			// The standalone trace page is the header, the preview
+			// stream, and the links: each read on its own, none touching
+			// the payload.
 			insertTurn("trc-d")
 			insertPreviewedSpan("trc-d", "d-1", 1, input, output, inputPreview, outputPreview)
 			insertPreviewedSpan("trc-d", "d-0", 0, input, output, inputPreview, outputPreview)
 
-			turn, spans, _, err := pgDriver.GetTraceDetail(ctx, orgID, "trc-d", storage.PayloadPreview)
+			turn, err := pgDriver.GetTraceSummary(ctx, orgID, "trc-d")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(turn).NotTo(BeNil())
+			Expect(turn.SpanCount).To(Equal(2), "the header carries the trace's whole span count")
+			links, err := pgDriver.ListTraceLinks(ctx, orgID, "trc-d")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(links).To(BeEmpty())
+
+			spans := collect(pgDriver.IterateTraceSpans(ctx, orgID, "trc-d", storage.SpanCursor{}, storage.PayloadPreview))
 			Expect(spans).To(HaveLen(2))
 			Expect(spans[0].SpanID).To(Equal("d-0"), "presentation order is seq order")
 			for _, sp := range spans {
@@ -414,8 +423,7 @@ var _ = Describe("span iterators", func() {
 
 			// Full mode is the read it always was: the same rows with the
 			// payload, in the same order.
-			_, fullSpans, _, err := pgDriver.GetTraceDetail(ctx, orgID, "trc-d", storage.PayloadFull)
-			Expect(err).NotTo(HaveOccurred())
+			fullSpans := collect(pgDriver.IterateTraceSpans(ctx, orgID, "trc-d", storage.SpanCursor{}, storage.PayloadFull))
 			Expect(fullSpans).To(HaveLen(2))
 			for i := range fullSpans {
 				Expect(decoded(fullSpans[i].Input)).To(Equal(decoded(json.RawMessage(input))))

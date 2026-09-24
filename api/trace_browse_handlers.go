@@ -1,7 +1,10 @@
 package api
 
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
+	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -115,6 +118,20 @@ func BuildTraceList(rows []storage.TraceSummaryRecord) TraceListResponse {
 	return TraceListResponse{Schema: ProjectionSchema, Items: items}
 }
 
+// parseTraceSpansLimit reads the trace page's `limit` query: the number
+// of spans a page holds, defaulting to 200 and clamped to 1000. Anything
+// that is not a positive integer is rejected rather than defaulted.
+func parseTraceSpansLimit(raw string) (int, error) {
+	if raw == "" {
+		return defaultTraceSpansLimit, nil
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed <= 0 {
+		return 0, errors.New("limit must be a positive integer")
+	}
+	return min(parsed, maxTraceSpansLimit), nil
+}
+
 // handleGetTrace handles GET /v1/traces/:trace_id.
 func (s *Server) handleGetTrace(c fiber.Ctx) error {
 	reader, ok := s.driver.(spanModelReader)
@@ -122,8 +139,31 @@ func (s *Server) handleGetTrace(c fiber.Ctx) error {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "span traces not supported by this backend"})
 	}
 	traceID := c.Params("trace_id")
-	mode := payloadModeFromQuery(c.Query("payload"))
-	turn, spans, links, err := reader.GetTraceDetail(c.RequestCtx(), singleTenantOrgID, traceID, mode)
+
+	limit, err := parseTraceSpansLimit(c.Query("limit"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
+	}
+	var after storage.SpanCursor
+	if raw := c.Query("cursor"); raw != "" {
+		cur, err := decodeTracePageCursor(raw)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
+		}
+		// A cursor is a boundary in one trace's span order; presented
+		// with another trace it is a malformed request, not a transition.
+		if cur.TraceID != traceID {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "cursor does not match trace"})
+		}
+		after = cur.spanCursor()
+	}
+
+	// Everything that can still turn into an error response is loaded
+	// here, before the status is committed: the payload-free turn header
+	// (with the span count the trace header carries ahead of its spans)
+	// and the links touching the trace. The spans themselves stream.
+	orgID := singleTenantOrgID
+	turn, err := reader.GetTraceSummary(c.RequestCtx(), orgID, traceID)
 	if err != nil {
 		s.logger.Error("get trace", "trace_id", traceID, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to get trace"})
@@ -131,15 +171,44 @@ func (s *Server) handleGetTrace(c fiber.Ctx) error {
 	if turn == nil {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "trace not found"})
 	}
-	return c.JSON(StandaloneTraceDetail{
-		SessionID:   turn.SessionID,
-		TraceDetail: BuildTraceDetail(*turn, spans, links, mode),
+	links, err := reader.ListTraceLinks(c.RequestCtx(), orgID, traceID)
+	if err != nil {
+		s.logger.Error("list trace links", "trace_id", traceID, "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to get trace"})
+	}
+
+	page := &tracePage{
+		orgID:   orgID,
+		traceID: traceID,
+		turn:    *turn,
+		links:   links,
+		mode:    payloadModeFromQuery(c.Query("payload")),
+		after:   after,
+		limit:   limit,
+		budget:  tracesPageByteBudget,
+		spans:   reader,
+	}
+
+	// The body is written by a goroutine after this handler returns, so
+	// the ctx is abandoned rather than recycled underneath it, and the
+	// goroutine takes only what it needs from it now: the user context,
+	// which is the one signal that can tell it to stop. Compression is
+	// left to the middleware, which wraps a body stream incrementally.
+	ctx := c.Context()
+	c.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	c.Abandon()
+	return c.SendStreamWriter(func(w *bufio.Writer) {
+		if err := page.write(ctx, w); err != nil {
+			s.logger.Warn("trace stream cut short", "trace_id", traceID, "error", err)
+		}
 	})
 }
 
-// BuildTraceDetail renders one turn with its spans and links. Exported
-// so `tapes dev trace-fixtures` emits byte-identical JSON to the
-// handler.
+// BuildTraceDetail renders one turn with its spans and links whole. The
+// handler no longer calls it — it streams a page through tracePage — but
+// this remains the reference shape: a page that holds the whole trace is
+// byte-identical to json.Marshal of this, which `tapes dev trace-fixtures`
+// relies on and the page specs prove.
 func BuildTraceDetail(turn storage.SpanTurnRecord, spans []storage.SpanRecord, links []storage.SpanLinkRecord, mode PayloadMode) TraceDetail {
 	detail := TraceDetail{
 		Schema: ProjectionSchema,
