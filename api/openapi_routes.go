@@ -111,14 +111,25 @@ func (s *Server) mountSessions(router *oasfiber.Router) {
 			Summary("Get a session's trace/span projection").
 			Description("Returns the session's user-visible turns as traces with nested spans (llm "+
 				"calls, tools, subagents, shadow calls, injected context) and dataflow links. "+
-				"Cross-trace links (compaction seams) are at the response top level.").
+				"Cross-trace links (compaction seams) are at the response top level. The response "+
+				"is one page: the first `limit` traces in turn order (default 50), closed early "+
+				"once the page passes its byte budget. `next_cursor` continues the walk; its "+
+				"absence, not the page's length, means the session's last trace was served. "+
+				"`session` and `links` are whole on every page. The body streams as it is read.").
 			Tag("sessions").
 			PathParam("id", oas.String(), oas.ParamDescription("Session id (UUID)")).
 			QueryParam("payload", oas.String(oas.Enum("full", "preview")),
 				oas.ParamDescription("Span payload mode: full (default) or preview (strings truncated; "+
 					"fetch the span endpoint for full payloads)")).
-			JSONResponse(200, "The session's traces and spans", s.schema(SessionTracesResponse{})).
-			JSONResponse(400, "Missing or malformed id", s.errorSchema()).
+			QueryParam("limit", oas.Integer(oas.Minimum(1)),
+				oas.ParamDescription("Maximum number of traces in the page (default 50, max 200); a "+
+					"page may close short of it on its byte budget")).
+			QueryParam("cursor", oas.String(),
+				oas.ParamDescription("Opaque pagination cursor returned as next_cursor by a previous "+
+					"page of the same session")).
+			JSONResponse(200, "One page of the session's traces and spans", s.schema(SessionTracesResponse{})).
+			JSONResponse(400, "Missing or malformed id, limit, or cursor, or a cursor minted for "+
+				"another session", s.errorSchema()).
 			JSONResponse(404, "Session not found", s.errorSchema()).
 			JSONResponse(500, "Failed to load session", s.errorSchema()).
 			JSONResponse(501, "Span traces not supported by this backend", s.errorSchema()))

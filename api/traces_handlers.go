@@ -1,7 +1,10 @@
 package api
 
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
+	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -187,13 +190,20 @@ type TraceDetail struct {
 }
 
 // SessionTracesResponse is the composite session view on the span
-// model. `schema` stamps the projection generation the rows were derived
-// against, so the presentational shape can version independently.
+// model — one page of it. `schema` stamps the projection generation the
+// rows were derived against, so the presentational shape can version
+// independently. The page is bounded in traces (`limit`) and in bytes;
+// `session` and `links` are whole on every page.
 type SessionTracesResponse struct {
 	Schema  string         `json:"schema"`
 	Session SessionItem    `json:"session"`
 	Traces  []TraceDetail  `json:"traces"`
 	Links   []SpanLinkItem `json:"links"`
+	// NextCursor continues the walk from the last trace of this page
+	// (pass it as `cursor`). Absent once the page reached the session's
+	// last trace. A page may close short of `limit` on its byte budget, so
+	// its absence — not the page's length — is what means "no more".
+	NextCursor string `json:"next_cursor,omitempty"`
 }
 
 // ProjectionSchema is the compatibility date of the derived projection
@@ -221,6 +231,24 @@ func (s *Server) handleGetSessionTraces(c fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id must be a valid UUID"})
 	}
 
+	limit, err := parseTracesLimit(c.Query("limit"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
+	}
+	var cursor *tracesPageCursor
+	if raw := c.Query("cursor"); raw != "" {
+		cur, err := decodeTracesPageCursor(raw)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
+		}
+		// A cursor is a boundary in one session's trace order; presented
+		// with another session it is a malformed request, not a transition.
+		if cur.Session != id {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "cursor does not match session"})
+		}
+		cursor = &cur
+	}
+
 	orgID := singleTenantOrgID
 	sess, err := sessions.GetSessionRecord(c.RequestCtx(), orgID, id)
 	if err != nil {
@@ -231,19 +259,77 @@ func (s *Server) handleGetSessionTraces(c fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
 	}
 
-	turns, spans, links, err := reader.ListSessionSpanModel(c.RequestCtx(), id)
+	// Everything that can still turn into an error response is loaded
+	// here, before the status is committed: the payload-free turn headers
+	// (with their span counts, which the trace header carries ahead of its
+	// spans) and the session's links. The spans themselves stream.
+	turns, err := reader.ListTraceSummaries(c.RequestCtx(), id)
 	if err != nil {
-		s.logger.Error("list span model", "session_id", id, "error", err)
+		s.logger.Error("list trace summaries", "session_id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session traces"})
 	}
+	links, err := reader.ListSessionLinks(c.RequestCtx(), id)
+	if err != nil {
+		s.logger.Error("list session links", "session_id", id, "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session traces"})
+	}
+	if cursor != nil {
+		// Turn headers arrive in emit order, so the traces an earlier
+		// page served are a prefix.
+		start := 0
+		for start < len(turns) && cursor.covers(turns[start].SpanTurnRecord) {
+			start++
+		}
+		turns = turns[start:]
+	}
 
-	resp := BuildSessionTraces(sessionItemFromStorage(*sess, time.Now()), turns, spans, links, payloadModeFromQuery(c.Query("payload")))
-	return c.JSON(resp)
+	page := &tracesPage{
+		sessionID: id,
+		orgID:     orgID,
+		session:   sessionItemFromStorage(*sess, time.Now()),
+		turns:     turns,
+		links:     links,
+		mode:      payloadModeFromQuery(c.Query("payload")),
+		limit:     limit,
+		budget:    tracesPageByteBudget,
+		spans:     reader,
+	}
+
+	// The body is written by a goroutine after this handler returns, so
+	// the ctx is abandoned rather than recycled underneath it, and the
+	// goroutine takes only what it needs from it now: the user context,
+	// which is the one signal that can tell it to stop. Compression is
+	// left to the middleware, which wraps a body stream incrementally.
+	ctx := c.Context()
+	c.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	c.Abandon()
+	return c.SendStreamWriter(func(w *bufio.Writer) {
+		if err := page.write(ctx, w); err != nil {
+			s.logger.Warn("session traces stream cut short", "session_id", id, "error", err)
+		}
+	})
 }
 
-// BuildSessionTraces assembles the composite response. Pure rendering:
-// every edge and kind here was computed by the deriver. Exported so
-// `tapes dev trace-fixtures` emits byte-identical JSON to the handler.
+// parseTracesLimit reads the composite's `limit` query: the number of
+// traces a page holds, defaulting to 50 and clamped to 200. Anything
+// that is not a positive integer is rejected rather than defaulted.
+func parseTracesLimit(raw string) (int, error) {
+	if raw == "" {
+		return defaultTracesLimit, nil
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed <= 0 {
+		return 0, errors.New("limit must be a positive integer")
+	}
+	return min(parsed, maxTracesLimit), nil
+}
+
+// BuildSessionTraces assembles the composite response whole. Pure
+// rendering: every edge and kind here was computed by the deriver. The
+// handler no longer calls it — it streams a page through tracesPage — but
+// this remains the reference shape: a page that fits in one is
+// byte-identical to json.Marshal of this, which `tapes dev trace-fixtures`
+// relies on and the stream specs prove.
 func BuildSessionTraces(
 	session SessionItem,
 	turns []storage.SpanTurnRecord,

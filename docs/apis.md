@@ -28,11 +28,38 @@ The authoritative parameters, schemas, and methods are compiled from route regis
 
 - session listing is cursor-paginated;
 - session and trace/span paths use UUID IDs;
-- session content is read through traces and spans;
+- session content is read through traces and spans, and the composite
+  session view is paged and streamed (see below);
 - semantic search is served by the search cassette (`/v1/cassettes/search/spans`);
 - raw turns remain available at `/v1/sessions/{id}/raw_turns`.
 
 There is no `/v1/search`, `/v1/sessions/summary`, or hash-based session route.
+
+### Session traces are paged and streamed
+
+`GET /v1/sessions/{id}/traces` returns one page of the composite view, not
+the whole session. A page is the next `limit` traces in turn order (default
+50, maximum 200; a larger value is clamped, and anything that is not a
+positive integer is rejected with `400`). A page also closes early, at the
+next trace boundary, once it has emitted roughly 8 MiB before compression —
+spans carry whole tool results and images, so a count alone does not bound
+a page, and a page may therefore hold a single trace.
+
+Every page carries the whole envelope: `schema`, `session`, and the
+session-scoped `links` are complete on each one; only `traces` is paged.
+When more traces remain the page ends with `next_cursor`; pass it back as
+`cursor` to continue. Its absence is what marks the session's last trace —
+a page shorter than `limit` does not. A cursor is opaque and bound to the
+session it was minted for; presenting it on another session is a `400`.
+
+The body is written as it is read: the server holds the payload-free turn
+headers and links, then streams each span through as its row is scanned,
+so memory stays bounded by one span regardless of session size. The
+response is still one JSON document per page, so existing clients that
+parse the body whole keep working; they only need to follow `next_cursor`
+where they previously assumed one response was everything. Because the
+status is committed before the first span is read, a failure mid-page
+truncates the body rather than producing an error response.
 
 ### Both contracts are sealed
 
