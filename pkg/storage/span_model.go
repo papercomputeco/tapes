@@ -65,6 +65,17 @@ type SpanRecord struct {
 	// Verdict is the deriver-written security-monitor disposition JSON
 	// (null on non-permission-check spans). Served verbatim on the wire.
 	Verdict json.RawMessage
+	// InputPreview / OutputPreview are the deriver-written bounded
+	// previews of Input / Output (derive.PreviewBlocks), stored beside
+	// the payload so a preview read never detoasts it. Nil when the row
+	// was derived before previews were stored.
+	InputPreview  json.RawMessage
+	OutputPreview json.RawMessage
+	// HasPreview reports whether the row carries stored previews. False
+	// on rows derived before the preview columns existed and not yet
+	// backfilled; readers serve those as pending rather than computing
+	// a preview from the payload.
+	HasPreview bool
 }
 
 // SpanLinkRecord is a dataflow edge between spans, possibly across

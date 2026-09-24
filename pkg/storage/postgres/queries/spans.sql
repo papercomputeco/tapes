@@ -56,12 +56,14 @@ INSERT INTO spans_20260615 (
     org_id, trace_id, span_id, parent_span_id, session_id,
     kind, name, status, call_kind, thread_id, model, stop_reason,
     started_at, duration_ns, seq, input, output, usage, raw_turn_id, node_hash,
-    verdict, content_hash, derive_seq, fidelity
+    verdict, content_hash, derive_seq, fidelity,
+    input_preview, output_preview
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11, $12,
     $13, $14, $15, $16, $17, $18, $19, $20,
-    $21, $22, $23, $24
+    $21, $22, $23, $24,
+    $25, $26
 )
 ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     parent_span_id = EXCLUDED.parent_span_id,
@@ -84,6 +86,11 @@ ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     verdict        = EXCLUDED.verdict,
     content_hash   = EXCLUDED.content_hash,
     fidelity       = EXCLUDED.fidelity,
+    -- Previews are a pure function of input/output and are not part of
+    -- content_hash: they are rewritten with the payload but never move the
+    -- cursor on their own.
+    input_preview  = EXCLUDED.input_preview,
+    output_preview = EXCLUDED.output_preview,
     -- See UpsertSpanTurn: the cursor advances only on a real content change,
     -- so a consumer polling derive_seq sees changes rather than every row a
     -- re-derive happened to touch.

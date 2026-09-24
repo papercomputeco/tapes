@@ -26,7 +26,8 @@ import (
 // gensqlc/spans.sql.go). scanSpanRow depends on this order.
 const spanSelectColumns = `org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, ` +
 	`call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, ` +
-	`raw_turn_id, node_hash, seq, verdict, content_hash, derive_seq, fidelity`
+	`raw_turn_id, node_hash, seq, verdict, content_hash, derive_seq, fidelity, ` +
+	`input_preview, output_preview`
 
 // iterateSessionSpansSQL streams a session's spans in the same composite
 // order ListSpansBySession uses. $2 is true when starting from the first
@@ -157,5 +158,7 @@ func scanSpanRow(rows pgx.Rows, row *gensqlc.Spans20260615) error {
 		&row.ContentHash,
 		&row.DeriveSeq,
 		&row.Fidelity,
+		&row.InputPreview,
+		&row.OutputPreview,
 	)
 }

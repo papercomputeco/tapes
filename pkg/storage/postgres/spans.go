@@ -139,30 +139,36 @@ func writeSpanSet(
 			if s.RawTurnID != 0 {
 				rawTurn = pgtype.Int8{Int64: s.RawTurnID, Valid: true}
 			}
+			// Previews ride the same upsert as the payload they summarize
+			// so a preview read never has to detoast input/output. They
+			// are a pure function of those columns and deliberately not
+			// part of content_hash: rewriting them moves no cursor.
 			spanParams := gensqlc.UpsertSpanParams{
-				OrgID:        orgID,
-				TraceID:      turn.TraceID,
-				SpanID:       s.SpanID,
-				ParentSpanID: s.ParentSpanID,
-				SessionID:    sid,
-				Kind:         s.Kind,
-				Name:         s.Name,
-				Status:       s.Status,
-				CallKind:     s.CallKind,
-				ThreadID:     s.ThreadID,
-				Model:        s.Model,
-				StopReason:   s.StopReason,
-				StartedAt:    pgtype.Timestamptz{Time: s.StartedAt, Valid: true},
-				DurationNs:   s.DurationNS,
-				Seq:          s.Seq,
-				Input:        input,
-				Output:       output,
-				Usage:        usage,
-				RawTurnID:    rawTurn,
-				NodeHash:     s.NodeHash,
-				Verdict:      verdict,
-				DeriveSeq:    deriveSeq,
-				Fidelity:     spanTiers[i],
+				OrgID:         orgID,
+				TraceID:       turn.TraceID,
+				SpanID:        s.SpanID,
+				ParentSpanID:  s.ParentSpanID,
+				SessionID:     sid,
+				Kind:          s.Kind,
+				Name:          s.Name,
+				Status:        s.Status,
+				CallKind:      s.CallKind,
+				ThreadID:      s.ThreadID,
+				Model:         s.Model,
+				StopReason:    s.StopReason,
+				StartedAt:     pgtype.Timestamptz{Time: s.StartedAt, Valid: true},
+				DurationNs:    s.DurationNS,
+				Seq:           s.Seq,
+				Input:         input,
+				Output:        output,
+				Usage:         usage,
+				RawTurnID:     rawTurn,
+				NodeHash:      s.NodeHash,
+				Verdict:       verdict,
+				DeriveSeq:     deriveSeq,
+				Fidelity:      spanTiers[i],
+				InputPreview:  derive.PreviewBlocks(input),
+				OutputPreview: derive.PreviewBlocks(output),
 			}
 			spanParams.ContentHash = spanContentHash(spanParams)
 			if err := qtx.UpsertSpan(ctx, spanParams); err != nil {
@@ -445,25 +451,32 @@ func spanTurnRecordFromColumns(c spanTurnColumns) storage.SpanTurnRecord {
 // spanRecordFromRow converts a versioned spans row to its flat record.
 func spanRecordFromRow(row gensqlc.Spans20260615) storage.SpanRecord {
 	return storage.SpanRecord{
-		TraceID:      row.TraceID,
-		SpanID:       row.SpanID,
-		ParentSpanID: row.ParentSpanID,
-		Kind:         row.Kind,
-		Name:         row.Name,
-		Status:       row.Status,
-		CallKind:     row.CallKind,
-		ThreadID:     row.ThreadID,
-		Model:        row.Model,
-		StopReason:   row.StopReason,
-		StartedAt:    row.StartedAt.Time,
-		DurationNS:   row.DurationNs,
-		Seq:          row.Seq,
-		Input:        row.Input,
-		Output:       row.Output,
-		Usage:        row.Usage,
-		RawTurnID:    row.RawTurnID.Int64,
-		NodeHash:     row.NodeHash,
-		Verdict:      row.Verdict,
+		TraceID:       row.TraceID,
+		SpanID:        row.SpanID,
+		ParentSpanID:  row.ParentSpanID,
+		Kind:          row.Kind,
+		Name:          row.Name,
+		Status:        row.Status,
+		CallKind:      row.CallKind,
+		ThreadID:      row.ThreadID,
+		Model:         row.Model,
+		StopReason:    row.StopReason,
+		StartedAt:     row.StartedAt.Time,
+		DurationNS:    row.DurationNs,
+		Seq:           row.Seq,
+		Input:         row.Input,
+		Output:        row.Output,
+		Usage:         row.Usage,
+		RawTurnID:     row.RawTurnID.Int64,
+		NodeHash:      row.NodeHash,
+		Verdict:       row.Verdict,
+		InputPreview:  row.InputPreview,
+		OutputPreview: row.OutputPreview,
+		// A NULL preview column comes back as a nil slice; a stored
+		// preview is never NULL (PreviewBlocks pins empty to []), so
+		// either column being present means the row was written with
+		// previews.
+		HasPreview: row.InputPreview != nil || row.OutputPreview != nil,
 	}
 }
 
