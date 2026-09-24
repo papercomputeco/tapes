@@ -363,3 +363,42 @@ WHERE org_id = $1
   AND derive_seq < pg_snapshot_xmin(pg_current_snapshot())::text::bigint
 ORDER BY derive_seq, trace_id, span_id
 LIMIT sqlc.arg(page_size);
+
+-- name: ListSpansMissingPreviews :many
+-- Preview backfill (`tapes backfill previews`): one page of the rows the
+-- 1781540000 migration left without stored previews, derived before the
+-- preview columns existed and not yet backfilled. A row with no payload at all is left alone — there is
+-- nothing to summarize — so the selection stays bounded to real work.
+--
+-- Keyset-paged on (session_id, trace_id, span_id): unique (a session
+-- belongs to one org, and (org_id, trace_id, span_id) is the key), unlike
+-- started_at, and it lets the caller log and resume from a row it can
+-- name. Rows whose session never resolved carry a NULL session_id, which
+-- no row-value comparison can order; they are unreachable orphans (see
+-- writeSpanSet) and are skipped here for the same reason.
+SELECT org_id, session_id, trace_id, span_id, input, output
+FROM spans_20260615
+WHERE input_preview IS NULL
+  AND output_preview IS NULL
+  AND (input IS NOT NULL OR output IS NOT NULL)
+  AND session_id IS NOT NULL
+  AND (sqlc.narg(session_filter)::uuid IS NULL OR session_id = sqlc.narg(session_filter)::uuid)
+  AND (sqlc.narg(cursor_session_id)::uuid IS NULL
+       OR (session_id, trace_id, span_id) > (sqlc.narg(cursor_session_id)::uuid, sqlc.narg(cursor_trace_id)::text, sqlc.narg(cursor_span_id)::text))
+ORDER BY session_id ASC, trace_id ASC, span_id ASC
+LIMIT sqlc.arg(batch_size);
+
+-- name: SetSpanPreviews :exec
+-- Fills the two preview columns and nothing else. Previews are outside
+-- content_hash and never move derive_seq (see UpsertSpan), and the
+-- payload is read, never rewritten: a backfill is invisible to every
+-- change-feed consumer. Only a row still without previews is written:
+-- the backfill reads the payload and writes the previews in separate
+-- transactions, and a derive in between stores previews of the newer
+-- payload, which a stale write must not replace.
+UPDATE spans_20260615
+SET input_preview  = sqlc.arg(input_preview),
+    output_preview = sqlc.arg(output_preview)
+WHERE org_id = $1 AND trace_id = $2 AND span_id = $3
+  AND input_preview IS NULL
+  AND output_preview IS NULL;

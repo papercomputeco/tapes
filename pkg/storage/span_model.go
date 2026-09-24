@@ -212,3 +212,69 @@ type SpanStats struct {
 type SpanStatsReader interface {
 	AggregateSpanStats(ctx context.Context, orgID string, since, until *time.Time, authSubject string) (SpanStats, error)
 }
+
+// SpanBackfillCursor is a resumption point in the preview backfill's
+// scan: the (session_id, trace_id, span_id) key of the last span a
+// batch returned, in the order ListSpansMissingPreviews serves rows. The
+// zero value starts from the first span. Unlike started_at the key is
+// unique, so resuming from it neither repeats nor skips a row.
+type SpanBackfillCursor struct {
+	SessionID string
+	TraceID   string
+	SpanID    string
+}
+
+// IsZero reports whether the cursor is the start-of-scan marker.
+func (c SpanBackfillCursor) IsZero() bool {
+	return c.SessionID == "" && c.TraceID == "" && c.SpanID == ""
+}
+
+// String renders the cursor as session/trace/span for progress logs.
+func (c SpanBackfillCursor) String() string {
+	return c.SessionID + "/" + c.TraceID + "/" + c.SpanID
+}
+
+// SpanBackfillRow is one span the preview backfill has to fill: its key
+// and the payloads the previews are a pure function of. Nothing else is
+// read — the job never re-derives.
+type SpanBackfillRow struct {
+	OrgID     string
+	SessionID string
+	TraceID   string
+	SpanID    string
+	Input     json.RawMessage
+	Output    json.RawMessage
+}
+
+// Cursor returns the row's position in the backfill scan.
+func (r SpanBackfillRow) Cursor() SpanBackfillCursor {
+	return SpanBackfillCursor{SessionID: r.SessionID, TraceID: r.TraceID, SpanID: r.SpanID}
+}
+
+// SpanPreviewUpdate carries the computed previews for one span back to
+// the store.
+type SpanPreviewUpdate struct {
+	OrgID         string
+	TraceID       string
+	SpanID        string
+	InputPreview  json.RawMessage
+	OutputPreview json.RawMessage
+}
+
+// PreviewBackfiller is the storage capability behind `tapes backfill
+// previews`: fill input_preview / output_preview on rows derived before
+// the columns existed, from the stored payload, without running the
+// deriver.
+type PreviewBackfiller interface {
+	// ListSpansMissingPreviews returns up to limit spans that carry no
+	// stored preview but do carry a payload, in (session_id, trace_id,
+	// span_id) order, starting strictly after `after` (zero value: from
+	// the first span). sessionID restricts the scan to one session;
+	// empty means every session. An empty page means the scan is done.
+	ListSpansMissingPreviews(ctx context.Context, after SpanBackfillCursor, sessionID string, limit int) ([]SpanBackfillRow, error)
+	// SetSpanPreviews writes the two preview columns for each update in
+	// one transaction and touches nothing else: not the payload, not
+	// content_hash, not derive_seq. Writing a preview never advances a
+	// change-feed cursor.
+	SetSpanPreviews(ctx context.Context, updates []SpanPreviewUpdate) error
+}

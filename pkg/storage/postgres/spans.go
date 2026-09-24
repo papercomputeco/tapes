@@ -751,3 +751,87 @@ func (d *Driver) ListRawTurnHeaders(ctx context.Context, orgID, harnessID, harne
 	}
 	return out, nil
 }
+
+// ListSpansMissingPreviews returns one keyset page of spans that carry a
+// payload but no stored preview, in (session_id, trace_id, span_id)
+// order starting strictly after `after`. Implements
+// storage.PreviewBackfiller.
+func (d *Driver) ListSpansMissingPreviews(ctx context.Context, after storage.SpanBackfillCursor, sessionID string, limit int) ([]storage.SpanBackfillRow, error) {
+	if d == nil || d.conn == nil {
+		return nil, errors.New("postgres driver not open")
+	}
+	if limit <= 0 || limit > math.MaxInt32 {
+		return nil, fmt.Errorf("batch size %d out of range", limit)
+	}
+	params := gensqlc.ListSpansMissingPreviewsParams{BatchSize: int32(limit)}
+	if sessionID != "" {
+		parsed, err := uuid.Parse(sessionID)
+		if err != nil {
+			return nil, fmt.Errorf("parse session id: %w", err)
+		}
+		params.SessionFilter = pgtype.UUID{Bytes: parsed, Valid: true}
+	}
+	if !after.IsZero() {
+		parsed, err := uuid.Parse(after.SessionID)
+		if err != nil {
+			return nil, fmt.Errorf("parse cursor session id: %w", err)
+		}
+		params.CursorSessionID = pgtype.UUID{Bytes: parsed, Valid: true}
+		params.CursorTraceID = pgtype.Text{String: after.TraceID, Valid: true}
+		params.CursorSpanID = pgtype.Text{String: after.SpanID, Valid: true}
+	}
+	rows, err := d.q.ListSpansMissingPreviews(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("list spans missing previews: %w", err)
+	}
+	out := make([]storage.SpanBackfillRow, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, storage.SpanBackfillRow{
+			OrgID:     uuidString(row.OrgID),
+			SessionID: uuidString(row.SessionID),
+			TraceID:   row.TraceID,
+			SpanID:    row.SpanID,
+			Input:     row.Input,
+			Output:    row.Output,
+		})
+	}
+	return out, nil
+}
+
+// SetSpanPreviews fills input_preview / output_preview for every update
+// in one transaction. The UPDATE names only those two columns, so the
+// payload, content_hash and derive_seq are untouched. Implements
+// storage.PreviewBackfiller.
+func (d *Driver) SetSpanPreviews(ctx context.Context, updates []storage.SpanPreviewUpdate) error {
+	if d == nil || d.conn == nil {
+		return errors.New("postgres driver not open")
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	tx, err := d.conn.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin preview backfill tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	qtx := d.q.WithTx(tx)
+	for _, u := range updates {
+		org, err := orgIDFromString(u.OrgID)
+		if err != nil {
+			return fmt.Errorf("decode org_id: %w", err)
+		}
+		if err := qtx.SetSpanPreviews(ctx, gensqlc.SetSpanPreviewsParams{
+			OrgID:         org,
+			TraceID:       u.TraceID,
+			SpanID:        u.SpanID,
+			InputPreview:  u.InputPreview,
+			OutputPreview: u.OutputPreview,
+		}); err != nil {
+			return fmt.Errorf("set span previews %s/%s: %w", u.TraceID, u.SpanID, err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit preview backfill tx: %w", err)
+	}
+	return nil
+}

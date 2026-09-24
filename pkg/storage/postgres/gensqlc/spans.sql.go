@@ -695,6 +695,81 @@ func (q *Queries) ListSpansByTrace(ctx context.Context, arg ListSpansByTracePara
 	return items, nil
 }
 
+const listSpansMissingPreviews = `-- name: ListSpansMissingPreviews :many
+SELECT org_id, session_id, trace_id, span_id, input, output
+FROM spans_20260615
+WHERE input_preview IS NULL
+  AND output_preview IS NULL
+  AND (input IS NOT NULL OR output IS NOT NULL)
+  AND session_id IS NOT NULL
+  AND ($1::uuid IS NULL OR session_id = $1::uuid)
+  AND ($2::uuid IS NULL
+       OR (session_id, trace_id, span_id) > ($2::uuid, $3::text, $4::text))
+ORDER BY session_id ASC, trace_id ASC, span_id ASC
+LIMIT $5
+`
+
+type ListSpansMissingPreviewsParams struct {
+	SessionFilter   pgtype.UUID
+	CursorSessionID pgtype.UUID
+	CursorTraceID   pgtype.Text
+	CursorSpanID    pgtype.Text
+	BatchSize       int32
+}
+
+type ListSpansMissingPreviewsRow struct {
+	OrgID     pgtype.UUID
+	SessionID pgtype.UUID
+	TraceID   string
+	SpanID    string
+	Input     []byte
+	Output    []byte
+}
+
+// Preview backfill (`tapes backfill previews`): one page of the rows the 1781540000 migration left without stored
+// previews: derived before the preview columns existed and not yet
+// backfilled. A row with no payload at all is left alone — there is
+// nothing to summarize — so the selection stays bounded to real work.
+//
+// Keyset-paged on (session_id, trace_id, span_id): unique (a session
+// belongs to one org, and (org_id, trace_id, span_id) is the key), unlike
+// started_at, and it lets the caller log and resume from a row it can
+// name. Rows whose session never resolved carry a NULL session_id, which
+// no row-value comparison can order; they are unreachable orphans (see
+// writeSpanSet) and are skipped here for the same reason.
+func (q *Queries) ListSpansMissingPreviews(ctx context.Context, arg ListSpansMissingPreviewsParams) ([]ListSpansMissingPreviewsRow, error) {
+	rows, err := q.db.Query(ctx, listSpansMissingPreviews,
+		arg.SessionFilter,
+		arg.CursorSessionID,
+		arg.CursorTraceID,
+		arg.CursorSpanID,
+		arg.BatchSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSpansMissingPreviewsRow
+	for rows.Next() {
+		var i ListSpansMissingPreviewsRow
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.SessionID,
+			&i.TraceID,
+			&i.SpanID,
+			&i.Input,
+			&i.Output,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTraceSummariesBySession = `-- name: ListTraceSummariesBySession :many
 SELECT t.org_id, t.trace_id, t.session_id, t.user_prompt, t.response_preview, t.synthetic,
        t.status, t.source, t.started_at, t.ended_at, t.duration_ns,
@@ -876,6 +951,41 @@ func (q *Queries) PruneSpans(ctx context.Context, arg PruneSpansParams) (int64, 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const setSpanPreviews = `-- name: SetSpanPreviews :exec
+UPDATE spans_20260615
+SET input_preview  = $4,
+    output_preview = $5
+WHERE org_id = $1 AND trace_id = $2 AND span_id = $3
+  AND input_preview IS NULL
+  AND output_preview IS NULL
+`
+
+type SetSpanPreviewsParams struct {
+	OrgID         pgtype.UUID
+	TraceID       string
+	SpanID        string
+	InputPreview  []byte
+	OutputPreview []byte
+}
+
+// Fills the two preview columns and nothing else. Previews are outside
+// content_hash and never move derive_seq (see UpsertSpan), and the
+// payload is read, never rewritten: a backfill is invisible to every
+// change-feed consumer. Only a row still without previews is written:
+// the backfill reads the payload and writes the previews in separate
+// transactions, and a derive in between stores previews of the newer
+// payload, which a stale write must not replace.
+func (q *Queries) SetSpanPreviews(ctx context.Context, arg SetSpanPreviewsParams) error {
+	_, err := q.db.Exec(ctx, setSpanPreviews,
+		arg.OrgID,
+		arg.TraceID,
+		arg.SpanID,
+		arg.InputPreview,
+		arg.OutputPreview,
+	)
+	return err
 }
 
 const upsertSpan = `-- name: UpsertSpan :exec
