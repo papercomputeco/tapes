@@ -24,7 +24,7 @@ type stubSpanModel struct {
 	turn storage.SpanTurnRecord
 }
 
-func (s *stubSpanModel) GetTraceDetail(_ context.Context, _, traceID string) (*storage.SpanTurnRecord, []storage.SpanRecord, []storage.SpanLinkRecord, error) {
+func (s *stubSpanModel) GetTraceDetail(_ context.Context, _, traceID string, _ storage.PayloadMode) (*storage.SpanTurnRecord, []storage.SpanRecord, []storage.SpanLinkRecord, error) {
 	if traceID != s.turn.TraceID {
 		return nil, nil, nil, nil
 	}

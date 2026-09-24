@@ -568,9 +568,11 @@ func (d *Driver) ListTraceSpans(ctx context.Context, orgID, traceID string) ([]s
 	return spans, nil
 }
 
-// GetTraceDetail returns one turn with its spans and links. Implements
-// storage.SpanModelReader.
-func (d *Driver) GetTraceDetail(ctx context.Context, orgID, traceID string) (*storage.SpanTurnRecord, []storage.SpanRecord, []storage.SpanLinkRecord, error) {
+// GetTraceDetail returns one turn with its spans and links. In preview
+// mode the spans are read through the preview select list — stored
+// previews, no payload columns — so the per-trace preview read costs what
+// the composite's does. Implements storage.SpanModelReader.
+func (d *Driver) GetTraceDetail(ctx context.Context, orgID, traceID string, mode storage.PayloadMode) (*storage.SpanTurnRecord, []storage.SpanRecord, []storage.SpanLinkRecord, error) {
 	if d == nil || d.conn == nil {
 		return nil, nil, nil, errors.New("postgres driver not open")
 	}
@@ -597,13 +599,27 @@ func (d *Driver) GetTraceDetail(ctx context.Context, orgID, traceID string) (*st
 		cost: row.TotalCostUsd,
 	})
 
-	spanRows, err := d.q.ListSpansByTrace(ctx, gensqlc.ListSpansByTraceParams{OrgID: org, TraceID: traceID})
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("list spans by trace: %w", err)
-	}
-	spans := make([]storage.SpanRecord, 0, len(spanRows))
-	for _, r := range spanRows {
-		spans = append(spans, spanRecordFromRow(r))
+	var spans []storage.SpanRecord
+	if mode == storage.PayloadPreview {
+		// The same rows in the same order (the iterator's ORDER BY is
+		// ListSpansByTrace's), through the select list that leaves the
+		// payload untouched.
+		spans = []storage.SpanRecord{}
+		for rec, err := range d.IterateTraceSpans(ctx, orgID, traceID, storage.SpanCursor{}, mode) {
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("list preview spans by trace: %w", err)
+			}
+			spans = append(spans, rec)
+		}
+	} else {
+		spanRows, err := d.q.ListSpansByTrace(ctx, gensqlc.ListSpansByTraceParams{OrgID: org, TraceID: traceID})
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("list spans by trace: %w", err)
+		}
+		spans = make([]storage.SpanRecord, 0, len(spanRows))
+		for _, r := range spanRows {
+			spans = append(spans, spanRecordFromRow(r))
+		}
 	}
 
 	linkRows, err := d.q.ListSpanLinksByTrace(ctx, gensqlc.ListSpanLinksByTraceParams{OrgID: org, FromTraceID: traceID})

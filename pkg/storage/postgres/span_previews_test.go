@@ -223,7 +223,7 @@ var _ = Describe("span previews [postgres]", func() {
 			Expect(string(rec.InputPreview)).To(Equal(string(spans[rec.SpanID].inputPreview)))
 			Expect(string(rec.OutputPreview)).To(Equal(string(spans[rec.SpanID].outputPreview)))
 		}
-		for rec, err := range driver.IterateSessionSpans(ctx, sessionRowID, storage.SpanCursor{}) {
+		for rec, err := range driver.IterateSessionSpans(ctx, sessionRowID, storage.SpanCursor{}, storage.PayloadFull) {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(rec.HasPreview).To(BeTrue())
 			Expect(string(rec.InputPreview)).To(Equal(string(spans[rec.SpanID].inputPreview)))

@@ -9,6 +9,7 @@ package postgres_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
@@ -81,6 +82,21 @@ var _ = Describe("span iterators", func() {
 			INSERT INTO spans_20260615 (org_id, trace_id, span_id, session_id, kind, started_at, seq, input)
 			VALUES ($1, $2, $3, $4, 'llm', $5, $6, $7::jsonb)`,
 			mustUUID(orgID), traceID, spanID, mustUUID(sessionID), startedAt, seq, input)
+		Expect(err).NotTo(HaveOccurred())
+	}
+
+	// insertPreviewedSpan writes a span the way the deriver does now: the
+	// payload and its stored previews side by side. The preview is
+	// deliberately not the projection of the payload so a read that
+	// recomputed it from input/output would be told apart from one that
+	// served the stored column.
+	insertPreviewedSpan := func(traceID, spanID string, seq int64, input, output, inputPreview, outputPreview string) {
+		_, err := pgDriver.DB().Exec(ctx, `
+			INSERT INTO spans_20260615
+			    (org_id, trace_id, span_id, session_id, kind, started_at, seq, input, output, input_preview, output_preview)
+			VALUES ($1, $2, $3, $4, 'tool', $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb)`,
+			mustUUID(orgID), traceID, spanID, mustUUID(sessionID), base.Add(time.Duration(seq)*time.Second), seq,
+			input, output, inputPreview, outputPreview)
 		Expect(err).NotTo(HaveOccurred())
 	}
 
@@ -160,7 +176,7 @@ var _ = Describe("span iterators", func() {
 		// Warm-up pass: the pool connection and pgx's read buffers are
 		// allocated on first use, and belong in the baseline rather than in
 		// the growth being measured.
-		Expect(collectCount(pgDriver.IterateSessionSpans(ctx, sessionID, storage.SpanCursor{}))).To(Equal(n))
+		Expect(collectCount(pgDriver.IterateSessionSpans(ctx, sessionID, storage.SpanCursor{}, storage.PayloadFull))).To(Equal(n))
 
 		gcAndRead := func(m *runtime.MemStats) {
 			// Two cycles: the first only moves sync.Pool contents (pgx's
@@ -174,7 +190,7 @@ var _ = Describe("span iterators", func() {
 		gcAndRead(&before)
 		i := 0
 		var rowBytes int
-		for rec, err := range pgDriver.IterateSessionSpans(ctx, sessionID, storage.SpanCursor{}) {
+		for rec, err := range pgDriver.IterateSessionSpans(ctx, sessionID, storage.SpanCursor{}, storage.PayloadFull) {
 			Expect(err).NotTo(HaveOccurred())
 			i++
 			switch i {
@@ -216,7 +232,7 @@ var _ = Describe("span iterators", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(listed).To(HaveLen(n))
 
-		iterated := collect(pgDriver.IterateSessionSpans(ctx, sessionID, storage.SpanCursor{}))
+		iterated := collect(pgDriver.IterateSessionSpans(ctx, sessionID, storage.SpanCursor{}, storage.PayloadFull))
 		Expect(iterated).To(Equal(listed))
 
 		// Pin the key explicitly so a regression in the slice reader's ORDER
@@ -235,20 +251,20 @@ var _ = Describe("span iterators", func() {
 		for _, trace := range []string{"trc-a", "trc-b", "trc-c"} {
 			byTrace, err := pgDriver.ListTraceSpans(ctx, orgID, trace)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(collect(pgDriver.IterateTraceSpans(ctx, orgID, trace, storage.SpanCursor{}))).To(Equal(byTrace), trace)
+			Expect(collect(pgDriver.IterateTraceSpans(ctx, orgID, trace, storage.SpanCursor{}, storage.PayloadFull))).To(Equal(byTrace), trace)
 		}
 	})
 
 	It("resumes after a cursor without gap or repeat", func() {
 		n := seedOrderingFixture()
-		full := collect(pgDriver.IterateSessionSpans(ctx, sessionID, storage.SpanCursor{}))
+		full := collect(pgDriver.IterateSessionSpans(ctx, sessionID, storage.SpanCursor{}, storage.PayloadFull))
 		Expect(full).To(HaveLen(n))
 
 		// Stop mid-stream by breaking out of the range (which must close the
 		// rows), take the cursor from the last record seen, and restart.
 		const stopAfter = 4
 		var head []storage.SpanRecord
-		for rec, err := range pgDriver.IterateSessionSpans(ctx, sessionID, storage.SpanCursor{}) {
+		for rec, err := range pgDriver.IterateSessionSpans(ctx, sessionID, storage.SpanCursor{}, storage.PayloadFull) {
 			Expect(err).NotTo(HaveOccurred())
 			head = append(head, rec)
 			if len(head) == stopAfter {
@@ -258,13 +274,13 @@ var _ = Describe("span iterators", func() {
 		Eventually(func() int32 { return pgDriver.DB().Stat().AcquiredConns() }).Should(BeZero(),
 			"breaking out of the range must release the pooled connection")
 
-		tail := collect(pgDriver.IterateSessionSpans(ctx, sessionID, cursorOf(head[len(head)-1])))
+		tail := collect(pgDriver.IterateSessionSpans(ctx, sessionID, cursorOf(head[len(head)-1]), storage.PayloadFull))
 		Expect(append(head, tail...)).To(Equal(full))
 
 		// Every position is an exact restart point, including the ones that
 		// only started_at or span_id distinguish.
 		for k := range full {
-			resumed := collect(pgDriver.IterateSessionSpans(ctx, sessionID, cursorOf(full[k])))
+			resumed := collect(pgDriver.IterateSessionSpans(ctx, sessionID, cursorOf(full[k]), storage.PayloadFull))
 			Expect(resumed).To(Equal(full[k+1:]), "resume after %s/%s", full[k].TraceID, full[k].SpanID)
 			seen := map[string]bool{}
 			merged := append(append([]storage.SpanRecord{}, full[:k+1]...), resumed...)
@@ -279,13 +295,134 @@ var _ = Describe("span iterators", func() {
 		// trc-b are the tied-seq traces: a seq-only cursor would skip rows
 		// there, so they are the ones that matter.
 		for _, trace := range []string{"trc-a", "trc-b", "trc-c"} {
-			byTrace := collect(pgDriver.IterateTraceSpans(ctx, orgID, trace, storage.SpanCursor{}))
+			byTrace := collect(pgDriver.IterateTraceSpans(ctx, orgID, trace, storage.SpanCursor{}, storage.PayloadFull))
 			Expect(byTrace).To(HaveLen(3), trace)
 			for k := range byTrace {
-				resumed := collect(pgDriver.IterateTraceSpans(ctx, orgID, trace, cursorOf(byTrace[k])))
+				resumed := collect(pgDriver.IterateTraceSpans(ctx, orgID, trace, cursorOf(byTrace[k]), storage.PayloadFull))
 				Expect(resumed).To(Equal(byTrace[k+1:]), "resume %s after %s", trace, byTrace[k].SpanID)
 			}
 		}
+	})
+
+	Describe("payload=preview", func() {
+		const (
+			input         = `[{"type":"text","text":"the whole payload"}]`
+			output        = `[{"type":"tool_result","tool_output":"the whole result"}]`
+			inputPreview  = `[{"type":"text","text":"stored input preview"}]`
+			outputPreview = `[{"type":"tool_result","tool_output":"stored output preview"}]`
+		)
+
+		decoded := func(raw json.RawMessage) any {
+			var v any
+			Expect(json.Unmarshal(raw, &v)).To(Succeed(), string(raw))
+			return v
+		}
+
+		It("preview mode selects no payload column", func() {
+			// The select list itself: neither payload column may be named.
+			// Split on the separator so input_preview does not pass for
+			// input, and the full list is checked the same way to prove the
+			// split sees the columns it should.
+			columnsOf := func(sel string) []string {
+				parts := strings.Split(sel, ",")
+				out := make([]string, 0, len(parts))
+				for _, c := range parts {
+					out = append(out, strings.TrimSpace(c))
+				}
+				return out
+			}
+			previewColumns := columnsOf(postgres.PreviewSpanSelectForTest)
+			Expect(previewColumns).NotTo(ContainElement("input"))
+			Expect(previewColumns).NotTo(ContainElement("output"))
+			Expect(previewColumns).To(ContainElements("input_preview", "output_preview", "usage", "verdict"))
+			fullColumns := columnsOf(postgres.SpanSelectColumnsForTest)
+			Expect(fullColumns).To(ContainElements("input", "output"))
+			Expect(len(fullColumns)).To(Equal(len(previewColumns)+2), "preview is the full list minus the two payload columns")
+
+			// And the rows it produces: previews populated, payload nil,
+			// everything else as the full read serves it.
+			insertTurn("trc-p")
+			insertPreviewedSpan("trc-p", "p-0", 0, input, output, inputPreview, outputPreview)
+			insertPreviewedSpan("trc-p", "p-1", 1, input, output, inputPreview, outputPreview)
+
+			for name, seq := range map[string]iter.Seq2[storage.SpanRecord, error]{
+				"session": pgDriver.IterateSessionSpans(ctx, sessionID, storage.SpanCursor{}, storage.PayloadPreview),
+				"trace":   pgDriver.IterateTraceSpans(ctx, orgID, "trc-p", storage.SpanCursor{}, storage.PayloadPreview),
+			} {
+				recs := collect(seq)
+				Expect(recs).To(HaveLen(2), name)
+				for _, rec := range recs {
+					Expect(rec.Input).To(BeNil(), "%s: preview mode must not read input", name)
+					Expect(rec.Output).To(BeNil(), "%s: preview mode must not read output", name)
+					Expect(rec.HasPreview).To(BeTrue(), name)
+					Expect(decoded(rec.InputPreview)).To(Equal(decoded(json.RawMessage(inputPreview))), name)
+					Expect(decoded(rec.OutputPreview)).To(Equal(decoded(json.RawMessage(outputPreview))), name)
+				}
+			}
+
+			// The header columns agree with the full read, which still
+			// carries the payload.
+			full := collect(pgDriver.IterateTraceSpans(ctx, orgID, "trc-p", storage.SpanCursor{}, storage.PayloadFull))
+			preview := collect(pgDriver.IterateTraceSpans(ctx, orgID, "trc-p", storage.SpanCursor{}, storage.PayloadPreview))
+			Expect(preview).To(HaveLen(len(full)))
+			for i := range full {
+				Expect(decoded(full[i].Input)).To(Equal(decoded(json.RawMessage(input))))
+				Expect(decoded(full[i].Output)).To(Equal(decoded(json.RawMessage(output))))
+				full[i].Input, full[i].Output = nil, nil
+				Expect(preview[i]).To(Equal(full[i]), "span %d", i)
+			}
+		})
+
+		It("resumes a preview stream from a cursor", func() {
+			n := seedOrderingFixture()
+			full := collect(pgDriver.IterateSessionSpans(ctx, sessionID, storage.SpanCursor{}, storage.PayloadPreview))
+			Expect(full).To(HaveLen(n))
+			for k := range full {
+				resumed := collect(pgDriver.IterateSessionSpans(ctx, sessionID, cursorOf(full[k]), storage.PayloadPreview))
+				Expect(resumed).To(Equal(full[k+1:]), "resume after %s/%s", full[k].TraceID, full[k].SpanID)
+			}
+		})
+
+		It("reads a row without stored previews as pending", func() {
+			insertTurn("trc-q")
+			insertSpan("trc-q", "q-0", 0, base, input)
+			recs := collect(pgDriver.IterateTraceSpans(ctx, orgID, "trc-q", storage.SpanCursor{}, storage.PayloadPreview))
+			Expect(recs).To(HaveLen(1))
+			Expect(recs[0].HasPreview).To(BeFalse())
+			Expect(recs[0].InputPreview).To(BeNil())
+			Expect(recs[0].OutputPreview).To(BeNil())
+			Expect(recs[0].Input).To(BeNil())
+		})
+
+		It("serves stored previews on trace detail", func() {
+			insertTurn("trc-d")
+			insertPreviewedSpan("trc-d", "d-1", 1, input, output, inputPreview, outputPreview)
+			insertPreviewedSpan("trc-d", "d-0", 0, input, output, inputPreview, outputPreview)
+
+			turn, spans, _, err := pgDriver.GetTraceDetail(ctx, orgID, "trc-d", storage.PayloadPreview)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(turn).NotTo(BeNil())
+			Expect(spans).To(HaveLen(2))
+			Expect(spans[0].SpanID).To(Equal("d-0"), "presentation order is seq order")
+			for _, sp := range spans {
+				Expect(sp.Input).To(BeNil())
+				Expect(sp.Output).To(BeNil())
+				Expect(sp.HasPreview).To(BeTrue())
+				Expect(decoded(sp.InputPreview)).To(Equal(decoded(json.RawMessage(inputPreview))))
+				Expect(decoded(sp.OutputPreview)).To(Equal(decoded(json.RawMessage(outputPreview))))
+			}
+
+			// Full mode is the read it always was: the same rows with the
+			// payload, in the same order.
+			_, fullSpans, _, err := pgDriver.GetTraceDetail(ctx, orgID, "trc-d", storage.PayloadFull)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fullSpans).To(HaveLen(2))
+			for i := range fullSpans {
+				Expect(decoded(fullSpans[i].Input)).To(Equal(decoded(json.RawMessage(input))))
+				fullSpans[i].Input, fullSpans[i].Output = nil, nil
+				Expect(spans[i]).To(Equal(fullSpans[i]))
+			}
+		})
 	})
 
 	It("stops on context cancellation", func() {
@@ -300,7 +437,7 @@ var _ = Describe("span iterators", func() {
 			delivered int
 			finalErr  error
 		)
-		for _, err := range pgDriver.IterateSessionSpans(cctx, sessionID, storage.SpanCursor{}) {
+		for _, err := range pgDriver.IterateSessionSpans(cctx, sessionID, storage.SpanCursor{}, storage.PayloadFull) {
 			if err != nil {
 				finalErr = err
 				continue // keep ranging: the iterator must end on its own

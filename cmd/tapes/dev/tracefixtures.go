@@ -320,6 +320,11 @@ func recordsFromSpanSet(spanSet *derive.SpanSet, sessionID string) ([]storage.Sp
 				RawTurnID:    s.RawTurnID,
 				NodeHash:     s.NodeHash,
 				Verdict:      verdict,
+				// writeSpanSet stores previews beside the payload; the
+				// preview-mode fixtures render those, as the handlers do.
+				InputPreview:  derive.PreviewBlocks(input),
+				OutputPreview: derive.PreviewBlocks(output),
+				HasPreview:    true,
 			})
 		}
 		for _, l := range turn.Links {

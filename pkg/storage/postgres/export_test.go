@@ -86,6 +86,13 @@ var (
 	SpanTurnContentHashForTest = spanTurnContentHash
 )
 
+// The span select lists, exported so the iterator specs can pin that the
+// preview one names no payload column.
+const (
+	SpanSelectColumnsForTest = spanSelectColumns
+	PreviewSpanSelectForTest = previewSpanSelect
+)
+
 // ListChangedSpanTurnsForTest runs the real change-feed read so a test
 // exercises the bound that ships, not a copy of it that could drift.
 func (d *Driver) ListChangedSpanTurnsForTest(ctx context.Context, orgID pgtype.UUID, afterCursor int64, pageSize int32) ([]gensqlc.ListChangedSpanTurnsRow, error) {

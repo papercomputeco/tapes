@@ -124,7 +124,7 @@ func (p *tracesPage) writeTrace(ctx context.Context, out *pageWriter, turn stora
 	out.marshal(traceItemFromTurn(turn.SpanTurnRecord, turn.SpanCount))
 	out.writeString(`,"spans":[`)
 	first := true
-	for sp, err := range p.spans.IterateTraceSpans(ctx, p.orgID, turn.TraceID, storage.SpanCursor{}) {
+	for sp, err := range p.spans.IterateTraceSpans(ctx, p.orgID, turn.TraceID, storage.SpanCursor{}, p.mode) {
 		if err != nil {
 			return err
 		}

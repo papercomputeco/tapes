@@ -61,6 +61,35 @@ where they previously assumed one response was everything. Because the
 status is committed before the first span is read, a failure mid-page
 truncates the body rather than producing an error response.
 
+### Span payload modes
+
+`GET /v1/sessions/{id}/traces` and `GET /v1/traces/{trace_id}` take
+`payload=full` (the default) or `payload=preview`. Full mode embeds each
+span's stored `input` and `output` content-block arrays verbatim. Preview
+mode is for list-shaped reads: every string is bounded to 512 runes, image
+bytes are dropped, and nested tool arguments are truncated in place, so a
+whole session of previews stays smaller than one full tool result. A
+preview span carries `payload: "preview"`; fetch
+`GET /v1/traces/{trace_id}/spans/{span_id}` for its full content.
+
+Previews are computed once, by the deriver, and stored beside the payload
+(`input_preview` / `output_preview` on the spans table). A preview read
+selects only those columns and the span header — never `input` or
+`output` — so it costs what the header read costs regardless of payload
+size. Nothing is truncated at read time.
+
+Spans derived before the preview columns existed have no stored preview
+yet. Preview mode serves such a span with `input` and `output` pinned to
+`[]` and `payload: "preview_pending"`, and does not consult the payload;
+the span endpoint still serves its full content. A backfill fills the
+columns for those rows, after which they are served as `preview`. The `payload` query parameter accepts only
+`full` and `preview`; `preview_pending` is a response marker, not a mode.
+
+Preview content is served as it was stored. Postgres canonicalizes JSONB,
+so the key order inside a preview block is whatever the store returns, and
+it is not part of the contract; compare previews as decoded JSON. Full
+mode is unaffected: its bytes are the stored payload's.
+
 ### Both contracts are sealed
 
 No generated OpenAPI document is checked in — a copy of what the server states

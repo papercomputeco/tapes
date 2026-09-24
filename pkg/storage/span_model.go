@@ -111,6 +111,17 @@ type RawTurnHeader struct {
 	ResponseBytes int64
 }
 
+// PayloadMode selects which payload columns a span read carries. Full
+// reads Input and Output; Preview reads only the deriver-written
+// InputPreview / OutputPreview and leaves Input and Output nil, so a
+// preview read never detoasts the payload it summarizes.
+type PayloadMode string
+
+const (
+	PayloadFull    PayloadMode = "full"
+	PayloadPreview PayloadMode = "preview"
+)
+
 // SpanCursor is a resumption point in a span stream: the composite key
 // (trace_id, seq, started_at, span_id) of the last span a consumer has
 // already seen, in the order IterateSessionSpans and ListSessionSpanModel
@@ -141,14 +152,16 @@ type SpanModelReader interface {
 	// by one span regardless of session size: each record is yielded and
 	// released before the next row is read. Breaking out of the range
 	// closes the underlying rows. A read failure — including context
-	// cancellation — is surfaced as the final yielded error.
-	IterateSessionSpans(ctx context.Context, sessionID string, after SpanCursor) iter.Seq2[SpanRecord, error]
+	// cancellation — is surfaced as the final yielded error. mode selects
+	// the payload columns: PayloadPreview reads the stored previews and
+	// never the payload, so each record has Input and Output nil.
+	IterateSessionSpans(ctx context.Context, sessionID string, after SpanCursor, mode PayloadMode) iter.Seq2[SpanRecord, error]
 	// IterateTraceSpans streams one trace's spans in presentation order
 	// (seq, started_at, span_id ASC), starting strictly after `after`
 	// (zero value: from the first span). The cursor's TraceID is not part
-	// of the comparison — the trace is fixed by the argument. Same memory
-	// and error contract as IterateSessionSpans.
-	IterateTraceSpans(ctx context.Context, orgID, traceID string, after SpanCursor) iter.Seq2[SpanRecord, error]
+	// of the comparison — the trace is fixed by the argument. Same memory,
+	// error, and payload-mode contract as IterateSessionSpans.
+	IterateTraceSpans(ctx context.Context, orgID, traceID string, after SpanCursor, mode PayloadMode) iter.Seq2[SpanRecord, error]
 	ListTraceSummaries(ctx context.Context, sessionID string) ([]TraceSummaryRecord, error)
 	// ListSessionLinks returns a session's dataflow links alone — the
 	// payload-free half of ListSessionSpanModel. It backs the per-trace
@@ -159,7 +172,10 @@ type SpanModelReader interface {
 	// same per-trace read GetTraceDetail performs, without the turn/link
 	// round-trips. It backs the per-trace streaming export.
 	ListTraceSpans(ctx context.Context, orgID, traceID string) ([]SpanRecord, error)
-	GetTraceDetail(ctx context.Context, orgID, traceID string) (*SpanTurnRecord, []SpanRecord, []SpanLinkRecord, error)
+	// GetTraceDetail returns one turn with its spans and links. mode
+	// selects the span payload columns as it does for the iterators: in
+	// PayloadPreview the spans carry stored previews and nil payloads.
+	GetTraceDetail(ctx context.Context, orgID, traceID string, mode PayloadMode) (*SpanTurnRecord, []SpanRecord, []SpanLinkRecord, error)
 	GetSpanRecord(ctx context.Context, orgID, traceID, spanID string) (*SpanRecord, error)
 	ListRawTurnHeaders(ctx context.Context, orgID, harnessID, harnessSessionID string) ([]RawTurnHeader, error)
 }

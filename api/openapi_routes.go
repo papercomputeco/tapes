@@ -119,8 +119,11 @@ func (s *Server) mountSessions(router *oasfiber.Router) {
 			Tag("sessions").
 			PathParam("id", oas.String(), oas.ParamDescription("Session id (UUID)")).
 			QueryParam("payload", oas.String(oas.Enum("full", "preview")),
-				oas.ParamDescription("Span payload mode: full (default) or preview (strings truncated; "+
-					"fetch the span endpoint for full payloads)")).
+				oas.ParamDescription("Span payload mode: full (default) or preview. Preview serves each "+
+					"span's stored preview (strings truncated, image bytes dropped) and marks it "+
+					"payload=preview; a span derived before previews were stored is served with "+
+					"empty input/output and payload=preview_pending until backfilled. Fetch the "+
+					"span endpoint for full payloads.")).
 			QueryParam("limit", oas.Integer(oas.Minimum(1)),
 				oas.ParamDescription("Maximum number of traces in the page (default 50, max 200); a "+
 					"page may close short of it on its byte budget")).
@@ -226,8 +229,11 @@ func (s *Server) mountTraces(router *oasfiber.Router) {
 			Tag("traces").
 			PathParam("trace_id", oas.String(), oas.ParamDescription("Trace id")).
 			QueryParam("payload", oas.String(oas.Enum("full", "preview")),
-				oas.ParamDescription("Span payload mode: full (default) or preview (strings truncated; "+
-					"fetch the span endpoint for full payloads)")).
+				oas.ParamDescription("Span payload mode: full (default) or preview. Preview serves each "+
+					"span's stored preview (strings truncated, image bytes dropped) and marks it "+
+					"payload=preview; a span derived before previews were stored is served with "+
+					"empty input/output and payload=preview_pending until backfilled. Fetch the "+
+					"span endpoint for full payloads.")).
 			JSONResponse(200, "The trace", s.schema(StandaloneTraceDetail{})).
 			JSONResponse(404, "Trace not found", s.errorSchema()).
 			JSONResponse(500, "Failed to load trace", s.errorSchema()).

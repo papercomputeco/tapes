@@ -122,7 +122,8 @@ func (s *Server) handleGetTrace(c fiber.Ctx) error {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "span traces not supported by this backend"})
 	}
 	traceID := c.Params("trace_id")
-	turn, spans, links, err := reader.GetTraceDetail(c.RequestCtx(), singleTenantOrgID, traceID)
+	mode := payloadModeFromQuery(c.Query("payload"))
+	turn, spans, links, err := reader.GetTraceDetail(c.RequestCtx(), singleTenantOrgID, traceID, mode)
 	if err != nil {
 		s.logger.Error("get trace", "trace_id", traceID, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to get trace"})
@@ -132,7 +133,7 @@ func (s *Server) handleGetTrace(c fiber.Ctx) error {
 	}
 	return c.JSON(StandaloneTraceDetail{
 		SessionID:   turn.SessionID,
-		TraceDetail: BuildTraceDetail(*turn, spans, links, payloadModeFromQuery(c.Query("payload"))),
+		TraceDetail: BuildTraceDetail(*turn, spans, links, mode),
 	})
 }
 

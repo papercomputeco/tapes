@@ -70,7 +70,11 @@ func (d *pagedSpanModel) ListSessionLinks(_ context.Context, sessionID string) (
 	return append([]storage.SpanLinkRecord(nil), d.links...), nil
 }
 
-func (d *pagedSpanModel) IterateTraceSpans(ctx context.Context, _, traceID string, after storage.SpanCursor) iter.Seq2[storage.SpanRecord, error] {
+// IterateTraceSpans serves the trace's spans the way the postgres driver
+// does for the mode: a preview read never selects the payload columns, so
+// in preview mode the record reaches the handler with Input and Output
+// nil and only the stored previews populated.
+func (d *pagedSpanModel) IterateTraceSpans(ctx context.Context, _, traceID string, after storage.SpanCursor, mode storage.PayloadMode) iter.Seq2[storage.SpanRecord, error] {
 	if d.iterate != nil {
 		return d.iterate(ctx, traceID)
 	}
@@ -83,11 +87,42 @@ func (d *pagedSpanModel) IterateTraceSpans(ctx context.Context, _, traceID strin
 				yield(storage.SpanRecord{}, err)
 				return
 			}
-			if !yield(sp, nil) {
+			if !yield(recordForMode(sp, mode), nil) {
 				return
 			}
 		}
 	}
+}
+
+// GetTraceDetail serves one trace whole, with the same per-mode column
+// discipline as IterateTraceSpans. Links are the ones touching the trace.
+func (d *pagedSpanModel) GetTraceDetail(_ context.Context, _, traceID string, mode storage.PayloadMode) (*storage.SpanTurnRecord, []storage.SpanRecord, []storage.SpanLinkRecord, error) {
+	for _, t := range d.turns {
+		if t.TraceID != traceID {
+			continue
+		}
+		turn := t.SpanTurnRecord
+		spans := make([]storage.SpanRecord, 0, len(d.spans[traceID]))
+		for _, sp := range d.spans[traceID] {
+			spans = append(spans, recordForMode(sp, mode))
+		}
+		var links []storage.SpanLinkRecord
+		for _, l := range d.links {
+			if l.FromTraceID == traceID || l.ToTraceID == traceID {
+				links = append(links, l)
+			}
+		}
+		return &turn, spans, links, nil
+	}
+	return nil, nil, nil, nil
+}
+
+// recordForMode strips what the mode's select list would not have read.
+func recordForMode(sp storage.SpanRecord, mode storage.PayloadMode) storage.SpanRecord {
+	if mode == storage.PayloadPreview {
+		sp.Input, sp.Output = nil, nil
+	}
+	return sp
 }
 
 const pagedSessionID = "0f0e0d0c-0b0a-4908-8706-050403020100"
@@ -267,18 +302,21 @@ func heapAlloc() int64 {
 
 var _ = Describe("GET /v1/sessions/:id/traces pagination", func() {
 	It("matches the materialized composite byte for byte", func() {
+		// Full mode only: a full page embeds the stored payload bytes
+		// verbatim, so the stream must reproduce json.Marshal of the
+		// reference exactly. Preview mode serves stored previews, which
+		// Postgres hands back JSONB-canonicalized, so byte identity is not
+		// the contract there; preview_test.go compares it decoded.
 		driver := newPagedSpanModel(5, 4)
 		server := newPagedServer(driver)
 
-		for _, mode := range []PayloadMode{PayloadFull, PayloadPreview} {
-			want, err := json.Marshal(driver.reference(mode))
-			Expect(err).NotTo(HaveOccurred())
+		want, err := json.Marshal(driver.reference(PayloadFull))
+		Expect(err).NotTo(HaveOccurred())
 
-			response, body := getPage(server, "?payload="+string(mode))
-			Expect(response.StatusCode).To(Equal(http.StatusOK), string(body))
-			Expect(response.Header.Get(fiber.HeaderContentType)).To(Equal(fiber.MIMEApplicationJSON))
-			Expect(string(body)).To(Equal(string(want)), "payload=%s", mode)
-		}
+		response, body := getPage(server, "?payload=full")
+		Expect(response.StatusCode).To(Equal(http.StatusOK), string(body))
+		Expect(response.Header.Get(fiber.HeaderContentType)).To(Equal(fiber.MIMEApplicationJSON))
+		Expect(string(body)).To(Equal(string(want)))
 	})
 
 	It("paginates traces with a continuing cursor", func() {

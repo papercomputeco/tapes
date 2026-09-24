@@ -93,4 +93,12 @@ curl http://localhost:8081/v1/stats
 
 Session IDs and trace/span IDs are UUIDs, not content hashes. `GET /v1/sessions/{id}` returns session metadata; conversation content is on the trace/span endpoints. Raw-turn retrieval preserves the original capture separately from the derived model.
 
+The trace endpoints take `?payload=preview` for a bounded view of every
+span's content. The deriver stores that preview next to the payload — the
+spans table carries `input_preview` and `output_preview` beside `input` and
+`output` — and a preview read selects only the preview columns, so it never
+touches the payload. Rows derived before those columns existed report
+`payload: "preview_pending"` until a backfill fills them in.
+See [HTTP APIs](./apis.md#span-payload-modes).
+
 Browse the live contract at `http://localhost:8081/swagger`, or fetch it from `http://localhost:8081/openapi`. See [HTTP APIs](./apis.md) for the surface and trust boundary.
