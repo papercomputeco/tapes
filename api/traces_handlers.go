@@ -258,7 +258,7 @@ func (s *Server) handleGetSessionTraces(c fiber.Ctx) error {
 	}
 
 	orgID := singleTenantOrgID
-	sess, err := sessions.GetSessionRecord(c.RequestCtx(), orgID, id)
+	sess, err := sessions.GetSessionRecord(c.Context(), orgID, id)
 	if err != nil {
 		s.logger.Error("get session for traces", "id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session"})
@@ -271,12 +271,12 @@ func (s *Server) handleGetSessionTraces(c fiber.Ctx) error {
 	// here, before the status is committed: the payload-free turn headers
 	// (with their span counts, which the trace header carries ahead of its
 	// spans) and the session's links. The spans themselves stream.
-	turns, err := reader.ListTraceSummaries(c.RequestCtx(), id)
+	turns, err := reader.ListTraceSummaries(c.Context(), id)
 	if err != nil {
 		s.logger.Error("list trace summaries", "session_id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session traces"})
 	}
-	links, err := reader.ListSessionLinks(c.RequestCtx(), id)
+	links, err := reader.ListSessionLinks(c.Context(), id)
 	if err != nil {
 		s.logger.Error("list session links", "session_id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session traces"})

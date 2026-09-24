@@ -164,7 +164,7 @@ func foldRuneSimple(r rune) rune {
 // Fiber's c.Query collapses repeats to a single value; a claimed filter's
 // repeats are AND, so every occurrence matters.
 func queryParamValues(c fiber.Ctx, name string) []string {
-	raw := c.RequestCtx().QueryArgs().PeekMulti(name)
+	raw := c.Request().URI().QueryArgs().PeekMulti(name)
 	if len(raw) == 0 {
 		return nil
 	}
@@ -644,7 +644,7 @@ func (s *Server) handleListSessions(c fiber.Ctx) error {
 	opts.ClaimedFilters = claimedFilters
 	// Fetch one extra item to detect whether a next page exists.
 	opts.Limit = limit + 1
-	sessions, err := reader.ListSessionRecords(c.RequestCtx(), orgID, opts)
+	sessions, err := reader.ListSessionRecords(c.Context(), orgID, opts)
 	if err != nil {
 		s.logger.Error("list sessions", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
@@ -738,7 +738,7 @@ func (s *Server) listSessionsByHarness(c fiber.Ctx, reader sessionsReader, claim
 		for _, rec := range recs {
 			matched := true
 			for fi := range claimedFilters {
-				ok, err := matcher.MatchesPublishedFilter(c.RequestCtx(), &claimedFilters[fi], rec.ID)
+				ok, err := matcher.MatchesPublishedFilter(c.Context(), &claimedFilters[fi], rec.ID)
 				if err != nil {
 					return nil, err
 				}
@@ -760,7 +760,7 @@ func (s *Server) listSessionsByHarness(c fiber.Ctx, reader sessionsReader, claim
 	// vocabulary).
 	items := []SessionItem{}
 	if harnessID == "" {
-		recs, err := reader.ListSessionRecordsByHarnessSessionID(c.RequestCtx(), orgID, harnessSessionID)
+		recs, err := reader.ListSessionRecordsByHarnessSessionID(c.Context(), orgID, harnessSessionID)
 		if err != nil {
 			s.logger.Error("list sessions by harness session id", "error", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
@@ -776,7 +776,7 @@ func (s *Server) listSessionsByHarness(c fiber.Ctx, reader sessionsReader, claim
 		return c.JSON(SessionListResponse{Items: items})
 	}
 
-	sess, err := reader.GetSessionRecordByHarness(c.RequestCtx(), orgID, harnessID, harnessSessionID)
+	sess, err := reader.GetSessionRecordByHarness(c.Context(), orgID, harnessID, harnessSessionID)
 	if err != nil {
 		s.logger.Error("get session by harness", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
@@ -812,7 +812,7 @@ func (s *Server) handleGetSession(c fiber.Ctx) error {
 	}
 
 	orgID := singleTenantOrgID
-	sess, err := reader.GetSessionRecord(c.RequestCtx(), orgID, id)
+	sess, err := reader.GetSessionRecord(c.Context(), orgID, id)
 	if err != nil {
 		s.logger.Error("get session", "id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session"})
@@ -844,7 +844,7 @@ func (s *Server) handleDeleteSession(c fiber.Ctx) error {
 	}
 
 	orgID := singleTenantOrgID
-	deleted, err := writer.DeleteSession(c.RequestCtx(), orgID, id)
+	deleted, err := writer.DeleteSession(c.Context(), orgID, id)
 	if err != nil {
 		s.logger.Error("delete session", "id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to delete session"})
@@ -925,7 +925,7 @@ func (s *Server) handleUpdateSession(c fiber.Ctx) error {
 	}
 
 	orgID := singleTenantOrgID
-	rowsAffected, err := reader.UpdateSessionDisplayName(c.RequestCtx(), orgID, id, normalized)
+	rowsAffected, err := reader.UpdateSessionDisplayName(c.Context(), orgID, id, normalized)
 	if err != nil {
 		s.logger.Error("update session display name", "id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to update session"})
@@ -934,7 +934,7 @@ func (s *Server) handleUpdateSession(c fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
 	}
 
-	sess, err := reader.GetSessionRecord(c.RequestCtx(), orgID, id)
+	sess, err := reader.GetSessionRecord(c.Context(), orgID, id)
 	if err != nil {
 		s.logger.Error("get session", "id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to update session"})

@@ -37,7 +37,7 @@ func (s *Server) handleSeedDemo(c fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "overwrite is no longer supported; seeding is idempotent against the raw layer"})
 	}
 
-	report, err := seed.Run(c.RequestCtx(), s.driver, s.logger, singleTenantOrgID)
+	report, err := seed.Run(c.Context(), s.driver, s.logger, singleTenantOrgID)
 	if err != nil {
 		if errors.Is(err, seed.ErrUnsupportedDriver) {
 			return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: err.Error()})
@@ -78,7 +78,7 @@ func (s *Server) handleDeriveRun(c fiber.Ctx) error {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "driver does not host the raw-turn layer"})
 	}
 
-	reports, err := runner.RederiveFromRaw(c.RequestCtx(), "")
+	reports, err := runner.RederiveFromRaw(c.Context(), "")
 	if err != nil {
 		s.logger.Error("derive run", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: err.Error()})
@@ -109,7 +109,7 @@ func (s *Server) handleRawTurnAttributionRepair(c fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
 	}
 	req.OrgID = singleTenantOrgID
-	result, err := repairer.RepairRawTurnAttribution(c.RequestCtx(), "", req)
+	result, err := repairer.RepairRawTurnAttribution(c.Context(), "", req)
 	if err != nil {
 		switch {
 		case errors.Is(err, storage.ErrRawTurnNotFound):

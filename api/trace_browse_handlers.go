@@ -121,7 +121,7 @@ func (s *Server) handleListTraceSummaries(c fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "session_id must be a valid UUID"})
 	}
 	orgID := singleTenantOrgID
-	sess, err := sessions.GetSessionRecord(c.RequestCtx(), orgID, sessionID)
+	sess, err := sessions.GetSessionRecord(c.Context(), orgID, sessionID)
 	if err != nil {
 		s.logger.Error("get session for trace summaries", "session_id", sessionID, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session"})
@@ -129,7 +129,7 @@ func (s *Server) handleListTraceSummaries(c fiber.Ctx) error {
 	if sess == nil {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
 	}
-	rows, err := reader.ListTraceSummaries(c.RequestCtx(), sessionID)
+	rows, err := reader.ListTraceSummaries(c.Context(), sessionID)
 	if err != nil {
 		s.logger.Error("list trace summaries", "session_id", sessionID, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list traces"})
@@ -186,7 +186,7 @@ func (s *Server) handleGetTrace(c fiber.Ctx) error {
 	// (with the span count the trace header carries ahead of its spans)
 	// and the links touching the trace. The spans themselves stream.
 	orgID := singleTenantOrgID
-	turn, err := reader.GetTraceSummary(c.RequestCtx(), orgID, traceID)
+	turn, err := reader.GetTraceSummary(c.Context(), orgID, traceID)
 	if err != nil {
 		s.logger.Error("get trace", "trace_id", traceID, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to get trace"})
@@ -194,7 +194,7 @@ func (s *Server) handleGetTrace(c fiber.Ctx) error {
 	if turn == nil {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "trace not found"})
 	}
-	links, err := reader.ListTraceLinks(c.RequestCtx(), orgID, traceID)
+	links, err := reader.ListTraceLinks(c.Context(), orgID, traceID)
 	if err != nil {
 		s.logger.Error("list trace links", "trace_id", traceID, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to get trace"})
@@ -267,7 +267,7 @@ func (s *Server) handleGetSpan(c fiber.Ctx) error {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "span traces not supported by this backend"})
 	}
 	traceID, spanID := c.Params("trace_id"), c.Params("span_id")
-	rec, err := reader.GetSpanRecord(c.RequestCtx(), singleTenantOrgID, traceID, spanID)
+	rec, err := reader.GetSpanRecord(c.Context(), singleTenantOrgID, traceID, spanID)
 	if err != nil {
 		s.logger.Error("get span", "trace_id", traceID, "span_id", spanID, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to get span"})
@@ -311,7 +311,7 @@ func (s *Server) handleListSessionRawTurns(c fiber.Ctx) error {
 		afterID = cur.ID
 	}
 	orgID := singleTenantOrgID
-	sess, err := sessions.GetSessionRecord(c.RequestCtx(), orgID, id)
+	sess, err := sessions.GetSessionRecord(c.Context(), orgID, id)
 	if err != nil {
 		s.logger.Error("get session for raw turns", "id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session"})
@@ -321,7 +321,7 @@ func (s *Server) handleListSessionRawTurns(c fiber.Ctx) error {
 	}
 	// One row past the page tells whether a next page exists without a
 	// second count query; it is trimmed before rendering.
-	rows, err := reader.ListRawTurnHeaders(c.RequestCtx(), orgID, sess.HarnessID, sess.HarnessSessionID, afterID, limit+1)
+	rows, err := reader.ListRawTurnHeaders(c.Context(), orgID, sess.HarnessID, sess.HarnessSessionID, afterID, limit+1)
 	if err != nil {
 		s.logger.Error("list raw turn headers", "session_id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list raw turns"})
