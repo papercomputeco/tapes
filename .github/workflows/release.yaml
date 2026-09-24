@@ -110,7 +110,7 @@ jobs:
               --access-key-id=env://BUCKET_ACCESS_KEY_ID \
               --secret-access-key=env://BUCKET_SECRET_ACCESS_KEY \
             export \
-              --path=./build
+              --path=./build --cloud
         env:
           BUCKET_ENDPOINT: ${{ secrets.BUCKET_ENDPOINT }}
           BUCKET_NAME: ${{ secrets.BUCKET_NAME }}
@@ -137,7 +137,7 @@ jobs:
           nix develop --command dagger call \
             contracts \
             export \
-              --path=./contracts
+              --path=./contracts --cloud
         env:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 

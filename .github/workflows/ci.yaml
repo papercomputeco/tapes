@@ -86,7 +86,7 @@ jobs:
       - name: Build binaries via Dagger
         env:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-        run: nix develop --command dagger call build export --path=./build
+        run: nix develop --command dagger call build export --path=./build --cloud
 
       - name: Upload darwin arm64 binaries
         uses: actions/upload-artifact@v4
