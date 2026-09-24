@@ -102,3 +102,20 @@ touches the payload. Rows derived before those columns existed report
 See [HTTP APIs](./apis.md#span-payload-modes).
 
 Browse the live contract at `http://localhost:8081/swagger`, or fetch it from `http://localhost:8081/openapi`. See [HTTP APIs](./apis.md) for the surface and trust boundary.
+
+## Payload compression on disk
+
+The raw layer (`raw_turns.raw_request`, `raw_turns.response`) and the span
+payloads and previews (`input`, `output`, `input_preview`, `output_preview`)
+are JSONB, so Postgres compresses any value past its TOAST threshold. Those
+columns are set to `lz4`, which compresses this JSON about as well as the
+`pglz` default and decompresses several times faster; every read of a turn or
+a span is a decompression, so that is where it shows. The setting is per
+column — the cluster's `default_toast_compression` is untouched — and applies
+to new rows only: values stored before it keep their `pglz` and read back
+correctly until something rewrites them (a dump and restore does; `VACUUM
+FULL` and `CLUSTER` copy compressed bytes as they are). Whether to rewrite
+existing rows is an operator decision; nothing in Tapes does it for you.
+`SELECT pg_column_compression(raw_request) FROM raw_turns WHERE id = ...`
+shows which method a stored value carries (`NULL` for values small enough to
+stay inline).
