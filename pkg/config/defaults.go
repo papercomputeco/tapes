@@ -1,5 +1,7 @@
 package config
 
+import "time"
+
 const (
 	defaultProvider     = "ollama"
 	defaultUpstream     = "http://localhost:11434"
@@ -13,6 +15,12 @@ const (
 	defaultLogLevel  = "info"
 	defaultLogFormat = "auto"
 	defaultLogColor  = "auto"
+
+	// The API read guards. The deadline sits under the gateway's 30 s so a
+	// read the gateway has given up on is cancelled server-side rather than
+	// left running under the retry; the cap is per replica.
+	defaultAPIReadDeadline       = 20 * time.Second
+	defaultAPIPayloadConcurrency = 4
 )
 
 // NewDefaultConfig returns a Config with sane defaults for all fields.
@@ -26,8 +34,10 @@ func NewDefaultConfig() *Config {
 			Listen:   defaultProxyListen,
 		},
 		API: APIConfig{
-			Listen: defaultAPIListen,
-			WebUI:  false,
+			Listen:             defaultAPIListen,
+			WebUI:              false,
+			ReadDeadline:       defaultAPIReadDeadline,
+			PayloadConcurrency: defaultAPIPayloadConcurrency,
 		},
 		Ingest: IngestConfig{
 			Listen: defaultIngestListen,

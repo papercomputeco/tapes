@@ -3,6 +3,8 @@
 package api
 
 import (
+	"time"
+
 	"github.com/papercomputeco/tapes/pkg/cassette"
 	"github.com/papercomputeco/tapes/pkg/sessions"
 )
@@ -26,4 +28,16 @@ type Config struct {
 	// admission, and the newest entry is what the discovery document
 	// advertises as current. Empty means DefaultContractVersions().
 	ContractVersions []cassette.ContractVersion
+
+	// ReadDeadline bounds every request: its context is cancelled once the
+	// deadline elapses, so storage aborts and a stream still writing is cut
+	// rather than left running for a client that has already given up.
+	// Zero installs no deadline. See guards.go.
+	ReadDeadline time.Duration
+
+	// PayloadConcurrency caps how many payload-bearing reads (session
+	// traces, trace pages, span drill-ins) this replica serves at once; a
+	// read past the cap is shed with 503 and Retry-After. Zero disables the
+	// cap. See guards.go.
+	PayloadConcurrency int
 }

@@ -59,6 +59,8 @@ Useful supported keys include:
 | `proxy.project` | Session project tag | auto-detected from Git when unset |
 | `api.listen` | Read API listen address | `:8081` |
 | `api.web_ui` | Minimal browser UI at `/` | `false` |
+| `api.read_deadline` | Deadline on every read API request; `0` disables (see [Read guards](#read-guards)) | `20s` |
+| `api.payload_concurrency` | Concurrent full-payload reads per replica; `0` disables (see [Read guards](#read-guards)) | `4` |
 | `ingest.listen` | Private ingest listen address | `:8082` |
 | `client.proxy_target` | Proxy URL used by clients | `http://localhost:8080` |
 | `client.api_target` | API URL used by clients | `http://localhost:8081` |
@@ -118,6 +120,51 @@ simply absent when unset. In Kubernetes these come from the downward API:
 | `TAPES_REPLICA_SET` | owning ReplicaSet name, when the deployment can supply it |
 | `TAPES_IMAGE_DIGEST` | the running image's digest |
 
+### Read guards
+
+The read API runs every request under a deadline and caps how many
+payload-bearing reads one replica serves at once. Both are per-process
+settings, with the usual precedence; the flag is spelled one way on
+`tapes serve api` and with the `api-` prefix on the bundled `tapes serve`:
+
+| Setting | `tapes serve api` | `tapes serve` | Default |
+| --- | --- | --- | --- |
+| `api.read_deadline` | `--read-deadline` | `--api-read-deadline` | `20s` |
+| `api.payload_concurrency` | `--payload-concurrency` | `--api-payload-concurrency` | `4` |
+
+**The deadline** bounds the request's context. When it elapses, storage
+calls still running are cancelled — a cancelled query aborts on the
+database side rather than running to completion for a client that has
+already given up — and a response still streaming is cut short: the client
+sees a truncated document, not a hang. It defaults to 20 seconds, under the
+30-second gateway timeout, so a read the gateway has answered with a 504 is
+not left running underneath the retry. `0` installs no deadline. The MCP
+endpoint (`/v1/mcp`) is exempt: it runs cassette tool calls under its own
+30-second timeout, which a shorter read deadline would cut short. So are the
+operator jobs under `/v1/admin/` (the demo seed, the derive run, attribution
+repair): they are writes that run for as long as the corpus takes, not reads
+a client is waiting on.
+
+**The concurrency cap** applies only to the routes whose responses carry
+span payloads: `GET /v1/sessions/{id}/traces`, `GET /v1/traces/{trace_id}`,
+and `GET /v1/traces/{trace_id}/spans/{span_id}`, and there only to
+full-payload reads: a `payload=preview` read of the composite or of a
+trace page serves stored previews and never touches a payload column, so
+it passes uncounted. The span drill-in has no preview mode and always
+counts. A payload read past the cap is not queued; it is answered immediately with `503`, a
+`Retry-After: 1` header, and the body
+`{"error":"too many concurrent payload reads"}`, so a client retries a
+second later against a replica that is still standing. Every other route —
+the sessions list, the trace summaries, stats — keeps answering while a
+replica is shedding, so a console under load degrades rather than going
+dark. A streamed read holds its slot until its stream has been written.
+`0` disables the cap.
+
+The gauge `tapes_apiserver_payload_reads_inflight` on `/metrics` reports how
+many payload reads the replica is serving at the moment, whether or not the
+cap is enabled; a replica sitting at its cap is one whose gauge reads
+`api.payload_concurrency`.
+
 ### Memory in a container
 
 `tapes serve api` and `tapes serve derive-worker` each set a soft heap limit
@@ -158,6 +205,8 @@ listen = ":8080"
 
 [api]
 listen = ":8081"
+read_deadline = "20s"
+payload_concurrency = 4
 
 [client]
 proxy_target = "http://localhost:8080"
