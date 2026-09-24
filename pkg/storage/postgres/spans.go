@@ -738,15 +738,17 @@ func (d *Driver) ListRawTurnHeaders(ctx context.Context, orgID, harnessID, harne
 	out := make([]storage.RawTurnHeader, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, storage.RawTurnHeader{
-			ID:            r.ID,
-			Source:        r.Source,
-			Provider:      r.Provider,
-			AgentName:     r.AgentName,
-			RequestID:     r.RequestID,
-			ReceivedAt:    r.ReceivedAt.Time,
-			Meta:          r.Meta,
-			RequestBytes:  r.RequestBytes,
-			ResponseBytes: r.ResponseBytes,
+			ID:                 r.ID,
+			Source:             r.Source,
+			Provider:           r.Provider,
+			AgentName:          r.AgentName,
+			RequestID:          r.RequestID,
+			ReceivedAt:         r.ReceivedAt.Time,
+			Meta:               r.Meta,
+			RequestBytes:       r.RequestBytes,
+			ResponseBytes:      r.ResponseBytes,
+			RawResponseBytes:   r.RawResponseBytes,
+			RawResponseDropped: r.RawResponseDropped,
 		})
 	}
 	return out, nil

@@ -99,16 +99,36 @@ type TraceSummaryRecord struct {
 
 // RawTurnHeader is one wire-log row: capture identity and sizes, no
 // payloads. The operator surface onto the raw layer.
+//
+// The sizes are read from the row's capture metadata, never measured
+// from the stored payloads: a header listing that detoasted every blob
+// to count its bytes would cost what the payload read costs, which is
+// the read this surface exists to avoid.
 type RawTurnHeader struct {
-	ID            int64
-	Source        string
-	Provider      string
-	AgentName     string
-	RequestID     string
-	ReceivedAt    time.Time
-	Meta          json.RawMessage
+	ID         int64
+	Source     string
+	Provider   string
+	AgentName  string
+	RequestID  string
+	ReceivedAt time.Time
+	Meta       json.RawMessage
+
+	// RequestBytes / ResponseBytes are the sizes the capture adapter
+	// recorded in meta (request_bytes / response_bytes). 0 when the
+	// producer did not report them or the value is not a number.
 	RequestBytes  int64
 	ResponseBytes int64
+
+	// RawResponseBytes is the stored length of the verbatim upstream
+	// response bytes; 0 when none were kept. It is read from the bytea
+	// column's length, not the bytes.
+	RawResponseBytes int64
+
+	// RawResponseDropped marks a turn whose verbatim response existed
+	// but was not kept — it exceeded the ingest cap or the producer
+	// withheld it — so 0 raw bytes with the flag set is a fidelity gap,
+	// not an absence. See RawTurnRecord.RawResponseDropped.
+	RawResponseDropped bool
 }
 
 // PayloadMode selects which payload columns a span read carries. Full

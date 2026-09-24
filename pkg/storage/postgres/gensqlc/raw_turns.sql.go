@@ -213,8 +213,12 @@ SELECT r.id, r.org_id, r.source, r.provider, r.agent_name, r.request_id,
        (CASE WHEN c.id IS NULL THEN r.meta
              ELSE jsonb_set(r.meta, '{thread_id}', to_jsonb(c.thread_id), true)
         END)::jsonb AS meta,
-       COALESCE(length(r.raw_request::text), 0)::bigint AS request_bytes,
-       COALESCE(length(r.response::text), 0)::bigint AS response_bytes,
+       (CASE WHEN r.meta->>'request_bytes' ~ '^[0-9]{1,18}$'
+             THEN (r.meta->>'request_bytes')::bigint
+             ELSE 0 END)::bigint AS request_bytes,
+       (CASE WHEN r.meta->>'response_bytes' ~ '^[0-9]{1,18}$'
+             THEN (r.meta->>'response_bytes')::bigint
+             ELSE 0 END)::bigint AS response_bytes,
        COALESCE(octet_length(r.raw_response), 0)::bigint AS raw_response_bytes,
        r.raw_response_dropped
 FROM raw_turns r
@@ -261,6 +265,15 @@ type ListRawTurnHeadersBySessionRow struct {
 
 // Operator wire log: identity + sizes, no payloads. The raw layer is
 // the capture truth; this surfaces it without shipping the blobs.
+//
+// request_bytes / response_bytes are the sizes the capture adapter
+// recorded in meta (extproc writes both), not the stored payloads
+// measured: length(jsonb::text) detoasts and re-serializes every blob
+// in the session, which is exactly the cost a header listing exists to
+// avoid. The digit-only guard keeps one malformed meta value from
+// failing the whole listing; anything unparseable, or absent because
+// the producer never reported it, reads as 0. octet_length on the bytea
+// column is fine — it reads the stored length, not the bytes.
 func (q *Queries) ListRawTurnHeadersBySession(ctx context.Context, arg ListRawTurnHeadersBySessionParams) ([]ListRawTurnHeadersBySessionRow, error) {
 	rows, err := q.db.Query(ctx, listRawTurnHeadersBySession, arg.OrgID, arg.HarnessID, arg.HarnessSessionID)
 	if err != nil {

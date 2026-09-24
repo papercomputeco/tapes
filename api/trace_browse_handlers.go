@@ -31,15 +31,34 @@ type TraceListResponse struct {
 // arrived as a transcript push), without the payload blobs. The
 // `source` field is the wire-vs-transcript distinction.
 type RawTurnHeaderItem struct {
-	ID            int64           `json:"id"`
-	Source        string          `json:"source"`
-	Provider      string          `json:"provider,omitempty"`
-	AgentName     string          `json:"agent_name,omitempty"`
-	RequestID     string          `json:"request_id,omitempty"`
-	ReceivedAt    time.Time       `json:"received_at"`
-	Meta          json.RawMessage `json:"meta,omitempty" oas:"type=object"`
-	RequestBytes  int64           `json:"request_bytes"`
-	ResponseBytes int64           `json:"response_bytes"`
+	ID         int64           `json:"id"`
+	Source     string          `json:"source"`
+	Provider   string          `json:"provider,omitempty"`
+	AgentName  string          `json:"agent_name,omitempty"`
+	RequestID  string          `json:"request_id,omitempty"`
+	ReceivedAt time.Time       `json:"received_at"`
+	Meta       json.RawMessage `json:"meta,omitempty" oas:"type=object"`
+
+	// RequestBytes is the request size the capture adapter recorded at
+	// capture time (meta.request_bytes), not a measurement of the stored
+	// payload; 0 when the producer did not report one.
+	RequestBytes int64 `json:"request_bytes"`
+
+	// ResponseBytes is the response size the capture adapter recorded at
+	// capture time (meta.response_bytes), not a measurement of the stored
+	// payload; 0 when the producer did not report one.
+	ResponseBytes int64 `json:"response_bytes"`
+
+	// RawResponseBytes is how many verbatim upstream response bytes the
+	// raw layer retained for this turn, as they arrived on the wire and
+	// before any reduction; 0 when none were kept.
+	RawResponseBytes int64 `json:"raw_response_bytes"`
+
+	// RawResponseDropped is true when the turn's verbatim response
+	// existed but was not retained — it exceeded the 8 MiB ingest cap or
+	// the producer withheld it — so raw_response_bytes=0 with this set is
+	// a fidelity gap, not a turn that never had verbatim bytes.
+	RawResponseDropped bool `json:"raw_response_dropped"`
 }
 
 // RawTurnListResponse is a session's wire log.
@@ -291,6 +310,7 @@ func (s *Server) handleListSessionRawTurns(c fiber.Ctx) error {
 			AgentName: r.AgentName, RequestID: r.RequestID,
 			ReceivedAt: r.ReceivedAt, Meta: r.Meta,
 			RequestBytes: r.RequestBytes, ResponseBytes: r.ResponseBytes,
+			RawResponseBytes: r.RawResponseBytes, RawResponseDropped: r.RawResponseDropped,
 		})
 	}
 	return c.JSON(RawTurnListResponse{Items: items})

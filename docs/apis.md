@@ -118,6 +118,31 @@ so the key order inside a preview block is whatever the store returns, and
 it is not part of the contract; compare previews as decoded JSON. Full
 mode is unaffected: its bytes are the stored payload's.
 
+### Raw turn sizes are capture-time metadata
+
+`GET /v1/sessions/{id}/raw_turns` is the operator's wire log: one header
+per captured call or transcript push, identity and sizes only, never the
+payloads. Its `request_bytes` and `response_bytes` are the sizes the
+capture adapter recorded when the turn crossed the wire (`request_bytes`
+and `response_bytes` in the row's `meta`, which `tapes-extproc` writes),
+not a measurement of the stored payloads. Measuring would mean detoasting
+and re-serializing every blob in the session to count it — the cost a
+header listing exists to avoid — so the stored rows are never read for
+their size. A producer that did not record a size, or recorded one that
+is not a number, reports `0`; one malformed value does not fail the
+listing.
+
+Each header also reports the raw layer's own fidelity:
+
+- `raw_response_bytes` is how many verbatim upstream response bytes the
+  row retained, as they arrived on the wire and before any reduction;
+  `0` when none were kept.
+- `raw_response_dropped` is `true` when the verbatim response existed
+  but was not retained, because it exceeded the 8 MiB ingest cap or the
+  producer withheld it. `raw_response_bytes: 0` with this flag set is a
+  fidelity gap — the turn cannot be re-derived from its source bytes —
+  not a turn that never had any.
+
 ### Both contracts are sealed
 
 No generated OpenAPI document is checked in — a copy of what the server states
