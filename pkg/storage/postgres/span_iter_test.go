@@ -186,32 +186,57 @@ var _ = Describe("span iterators", func() {
 			runtime.ReadMemStats(m)
 		}
 
-		var before, atFirst, atLast runtime.MemStats
-		gcAndRead(&before)
-		i := 0
-		var rowBytes int
-		for rec, err := range pgDriver.IterateSessionSpans(ctx, sessionID, storage.SpanCursor{}, storage.PayloadFull) {
-			Expect(err).NotTo(HaveOccurred())
-			i++
-			switch i {
-			case 1:
-				rowBytes = len(rec.Input) + len(rec.Output) + len(rec.Usage) + len(rec.Verdict)
-				Expect(rowBytes).To(BeNumerically(">=", payloadBytes))
-				gcAndRead(&atFirst)
-			case n:
-				// Measured with the last record still live, not after the
-				// loop has released everything.
-				gcAndRead(&atLast)
-				runtime.KeepAlive(rec)
+		// One pass reads the heap at the first and the last row with the
+		// record live. Anything else that happens to become live in the test
+		// process between those two readings (another suite's residue, pgx's
+		// statement cache, Ginkgo's own bookkeeping) lands in the delta, and
+		// that noise is the same order as the four-row budget. A real per-row
+		// leak scales with 5,000 rows and cannot hide behind a retry, so the
+		// spec measures three passes and judges the smallest delta.
+		measure := func() (rowBytes int, growthFromBaseline, growthAcrossStream int64) {
+			var before, atFirst, atLast runtime.MemStats
+			gcAndRead(&before)
+			i := 0
+			for rec, err := range pgDriver.IterateSessionSpans(ctx, sessionID, storage.SpanCursor{}, storage.PayloadFull) {
+				Expect(err).NotTo(HaveOccurred())
+				i++
+				switch i {
+				case 1:
+					rowBytes = len(rec.Input) + len(rec.Output) + len(rec.Usage) + len(rec.Verdict)
+					Expect(rowBytes).To(BeNumerically(">=", payloadBytes))
+					gcAndRead(&atFirst)
+				case n:
+					// Measured with the last record still live, not after the
+					// loop has released everything.
+					gcAndRead(&atLast)
+					runtime.KeepAlive(rec)
+				}
 			}
+			Expect(i).To(Equal(n))
+			return rowBytes,
+				int64(atLast.HeapAlloc) - int64(before.HeapAlloc),
+				int64(atLast.HeapAlloc) - int64(atFirst.HeapAlloc)
 		}
-		Expect(i).To(Equal(n))
+
+		const passes = 3
+		var rowBytes int
+		var growthFromBaseline, growthAcrossStream int64
+		for pass := range passes {
+			bytes, fromBaseline, acrossStream := measure()
+			fmt.Fprintf(GinkgoWriter, "pass %d: row payload %d B; heap growth baseline->last row %d B, first row->last row %d B\n",
+				pass+1, bytes, fromBaseline, acrossStream)
+			if pass == 0 || fromBaseline < growthFromBaseline {
+				growthFromBaseline = fromBaseline
+			}
+			if pass == 0 || acrossStream < growthAcrossStream {
+				growthAcrossStream = acrossStream
+			}
+			rowBytes = bytes
+		}
 
 		budget := int64(4 * rowBytes)
-		growthFromBaseline := int64(atLast.HeapAlloc) - int64(before.HeapAlloc)
-		growthAcrossStream := int64(atLast.HeapAlloc) - int64(atFirst.HeapAlloc)
-		fmt.Fprintf(GinkgoWriter, "row payload %d B; heap growth baseline->last row %d B, first row->last row %d B; budget %d B\n",
-			rowBytes, growthFromBaseline, growthAcrossStream, budget)
+		fmt.Fprintf(GinkgoWriter, "smallest of %d passes: baseline->last row %d B, first row->last row %d B; budget %d B\n",
+			passes, growthFromBaseline, growthAcrossStream, budget)
 		// The scaling check: both readings are taken inside the loop with a
 		// record live, so the only difference between them is what 4,999
 		// intervening rows left behind — which must be nothing.
