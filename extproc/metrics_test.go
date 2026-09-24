@@ -347,6 +347,13 @@ var _ = Describe("model family labelling", func() {
 		for raw, want := range map[string]string{
 			"gpt-6-astra":               "gpt-6-astra",
 			"gpt-6-astra-2026-09-03":    "gpt-6-astra",
+			"gpt-6-sol":                 "gpt-6-sol",
+			"gpt-6-sol-2026-09-22":      "gpt-6-sol",
+			"gpt-6-luna":                "gpt-6-luna",
+			"gpt-6-luna-2026-09-22":     "gpt-6-luna",
+			"claude-opus-5-5":           "claude-opus-5-5",
+			"claude-opus-5-5[1m]":       "claude-opus-5-5",
+			"claude-opus-5.5":           "claude-opus-5-5",
 			"claude-opus-5":             "claude-opus-5",
 			"claude-opus-5[1m]":         "claude-opus-5",
 			"claude-opus-4-8":           "claude-opus-4",
