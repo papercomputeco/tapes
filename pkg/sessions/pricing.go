@@ -10,7 +10,7 @@ import (
 
 // DefaultPricing returns hardcoded pricing per million tokens for supported models.
 //
-// Last verified: 2026-09-03
+// Last verified: 2026-09-24
 // Sources:
 //   - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
 //   - OpenAI:    https://platform.openai.com/docs/pricing
@@ -18,15 +18,23 @@ import (
 //
 // Anthropic cache multipliers: CacheWrite = 1.25x input, CacheRead = 0.10x input.
 // Exception: claude-fable-5.1 reads at 0.025x ($0.25/MTok) — a quarter of
-// claude-fable-5's rate at an identical per-token price. Read the published
-// number per model; do not derive cache rates from the family multiplier.
+// claude-fable-5's rate at an identical per-token price — and claude-opus-5.5
+// reads at 0.05x ($0.20/MTok). Read the published number per model; do not
+// derive cache rates from the family multiplier.
 // OpenAI cache: CacheWrite = 1x input and CacheRead = 0.50x input for older models;
 // GPT-5.6+ uses CacheWrite = 1.25x input and CacheRead = 0.10x input.
+// gpt-5.6-sol carries OpenAI promotional pricing "at least through November
+// 21, 2026"; its regular price is unpublished. Revisit after that date.
+//
+// Costs are computed once at derive time and stored on session rollups, so
+// changing an existing row does not reprice already-derived sessions. After
+// rollout, run the operator re-derive (POST /v1/admin/derive/run) to apply it.
 //
 // To override at runtime, pass a JSON file path to LoadPricing.
 func DefaultPricing() PricingTable {
 	return PricingTable{
 		// Anthropic
+		"claude-opus-5.5":   {Input: 4.00, Output: 20.00, CacheRead: 0.20, CacheWrite: 5.00},
 		"claude-opus-5":     {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25},
 		"claude-fable-5.1":  {Input: 10.00, Output: 50.00, CacheRead: 0.25, CacheWrite: 12.50},
 		"claude-fable-5":    {Input: 10.00, Output: 50.00, CacheRead: 1.00, CacheWrite: 12.50},
@@ -36,7 +44,7 @@ func DefaultPricing() PricingTable {
 		"claude-opus-4.5":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite: 6.25},
 		"claude-opus-4.1":   {Input: 15.00, Output: 75.00, CacheRead: 1.50, CacheWrite: 18.75},
 		"claude-opus-4":     {Input: 15.00, Output: 75.00, CacheRead: 1.50, CacheWrite: 18.75},
-		"claude-sonnet-5":   {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite: 3.75},
+		"claude-sonnet-5":   {Input: 2.00, Output: 10.00, CacheRead: 0.20, CacheWrite: 2.50},
 		"claude-sonnet-4.6": {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite: 3.75},
 		"claude-sonnet-4.5": {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite: 3.75},
 		"claude-sonnet-4":   {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite: 3.75},
@@ -50,6 +58,8 @@ func DefaultPricing() PricingTable {
 
 		// OpenAI
 		"gpt-6-astra":       {Input: 10.00, Output: 50.00, CacheRead: 1.00, CacheWrite: 12.50},
+		"gpt-6-sol":         {Input: 2.00, Output: 10.00, CacheRead: 0.20, CacheWrite: 2.50},
+		"gpt-6-luna":        {Input: 0.10, Output: 0.50, CacheRead: 0.01, CacheWrite: 0.125},
 		"gpt-4o":            {Input: 2.50, Output: 10.00, CacheRead: 1.25, CacheWrite: 2.50},
 		"gpt-4o-mini":       {Input: 0.15, Output: 0.60, CacheRead: 0.075, CacheWrite: 0.15},
 		"gpt-4.1":           {Input: 2.00, Output: 8.00, CacheRead: 0.50, CacheWrite: 2.00},
@@ -58,9 +68,9 @@ func DefaultPricing() PricingTable {
 		"o3":                {Input: 2.00, Output: 8.00, CacheRead: 0.50, CacheWrite: 2.00},
 		"o3-mini":           {Input: 1.10, Output: 4.40, CacheRead: 0.55, CacheWrite: 1.10},
 		"o4-mini":           {Input: 1.10, Output: 4.40, CacheRead: 0.275, CacheWrite: 1.10},
-		"gpt-5.6-sol":       {Input: 5.00, Output: 30.00, CacheRead: 0.50, CacheWrite: 6.25},
-		"gpt-5.6-terra":     {Input: 2.50, Output: 15.00, CacheRead: 0.25, CacheWrite: 3.125},
-		"gpt-5.6-luna":      {Input: 1.00, Output: 6.00, CacheRead: 0.10, CacheWrite: 1.25},
+		"gpt-5.6-sol":       {Input: 4.00, Output: 20.00, CacheRead: 0.40, CacheWrite: 5.00},
+		"gpt-5.6-terra":     {Input: 2.00, Output: 12.00, CacheRead: 0.20, CacheWrite: 2.50},
+		"gpt-5.6-luna":      {Input: 0.20, Output: 1.20, CacheRead: 0.02, CacheWrite: 0.25},
 		"gpt-5.5":           {Input: 5.00, Output: 30.00, CacheRead: 0.50, CacheWrite: 5.00},
 		"gpt-5.4":           {Input: 2.50, Output: 15.00, CacheRead: 0.25, CacheWrite: 2.50},
 		"gpt-5.3-codex":     {Input: 1.75, Output: 14.00, CacheRead: 0.175, CacheWrite: 1.75},

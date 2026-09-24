@@ -1089,6 +1089,11 @@ func modelFamily(model string) string {
 		return "claude-fable-5-1"
 	case strings.HasPrefix(model, "claude-fable-5"):
 		return "claude-fable-5"
+	// 5.5 before 5, split for the same reason as Fable 5.1: it prices below
+	// Opus 5 on every rate, including a 0.05x cache read. Pricing accepts the
+	// dotted spelling too, so match it here or it falls into claude-opus-5.
+	case strings.HasPrefix(model, "claude-opus-5-5"), strings.HasPrefix(model, "claude-opus-5.5"):
+		return "claude-opus-5-5"
 	// claude-opus-4 does not prefix-match claude-opus-5, so without its own
 	// case the current flagship falls through to "other".
 	case strings.HasPrefix(model, "claude-opus-5"):
@@ -1109,6 +1114,12 @@ func modelFamily(model string) string {
 		return "claude-3-5-sonnet"
 	case strings.HasPrefix(model, "gpt-6-astra"):
 		return "gpt-6-astra"
+	// Split per tier: Sol and Luna price 20x apart, so a shared gpt-6 family
+	// would make a cost-by-family panel wrong rather than merely coarse.
+	case strings.HasPrefix(model, "gpt-6-sol"):
+		return "gpt-6-sol"
+	case strings.HasPrefix(model, "gpt-6-luna"):
+		return "gpt-6-luna"
 	case strings.HasPrefix(model, "gpt-5"):
 		return "gpt-5"
 	case model == "":

@@ -111,8 +111,8 @@ var _ = Describe("NormalizeModel", func() {
 			{"claude-opus-5[1m]", 5.00, 25.00},
 			{"claude-fable-5", 10.00, 50.00},
 			{"claude-fable-5[1m]", 10.00, 50.00},
-			{"claude-sonnet-5", 3.00, 15.00},
-			{"claude-sonnet-5[1m]", 3.00, 15.00},
+			{"claude-sonnet-5", 2.00, 10.00},
+			{"claude-sonnet-5[1m]", 2.00, 10.00},
 		} {
 			price, ok := sessions.PricingForModel(pricing, p.api)
 			Expect(ok).To(BeTrue(), "PricingForModel(%q)", p.api)
@@ -159,6 +159,49 @@ var _ = Describe("NormalizeModel", func() {
 			Expect(price.CacheWrite).To(BeNumerically("==", p.cacheWrite), "cache-write $/MTok for %q", p.api)
 		}
 	})
+	It("resolves Opus 5.5 pricing, including its off-multiplier cache read", func() {
+		// Opus 5.5 reads cache at 0.05x input ($0.20/MTok), not the 0.10x
+		// family multiplier, and undercuts Opus 5 on every rate. Pin all four
+		// so a pass that "corrects" it back to the multiplier fails here.
+		pricing := sessions.DefaultPricing()
+		for _, p := range []struct {
+			api                             string
+			input, output, read, cacheWrite float64
+		}{
+			{"claude-opus-5.5", 4.00, 20.00, 0.20, 5.00},
+			{"claude-opus-5-5", 4.00, 20.00, 0.20, 5.00},
+			{"claude-opus-5-5[1m]", 4.00, 20.00, 0.20, 5.00},
+			{"claude-opus-5-5-20260101", 4.00, 20.00, 0.20, 5.00},
+			// The predecessor keeps its own rates; the two must not converge.
+			{"claude-opus-5", 5.00, 25.00, 0.50, 6.25},
+		} {
+			price, ok := sessions.PricingForModel(pricing, p.api)
+			Expect(ok).To(BeTrue(), "PricingForModel(%q)", p.api)
+			Expect(price.Input).To(BeNumerically("==", p.input), "input $/MTok for %q", p.api)
+			Expect(price.Output).To(BeNumerically("==", p.output), "output $/MTok for %q", p.api)
+			Expect(price.CacheRead).To(BeNumerically("==", p.read), "cache-read $/MTok for %q", p.api)
+			Expect(price.CacheWrite).To(BeNumerically("==", p.cacheWrite), "cache-write $/MTok for %q", p.api)
+		}
+	})
+	It("resolves GPT-6 Sol and Luna pricing and dated IDs", func() {
+		pricing := sessions.DefaultPricing()
+		for _, p := range []struct {
+			api                             string
+			input, output, read, cacheWrite float64
+		}{
+			{"gpt-6-sol", 2.00, 10.00, 0.20, 2.50},
+			{"gpt-6-sol-2026-09-22", 2.00, 10.00, 0.20, 2.50},
+			{"gpt-6-luna", 0.10, 0.50, 0.01, 0.125},
+			{"gpt-6-luna-2026-09-22", 0.10, 0.50, 0.01, 0.125},
+		} {
+			price, ok := sessions.PricingForModel(pricing, p.api)
+			Expect(ok).To(BeTrue(), "PricingForModel(%q)", p.api)
+			Expect(price.Input).To(BeNumerically("==", p.input), "input $/MTok for %q", p.api)
+			Expect(price.Output).To(BeNumerically("==", p.output), "output $/MTok for %q", p.api)
+			Expect(price.CacheRead).To(BeNumerically("==", p.read), "cache-read $/MTok for %q", p.api)
+			Expect(price.CacheWrite).To(BeNumerically("==", p.cacheWrite), "cache-write $/MTok for %q", p.api)
+		}
+	})
 	It("resolves GPT-6 Astra pricing and dated IDs", func() {
 		pricing := sessions.DefaultPricing()
 		for _, api := range []string{"gpt-6-astra", "gpt-6-astra-2026-09-03"} {
@@ -176,12 +219,12 @@ var _ = Describe("NormalizeModel", func() {
 			api                             string
 			input, output, read, cacheWrite float64
 		}{
-			{"gpt-5.6-sol", 5.00, 30.00, 0.50, 6.25},
-			{"gpt-5.6-terra", 2.50, 15.00, 0.25, 3.125},
-			{"gpt-5.6-luna", 1.00, 6.00, 0.10, 1.25},
-			{"gpt-5-6-sol-2026-07-09", 5.00, 30.00, 0.50, 6.25},
-			{"gpt-5-6-terra-2026-07-09", 2.50, 15.00, 0.25, 3.125},
-			{"gpt-5-6-luna-2026-07-09", 1.00, 6.00, 0.10, 1.25},
+			{"gpt-5.6-sol", 4.00, 20.00, 0.40, 5.00},
+			{"gpt-5.6-terra", 2.00, 12.00, 0.20, 2.50},
+			{"gpt-5.6-luna", 0.20, 1.20, 0.02, 0.25},
+			{"gpt-5-6-sol-2026-07-09", 4.00, 20.00, 0.40, 5.00},
+			{"gpt-5-6-terra-2026-07-09", 2.00, 12.00, 0.20, 2.50},
+			{"gpt-5-6-luna-2026-07-09", 0.20, 1.20, 0.02, 0.25},
 		} {
 			price, ok := sessions.PricingForModel(pricing, p.api)
 			Expect(ok).To(BeTrue(), "PricingForModel(%q)", p.api)
