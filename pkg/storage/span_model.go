@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"iter"
 	"time"
 )
 
@@ -99,9 +100,44 @@ type RawTurnHeader struct {
 	ResponseBytes int64
 }
 
+// SpanCursor is a resumption point in a span stream: the composite key
+// (trace_id, seq, started_at, span_id) of the last span a consumer has
+// already seen, in the order IterateSessionSpans and ListSessionSpanModel
+// serve rows. The zero value starts from the first span. Resumption is a
+// strict row-value comparison on the key columns — all four for a
+// session stream, the last three within one trace — so restarting from a
+// cursor neither repeats nor skips a row, including across spans that
+// share a seq (pre-re-derive rows all carry seq 0).
+type SpanCursor struct {
+	TraceID   string
+	Seq       int64
+	StartedAt time.Time
+	SpanID    string
+}
+
+// IsZero reports whether the cursor is the start-of-stream marker.
+func (c SpanCursor) IsZero() bool {
+	return c.TraceID == "" && c.Seq == 0 && c.StartedAt.IsZero() && c.SpanID == ""
+}
+
 // SpanModelReader serves the span projection for session UIs.
 type SpanModelReader interface {
 	ListSessionSpanModel(ctx context.Context, sessionID string) ([]SpanTurnRecord, []SpanRecord, []SpanLinkRecord, error)
+	// IterateSessionSpans streams a session's spans one row at a time in
+	// the same composite order ListSessionSpanModel returns them
+	// (trace_id, seq, started_at, span_id ASC), starting strictly after
+	// `after` (zero value: from the first span). Server memory is bounded
+	// by one span regardless of session size: each record is yielded and
+	// released before the next row is read. Breaking out of the range
+	// closes the underlying rows. A read failure — including context
+	// cancellation — is surfaced as the final yielded error.
+	IterateSessionSpans(ctx context.Context, sessionID string, after SpanCursor) iter.Seq2[SpanRecord, error]
+	// IterateTraceSpans streams one trace's spans in presentation order
+	// (seq, started_at, span_id ASC), starting strictly after `after`
+	// (zero value: from the first span). The cursor's TraceID is not part
+	// of the comparison — the trace is fixed by the argument. Same memory
+	// and error contract as IterateSessionSpans.
+	IterateTraceSpans(ctx context.Context, orgID, traceID string, after SpanCursor) iter.Seq2[SpanRecord, error]
 	ListTraceSummaries(ctx context.Context, sessionID string) ([]TraceSummaryRecord, error)
 	// ListSessionLinks returns a session's dataflow links alone — the
 	// payload-free half of ListSessionSpanModel. It backs the per-trace
