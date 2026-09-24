@@ -119,3 +119,15 @@ existing rows is an operator decision; nothing in Tapes does it for you.
 `SELECT pg_column_compression(raw_request) FROM raw_turns WHERE id = ...`
 shows which method a stored value carries (`NULL` for values small enough to
 stay inline).
+
+## Trace page order index
+
+A trace's spans are read in `(seq, started_at, span_id)` order, and
+`spans_20260615_page_order_idx` carries that key under `(org_id, trace_id)`,
+so resuming a trace read from a cursor seeks straight to it instead of sorting
+the whole trace, and with SSD planner costs (`random_page_cost` near 1) the
+whole read streams from the index in order with no sort at all. The migration
+builds it with a plain `CREATE INDEX`, which on a very large table blocks
+writes for the length of the build; an operator who would rather not pay that
+at deploy time can build it first by hand with `CREATE INDEX CONCURRENTLY`
+under the same name, and the migration's `IF NOT EXISTS` then skips it.

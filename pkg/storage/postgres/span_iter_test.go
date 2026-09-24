@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -501,3 +503,138 @@ func collectCount(seq iter.Seq2[storage.SpanRecord, error]) int {
 	}
 	return n
 }
+
+var _ = Describe("span page order index [postgres]", func() {
+	// The trace iterator pages one trace by (seq, started_at, span_id)
+	// inside (org_id, trace_id). spans_20260615_page_order_idx carries
+	// exactly that key, so a page must be an index range scan that comes
+	// out already in ORDER BY order — never a sort of the whole trace.
+	var (
+		ctx       context.Context
+		pgDriver  *postgres.Driver
+		orgID     string
+		sessionID string
+	)
+
+	base := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		var err error
+		// One pooled connection, so the connection the iterator ran on is
+		// the one Acquire hands back below, and the statement pgx prepared
+		// there is the one pg_prepared_statements lists.
+		pgDriver, err = postgres.NewDriver(ctx, testPostgresDSN, postgres.WithMaxConns(1))
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(pgDriver.Close)
+
+		orgID = newTestOrgID()
+		sessionID = uuid.New().String()
+		_, err = pgDriver.DB().Exec(ctx, `
+			INSERT INTO sessions (id, org_id, auth_subject, harness_id, harness_session_id, started_at, last_seen_at)
+			VALUES ($1, $2, 'test', 'claude', $3, $4, $4)`,
+			mustUUID(sessionID), mustUUID(orgID), "idx-"+sessionID, base)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			_, err := pgDriver.DB().Exec(ctx, "DELETE FROM sessions WHERE id = $1", mustUUID(sessionID))
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	It("pages a trace through the order-key index", func() {
+		// Enough rows that the planner decides from statistics rather than
+		// from a guess: on a handful of pages it reads the table whole and
+		// sorts whatever it finds, which says nothing about the index; and
+		// the rows other specs seeded and deleted still sit in every index
+		// until a vacuum, priced by size while invisible to ANALYZE, so a
+		// tiny live seed can be outweighed by dead entries and the planner
+		// can pick a narrower index plus a Sort. Seeding well past that
+		// makes the trace under test one trace among many, which is the
+		// shape the index is for.
+		const (
+			traceID       = "trc-0100"
+			traces        = 250
+			spansPerTrace = 200
+			n             = traces * spansPerTrace
+		)
+		_, err := pgDriver.DB().Exec(ctx, `
+			INSERT INTO span_turns_20260615
+			    (org_id, trace_id, session_id, started_at, duration_ns,
+			     total_input_tokens, total_output_tokens, total_cost_usd, tool_calls)
+			SELECT $1, 'trc-' || lpad(t::text, 4, '0'), $2, $3, 0, 0, 0, 0, 0
+			FROM generate_series(1, $4) AS t`,
+			mustUUID(orgID), mustUUID(sessionID), base, traces)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = pgDriver.DB().Exec(ctx, `
+			INSERT INTO spans_20260615 (org_id, trace_id, span_id, session_id, kind, started_at, seq, input)
+			SELECT $1,
+			       'trc-' || lpad((((g - 1) / $5) + 1)::text, 4, '0'),
+			       'span-' || lpad(g::text, 6, '0'),
+			       $2, 'llm',
+			       $3::timestamptz + (g * interval '1 second'),
+			       (g - 1) % $5,
+			       '[{"type":"text","text":"i"}]'::jsonb
+			FROM generate_series(1, $4) AS g`,
+			mustUUID(orgID), mustUUID(sessionID), base, n, spansPerTrace)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = pgDriver.DB().Exec(ctx, "ANALYZE spans_20260615")
+		Expect(err).NotTo(HaveOccurred())
+
+		// Run the real read from a mid-trace cursor, so the statement under
+		// EXPLAIN is the iterator's own text, taken from the connection's
+		// statement cache rather than restated here.
+		total := collectCount(pgDriver.IterateTraceSpans(ctx, orgID, traceID, storage.SpanCursor{}, storage.PayloadFull))
+		Expect(total).To(Equal(spansPerTrace))
+		const resumeAt = spansPerTrace / 2
+		var cursor storage.SpanCursor
+		i := 0
+		for rec, err := range pgDriver.IterateTraceSpans(ctx, orgID, traceID, storage.SpanCursor{}, storage.PayloadFull) {
+			Expect(err).NotTo(HaveOccurred())
+			if i++; i == resumeAt {
+				cursor = storage.SpanCursor{TraceID: rec.TraceID, Seq: rec.Seq, StartedAt: rec.StartedAt, SpanID: rec.SpanID}
+				break
+			}
+		}
+		Expect(cursor.IsZero()).To(BeFalse())
+		Expect(collectCount(pgDriver.IterateTraceSpans(ctx, orgID, traceID, cursor, storage.PayloadFull))).To(Equal(spansPerTrace - resumeAt))
+
+		conn, err := pgDriver.DB().Acquire(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		defer conn.Release()
+
+		rows, err := conn.Query(ctx,
+			`SELECT statement FROM pg_prepared_statements WHERE statement LIKE $1`,
+			"SELECT %FROM spans_20260615%WHERE org_id = $1 AND trace_id = $2%")
+		Expect(err).NotTo(HaveOccurred())
+		statements, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		Expect(err).NotTo(HaveOccurred())
+		Expect(statements).To(HaveLen(1), "the iterator's statement, cached on the pool's one connection")
+		stmt := statements[0]
+		Expect(stmt).To(ContainSubstring("ORDER BY seq ASC, started_at ASC, span_id ASC"))
+
+		// random_page_cost is the one setting the choice turns on. At the
+		// Postgres default of 4.0 the planner prices each heap fetch of an
+		// in-order index scan as a random read, and rather seeks through
+		// this index to the cursor, fetches the tail as a bitmap, and sorts
+		// it; at the value SSD-backed deployments set it to, the ordered
+		// scan is cheapest and the Sort goes away — the plan this index
+		// exists for. SET LOCAL inside a rolled-back transaction leaves the
+		// pooled connection as it was.
+		tx, err := conn.Begin(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = tx.Rollback(ctx) }()
+		_, err = tx.Exec(ctx, "SET LOCAL random_page_cost = 1.1")
+		Expect(err).NotTo(HaveOccurred())
+		rows, err = tx.Query(ctx, "EXPLAIN "+stmt,
+			mustUUID(orgID), traceID, cursor.IsZero(), cursor.Seq,
+			pgtype.Timestamptz{Time: cursor.StartedAt, Valid: true}, cursor.SpanID)
+		Expect(err).NotTo(HaveOccurred())
+		lines, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		Expect(err).NotTo(HaveOccurred())
+		plan := strings.Join(lines, "\n")
+		fmt.Fprintf(GinkgoWriter, "trace page plan:\n%s\n", plan)
+
+		Expect(plan).To(ContainSubstring("Scan using spans_20260615_page_order_idx on spans_20260615"))
+		Expect(plan).NotTo(ContainSubstring("Sort"), "a page must come out of the index in order")
+	})
+})

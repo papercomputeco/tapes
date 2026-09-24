@@ -1,0 +1,35 @@
+-- Index the key a trace's spans are paged by.
+--
+-- The trace span iterator (IterateTraceSpans, pkg/storage/postgres/
+-- span_iter.go) reads one trace's spans as
+--
+--   WHERE org_id = $1 AND trace_id = $2
+--     AND (seq, started_at, span_id) > ($4, $5, $6)   -- the page cursor
+--   ORDER BY seq, started_at, span_id
+--
+-- The primary key (org_id, trace_id, span_id) finds the trace, but its
+-- span_id tail says nothing about seq, so every page sorts the whole
+-- trace and then discards everything up to the cursor: a page costs the
+-- trace's size, not the page's. Ordering the index by the trace's own
+-- presentation key lets the planner walk it: the equality prefix locates
+-- the trace, the row-value comparison seeks to the cursor, and the rows
+-- come out already in ORDER BY order, with no Sort node. The composite
+-- session read pages spans per trace on the same key, so it benefits too.
+--
+-- Plain CREATE INDEX, not CONCURRENTLY. The migration runner sends each
+-- file to the server as one simple-protocol query, so a file could carry a
+-- concurrent build only as its sole statement — but a concurrent build that
+-- is interrupted (a pod killed mid-deploy) leaves an INVALID index behind,
+-- which IF NOT EXISTS then skips on the next start and the planner ignores
+-- for good, with nothing to say so. The plain build either lands whole or
+-- fails and leaves nothing, and every starting pod waits on the migration
+-- lock for the build's length in either case. The trade for operators is
+-- that the plain build holds a SHARE lock on spans_20260615 for its
+-- duration — reads proceed, writes (the deriver) wait — and on a very large
+-- tenant table that is a startup stall of the same length. An operator who
+-- would rather not pay it at deploy time can build the index by hand first
+-- with CREATE INDEX CONCURRENTLY under this exact name, check it is valid
+-- (pg_index.indisvalid), and let IF NOT EXISTS make this file a no-op.
+
+CREATE INDEX IF NOT EXISTS spans_20260615_page_order_idx
+    ON spans_20260615 (org_id, trace_id, seq, started_at, span_id);
