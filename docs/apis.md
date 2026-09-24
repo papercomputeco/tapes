@@ -31,7 +31,8 @@ The authoritative parameters, schemas, and methods are compiled from route regis
 - session content is read through traces and spans, and the composite
   session view is paged and streamed (see below);
 - semantic search is served by the search cassette (`/v1/cassettes/search/spans`);
-- raw turns remain available at `/v1/sessions/{id}/raw_turns`.
+- raw turns remain available at `/v1/sessions/{id}/raw_turns`, paged the
+  same way (see below).
 
 There is no `/v1/search`, `/v1/sessions/summary`, or hash-based session route.
 
@@ -118,12 +119,24 @@ so the key order inside a preview block is whatever the store returns, and
 it is not part of the contract; compare previews as decoded JSON. Full
 mode is unaffected: its bytes are the stored payload's.
 
+### Raw turns are paged by id
+
+`GET /v1/sessions/{id}/raw_turns` is paged like the other two reads,
+over raw turn headers. A page is the next `limit` headers in raw turn id
+order (default 200, maximum 1000; a larger value is clamped, and anything
+that is not a positive integer is rejected with `400`). The listing is
+payload-free, so the count alone bounds a page: there is no byte budget
+and the body is served whole, not streamed. When more headers remain the
+page ends with `next_cursor`; pass it back as `cursor` to continue. Its
+absence is what marks the session's last raw turn — a page shorter than
+`limit` does not. A cursor is opaque and bound to the session it was
+minted for; presenting it on another session is a `400`.
+
 ### Raw turn sizes are capture-time metadata
 
-`GET /v1/sessions/{id}/raw_turns` is the operator's wire log: one header
-per captured call or transcript push, identity and sizes only, never the
-payloads. Its `request_bytes` and `response_bytes` are the sizes the
-capture adapter recorded when the turn crossed the wire (`request_bytes`
+The wire log lists one header per captured call or transcript push,
+identity and sizes only, never the payloads. Its `request_bytes` and
+`response_bytes` are the sizes the capture adapter recorded when the turn crossed the wire (`request_bytes`
 and `response_bytes` in the row's `meta`, which `tapes-extproc` writes),
 not a measurement of the stored payloads. Measuring would mean detoasting
 and re-serializing every blob in the session to count it — the cost a

@@ -201,7 +201,10 @@ type SpanModelReader interface {
 	// It backs the per-trace streaming export.
 	ListTraceSpans(ctx context.Context, orgID, traceID string) ([]SpanRecord, error)
 	GetSpanRecord(ctx context.Context, orgID, traceID, spanID string) (*SpanRecord, error)
-	ListRawTurnHeaders(ctx context.Context, orgID, harnessID, harnessSessionID string) ([]RawTurnHeader, error)
+	// ListRawTurnHeaders returns one page of a session's wire log: up to
+	// limit payload-free headers in raw turn id order, starting strictly
+	// after afterID (0 for the first page).
+	ListRawTurnHeaders(ctx context.Context, orgID, harnessID, harnessSessionID string, afterID int64, limit int) ([]RawTurnHeader, error)
 }
 
 // SpanStats is the span-layer aggregate behind /v1/stats: trace-grain

@@ -3,8 +3,6 @@ package api
 import (
 	"bufio"
 	"encoding/json"
-	"errors"
-	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -324,14 +322,7 @@ func (s *Server) handleGetSessionTraces(c fiber.Ctx) error {
 // traces a page holds, defaulting to 50 and clamped to 200. Anything
 // that is not a positive integer is rejected rather than defaulted.
 func parseTracesLimit(raw string) (int, error) {
-	if raw == "" {
-		return defaultTracesLimit, nil
-	}
-	parsed, err := strconv.Atoi(raw)
-	if err != nil || parsed <= 0 {
-		return 0, errors.New("limit must be a positive integer")
-	}
-	return min(parsed, maxTracesLimit), nil
+	return parseLimit(raw, defaultTracesLimit, maxTracesLimit)
 }
 
 // BuildSessionTraces assembles the composite response whole. Pure

@@ -3,8 +3,6 @@ package api
 import (
 	"bufio"
 	"encoding/json"
-	"errors"
-	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -61,10 +59,23 @@ type RawTurnHeaderItem struct {
 	RawResponseDropped bool `json:"raw_response_dropped"`
 }
 
-// RawTurnListResponse is a session's wire log.
+// RawTurnListResponse is one page of a session's wire log, in raw turn
+// id order.
 type RawTurnListResponse struct {
 	Items []RawTurnHeaderItem `json:"items"`
+
+	// NextCursor continues the walk from the last raw turn of this page
+	// (pass it as `cursor`). Absent once the page reached the session's
+	// last raw turn.
+	NextCursor string `json:"next_cursor,omitempty"`
 }
+
+// A raw-turn page is bounded in rows only: the listing is payload-free,
+// so a header count bounds its bytes and no byte budget is needed.
+const (
+	defaultRawTurnsLimit = 200
+	maxRawTurnsLimit     = 1000
+)
 
 func traceItemFromTurn(turn storage.SpanTurnRecord, spanCount int) TraceItem {
 	return TraceItem{
@@ -141,14 +152,7 @@ func BuildTraceList(rows []storage.TraceSummaryRecord) TraceListResponse {
 // of spans a page holds, defaulting to 200 and clamped to 1000. Anything
 // that is not a positive integer is rejected rather than defaulted.
 func parseTraceSpansLimit(raw string) (int, error) {
-	if raw == "" {
-		return defaultTraceSpansLimit, nil
-	}
-	parsed, err := strconv.Atoi(raw)
-	if err != nil || parsed <= 0 {
-		return 0, errors.New("limit must be a positive integer")
-	}
-	return min(parsed, maxTraceSpansLimit), nil
+	return parseLimit(raw, defaultTraceSpansLimit, maxTraceSpansLimit)
 }
 
 // handleGetTrace handles GET /v1/traces/:trace_id.
@@ -289,6 +293,23 @@ func (s *Server) handleListSessionRawTurns(c fiber.Ctx) error {
 	if _, err := uuid.Parse(id); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id must be a valid UUID"})
 	}
+	limit, err := parseLimit(c.Query("limit"), defaultRawTurnsLimit, maxRawTurnsLimit)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
+	}
+	var afterID int64
+	if raw := c.Query("cursor"); raw != "" {
+		cur, err := decodeRawTurnsPageCursor(raw)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
+		}
+		// A cursor is a boundary in one session's wire log; presented
+		// with another session it is a malformed request, not a transition.
+		if cur.Session != id {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "cursor does not match session"})
+		}
+		afterID = cur.ID
+	}
 	orgID := singleTenantOrgID
 	sess, err := sessions.GetSessionRecord(c.RequestCtx(), orgID, id)
 	if err != nil {
@@ -298,10 +319,17 @@ func (s *Server) handleListSessionRawTurns(c fiber.Ctx) error {
 	if sess == nil {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
 	}
-	rows, err := reader.ListRawTurnHeaders(c.RequestCtx(), orgID, sess.HarnessID, sess.HarnessSessionID)
+	// One row past the page tells whether a next page exists without a
+	// second count query; it is trimmed before rendering.
+	rows, err := reader.ListRawTurnHeaders(c.RequestCtx(), orgID, sess.HarnessID, sess.HarnessSessionID, afterID, limit+1)
 	if err != nil {
 		s.logger.Error("list raw turn headers", "session_id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list raw turns"})
+	}
+	var nextCursor string
+	if len(rows) > limit {
+		rows = rows[:limit]
+		nextCursor = encodeRawTurnsPageCursor(rawTurnsPageCursor{Session: id, ID: rows[limit-1].ID})
 	}
 	items := make([]RawTurnHeaderItem, 0, len(rows))
 	for _, r := range rows {
@@ -313,5 +341,5 @@ func (s *Server) handleListSessionRawTurns(c fiber.Ctx) error {
 			RawResponseBytes: r.RawResponseBytes, RawResponseDropped: r.RawResponseDropped,
 		})
 	}
-	return c.JSON(RawTurnListResponse{Items: items})
+	return c.JSON(RawTurnListResponse{Items: items, NextCursor: nextCursor})
 }

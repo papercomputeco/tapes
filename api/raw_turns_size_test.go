@@ -36,11 +36,23 @@ func (d *rawTurnHeaderStub) GetSessionRecord(_ context.Context, _, id string) (*
 	return &sess, nil
 }
 
-func (d *rawTurnHeaderStub) ListRawTurnHeaders(_ context.Context, _, harnessID, harnessSessionID string) ([]storage.RawTurnHeader, error) {
+// ListRawTurnHeaders pages the stub's headers the way the store does:
+// id order, strictly after afterID, at most limit of them.
+func (d *rawTurnHeaderStub) ListRawTurnHeaders(_ context.Context, _, harnessID, harnessSessionID string, afterID int64, limit int) ([]storage.RawTurnHeader, error) {
 	if harnessID != d.session.HarnessID || harnessSessionID != d.session.HarnessSessionID {
 		return nil, nil
 	}
-	return append([]storage.RawTurnHeader(nil), d.headers...), nil
+	var page []storage.RawTurnHeader
+	for _, h := range d.headers {
+		if h.ID <= afterID {
+			continue
+		}
+		if len(page) == limit {
+			break
+		}
+		page = append(page, h)
+	}
+	return page, nil
 }
 
 var _ = Describe("GET /v1/sessions/{id}/raw_turns sizes", func() {

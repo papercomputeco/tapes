@@ -184,7 +184,7 @@ var _ = Describe("raw-turn attribution repair", func() {
 		Expect(sessionRows[0].Meta).To(MatchJSON(`{"thread_id":"child-thread","future":"keep-me"}`))
 		Expect(sessionRows[0].SessionEnvelope).To(MatchJSON(rawRows[0].SessionEnvelope))
 
-		headers, err := driver.ListRawTurnHeaders(ctx, orgID, harnessID, targetID)
+		headers, err := driver.ListRawTurnHeaders(ctx, orgID, harnessID, targetID, 0, 1000)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(headers).To(HaveLen(1))
 		Expect(headers[0].Meta).To(MatchJSON(`{"thread_id":"child-thread","future":"keep-me"}`))

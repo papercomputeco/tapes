@@ -716,12 +716,15 @@ func (d *Driver) AggregateSpanStats(ctx context.Context, orgID string, since, un
 	return stats, nil
 }
 
-// ListRawTurnHeaders returns the wire log for one session: capture
-// identity and payload sizes, no blobs. Implements
-// storage.SpanModelReader.
-func (d *Driver) ListRawTurnHeaders(ctx context.Context, orgID, harnessID, harnessSessionID string) ([]storage.RawTurnHeader, error) {
+// ListRawTurnHeaders returns one page of the wire log for one session:
+// capture identity and payload sizes, no blobs, for up to limit rows in
+// id order strictly after afterID. Implements storage.SpanModelReader.
+func (d *Driver) ListRawTurnHeaders(ctx context.Context, orgID, harnessID, harnessSessionID string, afterID int64, limit int) ([]storage.RawTurnHeader, error) {
 	if d == nil || d.conn == nil {
 		return nil, errors.New("postgres driver not open")
+	}
+	if limit <= 0 || limit > math.MaxInt32 {
+		return nil, errors.New("list raw turn headers: limit must be positive and fit an int32")
 	}
 	org, err := orgIDFromString(orgKeyForLookup(orgID))
 	if err != nil {
@@ -731,6 +734,8 @@ func (d *Driver) ListRawTurnHeaders(ctx context.Context, orgID, harnessID, harne
 		OrgID:            org,
 		HarnessID:        harnessID,
 		HarnessSessionID: harnessSessionID,
+		AfterID:          afterID,
+		PageSize:         int32Count(limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list raw turn headers: %w", err)

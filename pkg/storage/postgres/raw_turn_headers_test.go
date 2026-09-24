@@ -74,7 +74,7 @@ var _ = Describe("raw turn headers [postgres]", func() {
 
 	list := func() []storage.RawTurnHeader {
 		GinkgoHelper()
-		headers, err := driver.ListRawTurnHeaders(ctx, "", harnessID, harnessSessionID)
+		headers, err := driver.ListRawTurnHeaders(ctx, "", harnessID, harnessSessionID, 0, 1000)
 		Expect(err).NotTo(HaveOccurred())
 		return headers
 	}

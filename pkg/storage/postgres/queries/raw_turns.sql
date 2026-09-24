@@ -98,7 +98,9 @@ SELECT COUNT(*) FROM raw_turns;
 
 -- name: ListRawTurnHeadersBySession :many
 -- Operator wire log: identity + sizes, no payloads. The raw layer is
--- the capture truth; this surfaces it without shipping the blobs.
+-- the capture truth; this surfaces it without shipping the blobs. One
+-- keyset page: rows strictly after after_id in id order, page_size of
+-- them at most.
 --
 -- request_bytes / response_bytes are the sizes the capture adapter
 -- recorded in meta (extproc writes both), not the stored payloads
@@ -139,7 +141,9 @@ WHERE r.org_id = $1
       WHERE c2.org_id = r.org_id AND c2.raw_turn_id = r.id
       ORDER BY c2.id DESC LIMIT 1
   ), r.harness_session_id) = $3
-ORDER BY r.id ASC;
+  AND r.id > sqlc.arg(after_id)
+ORDER BY r.id ASC
+LIMIT sqlc.arg(page_size);
 
 -- name: RawTurnFidelityByIDs :many
 -- Provenance tier for a set of raw turns, for stamping the span projection.

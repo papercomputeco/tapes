@@ -142,11 +142,20 @@ func (s *Server) mountSessions(router *oasfiber.Router) {
 			Summary("List a session's raw capture log (operator)").
 			Description("The raw layer's wire log: one row per captured call or transcript push, "+
 				"identity and sizes only. `source` distinguishes what crossed the wire from what the "+
-				"harness pushed as its own account.").
+				"harness pushed as its own account. The response is one page: the next `limit` "+
+				"headers in raw turn id order (default 200). `next_cursor` continues the walk; its "+
+				"absence, not the page's length, means the session's last raw turn was served.").
 			Tag("sessions").
 			PathParam("id", oas.String(), oas.ParamDescription("Session id (UUID)")).
-			JSONResponse(200, "The session's raw turn headers", s.schema(RawTurnListResponse{})).
-			JSONResponse(400, "Missing or malformed id", s.errorSchema()).
+			QueryParam("limit", oas.Integer(oas.Minimum(1)),
+				oas.ParamDescription("Maximum number of raw turn headers in the page (default 200, "+
+					"max 1000)")).
+			QueryParam("cursor", oas.String(),
+				oas.ParamDescription("Opaque pagination cursor returned as next_cursor by a previous "+
+					"page of the same session")).
+			JSONResponse(200, "One page of the session's raw turn headers", s.schema(RawTurnListResponse{})).
+			JSONResponse(400, "Missing or malformed id, limit, or cursor, or a cursor minted for "+
+				"another session", s.errorSchema()).
 			JSONResponse(404, "Session not found", s.errorSchema()).
 			JSONResponse(500, "Failed to list raw turns", s.errorSchema()).
 			JSONResponse(501, "Raw turns not supported by this backend", s.errorSchema()))

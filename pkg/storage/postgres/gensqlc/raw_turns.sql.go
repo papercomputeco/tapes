@@ -239,13 +239,17 @@ WHERE r.org_id = $1
       WHERE c2.org_id = r.org_id AND c2.raw_turn_id = r.id
       ORDER BY c2.id DESC LIMIT 1
   ), r.harness_session_id) = $3
+  AND r.id > $4
 ORDER BY r.id ASC
+LIMIT $5
 `
 
 type ListRawTurnHeadersBySessionParams struct {
 	OrgID            pgtype.UUID
 	HarnessID        string
 	HarnessSessionID string
+	AfterID          int64
+	PageSize         int32
 }
 
 type ListRawTurnHeadersBySessionRow struct {
@@ -264,7 +268,9 @@ type ListRawTurnHeadersBySessionRow struct {
 }
 
 // Operator wire log: identity + sizes, no payloads. The raw layer is
-// the capture truth; this surfaces it without shipping the blobs.
+// the capture truth; this surfaces it without shipping the blobs. One
+// keyset page: rows strictly after after_id in id order, page_size of
+// them at most.
 //
 // request_bytes / response_bytes are the sizes the capture adapter
 // recorded in meta (extproc writes both), not the stored payloads
@@ -275,7 +281,13 @@ type ListRawTurnHeadersBySessionRow struct {
 // the producer never reported it, reads as 0. octet_length on the bytea
 // column is fine — it reads the stored length, not the bytes.
 func (q *Queries) ListRawTurnHeadersBySession(ctx context.Context, arg ListRawTurnHeadersBySessionParams) ([]ListRawTurnHeadersBySessionRow, error) {
-	rows, err := q.db.Query(ctx, listRawTurnHeadersBySession, arg.OrgID, arg.HarnessID, arg.HarnessSessionID)
+	rows, err := q.db.Query(ctx, listRawTurnHeadersBySession,
+		arg.OrgID,
+		arg.HarnessID,
+		arg.HarnessSessionID,
+		arg.AfterID,
+		arg.PageSize,
+	)
 	if err != nil {
 		return nil, err
 	}
