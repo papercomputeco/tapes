@@ -136,13 +136,14 @@ minted for; presenting it on another session is a `400`.
 
 The wire log lists one header per captured call or transcript push,
 identity and sizes only, never the payloads. Its `request_bytes` and
-`response_bytes` are the sizes the capture adapter recorded when the turn crossed the wire (`request_bytes`
-and `response_bytes` in the row's `meta`, which `tapes-extproc` writes),
-not a measurement of the stored payloads. Measuring would mean detoasting
-and re-serializing every blob in the session to count it — the cost a
-header listing exists to avoid — so the stored rows are never read for
-their size. A producer that did not record a size, or recorded one that
-is not a number, reports `0`; one malformed value does not fail the
+`response_bytes` are the sizes the capture adapter recorded when the turn
+crossed the wire (`request_bytes` and `response_bytes` in the row's
+`meta`, which both capture paths — `tapes-extproc` and the in-repo proxy —
+write), not a measurement of the stored payloads. Measuring would mean
+detoasting and re-serializing every blob in the session to count it — the
+cost a header listing exists to avoid — so the stored rows are never read
+for their size. A producer that did not record a size, or recorded one
+that is not a number, reports `0`; one malformed value does not fail the
 listing.
 
 Each header also reports the raw layer's own fidelity:

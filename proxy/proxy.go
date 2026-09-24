@@ -284,6 +284,25 @@ func captureWeight(rawRequestLen, responseBytes int) int {
 	return 2*rawRequestLen + responseBytes
 }
 
+// upstreamBodyCounter wraps an upstream response body and counts the bytes
+// read through it. The streaming paths never materialize the response —
+// they tee it straight from upstream to the client and the reducer — so
+// the count is the only record of how large the body was. It measures the
+// body as the proxy read it from upstream (already transparently
+// decompressed by http.Transport) and before any reduction: the quantity
+// the worker stamps into meta as response_bytes, matching what extproc
+// takes off its own response buffer.
+type upstreamBodyCounter struct {
+	r io.Reader
+	n int
+}
+
+func (c *upstreamBodyCounter) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += n
+	return n, err
+}
+
 func (p *Proxy) handleNonStreamingProxy(c fiber.Ctx, path, method, upstreamURL string, prov provider.Provider, agentName, threadID string, body []byte, parsedReq *llm.ChatRequest, startTime time.Time) error {
 	// Build upstream URL
 	upstreamURL += path
@@ -351,6 +370,11 @@ func (p *Proxy) handleNonStreamingProxy(c fiber.Ctx, path, method, upstreamURL s
 				Req:        parsedReq,
 				Resp:       parsedResp,
 				RawRequest: body,
+				// Capture-time sizes for the raw turn's meta: the request
+				// body as received from the client and the response body as
+				// read from upstream, before parsing.
+				RequestBytes:  len(body),
+				ResponseBytes: len(respBody),
 				// Charge every payload the job retains against the queue byte
 				// budget — request (raw + parsed) and response — so a burst of
 				// large turns applies backpressure instead of exhausting the
@@ -461,7 +485,10 @@ func (p *Proxy) handleSSEStream(httpResp *http.Response, pw *io.PipeWriter, pars
 // than materializing the full body into an intermediate []byte — on a
 // large response that would double the resident memory for no gain.
 func (p *Proxy) handleSSEStreamViaCapture(r capture.Reducer, httpResp *http.Response, pw *io.PipeWriter, parsedReq *llm.ChatRequest, prov provider.Provider, agentName, threadID string, rawRequest []byte, startTime time.Time) {
-	reader := io.TeeReader(httpResp.Body, pw)
+	// Count the upstream body on its way through the tee: nothing else
+	// retains it, and the raw turn's meta needs its size.
+	counted := &upstreamBodyCounter{r: httpResp.Body}
+	reader := io.TeeReader(counted, pw)
 
 	resp, err := r.Reduce(
 		context.Background(),
@@ -504,6 +531,11 @@ func (p *Proxy) handleSSEStreamViaCapture(r capture.Reducer, httpResp *http.Resp
 		Req:        parsedReq,
 		Resp:       resp,
 		RawRequest: rawRequest,
+		// Capture-time sizes for the raw turn's meta. The response is the
+		// upstream body as it streamed through the tee, before reduction —
+		// not the reduced form responseWeight measures for the budget.
+		RequestBytes:  len(rawRequest),
+		ResponseBytes: counted.n,
 		// Request (raw + parsed) + reduced-response bytes charged against the
 		// queue byte budget (see the non-streaming path). This path keeps no
 		// raw response buffer, so the reduced form is measured via
@@ -521,7 +553,8 @@ func (p *Proxy) handleSSEStreamLegacy(httpResp *http.Response, pw *io.PipeWriter
 	var streamUsage llm.Usage
 	var meta streamMeta
 
-	tr := sse.NewTeeReader(httpResp.Body, pw)
+	counted := &upstreamBodyCounter{r: httpResp.Body}
+	tr := sse.NewTeeReader(counted, pw)
 
 	for {
 		ev, err := tr.Next()
@@ -549,7 +582,7 @@ func (p *Proxy) handleSSEStreamLegacy(httpResp *http.Response, pw *io.PipeWriter
 		p.extractUsageFromSSE([]byte(ev.Data), prov.Name(), &streamUsage, &meta)
 	}
 
-	p.enqueueStreamedResponse(allChunks, fullContent.String(), &streamUsage, &meta, parsedReq, prov, agentName, threadID, rawRequest, startTime)
+	p.enqueueStreamedResponse(allChunks, fullContent.String(), &streamUsage, &meta, parsedReq, prov, agentName, threadID, rawRequest, counted.n, startTime)
 }
 
 // handleNDJSONStream reads a newline-delimited JSON upstream response (used by
@@ -561,7 +594,8 @@ func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, p
 	var streamUsage llm.Usage
 	var meta streamMeta
 
-	scanner := bufio.NewScanner(httpResp.Body)
+	counted := &upstreamBodyCounter{r: httpResp.Body}
+	scanner := bufio.NewScanner(counted)
 	// Increase buffer size for large chunks
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 
@@ -599,7 +633,7 @@ func (p *Proxy) handleNDJSONStream(httpResp *http.Response, pw *io.PipeWriter, p
 		p.logger.Error("error reading NDJSON stream", "error", err)
 	}
 
-	p.enqueueStreamedResponse(allChunks, fullContent.String(), &streamUsage, &meta, parsedReq, prov, agentName, threadID, rawRequest, startTime)
+	p.enqueueStreamedResponse(allChunks, fullContent.String(), &streamUsage, &meta, parsedReq, prov, agentName, threadID, rawRequest, counted.n, startTime)
 }
 
 // extractContentFromJSON performs best-effort content extraction from a JSON
@@ -679,8 +713,11 @@ func jsonInt(m map[string]any, key string) int {
 }
 
 // enqueueStreamedResponse handles post-stream telemetry: logging and
-// enqueuing the reconstructed response for async storage.
-func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, streamUsage *llm.Usage, meta *streamMeta, parsedReq *llm.ChatRequest, prov provider.Provider, agentName, threadID string, rawRequest []byte, startTime time.Time) {
+// enqueuing the reconstructed response for async storage. responseBytes is
+// the upstream body as the stream reader consumed it, recorded into the raw
+// turn's meta; it is not the chunk sum below, which drops framing and
+// sentinels and serves only the byte budget.
+func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, streamUsage *llm.Usage, meta *streamMeta, parsedReq *llm.ChatRequest, prov provider.Provider, agentName, threadID string, rawRequest []byte, responseBytes int, startTime time.Time) {
 	if parsedReq != nil && len(allChunks) > 0 {
 		p.logger.Debug("streaming complete",
 			"content_preview", fullContent,
@@ -704,14 +741,16 @@ func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, 
 				respBytes += len(ch)
 			}
 			p.workerPool.Enqueue(worker.Job{
-				Provider:   prov.Name(),
-				AgentName:  agentName,
-				ThreadID:   threadID,
-				Req:        parsedReq,
-				Resp:       finalResp,
-				RawRequest: rawRequest,
-				Weight:     captureWeight(len(rawRequest), respBytes),
-				Session:    localCaptureSession(),
+				Provider:      prov.Name(),
+				AgentName:     agentName,
+				ThreadID:      threadID,
+				Req:           parsedReq,
+				Resp:          finalResp,
+				RawRequest:    rawRequest,
+				RequestBytes:  len(rawRequest),
+				ResponseBytes: responseBytes,
+				Weight:        captureWeight(len(rawRequest), respBytes),
+				Session:       localCaptureSession(),
 			})
 		}
 	}

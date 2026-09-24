@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,8 +12,18 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/papercomputeco/tapes/ingest"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 )
+
+// decodeCaptureMeta reads a captured raw turn's meta block through the same
+// typed view ingest parses, so a key the proxy spells differently from
+// extproc fails here rather than listing as 0 in the wire log.
+func decodeCaptureMeta(raw []byte) ingest.TurnMeta {
+	var meta ingest.TurnMeta
+	Expect(json.Unmarshal(raw, &meta)).To(Succeed())
+	return meta
+}
 
 // newAnthropicTestProxy creates a Proxy pointed at the given upstream URL,
 // using a capture-recording driver and the anthropic provider so
@@ -40,6 +51,19 @@ var _ = Describe("Anthropic streaming proxy (capture-backed)", func() {
 		p        *Proxy
 		driver   *captureDriver
 		upstream *httptest.Server
+
+		// events is the upstream's SSE body, verbatim: what the client
+		// receives, what the reducer consumes, and — summed — the response
+		// size the capture records.
+		events = []string{
+			"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_x\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-3-5-sonnet-20241022\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":7,\"output_tokens\":1,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0}}}\n\n",
+			"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n",
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" world\"}}\n\n",
+			"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+			"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":2}}\n\n",
+			"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+		}
 	)
 
 	AfterEach(func() {
@@ -56,15 +80,6 @@ var _ = Describe("Anthropic streaming proxy (capture-backed)", func() {
 			w.Header().Set("Content-Type", "text/event-stream")
 			flusher, ok := w.(http.Flusher)
 			Expect(ok).To(BeTrue())
-			events := []string{
-				"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_x\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-3-5-sonnet-20241022\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":7,\"output_tokens\":1,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0}}}\n\n",
-				"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
-				"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n",
-				"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" world\"}}\n\n",
-				"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
-				"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":2}}\n\n",
-				"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
-			}
 			for _, ev := range events {
 				fmt.Fprint(w, ev)
 				flusher.Flush()
@@ -148,6 +163,38 @@ var _ = Describe("Anthropic streaming proxy (capture-backed)", func() {
 		Expect(raws).To(HaveLen(1))
 		Expect(string(raws[0].Meta)).NotTo(ContainSubstring("thread_id"))
 	})
+
+	// The wire log sizes a row from its meta and never measures the stored
+	// payloads, so a capture path that does not record the sizes lists every
+	// turn as 0 bytes. The streaming path holds no response buffer — the
+	// body is teed straight through — so the count must be taken as the
+	// bytes pass, and it is the upstream body before reduction, not the
+	// reduced ChatResponse that lands in the row.
+	It("records request and response sizes in meta on a streamed turn", func() {
+		reqBody := `{"model":"claude-3-5-sonnet-20241022","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
+		wantResponse := 0
+		for _, ev := range events {
+			wantResponse += len(ev)
+		}
+
+		resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(reqBody)), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
+		Expect(err).NotTo(HaveOccurred())
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		_, err = io.ReadAll(resp.Body)
+		Expect(err).NotTo(HaveOccurred())
+
+		p.Close()
+		p = nil
+
+		raws := driver.RawTurns()
+		Expect(raws).To(HaveLen(1))
+		Expect(string(raws[0].Meta)).To(ContainSubstring(`"request_bytes":`))
+		Expect(string(raws[0].Meta)).To(ContainSubstring(`"response_bytes":`))
+		meta := decodeCaptureMeta(raws[0].Meta)
+		Expect(meta.RequestBytes).To(Equal(len(reqBody)))
+		Expect(meta.ResponseBytes).To(Equal(wantResponse))
+	})
 })
 
 // The non-streaming handler is a separate enqueue site from the streaming one,
@@ -158,6 +205,13 @@ var _ = Describe("Anthropic non-streaming proxy (capture-backed)", func() {
 		p        *Proxy
 		driver   *captureDriver
 		upstream *httptest.Server
+
+		// upstreamBody is the upstream's JSON response, verbatim: its length
+		// is the response size the capture records.
+		upstreamBody = `{"id":"msg_x","type":"message","role":"assistant",` +
+			`"content":[{"type":"text","text":"Hello world"}],` +
+			`"model":"claude-3-5-sonnet-20241022","stop_reason":"end_turn","stop_sequence":null,` +
+			`"usage":{"input_tokens":7,"output_tokens":2}}`
 	)
 
 	AfterEach(func() {
@@ -172,10 +226,7 @@ var _ = Describe("Anthropic non-streaming proxy (capture-backed)", func() {
 	BeforeEach(func() {
 		upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"id":"msg_x","type":"message","role":"assistant",`+
-				`"content":[{"type":"text","text":"Hello world"}],`+
-				`"model":"claude-3-5-sonnet-20241022","stop_reason":"end_turn","stop_sequence":null,`+
-				`"usage":{"input_tokens":7,"output_tokens":2}}`)
+			fmt.Fprint(w, upstreamBody)
 		}))
 		p, driver = newAnthropicTestProxy(upstream.URL)
 	})
@@ -199,5 +250,30 @@ var _ = Describe("Anthropic non-streaming proxy (capture-backed)", func() {
 		raws := driver.RawTurns()
 		Expect(raws).To(HaveLen(1))
 		Expect(string(raws[0].Meta)).To(ContainSubstring(`"thread_id":"agent_sub_9"`))
+	})
+
+	// Same contract as the streamed spec, on the other enqueue site: the
+	// sizes are the bodies as they crossed the proxy, and they are recorded
+	// under the keys ingest and the wire log read.
+	It("records request and response sizes in meta on a non-streamed turn", func() {
+		reqBody := `{"model":"claude-3-5-sonnet-20241022","max_tokens":64,"stream":false,"messages":[{"role":"user","content":"hi"}]}`
+
+		resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(reqBody)), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
+		Expect(err).NotTo(HaveOccurred())
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		_, err = io.ReadAll(resp.Body)
+		Expect(err).NotTo(HaveOccurred())
+
+		p.Close()
+		p = nil
+
+		raws := driver.RawTurns()
+		Expect(raws).To(HaveLen(1))
+		Expect(string(raws[0].Meta)).To(ContainSubstring(`"request_bytes":`))
+		Expect(string(raws[0].Meta)).To(ContainSubstring(`"response_bytes":`))
+		meta := decodeCaptureMeta(raws[0].Meta)
+		Expect(meta.RequestBytes).To(Equal(len(reqBody)))
+		Expect(meta.ResponseBytes).To(Equal(len(upstreamBody)))
 	})
 })

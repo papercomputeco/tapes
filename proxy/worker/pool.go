@@ -74,6 +74,18 @@ type Job struct {
 	// (e.g. the in-memory test driver); the raw write is skipped then.
 	RawRequest json.RawMessage
 
+	// RequestBytes and ResponseBytes are the capture-time sizes of the
+	// turn's two bodies, recorded into the raw turn's meta under the same
+	// keys tapes-extproc writes (request_bytes / response_bytes) and with
+	// the same meaning: RequestBytes is the request body as the proxy
+	// received it from the client (len(RawRequest)), ResponseBytes the
+	// response body as the proxy read it from upstream, before any
+	// reduction. Both are measured when the bytes cross the proxy — never
+	// re-derived from stored payloads, which the wire log exists to avoid
+	// reading. Zero when the enqueuing path did not measure.
+	RequestBytes  int
+	ResponseBytes int
+
 	// Session is the optional session-tracking envelope attached to
 	// the turn. When non-nil and the driver supports session-aware
 	// ingest (Postgres), the worker UPSERTs the turn's `sessions` row
@@ -280,10 +292,19 @@ func (p *Pool) processJob(job Job) {
 // attribution; ts_request is omitted because single-process local
 // capture inserts the row at ~capture time, so the deriver's
 // received_at fallback is accurate.
+//
+// request_bytes and response_bytes are the keys the raw-turn wire log
+// (GET /v1/sessions/{id}/raw_turns) reads a row's sizes from. They are
+// spelled and measured exactly as extproc.TurnMeta records them — the
+// request body as the capture layer buffered it from the client, and the
+// response body as it buffered it from upstream, before any reduction —
+// so a row is sized the same whichever capture path produced it.
 type rawTurnMeta struct {
 	ThreadID          string `json:"thread_id,omitempty"`
 	RequestID         string `json:"request_id,omitempty"`
 	UpstreamRequestID string `json:"upstream_request_id,omitempty"`
+	RequestBytes      int    `json:"request_bytes,omitempty"`
+	ResponseBytes     int    `json:"response_bytes,omitempty"`
 }
 
 // persistRawTurn appends one captured turn to the immutable raw-turn
@@ -327,6 +348,8 @@ func (p *Pool) persistRawTurn(ctx context.Context, job Job, chain []*merkle.Node
 		ThreadID:          job.ThreadID,
 		RequestID:         job.RequestID,
 		UpstreamRequestID: job.UpstreamRequestID,
+		RequestBytes:      job.RequestBytes,
+		ResponseBytes:     job.ResponseBytes,
 	})
 	if err != nil {
 		log.Error("raw turn skipped: marshal meta",
