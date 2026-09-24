@@ -184,14 +184,15 @@ var _ = Describe("preview backfill [postgres]", func() {
 			seedSpan{session: sessionA, trace: "t1", span: "s2", output: textBlocks(long), contentHash: "h2", deriveSeq: 12},
 			// Already carries previews: not selected, not rewritten.
 			seedSpan{session: sessionA, trace: "t2", span: "s1", input: textBlocks(long), output: textBlocks(long), inputPreview: kept, outputPreview: kept, contentHash: "h3", deriveSeq: 13},
-			// No payload at all: nothing to summarize, left pending by design.
+			// No payload at all: still selected, backfilled to [] previews as
+			// the deriver would have stored.
 			seedSpan{session: sessionA, trace: "t2", span: "s2", contentHash: "h4", deriveSeq: 14},
 		)
 
 		result := run(backfill.PreviewOptions{})
-		Expect(result.Backfilled).To(Equal(2))
+		Expect(result.Backfilled).To(Equal(3))
 		Expect(result.Batches).To(Equal(1))
-		Expect(result.Last).To(Equal(storage.SpanBackfillCursor{SessionID: sessionA, TraceID: "t1", SpanID: "s2"}))
+		Expect(result.Last).To(Equal(storage.SpanBackfillCursor{SessionID: sessionA, TraceID: "t2", SpanID: "s2"}))
 
 		spans := readSpans()
 		Expect(spans).To(HaveLen(4))
@@ -204,9 +205,33 @@ var _ = Describe("preview backfill [postgres]", func() {
 		stored := spans[key(sessionA, "t2", "s1")]
 		Expect(decode(stored.inputPreview)).To(Equal(decode(kept)), "a stored preview is never rewritten")
 		Expect(decode(stored.outputPreview)).To(Equal(decode(kept)))
-		expectPending(spans[key(sessionA, "t2", "s2")])
+		expectBackfilled(spans[key(sessionA, "t2", "s2")])
 
 		// Idempotent: a second run finds nothing.
+		again := run(backfill.PreviewOptions{})
+		Expect(again.Backfilled).To(BeZero())
+		Expect(again.Batches).To(BeZero())
+	})
+
+	It("backfills a span with no payload to empty previews", func() {
+		// The deriver pins a NULL payload's preview to [] (PreviewBlocks),
+		// so a payload-less span it wrote renders as a preview, not as
+		// pending. A backfilled one must land in the same shape.
+		seed(seedSpan{session: sessionA, trace: "t1", span: "s1", contentHash: "h1", deriveSeq: 11})
+
+		result := run(backfill.PreviewOptions{})
+		Expect(result.Backfilled).To(Equal(1))
+		Expect(result.Last).To(Equal(storage.SpanBackfillCursor{SessionID: sessionA, TraceID: "t1", SpanID: "s1"}))
+
+		r := readSpans()[key(sessionA, "t1", "s1")]
+		Expect(r.input).To(BeNil(), "the payload is still NULL")
+		Expect(r.output).To(BeNil())
+		Expect(string(r.inputPreview)).To(Equal("[]"))
+		Expect(string(r.outputPreview)).To(Equal("[]"))
+		Expect(r.contentHash).To(Equal("h1"))
+		Expect(r.deriveSeq).To(Equal(int64(11)))
+
+		// Filled, so it leaves the selection: a second run finds nothing.
 		again := run(backfill.PreviewOptions{})
 		Expect(again.Backfilled).To(BeZero())
 		Expect(again.Batches).To(BeZero())

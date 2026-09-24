@@ -700,7 +700,6 @@ SELECT org_id, session_id, trace_id, span_id, input, output
 FROM spans_20260615
 WHERE input_preview IS NULL
   AND output_preview IS NULL
-  AND (input IS NOT NULL OR output IS NOT NULL)
   AND session_id IS NOT NULL
   AND ($1::uuid IS NULL OR session_id = $1::uuid)
   AND ($2::uuid IS NULL
@@ -726,10 +725,12 @@ type ListSpansMissingPreviewsRow struct {
 	Output    []byte
 }
 
-// Preview backfill (`tapes backfill previews`): one page of the rows the 1781540000 migration left without stored
-// previews: derived before the preview columns existed and not yet
-// backfilled. A row with no payload at all is left alone — there is
-// nothing to summarize — so the selection stays bounded to real work.
+// Preview backfill (`tapes backfill previews`): one page of the rows the
+// 1781540000 migration left without stored previews, derived before the
+// preview columns existed and not yet backfilled. A row with no payload at
+// all is selected too: the deriver stores `[]` previews for such a span,
+// and a NULL preview is served as pending, so leaving it alone would keep
+// it pending forever where the deriver's own output is not.
 //
 // Keyset-paged on (session_id, trace_id, span_id): unique (a session
 // belongs to one org, and (org_id, trace_id, span_id) is the key), unlike

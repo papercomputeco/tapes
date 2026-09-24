@@ -147,7 +147,7 @@ The job logs `backfilled=<n> last=<session>/<trace>/<span>` after every batch, e
 - **Idempotent and resumable.** Only rows with no stored preview are selected, so a row that has been filled is never rewritten and a completed run is a no-op. Re-running after an interruption picks up where the previous run stopped; there is no cursor to hand back. The scan is keyset-paged on `(session_id, trace_id, span_id)`, never on `started_at`, so a batch boundary neither repeats nor skips a row.
 - **Never a re-derive.** It reads `input` / `output` and writes the two preview columns, nothing else: the payload, `content_hash` and `derive_seq` are untouched, so no change-feed consumer sees a backfilled row as changed. To rebuild a projection, use `tapes dev rederive` instead.
 
-Spans with no payload at all (`input` and `output` both `NULL`) have nothing to summarize and are left alone.
+Spans with no payload at all (`input` and `output` both `NULL`) are filled with empty previews (`[]` / `[]`), exactly what the deriver stores for such a span, so they stop being served as pending.
 
 Tapes no longer provides `chat` or `checkout` commands. It captures external agents; it does not host a chat client or expose history branching.
 
