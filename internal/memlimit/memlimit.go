@@ -1,22 +1,18 @@
-package worker
-
-import (
-	"log/slog"
-	"os"
-	"runtime/debug"
-	"strconv"
-	"strings"
-)
-
-// A full session derive allocates transiently far above its live set:
-// every wire turn re-sends the whole prior conversation, so the deriver
-// re-parses an O(N) request per turn and the per-turn garbage piles up
-// faster than the GC reclaims it. Under the default GOGC=100 the heap is
-// allowed to roughly DOUBLE its live size before a collection, so a big
-// session's transient peak runs ~2x its (already large) live set and can
-// exceed the container memory limit in a brief spike, getting the worker
-// OOM-killed even though its steady-state live set fits the budget
-// (PCC-767).
+// Package memlimit derives a soft heap ceiling (GOMEMLIMIT) for a tapes
+// server process from the cgroup memory limit its orchestrator already
+// set, so a transient allocation spike is GC-paced under the container
+// budget instead of OOMKilling the process.
+//
+// A large session allocates transiently far above its live set. The
+// derive worker re-parses an O(N) request per wire turn because every
+// turn re-sends the whole prior conversation, and the API server builds
+// the same session's traces and export bundle in one response; in both
+// the per-request garbage piles up faster than the GC reclaims it. Under
+// the default GOGC=100 the heap is allowed to roughly DOUBLE its live
+// size before a collection, so a big session's transient peak runs ~2x
+// its (already large) live set and can exceed the container memory limit
+// in a brief spike, getting the process OOM-killed even though its
+// steady-state live set fits the budget (PCC-767).
 //
 // The live set itself fits the budget; only the transient overshoot does
 // not. A soft memory limit (GOMEMLIMIT) is the right tool: it makes the
@@ -25,6 +21,15 @@ import (
 // for a bounded heap. We derive the ceiling from the cgroup memory limit
 // the orchestrator already sets, so it tracks the container budget
 // without a second knob to keep in sync.
+package memlimit
+
+import (
+	"log/slog"
+	"os"
+	"runtime/debug"
+	"strconv"
+	"strings"
+)
 
 // memLimitFraction is the share of the cgroup memory limit used as the
 // soft heap ceiling. The remainder is headroom for non-heap memory
@@ -47,8 +52,9 @@ const cgroupUnlimited int64 = 0x7000000000000000
 // ApplySoftMemoryLimit sets a soft heap ceiling (GOMEMLIMIT) derived from
 // the cgroup memory limit, so a large session's transient allocation
 // overshoot is GC-paced under the container budget instead of OOMKilling
-// the worker. It is a no-op — leaving the Go default in place — when the
-// operator already pinned GOMEMLIMIT, when no cgroup memory limit is
+// the process. Call it once at startup, before the process has a heap
+// worth pacing. It is a no-op — leaving the Go default in place — when
+// the operator already pinned GOMEMLIMIT, when no cgroup memory limit is
 // readable (local dev, unconstrained container), or on non-Linux.
 //
 // Returns the soft limit applied in bytes, or 0 when none was set.

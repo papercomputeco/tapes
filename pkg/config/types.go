@@ -1,5 +1,7 @@
 package config
 
+import "time"
+
 // Config represents the persistent tapes configuration stored as config.toml
 // in the .tapes/ directory. The TOML layout uses sections for logical grouping.
 type Config struct {
@@ -34,6 +36,14 @@ type ProxyConfig struct {
 type APIConfig struct {
 	Listen string `toml:"listen,omitempty" mapstructure:"listen"`
 	WebUI  bool   `toml:"web_ui,omitempty" mapstructure:"web_ui"`
+	// ReadDeadline bounds every API read: the request context is cancelled
+	// at the deadline, so storage aborts and a stream still writing is cut.
+	// Written as a duration string ("20s"); zero disables it.
+	ReadDeadline time.Duration `toml:"read_deadline,omitempty" mapstructure:"read_deadline"`
+	// PayloadConcurrency caps concurrent payload-bearing reads per replica;
+	// a read past the cap is shed with 503 and Retry-After. Zero disables
+	// the cap.
+	PayloadConcurrency int `toml:"payload_concurrency,omitempty" mapstructure:"payload_concurrency"`
 }
 
 // IngestConfig holds ingest server settings for sidecar mode.
@@ -75,17 +85,19 @@ type UpdateConfig struct {
 // configKeySet is the authoritative set of all supported user-facing config keys.
 // Keys use dotted notation matching the TOML section structure.
 var configKeySet = map[string]bool{
-	"proxy.provider":      true,
-	"proxy.upstream":      true,
-	"proxy.listen":        true,
-	"proxy.project":       true,
-	"api.listen":          true,
-	"api.web_ui":          true,
-	"ingest.listen":       true,
-	"client.proxy_target": true,
-	"client.api_target":   true,
-	"opencode.provider":   true,
-	"opencode.model":      true,
+	"proxy.provider":          true,
+	"proxy.upstream":          true,
+	"proxy.listen":            true,
+	"proxy.project":           true,
+	"api.listen":              true,
+	"api.web_ui":              true,
+	"api.read_deadline":       true,
+	"api.payload_concurrency": true,
+	"ingest.listen":           true,
+	"client.proxy_target":     true,
+	"client.api_target":       true,
+	"opencode.provider":       true,
+	"opencode.model":          true,
 
 	"logging.level":  true,
 	"logging.format": true,

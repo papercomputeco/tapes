@@ -28,15 +28,17 @@ type ServeCommander struct {
 
 // ServeFlags defines the flags for the parent "tapes serve" command.
 var ServeFlags = config.FlagSet{
-	config.FlagProxyListen:  {Name: "proxy-listen", Shorthand: "p", ViperKey: "proxy.listen", Description: "Address for proxy to listen on"},
-	config.FlagAPIListen:    {Name: "api-listen", Shorthand: "a", ViperKey: "api.listen", Description: "Address for API server to listen on"},
-	config.FlagAPIWebUI:     {Name: "api-web-ui", ViperKey: "api.web_ui", Description: "Enable the minimal browser UI at /"},
-	config.FlagIngestListen: {Name: "ingest-listen", Shorthand: "i", ViperKey: "ingest.listen", Description: "Address for ingest server to listen on (sidecar mode)"},
-	config.FlagUpstream:     {Name: "upstream", Shorthand: "u", ViperKey: "proxy.upstream", Description: "Upstream LLM provider URL"},
-	config.FlagProvider:     {Name: "provider", ViperKey: "proxy.provider", Description: "LLM provider type (anthropic, openai, ollama)"},
-	config.FlagPostgres:     {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
-	config.FlagProject:      {Name: "project", ViperKey: "proxy.project", Description: "Project name to tag sessions (default: auto-detect from git)"},
-	config.FlagCassettes:    {Name: "cassettes", ViperKey: "cassettes", Description: "Full cassette OpenAPI URLs (comma-separated or repeated)"},
+	config.FlagProxyListen:           {Name: "proxy-listen", Shorthand: "p", ViperKey: "proxy.listen", Description: "Address for proxy to listen on"},
+	config.FlagAPIListen:             {Name: "api-listen", Shorthand: "a", ViperKey: "api.listen", Description: "Address for API server to listen on"},
+	config.FlagAPIWebUI:              {Name: "api-web-ui", ViperKey: "api.web_ui", Description: "Enable the minimal browser UI at /"},
+	config.FlagAPIReadDeadline:       {Name: "api-read-deadline", ViperKey: "api.read_deadline", Description: "Deadline for each API read request; storage is cancelled and a stream is cut when it elapses (0 disables)"},
+	config.FlagAPIPayloadConcurrency: {Name: "api-payload-concurrency", ViperKey: "api.payload_concurrency", Description: "Maximum concurrent payload-bearing API reads per replica; further reads get 503 with Retry-After (0 disables)"},
+	config.FlagIngestListen:          {Name: "ingest-listen", Shorthand: "i", ViperKey: "ingest.listen", Description: "Address for ingest server to listen on (sidecar mode)"},
+	config.FlagUpstream:              {Name: "upstream", Shorthand: "u", ViperKey: "proxy.upstream", Description: "Upstream LLM provider URL"},
+	config.FlagProvider:              {Name: "provider", ViperKey: "proxy.provider", Description: "LLM provider type (anthropic, openai, ollama)"},
+	config.FlagPostgres:              {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
+	config.FlagProject:               {Name: "project", ViperKey: "proxy.project", Description: "Project name to tag sessions (default: auto-detect from git)"},
+	config.FlagCassettes:             {Name: "cassettes", ViperKey: "cassettes", Description: "Full cassette OpenAPI URLs (comma-separated or repeated)"},
 }
 
 const serveLongDesc string = `Run Tapes services.

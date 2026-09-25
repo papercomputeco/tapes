@@ -11,6 +11,7 @@ import (
 
 	"github.com/papercomputeco/tapes/api"
 	"github.com/papercomputeco/tapes/cmd/tapes/serve/internallisten"
+	"github.com/papercomputeco/tapes/internal/memlimit"
 	"github.com/papercomputeco/tapes/pkg/config"
 	"github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/storage/postgres"
@@ -24,6 +25,9 @@ type apiCommander struct {
 	postgresDSN string
 	webUI       bool
 
+	readDeadline       time.Duration
+	payloadConcurrency int
+
 	cassetteSources []string
 	cassetteRefresh time.Duration
 
@@ -32,10 +36,12 @@ type apiCommander struct {
 
 // apiFlags defines the flags for the standalone API subcommand.
 var apiFlags = config.FlagSet{
-	config.FlagAPIListenStandalone: {Name: "listen", Shorthand: "l", ViperKey: "api.listen", Description: "Address for API server to listen on"},
-	config.FlagAPIWebUI:            {Name: "web-ui", ViperKey: "api.web_ui", Description: "Enable the minimal browser UI at /"},
-	config.FlagPostgres:            {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
-	config.FlagCassettes:           {Name: "cassettes", ViperKey: "cassettes", Description: "Full cassette OpenAPI URLs (comma-separated or repeated)"},
+	config.FlagAPIListenStandalone:   {Name: "listen", Shorthand: "l", ViperKey: "api.listen", Description: "Address for API server to listen on"},
+	config.FlagAPIWebUI:              {Name: "web-ui", ViperKey: "api.web_ui", Description: "Enable the minimal browser UI at /"},
+	config.FlagAPIReadDeadline:       {Name: "read-deadline", ViperKey: "api.read_deadline", Description: "Deadline for each read request; storage is cancelled and a stream is cut when it elapses (0 disables)"},
+	config.FlagAPIPayloadConcurrency: {Name: "payload-concurrency", ViperKey: "api.payload_concurrency", Description: "Maximum concurrent payload-bearing reads per replica; further reads get 503 with Retry-After (0 disables)"},
+	config.FlagPostgres:              {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
+	config.FlagCassettes:             {Name: "cassettes", ViperKey: "cassettes", Description: "Full cassette OpenAPI URLs (comma-separated or repeated)"},
 }
 
 const apiLongDesc string = `Run the Tapes API server for inspecting, managing, and query agent sessions.`
@@ -65,6 +71,8 @@ func newAPICmd(cmder *apiCommander) *cobra.Command {
 			config.BindRegisteredFlags(v, cmd, cmder.flags, []string{
 				config.FlagAPIListenStandalone,
 				config.FlagAPIWebUI,
+				config.FlagAPIReadDeadline,
+				config.FlagAPIPayloadConcurrency,
 				config.FlagPostgres,
 				config.FlagCassettes,
 			})
@@ -78,6 +86,8 @@ func newAPICmd(cmder *apiCommander) *cobra.Command {
 
 			cmder.listen = v.GetString("api.listen")
 			cmder.webUI = v.GetBool("api.web_ui")
+			cmder.readDeadline = v.GetDuration("api.read_deadline")
+			cmder.payloadConcurrency = v.GetInt("api.payload_concurrency")
 			cmder.postgresDSN = v.GetString("storage.postgres_dsn")
 			return nil
 		},
@@ -89,6 +99,8 @@ func newAPICmd(cmder *apiCommander) *cobra.Command {
 
 	config.AddStringFlag(cmd, cmder.flags, config.FlagAPIListenStandalone, &cmder.listen)
 	config.AddBoolFlag(cmd, cmder.flags, config.FlagAPIWebUI, &cmder.webUI)
+	config.AddDurationFlag(cmd, cmder.flags, config.FlagAPIReadDeadline, &cmder.readDeadline)
+	config.AddIntFlag(cmd, cmder.flags, config.FlagAPIPayloadConcurrency, &cmder.payloadConcurrency)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagPostgres, &cmder.postgresDSN)
 	config.AddStringSliceFlag(cmd, cmder.flags, config.FlagCassettes, &cmder.cassetteSources)
 	cmd.Flags().DurationVar(&cmder.cassetteRefresh, "cassette-refresh", 30*time.Second,
@@ -99,6 +111,17 @@ func newAPICmd(cmder *apiCommander) *cobra.Command {
 
 func (c *apiCommander) run(ctx context.Context) error {
 	c.logger = logger.FromContext(ctx)
+
+	// Bound the transient allocation overshoot of a large session read to
+	// the container budget: a session's traces or export bundle is built
+	// in one response, and the per-request churn lets the heap roughly
+	// double before GC runs, so serving a large session can spike past the
+	// memory limit and get the server OOM-killed even though its live set
+	// fits. A cgroup-derived soft limit GC-paces the peak back toward the
+	// live set. Applied before the server exists so every allocation is
+	// paced. No-op when GOMEMLIMIT is set or no cgroup limit exists.
+	memlimit.ApplySoftMemoryLimit(c.logger)
+
 	if len(c.cassetteSources) > 0 {
 		c.logger.Info("configured cassette OpenAPI sources",
 			"count", len(c.cassetteSources),
@@ -112,8 +135,10 @@ func (c *apiCommander) run(ctx context.Context) error {
 	defer driver.Close()
 
 	apiConfig := api.Config{
-		ListenAddr:  c.listen,
-		EnableWebUI: c.webUI,
+		ListenAddr:         c.listen,
+		EnableWebUI:        c.webUI,
+		ReadDeadline:       c.readDeadline,
+		PayloadConcurrency: c.payloadConcurrency,
 	}
 
 	server, err := api.NewServer(apiConfig, driver, c.logger) //nolint:contextcheck // Fiber owns request contexts.

@@ -56,12 +56,14 @@ INSERT INTO spans_20260615 (
     org_id, trace_id, span_id, parent_span_id, session_id,
     kind, name, status, call_kind, thread_id, model, stop_reason,
     started_at, duration_ns, seq, input, output, usage, raw_turn_id, node_hash,
-    verdict, content_hash, derive_seq, fidelity
+    verdict, content_hash, derive_seq, fidelity,
+    input_preview, output_preview
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11, $12,
     $13, $14, $15, $16, $17, $18, $19, $20,
-    $21, $22, $23, $24
+    $21, $22, $23, $24,
+    $25, $26
 )
 ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     parent_span_id = EXCLUDED.parent_span_id,
@@ -84,6 +86,11 @@ ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     verdict        = EXCLUDED.verdict,
     content_hash   = EXCLUDED.content_hash,
     fidelity       = EXCLUDED.fidelity,
+    -- Previews are a pure function of input/output and are not part of
+    -- content_hash: they are rewritten with the payload but never move the
+    -- cursor on their own.
+    input_preview  = EXCLUDED.input_preview,
+    output_preview = EXCLUDED.output_preview,
     -- See UpsertSpanTurn: the cursor advances only on a real content change,
     -- so a consumer polling derive_seq sees changes rather than every row a
     -- re-derive happened to touch.
@@ -356,3 +363,43 @@ WHERE org_id = $1
   AND derive_seq < pg_snapshot_xmin(pg_current_snapshot())::text::bigint
 ORDER BY derive_seq, trace_id, span_id
 LIMIT sqlc.arg(page_size);
+
+-- name: ListSpansMissingPreviews :many
+-- Preview backfill (`tapes backfill previews`): one page of the rows the
+-- 1781540000 migration left without stored previews, derived before the
+-- preview columns existed and not yet backfilled. A row with no payload at
+-- all is selected too: the deriver stores `[]` previews for such a span,
+-- and a NULL preview is served as pending, so leaving it alone would keep
+-- it pending forever where the deriver's own output is not.
+--
+-- Keyset-paged on (session_id, trace_id, span_id): unique (a session
+-- belongs to one org, and (org_id, trace_id, span_id) is the key), unlike
+-- started_at, and it lets the caller log and resume from a row it can
+-- name. Rows whose session never resolved carry a NULL session_id, which
+-- no row-value comparison can order; they are unreachable orphans (see
+-- writeSpanSet) and are skipped here for the same reason.
+SELECT org_id, session_id, trace_id, span_id, input, output
+FROM spans_20260615
+WHERE input_preview IS NULL
+  AND output_preview IS NULL
+  AND session_id IS NOT NULL
+  AND (sqlc.narg(session_filter)::uuid IS NULL OR session_id = sqlc.narg(session_filter)::uuid)
+  AND (sqlc.narg(cursor_session_id)::uuid IS NULL
+       OR (session_id, trace_id, span_id) > (sqlc.narg(cursor_session_id)::uuid, sqlc.narg(cursor_trace_id)::text, sqlc.narg(cursor_span_id)::text))
+ORDER BY session_id ASC, trace_id ASC, span_id ASC
+LIMIT sqlc.arg(batch_size);
+
+-- name: SetSpanPreviews :exec
+-- Fills the two preview columns and nothing else. Previews are outside
+-- content_hash and never move derive_seq (see UpsertSpan), and the
+-- payload is read, never rewritten: a backfill is invisible to every
+-- change-feed consumer. Only a row still without previews is written:
+-- the backfill reads the payload and writes the previews in separate
+-- transactions, and a derive in between stores previews of the newer
+-- payload, which a stale write must not replace.
+UPDATE spans_20260615
+SET input_preview  = sqlc.arg(input_preview),
+    output_preview = sqlc.arg(output_preview)
+WHERE org_id = $1 AND trace_id = $2 AND span_id = $3
+  AND input_preview IS NULL
+  AND output_preview IS NULL;

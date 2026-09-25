@@ -62,7 +62,7 @@ func (s *Server) handleStats(c fiber.Ctx) error {
 	// its rows and its totals passes the one value to both.
 	//
 	// Absent, it is empty and every total stays org-wide.
-	stats, err := reader.AggregateSpanStats(c.RequestCtx(), singleTenantOrgID, since, until, c.Query("auth_subject"))
+	stats, err := reader.AggregateSpanStats(c.Context(), singleTenantOrgID, since, until, c.Query("auth_subject"))
 	if err != nil {
 		s.logger.Error("aggregate span stats", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to compute stats"})

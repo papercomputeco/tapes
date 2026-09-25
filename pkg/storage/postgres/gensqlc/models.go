@@ -128,30 +128,32 @@ type SpanTurns20260615 struct {
 
 // Derived span projection schema version 2026-06-15.
 type Spans20260615 struct {
-	OrgID        pgtype.UUID
-	TraceID      string
-	SpanID       string
-	ParentSpanID string
-	SessionID    pgtype.UUID
-	Kind         string
-	Name         string
-	Status       string
-	CallKind     string
-	ThreadID     string
-	Model        string
-	StopReason   string
-	StartedAt    pgtype.Timestamptz
-	DurationNs   int64
-	Input        []byte
-	Output       []byte
-	Usage        []byte
-	RawTurnID    pgtype.Int8
-	NodeHash     string
-	Seq          int64
-	Verdict      []byte
-	ContentHash  string
-	DeriveSeq    int64
-	Fidelity     string
+	OrgID         pgtype.UUID
+	TraceID       string
+	SpanID        string
+	ParentSpanID  string
+	SessionID     pgtype.UUID
+	Kind          string
+	Name          string
+	Status        string
+	CallKind      string
+	ThreadID      string
+	Model         string
+	StopReason    string
+	StartedAt     pgtype.Timestamptz
+	DurationNs    int64
+	Input         []byte
+	Output        []byte
+	Usage         []byte
+	RawTurnID     pgtype.Int8
+	NodeHash      string
+	Seq           int64
+	Verdict       []byte
+	ContentHash   string
+	DeriveSeq     int64
+	Fidelity      string
+	InputPreview  []byte
+	OutputPreview []byte
 }
 
 // v1 contract view over the sessions table.

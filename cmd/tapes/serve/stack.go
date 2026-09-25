@@ -11,6 +11,7 @@ import (
 	"github.com/papercomputeco/tapes/api"
 	"github.com/papercomputeco/tapes/cmd/tapes/serve/internallisten"
 	"github.com/papercomputeco/tapes/ingest"
+	"github.com/papercomputeco/tapes/internal/memlimit"
 	"github.com/papercomputeco/tapes/pkg/cassette"
 	"github.com/papercomputeco/tapes/pkg/config"
 	deriveworker "github.com/papercomputeco/tapes/pkg/derive/worker"
@@ -32,6 +33,12 @@ type Stack struct {
 
 	// APIWebUI serves the minimal browser UI at the API server's root.
 	APIWebUI bool
+
+	// APIReadDeadline and APIPayloadConcurrency are the API server's read
+	// guards (api.Config.ReadDeadline / PayloadConcurrency); zero disables
+	// each.
+	APIReadDeadline       time.Duration
+	APIPayloadConcurrency int
 
 	// Upstream, ProviderType, and Project configure capture.
 	Upstream     string
@@ -67,6 +74,8 @@ func (stack *Stack) AddFlags(cmd *cobra.Command, flags config.FlagSet) {
 	config.AddStringFlag(cmd, flags, config.FlagProxyListen, &stack.ProxyListen)
 	config.AddStringFlag(cmd, flags, config.FlagAPIListen, &stack.APIListen)
 	config.AddBoolFlag(cmd, flags, config.FlagAPIWebUI, &stack.APIWebUI)
+	config.AddDurationFlag(cmd, flags, config.FlagAPIReadDeadline, &stack.APIReadDeadline)
+	config.AddIntFlag(cmd, flags, config.FlagAPIPayloadConcurrency, &stack.APIPayloadConcurrency)
 	config.AddStringFlag(cmd, flags, config.FlagIngestListen, &stack.IngestListen)
 	config.AddStringFlag(cmd, flags, config.FlagUpstream, &stack.Upstream)
 	config.AddStringFlag(cmd, flags, config.FlagProvider, &stack.ProviderType)
@@ -81,6 +90,8 @@ var stackFlagKeys = []string{
 	config.FlagProxyListen,
 	config.FlagAPIListen,
 	config.FlagAPIWebUI,
+	config.FlagAPIReadDeadline,
+	config.FlagAPIPayloadConcurrency,
 	config.FlagIngestListen,
 	config.FlagUpstream,
 	config.FlagProvider,
@@ -112,6 +123,8 @@ func (stack *Stack) Resolve(cmd *cobra.Command, flags config.FlagSet) error {
 	stack.ProxyListen = v.GetString("proxy.listen")
 	stack.APIListen = v.GetString("api.listen")
 	stack.APIWebUI = v.GetBool("api.web_ui")
+	stack.APIReadDeadline = v.GetDuration("api.read_deadline")
+	stack.APIPayloadConcurrency = v.GetInt("api.payload_concurrency")
 	stack.IngestListen = v.GetString("ingest.listen")
 	stack.Upstream = v.GetString("proxy.upstream")
 	stack.ProviderType = v.GetString("proxy.provider")
@@ -129,6 +142,10 @@ func (stack *Stack) Resolve(cmd *cobra.Command, flags config.FlagSet) error {
 // The caller owns the signal handling: cancelling ctx stops the workers, and
 // the servers are torn down by the deferred closes on the way out.
 func (stack *Stack) Run(ctx context.Context) error {
+	// One process hosts the API alongside the proxy and ingest, so the
+	// soft memory limit is applied once here, as `tapes serve api` does.
+	memlimit.ApplySoftMemoryLimit(stack.Logger)
+
 	driver, err := postgres.NewDriver(ctx, stack.PostgresDSN)
 	if err != nil {
 		return err
@@ -155,9 +172,11 @@ func (stack *Stack) Run(ctx context.Context) error {
 	)
 
 	apiServer, err := api.NewServer(api.Config{ //nolint:contextcheck // Fiber owns request contexts.
-		ListenAddr:       stack.APIListen,
-		EnableWebUI:      stack.APIWebUI,
-		ContractVersions: stack.ContractVersions,
+		ListenAddr:         stack.APIListen,
+		EnableWebUI:        stack.APIWebUI,
+		ContractVersions:   stack.ContractVersions,
+		ReadDeadline:       stack.APIReadDeadline,
+		PayloadConcurrency: stack.APIPayloadConcurrency,
 	}, driver, stack.Logger)
 	if err != nil {
 		return fmt.Errorf("could not build new api server: %w", err)

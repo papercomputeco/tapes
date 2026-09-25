@@ -177,7 +177,7 @@ func (q *Queries) FoldSessionRollupsFromSpans(ctx context.Context, sessionIds []
 }
 
 const getSpan = `-- name: GetSpan :one
-SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq, verdict, content_hash, derive_seq, fidelity FROM spans_20260615
+SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq, verdict, content_hash, derive_seq, fidelity, input_preview, output_preview FROM spans_20260615
 WHERE org_id = $1 AND trace_id = $2 AND span_id = $3
 `
 
@@ -215,6 +215,8 @@ func (q *Queries) GetSpan(ctx context.Context, arg GetSpanParams) (Spans20260615
 		&i.ContentHash,
 		&i.DeriveSeq,
 		&i.Fidelity,
+		&i.InputPreview,
+		&i.OutputPreview,
 	)
 	return i, err
 }
@@ -581,7 +583,7 @@ func (q *Queries) ListSpanTurnsBySession(ctx context.Context, sessionID pgtype.U
 }
 
 const listSpansBySession = `-- name: ListSpansBySession :many
-SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq, verdict, content_hash, derive_seq, fidelity FROM spans_20260615
+SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq, verdict, content_hash, derive_seq, fidelity, input_preview, output_preview FROM spans_20260615
 WHERE session_id = $1
 ORDER BY trace_id ASC, seq ASC, started_at ASC, span_id ASC
 `
@@ -622,6 +624,8 @@ func (q *Queries) ListSpansBySession(ctx context.Context, sessionID pgtype.UUID)
 			&i.ContentHash,
 			&i.DeriveSeq,
 			&i.Fidelity,
+			&i.InputPreview,
+			&i.OutputPreview,
 		); err != nil {
 			return nil, err
 		}
@@ -634,7 +638,7 @@ func (q *Queries) ListSpansBySession(ctx context.Context, sessionID pgtype.UUID)
 }
 
 const listSpansByTrace = `-- name: ListSpansByTrace :many
-SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq, verdict, content_hash, derive_seq, fidelity FROM spans_20260615
+SELECT org_id, trace_id, span_id, parent_span_id, session_id, kind, name, status, call_kind, thread_id, model, stop_reason, started_at, duration_ns, input, output, usage, raw_turn_id, node_hash, seq, verdict, content_hash, derive_seq, fidelity, input_preview, output_preview FROM spans_20260615
 WHERE org_id = $1 AND trace_id = $2
 ORDER BY seq ASC, started_at ASC, span_id ASC
 `
@@ -678,6 +682,84 @@ func (q *Queries) ListSpansByTrace(ctx context.Context, arg ListSpansByTracePara
 			&i.ContentHash,
 			&i.DeriveSeq,
 			&i.Fidelity,
+			&i.InputPreview,
+			&i.OutputPreview,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSpansMissingPreviews = `-- name: ListSpansMissingPreviews :many
+SELECT org_id, session_id, trace_id, span_id, input, output
+FROM spans_20260615
+WHERE input_preview IS NULL
+  AND output_preview IS NULL
+  AND session_id IS NOT NULL
+  AND ($1::uuid IS NULL OR session_id = $1::uuid)
+  AND ($2::uuid IS NULL
+       OR (session_id, trace_id, span_id) > ($2::uuid, $3::text, $4::text))
+ORDER BY session_id ASC, trace_id ASC, span_id ASC
+LIMIT $5
+`
+
+type ListSpansMissingPreviewsParams struct {
+	SessionFilter   pgtype.UUID
+	CursorSessionID pgtype.UUID
+	CursorTraceID   pgtype.Text
+	CursorSpanID    pgtype.Text
+	BatchSize       int32
+}
+
+type ListSpansMissingPreviewsRow struct {
+	OrgID     pgtype.UUID
+	SessionID pgtype.UUID
+	TraceID   string
+	SpanID    string
+	Input     []byte
+	Output    []byte
+}
+
+// Preview backfill (`tapes backfill previews`): one page of the rows the
+// 1781540000 migration left without stored previews, derived before the
+// preview columns existed and not yet backfilled. A row with no payload at
+// all is selected too: the deriver stores `[]` previews for such a span,
+// and a NULL preview is served as pending, so leaving it alone would keep
+// it pending forever where the deriver's own output is not.
+//
+// Keyset-paged on (session_id, trace_id, span_id): unique (a session
+// belongs to one org, and (org_id, trace_id, span_id) is the key), unlike
+// started_at, and it lets the caller log and resume from a row it can
+// name. Rows whose session never resolved carry a NULL session_id, which
+// no row-value comparison can order; they are unreachable orphans (see
+// writeSpanSet) and are skipped here for the same reason.
+func (q *Queries) ListSpansMissingPreviews(ctx context.Context, arg ListSpansMissingPreviewsParams) ([]ListSpansMissingPreviewsRow, error) {
+	rows, err := q.db.Query(ctx, listSpansMissingPreviews,
+		arg.SessionFilter,
+		arg.CursorSessionID,
+		arg.CursorTraceID,
+		arg.CursorSpanID,
+		arg.BatchSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSpansMissingPreviewsRow
+	for rows.Next() {
+		var i ListSpansMissingPreviewsRow
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.SessionID,
+			&i.TraceID,
+			&i.SpanID,
+			&i.Input,
+			&i.Output,
 		); err != nil {
 			return nil, err
 		}
@@ -872,17 +954,54 @@ func (q *Queries) PruneSpans(ctx context.Context, arg PruneSpansParams) (int64, 
 	return result.RowsAffected(), nil
 }
 
+const setSpanPreviews = `-- name: SetSpanPreviews :exec
+UPDATE spans_20260615
+SET input_preview  = $4,
+    output_preview = $5
+WHERE org_id = $1 AND trace_id = $2 AND span_id = $3
+  AND input_preview IS NULL
+  AND output_preview IS NULL
+`
+
+type SetSpanPreviewsParams struct {
+	OrgID         pgtype.UUID
+	TraceID       string
+	SpanID        string
+	InputPreview  []byte
+	OutputPreview []byte
+}
+
+// Fills the two preview columns and nothing else. Previews are outside
+// content_hash and never move derive_seq (see UpsertSpan), and the
+// payload is read, never rewritten: a backfill is invisible to every
+// change-feed consumer. Only a row still without previews is written:
+// the backfill reads the payload and writes the previews in separate
+// transactions, and a derive in between stores previews of the newer
+// payload, which a stale write must not replace.
+func (q *Queries) SetSpanPreviews(ctx context.Context, arg SetSpanPreviewsParams) error {
+	_, err := q.db.Exec(ctx, setSpanPreviews,
+		arg.OrgID,
+		arg.TraceID,
+		arg.SpanID,
+		arg.InputPreview,
+		arg.OutputPreview,
+	)
+	return err
+}
+
 const upsertSpan = `-- name: UpsertSpan :exec
 INSERT INTO spans_20260615 (
     org_id, trace_id, span_id, parent_span_id, session_id,
     kind, name, status, call_kind, thread_id, model, stop_reason,
     started_at, duration_ns, seq, input, output, usage, raw_turn_id, node_hash,
-    verdict, content_hash, derive_seq, fidelity
+    verdict, content_hash, derive_seq, fidelity,
+    input_preview, output_preview
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11, $12,
     $13, $14, $15, $16, $17, $18, $19, $20,
-    $21, $22, $23, $24
+    $21, $22, $23, $24,
+    $25, $26
 )
 ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     parent_span_id = EXCLUDED.parent_span_id,
@@ -905,6 +1024,11 @@ ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
     verdict        = EXCLUDED.verdict,
     content_hash   = EXCLUDED.content_hash,
     fidelity       = EXCLUDED.fidelity,
+    -- Previews are a pure function of input/output and are not part of
+    -- content_hash: they are rewritten with the payload but never move the
+    -- cursor on their own.
+    input_preview  = EXCLUDED.input_preview,
+    output_preview = EXCLUDED.output_preview,
     -- See UpsertSpanTurn: the cursor advances only on a real content change,
     -- so a consumer polling derive_seq sees changes rather than every row a
     -- re-derive happened to touch.
@@ -916,30 +1040,32 @@ ON CONFLICT (org_id, trace_id, span_id) DO UPDATE SET
 `
 
 type UpsertSpanParams struct {
-	OrgID        pgtype.UUID
-	TraceID      string
-	SpanID       string
-	ParentSpanID string
-	SessionID    pgtype.UUID
-	Kind         string
-	Name         string
-	Status       string
-	CallKind     string
-	ThreadID     string
-	Model        string
-	StopReason   string
-	StartedAt    pgtype.Timestamptz
-	DurationNs   int64
-	Seq          int64
-	Input        []byte
-	Output       []byte
-	Usage        []byte
-	RawTurnID    pgtype.Int8
-	NodeHash     string
-	Verdict      []byte
-	ContentHash  string
-	DeriveSeq    int64
-	Fidelity     string
+	OrgID         pgtype.UUID
+	TraceID       string
+	SpanID        string
+	ParentSpanID  string
+	SessionID     pgtype.UUID
+	Kind          string
+	Name          string
+	Status        string
+	CallKind      string
+	ThreadID      string
+	Model         string
+	StopReason    string
+	StartedAt     pgtype.Timestamptz
+	DurationNs    int64
+	Seq           int64
+	Input         []byte
+	Output        []byte
+	Usage         []byte
+	RawTurnID     pgtype.Int8
+	NodeHash      string
+	Verdict       []byte
+	ContentHash   string
+	DeriveSeq     int64
+	Fidelity      string
+	InputPreview  []byte
+	OutputPreview []byte
 }
 
 func (q *Queries) UpsertSpan(ctx context.Context, arg UpsertSpanParams) error {
@@ -968,6 +1094,8 @@ func (q *Queries) UpsertSpan(ctx context.Context, arg UpsertSpanParams) error {
 		arg.ContentHash,
 		arg.DeriveSeq,
 		arg.Fidelity,
+		arg.InputPreview,
+		arg.OutputPreview,
 	)
 	return err
 }

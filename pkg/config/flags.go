@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -38,21 +39,23 @@ type FlagSet map[string]Flag
 // Use these constants when calling AddStringFlag, AddUintFlag, AddBoolFlag,
 // and BindRegisteredFlags to avoid typos or drift from one command to another.
 const (
-	FlagProxyListen         = "proxy-listen"
-	FlagAPIListen           = "api-listen"
-	FlagAPIWebUI            = "api-web-ui"
-	FlagUpstream            = "upstream"
-	FlagProvider            = "provider"
-	FlagPostgres            = "postgres"
-	FlagProject             = "project"
-	FlagAPITarget           = "api-target"
-	FlagProxyTarget         = "proxy-target"
-	FlagTelemetryDisabled   = "telemetry-disabled"
-	FlagUpdateCheckDisabled = "update-check-disabled"
-	FlagLogLevel            = "log-level"
-	FlagLogFormat           = "log-format"
-	FlagLogColor            = "log-color"
-	FlagCassettes           = "cassettes"
+	FlagProxyListen           = "proxy-listen"
+	FlagAPIListen             = "api-listen"
+	FlagAPIWebUI              = "api-web-ui"
+	FlagAPIReadDeadline       = "api-read-deadline"
+	FlagAPIPayloadConcurrency = "api-payload-concurrency"
+	FlagUpstream              = "upstream"
+	FlagProvider              = "provider"
+	FlagPostgres              = "postgres"
+	FlagProject               = "project"
+	FlagAPITarget             = "api-target"
+	FlagProxyTarget           = "proxy-target"
+	FlagTelemetryDisabled     = "telemetry-disabled"
+	FlagUpdateCheckDisabled   = "update-check-disabled"
+	FlagLogLevel              = "log-level"
+	FlagLogFormat             = "log-format"
+	FlagLogColor              = "log-color"
+	FlagCassettes             = "cassettes"
 
 	FlagIngestListen = "ingest-listen"
 
@@ -144,6 +147,21 @@ func AddIntFlag(cmd *cobra.Command, fs FlagSet, registryKey string, target *int)
 		cmd.Flags().IntVarP(target, def.Name, def.Shorthand, defaultVal, def.Description)
 	} else {
 		cmd.Flags().IntVar(target, def.Name, defaultVal, def.Description)
+	}
+}
+
+// AddDurationFlag registers a time.Duration flag on cmd from the given FlagSet.
+func AddDurationFlag(cmd *cobra.Command, fs FlagSet, registryKey string, target *time.Duration) {
+	def, ok := fs[registryKey]
+	if !ok {
+		return
+	}
+
+	defaultVal := defaultDuration(def.ViperKey)
+	if def.Shorthand != "" {
+		cmd.Flags().DurationVarP(target, def.Name, def.Shorthand, defaultVal, def.Description)
+	} else {
+		cmd.Flags().DurationVar(target, def.Name, defaultVal, def.Description)
 	}
 }
 
@@ -259,4 +277,9 @@ func defaultInt(viperKey string) int {
 // defaultBool returns the default bool value for a viper key from NewDefaultConfig.
 func defaultBool(viperKey string) bool {
 	return getDefaultViper().GetBool(viperKey)
+}
+
+// defaultDuration returns the default time.Duration value for a viper key from NewDefaultConfig.
+func defaultDuration(viperKey string) time.Duration {
+	return getDefaultViper().GetDuration(viperKey)
 }

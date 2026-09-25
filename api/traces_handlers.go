@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"encoding/json"
 	"time"
 
@@ -22,20 +23,22 @@ type spanModelReader interface {
 }
 
 // PayloadMode selects how much span payload a trace response carries.
-// Full embeds the stored content verbatim; preview truncates long
-// text so list-shaped reads stay O(structure), with the span drill-in
-// endpoint serving the full payload on demand.
-type PayloadMode string
+// Full embeds the stored content verbatim; preview serves the
+// deriver-written previews (derive.PreviewBlocks: strings truncated,
+// image bytes dropped) so list-shaped reads stay O(structure), with the
+// span drill-in endpoint serving the full payload on demand. It is the
+// storage mode: the same value picks the columns the read selects.
+type PayloadMode = storage.PayloadMode
 
 const (
-	PayloadFull    PayloadMode = "full"
-	PayloadPreview PayloadMode = "preview"
+	PayloadFull    = storage.PayloadFull
+	PayloadPreview = storage.PayloadPreview
+	// PayloadPending marks a preview-mode span whose row carries no stored
+	// preview yet (derived before the preview columns existed and not yet
+	// backfilled). Its input and output are served as [] rather than
+	// computed from the payload — a preview read never touches it.
+	PayloadPending PayloadMode = "preview_pending"
 )
-
-// previewPayloadRunes bounds every string carried by a preview-mode
-// payload. Long enough to read, short enough that a whole session of
-// previews stays smaller than one full tool result.
-const previewPayloadRunes = 512
 
 // payloadModeFromQuery maps the ?payload= query param to a mode;
 // anything but "preview" is the full default.
@@ -142,8 +145,10 @@ type SpanItem struct {
 	// Usage (was `metrics`) is an llm.Usage object on the wire — {}-pinned
 	// for usage-less spans.
 	Usage json.RawMessage `json:"usage" oas:"type=object"`
-	// Payload marks a preview-truncated span so the console drills in for
-	// the full payload; absent in full mode.
+	// Payload marks a preview-mode span so the console drills in for the
+	// full payload: "preview" when input/output are the stored previews,
+	// "preview_pending" when the row has no stored preview yet (input and
+	// output are then []). Absent in full mode.
 	Payload string `json:"payload,omitempty"`
 }
 
@@ -184,16 +189,29 @@ type TraceDetail struct {
 	Trace  TraceItem      `json:"trace"`
 	Spans  []SpanItem     `json:"spans"`
 	Links  []SpanLinkItem `json:"links,omitempty"`
+	// NextCursor continues the STANDALONE /v1/traces/{id} walk from the
+	// last span of this page (pass it as `cursor`). Absent once the page
+	// reached the trace's last span, and always absent on the copies the
+	// composite embeds — there a trace is served whole, so the field
+	// never appears on that wire.
+	NextCursor string `json:"next_cursor,omitempty"`
 }
 
 // SessionTracesResponse is the composite session view on the span
-// model. `schema` stamps the projection generation the rows were derived
-// against, so the presentational shape can version independently.
+// model — one page of it. `schema` stamps the projection generation the
+// rows were derived against, so the presentational shape can version
+// independently. The page is bounded in traces (`limit`) and in bytes;
+// `session` and `links` are whole on every page.
 type SessionTracesResponse struct {
 	Schema  string         `json:"schema"`
 	Session SessionItem    `json:"session"`
 	Traces  []TraceDetail  `json:"traces"`
 	Links   []SpanLinkItem `json:"links"`
+	// NextCursor continues the walk from the last trace of this page
+	// (pass it as `cursor`). Absent once the page reached the session's
+	// last trace. A page may close short of `limit` on its byte budget, so
+	// its absence — not the page's length — is what means "no more".
+	NextCursor string `json:"next_cursor,omitempty"`
 }
 
 // ProjectionSchema is the compatibility date of the derived projection
@@ -221,8 +239,26 @@ func (s *Server) handleGetSessionTraces(c fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id must be a valid UUID"})
 	}
 
+	limit, err := parseTracesLimit(c.Query("limit"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
+	}
+	var cursor *tracesPageCursor
+	if raw := c.Query("cursor"); raw != "" {
+		cur, err := decodeTracesPageCursor(raw)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
+		}
+		// A cursor is a boundary in one session's trace order; presented
+		// with another session it is a malformed request, not a transition.
+		if cur.Session != id {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "cursor does not match session"})
+		}
+		cursor = &cur
+	}
+
 	orgID := singleTenantOrgID
-	sess, err := sessions.GetSessionRecord(c.RequestCtx(), orgID, id)
+	sess, err := sessions.GetSessionRecord(c.Context(), orgID, id)
 	if err != nil {
 		s.logger.Error("get session for traces", "id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session"})
@@ -231,19 +267,70 @@ func (s *Server) handleGetSessionTraces(c fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
 	}
 
-	turns, spans, links, err := reader.ListSessionSpanModel(c.RequestCtx(), id)
+	// Everything that can still turn into an error response is loaded
+	// here, before the status is committed: the payload-free turn headers
+	// (with their span counts, which the trace header carries ahead of its
+	// spans) and the session's links. The spans themselves stream.
+	turns, err := reader.ListTraceSummaries(c.Context(), id)
 	if err != nil {
-		s.logger.Error("list span model", "session_id", id, "error", err)
+		s.logger.Error("list trace summaries", "session_id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session traces"})
 	}
+	links, err := reader.ListSessionLinks(c.Context(), id)
+	if err != nil {
+		s.logger.Error("list session links", "session_id", id, "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session traces"})
+	}
+	if cursor != nil {
+		// Turn headers arrive in emit order, so the traces an earlier
+		// page served are a prefix.
+		start := 0
+		for start < len(turns) && cursor.covers(turns[start].SpanTurnRecord) {
+			start++
+		}
+		turns = turns[start:]
+	}
 
-	resp := BuildSessionTraces(sessionItemFromStorage(*sess, time.Now()), turns, spans, links, payloadModeFromQuery(c.Query("payload")))
-	return c.JSON(resp)
+	page := &tracesPage{
+		sessionID: id,
+		orgID:     orgID,
+		session:   sessionItemFromStorage(*sess, time.Now()),
+		turns:     turns,
+		links:     links,
+		mode:      payloadModeFromQuery(c.Query("payload")),
+		limit:     limit,
+		budget:    tracesPageByteBudget,
+		spans:     reader,
+	}
+
+	// The body is written by a goroutine after this handler returns, so
+	// the ctx is abandoned rather than recycled underneath it, and the
+	// goroutine takes only what it needs from it now: the user context,
+	// which is the one signal that can tell it to stop. Compression is
+	// left to the middleware, which wraps a body stream incrementally.
+	ctx := c.Context()
+	c.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	c.Abandon()
+	return c.SendStreamWriter(func(w *bufio.Writer) {
+		if err := page.write(ctx, w); err != nil {
+			s.logger.Warn("session traces stream cut short", "session_id", id, "error", err)
+		}
+	})
 }
 
-// BuildSessionTraces assembles the composite response. Pure rendering:
-// every edge and kind here was computed by the deriver. Exported so
-// `tapes dev trace-fixtures` emits byte-identical JSON to the handler.
+// parseTracesLimit reads the composite's `limit` query: the number of
+// traces a page holds, defaulting to 50 and clamped to 200. Anything
+// that is not a positive integer is rejected rather than defaulted.
+func parseTracesLimit(raw string) (int, error) {
+	return parseLimit(raw, defaultTracesLimit, maxTracesLimit)
+}
+
+// BuildSessionTraces assembles the composite response whole. Pure
+// rendering: every edge and kind here was computed by the deriver. The
+// handler no longer calls it — it streams a page through tracesPage — but
+// this remains the reference shape: a page that fits in one is
+// byte-identical to json.Marshal of this, which `tapes dev trace-fixtures`
+// relies on and the stream specs prove.
 func BuildSessionTraces(
 	session SessionItem,
 	turns []storage.SpanTurnRecord,
@@ -290,8 +377,10 @@ func BuildSessionTraces(
 
 // spanItemFromRecord renders one stored span as uniform content-block
 // input/output for every kind — no tool unwrapping — with the taxonomy
-// fields promoted to typed columns. Preview mode truncates payload
-// strings and marks the item so clients drill in for the full payload.
+// fields promoted to typed columns. Preview mode serves the stored
+// previews as they are and marks the item so clients drill in for the
+// full payload; a row without stored previews is marked pending and
+// served with empty content, never a preview computed here.
 func spanItemFromRecord(sp storage.SpanRecord, mode PayloadMode) SpanItem {
 	item := SpanItem{
 		TraceID:      sp.TraceID,
@@ -309,89 +398,31 @@ func spanItemFromRecord(sp storage.SpanRecord, mode PayloadMode) SpanItem {
 		ThreadID:     sp.ThreadID,
 		RawTurnID:    sp.RawTurnID,
 		Verdict:      sp.Verdict, // already json.RawMessage; nil → null on the wire
-		Input:        contentArray(sp.Input, mode),
-		Output:       contentArray(sp.Output, mode),
 		Usage:        emptyObjectIfNil(sp.Usage),
 	}
-	if mode == PayloadPreview {
+	switch {
+	case mode != PayloadPreview:
+		item.Input = contentArray(sp.Input)
+		item.Output = contentArray(sp.Output)
+	case sp.HasPreview:
+		item.Input = contentArray(sp.InputPreview)
+		item.Output = contentArray(sp.OutputPreview)
 		item.Payload = string(PayloadPreview)
+	default:
+		item.Input = json.RawMessage("[]")
+		item.Output = json.RawMessage("[]")
+		item.Payload = string(PayloadPending)
 	}
 	return item
 }
 
-// contentArray renders a stored content-block array for the wire, pinned
-// to [] when empty. Full mode passes the stored JSON through verbatim;
-// preview mode truncates every string.
-func contentArray(raw json.RawMessage, mode PayloadMode) json.RawMessage {
+// contentArray renders a stored content-block array for the wire
+// verbatim, pinned to [] when empty.
+func contentArray(raw json.RawMessage) json.RawMessage {
 	if len(raw) == 0 || string(raw) == "null" {
 		return json.RawMessage("[]")
 	}
-	if mode != PayloadPreview {
-		return raw
-	}
-	b, err := json.Marshal(payloadContent(raw, mode))
-	if err != nil {
-		return raw
-	}
-	return b
-}
-
-// payloadContent renders a stored content-block array for the wire. In
-// full mode the stored JSON passes through verbatim; preview mode
-// decodes, truncates every string, and re-encodes. A blob that fails
-// to decode passes through whole rather than silently vanishing.
-func payloadContent(raw json.RawMessage, mode PayloadMode) any {
-	if mode != PayloadPreview {
-		return raw
-	}
-	blocks := decodeBlocks(raw)
-	if blocks == nil {
-		return raw
-	}
-	for i := range blocks {
-		b := &blocks[i]
-		b.Text = previewString(b.Text)
-		b.Thinking = previewString(b.Thinking)
-		b.ToolOutput = previewString(b.ToolOutput)
-		// Previews never carry image bytes.
-		b.ImageBase64 = ""
-		if b.ToolInput != nil {
-			b.ToolInput = previewValue(b.ToolInput).(map[string]any)
-		}
-	}
-	return blocks
-}
-
-// previewString truncates one payload string to the preview bound.
-func previewString(s string) string {
-	r := []rune(s)
-	if len(r) <= previewPayloadRunes {
-		return s
-	}
-	return string(r[:previewPayloadRunes]) + "…"
-}
-
-// previewValue truncates every string reachable in a decoded JSON
-// value, preserving structure (tool arguments nest arbitrarily).
-func previewValue(v any) any {
-	switch t := v.(type) {
-	case string:
-		return previewString(t)
-	case map[string]any:
-		out := make(map[string]any, len(t))
-		for k, val := range t {
-			out[k] = previewValue(val)
-		}
-		return out
-	case []any:
-		out := make([]any, len(t))
-		for i, val := range t {
-			out[i] = previewValue(val)
-		}
-		return out
-	default:
-		return v
-	}
+	return raw
 }
 
 // TreeTask is one task folded from the session's TaskCreate/TaskUpdate
@@ -411,17 +442,4 @@ func emptyObjectIfNil(raw json.RawMessage) json.RawMessage {
 		return json.RawMessage("{}")
 	}
 	return raw
-}
-
-// decodeBlocks unmarshals a stored content-block array ("" / null →
-// empty).
-func decodeBlocks(raw json.RawMessage) []llm.ContentBlock {
-	if len(raw) == 0 {
-		return nil
-	}
-	var blocks []llm.ContentBlock
-	if err := json.Unmarshal(raw, &blocks); err != nil {
-		return nil
-	}
-	return blocks
 }

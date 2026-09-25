@@ -84,6 +84,8 @@ func setViperDefaults(v *viper.Viper) {
 	// API
 	v.SetDefault("api.listen", d.API.Listen)
 	v.SetDefault("api.web_ui", d.API.WebUI)
+	v.SetDefault("api.read_deadline", d.API.ReadDeadline)
+	v.SetDefault("api.payload_concurrency", d.API.PayloadConcurrency)
 
 	// Ingest
 	v.SetDefault("ingest.listen", d.Ingest.Listen)

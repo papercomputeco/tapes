@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"iter"
 	"net/http"
 	"net/http/httptest"
 	"time"
@@ -16,20 +17,28 @@ import (
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
-// stubSpanModel serves one canned trace. The embedded nil interface
-// satisfies storage.SpanModelReader; only the method under test is real.
+// stubSpanModel serves one canned, span-less trace. The embedded nil
+// interface satisfies storage.SpanModelReader; only the methods the
+// streaming trace page calls are real.
 type stubSpanModel struct {
 	storage.Driver
 	storage.SpanModelReader
 	turn storage.SpanTurnRecord
 }
 
-func (s *stubSpanModel) GetTraceDetail(_ context.Context, _, traceID string) (*storage.SpanTurnRecord, []storage.SpanRecord, []storage.SpanLinkRecord, error) {
+func (s *stubSpanModel) GetTraceSummary(_ context.Context, _, traceID string) (*storage.TraceSummaryRecord, error) {
 	if traceID != s.turn.TraceID {
-		return nil, nil, nil, nil
+		return nil, nil
 	}
-	turn := s.turn
-	return &turn, nil, nil, nil
+	return &storage.TraceSummaryRecord{SpanTurnRecord: s.turn}, nil
+}
+
+func (s *stubSpanModel) ListTraceLinks(context.Context, string, string) ([]storage.SpanLinkRecord, error) {
+	return nil, nil
+}
+
+func (s *stubSpanModel) IterateTraceSpans(context.Context, string, string, storage.SpanCursor, storage.PayloadMode) iter.Seq2[storage.SpanRecord, error] {
+	return func(func(storage.SpanRecord, error) bool) {}
 }
 
 var _ = Describe("standalone trace reads", func() {

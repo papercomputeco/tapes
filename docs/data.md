@@ -93,4 +93,41 @@ curl http://localhost:8081/v1/stats
 
 Session IDs and trace/span IDs are UUIDs, not content hashes. `GET /v1/sessions/{id}` returns session metadata; conversation content is on the trace/span endpoints. Raw-turn retrieval preserves the original capture separately from the derived model.
 
+The trace endpoints take `?payload=preview` for a bounded view of every
+span's content. The deriver stores that preview next to the payload — the
+spans table carries `input_preview` and `output_preview` beside `input` and
+`output` — and a preview read selects only the preview columns, so it never
+touches the payload. Rows derived before those columns existed report
+`payload: "preview_pending"` until a backfill fills them in.
+See [HTTP APIs](./apis.md#span-payload-modes).
+
 Browse the live contract at `http://localhost:8081/swagger`, or fetch it from `http://localhost:8081/openapi`. See [HTTP APIs](./apis.md) for the surface and trust boundary.
+
+## Payload compression on disk
+
+The raw layer (`raw_turns.raw_request`, `raw_turns.response`) and the span
+payloads and previews (`input`, `output`, `input_preview`, `output_preview`)
+are JSONB, so Postgres compresses any value past its TOAST threshold. Those
+columns are set to `lz4`, which compresses this JSON about as well as the
+`pglz` default and decompresses several times faster; every read of a turn or
+a span is a decompression, so that is where it shows. The setting is per
+column — the cluster's `default_toast_compression` is untouched — and applies
+to new rows only: values stored before it keep their `pglz` and read back
+correctly until something rewrites them (a dump and restore does; `VACUUM
+FULL` and `CLUSTER` copy compressed bytes as they are). Whether to rewrite
+existing rows is an operator decision; nothing in Tapes does it for you.
+`SELECT pg_column_compression(raw_request) FROM raw_turns WHERE id = ...`
+shows which method a stored value carries (`NULL` for values small enough to
+stay inline).
+
+## Trace page order index
+
+A trace's spans are read in `(seq, started_at, span_id)` order, and
+`spans_20260615_page_order_idx` carries that key under `(org_id, trace_id)`,
+so resuming a trace read from a cursor seeks straight to it instead of sorting
+the whole trace, and with SSD planner costs (`random_page_cost` near 1) the
+whole read streams from the index in order with no sort at all. The migration
+builds it with a plain `CREATE INDEX`, which on a very large table blocks
+writes for the length of the build; an operator who would rather not pay that
+at deploy time can build it first by hand with `CREATE INDEX CONCURRENTLY`
+under the same name, and the migration's `IF NOT EXISTS` then skips it.

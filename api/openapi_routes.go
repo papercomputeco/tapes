@@ -111,14 +111,28 @@ func (s *Server) mountSessions(router *oasfiber.Router) {
 			Summary("Get a session's trace/span projection").
 			Description("Returns the session's user-visible turns as traces with nested spans (llm "+
 				"calls, tools, subagents, shadow calls, injected context) and dataflow links. "+
-				"Cross-trace links (compaction seams) are at the response top level.").
+				"Cross-trace links (compaction seams) are at the response top level. The response "+
+				"is one page: the first `limit` traces in turn order (default 50), closed early "+
+				"once the page passes its byte budget. `next_cursor` continues the walk; its "+
+				"absence, not the page's length, means the session's last trace was served. "+
+				"`session` and `links` are whole on every page. The body streams as it is read.").
 			Tag("sessions").
 			PathParam("id", oas.String(), oas.ParamDescription("Session id (UUID)")).
 			QueryParam("payload", oas.String(oas.Enum("full", "preview")),
-				oas.ParamDescription("Span payload mode: full (default) or preview (strings truncated; "+
-					"fetch the span endpoint for full payloads)")).
-			JSONResponse(200, "The session's traces and spans", s.schema(SessionTracesResponse{})).
-			JSONResponse(400, "Missing or malformed id", s.errorSchema()).
+				oas.ParamDescription("Span payload mode: full (default) or preview. Preview serves each "+
+					"span's stored preview (strings truncated, image bytes dropped) and marks it "+
+					"payload=preview; a span derived before previews were stored is served with "+
+					"empty input/output and payload=preview_pending until backfilled. Fetch the "+
+					"span endpoint for full payloads.")).
+			QueryParam("limit", oas.Integer(oas.Minimum(1)),
+				oas.ParamDescription("Maximum number of traces in the page (default 50, max 200); a "+
+					"page may close short of it on its byte budget")).
+			QueryParam("cursor", oas.String(),
+				oas.ParamDescription("Opaque pagination cursor returned as next_cursor by a previous "+
+					"page of the same session")).
+			JSONResponse(200, "One page of the session's traces and spans", s.schema(SessionTracesResponse{})).
+			JSONResponse(400, "Missing or malformed id, limit, or cursor, or a cursor minted for "+
+				"another session", s.errorSchema()).
 			JSONResponse(404, "Session not found", s.errorSchema()).
 			JSONResponse(500, "Failed to load session", s.errorSchema()).
 			JSONResponse(501, "Span traces not supported by this backend", s.errorSchema()))
@@ -128,11 +142,20 @@ func (s *Server) mountSessions(router *oasfiber.Router) {
 			Summary("List a session's raw capture log (operator)").
 			Description("The raw layer's wire log: one row per captured call or transcript push, "+
 				"identity and sizes only. `source` distinguishes what crossed the wire from what the "+
-				"harness pushed as its own account.").
+				"harness pushed as its own account. The response is one page: the next `limit` "+
+				"headers in raw turn id order (default 200). `next_cursor` continues the walk; its "+
+				"absence, not the page's length, means the session's last raw turn was served.").
 			Tag("sessions").
 			PathParam("id", oas.String(), oas.ParamDescription("Session id (UUID)")).
-			JSONResponse(200, "The session's raw turn headers", s.schema(RawTurnListResponse{})).
-			JSONResponse(400, "Missing or malformed id", s.errorSchema()).
+			QueryParam("limit", oas.Integer(oas.Minimum(1)),
+				oas.ParamDescription("Maximum number of raw turn headers in the page (default 200, "+
+					"max 1000)")).
+			QueryParam("cursor", oas.String(),
+				oas.ParamDescription("Opaque pagination cursor returned as next_cursor by a previous "+
+					"page of the same session")).
+			JSONResponse(200, "One page of the session's raw turn headers", s.schema(RawTurnListResponse{})).
+			JSONResponse(400, "Missing or malformed id, limit, or cursor, or a cursor minted for "+
+				"another session", s.errorSchema()).
 			JSONResponse(404, "Session not found", s.errorSchema()).
 			JSONResponse(500, "Failed to list raw turns", s.errorSchema()).
 			JSONResponse(501, "Raw turns not supported by this backend", s.errorSchema()))
@@ -209,15 +232,32 @@ func (s *Server) mountTraces(router *oasfiber.Router) {
 
 	router.Get("/v1/traces/:trace_id", s.handleGetTrace,
 		oasfiber.Doc("getTrace").
-			Summary("Get one trace with spans and links").
-			Description("Returns one user-visible turn: its spans nested by parent_span_id and its "+
-				"dataflow links (links touching other traces included).").
+			Summary("Get one trace with spans and links (paged)").
+			Description("Returns one page of a user-visible turn: its header, the next `limit` spans "+
+				"in presentation order (seq), and its dataflow links (links touching other traces "+
+				"included). The header and links are whole on every page; only `spans` is paged. "+
+				"When more spans remain the page ends with `next_cursor` — pass it back as `cursor` "+
+				"to continue; its absence marks the trace's last span. A page also closes at the "+
+				"next span boundary once it has emitted roughly 8 MiB before compression, so a "+
+				"page shorter than `limit` does not mean the end. The body is streamed as spans are "+
+				"read: the status is committed before the first span, so a mid-page failure "+
+				"truncates the document rather than returning an error.").
 			Tag("traces").
 			PathParam("trace_id", oas.String(), oas.ParamDescription("Trace id")).
 			QueryParam("payload", oas.String(oas.Enum("full", "preview")),
-				oas.ParamDescription("Span payload mode: full (default) or preview (strings truncated; "+
-					"fetch the span endpoint for full payloads)")).
-			JSONResponse(200, "The trace", s.schema(StandaloneTraceDetail{})).
+				oas.ParamDescription("Span payload mode: full (default) or preview. Preview serves each "+
+					"span's stored preview (strings truncated, image bytes dropped) and marks it "+
+					"payload=preview; a span derived before previews were stored is served with "+
+					"empty input/output and payload=preview_pending until backfilled. Fetch the "+
+					"span endpoint for full payloads.")).
+			QueryParam("limit", oas.Integer(oas.Minimum(1)),
+				oas.ParamDescription("Maximum number of spans in the page (default 200, max 1000); a "+
+					"page may close short of it on its byte budget")).
+			QueryParam("cursor", oas.String(),
+				oas.ParamDescription("Opaque pagination cursor returned as next_cursor by a previous "+
+					"page of the same trace")).
+			JSONResponse(200, "One page of the trace's spans, with its header and links", s.schema(StandaloneTraceDetail{})).
+			JSONResponse(400, "Malformed limit or cursor, or a cursor minted for another trace", s.errorSchema()).
 			JSONResponse(404, "Trace not found", s.errorSchema()).
 			JSONResponse(500, "Failed to load trace", s.errorSchema()).
 			JSONResponse(501, "Traces not supported by this backend", s.errorSchema()))

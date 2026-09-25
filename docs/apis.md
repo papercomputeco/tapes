@@ -28,11 +28,134 @@ The authoritative parameters, schemas, and methods are compiled from route regis
 
 - session listing is cursor-paginated;
 - session and trace/span paths use UUID IDs;
-- session content is read through traces and spans;
+- session content is read through traces and spans, and the composite
+  session view is paged and streamed (see below);
 - semantic search is served by the search cassette (`/v1/cassettes/search/spans`);
-- raw turns remain available at `/v1/sessions/{id}/raw_turns`.
+- raw turns remain available at `/v1/sessions/{id}/raw_turns`, paged the
+  same way (see below).
 
 There is no `/v1/search`, `/v1/sessions/summary`, or hash-based session route.
+
+### Session traces are paged and streamed
+
+`GET /v1/sessions/{id}/traces` returns one page of the composite view, not
+the whole session. A page is the next `limit` traces in turn order (default
+50, maximum 200; a larger value is clamped, and anything that is not a
+positive integer is rejected with `400`). A page also closes early, at the
+next trace boundary, once it has emitted roughly 8 MiB before compression —
+spans carry whole tool results and images, so a count alone does not bound
+a page, and a page may therefore hold a single trace.
+
+Every page carries the whole envelope: `schema`, `session`, and the
+session-scoped `links` are complete on each one; only `traces` is paged.
+When more traces remain the page ends with `next_cursor`; pass it back as
+`cursor` to continue. Its absence is what marks the session's last trace —
+a page shorter than `limit` does not. A cursor is opaque and bound to the
+session it was minted for; presenting it on another session is a `400`.
+
+The body is written as it is read: the server holds the payload-free turn
+headers and links, then streams each span through as its row is scanned,
+so memory stays bounded by one span regardless of session size. The
+response is still one JSON document per page, so existing clients that
+parse the body whole keep working; they only need to follow `next_cursor`
+where they previously assumed one response was everything. Because the
+status is committed before the first span is read, a failure mid-page
+truncates the body rather than producing an error response.
+
+### Trace detail is paged and streamed
+
+`GET /v1/traces/{trace_id}` pages the same way, over spans instead of
+traces. A page is the trace's header plus its next `limit` spans in
+presentation order (`seq`; default 200, maximum 1000; a larger value is
+clamped, and anything that is not a positive integer is rejected with
+`400`). It closes early at the next span boundary once it has emitted
+roughly 8 MiB before compression — the same budget the composite uses —
+so a page may hold a single span.
+
+Every page carries the whole envelope: `session_id`, `schema`, the `trace`
+header (its `span_count` is the trace's whole count, not the page's), and
+the `links` touching the trace are complete on each one; only `spans` is
+paged. When more spans remain the page ends with `next_cursor`; pass it
+back as `cursor` to continue. Its absence is what marks the trace's last
+span — a page shorter than `limit` does not. A cursor is opaque and bound
+to the trace it was minted for; presenting it on another trace is a
+`400`. The field never appears on the trace copies embedded in the
+composite, where a trace is served whole.
+
+The body is written as it is read, in both payload modes: the server
+holds the payload-free header and links, then streams each span through
+as its row is scanned, so memory stays bounded by one span regardless of
+the trace's length. A page that holds the whole trace is byte-identical to
+the document the endpoint used to return whole, so clients that parse the
+body as one document keep working; they only need to follow `next_cursor`
+where they previously assumed one response was everything.
+
+### Span payload modes
+
+`GET /v1/sessions/{id}/traces` and `GET /v1/traces/{trace_id}` take
+`payload=full` (the default) or `payload=preview`. Full mode embeds each
+span's stored `input` and `output` content-block arrays verbatim. Preview
+mode is for list-shaped reads: every string is bounded to 512 runes, image
+bytes are dropped, and nested tool arguments are truncated in place, so a
+whole session of previews stays smaller than one full tool result. A
+preview span carries `payload: "preview"`; fetch
+`GET /v1/traces/{trace_id}/spans/{span_id}` for its full content.
+
+Previews are computed once, by the deriver, and stored beside the payload
+(`input_preview` / `output_preview` on the spans table). A preview read
+selects only those columns and the span header — never `input` or
+`output` — so it costs what the header read costs regardless of payload
+size. Nothing is truncated at read time.
+
+Spans derived before the preview columns existed have no stored preview
+yet. Preview mode serves such a span with `input` and `output` pinned to
+`[]` and `payload: "preview_pending"`, and does not consult the payload;
+the span endpoint still serves its full content. A backfill fills the
+columns for those rows, after which they are served as `preview`. The `payload` query parameter accepts only
+`full` and `preview`; `preview_pending` is a response marker, not a mode.
+
+Preview content is served as it was stored. Postgres canonicalizes JSONB,
+so the key order inside a preview block is whatever the store returns, and
+it is not part of the contract; compare previews as decoded JSON. Full
+mode is unaffected: its bytes are the stored payload's.
+
+### Raw turns are paged by id
+
+`GET /v1/sessions/{id}/raw_turns` is paged like the other two reads,
+over raw turn headers. A page is the next `limit` headers in raw turn id
+order (default 200, maximum 1000; a larger value is clamped, and anything
+that is not a positive integer is rejected with `400`). The listing is
+payload-free, so the count alone bounds a page: there is no byte budget
+and the body is served whole, not streamed. When more headers remain the
+page ends with `next_cursor`; pass it back as `cursor` to continue. Its
+absence is what marks the session's last raw turn — a page shorter than
+`limit` does not. A cursor is opaque and bound to the session it was
+minted for; presenting it on another session is a `400`.
+
+### Raw turn sizes are capture-time metadata
+
+The wire log lists one header per captured call or transcript push,
+identity and sizes only, never the payloads. Its `request_bytes` and
+`response_bytes` are the sizes the capture adapter recorded when the turn
+crossed the wire (`request_bytes` and `response_bytes` in the row's
+`meta`, which both capture paths — `tapes-extproc` and the in-repo proxy —
+write), not a measurement of the stored payloads. Measuring would mean
+detoasting and re-serializing every blob in the session to count it — the
+cost a header listing exists to avoid — so the stored rows are never read
+for their size. A producer that did not record a size, or recorded one
+that is not a number, reports `0`; one malformed value does not fail the
+listing.
+
+Each header also reports the raw layer's own fidelity:
+
+- `raw_response_bytes` is how many verbatim upstream response bytes the
+  row retained, as they arrived on the wire and before any reduction;
+  `0` when none were kept.
+- `raw_response_dropped` is `true` when the verbatim response existed
+  but was not retained, because it exceeded the 8 MiB ingest cap or the
+  producer withheld it. `raw_response_bytes: 0` with this flag set is a
+  fidelity gap — the turn cannot be re-derived from its source bytes —
+  not a turn that never had any.
 
 ### Both contracts are sealed
 

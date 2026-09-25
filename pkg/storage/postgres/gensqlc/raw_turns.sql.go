@@ -213,8 +213,12 @@ SELECT r.id, r.org_id, r.source, r.provider, r.agent_name, r.request_id,
        (CASE WHEN c.id IS NULL THEN r.meta
              ELSE jsonb_set(r.meta, '{thread_id}', to_jsonb(c.thread_id), true)
         END)::jsonb AS meta,
-       COALESCE(length(r.raw_request::text), 0)::bigint AS request_bytes,
-       COALESCE(length(r.response::text), 0)::bigint AS response_bytes,
+       (CASE WHEN r.meta->>'request_bytes' ~ '^[0-9]{1,18}$'
+             THEN (r.meta->>'request_bytes')::bigint
+             ELSE 0 END)::bigint AS request_bytes,
+       (CASE WHEN r.meta->>'response_bytes' ~ '^[0-9]{1,18}$'
+             THEN (r.meta->>'response_bytes')::bigint
+             ELSE 0 END)::bigint AS response_bytes,
        COALESCE(octet_length(r.raw_response), 0)::bigint AS raw_response_bytes,
        r.raw_response_dropped
 FROM raw_turns r
@@ -235,13 +239,17 @@ WHERE r.org_id = $1
       WHERE c2.org_id = r.org_id AND c2.raw_turn_id = r.id
       ORDER BY c2.id DESC LIMIT 1
   ), r.harness_session_id) = $3
+  AND r.id > $4
 ORDER BY r.id ASC
+LIMIT $5
 `
 
 type ListRawTurnHeadersBySessionParams struct {
 	OrgID            pgtype.UUID
 	HarnessID        string
 	HarnessSessionID string
+	AfterID          int64
+	PageSize         int32
 }
 
 type ListRawTurnHeadersBySessionRow struct {
@@ -260,9 +268,26 @@ type ListRawTurnHeadersBySessionRow struct {
 }
 
 // Operator wire log: identity + sizes, no payloads. The raw layer is
-// the capture truth; this surfaces it without shipping the blobs.
+// the capture truth; this surfaces it without shipping the blobs. One
+// keyset page: rows strictly after after_id in id order, page_size of
+// them at most.
+//
+// request_bytes / response_bytes are the sizes the capture adapter
+// recorded in meta (extproc writes both), not the stored payloads
+// measured: length(jsonb::text) detoasts and re-serializes every blob
+// in the session, which is exactly the cost a header listing exists to
+// avoid. The digit-only guard keeps one malformed meta value from
+// failing the whole listing; anything unparseable, or absent because
+// the producer never reported it, reads as 0. octet_length on the bytea
+// column is fine — it reads the stored length, not the bytes.
 func (q *Queries) ListRawTurnHeadersBySession(ctx context.Context, arg ListRawTurnHeadersBySessionParams) ([]ListRawTurnHeadersBySessionRow, error) {
-	rows, err := q.db.Query(ctx, listRawTurnHeadersBySession, arg.OrgID, arg.HarnessID, arg.HarnessSessionID)
+	rows, err := q.db.Query(ctx, listRawTurnHeadersBySession,
+		arg.OrgID,
+		arg.HarnessID,
+		arg.HarnessSessionID,
+		arg.AfterID,
+		arg.PageSize,
+	)
 	if err != nil {
 		return nil, err
 	}

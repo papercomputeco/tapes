@@ -139,30 +139,36 @@ func writeSpanSet(
 			if s.RawTurnID != 0 {
 				rawTurn = pgtype.Int8{Int64: s.RawTurnID, Valid: true}
 			}
+			// Previews ride the same upsert as the payload they summarize
+			// so a preview read never has to detoast input/output. They
+			// are a pure function of those columns and deliberately not
+			// part of content_hash: rewriting them moves no cursor.
 			spanParams := gensqlc.UpsertSpanParams{
-				OrgID:        orgID,
-				TraceID:      turn.TraceID,
-				SpanID:       s.SpanID,
-				ParentSpanID: s.ParentSpanID,
-				SessionID:    sid,
-				Kind:         s.Kind,
-				Name:         s.Name,
-				Status:       s.Status,
-				CallKind:     s.CallKind,
-				ThreadID:     s.ThreadID,
-				Model:        s.Model,
-				StopReason:   s.StopReason,
-				StartedAt:    pgtype.Timestamptz{Time: s.StartedAt, Valid: true},
-				DurationNs:   s.DurationNS,
-				Seq:          s.Seq,
-				Input:        input,
-				Output:       output,
-				Usage:        usage,
-				RawTurnID:    rawTurn,
-				NodeHash:     s.NodeHash,
-				Verdict:      verdict,
-				DeriveSeq:    deriveSeq,
-				Fidelity:     spanTiers[i],
+				OrgID:         orgID,
+				TraceID:       turn.TraceID,
+				SpanID:        s.SpanID,
+				ParentSpanID:  s.ParentSpanID,
+				SessionID:     sid,
+				Kind:          s.Kind,
+				Name:          s.Name,
+				Status:        s.Status,
+				CallKind:      s.CallKind,
+				ThreadID:      s.ThreadID,
+				Model:         s.Model,
+				StopReason:    s.StopReason,
+				StartedAt:     pgtype.Timestamptz{Time: s.StartedAt, Valid: true},
+				DurationNs:    s.DurationNS,
+				Seq:           s.Seq,
+				Input:         input,
+				Output:        output,
+				Usage:         usage,
+				RawTurnID:     rawTurn,
+				NodeHash:      s.NodeHash,
+				Verdict:       verdict,
+				DeriveSeq:     deriveSeq,
+				Fidelity:      spanTiers[i],
+				InputPreview:  derive.PreviewBlocks(input),
+				OutputPreview: derive.PreviewBlocks(output),
 			}
 			spanParams.ContentHash = spanContentHash(spanParams)
 			if err := qtx.UpsertSpan(ctx, spanParams); err != nil {
@@ -445,25 +451,32 @@ func spanTurnRecordFromColumns(c spanTurnColumns) storage.SpanTurnRecord {
 // spanRecordFromRow converts a versioned spans row to its flat record.
 func spanRecordFromRow(row gensqlc.Spans20260615) storage.SpanRecord {
 	return storage.SpanRecord{
-		TraceID:      row.TraceID,
-		SpanID:       row.SpanID,
-		ParentSpanID: row.ParentSpanID,
-		Kind:         row.Kind,
-		Name:         row.Name,
-		Status:       row.Status,
-		CallKind:     row.CallKind,
-		ThreadID:     row.ThreadID,
-		Model:        row.Model,
-		StopReason:   row.StopReason,
-		StartedAt:    row.StartedAt.Time,
-		DurationNS:   row.DurationNs,
-		Seq:          row.Seq,
-		Input:        row.Input,
-		Output:       row.Output,
-		Usage:        row.Usage,
-		RawTurnID:    row.RawTurnID.Int64,
-		NodeHash:     row.NodeHash,
-		Verdict:      row.Verdict,
+		TraceID:       row.TraceID,
+		SpanID:        row.SpanID,
+		ParentSpanID:  row.ParentSpanID,
+		Kind:          row.Kind,
+		Name:          row.Name,
+		Status:        row.Status,
+		CallKind:      row.CallKind,
+		ThreadID:      row.ThreadID,
+		Model:         row.Model,
+		StopReason:    row.StopReason,
+		StartedAt:     row.StartedAt.Time,
+		DurationNS:    row.DurationNs,
+		Seq:           row.Seq,
+		Input:         row.Input,
+		Output:        row.Output,
+		Usage:         row.Usage,
+		RawTurnID:     row.RawTurnID.Int64,
+		NodeHash:      row.NodeHash,
+		Verdict:       row.Verdict,
+		InputPreview:  row.InputPreview,
+		OutputPreview: row.OutputPreview,
+		// A NULL preview column comes back as a nil slice; a stored
+		// preview is never NULL (PreviewBlocks pins empty to []), so
+		// either column being present means the row was written with
+		// previews.
+		HasPreview: row.InputPreview != nil || row.OutputPreview != nil,
 	}
 }
 
@@ -533,9 +546,8 @@ func (d *Driver) ListSessionLinks(ctx context.Context, sessionID string) ([]stor
 }
 
 // ListTraceSpans returns one trace's spans in presentation order (seq
-// ASC, matching ListSessionSpanModel restricted to the trace) — the same
-// per-trace read GetTraceDetail performs, without the turn/link
-// round-trips. Implements storage.SpanModelReader.
+// ASC, matching ListSessionSpanModel restricted to the trace), with full
+// payloads. Implements storage.SpanModelReader.
 func (d *Driver) ListTraceSpans(ctx context.Context, orgID, traceID string) ([]storage.SpanRecord, error) {
 	if d == nil || d.conn == nil {
 		return nil, errors.New("postgres driver not open")
@@ -555,24 +567,63 @@ func (d *Driver) ListTraceSpans(ctx context.Context, orgID, traceID string) ([]s
 	return spans, nil
 }
 
-// GetTraceDetail returns one turn with its spans and links. Implements
+// countSpansByTrace is the span_count the standalone trace header
+// carries — the same count ListTraceSummariesBySession folds into every
+// session-detail row, for one trace. Hand-written beside the iterators
+// rather than generated: it scans a single scalar, and the header read it
+// serves must never touch a span row.
+const countSpansByTrace = `SELECT count(*) FROM spans_20260615 WHERE org_id = $1 AND trace_id = $2`
+
+// GetTraceSummary returns one turn header with its span count and no
+// spans — what the streaming trace page writes before its first span is
+// read. nil when the trace does not exist. Implements
 // storage.SpanModelReader.
-func (d *Driver) GetTraceDetail(ctx context.Context, orgID, traceID string) (*storage.SpanTurnRecord, []storage.SpanRecord, []storage.SpanLinkRecord, error) {
+func (d *Driver) GetTraceSummary(ctx context.Context, orgID, traceID string) (*storage.TraceSummaryRecord, error) {
 	if d == nil || d.conn == nil {
-		return nil, nil, nil, errors.New("postgres driver not open")
+		return nil, errors.New("postgres driver not open")
 	}
 	org, err := orgIDFromString(orgKeyForLookup(orgID))
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("decode org_id: %w", err)
+		return nil, fmt.Errorf("decode org_id: %w", err)
 	}
 	row, err := d.q.GetSpanTurn(ctx, gensqlc.GetSpanTurnParams{OrgID: org, TraceID: traceID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil, nil, nil
+		return nil, nil
 	}
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("get span turn: %w", err)
+		return nil, fmt.Errorf("get span turn: %w", err)
 	}
-	turn := spanTurnRecordFromColumns(spanTurnColumns{
+	var count int64
+	if err := d.conn.QueryRow(ctx, countSpansByTrace, org, traceID).Scan(&count); err != nil {
+		return nil, fmt.Errorf("count spans by trace: %w", err)
+	}
+	return &storage.TraceSummaryRecord{
+		SpanTurnRecord: spanTurnRecordFromTurnRow(row),
+		SpanCount:      int(count),
+	}, nil
+}
+
+// ListTraceLinks returns the dataflow links touching one trace on either
+// end. Implements storage.SpanModelReader.
+func (d *Driver) ListTraceLinks(ctx context.Context, orgID, traceID string) ([]storage.SpanLinkRecord, error) {
+	if d == nil || d.conn == nil {
+		return nil, errors.New("postgres driver not open")
+	}
+	org, err := orgIDFromString(orgKeyForLookup(orgID))
+	if err != nil {
+		return nil, fmt.Errorf("decode org_id: %w", err)
+	}
+	linkRows, err := d.q.ListSpanLinksByTrace(ctx, gensqlc.ListSpanLinksByTraceParams{OrgID: org, FromTraceID: traceID})
+	if err != nil {
+		return nil, fmt.Errorf("list span links by trace: %w", err)
+	}
+	return spanLinkRecordsFromRows(linkRows), nil
+}
+
+// spanTurnRecordFromTurnRow converts a whole span_turns row (the
+// GetSpanTurn shape) to its flat record.
+func spanTurnRecordFromTurnRow(row gensqlc.SpanTurns20260615) storage.SpanTurnRecord {
+	return spanTurnRecordFromColumns(spanTurnColumns{
 		traceID: row.TraceID, userPrompt: row.UserPrompt,
 		responsePreview: row.ResponsePreview,
 		synthetic:       row.Synthetic, status: row.Status, source: row.Source,
@@ -583,29 +634,21 @@ func (d *Driver) GetTraceDetail(ctx context.Context, orgID, traceID string) (*st
 		cacheRead: row.CacheReadTokens, cacheCreation: row.CacheCreationTokens,
 		cost: row.TotalCostUsd,
 	})
+}
 
-	spanRows, err := d.q.ListSpansByTrace(ctx, gensqlc.ListSpansByTraceParams{OrgID: org, TraceID: traceID})
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("list spans by trace: %w", err)
-	}
-	spans := make([]storage.SpanRecord, 0, len(spanRows))
-	for _, r := range spanRows {
-		spans = append(spans, spanRecordFromRow(r))
-	}
-
-	linkRows, err := d.q.ListSpanLinksByTrace(ctx, gensqlc.ListSpanLinksByTraceParams{OrgID: org, FromTraceID: traceID})
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("list span links by trace: %w", err)
-	}
-	links := make([]storage.SpanLinkRecord, 0, len(linkRows))
-	for _, r := range linkRows {
+// spanLinkRecordsFromRows converts span_links rows to their flat records,
+// in the order the query returned them. Never nil: an edge-less trace
+// serves an empty list.
+func spanLinkRecordsFromRows(rows []gensqlc.SpanLinks20260615) []storage.SpanLinkRecord {
+	links := make([]storage.SpanLinkRecord, 0, len(rows))
+	for _, r := range rows {
 		links = append(links, storage.SpanLinkRecord{
 			FromTraceID: r.FromTraceID, FromSpanID: r.FromSpanID, FromIO: r.FromIo,
 			ToTraceID: r.ToTraceID, ToSpanID: r.ToSpanID, ToIO: r.ToIo,
 			Kind: r.Kind,
 		})
 	}
-	return &turn, spans, links, nil
+	return links
 }
 
 // GetSpanRecord returns one span with full payloads. Implements
@@ -673,12 +716,15 @@ func (d *Driver) AggregateSpanStats(ctx context.Context, orgID string, since, un
 	return stats, nil
 }
 
-// ListRawTurnHeaders returns the wire log for one session: capture
-// identity and payload sizes, no blobs. Implements
-// storage.SpanModelReader.
-func (d *Driver) ListRawTurnHeaders(ctx context.Context, orgID, harnessID, harnessSessionID string) ([]storage.RawTurnHeader, error) {
+// ListRawTurnHeaders returns one page of the wire log for one session:
+// capture identity and payload sizes, no blobs, for up to limit rows in
+// id order strictly after afterID. Implements storage.SpanModelReader.
+func (d *Driver) ListRawTurnHeaders(ctx context.Context, orgID, harnessID, harnessSessionID string, afterID int64, limit int) ([]storage.RawTurnHeader, error) {
 	if d == nil || d.conn == nil {
 		return nil, errors.New("postgres driver not open")
+	}
+	if limit <= 0 || limit > math.MaxInt32 {
+		return nil, errors.New("list raw turn headers: limit must be positive and fit an int32")
 	}
 	org, err := orgIDFromString(orgKeyForLookup(orgID))
 	if err != nil {
@@ -688,6 +734,8 @@ func (d *Driver) ListRawTurnHeaders(ctx context.Context, orgID, harnessID, harne
 		OrgID:            org,
 		HarnessID:        harnessID,
 		HarnessSessionID: harnessSessionID,
+		AfterID:          afterID,
+		PageSize:         int32Count(limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list raw turn headers: %w", err)
@@ -695,16 +743,102 @@ func (d *Driver) ListRawTurnHeaders(ctx context.Context, orgID, harnessID, harne
 	out := make([]storage.RawTurnHeader, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, storage.RawTurnHeader{
-			ID:            r.ID,
-			Source:        r.Source,
-			Provider:      r.Provider,
-			AgentName:     r.AgentName,
-			RequestID:     r.RequestID,
-			ReceivedAt:    r.ReceivedAt.Time,
-			Meta:          r.Meta,
-			RequestBytes:  r.RequestBytes,
-			ResponseBytes: r.ResponseBytes,
+			ID:                 r.ID,
+			Source:             r.Source,
+			Provider:           r.Provider,
+			AgentName:          r.AgentName,
+			RequestID:          r.RequestID,
+			ReceivedAt:         r.ReceivedAt.Time,
+			Meta:               r.Meta,
+			RequestBytes:       r.RequestBytes,
+			ResponseBytes:      r.ResponseBytes,
+			RawResponseBytes:   r.RawResponseBytes,
+			RawResponseDropped: r.RawResponseDropped,
 		})
 	}
 	return out, nil
+}
+
+// ListSpansMissingPreviews returns one keyset page of spans that carry a
+// payload but no stored preview, in (session_id, trace_id, span_id)
+// order starting strictly after `after`. Implements
+// storage.PreviewBackfiller.
+func (d *Driver) ListSpansMissingPreviews(ctx context.Context, after storage.SpanBackfillCursor, sessionID string, limit int) ([]storage.SpanBackfillRow, error) {
+	if d == nil || d.conn == nil {
+		return nil, errors.New("postgres driver not open")
+	}
+	if limit <= 0 || limit > math.MaxInt32 {
+		return nil, fmt.Errorf("batch size %d out of range", limit)
+	}
+	params := gensqlc.ListSpansMissingPreviewsParams{BatchSize: int32(limit)}
+	if sessionID != "" {
+		parsed, err := uuid.Parse(sessionID)
+		if err != nil {
+			return nil, fmt.Errorf("parse session id: %w", err)
+		}
+		params.SessionFilter = pgtype.UUID{Bytes: parsed, Valid: true}
+	}
+	if !after.IsZero() {
+		parsed, err := uuid.Parse(after.SessionID)
+		if err != nil {
+			return nil, fmt.Errorf("parse cursor session id: %w", err)
+		}
+		params.CursorSessionID = pgtype.UUID{Bytes: parsed, Valid: true}
+		params.CursorTraceID = pgtype.Text{String: after.TraceID, Valid: true}
+		params.CursorSpanID = pgtype.Text{String: after.SpanID, Valid: true}
+	}
+	rows, err := d.q.ListSpansMissingPreviews(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("list spans missing previews: %w", err)
+	}
+	out := make([]storage.SpanBackfillRow, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, storage.SpanBackfillRow{
+			OrgID:     uuidString(row.OrgID),
+			SessionID: uuidString(row.SessionID),
+			TraceID:   row.TraceID,
+			SpanID:    row.SpanID,
+			Input:     row.Input,
+			Output:    row.Output,
+		})
+	}
+	return out, nil
+}
+
+// SetSpanPreviews fills input_preview / output_preview for every update
+// in one transaction. The UPDATE names only those two columns, so the
+// payload, content_hash and derive_seq are untouched. Implements
+// storage.PreviewBackfiller.
+func (d *Driver) SetSpanPreviews(ctx context.Context, updates []storage.SpanPreviewUpdate) error {
+	if d == nil || d.conn == nil {
+		return errors.New("postgres driver not open")
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	tx, err := d.conn.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin preview backfill tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	qtx := d.q.WithTx(tx)
+	for _, u := range updates {
+		org, err := orgIDFromString(u.OrgID)
+		if err != nil {
+			return fmt.Errorf("decode org_id: %w", err)
+		}
+		if err := qtx.SetSpanPreviews(ctx, gensqlc.SetSpanPreviewsParams{
+			OrgID:         org,
+			TraceID:       u.TraceID,
+			SpanID:        u.SpanID,
+			InputPreview:  u.InputPreview,
+			OutputPreview: u.OutputPreview,
+		}); err != nil {
+			return fmt.Errorf("set span previews %s/%s: %w", u.TraceID, u.SpanID, err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit preview backfill tx: %w", err)
+	}
+	return nil
 }

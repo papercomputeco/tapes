@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"encoding/json"
 	"time"
 
@@ -28,21 +29,53 @@ type TraceListResponse struct {
 // arrived as a transcript push), without the payload blobs. The
 // `source` field is the wire-vs-transcript distinction.
 type RawTurnHeaderItem struct {
-	ID            int64           `json:"id"`
-	Source        string          `json:"source"`
-	Provider      string          `json:"provider,omitempty"`
-	AgentName     string          `json:"agent_name,omitempty"`
-	RequestID     string          `json:"request_id,omitempty"`
-	ReceivedAt    time.Time       `json:"received_at"`
-	Meta          json.RawMessage `json:"meta,omitempty" oas:"type=object"`
-	RequestBytes  int64           `json:"request_bytes"`
-	ResponseBytes int64           `json:"response_bytes"`
+	ID         int64           `json:"id"`
+	Source     string          `json:"source"`
+	Provider   string          `json:"provider,omitempty"`
+	AgentName  string          `json:"agent_name,omitempty"`
+	RequestID  string          `json:"request_id,omitempty"`
+	ReceivedAt time.Time       `json:"received_at"`
+	Meta       json.RawMessage `json:"meta,omitempty" oas:"type=object"`
+
+	// RequestBytes is the request size the capture adapter recorded at
+	// capture time (meta.request_bytes), not a measurement of the stored
+	// payload; 0 when the producer did not report one.
+	RequestBytes int64 `json:"request_bytes"`
+
+	// ResponseBytes is the response size the capture adapter recorded at
+	// capture time (meta.response_bytes), not a measurement of the stored
+	// payload; 0 when the producer did not report one.
+	ResponseBytes int64 `json:"response_bytes"`
+
+	// RawResponseBytes is how many verbatim upstream response bytes the
+	// raw layer retained for this turn, as they arrived on the wire and
+	// before any reduction; 0 when none were kept.
+	RawResponseBytes int64 `json:"raw_response_bytes"`
+
+	// RawResponseDropped is true when the turn's verbatim response
+	// existed but was not retained — it exceeded the 8 MiB ingest cap or
+	// the producer withheld it — so raw_response_bytes=0 with this set is
+	// a fidelity gap, not a turn that never had verbatim bytes.
+	RawResponseDropped bool `json:"raw_response_dropped"`
 }
 
-// RawTurnListResponse is a session's wire log.
+// RawTurnListResponse is one page of a session's wire log, in raw turn
+// id order.
 type RawTurnListResponse struct {
 	Items []RawTurnHeaderItem `json:"items"`
+
+	// NextCursor continues the walk from the last raw turn of this page
+	// (pass it as `cursor`). Absent once the page reached the session's
+	// last raw turn.
+	NextCursor string `json:"next_cursor,omitempty"`
 }
+
+// A raw-turn page is bounded in rows only: the listing is payload-free,
+// so a header count bounds its bytes and no byte budget is needed.
+const (
+	defaultRawTurnsLimit = 200
+	maxRawTurnsLimit     = 1000
+)
 
 func traceItemFromTurn(turn storage.SpanTurnRecord, spanCount int) TraceItem {
 	return TraceItem{
@@ -88,7 +121,7 @@ func (s *Server) handleListTraceSummaries(c fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "session_id must be a valid UUID"})
 	}
 	orgID := singleTenantOrgID
-	sess, err := sessions.GetSessionRecord(c.RequestCtx(), orgID, sessionID)
+	sess, err := sessions.GetSessionRecord(c.Context(), orgID, sessionID)
 	if err != nil {
 		s.logger.Error("get session for trace summaries", "session_id", sessionID, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session"})
@@ -96,7 +129,7 @@ func (s *Server) handleListTraceSummaries(c fiber.Ctx) error {
 	if sess == nil {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
 	}
-	rows, err := reader.ListTraceSummaries(c.RequestCtx(), sessionID)
+	rows, err := reader.ListTraceSummaries(c.Context(), sessionID)
 	if err != nil {
 		s.logger.Error("list trace summaries", "session_id", sessionID, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list traces"})
@@ -115,6 +148,13 @@ func BuildTraceList(rows []storage.TraceSummaryRecord) TraceListResponse {
 	return TraceListResponse{Schema: ProjectionSchema, Items: items}
 }
 
+// parseTraceSpansLimit reads the trace page's `limit` query: the number
+// of spans a page holds, defaulting to 200 and clamped to 1000. Anything
+// that is not a positive integer is rejected rather than defaulted.
+func parseTraceSpansLimit(raw string) (int, error) {
+	return parseLimit(raw, defaultTraceSpansLimit, maxTraceSpansLimit)
+}
+
 // handleGetTrace handles GET /v1/traces/:trace_id.
 func (s *Server) handleGetTrace(c fiber.Ctx) error {
 	reader, ok := s.driver.(spanModelReader)
@@ -122,7 +162,31 @@ func (s *Server) handleGetTrace(c fiber.Ctx) error {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "span traces not supported by this backend"})
 	}
 	traceID := c.Params("trace_id")
-	turn, spans, links, err := reader.GetTraceDetail(c.RequestCtx(), singleTenantOrgID, traceID)
+
+	limit, err := parseTraceSpansLimit(c.Query("limit"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
+	}
+	var after storage.SpanCursor
+	if raw := c.Query("cursor"); raw != "" {
+		cur, err := decodeTracePageCursor(raw)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
+		}
+		// A cursor is a boundary in one trace's span order; presented
+		// with another trace it is a malformed request, not a transition.
+		if cur.TraceID != traceID {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "cursor does not match trace"})
+		}
+		after = cur.spanCursor()
+	}
+
+	// Everything that can still turn into an error response is loaded
+	// here, before the status is committed: the payload-free turn header
+	// (with the span count the trace header carries ahead of its spans)
+	// and the links touching the trace. The spans themselves stream.
+	orgID := singleTenantOrgID
+	turn, err := reader.GetTraceSummary(c.Context(), orgID, traceID)
 	if err != nil {
 		s.logger.Error("get trace", "trace_id", traceID, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to get trace"})
@@ -130,15 +194,44 @@ func (s *Server) handleGetTrace(c fiber.Ctx) error {
 	if turn == nil {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "trace not found"})
 	}
-	return c.JSON(StandaloneTraceDetail{
-		SessionID:   turn.SessionID,
-		TraceDetail: BuildTraceDetail(*turn, spans, links, payloadModeFromQuery(c.Query("payload"))),
+	links, err := reader.ListTraceLinks(c.Context(), orgID, traceID)
+	if err != nil {
+		s.logger.Error("list trace links", "trace_id", traceID, "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to get trace"})
+	}
+
+	page := &tracePage{
+		orgID:   orgID,
+		traceID: traceID,
+		turn:    *turn,
+		links:   links,
+		mode:    payloadModeFromQuery(c.Query("payload")),
+		after:   after,
+		limit:   limit,
+		budget:  tracesPageByteBudget,
+		spans:   reader,
+	}
+
+	// The body is written by a goroutine after this handler returns, so
+	// the ctx is abandoned rather than recycled underneath it, and the
+	// goroutine takes only what it needs from it now: the user context,
+	// which is the one signal that can tell it to stop. Compression is
+	// left to the middleware, which wraps a body stream incrementally.
+	ctx := c.Context()
+	c.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	c.Abandon()
+	return c.SendStreamWriter(func(w *bufio.Writer) {
+		if err := page.write(ctx, w); err != nil {
+			s.logger.Warn("trace stream cut short", "trace_id", traceID, "error", err)
+		}
 	})
 }
 
-// BuildTraceDetail renders one turn with its spans and links. Exported
-// so `tapes dev trace-fixtures` emits byte-identical JSON to the
-// handler.
+// BuildTraceDetail renders one turn with its spans and links whole. The
+// handler no longer calls it — it streams a page through tracePage — but
+// this remains the reference shape: a page that holds the whole trace is
+// byte-identical to json.Marshal of this, which `tapes dev trace-fixtures`
+// relies on and the page specs prove.
 func BuildTraceDetail(turn storage.SpanTurnRecord, spans []storage.SpanRecord, links []storage.SpanLinkRecord, mode PayloadMode) TraceDetail {
 	detail := TraceDetail{
 		Schema: ProjectionSchema,
@@ -174,7 +267,7 @@ func (s *Server) handleGetSpan(c fiber.Ctx) error {
 		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "span traces not supported by this backend"})
 	}
 	traceID, spanID := c.Params("trace_id"), c.Params("span_id")
-	rec, err := reader.GetSpanRecord(c.RequestCtx(), singleTenantOrgID, traceID, spanID)
+	rec, err := reader.GetSpanRecord(c.Context(), singleTenantOrgID, traceID, spanID)
 	if err != nil {
 		s.logger.Error("get span", "trace_id", traceID, "span_id", spanID, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to get span"})
@@ -200,8 +293,25 @@ func (s *Server) handleListSessionRawTurns(c fiber.Ctx) error {
 	if _, err := uuid.Parse(id); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id must be a valid UUID"})
 	}
+	limit, err := parseLimit(c.Query("limit"), defaultRawTurnsLimit, maxRawTurnsLimit)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
+	}
+	var afterID int64
+	if raw := c.Query("cursor"); raw != "" {
+		cur, err := decodeRawTurnsPageCursor(raw)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: err.Error()})
+		}
+		// A cursor is a boundary in one session's wire log; presented
+		// with another session it is a malformed request, not a transition.
+		if cur.Session != id {
+			return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "cursor does not match session"})
+		}
+		afterID = cur.ID
+	}
 	orgID := singleTenantOrgID
-	sess, err := sessions.GetSessionRecord(c.RequestCtx(), orgID, id)
+	sess, err := sessions.GetSessionRecord(c.Context(), orgID, id)
 	if err != nil {
 		s.logger.Error("get session for raw turns", "id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session"})
@@ -209,10 +319,17 @@ func (s *Server) handleListSessionRawTurns(c fiber.Ctx) error {
 	if sess == nil {
 		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
 	}
-	rows, err := reader.ListRawTurnHeaders(c.RequestCtx(), orgID, sess.HarnessID, sess.HarnessSessionID)
+	// One row past the page tells whether a next page exists without a
+	// second count query; it is trimmed before rendering.
+	rows, err := reader.ListRawTurnHeaders(c.Context(), orgID, sess.HarnessID, sess.HarnessSessionID, afterID, limit+1)
 	if err != nil {
 		s.logger.Error("list raw turn headers", "session_id", id, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list raw turns"})
+	}
+	var nextCursor string
+	if len(rows) > limit {
+		rows = rows[:limit]
+		nextCursor = encodeRawTurnsPageCursor(rawTurnsPageCursor{Session: id, ID: rows[limit-1].ID})
 	}
 	items := make([]RawTurnHeaderItem, 0, len(rows))
 	for _, r := range rows {
@@ -221,7 +338,8 @@ func (s *Server) handleListSessionRawTurns(c fiber.Ctx) error {
 			AgentName: r.AgentName, RequestID: r.RequestID,
 			ReceivedAt: r.ReceivedAt, Meta: r.Meta,
 			RequestBytes: r.RequestBytes, ResponseBytes: r.ResponseBytes,
+			RawResponseBytes: r.RawResponseBytes, RawResponseDropped: r.RawResponseDropped,
 		})
 	}
-	return c.JSON(RawTurnListResponse{Items: items})
+	return c.JSON(RawTurnListResponse{Items: items, NextCursor: nextCursor})
 }

@@ -139,6 +139,15 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 	// including metrics/recovery error paths, can share one validated ID.
 	app.Use(requestIDMiddleware(log))
 
+	// The read deadline goes directly behind correlation: it derives its
+	// context from the one requestIDMiddleware seeded, so what a handler
+	// sees as c.Context() carries the request logger and the deadline both.
+	// Anything registered before this line would run outside the deadline.
+	guards := newReadGuards(config.ReadDeadline, config.PayloadConcurrency, s.metrics.Registry())
+	if config.ReadDeadline > 0 {
+		app.Use(guards.deadlineMiddleware())
+	}
+
 	// RED metrics is registered after correlation so it remains outside the
 	// recovery middleware while inheriting the request context.
 	// Order matters: the request-count and duration increments run AFTER
@@ -181,6 +190,15 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 		return nil, fmt.Errorf("failed to create MCP server: %w", err)
 	}
 	s.mcpServer = mcpServer
+
+	// The payload cap sits on the payload-bearing routes alone, as prefix
+	// middleware ahead of their handlers: a 503 it sheds is still counted by
+	// the metrics middleware, and a panic past it is still recovered. It is
+	// not on the app as a whole — the sessions list and the summaries must
+	// keep answering while a replica sheds payload reads, or the console
+	// would go dark instead of degrading. Registered before the routes so
+	// Fiber orders it ahead of them.
+	app.Use(payloadRoutePrefixes, guards.payloadMiddleware())
 
 	// Every documented route registers through this wrapper, which puts it on
 	// the app and into the parser in one call.

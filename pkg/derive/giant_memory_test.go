@@ -9,7 +9,7 @@ package derive_test
 // collection, so a large session's TRANSIENT peak runs ~2x its live set —
 // enough to cross the container limit in a brief spike and get the worker
 // OOM-killed. The durable fix is a soft memory limit
-// (worker.ApplySoftMemoryLimit) that GC-paces the peak back toward the
+// (memlimit.ApplySoftMemoryLimit) that GC-paces the peak back toward the
 // live set.
 //
 // These specs (a) pin the synthetic fixture that reproduces the growth and

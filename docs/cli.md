@@ -17,7 +17,7 @@ Run `tapes <command> --help` for the complete, version-matched flag list.
 | `tapes status` | Show active config, provider/upstream, API reachability, and capture summary. |
 | `tapes auth` | Store OpenAI or Anthropic credentials in `.tapes/credentials.toml`. |
 | `tapes config get\|set\|list` | Manage persistent scalar settings. |
-| `tapes backfill` | Replay existing capture artifacts into a deployment. |
+| `tapes backfill` | Replay existing capture artifacts into a deployment, or fill stored span previews on rows derived before they existed. See [Backfilling span previews](#backfilling-span-previews). |
 | `tapes raw equivalence` | Prove stored capture bytes re-reduce to the stored reduction. See [Proving the capture ratchet](#proving-the-capture-ratchet). |
 | `tapes dev` | Developer maintenance utilities. |
 | `tapes version` | Print version information. |
@@ -122,7 +122,32 @@ Because both excluded fields are ones `raw` restores from the capture adapter's 
 
 ## Commands not intended as everyday workflow
 
-`backfill` is for replaying existing capture artifacts into a deployment. `dev` contains developer maintenance utilities. Consult their `--help` only when operating those workflows.
+`backfill` is for replaying existing capture artifacts into a deployment (`wire-trace`, `transcripts`) and for the one-off projection repair below. `dev` contains developer maintenance utilities. Consult their `--help` only when operating those workflows.
+
+### Backfilling span previews
+
+The deriver stores a bounded preview of every span's input and output beside the payload (`input_preview` / `output_preview`), so a preview read never has to load the payload it summarizes. Spans derived before those columns existed carry `NULL` and are served as pending until they are filled in. `tapes backfill previews` fills them from the payload already on each row, with the same 512-rune projection the deriver applies:
+
+```bash
+tapes backfill previews \
+  --postgres "postgres://user:pass@127.0.0.1:15432/tapes" \
+  --batch 500 --pause 200ms
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--postgres` | `storage.postgres_dsn` from config | Database to backfill. Resolved like every other database-backed command: flag, then environment, then config file. |
+| `--session <uuid>` | all sessions | Restrict the backfill to one session. |
+| `--batch <n>` | `500` | Spans per batch. Each batch is one bounded read and one write transaction. |
+| `--pause <duration>` | `200ms` | Pause between batches, so the job shares the database with live derive and reads. |
+| `--dry-run` | off | Walk the selection and count, writing nothing. |
+
+The job logs `backfilled=<n> last=<session>/<trace>/<span>` after every batch, exits `0` when a batch comes back empty, and prints a one-line total. It is:
+
+- **Idempotent and resumable.** Only rows with no stored preview are selected, so a row that has been filled is never rewritten and a completed run is a no-op. Re-running after an interruption picks up where the previous run stopped; there is no cursor to hand back. The scan is keyset-paged on `(session_id, trace_id, span_id)`, never on `started_at`, so a batch boundary neither repeats nor skips a row.
+- **Never a re-derive.** It reads `input` / `output` and writes the two preview columns, nothing else: the payload, `content_hash` and `derive_seq` are untouched, so no change-feed consumer sees a backfilled row as changed. To rebuild a projection, use `tapes dev rederive` instead.
+
+Spans with no payload at all (`input` and `output` both `NULL`) are filled with empty previews (`[]` / `[]`), exactly what the deriver stores for such a span, so they stop being served as pending.
 
 Tapes no longer provides `chat` or `checkout` commands. It captures external agents; it does not host a chat client or expose history branching.
 

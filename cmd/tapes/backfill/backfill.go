@@ -1,7 +1,9 @@
 // Package backfillcmder exposes offline backfills into a running tapes
-// deployment. Today that is the paperd wire-trace replay, which fills
-// the immutable raw-turn layer for sessions recorded before the raw
-// layer existed; the derive worker projects them into spans as usual.
+// deployment: the paperd wire-trace replay and the transcript upload,
+// which fill the immutable raw-turn layer for sessions recorded before
+// the raw layer existed (the derive worker projects them into spans as
+// usual), and the span preview backfill, which fills a projection column
+// added after the rows were derived without re-deriving them.
 package backfillcmder
 
 import (
@@ -16,7 +18,12 @@ const backfillLongDesc string = `Backfill captured data into a running tapes dep
 
 Subcommands replay existing capture artifacts through the normal ingest
 path, so every write is idempotent: raw turns dedup on their capture id,
-and re-deriving the affected sessions reproduces the span projection.`
+and re-deriving the affected sessions reproduces the span projection.
+
+The previews subcommand is the exception: it writes the database
+directly, filling stored span previews on rows derived before the preview
+columns existed, and is idempotent because a row that has previews no
+longer matches.`
 
 const wireTraceLongDesc string = `Replay paperd wire-trace capture bundles through tapes-ingest.
 
@@ -43,6 +50,7 @@ func NewBackfillCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newWireTraceCmd())
 	cmd.AddCommand(newTranscriptsCmd())
+	cmd.AddCommand(newPreviewsCmd())
 	return cmd
 }
 
