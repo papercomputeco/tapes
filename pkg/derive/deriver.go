@@ -82,6 +82,8 @@ type SpanSource struct {
 	Chain []*DerivedNode
 	New   []bool
 
+	TrailingToolResults []*DerivedNode
+
 	// Anchor is the tool_use id this call attaches to, recorded
 	// per-call by the attach passes. Node stamps (ParentToolUseID)
 	// cannot carry this: checks share deduped prefix nodes, and a
@@ -268,6 +270,8 @@ type TranscriptTurn struct {
 	CapturedAt   time.Time
 	ThreadID     string
 	Anchor       string
+
+	TrailingToolResults []*merkle.Node
 }
 
 type chainTurn struct {
@@ -408,6 +412,21 @@ func (dv *Deriver) AddTranscriptTurn(turn TranscriptTurn) {
 		capturedAt: turn.CapturedAt, threadID: turn.ThreadID,
 		source: storage.RawTurnSourceTranscript, anchor: turn.Anchor,
 	})
+	source := dv.set.SpanSources[len(dv.set.SpanSources)-1]
+	for _, node := range turn.TrailingToolResults {
+		retained, dup := dv.byHash[node.Hash]
+		if !dup {
+			node.CloneRetained(nil)
+			if node.CreatedAt.IsZero() {
+				node.CreatedAt = turn.CapturedAt
+			}
+			retained = &DerivedNode{Node: node, Session: turn.Session, CapturedAt: node.CreatedAt}
+			dv.byHash[node.Hash] = retained
+			dv.set.Nodes = append(dv.set.Nodes, retained)
+			dv.set.Report.NodeKinds[node.Kind]++
+		}
+		source.TrailingToolResults = append(source.TrailingToolResults, retained)
+	}
 }
 
 // addChainTurn is the single fold seam for parsed wire calls and normalized
