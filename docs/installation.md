@@ -73,15 +73,23 @@ tapes status
 The client defaults reads to this API and capture to the ingest service on
 `http://localhost:8082`.
 
-Seed representative capture data through the normal ingest and derive path:
+Now bring in the sessions you already have. `tapesctl sync` walks the Claude
+Code transcripts on disk under `~/.claude/projects` and pushes the last seven
+days of them to the ingest port:
 
 ```bash
-tapesctl seed
+tapesctl sync --ingest-url http://localhost:8082
 tapesctl sessions list
 ```
 
-Capture commands address the **ingest** port instead. Override its local default
-with `--ingest-url` or `TAPES_INGEST_URL`. See [Agent integrations](./integrations.md).
+It is safe to run again: the server keeps one copy per file version. Sessions
+pushed this way derive in the background, so the list may take a moment to
+fill in. Pass `--since-days 0` to sweep everything. See
+[Capture](/docs/tapesctl/capture/#the-sweep) for what a transcript-only session
+does and does not contain.
+
+Capture commands address the **ingest** port. Override its local default with
+`--ingest-url` or `TAPES_INGEST_URL`. See [Agent integrations](./integrations.md).
 
 ## Run the complete Docker Compose stack
 
