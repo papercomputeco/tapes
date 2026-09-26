@@ -48,6 +48,11 @@ tapes config set proxy.provider anthropic
 tapes config set proxy.upstream https://api.anthropic.com
 ```
 
+`tapes config list` annotates every value with its source: `(default)` for
+built-in defaults, `(config file)` for `config.toml` values, and
+`(environment)` for `TAPES_...` overrides. Keys with no value in any layer
+show `<not set>`, so a default never looks like something you configured.
+
 Useful supported keys include:
 
 | Key | Purpose | Default |

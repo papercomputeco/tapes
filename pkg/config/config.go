@@ -235,24 +235,7 @@ func (c *Configer) GetConfigValue(key string) (string, error) {
 		return "", fmt.Errorf("unknown config key: %q", key)
 	}
 
-	v := viper.New()
-	setViperDefaults(v)
-	v.SetConfigType("toml")
-
-	// Load existing config into viper if the file exists.
-	if c.targetPath != "" {
-		data, err := os.ReadFile(c.targetPath)
-		if err == nil {
-			_ = v.ReadConfig(bytes.NewReader(data))
-		}
-	}
-
-	// Bind environment variables so TAPES_PROXY_LISTEN etc. are reflected.
-	v.SetEnvPrefix("TAPES")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.AutomaticEnv()
-
-	return v.GetString(key), nil
+	return c.loadViper().GetString(key), nil
 }
 
 // PresetConfig returns a Config with sane defaults for the named provider preset.
