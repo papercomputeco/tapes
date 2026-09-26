@@ -3,6 +3,8 @@ package configcmder
 import (
 	"fmt"
 	"os"
+
+	"golang.org/x/term"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -55,16 +57,26 @@ func runGet(key, configDir string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	// The header goes to stderr so `$(tapes config get api.listen)` is the
-	// value and nothing else.
+	// Piped or captured, print the value and nothing else, so
+	// `$(tapes config get api.listen)` is `:8081`. On a terminal, the styled
+	// readout with its config-file header.
+	if !term.IsTerminal(int(os.Stdout.Fd())) {
+		value, err := cfger.GetConfigValue(key)
+		if err != nil {
+			return err
+		}
+		fmt.Println(value)
+		return nil
+	}
+
 	target := cfger.GetTarget()
 	if target != "" {
-		fmt.Fprintf(os.Stderr, "%s %s\n",
-			cliui.KeyStyle.Render("config file:"),
+		fmt.Fprintf(os.Stderr, "\n  %s %s\n\n",
+			cliui.KeyStyle.Render("Config file:"),
 			cliui.DimStyle.Render(target),
 		)
 	} else {
-		fmt.Fprintf(os.Stderr, "%s\n", cliui.DimStyle.Render("no config file found; using defaults"))
+		fmt.Fprintf(os.Stderr, "\n  %s\n\n", cliui.DimStyle.Render("No config file found. Using defaults."))
 	}
 
 	value, err := cfger.GetConfigValue(key)
