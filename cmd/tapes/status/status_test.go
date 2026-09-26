@@ -67,8 +67,6 @@ var _ = Describe("Status command execution", func() {
 		cmd.SetOut(&out)
 		cmd.SetArgs([]string{"--api-target", "http://127.0.0.1:1"})
 		err = cmd.Execute()
-		// The readout still prints, and the exit is non-zero so a script
-		// can ask "is tapes up" without parsing it.
 		Expect(err).To(HaveOccurred())
 
 		Expect(out.String()).To(ContainSubstring(".tapes"))
