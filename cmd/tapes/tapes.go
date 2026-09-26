@@ -98,10 +98,6 @@ func NewTapesCmd() *cobra.Command {
 		Long:               tapesLongDesc,
 		PersistentPreRunE:  preRun,
 		PersistentPostRunE: closeTelemetry,
-		// A runtime failure is not a usage mistake: print the error, not the
-		// flag table. Argument errors still show usage, as cobra decides
-		// them before RunE.
-		SilenceUsage: true,
 	}
 
 	// Global flags
@@ -137,6 +133,11 @@ func NewTapesCmd() *cobra.Command {
 // hidden --disable-update-check flag, TAPES_UPDATE_DISABLED env var, or
 // [update] disabled = true in config.toml.
 func preRun(cmd *cobra.Command, args []string) error {
+	// Flags and positional arguments were validated before this hook runs,
+	// so from here on a failure is a runtime one: print the error, not the
+	// flag table. `tapes config get` with no key still shows its usage.
+	cmd.SilenceUsage = true
+
 	configDir, _ := cmd.Flags().GetString("config-dir")
 	v, err := config.InitViper(configDir)
 	if err != nil {
