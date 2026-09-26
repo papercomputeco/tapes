@@ -29,7 +29,6 @@ import (
 // stream, while the caller can inspect parsed events.
 type TeeReader struct {
 	scanner *bufio.Scanner
-	dest    io.Writer
 
 	// current accumulates fields for the event being built in the current scan.
 	current *Event
@@ -41,12 +40,11 @@ type TeeReader struct {
 // The dest writer typically backs an io.Pipe connected to the downstream HTTP
 // response.
 func NewTeeReader(src io.Reader, dest io.Writer) *TeeReader {
-	scanner := bufio.NewScanner(src)
+	scanner := bufio.NewScanner(io.TeeReader(src, dest))
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 
 	return &TeeReader{
 		scanner: scanner,
-		dest:    dest,
 		current: &Event{},
 	}
 }
@@ -61,13 +59,6 @@ func NewTeeReader(src io.Reader, dest io.Writer) *TeeReader {
 func (r *TeeReader) Next() (*Event, error) {
 	for r.scanner.Scan() {
 		raw := r.scanner.Text()
-
-		// Write the raw line content and newline to the destination.
-		// bufio.Scanner strips the newline from the Scan() so we reinsert it here.
-		_, err := io.WriteString(r.dest, raw+"\n")
-		if err != nil {
-			return nil, err
-		}
 
 		// A blank line signals the end of the current event.
 		if raw == "" {

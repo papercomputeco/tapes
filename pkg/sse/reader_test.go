@@ -222,6 +222,36 @@ var _ = Describe("Reader", func() {
 				Expect(dst.String()).To(Equal(input))
 			})
 
+			It("preserves CRLF line endings", func() {
+				input := "data: first\r\n\r\ndata: second\r\n\r\n"
+				src := strings.NewReader(input)
+				r := NewTeeReader(src, dst)
+
+				ev, err := r.Next()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(ev.Data).To(Equal("first"))
+				ev, err = r.Next()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(ev.Data).To(Equal("second"))
+				ev, err = r.Next()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(ev).To(BeNil())
+
+				Expect(dst.String()).To(Equal(input))
+			})
+
+			It("does not append a newline to an unterminated final line", func() {
+				input := "data: unterminated"
+				src := strings.NewReader(input)
+				r := NewTeeReader(src, dst)
+
+				ev, err := r.Next()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(ev.Data).To(Equal("unterminated"))
+
+				Expect(dst.String()).To(Equal(input))
+			})
+
 			It("preserves comment lines in dst output", func() {
 				input := ": comment\ndata: hello\n\n"
 				src := strings.NewReader(input)
