@@ -6,6 +6,7 @@ package statuscmder
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -19,6 +20,10 @@ import (
 )
 
 const statsProbeTimeout = 3 * time.Second
+
+// errAPIUnreachable makes `tapes status` exit 1 when the API is down. The
+// readout already says why.
+var errAPIUnreachable = errors.New("tapes API unreachable")
 
 // captureStats is the slice of /v1/stats the readout surfaces. It doubles as
 // the reachability probe: a decoded response means the API is up.
@@ -152,7 +157,8 @@ func (c *statusCommander) run(cmd *cobra.Command) error {
 			cliui.FailMark,
 			cliui.DimStyle.Render("unreachable — start one with `tapes local up` then `tapes serve`"),
 		)
-		return nil
+		cmd.SilenceErrors = true
+		return errAPIUnreachable
 	}
 
 	fmt.Fprintf(out, "  %s  %s %s\n\n",

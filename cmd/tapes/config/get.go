@@ -2,6 +2,7 @@ package configcmder
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -54,14 +55,26 @@ func runGet(key, configDir string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
+	// Piped or captured, print the value and nothing else, so
+	// `$(tapes config get api.listen)` is `:8081`. On a terminal, the styled
+	// readout with its config-file header.
+	if !stdoutIsTerminal() {
+		value, err := cfger.GetConfigValue(key)
+		if err != nil {
+			return err
+		}
+		fmt.Println(value)
+		return nil
+	}
+
 	target := cfger.GetTarget()
 	if target != "" {
-		fmt.Printf("\n  %s %s\n\n",
+		fmt.Fprintf(os.Stderr, "\n  %s %s\n\n",
 			cliui.KeyStyle.Render("Config file:"),
 			cliui.DimStyle.Render(target),
 		)
 	} else {
-		fmt.Printf("\n  %s\n\n", cliui.DimStyle.Render("No config file found. Using defaults."))
+		fmt.Fprintf(os.Stderr, "\n  %s\n\n", cliui.DimStyle.Render("No config file found. Using defaults."))
 	}
 
 	value, err := cfger.GetConfigValue(key)
@@ -76,4 +89,11 @@ func runGet(key, configDir string) error {
 	}
 
 	return nil
+}
+
+// stdoutIsTerminal reports whether stdout is a character device, which is
+// what a terminal is and a pipe or file is not.
+func stdoutIsTerminal() bool {
+	info, err := os.Stdout.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }

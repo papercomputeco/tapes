@@ -67,7 +67,7 @@ var _ = Describe("Status command execution", func() {
 		cmd.SetOut(&out)
 		cmd.SetArgs([]string{"--api-target", "http://127.0.0.1:1"})
 		err = cmd.Execute()
-		Expect(err).NotTo(HaveOccurred())
+		Expect(err).To(HaveOccurred())
 
 		Expect(out.String()).To(ContainSubstring(".tapes"))
 		Expect(out.String()).To(ContainSubstring("unreachable"))

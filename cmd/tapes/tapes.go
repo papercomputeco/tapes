@@ -133,6 +133,10 @@ func NewTapesCmd() *cobra.Command {
 // hidden --disable-update-check flag, TAPES_UPDATE_DISABLED env var, or
 // [update] disabled = true in config.toml.
 func preRun(cmd *cobra.Command, args []string) error {
+	// Arguments are valid by now, so a later error is a runtime failure:
+	// show the error without the usage block.
+	cmd.SilenceUsage = true
+
 	configDir, _ := cmd.Flags().GetString("config-dir")
 	v, err := config.InitViper(configDir)
 	if err != nil {

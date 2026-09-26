@@ -25,7 +25,9 @@ tapesctl sessions traces <session-id>
 tapesctl sessions raw-turns <session-id>
 ```
 
-Each prints the server's JSON verbatim, so it composes with `jq`. `--api-url` falls back to `TAPES_API_URL`, and then to the value from `tapesctl config set api-url`. A running read API is required; start one with `tapes serve`.
+`sessions list` and `sessions get` render a table and a record for the
+terminal; `--json` on either prints the server's document verbatim. `traces`
+and `raw-turns` print the document as it is, so all four compose with `jq`. `--api-url` falls back to `TAPES_API_URL`, and then to the value from `tapesctl config set api-url`. A running read API is required; start one with `tapes serve`.
 
 The `<session-id>` these take is the Tapes session id from `sessions list`. It
 is not the harness session id `tapesctl start` prints when it exits.
