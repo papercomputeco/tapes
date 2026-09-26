@@ -13,7 +13,7 @@ Run `tapes <command> --help` for the complete, version-matched flag list.
 | --- | --- |
 | `tapes init [--preset ...]` | Create a local `.tapes/` configuration directory. |
 | `tapes local [up\|status\|down]` | Manage local PostgreSQL and Ollama dependencies. |
-| `tapes serve` | Run proxy, read API, private ingest API, derive worker, and optional embed worker together. |
+| `tapes serve` | Run proxy, read API, private ingest API, and derive worker together. |
 | `tapes status` | Show active config, provider/upstream, API reachability, and capture summary. |
 | `tapes auth` | Store OpenAI or Anthropic credentials in `.tapes/credentials.toml`. |
 | `tapes config get\|set\|list` | Manage persistent scalar settings. |
@@ -30,12 +30,11 @@ The common local command is:
 tapes serve
 ```
 
-It accepts provider/upstream, PostgreSQL, listening, embedding, and project flags. Useful examples:
+It accepts provider/upstream, PostgreSQL, listening, and project flags. Useful examples:
 
 ```bash
 tapes serve --provider anthropic --upstream https://api.anthropic.com
 tapes serve --api-web-ui
-tapes serve --embed-spans=false
 ```
 
 For split deployments, service subcommands are available:
@@ -44,11 +43,10 @@ For split deployments, service subcommands are available:
 tapes serve proxy
 tapes serve api
 tapes serve derive-worker
-tapes serve embed-worker
 tapes serve ingest
 ```
 
-The last three are operator-oriented: the derive worker projects dirty sessions, the independent embed worker populates search vectors, and the private ingest sidecar receives completed turns from a trusted gateway. See [HTTP APIs](./apis.md) before exposing any endpoint.
+The last two are operator-oriented: the derive worker projects dirty sessions, and the private ingest sidecar receives completed turns from a trusted gateway. Span embedding for semantic search runs outside core in the search cassette. See [HTTP APIs](./apis.md) before exposing any endpoint.
 
 ## The client CLI
 

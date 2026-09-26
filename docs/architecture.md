@@ -60,7 +60,7 @@ Codex subagents share the root session's harness session id, so a captured run i
 
 ## Search
 
-The embedding worker embeds **main-conversation LLM spans** into PostgreSQL using pgvector. Search is span-only: `/v1/search/spans`, `tapesctl search`, and the MCP `search` tool all return individual span hits with session, trace, and turn context. They do not search session objects or a conversation DAG.
+Span embedding for semantic search runs outside core in the search cassette, embedding **main-conversation LLM spans** into PostgreSQL using pgvector. Search is span-only: `/v1/cassettes/search/spans`, `tapesctl search`, and the MCP `search` tool all return individual span hits with session, trace, and turn context. They do not search session objects or a conversation DAG.
 
 ## Content addressing
 
@@ -68,4 +68,4 @@ Merkle content addressing remains an internal, in-memory derivation mechanism fo
 
 ## Runtime forms
 
-`tapes serve` is the convenient all-in-one runtime. It runs the proxy, read API, private ingest API, derive worker, and—by default—the embed worker in one process. Operators can instead run `tapes serve proxy`, `api`, `ingest`, `derive-worker`, or `embed-worker` as separate processes. In a split deployment, derivation and embedding are deliberately independent failure domains.
+`tapes serve` is the convenient all-in-one runtime. It runs the proxy, read API, private ingest API, and derive worker in one process. Operators can instead run `tapes serve proxy`, `api`, `ingest`, or `derive-worker` as separate processes. Span embedding for semantic search runs outside core in the search cassette, so it can never share the derive worker's memory budget or block derivation.
