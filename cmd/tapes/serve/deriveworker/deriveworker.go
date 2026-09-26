@@ -72,10 +72,9 @@ Derivation is idempotent (re-running an unchanged session prunes 0 spans), so
 everything here is safely at-least-once. The admin endpoints
 POST /v1/admin/derive/run and /verify remain available as escape hatches.
 
-Span embedding for semantic search runs in its own process,
-"tapes serve embed-worker", so it can never share this worker's memory
-budget or block derivation. This worker only derives; run the embed
-worker as a separate workload to populate search vectors.
+Span embedding for semantic search runs outside core in the search
+cassette, so it can never share this worker's memory budget or block
+derivation. This worker only derives.
 
 Operations: an unreachable database fails startup fast unless --wait-for-db
 is set; poll failures back off exponentially (capped at 30s) and recover on
