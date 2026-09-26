@@ -3,8 +3,6 @@ package configcmder
 import (
 	"fmt"
 	"os"
-
-	"golang.org/x/term"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -60,7 +58,7 @@ func runGet(key, configDir string) error {
 	// Piped or captured, print the value and nothing else, so
 	// `$(tapes config get api.listen)` is `:8081`. On a terminal, the styled
 	// readout with its config-file header.
-	if !term.IsTerminal(int(os.Stdout.Fd())) {
+	if !stdoutIsTerminal() {
 		value, err := cfger.GetConfigValue(key)
 		if err != nil {
 			return err
@@ -91,4 +89,11 @@ func runGet(key, configDir string) error {
 	}
 
 	return nil
+}
+
+// stdoutIsTerminal reports whether stdout is a character device, which is
+// what a terminal is and a pipe or file is not.
+func stdoutIsTerminal() bool {
+	info, err := os.Stdout.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
