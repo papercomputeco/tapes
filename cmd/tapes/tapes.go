@@ -98,6 +98,10 @@ func NewTapesCmd() *cobra.Command {
 		Long:               tapesLongDesc,
 		PersistentPreRunE:  preRun,
 		PersistentPostRunE: closeTelemetry,
+		// A runtime failure is not a usage mistake: print the error, not the
+		// flag table. Argument errors still show usage, as cobra decides
+		// them before RunE.
+		SilenceUsage: true,
 	}
 
 	// Global flags

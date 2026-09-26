@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	tapescmder "github.com/papercomputeco/tapes/cmd/tapes"
@@ -9,9 +8,9 @@ import (
 
 func main() {
 	cmd := tapescmder.NewTapesCmd()
-	err := cmd.Execute()
-	if err != nil {
-		fmt.Printf("Error executing root command: %v\n", err)
+	// cobra already printed the error to stderr; a second copy on stdout
+	// would land in whatever a script captured.
+	if err := cmd.Execute(); err != nil {
 		os.Exit(1)
 	}
 }

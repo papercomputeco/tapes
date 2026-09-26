@@ -2,6 +2,7 @@ package configcmder
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -54,14 +55,16 @@ func runGet(key, configDir string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
+	// The header goes to stderr so `$(tapes config get api.listen)` is the
+	// value and nothing else.
 	target := cfger.GetTarget()
 	if target != "" {
-		fmt.Printf("\n  %s %s\n\n",
-			cliui.KeyStyle.Render("Config file:"),
+		fmt.Fprintf(os.Stderr, "%s %s\n",
+			cliui.KeyStyle.Render("config file:"),
 			cliui.DimStyle.Render(target),
 		)
 	} else {
-		fmt.Printf("\n  %s\n\n", cliui.DimStyle.Render("No config file found. Using defaults."))
+		fmt.Fprintf(os.Stderr, "%s\n", cliui.DimStyle.Render("no config file found; using defaults"))
 	}
 
 	value, err := cfger.GetConfigValue(key)

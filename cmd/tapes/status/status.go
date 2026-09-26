@@ -6,6 +6,7 @@ package statuscmder
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -19,6 +20,11 @@ import (
 )
 
 const statsProbeTimeout = 3 * time.Second
+
+// errAPIUnreachable makes `tapes status` exit non-zero when the API probe
+// fails. The message is already on the readout, so cobra is told not to
+// print it again.
+var errAPIUnreachable = errors.New("tapes API unreachable")
 
 // captureStats is the slice of /v1/stats the readout surfaces. It doubles as
 // the reachability probe: a decoded response means the API is up.
@@ -152,7 +158,10 @@ func (c *statusCommander) run(cmd *cobra.Command) error {
 			cliui.FailMark,
 			cliui.DimStyle.Render("unreachable — start one with `tapes local up` then `tapes serve`"),
 		)
-		return nil
+		// The readout is complete, but the answer to "is tapes up" is no,
+		// and a script asking that question reads the exit code.
+		cmd.SilenceErrors = true
+		return errAPIUnreachable
 	}
 
 	fmt.Fprintf(out, "  %s  %s %s\n\n",
