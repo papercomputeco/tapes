@@ -19,13 +19,23 @@ import (
 
 var _ = Describe("Chat Completions capture lanes", func() {
 	DescribeTable("captures the same response live and from stored bytes", func(mode RawResponseMode, streaming bool) {
-		request := []byte(`{"model":"poc-cheap","messages":[{"role":"user","content":"hello"}],"stream":false}`)
-		body := `{"id":"chatcmpl_test","object":"chat.completion","model":"poc-cheap","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":4,"total_tokens":16}}`
+		request := []byte(`{"model":"accounts/fireworks/models/gpt-oss-120b","messages":[{"role":"user","content":"hello"}],"stream":false}`)
+		body := `{"id":"chatcmpl_test","object":"chat.completion","model":"accounts/fireworks/models/gpt-oss-120b","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":4,"total_tokens":16}}`
 		ct := "application/json"
+		chunks := []string{body[:len(body)/2], body[len(body)/2:]}
 		if streaming {
 			request = bytes.ReplaceAll(request, []byte("false"), []byte("true"))
 			ct = "text/event-stream"
-			body = "data: " + strings.ReplaceAll(strings.ReplaceAll(body, `"chat.completion"`, `"chat.completion.chunk"`), `"message":`, `"delta":`) + "\n\ndata: [DONE]\n\n"
+			// Split an SSE event inside its JSON payload, then send the finish
+			// reason, usage, and [DONE] in separate Envoy response frames.
+			chunks = []string{
+				`data: {"id":"chatcmpl_test","object":"chat.completion.chunk","model":"accounts/fireworks/models/gpt-oss-120b","choices":[{"index":0,"delta":{"role":"assistant","content":"hel`,
+				"lo\"}}]}\n\n",
+				"data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+				"data: {\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":4,\"total_tokens\":16}}\n\n",
+				"data: [DONE]\n\n",
+			}
+			body = strings.Join(chunks, "")
 		}
 		payloads := make(chan ingest.TurnPayload, 1)
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -41,10 +51,12 @@ var _ = Describe("Chat Completions capture lanes", func() {
 		proc, err := NewProcessor(Config{IngestURL: server.URL, MaxInflight: 4, RawResponseMode: mode})
 		Expect(err).NotTo(HaveOccurred())
 		stream := &fakeStream{ctx: context.Background(), toSend: []*extprocv3.ProcessingRequest{
-			headerReq(map[string]string{":method": "POST", ":path": "/v1/chat/completions", "x-tapes-harness-id": "unknown", "x-tapes-harness-session-id": "chat-test"}),
+			headerReq(map[string]string{":method": "POST", ":path": "/local-gw/v1/chat/completions", "x-tapes-harness-id": "unknown", "x-tapes-harness-session-id": "chat-test"}),
 			reqBodyReq(request, true), respHeaderReq("200", ct),
-			respBodyReq([]byte(body[:len(body)/2]), false), respBodyReq([]byte(body[len(body)/2:]), true),
 		}}
+		for i, chunk := range chunks {
+			stream.toSend = append(stream.toSend, respBodyReq([]byte(chunk), i == len(chunks)-1))
+		}
 		Expect(proc.Process(stream)).To(Succeed())
 		var payload ingest.TurnPayload
 		Eventually(payloads).WithTimeout(3 * time.Second).Should(Receive(&payload))
@@ -60,6 +72,8 @@ var _ = Describe("Chat Completions capture lanes", func() {
 		}
 		if mode != RawResponseRaw {
 			Expect(payload.Response.Message.Content[0].Text).To(Equal("hello"))
+			Expect(payload.Response.Model).To(Equal("accounts/fireworks/models/gpt-oss-120b"))
+			Expect(payload.Response.Done).To(BeTrue())
 		} else {
 			Expect(ingest.ReducedResponseAbsent(payload.Response)).To(BeTrue())
 		}

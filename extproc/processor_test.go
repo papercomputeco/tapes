@@ -229,13 +229,12 @@ var _ = Describe("Processor state machine", func() {
 			Expect(ok).To(BeFalse())
 		})
 
-		It("serves openai Responses and Chat Completions endpoints", func() {
-			_, ok := proc.reducerFor("openai", "responses")
+		It("selects distinct OpenAI reducers by endpoint", func() {
+			responses, ok := proc.reducerFor("openai", "responses")
 			Expect(ok).To(BeTrue())
-
-			// The shared dispatcher selects a distinct Chat Completions parser.
-			_, ok = proc.reducerFor("openai", "chat_completions")
+			chat, ok := proc.reducerFor("openai", "chat_completions")
 			Expect(ok).To(BeTrue())
+			Expect(chat).NotTo(Equal(responses))
 
 			_, ok = proc.reducerFor("openai", "other")
 			Expect(ok).To(BeFalse())
@@ -546,10 +545,9 @@ data: {"type":"response.completed","response":{"id":"resp_1","object":"response"
 				respBodyReq([]byte(`{}`), true),
 			},
 		}
-		// resolveProvider falls through to "anthropic", which has a reducer
-		// in p.reducers — so dispatchTurn would just succeed. Force the
-		// unknown-provider drop by pointing the provider map at a name not
-		// in p.reducers.
+		// resolveProvider falls through to "anthropic", which has a
+		// Messages reducer. Force the unknown-provider drop by pointing the
+		// provider map at a name with no eligible endpoint reducer.
 		proc.SetProviderMap(map[string]string{"weird-backend": "totally-unknown-provider"})
 
 		Expect(proc.Process(stream)).To(Succeed())

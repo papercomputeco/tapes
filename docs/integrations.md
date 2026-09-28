@@ -78,12 +78,14 @@ It keeps the provider's model ID after any gateway routing rewrite.
 Explicit Chat Completions tool exchanges are derived as conversation calls
 even when non-streaming, so tool results link back to their function calls.
 
-Responses and Chat Completions use distinct shared reducers. The captured
-request selects the format (`input` versus `messages`), including when ingest
-reduces raw-only turns or the derive read path recovers a missing reduction.
-Deploy the updated Tapes ingest/derive image before enabling raw-only capture
-with the updated extproc image; `dual` retains the adapter's reduction as well
-as the original wire bytes.
+Responses and Chat Completions use distinct shared reducers. The gateway
+adapter selects the reducer by provider and endpoint, so an OpenAI-compatible
+`/v1/chat/completions` turn is not sent through the Responses parser. When
+reducing stored raw-only turns or recovering a missing reduction, the captured
+request selects the format (`input` versus `messages`). Deploy the updated
+Tapes ingest/derive image before enabling raw-only capture with the updated
+extproc image; `dual` retains the adapter's reduction as well as the original
+wire bytes.
 
 A stream missing `[DONE]`, a finish reason, or valid frames is retained as
 partial, not represented as a completed answer. Invalid function arguments

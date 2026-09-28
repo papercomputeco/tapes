@@ -156,8 +156,9 @@ func NewProcessor(cfg Config) (*Processor, error) {
 		maxInflight:     cfg.MaxInflight,
 		rawResponseMode: cfg.RawResponseMode,
 		reducers: map[string]capture.Reducer{
-			capture.ProviderAnthropic: capture.NewAnthropicReducer(),
-			capture.ProviderOpenAI:    capture.NewOpenAIReducer(),
+			capture.ProviderAnthropic + "/" + endpointMessages:     capture.NewAnthropicReducer(),
+			capture.ProviderOpenAI + "/" + endpointResponses:       capture.NewOpenAIResponsesReducer(),
+			capture.ProviderOpenAI + "/" + endpointChatCompletions: capture.NewOpenAIChatCompletionsReducer(),
 		},
 	}, nil
 }
@@ -166,34 +167,12 @@ func NewProcessor(cfg Config) (*Processor, error) {
 // /metrics on its existing HTTP mux.
 func (p *Processor) Metrics() *Metrics { return p.metrics }
 
-// reducerFor returns the reducer able to consume this turn's wire format.
-// Eligibility is a positive (provider, endpoint) allowlist. OpenAI dispatches
-// Responses and Chat Completions to separate parsers using the request shape;
-// the Anthropic reducer only understands Messages. Ineligible turns keep the pre-capture
-// behavior: default BUFFERED Envoy mode and an unknown_provider drop.
-// Used to gate behavior that only makes sense when we can actually
-// consume the upstream bytes.
+// reducerFor selects by both provider and endpoint: Responses and Chat
+// Completions have different wire formats even though both use provider openai.
+// Unlisted pairs stay in BUFFERED mode and drop as unknown_provider.
 func (p *Processor) reducerFor(provider, endpoint string) (capture.Reducer, bool) {
-	if !reducerHandlesEndpoint(provider, endpoint) {
-		return nil, false
-	}
-	r, ok := p.reducers[provider]
+	r, ok := p.reducers[provider+"/"+endpoint]
 	return r, ok
-}
-
-// reducerHandlesEndpoint is the wire-format allowlist backing reducerFor.
-// New reducers must add their (provider, endpoint) pair here explicitly —
-// defaulting to false makes a missing entry a loud test failure rather
-// than a silently mis-fed reducer.
-func reducerHandlesEndpoint(provider, endpoint string) bool {
-	switch provider {
-	case capture.ProviderAnthropic:
-		return endpoint == endpointMessages
-	case capture.ProviderOpenAI:
-		return endpoint == endpointResponses || endpoint == endpointChatCompletions
-	default:
-		return false
-	}
 }
 
 // RegisterServer installs p on the given gRPC server.
@@ -991,7 +970,7 @@ func isTurnRequestPath(path string) bool {
 		pathHasCleanSuffix(path, "/api/chat")
 }
 
-// classifyEndpoint labels that reducerHandlesEndpoint keys capture
+// classifyEndpoint labels the wire formats that reducerFor keys capture
 // eligibility on.
 const (
 	endpointMessages        = "messages"
