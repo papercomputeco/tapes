@@ -183,6 +183,34 @@ var _ = Describe("NormalizeModel", func() {
 			Expect(price.CacheWrite).To(BeNumerically("==", p.cacheWrite), "cache-write $/MTok for %q", p.api)
 		}
 	})
+	It("resolves Sonnet 5.5 pricing, including its 1M-context marker", func() {
+		// Sonnet 5.5 matches Sonnet 5 on every rate ($2/$10, 0.10x cache read),
+		// so the two rows must stay equal — a future edit that "differentiates"
+		// the point release would silently reprice one of them. Pin all four
+		// rates for the dotted key, the API-spelled key, the [1m] marker, and a
+		// dated ID.
+		pricing := sessions.DefaultPricing()
+		for _, p := range []struct {
+			api                             string
+			input, output, read, cacheWrite float64
+		}{
+			{"claude-sonnet-5.5", 2.00, 10.00, 0.20, 2.50},
+			{"claude-sonnet-5-5", 2.00, 10.00, 0.20, 2.50},
+			{"claude-sonnet-5-5[1m]", 2.00, 10.00, 0.20, 2.50},
+			{"claude-sonnet-5-5-20260101", 2.00, 10.00, 0.20, 2.50},
+			// Unlike Opus 5.5, the predecessor prices the same here; both rows
+			// must remain reachable so historical Sonnet 5 sessions keep costing
+			// the same as new Sonnet 5.5 ones.
+			{"claude-sonnet-5", 2.00, 10.00, 0.20, 2.50},
+		} {
+			price, ok := sessions.PricingForModel(pricing, p.api)
+			Expect(ok).To(BeTrue(), "PricingForModel(%q)", p.api)
+			Expect(price.Input).To(BeNumerically("==", p.input), "input $/MTok for %q", p.api)
+			Expect(price.Output).To(BeNumerically("==", p.output), "output $/MTok for %q", p.api)
+			Expect(price.CacheRead).To(BeNumerically("==", p.read), "cache-read $/MTok for %q", p.api)
+			Expect(price.CacheWrite).To(BeNumerically("==", p.cacheWrite), "cache-write $/MTok for %q", p.api)
+		}
+	})
 	It("resolves GPT-6 Sol and Luna pricing and dated IDs", func() {
 		pricing := sessions.DefaultPricing()
 		for _, p := range []struct {
