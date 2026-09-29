@@ -80,11 +80,24 @@ var _ = Describe("Chat Completions capture lanes", func() {
 		if mode != RawResponseOff {
 			stored, err := ingest.ReduceStoredRawTurn(context.Background(), ingest.StoredRawTurn{Provider: payload.Provider, RawRequest: payload.RawRequest, RawResponse: payload.RawResponse, Meta: payload.Meta})
 			Expect(err).NotTo(HaveOccurred())
-			live, err := capture.NewOpenAIReducer().Reduce(context.Background(), bytes.NewReader(request), strings.NewReader(body), ct)
+			if mode == RawResponseDual {
+				Expect(stored.Response.Usage).NotTo(BeNil())
+				Expect(payload.Response.Usage).NotTo(BeNil())
+				Expect(stored.Response.Usage.TotalDurationNs).To(BeNumerically(">", 0))
+				Expect(payload.Response.Usage.TotalDurationNs).To(BeNumerically(">", 0))
+				// The two lanes measure duration independently. Compare every other
+				// response field to the reduction actually sent by the adapter.
+				recovered, captured := *stored.Response, payload.Response
+				recoveredUsage, capturedUsage := *recovered.Usage, *captured.Usage
+				recoveredUsage.TotalDurationNs, capturedUsage.TotalDurationNs = 0, 0
+				recovered.Usage, captured.Usage = &recoveredUsage, &capturedUsage
+				Expect(recovered).To(Equal(captured))
+			}
+			requestReduced, err := capture.NewOpenAIReducer().Reduce(context.Background(), bytes.NewReader(request), strings.NewReader(body), ct)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(stored.Response.Message).To(Equal(live.Message))
-			Expect(stored.Response.Model).To(Equal(live.Model))
-			Expect(stored.Response.Usage.TotalTokens).To(Equal(live.Usage.TotalTokens))
+			Expect(stored.Response.Message).To(Equal(requestReduced.Message))
+			Expect(stored.Response.Model).To(Equal(requestReduced.Model))
+			Expect(stored.Response.Usage.TotalTokens).To(Equal(requestReduced.Usage.TotalTokens))
 			Expect(stored.Response.Done).To(BeTrue())
 		}
 	},
