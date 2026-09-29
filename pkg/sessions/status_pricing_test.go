@@ -88,6 +88,10 @@ var _ = Describe("NormalizeModel", func() {
 		Expect(sessions.NormalizeModel("gpt-5-6-sol-2026-07-09")).To(Equal("gpt-5.6-sol"))
 		Expect(sessions.NormalizeModel("gpt-5.5-2026-04-23")).To(Equal("gpt-5.5"))
 		Expect(sessions.NormalizeModel("gpt-5-5-2026-04-23")).To(Equal("gpt-5.5"))
+		// gpt-6.1-sol is the only 6.x point release so far, so it needs its own
+		// `-6-1` -> `-6.1` rewrite; there is no general rule.
+		Expect(sessions.NormalizeModel("gpt-6.1-sol-2026-09-29")).To(Equal("gpt-6.1-sol"))
+		Expect(sessions.NormalizeModel("gpt-6-1-sol-2026-09-29")).To(Equal("gpt-6.1-sol"))
 	})
 	It("strips the Anthropic 1M-context marker", func() {
 		Expect(sessions.NormalizeModel("claude-fable-5[1m]")).To(Equal("claude-fable-5"))
@@ -202,6 +206,31 @@ var _ = Describe("NormalizeModel", func() {
 			// must remain reachable so historical Sonnet 5 sessions keep costing
 			// the same as new Sonnet 5.5 ones.
 			{"claude-sonnet-5", 2.00, 10.00, 0.20, 2.50},
+		} {
+			price, ok := sessions.PricingForModel(pricing, p.api)
+			Expect(ok).To(BeTrue(), "PricingForModel(%q)", p.api)
+			Expect(price.Input).To(BeNumerically("==", p.input), "input $/MTok for %q", p.api)
+			Expect(price.Output).To(BeNumerically("==", p.output), "output $/MTok for %q", p.api)
+			Expect(price.CacheRead).To(BeNumerically("==", p.read), "cache-read $/MTok for %q", p.api)
+			Expect(price.CacheWrite).To(BeNumerically("==", p.cacheWrite), "cache-write $/MTok for %q", p.api)
+		}
+	})
+	It("resolves GPT-6.1 Sol pricing, including its off-multiplier cache read", func() {
+		// gpt-6.1-sol costs the same per token as gpt-6-sol but reads cache at
+		// 0.05x input ($0.10/MTok) rather than the 0.10x multiplier — the only
+		// 6.x point release that does. Pin all four rates so a pass that
+		// "corrects" it back to gpt-6-sol's rate fails here.
+		pricing := sessions.DefaultPricing()
+		for _, p := range []struct {
+			api                             string
+			input, output, read, cacheWrite float64
+		}{
+			{"gpt-6.1-sol", 2.00, 10.00, 0.10, 2.50},
+			{"gpt-6-1-sol", 2.00, 10.00, 0.10, 2.50},
+			{"gpt-6-1-sol-2026-09-29", 2.00, 10.00, 0.10, 2.50},
+			// The predecessor keeps its own cache-read rate; the two must not
+			// converge or a cost-by-model panel would misprice one of them.
+			{"gpt-6-sol", 2.00, 10.00, 0.20, 2.50},
 		} {
 			price, ok := sessions.PricingForModel(pricing, p.api)
 			Expect(ok).To(BeTrue(), "PricingForModel(%q)", p.api)

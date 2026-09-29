@@ -10,7 +10,7 @@ import (
 
 // DefaultPricing returns hardcoded pricing per million tokens for supported models.
 //
-// Last verified: 2026-09-28
+// Last verified: 2026-09-29
 // Sources:
 //   - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
 //   - OpenAI:    https://platform.openai.com/docs/pricing
@@ -23,6 +23,9 @@ import (
 // derive cache rates from the family multiplier.
 // OpenAI cache: CacheWrite = 1x input and CacheRead = 0.50x input for older models;
 // GPT-5.6+ uses CacheWrite = 1.25x input and CacheRead = 0.10x input.
+// Exception: gpt-6.1-sol reads cache at 0.05x ($0.10/MTok) — half of gpt-6-sol's
+// rate at identical input/output prices. Read the published number per model;
+// do not derive cache rates from the family multiplier.
 // gpt-5.6-sol carries OpenAI promotional pricing "at least through November
 // 21, 2026"; its regular price is unpublished. Revisit after that date.
 //
@@ -59,6 +62,7 @@ func DefaultPricing() PricingTable {
 
 		// OpenAI
 		"gpt-6-astra":       {Input: 10.00, Output: 50.00, CacheRead: 1.00, CacheWrite: 12.50},
+		"gpt-6.1-sol":       {Input: 2.00, Output: 10.00, CacheRead: 0.10, CacheWrite: 2.50},
 		"gpt-6-sol":         {Input: 2.00, Output: 10.00, CacheRead: 0.20, CacheWrite: 2.50},
 		"gpt-6-luna":        {Input: 0.10, Output: 0.50, CacheRead: 0.01, CacheWrite: 0.125},
 		"gpt-4o":            {Input: 2.50, Output: 10.00, CacheRead: 1.25, CacheWrite: 2.50},
@@ -171,6 +175,7 @@ func NormalizeModel(model string) string {
 	// Strip OpenAI-style date suffix: -YYYY-MM-DD
 	normalized = stripOpenAIDateSuffix(normalized)
 
+	normalized = strings.ReplaceAll(normalized, "-6-1", "-6.1")
 	normalized = strings.ReplaceAll(normalized, "-5-6", "-5.6")
 	normalized = strings.ReplaceAll(normalized, "-5-5", "-5.5")
 	normalized = strings.ReplaceAll(normalized, "-5-4", "-5.4")

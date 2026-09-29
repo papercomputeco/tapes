@@ -1093,6 +1093,14 @@ func modelFamily(model string) string {
 		return "claude-3-5-sonnet"
 	case strings.HasPrefix(model, "gpt-6-astra"):
 		return "gpt-6-astra"
+	// gpt-6.1-sol is Sol's point release. The dot means it prefix-matches
+	// neither "gpt-6-sol" nor "gpt-5", so without its own case it lands in
+	// "other". Split rather than folded into gpt-6-sol: it reads cache at
+	// half the rate ($0.10 vs $0.20 /MTok), so one merged cost-by-family
+	// panel would misprice whichever model carries the cache traffic.
+	// Pricing accepts the hyphenated spelling too, so match both.
+	case strings.HasPrefix(model, "gpt-6.1-sol"), strings.HasPrefix(model, "gpt-6-1-sol"):
+		return "gpt-6-1-sol"
 	// Split per tier: Sol and Luna price 20x apart, so a shared gpt-6 family
 	// would make a cost-by-family panel wrong rather than merely coarse.
 	case strings.HasPrefix(model, "gpt-6-sol"):
