@@ -185,8 +185,13 @@ func (p *Proxy) handleProxy(c fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusRequestEntityTooLarge)
 	}
 
-	// Only process POST requests that look like chat/completion endpoints
-	body := c.Body()
+	// Only process POST requests that look like chat/completion endpoints.
+	// Copy the body: c.Body() is a view into fasthttp's request buffer, which
+	// is reused for the next request on the same keep-alive connection once
+	// this handler returns. The capture job (and, for streaming, the upstream
+	// write) outlives the handler, so a view would persist a torn mix of two
+	// requests.
+	body := bytes.Clone(c.Body())
 	if len(body) > ingest.MaxIngestBodyBytes {
 		return c.SendStatus(fiber.StatusRequestEntityTooLarge)
 	}
