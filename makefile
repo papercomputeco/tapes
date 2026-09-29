@@ -182,6 +182,15 @@ build-push-tapes-images: ensure-buildx-builder ## Builds and publishes the multi
 up: ## Starts the default, fully containerized Compose stack
 	docker compose up --build
 
+.PHONY: validate-envoy
+validate-envoy: ## Validates Compose and the pinned stock Envoy config without starting the stack
+	docker compose -f docker-compose.yaml config --quiet
+	docker compose -f docker-compose.yaml run --rm --no-deps envoy --mode validate -c /etc/envoy/envoy.yaml
+
+.PHONY: smoke-envoy
+smoke-envoy: ## Tests real Envoy with mock providers/ingest (no credentials or persistent stack)
+	TAPES_ENVOY_SMOKE=1 GOEXPERIMENT=jsonv2 go test ./extproc -ginkgo.focus='Compose Envoy' -count=1 -timeout=3m
+
 .PHONY: down
 down: ## Stops the Compose stack without deleting its volumes
 	docker compose -f docker-compose.yaml down
