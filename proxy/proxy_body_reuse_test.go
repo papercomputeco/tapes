@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"strings"
 	"sync"
 
@@ -78,13 +79,24 @@ var _ = Describe("Raw request capture across keep-alive requests", func() {
 		upstream.Close()
 	})
 
-	post := func(body []byte) {
-		resp, err := client.Post(baseURL+"/api/chat", "application/json", bytes.NewReader(body))
+	// post reports whether the request went over a reused connection.
+	post := func(body []byte) bool {
+		var reused bool
+		trace := &httptrace.ClientTrace{
+			GotConn: func(info httptrace.GotConnInfo) { reused = info.Reused },
+		}
+		req, err := http.NewRequestWithContext(
+			httptrace.WithClientTrace(context.Background(), trace),
+			http.MethodPost, baseURL+"/api/chat", bytes.NewReader(body))
+		Expect(err).NotTo(HaveOccurred())
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
 		Expect(err).NotTo(HaveOccurred())
 		_, err = io.Copy(io.Discard, resp.Body)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resp.Body.Close()).To(Succeed())
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		return reused
 	}
 
 	It("keeps each queued raw request intact when the next request reuses the connection", func() {
@@ -100,7 +112,9 @@ var _ = Describe("Raw request capture across keep-alive requests", func() {
 		Expect(first).To(HaveLen(len(second)))
 
 		post(first)
-		post(second)
+		// The bug needs the second request on the first one's connection;
+		// without reuse this test would pass on a fresh buffer.
+		Expect(post(second)).To(BeTrue(), "second request did not reuse the connection")
 
 		driver.open()
 		p.Close()
