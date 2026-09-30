@@ -1,6 +1,8 @@
 package sessions_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -318,5 +320,57 @@ var _ = Describe("CostForTokensWithCache", func() {
 		Expect(inCost).To(BeNumerically("~", 9.20, 0.0001))
 		Expect(outCost).To(BeNumerically("~", 3.0, 0.0001))
 		Expect(total).To(BeNumerically("~", 12.20, 0.0001))
+	})
+})
+
+var _ = Describe("LoadPricing", func() {
+	It("lets a hyphenated override beat the dotted default row", func() {
+		// PricingForModel looks up the normalized id first, so before overrides
+		// were normalized an operator override keyed gpt-6-1-sol was shadowed
+		// by the gpt-6.1-sol default already in the table and never took
+		// effect. Both spellings must resolve to the override.
+		path := filepath.Join(GinkgoT().TempDir(), "pricing.json")
+		Expect(os.WriteFile(path, []byte(
+			`{"gpt-6-1-sol":{"input":9.00,"output":9.00,"cache_read":9.00,"cache_write":9.00}}`,
+		), 0o600)).To(Succeed())
+
+		pricing, err := sessions.LoadPricing(path)
+		Expect(err).To(BeNil())
+
+		for _, api := range []string{"gpt-6.1-sol", "gpt-6-1-sol"} {
+			price, ok := sessions.PricingForModel(pricing, api)
+			Expect(ok).To(BeTrue(), "PricingForModel(%q)", api)
+			Expect(price.Input).To(BeNumerically("==", 9.00), "override input $/MTok for %q", api)
+			Expect(price.CacheRead).To(BeNumerically("==", 9.00), "override cache-read $/MTok for %q", api)
+		}
+	})
+
+	It("accepts two keys that restate one model at identical rates", func() {
+		path := filepath.Join(GinkgoT().TempDir(), "pricing.json")
+		Expect(os.WriteFile(path, []byte(
+			`{"gpt-6-1-sol":{"input":9.00,"output":9.00,"cache_read":9.00,"cache_write":9.00},`+
+				`"gpt-6.1-sol":{"input":9.00,"output":9.00,"cache_read":9.00,"cache_write":9.00}}`,
+		), 0o600)).To(Succeed())
+
+		pricing, err := sessions.LoadPricing(path)
+		Expect(err).To(BeNil())
+
+		price, ok := sessions.PricingForModel(pricing, "gpt-6.1-sol")
+		Expect(ok).To(BeTrue())
+		Expect(price.Input).To(BeNumerically("==", 9.00))
+	})
+
+	It("rejects two keys that normalize alike but disagree on rates", func() {
+		// Collapsing these onto one row would pick a survivor by map iteration
+		// order, so the same file could price a model differently between runs.
+		path := filepath.Join(GinkgoT().TempDir(), "pricing.json")
+		Expect(os.WriteFile(path, []byte(
+			`{"custom-20260101":{"input":1.00,"output":1.00,"cache_read":1.00,"cache_write":1.00},`+
+				`"custom-20260102":{"input":2.00,"output":2.00,"cache_read":2.00,"cache_write":2.00}}`,
+		), 0o600)).To(Succeed())
+
+		_, err := sessions.LoadPricing(path)
+		Expect(err).ToNot(BeNil())
+		Expect(err.Error()).To(ContainSubstring("normalize"))
 	})
 })

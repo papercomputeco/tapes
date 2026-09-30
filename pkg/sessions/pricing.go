@@ -108,7 +108,34 @@ func LoadPricing(path string) (PricingTable, error) {
 		return nil, fmt.Errorf("parse pricing file: %w", err)
 	}
 
-	maps.Copy(pricing, overrides)
+	// Normalize override keys before merging. PricingForModel looks up the
+	// normalized id first, so an override written with the hyphenated API form
+	// (gpt-6-1-sol) would otherwise be shadowed by the dotted default row
+	// (gpt-6.1-sol) already in the table and would silently have no effect.
+	// Folding both spellings onto the normalized key keeps an override
+	// authoritative regardless of which form the operator used.
+	//
+	// Two override keys that normalize to the same id (say two dated snapshots
+	// of one custom model) would otherwise collapse onto one row, with the
+	// survivor decided by map iteration order — the same config yielding
+	// different costs between runs. Identical rates are a harmless restatement
+	// of one model; differing rates are a configuration error, so report it
+	// instead of picking a winner.
+	normalized := make(PricingTable, len(overrides))
+	source := make(map[string]string, len(overrides))
+	for model, price := range overrides {
+		key := NormalizeModel(model)
+		if prior, dup := source[key]; dup && normalized[key] != price {
+			return nil, fmt.Errorf(
+				"pricing overrides %q and %q both normalize to %q but set different rates",
+				prior, model, key,
+			)
+		}
+		normalized[key] = price
+		source[key] = model
+	}
+
+	maps.Copy(pricing, normalized)
 	return pricing, nil
 }
 
