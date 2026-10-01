@@ -121,7 +121,13 @@ func (r *openAIChatReducer) stream(ctx context.Context, body io.Reader) (*llm.Ch
 			done = true
 			break
 		}
-		if ev.Data == "" {
+		// Whitespace-only data carries no frame. An event built from empty
+		// data fields joins to "\n" rather than "" — the SSE spec owes a
+		// separator per data field and strips only the trailing one — so an
+		// exact `ev.Data == ""` test would hand "\n" to the decoder below
+		// and record a malformed-stream problem for a stream that is in
+		// fact complete.
+		if strings.TrimSpace(ev.Data) == "" {
 			continue
 		}
 		var chunk chatEnvelope

@@ -77,6 +77,44 @@ var _ = Describe("Reader", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(ev.Data).To(Equal("line one\nline two\nline three"))
 			})
+
+			It("joins a data line that follows an empty one with a newline", func() {
+				// The separator is owed per data field, so an empty first field
+				// must still contribute its newline. Deciding the join from the
+				// accumulated buffer loses it, and a multi-line JSON payload
+				// then fails to unmarshal downstream.
+				stream := "data:\ndata: second\n\n" //nolint:dupword // repeated data: fields are the fixture
+				src := strings.NewReader(stream)
+				r := NewTeeReader(src, dst)
+
+				ev, err := r.Next()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(ev.Data).To(Equal("\nsecond"))
+			})
+
+			It("joins a run of empty data lines with one newline each", func() {
+				stream := "data:\ndata:\ndata:\n\n" //nolint:dupword // repeated data: fields are the fixture
+				src := strings.NewReader(stream)
+				r := NewTeeReader(src, dst)
+
+				ev, err := r.Next()
+				Expect(err).NotTo(HaveOccurred())
+				// Three fields means two separators.
+				Expect(ev.Data).To(Equal("\n\n"))
+			})
+
+			It("does not add a newline for a non-data field before the first data line", func() {
+				// event: and id: mark the event as started but contribute no
+				// data, so the first data line still starts a fresh buffer.
+				src := strings.NewReader("event: ping\nid: 7\ndata: payload\n\n")
+				r := NewTeeReader(src, dst)
+
+				ev, err := r.Next()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(ev.Data).To(Equal("payload"))
+				Expect(ev.Type).To(Equal("ping"))
+				Expect(ev.ID).To(Equal("7"))
+			})
 		})
 
 		Context("with OpenAI-style SSE", func() {

@@ -33,6 +33,11 @@ type TeeReader struct {
 	// current accumulates fields for the event being built in the current scan.
 	current *Event
 	hasData bool
+
+	// dataFields counts the data fields accumulated into current, so the
+	// "\n" join is driven by how many fields arrived rather than by how much
+	// text they produced. hasData cannot serve here: event: and id: set it too.
+	dataFields int
 }
 
 // NewTeeReader returns a Reader that parses SSE events from the src io.Reader
@@ -118,11 +123,15 @@ func (r *TeeReader) parseLine(line string) {
 
 	switch field {
 	case "data":
-		if r.hasData && r.current.Data != "" {
-			// Multiple data fields are joined with "\n".
+		// Multiple data fields are joined with "\n", so the separator is owed
+		// per field rather than per non-empty buffer. An empty first data field
+		// leaves the buffer empty, and a buffer test then skips the separator,
+		// silently shortening the event's payload by a newline.
+		if r.dataFields > 0 {
 			r.current.Data += "\n"
 		}
 		r.current.Data += value
+		r.dataFields++
 		r.hasData = true
 	case "event":
 		r.current.Type = value
@@ -140,4 +149,5 @@ func (r *TeeReader) parseLine(line string) {
 func (r *TeeReader) reset() {
 	r.current = &Event{}
 	r.hasData = false
+	r.dataFields = 0
 }

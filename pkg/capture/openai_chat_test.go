@@ -68,6 +68,23 @@ var _ = Describe("Chat Completions reducer", func() {
 		Entry("malformed frame then finish", "data: broken\n\n"+chatEvent(`[{"index":0,"delta":{},"finish_reason":"stop"}]`)+"data: [DONE]\n\n"),
 	)
 
+	It("does not mark a complete capture partial over a whitespace-only event", func() {
+		// An event made of several empty data fields is joined by the SSE
+		// spec into "\n", not "": the separator is owed per data field and
+		// only the trailing one is stripped at dispatch. Reducing on an
+		// exact `ev.Data == ""` test therefore feeds "\n" to the JSON
+		// decoder and records a malformed-stream problem for a stream that
+		// is in fact complete. Whitespace-only data carries no frame.
+		body := "data:\ndata:\n\n" +
+			chatEvent(`[{"index":0,"delta":{"content":"hello"},"finish_reason":"stop"}]`) +
+			"data: [DONE]\n\n"
+		resp, err := capture.NewOpenAIChatCompletionsReducer().Reduce(context.Background(), nil, strings.NewReader(body), "text/event-stream")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Done).To(BeTrue())
+		Expect(resp.Message.Content[0].Text).To(Equal("hello"))
+		Expect(resp.Extra).NotTo(HaveKeyWithValue("partial", true))
+	})
+
 	It("preserves a refusal and invalid tool arguments", func() {
 		body := `{"object":"chat.completion","choices":[{"index":0,"message":{"refusal":"no","tool_calls":[{"id":"call","type":"function","function":{"name":"echo","arguments":"{"}}]},"finish_reason":"tool_calls"}]}`
 		resp, err := capture.NewOpenAIChatCompletionsReducer().Reduce(context.Background(), nil, strings.NewReader(body), "application/json")
