@@ -153,11 +153,17 @@ var skipResponse = map[string]struct{}{
 // SetUpstreamRequestHeaders copies request headers from the Fiber context to
 // the outgoing http.Request, filtering headers that the proxy should not forward
 // to the upstream API.
+//
+// Header.All() yields one iteration per key/value pair, so a header the client
+// sent more than once must be appended rather than set: Set would replace the
+// value written by the previous iteration and silently drop all but the last.
+// The proxy is transparent, so a repeated header (Cookie, Forwarded, a repeated
+// X-Forwarded-For hop) has to reach the provider with every value intact.
 func (h *Handler) SetUpstreamRequestHeaders(c fiber.Ctx, req *http.Request) {
 	for key, value := range c.Request().Header.All() {
 		k := string(key)
 		if _, skip := skipRequest[k]; !skip {
-			req.Header.Set(k, string(value))
+			req.Header.Add(k, string(value))
 		}
 	}
 }

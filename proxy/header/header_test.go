@@ -110,6 +110,50 @@ var _ = Describe("SetUpstreamRequestHeaders", func() {
 		// Other headers still forwarded
 		Expect(got.Get("Authorization")).To(Equal("Bearer token123"))
 	})
+
+	It("forwards every value of a repeated request header", func() {
+		var got http.Header
+
+		app.Post("/test", func(c fiber.Ctx) error {
+			req, _ := http.NewRequest(http.MethodPost, "http://upstream/test", nil)
+			hh.SetUpstreamRequestHeaders(c, req)
+			got = req.Header
+			return c.SendStatus(fiber.StatusOK)
+		})
+
+		req := httptest.NewRequest(http.MethodPost, "/test", nil)
+		req.Header.Add("X-Forwarded-For", "203.0.113.1")
+		req.Header.Add("X-Forwarded-For", "198.51.100.7")
+
+		resp, err := app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		resp.Body.Close()
+
+		Expect(got.Values("X-Forwarded-For")).To(Equal([]string{"203.0.113.1", "198.51.100.7"}))
+	})
+
+	It("forwards every value of a repeated request header including interleaved ones", func() {
+		var got http.Header
+
+		app.Post("/test", func(c fiber.Ctx) error {
+			req, _ := http.NewRequest(http.MethodPost, "http://upstream/test", nil)
+			hh.SetUpstreamRequestHeaders(c, req)
+			got = req.Header
+			return c.SendStatus(fiber.StatusOK)
+		})
+
+		req := httptest.NewRequest(http.MethodPost, "/test", nil)
+		req.Header.Add("X-Request-Id", "first")
+		req.Header.Add("Authorization", "Bearer token123")
+		req.Header.Add("X-Request-Id", "second")
+
+		resp, err := app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		resp.Body.Close()
+
+		Expect(got.Values("X-Request-Id")).To(Equal([]string{"first", "second"}))
+		Expect(got.Get("Authorization")).To(Equal("Bearer token123"))
+	})
 })
 
 var _ = Describe("SetClientResponseHeaders", func() {
