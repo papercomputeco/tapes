@@ -1,6 +1,7 @@
 package merkle_test
 
 import (
+	"encoding/json"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -175,6 +176,102 @@ var _ = Describe("ProjectContent", func() {
 		}}
 
 		Expect(merkle.ProjectContent(streamed)).To(Equal(merkle.ProjectContent(resent)))
+	})
+
+	It("drops a json.Number zero the same way it drops a float64 zero", func() {
+		// The Chat Completions reducer decodes tool arguments with
+		// decoder.UseNumber(), so the streamed capture carries json.Number while
+		// the re-sent history of the same call carries float64. An explicit
+		// numeric zero has to fold on both sides, or the two hash apart and the
+		// chain branches.
+		//
+		// The comparison is on the hash rather than on the projected blocks:
+		// a non-zero value keeps its own decode type on each side, and those
+		// marshal to the same JSON even though they are not reflect-equal.
+		const args = `{"offset":0,"limit":10,"nested":{"deep":0}}`
+
+		captured := map[string]any{}
+		decoder := json.NewDecoder(strings.NewReader(args))
+		decoder.UseNumber()
+		Expect(decoder.Decode(&captured)).To(Succeed())
+		Expect(captured["offset"]).To(BeAssignableToTypeOf(json.Number("")))
+
+		history := map[string]any{}
+		Expect(json.Unmarshal([]byte(args), &history)).To(Succeed())
+		Expect(history["offset"]).To(BeAssignableToTypeOf(float64(0)))
+
+		hashOf := func(input map[string]any) string {
+			return merkle.NewNode(merkle.Bucket{
+				Type:    "message",
+				Role:    "assistant",
+				Content: []llm.ContentBlock{{Type: "tool_use", ToolUseID: "call_01abc", ToolName: "read_range", ToolInput: input}},
+			}, nil).Hash
+		}
+
+		Expect(hashOf(captured)).To(Equal(hashOf(history)))
+
+		// The zero really is dropped, rather than both sides coincidentally
+		// keeping it: only "limit": 10 survives, and the nested map empties out
+		// with it and is dropped in turn.
+		projected := merkle.ProjectContent([]llm.ContentBlock{{
+			Type: "tool_use", ToolInput: captured,
+		}})
+		Expect(projected[0].ToolInput).To(HaveLen(1))
+		Expect(projected[0].ToolInput).To(HaveKeyWithValue("limit", json.Number("10")))
+	})
+
+	It("keeps a non-zero json.Number", func() {
+		blocks := []llm.ContentBlock{{
+			Type:      "tool_use",
+			ToolUseID: "toolu_01abc",
+			ToolName:  "read_range",
+			ToolInput: map[string]any{"offset": json.Number("10")},
+		}}
+
+		Expect(merkle.ProjectContent(blocks)).To(Equal(blocks))
+	})
+
+	It("keeps a json.Number that only underflows to zero in float64", func() {
+		// 1e-999 is not zero — it is a positive decimal far below float64's
+		// smallest subnormal. strconv.ParseFloat reports it as 0 with NO
+		// error, so a float64 comparison folds it away and a tool call
+		// carrying it hashes the same as one carrying a real 0 or no
+		// argument at all. Because the projected arguments determine the
+		// node hash, that de-duplicates two distinct calls. Deciding
+		// zero-ness in exact decimal keeps it.
+		blocks := []llm.ContentBlock{{
+			Type:      "tool_use",
+			ToolUseID: "toolu_01abc",
+			ToolName:  "search",
+			ToolInput: map[string]any{"epsilon": json.Number("1e-999")},
+		}}
+
+		Expect(merkle.ProjectContent(blocks)).To(Equal(blocks))
+
+		// And it must not collide with the genuine zero it would otherwise
+		// fold onto.
+		zeroed := []llm.ContentBlock{{
+			Type:      "tool_use",
+			ToolUseID: "toolu_01abc",
+			ToolName:  "search",
+			ToolInput: map[string]any{"epsilon": json.Number("0")},
+		}}
+		dropped := []llm.ContentBlock{{
+			Type:      "tool_use",
+			ToolUseID: "toolu_01abc",
+			ToolName:  "search",
+			ToolInput: map[string]any{},
+		}}
+
+		hashOf := func(input map[string]any) string {
+			return merkle.NewNode(merkle.Bucket{
+				Type:    "message",
+				Role:    "assistant",
+				Content: []llm.ContentBlock{{Type: "tool_use", ToolUseID: "call_01abc", ToolName: "search", ToolInput: input}},
+			}, nil).Hash
+		}
+		Expect(hashOf(map[string]any{"epsilon": json.Number("1e-999")})).NotTo(Equal(hashOf(map[string]any{"epsilon": json.Number("0")})))
+		Expect(hashOf(zeroed[0].ToolInput)).To(Equal(hashOf(dropped[0].ToolInput)))
 	})
 
 	It("keeps tool_input values that are not the zero value", func() {

@@ -1,6 +1,8 @@
 package merkle
 
 import (
+	"encoding/json"
+	"math/big"
 	"regexp"
 	"strings"
 
@@ -132,9 +134,14 @@ func pruneZeroValues(m map[string]any) map[string]any {
 }
 
 // isZeroValue reports whether v is the zero value for its JSON kind.
-// JSON numbers decode to float64 through encoding/json, but tool input
-// can also reach us via direct map literals, so int / int64 are covered
-// for completeness.
+//
+// Numbers arrive in two shapes and both have to fold to the same answer.
+// A plain decode gives float64, but the Chat Completions reducer decodes tool
+// arguments with decoder.UseNumber() (pkg/capture/openai_chat.go), so the same
+// streamed call reaches the projection as json.Number. Treating only one of
+// them as a number leaves an explicit zero on the capture side while the
+// re-sent history has it pruned, the two projections differ, and the chain
+// forks — which is the whole failure step (4) above exists to prevent.
 func isZeroValue(v any) bool {
 	switch x := v.(type) {
 	case nil:
@@ -151,6 +158,16 @@ func isZeroValue(v any) bool {
 		return x == 0
 	case int64:
 		return x == 0
+	case json.Number:
+		// Decide zero-ness in exact decimal, NOT in float64. A literal like
+		// "1e-999" is not zero, but strconv.ParseFloat reports it as 0 with
+		// no error, so a float64 comparison folds a real argument away and
+		// the call then hashes identically to one passing a genuine 0.
+		// A Rat parses the decimal text exactly, so it separates "1e-999"
+		// from "0" while still folding "0", "0.0", "-0" and "0e3" alike.
+		// Text that is not a decimal at all is kept rather than guessed at.
+		r, ok := new(big.Rat).SetString(string(x))
+		return ok && r.Sign() == 0
 	case []any:
 		return len(x) == 0
 	default:
