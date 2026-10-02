@@ -1,7 +1,9 @@
 package initcmder_test
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,10 +12,34 @@ import (
 	"github.com/BurntSushi/toml"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/spf13/cobra"
 
 	initcmder "github.com/papercomputeco/tapes/cmd/tapes/init"
 	"github.com/papercomputeco/tapes/pkg/config"
 )
+
+// captureStdout collects everything fn writes to os.Stdout, which is where
+// init reports the path it wrote.
+func captureStdout(fn func()) string {
+	r, w, err := os.Pipe()
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+
+	orig := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+
+	fn()
+
+	ExpectWithOffset(1, w.Close()).To(Succeed())
+	return <-done
+}
 
 var _ = Describe("NewInitCmd", func() {
 	It("creates a command with the correct use string", func() {
@@ -123,6 +149,78 @@ var _ = Describe("Init command execution", func() {
 		data, err := os.ReadFile(testFile)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(data)).To(Equal(`{"hash":"abc"}`))
+	})
+
+	Describe("--config-dir", func() {
+		var overrideDir string
+
+		BeforeEach(func() {
+			overrideDir = filepath.Join(tmpDir, "elsewhere")
+		})
+
+		// initCmdWithConfigDir builds the init command with the --config-dir
+		// flag attached. The flag is registered on the root command in
+		// production, so a standalone init command has to carry its own copy
+		// for the test to drive it.
+		initCmdWithConfigDir := func(dir string, args ...string) *cobra.Command {
+			cmd := initcmder.NewInitCmd()
+			cmd.Flags().String("config-dir", "", "")
+			cmd.SetArgs(append([]string{"--config-dir", dir}, args...))
+			return cmd
+		}
+
+		It("writes the config to --config-dir", func() {
+			err := initCmdWithConfigDir(overrideDir).Execute()
+			Expect(err).NotTo(HaveOccurred())
+
+			path := filepath.Join(overrideDir, "config.toml")
+			data, err := os.ReadFile(path)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(data)).NotTo(BeEmpty())
+
+			cfg := &config.Config{}
+			Expect(toml.Unmarshal(data, cfg)).To(Succeed())
+			Expect(cfg.Version).To(Equal(config.CurrentV))
+			Expect(cfg.API.Listen).To(Equal(":8081"))
+		})
+
+		It("does not leave a .tapes directory in the working directory", func() {
+			err := initCmdWithConfigDir(overrideDir).Execute()
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = os.Stat(filepath.Join(tmpDir, ".tapes"))
+			Expect(os.IsNotExist(err)).To(BeTrue(),
+				"init must not create a local .tapes when --config-dir points elsewhere")
+		})
+
+		It("reports the path it actually wrote", func() {
+			out := captureStdout(func() {
+				Expect(initCmdWithConfigDir(overrideDir).Execute()).To(Succeed())
+			})
+
+			Expect(out).To(ContainSubstring(filepath.Join(overrideDir, "config.toml")))
+			Expect(out).NotTo(ContainSubstring(filepath.Join(tmpDir, ".tapes", "config.toml")))
+		})
+
+		It("still honours --preset together with --config-dir", func() {
+			err := initCmdWithConfigDir(overrideDir, "--preset", "openai").Execute()
+			Expect(err).NotTo(HaveOccurred())
+
+			data, err := os.ReadFile(filepath.Join(overrideDir, "config.toml"))
+			Expect(err).NotTo(HaveOccurred())
+
+			cfg := &config.Config{}
+			Expect(toml.Unmarshal(data, cfg)).To(Succeed())
+			Expect(cfg.Proxy.Provider).To(Equal("openai"))
+		})
+
+		It("falls back to the working directory when --config-dir is empty", func() {
+			err := initCmdWithConfigDir("").Execute()
+			Expect(err).NotTo(HaveOccurred())
+
+			cfg := loadConfig(tmpDir)
+			Expect(cfg.Version).To(Equal(config.CurrentV))
+		})
 	})
 
 	Describe("--preset with provider presets", func() {

@@ -65,22 +65,27 @@ func NewInitCmd() *cobra.Command {
 }
 
 func runInit(preset, configDir string) error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getting current directory: %w", err)
-	}
-
-	dir := filepath.Join(cwd, dirName)
-
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("creating .tapes directory: %w", err)
-	}
-
-	configPath := filepath.Join(dir, "config.toml")
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		if err := os.WriteFile(configPath, []byte{}, 0o600); err != nil {
-			return fmt.Errorf("creating config.toml: %w", err)
+	// Resolve the target directory once and use it for everything below.
+	//
+	// --config-dir wins when given. Otherwise the point of init is to create
+	// the local .tapes/ next to the caller, so the CWD is the answer. Resolving
+	// it here rather than letting Configer do it again is what keeps the
+	// directory that gets created, the directory that gets written, and the
+	// directory that gets reported from disagreeing: Configer honours
+	// --config-dir through dotdir.Target, which ignores the CWD entirely, so
+	// deriving the path from the CWD separately left a stray ./.tapes behind and
+	// printed a path that did not hold the config.
+	target := configDir
+	if target == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("getting current directory: %w", err)
 		}
+		target = filepath.Join(cwd, dirName)
+	}
+
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		return fmt.Errorf("creating .tapes directory: %w", err)
 	}
 
 	// Resolve the config to write.
@@ -89,8 +94,10 @@ func runInit(preset, configDir string) error {
 		return err
 	}
 
-	// Save the config into the .tapes/ directory.
-	cfger, err := config.NewConfiger(configDir)
+	// Pass the resolved directory as the override so the Configer writes to
+	// exactly the path reported below. SaveConfig creates config.toml at 0600,
+	// so there is no need to pre-create an empty one here.
+	cfger, err := config.NewConfiger(target)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
@@ -107,7 +114,7 @@ func runInit(preset, configDir string) error {
 	fmt.Printf("\n  %s %s written: %s\n\n",
 		cliui.SuccessMark,
 		configLabel,
-		cliui.DimStyle.Render(filepath.Join(dir, "config.toml")),
+		cliui.DimStyle.Render(filepath.Join(target, "config.toml")),
 	)
 
 	return nil
