@@ -1345,6 +1345,8 @@ var normalizationCorpus = []struct {
 	{"final sigma folds to sigma", "οδος", "οδοσ"},
 	{"capital sigma folds to sigma", "ΟΔΟΣ", "οδοσ"},
 	{"micro sign folds to greek mu", "µ", "μ"},
+	{"combining ypogegrammeni folds to iota", "ͅ", "ι"},
+	{"prosgegrammeni folds to iota", "ι", "ι"},
 	{"sharp s is preserved (simple fold, not full)", "straße", "straße"},
 	{"capital sharp s folds to sharp s", "STRAẞE", "straße"},
 
@@ -1372,4 +1374,21 @@ var _ = Describe("normalization verbs for claimed filter values", func() {
 		Expect(err).To(MatchError(ContainSubstring("lowercase")),
 			"an unknown verb is a claim core cannot execute, never a silent skip")
 	})
+
+	DescribeTable("folds the iota-class runes without a preceding NFC", func(raw string, want string) {
+		// The shared corpus runs {"trim","nfc","casefold"}, and NFC already
+		// composes both U+0345 and U+1FBE to U+03B9. A casefold verb on its
+		// own is the only path that reaches foldRuneExceptions for these two,
+		// so without this the exception rows could be deleted or mistyped and
+		// the corpus would still pass.
+		folded, err := applyNormalizeVerbs([]string{"casefold"}, raw)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(folded).To(Equal(want))
+	},
+		Entry("prosgegrammeni", "\u1FBE", "\u03B9"),
+		Entry("combining ypogegrammeni", "\u0345", "\u03B9"),
+		Entry("micro sign", "\u00B5", "\u03BC"),
+		Entry("long s", "\u017F", "s"),
+		Entry("final sigma", "\u03C2", "\u03C3"),
+	)
 })

@@ -142,11 +142,20 @@ func casefoldSimple(s string) string {
 
 // foldRuneExceptions are the simple case foldings unicode.ToLower does not
 // perform (source is already lowercase, fold target differs).
+//
+// The U+0345 and U+1FBE rows are why this table must be read by codepoint and
+// not by eye: all three iota-class runes render as a bare "iota" in a terminal,
+// a diff viewer, and review, so a mistyped literal is invisible. This table
+// carried U+03B9 -> U+03B9, an identity that could never fire, while the two
+// runes that actually need the exception were left unfolded, so a filter value
+// folded here derived a different key than the publisher had stored.
+// Each row states its codepoints so the next edit needs no font.
 var foldRuneExceptions = map[rune]rune{
-	'µ': 'μ', // MICRO SIGN → GREEK SMALL LETTER MU
-	'ſ': 's', // LATIN SMALL LETTER LONG S → s
-	'ς': 'σ', // GREEK SMALL LETTER FINAL SIGMA → SIGMA
-	'ι': 'ι', // GREEK PROSGEGRAMMENI → GREEK SMALL LETTER IOTA
+	'µ': 'μ', // MICRO SIGN -> GREEK SMALL LETTER MU              U+00B5 -> U+03BC
+	'ſ': 's', // LATIN SMALL LETTER LONG S -> s                     U+017F -> U+0073
+	'ς': 'σ', // GREEK SMALL LETTER FINAL SIGMA -> SIGMA             U+03C2 -> U+03C3
+	'ͅ': 'ι', // COMBINING GREEK YPOGEGRAMMENI -> IOTA               U+0345 -> U+03B9
+	'ι': 'ι', // GREEK PROSGEGRAMMENI -> IOTA                       U+1FBE -> U+03B9
 }
 
 func foldRuneSimple(r rune) rune {
