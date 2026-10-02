@@ -190,6 +190,13 @@ func (p *Proxy) handleProxy(c fiber.Ctx) error {
 	if len(body) > ingest.MaxIngestBodyBytes {
 		return c.SendStatus(fiber.StatusRequestEntityTooLarge)
 	}
+	// Copy the body (after the size check, so a rejected body is never
+	// copied): c.Body() is a view into fasthttp's request buffer, which is
+	// reused for the next request on the same keep-alive connection once this
+	// handler returns. The capture job (and, for streaming, the upstream
+	// write) outlives the handler, so a view would persist a torn mix of two
+	// requests.
+	body = bytes.Clone(body)
 	isChatRequest := method == "POST" && len(body) > 0
 
 	// Parse request using configured provider
