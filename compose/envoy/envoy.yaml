@@ -1,0 +1,148 @@
+# Stock Envoy, not Envoy AI Gateway. Keep capture before the final header scrub.
+static_resources:
+  listeners:
+    - name: llm
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 8080 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: llm
+                codec_type: AUTO
+                stream_idle_timeout: 300s
+                route_config:
+                  name: providers
+                  virtual_hosts:
+                    - name: providers
+                      domains: ["*"]
+                      routes:
+                        - match:
+                            safe_regex: { regex: "/v1/messages/?" }
+                            headers: [{ name: ":method", string_match: { exact: POST } }]
+                          route:
+                            cluster: anthropic
+                            host_rewrite_literal: api.anthropic.com
+                            timeout: 0s
+                        - match:
+                            safe_regex: { regex: "/v1/(responses|chat/completions)/?" }
+                            headers: [{ name: ":method", string_match: { exact: POST } }]
+                          route:
+                            cluster: openai
+                            host_rewrite_literal: api.openai.com
+                            timeout: 0s
+                http_filters:
+                  # Local requests have no authenticated Paper identity. Scrub
+                  # before capture too, so forged identities cannot be stored.
+                  - name: envoy.filters.http.lua
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                      default_source_code:
+                        inline_string: |
+                          function envoy_on_request(handle)
+                            local remove = {}
+                            for key, _ in pairs(handle:headers()) do
+                              if string.sub(key, 1, 13) == "x-paper-auth-" or key == "x-ai-eg-selected-backend" then
+                                table.insert(remove, key)
+                              end
+                            end
+                            for _, key in ipairs(remove) do handle:headers():remove(key) end
+                          end
+                  - name: envoy.filters.http.ext_proc
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
+                      grpc_service:
+                        envoy_grpc: { cluster_name: tapes_extproc }
+                      failure_mode_allow: true
+                      message_timeout: 1s
+                      # The processor sends ordinary per-chunk ACKs. Its body
+                      # mode overrides are not compatible with stock Envoy's
+                      # FULL_DUPLEX protocol; do not enable overrides or
+                      # observability_mode here.
+                      allow_mode_override: false
+                      processing_mode:
+                        request_header_mode: SEND
+                        response_header_mode: SEND
+                        request_body_mode: STREAMED
+                        response_body_mode: STREAMED
+                        request_trailer_mode: SKIP
+                        response_trailer_mode: SKIP
+                  # Independent of ext_proc success: never leak session or
+                  # forged identity headers upstream, including unknown keys.
+                  - name: envoy.filters.http.lua
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                      default_source_code:
+                        inline_string: |
+                          function envoy_on_request(handle)
+                            local remove = {}
+                            for key, _ in pairs(handle:headers()) do
+                              if string.sub(key, 1, 8) == "x-tapes-" or string.sub(key, 1, 13) == "x-paper-auth-" then
+                                table.insert(remove, key)
+                              end
+                            end
+                            for _, key in ipairs(remove) do handle:headers():remove(key) end
+                          end
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  clusters:
+    - name: tapes_extproc
+      type: STRICT_DNS
+      connect_timeout: 1s
+      http2_protocol_options: {}
+      load_assignment:
+        cluster_name: tapes_extproc
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: tapes-extproc, port_value: 50051 }
+    - name: anthropic
+      type: STRICT_DNS
+      connect_timeout: 10s
+      load_assignment:
+        cluster_name: anthropic
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: api.anthropic.com, port_value: 443 }
+      transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+          sni: api.anthropic.com
+          common_tls_context:
+            validation_context:
+              trusted_ca: { filename: /etc/ssl/certs/ca-certificates.crt }
+              match_typed_subject_alt_names:
+                - san_type: DNS
+                  matcher: { exact: api.anthropic.com }
+    - name: openai
+      type: STRICT_DNS
+      connect_timeout: 10s
+      load_assignment:
+        cluster_name: openai
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: api.openai.com, port_value: 443 }
+      transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+          sni: api.openai.com
+          common_tls_context:
+            validation_context:
+              trusted_ca: { filename: /etc/ssl/certs/ca-certificates.crt }
+              match_typed_subject_alt_names:
+                - san_type: DNS
+                  matcher: { exact: api.openai.com }
+# Admin is reachable only from inside this container. No access logs: never
+# log provider credentials, prompts, or query strings in this local recipe.
+admin:
+  address:
+    socket_address: { address: 127.0.0.1, port_value: 9901 }
