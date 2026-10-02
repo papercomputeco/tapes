@@ -77,6 +77,13 @@ const mcpRoutePath = "/v1/mcp"
 // on, so the read deadline leaves them to their own bounds.
 const adminRoutePrefix = "/v1/admin/"
 
+// sessionRoutePrefix covers DELETE /v1/sessions/{id}. Deleting a session
+// removes its raw turns in one transaction, which takes as long as the
+// session is large, and a delete cut short by the read deadline rolls back
+// and frees nothing — so a retry would hit the same wall every time. It is a
+// write that must finish, like the admin jobs, not a read to abandon.
+const sessionRoutePrefix = "/v1/sessions/"
+
 // spanRouteSegment marks the span drill-in beneath the trace page. That
 // route has no preview mode — it always serves one span's full payload —
 // so a payload=preview flag on it changes nothing and must not skip the
@@ -84,11 +91,13 @@ const adminRoutePrefix = "/v1/admin/"
 const spanRouteSegment = "/spans/"
 
 // deadlineExempt reports whether the request is outside the deadline's
-// remit: the MCP mount and anything beneath it.
+// remit: the MCP mount and anything beneath it, the admin jobs, and session
+// deletes.
 func deadlineExempt(c fiber.Ctx) bool {
 	path := c.Path()
 	return path == mcpRoutePath || strings.HasPrefix(path, mcpRoutePath+"/") ||
-		strings.HasPrefix(path, adminRoutePrefix)
+		strings.HasPrefix(path, adminRoutePrefix) ||
+		(c.Method() == fiber.MethodDelete && strings.HasPrefix(path, sessionRoutePrefix))
 }
 
 // readGuards owns the two guards' state: the deadline, the payload slots,

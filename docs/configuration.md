@@ -143,7 +143,9 @@ endpoint (`/v1/mcp`) is exempt: it runs cassette tool calls under its own
 30-second timeout, which a shorter read deadline would cut short. So are the
 operator jobs under `/v1/admin/` (the demo seed, the derive run, attribution
 repair): they are writes that run for as long as the corpus takes, not reads
-a client is waiting on.
+a client is waiting on. So is `DELETE /v1/sessions/{id}`: deleting a session
+removes its raw turns in one transaction, and a delete cut short rolls back
+and frees nothing, so the deadline must not cut it short.
 
 **The concurrency cap** applies only to the routes whose responses carry
 span payloads: `GET /v1/sessions/{id}/traces`, `GET /v1/traces/{trace_id}`,

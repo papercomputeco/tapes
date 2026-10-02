@@ -176,9 +176,10 @@ func (s *Server) mountSessions(router *oasfiber.Router) {
 	router.Delete("/v1/sessions/:id", s.handleDeleteSession,
 		oasfiber.Doc("deleteSession").
 			Summary("Delete a session").
-			Description("Permanently deletes a session and its subtree: subagent child sessions and "+
-				"their derived traces/spans cascade with it. The immutable raw_turns capture log is "+
-				"left intact.").
+			Description("Permanently deletes a session and its subtree: subagent child sessions, their "+
+				"derived traces/spans, and the captured raw turns behind all of them, in one "+
+				"transaction. Re-deriving cannot bring the session back. A turn captured for the same "+
+				"harness session afterwards starts a new session with a new id.").
 			Tag("sessions").
 			PathParam("id", oas.String(), oas.ParamDescription("Session id (UUID)")).
 			EmptyResponse(204, "Session deleted").

@@ -157,6 +157,42 @@ Each header also reports the raw layer's own fidelity:
   fidelity gap — the turn cannot be re-derived from its source bytes —
   not a turn that never had any.
 
+### Deleting a session
+
+`DELETE /v1/sessions/{id}` permanently removes the session and the data
+captured for it, and answers `204`, or `404` for an unknown id. It removes:
+
+- the session and every subagent session beneath it;
+- their traces, spans, and span links;
+- every raw turn attributed to any of those sessions, with the attribution
+  corrections recorded against those turns;
+- the sessions' pending derive work.
+
+All of it goes in one transaction, so a failed delete leaves the session
+and its capture whole. Raw turns are almost all of a tenant's stored data,
+so deleting a session frees its share of the tenant's storage straight
+away. Postgres reuses the space after vacuum rather than shrinking its
+files, so the database's on-disk size does not drop at the same moment.
+
+A raw turn belongs to the session its attribution names: the latest
+[attribution repair](#attribution-repair) when one exists, otherwise the
+harness session it was captured under. A turn repaired onto another
+session belongs to that session and is kept; a turn repaired onto the
+deleted session is removed with it. No raw turn belongs to two sessions.
+
+Re-deriving cannot bring a deleted session back: derivation never creates
+a session, and its raw turns are gone. If the agent is still running, its
+next captured turn or transcript upload starts a new session with a new id,
+holding only what was captured after the delete. Most harnesses re-send the
+conversation so far with each request, and a transcript upload carries the
+whole file, so that new session can show earlier messages again.
+
+The delete waits for any in-flight derive or attribution repair of the
+same sessions to finish before it runs. It takes as long as the session is
+large, so it is exempt from the read deadline (see
+[Read guards](./configuration.md#read-guards)): a gateway may answer the
+client with a `504` while the delete goes on to commit.
+
 ### Both contracts are sealed
 
 No generated OpenAPI document is checked in — a copy of what the server states

@@ -216,9 +216,72 @@ WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id);
 -- handler can distinguish a real delete from a missing id. Dependent rows
 -- (subagent child sessions, spans/span_turns/span_links) are removed by the
 -- session_id ON DELETE CASCADE foreign keys, so this single statement tears
--- down the whole subtree.
+-- down the whole derived subtree. The subtree's raw turns have no foreign key
+-- to sessions; Driver.DeleteSession removes them with DeleteSessionRawTurns in
+-- the same transaction, before this statement runs.
 DELETE FROM sessions
 WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id);
+
+-- name: ListSessionSubtreeKeys :many
+-- The natural keys of a session and every subagent session beneath it: the
+-- set a DeleteSession cascade removes. raw_turns and derive_queue are keyed by
+-- these, not by session id, so the delete needs them to clear the capture the
+-- cascade cannot reach. Each level is an index lookup on sessions_parent_idx.
+WITH RECURSIVE subtree AS (
+    SELECT s.id, s.harness_id, s.harness_session_id
+    FROM sessions s
+    WHERE s.org_id = sqlc.arg(org_id) AND s.id = sqlc.arg(id)
+    UNION
+    SELECT c.id, c.harness_id, c.harness_session_id
+    FROM sessions c
+    JOIN subtree t ON c.parent_session_id = t.id
+    WHERE c.org_id = sqlc.arg(org_id)
+)
+SELECT harness_id, harness_session_id
+FROM subtree
+ORDER BY harness_id, harness_session_id;
+
+-- name: DeleteSessionRawTurns :execrows
+-- Delete every raw turn whose EFFECTIVE attribution is one session's natural
+-- key, together with all attribution corrections recorded against those raw
+-- turns. Returns the number of raw turns deleted.
+--
+-- Effective attribution is the latest correction when one exists, otherwise
+-- the row's own harness key — the same rule ListRawTurnIndexBySession derives
+-- from. So a raw turn captured under this key but corrected onto another
+-- session belongs to that other session and survives, while a turn captured
+-- elsewhere and corrected onto this one is deleted. A raw turn has exactly one
+-- effective session, so nothing deleted here is shared with a surviving one.
+--
+-- The first arm seeks raw_turns_org_session_idx; the second reads the
+-- correction overlay, which holds only operator repairs.
+WITH latest_correction AS (
+    SELECT DISTINCT ON (c.raw_turn_id)
+           c.raw_turn_id, c.harness_id, c.harness_session_id
+    FROM raw_turn_attribution_corrections c
+    WHERE c.org_id = sqlc.arg(org_id)
+    ORDER BY c.raw_turn_id, c.id DESC
+), targets AS (
+    SELECT r.id
+    FROM raw_turns r
+    LEFT JOIN latest_correction lc ON lc.raw_turn_id = r.id
+    WHERE r.org_id = sqlc.arg(org_id)
+      AND r.harness_session_id = sqlc.arg(harness_session_id)
+      AND r.harness_id = sqlc.arg(harness_id)
+      AND lc.raw_turn_id IS NULL
+    UNION
+    SELECT lc.raw_turn_id
+    FROM latest_correction lc
+    WHERE lc.harness_id = sqlc.arg(harness_id)
+      AND lc.harness_session_id = sqlc.arg(harness_session_id)
+), deleted_corrections AS (
+    DELETE FROM raw_turn_attribution_corrections c
+    WHERE c.org_id = sqlc.arg(org_id)
+      AND c.raw_turn_id IN (SELECT id FROM targets)
+)
+DELETE FROM raw_turns r
+WHERE r.org_id = sqlc.arg(org_id)
+  AND r.id IN (SELECT id FROM targets);
 
 -- name: UpdateSessionDerivedTitle :exec
 -- Fold the title-gen shadow call's output onto the session. Written at

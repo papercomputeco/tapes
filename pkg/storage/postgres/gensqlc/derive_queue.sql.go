@@ -43,6 +43,29 @@ func (q *Queries) ClearDeriveDirty(ctx context.Context, arg ClearDeriveDirtyPara
 	return result.RowsAffected(), nil
 }
 
+const deleteDeriveDirtyForSession = `-- name: DeleteDeriveDirtyForSession :exec
+DELETE FROM derive_queue
+WHERE org_id = $1
+  AND harness_id = $2
+  AND harness_session_id = $3
+`
+
+type DeleteDeriveDirtyForSessionParams struct {
+	OrgID            pgtype.UUID
+	HarnessID        string
+	HarnessSessionID string
+}
+
+// Unconditionally drop one harness session's dirty mark. Used only by
+// session deletion, which removes the session's raw turns in the same
+// transaction: there is nothing left to derive, and a stale mark would
+// only spend a worker pass on an empty session. A raw turn that commits
+// after the delete re-marks the session through PutRawTurn's upsert.
+func (q *Queries) DeleteDeriveDirtyForSession(ctx context.Context, arg DeleteDeriveDirtyForSessionParams) error {
+	_, err := q.db.Exec(ctx, deleteDeriveDirtyForSession, arg.OrgID, arg.HarnessID, arg.HarnessSessionID)
+	return err
+}
+
 const deriveQueueStats = `-- name: DeriveQueueStats :one
 SELECT COUNT(*) AS depth, MIN(dirtied_at)::timestamptz AS oldest_dirtied_at
 FROM derive_queue
