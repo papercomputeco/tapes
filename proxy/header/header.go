@@ -26,6 +26,10 @@ func NewHandler() *Handler {
 // AgentNameHeader is the optional header used to tag agent requests.
 const AgentNameHeader = "X-Tapes-Agent-Name"
 
+// setCookie is the one response header whose values must not be combined into a
+// single comma-separated field. See SetClientResponseHeaders.
+const setCookie = "Set-Cookie"
+
 // ThreadIDHeaders maps each harness's native sub-thread header onto the
 // capture-side thread id. A harness that runs subagents fires their API calls
 // with a per-thread identifier — Claude Code stamps x-claude-code-agent-id on
@@ -165,9 +169,24 @@ func (h *Handler) SetUpstreamRequestHeaders(c fiber.Ctx, req *http.Request) {
 // SetClientResponseHeaders copies response headers from the upstream API
 // http.Response to the Fiber context, filtering headers that the proxy should
 // not forward back down to the client.
+//
+// Multi-valued headers are combined into one comma-separated field, which RFC
+// 9110 5.3 permits and which keeps the downstream response shape stable.
+// Set-Cookie is the documented exception to that rule: 5.3 notes that it
+// "cannot be combined this way because each cookie needs its own field line",
+// and a joined value parses as a single cookie whose attributes are the rest of
+// the cookies, so the client silently loses every cookie but the first. That
+// one header is relayed as separate field lines, in order.
 func (h *Handler) SetClientResponseHeaders(c fiber.Ctx, resp *http.Response) {
 	for k, v := range resp.Header {
 		if _, skip := skipResponse[k]; !skip {
+			if k == setCookie {
+				for _, value := range v {
+					c.Response().Header.Add(k, value)
+				}
+
+				continue
+			}
 			c.Set(k, strings.Join(v, ", "))
 		}
 	}

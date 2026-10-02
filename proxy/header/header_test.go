@@ -150,6 +150,74 @@ var _ = Describe("SetClientResponseHeaders", func() {
 		Expect(resp.Header.Get("X-Custom-Value")).To(Equal("hello"))
 	})
 
+	It("relays each value of a multi-valued Set-Cookie separately", func() {
+		app.Get("/test", func(c fiber.Ctx) error {
+			resp := &http.Response{
+				Header: http.Header{
+					"Set-Cookie": {
+						"session=abc; Path=/; HttpOnly",
+						"csrf=def; Path=/; SameSite=Lax",
+					},
+				},
+			}
+			hh.SetClientResponseHeaders(c, resp)
+			return c.SendStatus(fiber.StatusOK)
+		})
+
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		resp, err := app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		resp.Body.Close()
+
+		// RFC 9110 5.3 excludes Set-Cookie from field combining, so the two
+		// values must survive as two fields. Comma-joining them yields a single
+		// unparseable cookie and the client silently loses one.
+		Expect(resp.Header.Values("Set-Cookie")).To(Equal([]string{
+			"session=abc; Path=/; HttpOnly",
+			"csrf=def; Path=/; SameSite=Lax",
+		}))
+	})
+
+	It("relays a single Set-Cookie unchanged", func() {
+		app.Get("/test", func(c fiber.Ctx) error {
+			resp := &http.Response{
+				Header: http.Header{
+					"Set-Cookie": {"session=abc; Path=/; HttpOnly"},
+				},
+			}
+			hh.SetClientResponseHeaders(c, resp)
+			return c.SendStatus(fiber.StatusOK)
+		})
+
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		resp, err := app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		resp.Body.Close()
+
+		Expect(resp.Header.Values("Set-Cookie")).To(Equal([]string{"session=abc; Path=/; HttpOnly"}))
+	})
+
+	It("still combines other multi-valued headers, which RFC 9110 5.3 allows", func() {
+		app.Get("/test", func(c fiber.Ctx) error {
+			resp := &http.Response{
+				Header: http.Header{
+					"Vary": {"Accept-Encoding", "Origin"},
+				},
+			}
+			hh.SetClientResponseHeaders(c, resp)
+			return c.SendStatus(fiber.StatusOK)
+		})
+
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		resp, err := app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		resp.Body.Close()
+
+		// Vary is a list-valued header and combining it is the RFC's normal
+		// case; Set-Cookie is the exception, not the rule.
+		Expect(resp.Header.Get("Vary")).To(Equal("Accept-Encoding, Origin"))
+	})
+
 	It("strips the Connection header", func() {
 		app.Get("/test", func(c fiber.Ctx) error {
 			resp := &http.Response{
