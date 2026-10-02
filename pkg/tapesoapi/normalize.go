@@ -59,13 +59,22 @@ func NormalizePath(path string) (string, error) {
 	if len(trimmed) > 1 {
 		trimmed = strings.TrimSuffix(trimmed, "/")
 	}
-	for _, match := range templateParam.FindAllStringSubmatch(trimmed, -1) {
+	params := templateParam.FindAllStringSubmatch(trimmed, -1)
+	for _, match := range params {
 		if strings.TrimSpace(match[1]) == "" {
 			return "", fmt.Errorf("path %q has an unnamed template parameter", path)
 		}
 	}
 	if strings.Count(trimmed, "{") != strings.Count(trimmed, "}") {
 		return "", fmt.Errorf("path %q has unbalanced template braces", path)
+	}
+	// templateParam deliberately excludes "/" from a parameter name, so a brace
+	// carrying a slash — "/a/{b/c}" — matches nothing at all. The balance check
+	// above still passes, one "{" against one "}", so the path was accepted with
+	// no parameter declared for a segment that visibly has one. Every "{" has to
+	// open a parameter the grammar recognises.
+	if strings.Count(trimmed, "{") != len(params) {
+		return "", fmt.Errorf("path %q has a malformed template parameter", path)
 	}
 
 	return trimmed, nil
