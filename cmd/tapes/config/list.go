@@ -14,6 +14,11 @@ const listLongDesc string = `List all configuration values.
 Displays all configuration keys and their current values from the
 config.toml file stored in the .tapes/ directory.
 
+Each value carries its source in parentheses: (default) for built-in
+defaults, (config file) for config.toml values, and (environment) for
+TAPES_... environment overrides. Keys with no value in any layer show
+<not set>.
+
 Examples:
   tapes config list`
 
@@ -61,7 +66,7 @@ func runList(configDir string) error {
 	}
 
 	for _, key := range keys {
-		value, err := cfger.GetConfigValue(key)
+		value, source, err := cfger.GetConfigValueSource(key)
 		if err != nil {
 			return err
 		}
@@ -73,10 +78,11 @@ func runList(configDir string) error {
 				cliui.DimStyle.Render("<not set>"),
 			)
 		} else {
-			fmt.Printf("  %-*s  %s\n",
+			fmt.Printf("  %-*s  %s %s\n",
 				maxLen,
 				cliui.KeyStyle.Render(key),
 				cliui.ValueStyle.Render(value),
+				cliui.DimStyle.Render("("+string(source)+")"),
 			)
 		}
 	}
