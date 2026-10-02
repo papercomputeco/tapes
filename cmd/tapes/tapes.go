@@ -45,7 +45,6 @@ Run services:
   tapes serve proxy    Run just the proxy server
   tapes serve ingest   Run just the ingest server
   tapes serve derive-worker  Project captured raw turns into sessions/traces/spans
-  tapes serve embed-worker   Backfill span embeddings for semantic search
 
 Provision a local environment:
   tapes local up                     Start Postgres and Ollama in Docker
