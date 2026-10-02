@@ -417,6 +417,14 @@ func (p *Proxy) handleStreamingProxy(c fiber.Ctx, path, upstreamURL string, prov
 		p.logger.Error("upstream request failed", "error", err)
 		return c.Status(fiber.StatusBadGateway).JSON(llm.ErrorResponse{Error: "upstream request failed"})
 	}
+	// Copy the upstream response headers before branching on the status, so an
+	// error response carries the same headers a success would have. The
+	// non-streaming path does this at the same point in its own flow; doing it
+	// after the status check here would strip Content-Type and the provider's
+	// request id off every 4xx/5xx, and a client that switches on the content
+	// type would then read a JSON error envelope as text.
+	p.headerHandler.SetClientResponseHeaders(c, httpResp)
+
 	if httpResp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(httpResp.Body)
 		httpResp.Body.Close()
@@ -426,8 +434,6 @@ func (p *Proxy) handleStreamingProxy(c fiber.Ctx, path, upstreamURL string, prov
 		)
 		return c.Status(httpResp.StatusCode).Send(respBody)
 	}
-
-	p.headerHandler.SetClientResponseHeaders(c, httpResp)
 
 	// Use io.Pipe + SetBodyStream instead of SetBodyStreamWriter.
 	// SetBodyStreamWriter uses an internal PipeConns with a buffered channel

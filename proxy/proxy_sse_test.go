@@ -317,4 +317,64 @@ var _ = Describe("SSE Streaming Proxy", func() {
 			Expect(bodyStr).To(ContainSubstring("data: {\"choices\""))
 		})
 	})
+
+	Context("when upstream returns an error status to a streaming request", func() {
+		BeforeEach(func() {
+			upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Request-Id", "req-stream-error")
+				w.WriteHeader(http.StatusTooManyRequests)
+				fmt.Fprint(w, `{"error":{"type":"rate_limit_exceeded","message":"slow down"}}`)
+			}))
+			p, driver = newOpenAITestProxy(upstream.URL)
+		})
+
+		It("relays the upstream status and body", func() {
+			reqBody := makeOpenAIRequestBody("gpt-4", []openaiTestMsgEntry{
+				{Role: "user", Content: "test"},
+			}, new(true))
+
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			Expect(resp.StatusCode).To(Equal(http.StatusTooManyRequests))
+
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(body)).To(ContainSubstring("rate_limit_exceeded"))
+		})
+
+		It("relays the upstream Content-Type on the error", func() {
+			reqBody := makeOpenAIRequestBody("gpt-4", []openaiTestMsgEntry{
+				{Role: "user", Content: "test"},
+			}, new(true))
+
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+			_, err = io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+
+			// The non-streaming path copies upstream headers before its status
+			// check, so a JSON error body is labelled application/json there.
+			// The streaming path must agree, or a client that switches on the
+			// content type parses the provider's error envelope as plain text.
+			Expect(resp.Header.Get("Content-Type")).To(ContainSubstring("application/json"))
+		})
+
+		It("relays the upstream X-Request-Id on the error", func() {
+			reqBody := makeOpenAIRequestBody("gpt-4", []openaiTestMsgEntry{
+				{Role: "user", Content: "test"},
+			}, new(true))
+
+			resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(reqBody))), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+			_, err = io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(resp.Header.Get("X-Request-Id")).To(Equal("req-stream-error"))
+		})
+	})
 })
