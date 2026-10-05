@@ -25,7 +25,9 @@ var _ storage.RawTurnStore = (*Driver)(nil)
 // no-op per the partial unique index.
 //
 // Session-keyed rows also mark the session dirty in derive_queue, in
-// the same transaction, so the derive worker picks the session up.
+// the same transaction, so the derive worker picks the session up, and
+// hold the session's capture lock shared so a concurrent DeleteSession
+// either removes the turn or runs entirely before it.
 // Marking happens even when the row deduped: a re-POST of an existing
 // turn is the natural "re-derive this session" signal, and a redundant
 // mark only costs one idempotent derive.
@@ -50,6 +52,17 @@ func (d *Driver) PutRawTurn(ctx context.Context, rec storage.RawTurnRecord) (boo
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // commit shadows on success
 	qtx := d.q.WithTx(tx)
+
+	// Order the capture against a delete of its session: DeleteSession holds
+	// this lock exclusively, so the turn is either visible to the delete and
+	// removed with the session, or written after it commits as new capture.
+	// Captures share the lock and never wait on each other or on a derive.
+	if rec.HarnessSessionID != "" {
+		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock_shared($1)",
+			captureLockKey(orgID, rec.HarnessID, rec.HarnessSessionID)); err != nil {
+			return false, fmt.Errorf("lock capture: %w", err)
+		}
+	}
 
 	// Scrub the JSONB payloads of escapes/bytes Postgres cannot store
 	// (SQLSTATE 22P05 / 22021). A clean payload passes through byte-identical,

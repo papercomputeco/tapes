@@ -228,6 +228,31 @@ var _ = Describe("read guards", func() {
 		}), "only the admin mount is exempt; a sibling path is not")
 	})
 
+	It("does not apply the deadline to session deletes", func() {
+		// A delete cut short rolls back and frees nothing, so it runs to
+		// completion; a read of the same session keeps its deadline.
+		deadlines := map[string]bool{}
+		probe := func(c fiber.Ctx) error {
+			_, deadlines[c.Method()] = c.Context().Deadline()
+			return c.SendStatus(http.StatusNoContent)
+		}
+		app := fiber.New()
+		app.Use(newReadGuards(time.Second, 0, prometheus.NewRegistry()).deadlineMiddleware())
+		app.Delete("/v1/sessions/:id", probe)
+		app.Get("/v1/sessions/:id", probe)
+		for _, method := range []string{http.MethodDelete, http.MethodGet} {
+			request := httptest.NewRequestWithContext(context.Background(), method, "/v1/sessions/sess-1", nil)
+			response, err := app.Test(request)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(response.StatusCode).To(Equal(http.StatusNoContent))
+			Expect(response.Body.Close()).To(Succeed())
+		}
+		Expect(deadlines).To(Equal(map[string]bool{
+			http.MethodDelete: false,
+			http.MethodGet:    true,
+		}))
+	})
+
 	It("keeps the request logger in the deadline context", func() {
 		server := newGuardedServer(newParkedSpanModel(), Config{ReadDeadline: time.Second})
 

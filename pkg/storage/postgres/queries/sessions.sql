@@ -216,9 +216,105 @@ WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id);
 -- handler can distinguish a real delete from a missing id. Dependent rows
 -- (subagent child sessions, spans/span_turns/span_links) are removed by the
 -- session_id ON DELETE CASCADE foreign keys, so this single statement tears
--- down the whole subtree.
+-- down the whole derived subtree. The subtree's raw turns have no foreign key
+-- to sessions; Driver.DeleteSession removes them with DeleteSessionsRawTurns in
+-- the same transaction, before this statement runs.
 DELETE FROM sessions
 WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id);
+
+-- name: ListSessionSubtreeKeys :many
+-- The natural keys of a session and every subagent session beneath it: the
+-- set a DeleteSession cascade removes. raw_turns and derive_queue are keyed by
+-- these, not by session id, so the delete needs them to clear the capture the
+-- cascade cannot reach. Each level is an index lookup on sessions_parent_idx.
+WITH RECURSIVE subtree AS (
+    SELECT s.id, s.harness_id, s.harness_session_id
+    FROM sessions s
+    WHERE s.org_id = sqlc.arg(org_id) AND s.id = sqlc.arg(id)
+    UNION
+    SELECT c.id, c.harness_id, c.harness_session_id
+    FROM sessions c
+    JOIN subtree t ON c.parent_session_id = t.id
+    WHERE c.org_id = sqlc.arg(org_id)
+)
+SELECT harness_id, harness_session_id
+FROM subtree
+ORDER BY harness_id, harness_session_id;
+
+-- name: LockSessionSubtree :many
+-- Row-lock a session and every subagent session beneath it, returning their
+-- natural keys. FOR UPDATE conflicts with the FOR KEY SHARE lock a foreign-key
+-- check takes, so while the delete holds these rows no ingest can attach a new
+-- child session to any of them: the subtree the cascade removes stays the one
+-- whose capture the delete removed.
+WITH RECURSIVE subtree AS (
+    SELECT s.id
+    FROM sessions s
+    WHERE s.org_id = sqlc.arg(org_id) AND s.id = sqlc.arg(id)
+    UNION
+    SELECT c.id
+    FROM sessions c
+    JOIN subtree t ON c.parent_session_id = t.id
+    WHERE c.org_id = sqlc.arg(org_id)
+)
+SELECT s.harness_id, s.harness_session_id
+FROM sessions s
+WHERE s.org_id = sqlc.arg(org_id)
+  AND s.id IN (SELECT id FROM subtree)
+FOR UPDATE OF s;
+
+-- name: DeleteSessionsRawTurns :execrows
+-- Delete every raw turn whose EFFECTIVE attribution is one of the given
+-- session natural keys (parallel arrays), together with all attribution
+-- corrections recorded against those raw turns. Returns the number of raw
+-- turns deleted.
+--
+-- Effective attribution is the latest correction when one exists, otherwise
+-- the row's own harness key — the same rule ListRawTurnIndexBySession derives
+-- from. So a raw turn captured under a key but corrected onto another session
+-- belongs to that other session and survives, while a turn captured elsewhere
+-- and corrected onto one of these keys is deleted. A raw turn has exactly one
+-- effective session, so nothing deleted here is shared with a surviving one.
+--
+-- One statement covers the whole subtree. The first arm seeks
+-- raw_turns_org_session_idx per key and probes the correction overlay per
+-- turn; the second reads only the corrections naming a subtree key and checks
+-- each is its turn's latest through raw_turn_attribution_corrections_latest_idx.
+WITH subtree_keys AS (
+    SELECT unnest(sqlc.arg(harness_ids)::text[]) AS harness_id,
+           unnest(sqlc.arg(harness_session_ids)::text[]) AS harness_session_id
+), targets AS (
+    SELECT r.id
+    FROM subtree_keys k
+    JOIN raw_turns r
+      ON r.org_id = sqlc.arg(org_id)
+     AND r.harness_id = k.harness_id
+     AND r.harness_session_id = k.harness_session_id
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM raw_turn_attribution_corrections c
+        WHERE c.org_id = r.org_id AND c.raw_turn_id = r.id
+    )
+    UNION
+    SELECT c.raw_turn_id
+    FROM raw_turn_attribution_corrections c
+    JOIN subtree_keys k
+      ON c.harness_id = k.harness_id
+     AND c.harness_session_id = k.harness_session_id
+    WHERE c.org_id = sqlc.arg(org_id)
+      AND c.id = (
+          SELECT max(c2.id)
+          FROM raw_turn_attribution_corrections c2
+          WHERE c2.org_id = c.org_id AND c2.raw_turn_id = c.raw_turn_id
+      )
+), deleted_corrections AS (
+    DELETE FROM raw_turn_attribution_corrections c
+    WHERE c.org_id = sqlc.arg(org_id)
+      AND c.raw_turn_id IN (SELECT id FROM targets)
+)
+DELETE FROM raw_turns r
+WHERE r.org_id = sqlc.arg(org_id)
+  AND r.id IN (SELECT id FROM targets);
 
 -- name: UpdateSessionDerivedTitle :exec
 -- Fold the title-gen shadow call's output onto the session. Written at
