@@ -12,12 +12,15 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/google/uuid"
 
 	"github.com/papercomputeco/tapes/api/cassetterunner"
 	"github.com/papercomputeco/tapes/pkg/cassette"
+	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/tapesoapi/oasfiber"
 )
@@ -348,6 +351,20 @@ func (s *Server) proxyToCassette(c fiber.Ctx, instance *cassetterunner.Instance,
 			fmt.Sprintf("could not forward this request to cassette %q: %v", instance.Name, err))
 	}
 
+	requestLog := tapeslogger.RequestLoggerFromContext(c.Context())
+	if requestLog == nil {
+		requestLog = s.logger
+	}
+	requestLog = requestLog.With("pod", s.instance.PodName, "pod_uid", s.instance.PodUID,
+		"node", s.instance.NodeName, "instance_id", s.instance.InstanceID)
+	// A client operation can span multiple HTTP attempts (for example, a
+	// reconnecting subscription). Copy it before Fiber recycles the buffers.
+	operationID := strings.Clone(c.Get("X-Tapes-Operation-Id"))
+	if len(operationID) == 36 {
+		if parsed, parseErr := uuid.Parse(operationID); parseErr == nil && parsed.String() == operationID {
+			requestLog = requestLog.With("client_operation_id", operationID)
+		}
+	}
 	proxy := &httputil.ReverseProxy{
 		Transport: s.cassetteClient.Transport,
 		Rewrite: func(proxied *httputil.ProxyRequest) {
@@ -357,7 +374,7 @@ func (s *Server) proxyToCassette(c fiber.Ctx, instance *cassetterunner.Instance,
 		// gets a 502 that names the cassette rather than a bare gateway error
 		// an operator would have to correlate with logs.
 		ErrorHandler: func(writer http.ResponseWriter, request *http.Request, err error) {
-			s.logger.Warn("cassette request failed",
+			requestLog.Warn("cassette request failed",
 				"cassette", string(instance.Name), "url", instance.URL, "path", request.URL.Path, "error", err)
 
 			writer.Header().Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
@@ -367,7 +384,7 @@ func (s *Server) proxyToCassette(c fiber.Ctx, instance *cassetterunner.Instance,
 				"message": fmt.Sprintf("cassette %q at %s did not respond: %v",
 					instance.Name, instance.URL, err),
 			}); encodeErr != nil {
-				s.logger.Warn("writing cassette proxy error response",
+				requestLog.Warn("writing cassette proxy error response",
 					"cassette", string(instance.Name), "error", encodeErr)
 			}
 		},
