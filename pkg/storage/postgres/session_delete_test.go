@@ -336,6 +336,26 @@ var _ = Describe("Driver.DeleteSession captured data", func() {
 			"the other session still projects its own turn and the one corrected onto it")
 	})
 
+	It("judges attribution by the latest correction only, across a correction history", func() {
+		// Corrected onto the victim, then back: belongs to "other" now.
+		bounced := putTurn(orgID, harnessID, "other", "other-bounced")
+		correct(bounced, harnessID, "victim")
+		correct(bounced, harnessID, "other")
+		// Corrected away from the victim, then back: belongs to the victim.
+		returned := putTurn(orgID, harnessID, "victim", "victim-returned")
+		correct(returned, harnessID, "other")
+		correct(returned, harnessID, "victim")
+		victimID := insertSession(orgID, harnessID, "victim", nil)
+		insertSession(orgID, harnessID, "other", nil)
+
+		deleteSession(victimID)
+
+		Expect(rawTurnExists(bounced)).To(BeTrue(), "an earlier correction onto the victim does not claim the turn")
+		Expect(correctionsFor(bounced)).To(Equal(2))
+		Expect(rawTurnExists(returned)).To(BeFalse(), "the latest correction onto the victim claims the turn")
+		Expect(correctionsFor(returned)).To(BeZero())
+	})
+
 	It("removes the raw turns of every subagent session in the subtree, and nothing outside it", func() {
 		parentTurn := putTurn(orgID, harnessID, "parent", "parent-1")
 		childTurn := putTurn(orgID, harnessID, "child", "child-1")
@@ -450,5 +470,78 @@ var _ = Describe("Driver.DeleteSession captured data", func() {
 		Eventually(done, 5*time.Second).Should(Receive(BeNil()))
 		Expect(rawTurnExists(turn)).To(BeFalse())
 		Expect(sessionIDFor(orgID, harnessID, "busy")).To(BeEmpty())
+	})
+
+	It("removes the raw turns of a subagent session that attaches while the delete runs", func() {
+		parentTurn := putTurn(orgID, harnessID, "parent", "parent-1")
+		childTurn := putTurn(orgID, harnessID, "late-child", "late-child-1")
+		parentID := insertSession(orgID, harnessID, "parent", nil)
+
+		// Ingest of the child is mid-transaction when the delete starts: its
+		// session row references the parent but has not committed, so the
+		// delete's first read of the subtree cannot see it.
+		attach, err := driver.DB().Begin(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		defer attach.Rollback(ctx)
+		_, err = attach.Exec(ctx, `
+			INSERT INTO sessions (id, org_id, auth_subject, harness_id, harness_session_id,
+			                      parent_session_id, started_at, last_seen_at)
+			VALUES ($1, $2, 'user-test', $3, 'late-child', $4, NOW(), NOW())`,
+			newTestOrgID(), orgID, harnessID, parentID)
+		Expect(err).NotTo(HaveOccurred())
+
+		done := make(chan error, 1)
+		go func() {
+			_, err := driver.DeleteSession(ctx, orgID, parentID)
+			done <- err
+		}()
+		Consistently(done, 300*time.Millisecond).ShouldNot(Receive(),
+			"the delete waits for the attaching child to settle")
+		Expect(attach.Commit(ctx)).To(Succeed())
+		Eventually(done, 5*time.Second).Should(Receive(BeNil()))
+
+		Expect(sessionIDFor(orgID, harnessID, "late-child")).To(BeEmpty(), "the child cascades with its parent")
+		Expect(rawTurnExists(parentTurn)).To(BeFalse())
+		Expect(rawTurnExists(childTurn)).To(BeFalse(),
+			"a child session the delete removes takes its raw turns with it")
+		mark, err := driver.GetDeriveDirty(ctx, orgID, harnessID, "late-child")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mark).To(BeNil())
+	})
+
+	It("never strands a turn captured while the delete runs", func() {
+		putTurn(orgID, harnessID, "racing", "racing-1")
+		id := insertSession(orgID, harnessID, "racing", nil)
+
+		// A capture for the session arrives after the delete removed the raw
+		// turns but before it commits.
+		captured := make(chan error, 1)
+		restore := postgres.SetDeleteSessionAfterRawTurnsForTest(func() {
+			go func() {
+				_, err := driver.PutRawTurn(ctx, storage.RawTurnRecord{
+					OrgID: orgID, Source: storage.RawTurnSourceWire, Provider: "anthropic", AgentName: harnessID,
+					HarnessID: harnessID, HarnessSessionID: "racing", RequestID: "racing-late",
+					RawRequest: json.RawMessage(`{"model":"claude-test","max_tokens":4096,"messages":[{"role":"user","content":"late"}]}`),
+					Response:   json.RawMessage(`{"model":"claude-test","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]},"stop_reason":"end_turn"}`),
+				})
+				captured <- err
+			}()
+			// Give the capture every chance to commit inside the delete.
+			select {
+			case err := <-captured:
+				captured <- err
+			case <-time.After(300 * time.Millisecond):
+			}
+		})
+		defer restore()
+
+		deleteSession(id)
+		Eventually(captured, 5*time.Second).Should(Receive(BeNil()))
+
+		late := rawTurnIDForRequest(ctx, driver, orgID, "racing-late")
+		Expect(rawTurnExists(late)).To(BeTrue(), "the capture is ordered after the delete, so it is new capture")
+		mark, err := driver.GetDeriveDirty(ctx, orgID, harnessID, "racing")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mark).NotTo(BeNil(), "the surviving turn keeps its derive mark")
 	})
 })

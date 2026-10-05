@@ -188,7 +188,12 @@ conversation so far with each request, and a transcript upload carries the
 whole file, so that new session can show earlier messages again.
 
 The delete waits for any in-flight derive or attribution repair of the
-same sessions to finish before it runs. It takes as long as the session is
+same sessions to finish before it runs. A turn captured while the delete
+runs is ordered against it: it is either visible to the delete and removed
+with the session, or written once the delete commits and starts the new
+session. A subagent session that attaches to the deleted subtree while the
+delete runs is deleted with it, raw turns included; one whose capture
+arrives after the delete commits starts afresh. It takes as long as the session is
 large, so it is exempt from the read deadline (see
 [Read guards](./configuration.md#read-guards)): a gateway may answer the
 client with a `504` while the delete goes on to commit.

@@ -44,16 +44,21 @@ WHERE org_id = $1
   AND harness_session_id = $3
   AND dirtied_at = sqlc.arg(dirtied_at);
 
--- name: DeleteDeriveDirtyForSession :exec
--- Unconditionally drop one harness session's dirty mark. Used only by
--- session deletion, which removes the session's raw turns in the same
--- transaction: there is nothing left to derive, and a stale mark would
--- only spend a worker pass on an empty session. A raw turn that commits
--- after the delete re-marks the session through PutRawTurn's upsert.
-DELETE FROM derive_queue
-WHERE org_id = $1
-  AND harness_id = $2
-  AND harness_session_id = $3;
+-- name: DeleteDeriveDirtyForSessions :exec
+-- Unconditionally drop the dirty marks of the given harness sessions
+-- (parallel arrays). Used only by session deletion, which removes the
+-- sessions' raw turns in the same transaction: there is nothing left to
+-- derive, and a stale mark would only spend a worker pass on an empty
+-- session. A raw turn that commits after the delete re-marks the session
+-- through PutRawTurn's upsert.
+DELETE FROM derive_queue d
+USING (
+    SELECT unnest(sqlc.arg(harness_ids)::text[]) AS harness_id,
+           unnest(sqlc.arg(harness_session_ids)::text[]) AS harness_session_id
+) k
+WHERE d.org_id = sqlc.arg(org_id)
+  AND d.harness_id = k.harness_id
+  AND d.harness_session_id = k.harness_session_id;
 
 -- name: DeriveQueueStats :one
 -- Queue depth plus the oldest dirty mark: the worker polls this for

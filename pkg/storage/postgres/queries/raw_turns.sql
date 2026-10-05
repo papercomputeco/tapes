@@ -1,7 +1,7 @@
 -- name: InsertRawTurn :execrows
 -- raw_turns is append-only and immutable: a row is never updated, and the
 -- only delete is a user deleting the session it belongs to
--- (DeleteSessionRawTurns). The ON CONFLICT arm matches the partial unique index
+-- (DeleteSessionsRawTurns). The ON CONFLICT arm matches the partial unique index
 -- raw_turns_org_request_uq so a retried POST of the same captured turn
 -- (same org, same extproc request_id) is a no-op rather than a
 -- duplicate raw row. Writers without a request_id ('') bypass the

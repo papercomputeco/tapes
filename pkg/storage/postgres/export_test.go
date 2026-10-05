@@ -44,6 +44,17 @@ func SetRepairSourceCleanupForTest(
 	return func() { repairSourceCleanup = prev }
 }
 
+// SetDeleteSessionAfterRawTurnsForTest installs a callback DeleteSession runs
+// inside its transaction right after removing the subtree's raw turns, so a
+// test can race a capture against an uncommitted delete. Returns a restore
+// func; the ginkgo specs run sequentially, so swapping the package variable
+// is race-free.
+func SetDeleteSessionAfterRawTurnsForTest(fn func()) (restore func()) {
+	prev := deleteSessionAfterRawTurns
+	deleteSessionAfterRawTurns = fn
+	return func() { deleteSessionAfterRawTurns = prev }
+}
+
 // SpanTurnUpsertForTest runs the real UpsertSpanTurn query so a test can
 // exercise the change-feed semantics against the query that actually ships,
 // rather than a copy of its SQL that could drift from it.

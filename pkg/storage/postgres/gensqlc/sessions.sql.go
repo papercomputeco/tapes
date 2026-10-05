@@ -73,7 +73,7 @@ type DeleteSessionParams struct {
 // (subagent child sessions, spans/span_turns/span_links) are removed by the
 // session_id ON DELETE CASCADE foreign keys, so this single statement tears
 // down the whole derived subtree. The subtree's raw turns have no foreign key
-// to sessions; Driver.DeleteSession removes them with DeleteSessionRawTurns in
+// to sessions; Driver.DeleteSession removes them with DeleteSessionsRawTurns in
 // the same transaction, before this statement runs.
 func (q *Queries) DeleteSession(ctx context.Context, arg DeleteSessionParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteSession, arg.OrgID, arg.ID)
@@ -83,26 +83,34 @@ func (q *Queries) DeleteSession(ctx context.Context, arg DeleteSessionParams) (i
 	return result.RowsAffected(), nil
 }
 
-const deleteSessionRawTurns = `-- name: DeleteSessionRawTurns :execrows
-WITH latest_correction AS (
-    SELECT DISTINCT ON (c.raw_turn_id)
-           c.raw_turn_id, c.harness_id, c.harness_session_id
-    FROM raw_turn_attribution_corrections c
-    WHERE c.org_id = $1
-    ORDER BY c.raw_turn_id, c.id DESC
+const deleteSessionsRawTurns = `-- name: DeleteSessionsRawTurns :execrows
+WITH subtree_keys AS (
+    SELECT unnest($2::text[]) AS harness_id,
+           unnest($3::text[]) AS harness_session_id
 ), targets AS (
     SELECT r.id
-    FROM raw_turns r
-    LEFT JOIN latest_correction lc ON lc.raw_turn_id = r.id
-    WHERE r.org_id = $1
-      AND r.harness_session_id = $2
-      AND r.harness_id = $3
-      AND lc.raw_turn_id IS NULL
+    FROM subtree_keys k
+    JOIN raw_turns r
+      ON r.org_id = $1
+     AND r.harness_id = k.harness_id
+     AND r.harness_session_id = k.harness_session_id
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM raw_turn_attribution_corrections c
+        WHERE c.org_id = r.org_id AND c.raw_turn_id = r.id
+    )
     UNION
-    SELECT lc.raw_turn_id
-    FROM latest_correction lc
-    WHERE lc.harness_id = $3
-      AND lc.harness_session_id = $2
+    SELECT c.raw_turn_id
+    FROM raw_turn_attribution_corrections c
+    JOIN subtree_keys k
+      ON c.harness_id = k.harness_id
+     AND c.harness_session_id = k.harness_session_id
+    WHERE c.org_id = $1
+      AND c.id = (
+          SELECT max(c2.id)
+          FROM raw_turn_attribution_corrections c2
+          WHERE c2.org_id = c.org_id AND c2.raw_turn_id = c.raw_turn_id
+      )
 ), deleted_corrections AS (
     DELETE FROM raw_turn_attribution_corrections c
     WHERE c.org_id = $1
@@ -113,27 +121,30 @@ WHERE r.org_id = $1
   AND r.id IN (SELECT id FROM targets)
 `
 
-type DeleteSessionRawTurnsParams struct {
-	OrgID            pgtype.UUID
-	HarnessSessionID string
-	HarnessID        string
+type DeleteSessionsRawTurnsParams struct {
+	OrgID             pgtype.UUID
+	HarnessIds        []string
+	HarnessSessionIds []string
 }
 
-// Delete every raw turn whose EFFECTIVE attribution is one session's natural
-// key, together with all attribution corrections recorded against those raw
-// turns. Returns the number of raw turns deleted.
+// Delete every raw turn whose EFFECTIVE attribution is one of the given
+// session natural keys (parallel arrays), together with all attribution
+// corrections recorded against those raw turns. Returns the number of raw
+// turns deleted.
 //
 // Effective attribution is the latest correction when one exists, otherwise
 // the row's own harness key — the same rule ListRawTurnIndexBySession derives
-// from. So a raw turn captured under this key but corrected onto another
-// session belongs to that other session and survives, while a turn captured
-// elsewhere and corrected onto this one is deleted. A raw turn has exactly one
+// from. So a raw turn captured under a key but corrected onto another session
+// belongs to that other session and survives, while a turn captured elsewhere
+// and corrected onto one of these keys is deleted. A raw turn has exactly one
 // effective session, so nothing deleted here is shared with a surviving one.
 //
-// The first arm seeks raw_turns_org_session_idx; the second reads the
-// correction overlay, which holds only operator repairs.
-func (q *Queries) DeleteSessionRawTurns(ctx context.Context, arg DeleteSessionRawTurnsParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteSessionRawTurns, arg.OrgID, arg.HarnessSessionID, arg.HarnessID)
+// One statement covers the whole subtree. The first arm seeks
+// raw_turns_org_session_idx per key and probes the correction overlay per
+// turn; the second reads only the corrections naming a subtree key and checks
+// each is its turn's latest through raw_turn_attribution_corrections_latest_idx.
+func (q *Queries) DeleteSessionsRawTurns(ctx context.Context, arg DeleteSessionsRawTurnsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteSessionsRawTurns, arg.OrgID, arg.HarnessIds, arg.HarnessSessionIds)
 	if err != nil {
 		return 0, err
 	}
@@ -404,6 +415,59 @@ func (q *Queries) ListSessionsByHarnessSessionID(ctx context.Context, arg ListSe
 			&i.KindCounts,
 			&i.DisplayName,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockSessionSubtree = `-- name: LockSessionSubtree :many
+WITH RECURSIVE subtree AS (
+    SELECT s.id
+    FROM sessions s
+    WHERE s.org_id = $1 AND s.id = $2
+    UNION
+    SELECT c.id
+    FROM sessions c
+    JOIN subtree t ON c.parent_session_id = t.id
+    WHERE c.org_id = $1
+)
+SELECT s.harness_id, s.harness_session_id
+FROM sessions s
+WHERE s.org_id = $1
+  AND s.id IN (SELECT id FROM subtree)
+FOR UPDATE OF s
+`
+
+type LockSessionSubtreeParams struct {
+	OrgID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+type LockSessionSubtreeRow struct {
+	HarnessID        string
+	HarnessSessionID string
+}
+
+// Row-lock a session and every subagent session beneath it, returning their
+// natural keys. FOR UPDATE conflicts with the FOR KEY SHARE lock a foreign-key
+// check takes, so while the delete holds these rows no ingest can attach a new
+// child session to any of them: the subtree the cascade removes stays the one
+// whose capture the delete removed.
+func (q *Queries) LockSessionSubtree(ctx context.Context, arg LockSessionSubtreeParams) ([]LockSessionSubtreeRow, error) {
+	rows, err := q.db.Query(ctx, lockSessionSubtree, arg.OrgID, arg.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LockSessionSubtreeRow
+	for rows.Next() {
+		var i LockSessionSubtreeRow
+		if err := rows.Scan(&i.HarnessID, &i.HarnessSessionID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
