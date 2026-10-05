@@ -723,3 +723,20 @@ Before handing a cassette to an operator:
   spec, and at least one proxied request; and
 - describe a streaming endpoint with its real media type (`text/event-stream`),
   and document that its clients must send a matching `Accept` header.
+
+## Correlating proxy failures
+
+A failed request to a cassette logs the canonical `request_id` together with the
+API pod name, pod UID, node and process `instance_id`. This identifies the replica
+that served a failed request even when multiple API pods share the service.
+Any cassette client may also send `X-Tapes-Operation-Id` to correlate a logical
+operation across requests, such as a stream subscription that reconnects.
+Canonical UUID values appear as `client_operation_id` in the proxy failure
+record. This optional client ID is separate from the canonical `X-Request-Id`
+for each HTTP attempt. Both headers are forwarded to the cassette and are
+diagnostic fields, never credentials or authorization decisions.
+
+A successful HTTP status on an event stream establishes only that its headers
+were accepted. Use the cassette's stream-completion and agent lifecycle records
+to diagnose failures after those headers, and keep client-reported failures
+separate from confirmed server outcomes.

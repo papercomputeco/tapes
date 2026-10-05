@@ -2,12 +2,14 @@ package api
 
 import (
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -166,6 +168,44 @@ var _ = Describe("The cassette surface", func() {
 			var decoded map[string]string
 			Expect(json.Unmarshal(body, &decoded)).To(Succeed())
 			Expect(decoded["path"]).To(Equal("/api/summary/reports"))
+		})
+
+		It("correlates a failed proxy request with the API replica", func() {
+			var logs bytes.Buffer
+			observed, err := NewServer(Config{ListenAddr: ":0"}, inmemory.NewDriver(), slog.New(slog.NewJSONHandler(&logs, nil)))
+			Expect(err).NotTo(HaveOccurred())
+			for _, instance := range reg.Instances() {
+				Expect(observed.cassettes.Put(instance)).To(Succeed())
+			}
+			observed.instance.PodName = "api-replica-test"
+			observed.instance.PodUID = "pod-uid-test"
+			observed.instance.NodeName = "node-test"
+			observed.instance.InstanceID = "process-instance-test"
+			upstream.Close()
+			requestID := "b22b8e33-56af-4b8e-a9cb-9e86828a5f18"
+			operationID := "ca4bc0e5-29fd-4df5-951a-4c6b3b290761"
+			req := httptest.NewRequest(http.MethodGet, "/v1/cassettes/summary/reports", nil)
+			req.Header.Set("X-Request-Id", requestID)
+			req.Header.Set("X-Tapes-Operation-Id", operationID)
+			response, _ := do(observed, req)
+			Expect(response.StatusCode).To(Equal(http.StatusBadGateway))
+			var records []map[string]any
+			scanner := bufio.NewScanner(&logs)
+			for scanner.Scan() {
+				var record map[string]any
+				Expect(json.Unmarshal(scanner.Bytes(), &record)).To(Succeed())
+				records = append(records, record)
+			}
+			Expect(scanner.Err()).NotTo(HaveOccurred())
+			Expect(records).To(ContainElement(And(
+				HaveKeyWithValue("msg", "cassette request failed"),
+				HaveKeyWithValue("request_id", requestID),
+				HaveKeyWithValue("client_operation_id", operationID),
+				HaveKeyWithValue("pod", "api-replica-test"),
+				HaveKeyWithValue("pod_uid", "pod-uid-test"),
+				HaveKeyWithValue("node", "node-test"),
+				HaveKeyWithValue("instance_id", "process-instance-test"),
+			)))
 		})
 
 		It("returns a 502 that names the cassette when it does not answer", func() {
