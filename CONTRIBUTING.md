@@ -23,13 +23,48 @@ make build-local
 ./build/tapes local
 ```
 
+## Contributing an issue
+
+_BEFORE_ you create a PR, search for existing issues. If no issue exists,
+create an issue. Community contributions that do _NOT_ link to an issue will be closed
+outright or temporally kicked down to an issue.
+
+## Vouch trust management
+
+We use [`vouch`](https://github.com/mitchellh/vouch), an experimental system for
+contributor trust management. In order for your contribution to be accepted,
+a team member must first `!vouch` for you.
+
+Team members manage contributor status with a standalone, first-line command:
+
+```text
+!vouch
+!vouch @username optional reason
+
+!denounce
+!denounce @username reason
+
+!unvouch
+!unvouch @username
+
+!vouch-recheck
+```
+
+`!vouch`, `!denounce`, and `!unvouch` create a bot-authored PR for the
+`.github/VOUCHED.td` list. `!vouch-recheck` reruns the trust check on the given PR.
+
+Unvouched PRs are closed automatically - once vouched by a team member, its
+author or team member must reopen it.
+
+Making low effort, bad faith human-in-the-loop, resource exhaustive AI contributions
+_WILL_ result in a denouncement and a ban.
+
 ## Contributing a PR
 
-0. _BEFORE_ you create a PR, search for existing issues. If no issue exists,
-   create an issue and signal that you'd like to work on it.
-1. When submitting a pull request, _ALL_ titles must start with one of the
-   following. CI rejects anything else, and because merges are squashed the PR
-   title becomes the commit message on `main`.
+When submitting a pull request, _ALL_ titles must start with one of the
+following. CI rejects anything else, and because merges are squashed the PR
+title becomes the commit message on `main`.
+
   * `✨ feat:` - `:sparkles: feat:` - adds a new feature. Triggers a minor version bump (i.e., `0.1.0` --> `0.2.0`).
   * `🔧 fix:` - `:wrench: fix:` - fixes a bug. Triggers a patch bump (i.e., `0.0.1` --> `0.0.2`).
   * `🧹 chore:` - `:broom: chore:` - non-feature, non-bug code changes (i.e., CICD, tests, etc.). Patch bump.
