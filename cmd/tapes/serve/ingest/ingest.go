@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -22,6 +23,7 @@ type ingestCommander struct {
 	listen      string
 	postgresDSN string
 	project     string
+	idleGap     time.Duration
 
 	logger *slog.Logger
 }
@@ -33,6 +35,7 @@ var ingestFlags = config.FlagSet{
 	config.FlagIngestListenStandalone: {Name: "listen", Shorthand: "l", ViperKey: "ingest.listen", Description: "Address for ingest server to listen on"},
 	config.FlagPostgres:               {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
 	config.FlagProject:                {Name: "project", ViperKey: "proxy.project", Description: "Project name to tag sessions (default: auto-detect from git)"},
+	config.FlagSessionIdleGap:         {Name: "session-idle-gap", ViperKey: "sessions.idle_gap", Description: "Idle gap after which a conversation captured without a harness session id starts a new session (0 disables)"},
 }
 
 const ingestLongDesc string = `Run the ingest server (sidecar mode).
@@ -69,9 +72,11 @@ func NewIngestCmd() *cobra.Command {
 				config.FlagIngestListenStandalone,
 				config.FlagPostgres,
 				config.FlagProject,
+				config.FlagSessionIdleGap,
 			})
 
 			cmder.listen = v.GetString("ingest.listen")
+			cmder.idleGap = v.GetDuration("sessions.idle_gap")
 			cmder.postgresDSN = v.GetString("storage.postgres_dsn")
 			cmder.project = v.GetString("proxy.project")
 			if cmder.project == "" {
@@ -90,6 +95,7 @@ func NewIngestCmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagIngestListenStandalone, &cmder.listen)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagPostgres, &cmder.postgresDSN)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagProject, &cmder.project)
+	config.AddDurationFlag(cmd, cmder.flags, config.FlagSessionIdleGap, &cmder.idleGap)
 
 	return cmd
 }
@@ -102,8 +108,9 @@ func (c *ingestCommander) run() error {
 	defer driver.Close()
 
 	cfg := ingest.Config{
-		ListenAddr: c.listen,
-		Project:    c.project,
+		ListenAddr:     c.listen,
+		Project:        c.project,
+		SessionIdleGap: c.idleGap,
 	}
 
 	s, err := ingest.New(cfg, driver, c.logger)

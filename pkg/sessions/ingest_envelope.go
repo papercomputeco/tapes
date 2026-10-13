@@ -170,7 +170,9 @@ const SyntheticHarnessSessionIDPrefixLen = 16
 // SyntheticHarnessSessionIDPrefixLen hex characters. Because every turn
 // in a conversation re-sends the full history, the root (first message)
 // hash is stable across the conversation, so all of a conversation's
-// turns map to the same synthetic id. Returns "" when rootHash is empty.
+// turns map to the same synthetic id — the conversation key, which
+// AssignSyntheticSplit splits into a session per burst of activity.
+// Returns "" when rootHash is empty.
 func SyntheticHarnessSessionID(rootHash string) string {
 	if rootHash == "" {
 		return ""

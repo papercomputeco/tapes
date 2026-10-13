@@ -10,6 +10,7 @@ type Config struct {
 	Proxy     ProxyConfig     `toml:"proxy"         mapstructure:"proxy"`
 	API       APIConfig       `toml:"api"           mapstructure:"api"`
 	Ingest    IngestConfig    `toml:"ingest"        mapstructure:"ingest"`
+	Sessions  SessionsConfig  `toml:"sessions"      mapstructure:"sessions"`
 	Client    ClientConfig    `toml:"client"        mapstructure:"client"`
 	OpenCode  OpenCodeConfig  `toml:"opencode"      mapstructure:"opencode"`
 	Logging   LoggingConfig   `toml:"logging"       mapstructure:"logging"`
@@ -49,6 +50,17 @@ type APIConfig struct {
 // IngestConfig holds ingest server settings for sidecar mode.
 type IngestConfig struct {
 	Listen string `toml:"listen,omitempty" mapstructure:"listen"`
+}
+
+// SessionsConfig holds session-identity settings shared by every capture
+// path (the proxy and the ingest server).
+type SessionsConfig struct {
+	// IdleGap splits a synthetic session — a conversation captured with no
+	// harness session id, keyed by its root message — into a new session
+	// when a turn is captured more than this long after the conversation's
+	// previous turn. A harness-provided session id is never split. Written
+	// as a duration string ("30m"); zero disables the split.
+	IdleGap time.Duration `toml:"idle_gap,omitempty" mapstructure:"idle_gap"`
 }
 
 // ClientConfig holds settings for CLI commands that connect to the running
@@ -94,6 +106,7 @@ var configKeySet = map[string]bool{
 	"api.read_deadline":       true,
 	"api.payload_concurrency": true,
 	"ingest.listen":           true,
+	"sessions.idle_gap":       true,
 	"client.proxy_target":     true,
 	"client.api_target":       true,
 	"opencode.provider":       true,

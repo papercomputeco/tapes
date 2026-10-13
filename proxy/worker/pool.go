@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/papercomputeco/tapes/pkg/derive"
 	"github.com/papercomputeco/tapes/pkg/llm"
@@ -96,6 +97,12 @@ type Job struct {
 	// backend. The local proxy always attaches an envelope so its
 	// captured turns surface in the deck.
 	Session *sessions.IngestEnvelope
+
+	// SessionKey is the harness_session_id the enqueuing path already
+	// resolved and keyed the turn's raw row by (ingest resolves a
+	// synthetic turn's idle split when it writes the raw turn). When set,
+	// the sessions row is keyed by it; empty leaves the envelope rules.
+	SessionKey string
 }
 
 // Config is the configuration options for the worker pool.
@@ -117,6 +124,11 @@ type Config struct {
 
 	// Project is the git repository or project name to tag on stored nodes.
 	Project string
+
+	// SessionIdleGap is the idle gap after which a synthetic (root-derived)
+	// session is split into a new one; zero disables the split. A
+	// harness-provided session id is never split.
+	SessionIdleGap time.Duration
 
 	// Logger is the provided logger
 	Logger *slog.Logger
@@ -283,8 +295,8 @@ func (p *Pool) processJob(job Job) {
 		return
 	}
 
-	p.persistRawTurn(ctx, job, chain)
-	p.ingestSession(ctx, job, chain)
+	session, sessionKey := p.persistRawTurn(ctx, job, chain)
+	p.ingestSession(ctx, job, session, sessionKey, chain)
 }
 
 // rawTurnMeta is the minimal capture-side meta block the proxy stamps
@@ -316,32 +328,56 @@ type rawTurnMeta struct {
 // A bare proxied call carries no session envelope, so the turn is
 // attributed a synthetic harness_session_id from its Merkle root hash
 // (the same scheme the node ingest path uses) — stable across a
-// conversation's turns, so they group into one derivable session.
+// conversation's turns, so they group into one derivable session — and
+// split into a new session after SessionIdleGap of inactivity.
+//
+// It returns the envelope and harness_session_id the turn was keyed by, for
+// ingestSession to key the sessions row identically; nil and "" when no raw
+// turn was written, in which case ingestSession falls back to the job's own
+// envelope.
 //
 // Failures are logged, never propagated: a raw-layer outage must not
 // take down capture.
-func (p *Pool) persistRawTurn(ctx context.Context, job Job, chain []*merkle.Node) {
+func (p *Pool) persistRawTurn(ctx context.Context, job Job, chain []*merkle.Node) (*sessions.IngestEnvelope, string) {
 	log := tapeslogger.RequestLoggerFromContext(ctx)
 	rawStore, ok := p.config.Driver.(storage.RawTurnStore)
 	if !ok || len(job.RawRequest) == 0 {
-		return
+		return nil, ""
 	}
 
 	root := chain[0]
 	head := chain[len(chain)-1]
 
-	envelope, harnessSessionID, err := sessions.ResolveHarnessSessionID(job.Session, root.Hash)
-	if err != nil {
+	requestID := job.RequestID
+	if requestID == "" {
+		requestID = head.Hash
+	}
+
+	// Local capture writes the row at ~capture time, so "now" is the
+	// capture instant the split rule compares.
+	envelope, harnessSessionID, err := storage.ResolveSessionKey(ctx, p.config.Driver, job.Session, storage.SyntheticTurn{
+		RootHash:   root.Hash,
+		RequestID:  requestID,
+		CapturedAt: time.Now(),
+		IdleGap:    p.config.SessionIdleGap,
+	})
+	switch {
+	case err != nil && harnessSessionID == "":
 		log.Error("raw turn skipped: resolve harness_session_id",
 			"provider", job.Provider, "error", err)
-		return
+		return nil, ""
+	case err != nil:
+		// The idle split could not be assigned; keep the turn under its
+		// conversation key rather than dropping it.
+		log.Error("synthetic session split failed",
+			"provider", job.Provider, "harness_session_id", harnessSessionID, "error", err)
 	}
 
 	response, err := json.Marshal(job.Resp)
 	if err != nil {
 		log.Error("raw turn skipped: marshal response",
 			"provider", job.Provider, "error", err)
-		return
+		return nil, ""
 	}
 
 	meta, err := json.Marshal(rawTurnMeta{
@@ -354,20 +390,16 @@ func (p *Pool) persistRawTurn(ctx context.Context, job Job, chain []*merkle.Node
 	if err != nil {
 		log.Error("raw turn skipped: marshal meta",
 			"provider", job.Provider, "error", err)
-		return
+		return nil, ""
 	}
 
 	sessionJSON, err := json.Marshal(envelope)
 	if err != nil {
 		log.Error("raw turn skipped: marshal session envelope",
 			"provider", job.Provider, "error", err)
-		return
+		return nil, ""
 	}
 
-	requestID := job.RequestID
-	if requestID == "" {
-		requestID = head.Hash
-	}
 	if _, err := rawStore.PutRawTurn(ctx, storage.RawTurnRecord{
 		OrgID:            envelope.OrgID,
 		Source:           storage.RawTurnSourceWire,
@@ -390,6 +422,7 @@ func (p *Pool) persistRawTurn(ctx context.Context, job Job, chain []*merkle.Node
 			"error", err,
 		)
 	}
+	return envelope, harnessSessionID
 }
 
 // ingestSession ensures the turn's sessions row exists (and folds its
@@ -401,15 +434,19 @@ func (p *Pool) persistRawTurn(ctx context.Context, job Job, chain []*merkle.Node
 //
 // Drivers without the SessionIngester capability (the in-memory test
 // driver) have no sessions surface, so this is a no-op for them.
-func (p *Pool) ingestSession(ctx context.Context, job Job, chain []*merkle.Node) {
+func (p *Pool) ingestSession(ctx context.Context, job Job, session *sessions.IngestEnvelope, sessionKey string, chain []*merkle.Node) {
 	log := tapeslogger.RequestLoggerFromContext(ctx)
 	ingester, ok := p.config.Driver.(storage.SessionIngester)
 	if !ok || job.Session == nil {
 		return
 	}
+	if session == nil {
+		session, sessionKey = job.Session, job.SessionKey
+	}
 
 	if _, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
-		Session:      job.Session,
+		Session:      session,
+		SessionKey:   sessionKey,
 		Nodes:        chain,
 		DerivedTitle: derive.SessionTitle(chain[len(chain)-1].Kind, job.Resp),
 	}); err != nil {

@@ -15,6 +15,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/adaptor"
 
+	"github.com/papercomputeco/tapes/pkg/derive"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/llm/provider"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
@@ -286,9 +287,10 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs oas.
 	})
 
 	wp, err := worker.NewPool(&worker.Config{
-		Driver:  driver,
-		Project: config.Project,
-		Logger:  log,
+		Driver:         driver,
+		Project:        config.Project,
+		Logger:         log,
+		SessionIdleGap: config.SessionIdleGap,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("could not create worker pool: %w", err)
@@ -432,6 +434,7 @@ func (s *Server) handleIngest(c fiber.Ctx) error {
 	// Persist the immutable raw envelope BEFORE parsing: a turn that
 	// fails provider parsing (422) is still captured, so a future
 	// parser fix re-derives it instead of needing a re-capture.
+	var sessionKey string
 	if s.rawStore != nil {
 		raw := rawEnvelope{
 			Request:  body.RawRequest,
@@ -442,11 +445,11 @@ func (s *Server) handleIngest(c fiber.Ctx) error {
 		if len(reduced) > 0 {
 			raw.Response = reduced
 		}
-		s.persistRawTurn(c.RequestCtx(), &payload, raw)
+		sessionKey = s.persistRawTurn(c.RequestCtx(), &payload, raw)
 	}
 
 	start := time.Now()
-	if err := s.processTurn(&payload, bodySize); err != nil {
+	if err := s.processTurn(&payload, bodySize, sessionKey); err != nil {
 		s.recordProcessTurnError(payload.Provider, err, bodySize)
 		return s.writeProcessTurnError(c, err)
 	}
@@ -810,7 +813,10 @@ const MaxDecodedRequestBytes = 32 << 20
 // transport with no fidelity marker recorded anywhere.
 const MaxIngestBodyBytes = MaxDecodedRequestBytes + MaxRawResponseBytes*4/3 + 4<<20
 
-func (s *Server) persistRawTurn(ctx context.Context, turn *TurnPayload, raw rawEnvelope) {
+// It returns the harness_session_id it resolved for a synthetic turn (one
+// whose envelope carries no harness session id), so the worker keys the
+// sessions row exactly as the raw turn was keyed; "" otherwise.
+func (s *Server) persistRawTurn(ctx context.Context, turn *TurnPayload, raw rawEnvelope) string {
 	rawResponse := turn.RawResponse
 	dropped := false
 	if len(rawResponse) > MaxRawResponseBytes {
@@ -858,10 +864,18 @@ func (s *Server) persistRawTurn(ctx context.Context, turn *TurnPayload, raw rawE
 		RawResponseEncoding: turn.RawResponseEncoding,
 		RawResponseDropped:  dropped,
 	}
+	var sessionKey string
 	if turn.Session != nil {
 		rec.OrgID = turn.Session.OrgID
 		rec.HarnessID = turn.Session.HarnessIDOrUnknown()
 		rec.HarnessSessionID = turn.Session.HarnessSessionID
+		if turn.Session.NeedsSyntheticHarnessSessionID() {
+			// Keyed by its conversation root (and idle split), as the
+			// sessions row is; "" leaves the turn unattributed, as before,
+			// when its request does not parse.
+			sessionKey = s.syntheticSessionKey(ctx, turn, raw.Meta)
+			rec.HarnessSessionID = sessionKey
+		}
 	}
 	if _, err := s.rawStore.PutRawTurn(ctx, rec); err != nil {
 		s.logger.Error("raw turn persist failed",
@@ -870,6 +884,49 @@ func (s *Server) persistRawTurn(ctx context.Context, turn *TurnPayload, raw rawE
 			"error", err,
 		)
 	}
+	return sessionKey
+}
+
+// syntheticSessionKey resolves the harness_session_id of a turn whose
+// envelope names no harness session: the conversation key derived from the
+// turn's Merkle root, placed into an idle split of that conversation by the
+// turn's capture time (derive.CapturedAt — the same instant its spans are
+// dated by). Returns "" when the request cannot be parsed into a chain: the
+// turn then lands unattributed, as it would fail processTurn anyway. When
+// only the split assignment fails, the bare conversation key is returned.
+func (s *Server) syntheticSessionKey(ctx context.Context, turn *TurnPayload, meta json.RawMessage) string {
+	prov, ok := s.providers[turn.Provider]
+	if !ok {
+		return ""
+	}
+	req, err := prov.ParseRequest(turn.RawRequest)
+	if err != nil {
+		return ""
+	}
+	chain := derive.TurnChain(derive.CallContext{
+		Provider:  prov.Name(),
+		AgentName: turn.AgentName,
+		ThreadID:  turn.Meta.ThreadID,
+		Project:   s.config.Project,
+	}, req, &turn.Response)
+	if len(chain) == 0 {
+		return ""
+	}
+	_, key, err := storage.ResolveSessionKey(ctx, s.driver, turn.Session, storage.SyntheticTurn{
+		RootHash:   chain[0].Hash,
+		RequestID:  turn.Meta.RequestID,
+		CapturedAt: derive.CapturedAt(&storage.RawTurnRecord{Meta: meta, ReceivedAt: time.Now()}),
+		IdleGap:    s.config.SessionIdleGap,
+	})
+	if err != nil {
+		s.logger.Error("synthetic session assignment failed",
+			"provider", turn.Provider,
+			"request_id", turn.Meta.RequestID,
+			"harness_session_id", key,
+			"error", err,
+		)
+	}
+	return key
 }
 
 // recordProcessTurnError maps an internal error to the matching metric label
@@ -953,7 +1010,10 @@ func boundedWorkerCorrelation(value string) string {
 // processTurn parses a raw turn payload and enqueues it for async DAG storage.
 // Returned errors wrap one of ErrEnvelope / ErrUnprocessable / ErrDownstream so
 // the caller can map to an HTTP status without re-parsing the message.
-func (s *Server) processTurn(turn *TurnPayload, weight int) error {
+//
+// sessionKey is the harness_session_id persistRawTurn resolved for a
+// synthetic turn; the worker keys the sessions row by it.
+func (s *Server) processTurn(turn *TurnPayload, weight int, sessionKey string) error {
 	prov, ok := s.providers[turn.Provider]
 	if !ok {
 		return fmt.Errorf("%w: unsupported provider %q (supported: %v)",
@@ -1007,6 +1067,7 @@ func (s *Server) processTurn(turn *TurnPayload, weight int) error {
 		Req:               parsedReq,
 		Resp:              &parsedResp,
 		Session:           turn.Session,
+		SessionKey:        sessionKey,
 		Weight:            weight,
 	}); reason {
 	case worker.RejectNone:

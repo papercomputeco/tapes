@@ -71,6 +71,7 @@ func ValidConfigKeys() []string {
 		"api.read_deadline",
 		"api.payload_concurrency",
 		"ingest.listen",
+		"sessions.idle_gap",
 		"client.proxy_target",
 		"client.api_target",
 		"opencode.provider",

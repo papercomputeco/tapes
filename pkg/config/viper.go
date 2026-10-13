@@ -90,6 +90,9 @@ func setViperDefaults(v *viper.Viper) {
 	// Ingest
 	v.SetDefault("ingest.listen", d.Ingest.Listen)
 
+	// Sessions
+	v.SetDefault("sessions.idle_gap", d.Sessions.IdleGap)
+
 	// Client
 	v.SetDefault("client.proxy_target", d.Client.ProxyTarget)
 	v.SetDefault("client.api_target", d.Client.APITarget)

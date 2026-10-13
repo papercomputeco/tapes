@@ -151,6 +151,41 @@ func (q *Queries) DeleteSessionsRawTurns(ctx context.Context, arg DeleteSessions
 	return result.RowsAffected(), nil
 }
 
+const getRawTurnSessionKeyByRequestID = `-- name: GetRawTurnSessionKeyByRequestID :one
+SELECT COALESCE(c.harness_id, r.harness_id)::text AS harness_id,
+       COALESCE(c.harness_session_id, r.harness_session_id)::text AS harness_session_id
+FROM raw_turns r
+LEFT JOIN LATERAL (
+    SELECT harness_id, harness_session_id
+    FROM raw_turn_attribution_corrections
+    WHERE org_id = r.org_id AND raw_turn_id = r.id
+    ORDER BY id DESC LIMIT 1
+) c ON TRUE
+WHERE r.org_id = $1
+  AND r.request_id = $2
+  AND r.request_id <> ''
+LIMIT 1
+`
+
+type GetRawTurnSessionKeyByRequestIDParams struct {
+	OrgID     pgtype.UUID
+	RequestID string
+}
+
+type GetRawTurnSessionKeyByRequestIDRow struct {
+	HarnessID        string
+	HarnessSessionID string
+}
+
+// The effective session key of an already-captured turn, so a retried or
+// re-ingested turn keeps the session it was first assigned.
+func (q *Queries) GetRawTurnSessionKeyByRequestID(ctx context.Context, arg GetRawTurnSessionKeyByRequestIDParams) (GetRawTurnSessionKeyByRequestIDRow, error) {
+	row := q.db.QueryRow(ctx, getRawTurnSessionKeyByRequestID, arg.OrgID, arg.RequestID)
+	var i GetRawTurnSessionKeyByRequestIDRow
+	err := row.Scan(&i.HarnessID, &i.HarnessSessionID)
+	return i, err
+}
+
 const getSessionByNaturalKey = `-- name: GetSessionByNaturalKey :one
 SELECT id, org_id, auth_subject, harness_id, harness_session_id, name, cwd, harness_version, parent_session_id, started_at, last_seen_at, ended_at, harness_metadata, total_input_tokens, total_output_tokens, total_cost_usd, turn_count, derived_status, has_git_activity, tool_result_count, tool_error_count, derived_title, derived_model, model_usage, total_tokens, duration_ns, tasks, kind_counts, display_name FROM sessions
 WHERE org_id = $1
@@ -249,6 +284,37 @@ func (q *Queries) GetSessionRecord(ctx context.Context, arg GetSessionRecordPara
 		&i.KindCounts,
 		&i.DisplayName,
 	)
+	return i, err
+}
+
+const getSyntheticSessionSeed = `-- name: GetSyntheticSessionSeed :one
+SELECT started_at, last_seen_at
+FROM sessions
+WHERE org_id = $1
+  AND harness_id = $2
+  AND harness_session_id = $3
+`
+
+type GetSyntheticSessionSeedParams struct {
+	OrgID           pgtype.UUID
+	HarnessID       string
+	ConversationKey string
+}
+
+type GetSyntheticSessionSeedRow struct {
+	StartedAt  pgtype.Timestamptz
+	LastSeenAt pgtype.Timestamptz
+}
+
+// The pre-split identity of a synthetic conversation: the session keyed by
+// the bare conversation key, written before idle splitting tracked ranges.
+// Its started_at/last_seen_at seed the conversation's first split so the
+// first turn after an idle gap opens a new session rather than extending
+// the old one forever.
+func (q *Queries) GetSyntheticSessionSeed(ctx context.Context, arg GetSyntheticSessionSeedParams) (GetSyntheticSessionSeedRow, error) {
+	row := q.db.QueryRow(ctx, getSyntheticSessionSeed, arg.OrgID, arg.HarnessID, arg.ConversationKey)
+	var i GetSyntheticSessionSeedRow
+	err := row.Scan(&i.StartedAt, &i.LastSeenAt)
 	return i, err
 }
 
@@ -415,6 +481,50 @@ func (q *Queries) ListSessionsByHarnessSessionID(ctx context.Context, arg ListSe
 			&i.KindCounts,
 			&i.DisplayName,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSyntheticSessionSplits = `-- name: ListSyntheticSessionSplits :many
+SELECT harness_session_id, first_captured_at, last_captured_at
+FROM synthetic_session_splits
+WHERE org_id = $1
+  AND harness_id = $2
+  AND conversation_key = $3
+ORDER BY first_captured_at, harness_session_id
+`
+
+type ListSyntheticSessionSplitsParams struct {
+	OrgID           pgtype.UUID
+	HarnessID       string
+	ConversationKey string
+}
+
+type ListSyntheticSessionSplitsRow struct {
+	HarnessSessionID string
+	FirstCapturedAt  pgtype.Timestamptz
+	LastCapturedAt   pgtype.Timestamptz
+}
+
+// Every idle split of one synthetic conversation. The set is small — one
+// row per idle period the conversation has had — and the assignment rule
+// needs all of it to know whether the conversation has any split yet.
+func (q *Queries) ListSyntheticSessionSplits(ctx context.Context, arg ListSyntheticSessionSplitsParams) ([]ListSyntheticSessionSplitsRow, error) {
+	rows, err := q.db.Query(ctx, listSyntheticSessionSplits, arg.OrgID, arg.HarnessID, arg.ConversationKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSyntheticSessionSplitsRow
+	for rows.Next() {
+		var i ListSyntheticSessionSplitsRow
+		if err := rows.Scan(&i.HarnessSessionID, &i.FirstCapturedAt, &i.LastCapturedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -930,4 +1040,41 @@ func (q *Queries) UpsertSessionFromTranscript(ctx context.Context, arg UpsertSes
 		&i.DisplayName,
 	)
 	return i, err
+}
+
+const upsertSyntheticSessionSplit = `-- name: UpsertSyntheticSessionSplit :exec
+INSERT INTO synthetic_session_splits (
+    org_id, harness_id, harness_session_id, conversation_key,
+    first_captured_at, last_captured_at
+) VALUES (
+    $1, $2, $3,
+    $4, $5, $6
+)
+ON CONFLICT (org_id, harness_id, harness_session_id) DO UPDATE
+SET first_captured_at = LEAST(synthetic_session_splits.first_captured_at, EXCLUDED.first_captured_at),
+    last_captured_at  = GREATEST(synthetic_session_splits.last_captured_at, EXCLUDED.last_captured_at)
+`
+
+type UpsertSyntheticSessionSplitParams struct {
+	OrgID            pgtype.UUID
+	HarnessID        string
+	HarnessSessionID string
+	ConversationKey  string
+	FirstCapturedAt  pgtype.Timestamptz
+	LastCapturedAt   pgtype.Timestamptz
+}
+
+// Record a turn's assignment: create the split, or widen its range to
+// cover the turn. LEAST/GREATEST keep a retried or out-of-order write
+// idempotent.
+func (q *Queries) UpsertSyntheticSessionSplit(ctx context.Context, arg UpsertSyntheticSessionSplitParams) error {
+	_, err := q.db.Exec(ctx, upsertSyntheticSessionSplit,
+		arg.OrgID,
+		arg.HarnessID,
+		arg.HarnessSessionID,
+		arg.ConversationKey,
+		arg.FirstCapturedAt,
+		arg.LastCapturedAt,
+	)
+	return err
 }

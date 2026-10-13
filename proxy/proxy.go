@@ -100,6 +100,7 @@ func New(config Config, driver storage.Driver, log *slog.Logger) (*Proxy, error)
 		Project:         config.Project,
 		Logger:          log,
 		QueueByteBudget: config.QueueByteBudget,
+		SessionIdleGap:  config.SessionIdleGap,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("could not create worker pool: %w", err)

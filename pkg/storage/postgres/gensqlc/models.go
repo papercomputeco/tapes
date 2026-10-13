@@ -157,6 +157,15 @@ type Spans20260615 struct {
 	OutputPreview []byte
 }
 
+type SyntheticSessionSplit struct {
+	OrgID            pgtype.UUID
+	HarnessID        string
+	HarnessSessionID string
+	ConversationKey  string
+	FirstCapturedAt  pgtype.Timestamptz
+	LastCapturedAt   pgtype.Timestamptz
+}
+
 // v1 contract view over the sessions table.
 type TapesV1Session struct {
 	ID                pgtype.UUID

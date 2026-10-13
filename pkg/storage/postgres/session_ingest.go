@@ -55,7 +55,7 @@ func (d *Driver) IngestTurn(ctx context.Context, req storage.IngestTurnRequest) 
 	// silently keying turns onto the wrong synthetic session (the old
 	// persisted-node path validated the whole chain; identity-only ingest
 	// needs only this root check, and only on the synthetic path).
-	if req.Session == nil || req.Session.HarnessSessionID == "" {
+	if req.SessionKey == "" && (req.Session == nil || req.Session.HarnessSessionID == "") {
 		if ph := req.Nodes[0].ParentHash; ph != nil && *ph != "" {
 			return storage.IngestTurnResult{}, fmt.Errorf("ingest turn: nodes[0] must be the conversation root when no harness_session_id is supplied, got ParentHash=%q", *ph)
 		}
@@ -74,6 +74,9 @@ func (d *Driver) IngestTurn(ctx context.Context, req storage.IngestTurnRequest) 
 	envelope, harnessSessionID, err := resolveHarnessSessionID(req.Session, req.Nodes[0])
 	if err != nil {
 		return storage.IngestTurnResult{}, fmt.Errorf("resolve harness_session_id: %w", err)
+	}
+	if req.SessionKey != "" {
+		harnessSessionID = req.SessionKey
 	}
 
 	orgID, err := orgIDFromEnvelope(envelope)

@@ -6,6 +6,8 @@
 // (pkg/spanembed), never at ingest time.
 package ingest
 
+import "time"
+
 // Config is the ingest server configuration.
 type Config struct {
 	// ListenAddr is the address to listen on (e.g., ":8082")
@@ -13,4 +15,11 @@ type Config struct {
 
 	// Project is the git repository or project name to tag on captured turns.
 	Project string
+
+	// SessionIdleGap splits a synthetic session — a turn whose envelope
+	// carries no harness session id is keyed by its conversation root —
+	// into a new session when the turn was captured more than this long
+	// after the conversation's previous turn. Zero disables the split; a
+	// harness-provided session id is never split.
+	SessionIdleGap time.Duration
 }

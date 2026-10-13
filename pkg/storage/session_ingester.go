@@ -27,7 +27,9 @@ import (
 //     (org_id, harness_id, harness_session_id). When the inbound
 //     envelope is nil, or HarnessID is "unknown", or
 //     HarnessSessionID is empty, implementations derive a synthetic
-//     harness_session_id from the captured turn's Merkle root prefix.
+//     harness_session_id from the captured turn's Merkle root prefix —
+//     unless the request carries a SessionKey the capture path already
+//     resolved (an idle split, see ResolveSessionKey), which wins.
 //   - Nothing turn-shaped is persisted here: the in-memory node chain
 //     is consumed only to resolve session identity and fold
 //     derived_status/tool counts. The token/turn/cost rollups are
@@ -51,6 +53,13 @@ type IngestTurnRequest struct {
 	// legitimate value (legacy clients): implementations fall back
 	// to a Merkle-derived synthetic harness_session_id.
 	Session *sessions.IngestEnvelope
+
+	// SessionKey, when set, is the harness_session_id the caller already
+	// resolved for this turn (storage.ResolveSessionKey) and keyed its raw
+	// turn by — a synthetic turn's idle split. It wins over the envelope's
+	// own id and over the Merkle-derived fallback, so the sessions row and
+	// the raw turn are keyed identically. Empty keeps the envelope rules.
+	SessionKey string
 
 	// Nodes is the in-memory chain of nodes for this turn, ordered
 	// root-to-leaf. The first element is the conversation root; the

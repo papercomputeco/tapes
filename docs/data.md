@@ -43,6 +43,34 @@ previews are treated as tool payloads and skipped rather than shown as titles.
 This classification uses the complete prompt, so JSON payloads remain skipped
 when their displayed preview is truncated.
 
+### Sessions without a harness session id
+
+A turn captured without a harness session id is grouped by its conversation:
+`harness_session_id` is the first 16 hex characters of the hash of the
+request's first message, which every turn of the conversation re-sends. A
+conversation that goes quiet for longer than
+[`sessions.idle_gap`](./configuration.md#idle-split) (30 minutes by default)
+and then resumes starts a new session, whose `harness_session_id` is the
+conversation's id, a dash, and the UTC second at which the turn that opened it
+was captured: `be436c07b169c409-20261013T170000Z`. The first session of a
+conversation keeps the bare id. A session id the harness supplies is never
+split.
+
+Turns are placed by when they were captured upstream, not by when they reach
+Tapes, so a retried or backfilled turn lands where it belongs. A turn joins the
+session whose captured turns it falls among, else the one whose last turn is at
+most the gap before it, else the one whose first turn is at most the gap after
+it; otherwise it starts a session. Placement is decided when a turn is captured
+and never revised. A turn that is already stored keeps its session when it is
+sent again. The one consequence of never revising: a late turn that would have
+bridged two sessions in arrival order — within the gap of both — joins the
+earlier one, and the two stay separate.
+
+Each session derives, lists, exports, and deletes on its own, exactly like a
+session with a harness-supplied id. An [attribution repair](./apis.md#attribution-repair) moves a
+turn between sessions as for any other turn; it does not change where later
+turns of the conversation are placed.
+
 ## Browse in a browser
 
 The API binary can serve a small same-origin UI at `/`, in the style of

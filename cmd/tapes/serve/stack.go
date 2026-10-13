@@ -48,6 +48,10 @@ type Stack struct {
 	// PostgresDSN is the capture and derived store.
 	PostgresDSN string
 
+	// SessionIdleGap is sessions.idle_gap, applied by both capture paths
+	// (proxy and ingest); zero disables the split.
+	SessionIdleGap time.Duration
+
 	// CassetteSources are exact full OpenAPI document URLs transferred to the
 	// API server's lifetime-owned runtime.
 	CassetteSources []string
@@ -82,6 +86,7 @@ func (stack *Stack) AddFlags(cmd *cobra.Command, flags config.FlagSet) {
 	config.AddStringFlag(cmd, flags, config.FlagProject, &stack.Project)
 	config.AddStringFlag(cmd, flags, config.FlagPostgres, &stack.PostgresDSN)
 	config.AddStringSliceFlag(cmd, flags, config.FlagCassettes, &stack.CassetteSources)
+	config.AddDurationFlag(cmd, flags, config.FlagSessionIdleGap, &stack.SessionIdleGap)
 }
 
 // stackFlagKeys are the registered flags Resolve binds into viper's precedence
@@ -98,6 +103,7 @@ var stackFlagKeys = []string{
 	config.FlagPostgres,
 	config.FlagProject,
 	config.FlagCassettes,
+	config.FlagSessionIdleGap,
 }
 
 // Resolve fills the stack from flags, environment, and config file. Call it
@@ -126,6 +132,7 @@ func (stack *Stack) Resolve(cmd *cobra.Command, flags config.FlagSet) error {
 	stack.APIReadDeadline = v.GetDuration("api.read_deadline")
 	stack.APIPayloadConcurrency = v.GetInt("api.payload_concurrency")
 	stack.IngestListen = v.GetString("ingest.listen")
+	stack.SessionIdleGap = v.GetDuration("sessions.idle_gap")
 	stack.Upstream = v.GetString("proxy.upstream")
 	stack.ProviderType = v.GetString("proxy.provider")
 
@@ -155,10 +162,11 @@ func (stack *Stack) Run(ctx context.Context) error {
 	// These constructors own worker pools whose lifecycle is closed explicitly
 	// below; neither constructor accepts an inherited context.
 	p, err := proxy.New(proxy.Config{ //nolint:contextcheck
-		ListenAddr:   stack.ProxyListen,
-		UpstreamURL:  stack.Upstream,
-		ProviderType: stack.ProviderType,
-		Project:      stack.Project,
+		ListenAddr:     stack.ProxyListen,
+		UpstreamURL:    stack.Upstream,
+		ProviderType:   stack.ProviderType,
+		Project:        stack.Project,
+		SessionIdleGap: stack.SessionIdleGap,
 	}, driver, stack.Logger)
 	if err != nil {
 		return fmt.Errorf("creating proxy: %w", err)
@@ -209,8 +217,9 @@ func (stack *Stack) Run(ctx context.Context) error {
 	// not, the directive reads as unused and reds the lint gate on a tree
 	// that has not changed. Suppressing both keeps the gate deterministic.
 	ingestServer, err := ingest.New(ingest.Config{ //nolint:contextcheck,nolintlint
-		ListenAddr: stack.IngestListen,
-		Project:    stack.Project,
+		ListenAddr:     stack.IngestListen,
+		Project:        stack.Project,
+		SessionIdleGap: stack.SessionIdleGap,
 	}, driver, stack.Logger)
 	if err != nil {
 		return fmt.Errorf("creating ingest server: %w", err)
