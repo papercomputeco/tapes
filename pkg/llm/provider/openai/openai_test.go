@@ -4,6 +4,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/llm/provider"
 	"github.com/papercomputeco/tapes/pkg/llm/provider/openai"
 )
@@ -225,6 +226,59 @@ var _ = Describe("OpenAI Provider", func() {
 			})
 		})
 
+		Context("with reasoning_content on assistant history", func() {
+			It("prepends a thinking block before text and tool calls", func() {
+				payload := []byte(`{
+					"model": "deepseek-reasoner",
+					"messages": [
+						{
+							"role": "assistant",
+							"content": "Checking.",
+							"reasoning_content": "I should call get_weather.",
+							"tool_calls": [{"id": "call_00_x", "type": "function", "function": {"name": "get_weather", "arguments": "{\"location\": \"NYC\"}"}}]
+						}
+					]
+				}`)
+
+				req, err := p.ParseRequest(payload)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(req.Messages[0].Content).To(HaveLen(3))
+				Expect(req.Messages[0].Content[0].Type).To(Equal("thinking"))
+				Expect(req.Messages[0].Content[0].Thinking).To(Equal("I should call get_weather."))
+				Expect(req.Messages[0].Content[1].Text).To(Equal("Checking."))
+				Expect(req.Messages[0].Content[2].ToolUseID).To(Equal("call_00_x"))
+			})
+
+			It("accepts the newer reasoning field", func() {
+				payload := []byte(`{"model": "Qwen/Qwen3-32B", "messages": [{"role": "assistant", "content": "4", "reasoning": "2 + 2 = 4."}]}`)
+				req, err := p.ParseRequest(payload)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(req.Messages[0].Content).To(Equal([]llm.ContentBlock{{Type: "thinking", Thinking: "2 + 2 = 4."}, {Type: "text", Text: "4"}}))
+			})
+
+			It("prefers reasoning_content when both fields are present", func() {
+				payload := []byte(`{"model": "Qwen/Qwen3-32B", "messages": [{"role": "assistant", "content": "4", "reasoning_content": "from reasoning_content", "reasoning": "from reasoning"}]}`)
+				req, err := p.ParseRequest(payload)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(req.Messages[0].Content).To(Equal([]llm.ContentBlock{{Type: "thinking", Thinking: "from reasoning_content"}, {Type: "text", Text: "4"}}))
+			})
+
+			It("ignores a non-string reasoning value", func() {
+				payload := []byte(`{"model": "Qwen/Qwen3-32B", "messages": [{"role": "assistant", "content": "4", "reasoning": {"effort": "high"}}]}`)
+				req, err := p.ParseRequest(payload)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(req.Messages[0].Content).To(Equal([]llm.ContentBlock{{Type: "text", Text: "4"}}))
+			})
+
+			It("adds nothing when reasoning_content is null", func() {
+				payload := []byte(`{"model": "deepseek-reasoner", "messages": [{"role": "assistant", "content": "hi", "reasoning_content": null}]}`)
+				req, err := p.ParseRequest(payload)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(req.Messages[0].Content).To(HaveLen(1))
+				Expect(req.Messages[0].Content[0].Type).To(Equal("text"))
+			})
+		})
+
 		Context("preserves raw request", func() {
 			It("stores the original payload in RawRequest", func() {
 				payload := []byte(`{"model": "gpt-4", "messages": []}`)
@@ -338,6 +392,37 @@ var _ = Describe("OpenAI Provider", func() {
 				Expect(resp.Message.Content[0].ToolUseID).To(Equal("call_abc123"))
 				Expect(resp.Message.Content[0].ToolName).To(Equal("get_weather"))
 				Expect(resp.StopReason).To(Equal("tool_calls"))
+			})
+		})
+
+		Context("with reasoning_content in the message", func() {
+			It("prepends a thinking block", func() {
+				payload := []byte(`{
+					"object": "chat.completion",
+					"model": "deepseek-reasoner",
+					"choices": [{"index": 0, "message": {"role": "assistant", "content": "4", "reasoning_content": "2 + 2 = 4."}, "finish_reason": "stop"}]
+				}`)
+
+				resp, err := p.ParseResponse(payload)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.Message.Content).To(HaveLen(2))
+				Expect(resp.Message.Content[0].Type).To(Equal("thinking"))
+				Expect(resp.Message.Content[0].Thinking).To(Equal("2 + 2 = 4."))
+				Expect(resp.Message.GetText()).To(Equal("4"))
+			})
+		})
+
+		Context("with the newer reasoning field in the message", func() {
+			It("prepends a thinking block, preferring reasoning_content when both are present", func() {
+				only := []byte(`{"object": "chat.completion", "choices": [{"index": 0, "message": {"role": "assistant", "content": "4", "reasoning": "2 + 2 = 4."}, "finish_reason": "stop"}]}`)
+				resp, err := p.ParseResponse(only)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.Message.Content).To(Equal([]llm.ContentBlock{{Type: "thinking", Thinking: "2 + 2 = 4."}, {Type: "text", Text: "4"}}))
+
+				both := []byte(`{"object": "chat.completion", "choices": [{"index": 0, "message": {"role": "assistant", "content": "4", "reasoning_content": "kept", "reasoning": "dropped"}, "finish_reason": "stop"}]}`)
+				resp, err = p.ParseResponse(both)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.Message.Content).To(Equal([]llm.ContentBlock{{Type: "thinking", Thinking: "kept"}, {Type: "text", Text: "4"}}))
 			})
 		})
 

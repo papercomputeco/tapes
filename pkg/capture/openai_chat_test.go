@@ -1,6 +1,7 @@
 package capture_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"strings"
@@ -9,6 +10,8 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/papercomputeco/tapes/pkg/capture"
+	"github.com/papercomputeco/tapes/pkg/capture/fixtures"
+	"github.com/papercomputeco/tapes/pkg/llm"
 )
 
 const chatJSON = `{"id":"chatcmpl_test","object":"chat.completion","created":1700000000,"model":"poc-cheap","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":4,"total_tokens":16,"prompt_tokens_details":{"cached_tokens":3}}}`
@@ -67,6 +70,123 @@ var _ = Describe("Chat Completions reducer", func() {
 		Entry("provider error", "data: {\"error\":{\"message\":\"failed\"}}\n\n"),
 		Entry("malformed frame then finish", "data: broken\n\n"+chatEvent(`[{"index":0,"delta":{},"finish_reason":"stop"}]`)+"data: [DONE]\n\n"),
 	)
+
+	Describe("reasoning_content from OpenAI-compatible reasoning models", func() {
+		readFixture := func(name string) []byte {
+			data, err := fixtures.ReadFile("openai_chat/" + name)
+			Expect(err).NotTo(HaveOccurred())
+			return data
+		}
+		const reasoning = "The user wants tomorrow's weather in Hangzhou.\nI have a get_weather tool that takes a location and a date, so I should call it."
+
+		expectDeepSeekTurn := func(resp *llm.ChatResponse) {
+			Expect(resp.Done).To(BeTrue())
+			Expect(resp.Model).To(Equal("deepseek-reasoner"))
+			Expect(resp.StopReason).To(Equal("tool_calls"))
+			Expect(resp.Message.Content).To(HaveLen(3))
+			Expect(resp.Message.Content[0].Type).To(Equal("thinking"))
+			Expect(resp.Message.Content[0].Thinking).To(Equal(reasoning))
+			Expect(resp.Message.Content[0].ThinkingSignature).To(BeEmpty())
+			Expect(resp.Message.Content[1].Type).To(Equal("text"))
+			Expect(resp.Message.Content[1].Text).To(Equal("Let me check the weather in Hangzhou."))
+			Expect(resp.Message.Content[2].Type).To(Equal("tool_use"))
+			Expect(resp.Message.Content[2].ToolUseID).To(Equal("call_00_FIXTURE00000000000000"))
+			Expect(resp.Message.Content[2].ToolName).To(Equal("get_weather"))
+			Expect(resp.Message.Content[2].ToolInput).To(Equal(map[string]any{"location": "Hangzhou", "date": "2026-01-02"}))
+			Expect(resp.Message.GetText()).To(Equal("Let me check the weather in Hangzhou."))
+			Expect(resp.Usage.PromptTokens).To(Equal(312))
+			Expect(resp.Usage.CompletionTokens).To(Equal(96))
+			Expect(resp.Usage.TotalTokens).To(Equal(408))
+			Expect(resp.Usage.CacheReadInputTokens).To(Equal(256))
+			Expect(resp.Extra["completion_tokens_details"]).To(MatchJSON(`{"reasoning_tokens":61}`))
+		}
+
+		It("maps a one-shot message.reasoning_content to a leading thinking block", func() {
+			resp, err := capture.NewOpenAIChatCompletionsReducer().Reduce(context.Background(), nil, bytes.NewReader(readFixture("deepseek_oneshot.json")), "application/json")
+			Expect(err).NotTo(HaveOccurred())
+			expectDeepSeekTurn(resp)
+		})
+
+		It("accumulates streamed delta.reasoning_content in order", func() {
+			resp, err := capture.NewOpenAIChatCompletionsReducer().Reduce(context.Background(), nil, bytes.NewReader(readFixture("deepseek_stream.sse")), "text/event-stream")
+			Expect(err).NotTo(HaveOccurred())
+			expectDeepSeekTurn(resp)
+		})
+
+		It("reduces the streamed and one-shot forms of a turn to the same message", func() {
+			oneshot, err := capture.NewOpenAIChatCompletionsReducer().Reduce(context.Background(), nil, bytes.NewReader(readFixture("deepseek_oneshot.json")), "application/json")
+			Expect(err).NotTo(HaveOccurred())
+			stream, err := capture.NewOpenAIChatCompletionsReducer().Reduce(context.Background(), nil, bytes.NewReader(readFixture("deepseek_stream.sse")), "text/event-stream")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stream.Message).To(Equal(oneshot.Message))
+		})
+
+		It("keeps reasoning from a stream torn down before the answer", func() {
+			body := chatEvent(`[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":"step one"}}]`) +
+				chatEvent(`[{"index":0,"delta":{"content":null,"reasoning_content":", step two"}}]`)
+			resp, err := capture.NewOpenAIChatCompletionsReducer().Reduce(context.Background(), nil, strings.NewReader(body), "text/event-stream")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Done).To(BeFalse())
+			Expect(resp.Message.Content).To(HaveLen(1))
+			Expect(resp.Message.Content[0].Type).To(Equal("thinking"))
+			Expect(resp.Message.Content[0].Thinking).To(Equal("step one, step two"))
+		})
+
+		It("leaves alternatives without reasoning byte-identical in metadata", func() {
+			body := `{"object":"chat.completion","choices":[{"index":0,"message":{"content":"primary","reasoning_content":"why"},"finish_reason":"stop"},{"index":1,"message":{"content":"other"},"finish_reason":"stop"}]}`
+			resp, err := capture.NewOpenAIChatCompletionsReducer().Reduce(context.Background(), nil, strings.NewReader(body), "application/json")
+			Expect(err).NotTo(HaveOccurred())
+			encoded, err := json.Marshal(resp.Extra["choices"])
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(encoded)).To(Equal(`[{"index":0,"message":{"role":"","content":"primary","reasoning_content":"why","refusal":"","tool_calls":null},"delta":{"role":"","content":"","refusal":"","tool_calls":null},"finish_reason":"stop"},{"index":1,"message":{"role":"","content":"other","refusal":"","tool_calls":null},"delta":{"role":"","content":"","refusal":"","tool_calls":null},"finish_reason":"stop"}]`))
+		})
+
+		const vllmReasoning = "The user asked for the square root of 1764.\nI'll use the calculator tool to be exact."
+		expectVLLMTurn := func(resp *llm.ChatResponse) {
+			Expect(resp.Done).To(BeTrue())
+			Expect(resp.Model).To(Equal("Qwen/Qwen3-32B"))
+			Expect(resp.StopReason).To(Equal("tool_calls"))
+			Expect(resp.Message.Content).To(HaveLen(3))
+			Expect(resp.Message.Content[0]).To(Equal(llm.ContentBlock{Type: "thinking", Thinking: vllmReasoning}))
+			Expect(resp.Message.Content[1]).To(Equal(llm.ContentBlock{Type: "text", Text: "Let me compute that."}))
+			Expect(resp.Message.Content[2].ToolUseID).To(Equal("chatcmpl-tool-FIXTURE00000000000000000001"))
+			Expect(resp.Message.Content[2].ToolInput).To(Equal(map[string]any{"expression": "sqrt(1764)"}))
+			Expect(resp.Usage.TotalTokens).To(Equal(277))
+		}
+
+		DescribeTable("maps the newer reasoning field the same way", func(name, contentType string) {
+			resp, err := capture.NewOpenAIChatCompletionsReducer().Reduce(context.Background(), nil, bytes.NewReader(readFixture(name)), contentType)
+			Expect(err).NotTo(HaveOccurred())
+			expectVLLMTurn(resp)
+		},
+			Entry("one-shot message.reasoning", "vllm_reasoning_oneshot.json", "application/json"),
+			Entry("streamed delta.reasoning", "vllm_reasoning_stream.sse", "text/event-stream"),
+			Entry("streamed deltas carrying both fields", "vllm_both_fields_stream.sse", "text/event-stream"),
+		)
+
+		It("prefers reasoning_content when a one-shot message carries both fields", func() {
+			body := `{"object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"4","reasoning_content":"2 + 2 = 4.","reasoning":"2 + 2 = 4."},"finish_reason":"stop"}]}`
+			resp, err := capture.NewOpenAIChatCompletionsReducer().Reduce(context.Background(), nil, strings.NewReader(body), "application/json")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Message.Content).To(Equal([]llm.ContentBlock{{Type: "thinking", Thinking: "2 + 2 = 4."}, {Type: "text", Text: "4"}}))
+		})
+
+		It("ignores a non-string reasoning value instead of failing the turn", func() {
+			body := `{"object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"hello","reasoning":{"effort":"high"}},"finish_reason":"stop"}]}`
+			resp, err := capture.NewOpenAIChatCompletionsReducer().Reduce(context.Background(), nil, strings.NewReader(body), "application/json")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Message.Content).To(Equal([]llm.ContentBlock{{Type: "text", Text: "hello"}}))
+		})
+
+		It("adds no block when the reasoning fields are absent, null, or empty", func() {
+			for _, field := range []string{``, `,"reasoning_content":null`, `,"reasoning_content":""`, `,"reasoning":null`, `,"reasoning":""`} {
+				body := `{"object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"hello"` + field + `},"finish_reason":"stop"}]}`
+				resp, err := capture.NewOpenAIChatCompletionsReducer().Reduce(context.Background(), nil, strings.NewReader(body), "application/json")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.Message.Content).To(Equal([]llm.ContentBlock{{Type: "text", Text: "hello"}}))
+			}
+		})
+	})
 
 	It("preserves a refusal and invalid tool arguments", func() {
 		body := `{"object":"chat.completion","choices":[{"index":0,"message":{"refusal":"no","tool_calls":[{"id":"call","type":"function","function":{"name":"echo","arguments":"{"}}]},"finish_reason":"tool_calls"}]}`

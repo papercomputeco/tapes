@@ -66,6 +66,13 @@ func (o *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 			converted.Content = []llm.ContentBlock{}
 		}
 
+		// Re-sent reasoning must project to the same leading thinking block
+		// the capture reducer produced for the original response, or the
+		// history message hashes apart from that response node.
+		if reasoning := msg.reasoningText(); reasoning != "" {
+			converted.Content = append([]llm.ContentBlock{reasoningContentBlock(reasoning)}, converted.Content...)
+		}
+
 		// Handle tool calls in assistant messages
 		for _, tc := range msg.ToolCalls {
 			var input map[string]any
@@ -178,6 +185,10 @@ func (o *Provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 		content = []llm.ContentBlock{}
 	}
 
+	if reasoning := msg.reasoningText(); reasoning != "" {
+		content = append([]llm.ContentBlock{reasoningContentBlock(reasoning)}, content...)
+	}
+
 	// Handle tool calls
 	for _, tc := range msg.ToolCalls {
 		var input map[string]any
@@ -221,6 +232,13 @@ func (o *Provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 	}
 
 	return result, nil
+}
+
+// reasoningContentBlock maps a Chat Completions reasoning trace to a
+// thinking block, the representation Anthropic extended thinking and Responses
+// reasoning items share. There is no signature on this wire.
+func reasoningContentBlock(reasoning string) llm.ContentBlock {
+	return llm.ContentBlock{Type: "thinking", Thinking: reasoning}
 }
 
 func (o *Provider) ParseStreamChunk(_ []byte) (*llm.StreamChunk, error) {

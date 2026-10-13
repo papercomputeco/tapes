@@ -1,0 +1,43 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "object": "chat.completion",
+  "created": 1767225600,
+  "model": "deepseek-reasoner",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Let me check the weather in Hangzhou.",
+        "reasoning_content": "The user wants tomorrow's weather in Hangzhou.\nI have a get_weather tool that takes a location and a date, so I should call it.",
+        "tool_calls": [
+          {
+            "index": 0,
+            "id": "call_00_FIXTURE00000000000000",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"location\": \"Hangzhou\", \"date\": \"2026-01-02\"}"
+            }
+          }
+        ]
+      },
+      "logprobs": null,
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 312,
+    "completion_tokens": 96,
+    "total_tokens": 408,
+    "prompt_tokens_details": {
+      "cached_tokens": 256
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 61
+    },
+    "prompt_cache_hit_tokens": 256,
+    "prompt_cache_miss_tokens": 56
+  },
+  "system_fingerprint": "fp_FIXTURE000_prod0000"
+}

@@ -7,6 +7,8 @@
 //     one-shot bodies, plus canonical_equivalence/ oneshot↔stream pairs.
 //   - openai_responses/*.sse, *.json — OpenAI Responses wire (incl. the
 //     Codex chatgpt stream).
+//   - openai_chat/*.sse, *.json — OpenAI-compatible Chat Completions wire
+//     from reasoning models (DeepSeek reasoning_content, vLLM reasoning).
 //
 // The reducer lives in one place but runs in more than one: the in-process
 // capture path and any external service that embeds the same reducer to
@@ -24,7 +26,7 @@ import "embed"
 // (e.g. "anthropic/messages_stream.sse", "openai_responses/oneshot.json").
 // Paths use forward slashes on every OS, as embed.FS requires.
 //
-//go:embed anthropic openai_responses
+//go:embed anthropic openai_chat openai_responses
 var FS embed.FS
 
 // ReadFile returns the fixture bytes at name, a forward-slash path relative to
