@@ -252,16 +252,21 @@ const (
 // deriver-written — so the wire can't blur which layer owns a field.
 type SessionItem struct {
 	// Identity — capture-side facts, ingest-written.
-	ID               string         `json:"id"`
-	HarnessID        string         `json:"harness_id"`
-	HarnessSessionID string         `json:"harness_session_id"`
-	Cwd              string         `json:"cwd,omitempty"`
-	HarnessVersion   string         `json:"harness_version,omitempty"`
-	ParentSessionID  string         `json:"parent_session_id,omitempty"`
-	StartedAt        time.Time      `json:"started_at"`
-	LastSeenAt       time.Time      `json:"last_seen_at"`
-	EndedAt          *time.Time     `json:"ended_at,omitempty"`
-	HarnessMetadata  map[string]any `json:"harness_metadata,omitempty"`
+	ID               string `json:"id"`
+	HarnessID        string `json:"harness_id"`
+	HarnessSessionID string `json:"harness_session_id"`
+	Cwd              string `json:"cwd,omitempty"`
+	HarnessVersion   string `json:"harness_version,omitempty"`
+	ParentSessionID  string `json:"parent_session_id,omitempty"`
+	// ParentHarnessID is the parent session's harness_id, present exactly
+	// when ParentSessionID is. It differs from HarnessID when the parent
+	// ran under another harness (a claude session that launched a codex
+	// child).
+	ParentHarnessID string         `json:"parent_harness_id,omitempty"`
+	StartedAt       time.Time      `json:"started_at"`
+	LastSeenAt      time.Time      `json:"last_seen_at"`
+	EndedAt         *time.Time     `json:"ended_at,omitempty"`
+	HarnessMetadata map[string]any `json:"harness_metadata,omitempty"`
 	// AuthSubject is the gateway-stamped JWT subject (WorkOS user id)
 	// captured at ingest; empty for rows captured before the edge began
 	// stamping it.
@@ -429,6 +434,7 @@ func sessionItemFromStorage(s storage.SessionRecord, now time.Time) SessionItem 
 		Cwd:              s.Cwd,
 		HarnessVersion:   s.HarnessVersion,
 		ParentSessionID:  s.ParentSessionID,
+		ParentHarnessID:  s.ParentHarnessID,
 		StartedAt:        s.StartedAt,
 		LastSeenAt:       s.LastSeenAt,
 		EndedAt:          s.EndedAt,

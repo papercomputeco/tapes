@@ -30,10 +30,15 @@ type SessionRecord struct {
 	// (sessions.derived_title), generated from the conversation. Empty
 	// until title generation produces one. Unlike Name it never falls back
 	// to the identity-row name, so it is the pure descriptive title.
-	DerivedTitle      string
-	Cwd               string // empty when not set
-	HarnessVersion    string // empty when not set
-	ParentSessionID   string // empty when not set
+	DerivedTitle    string
+	Cwd             string // empty when not set
+	HarnessVersion  string // empty when not set
+	ParentSessionID string // empty when not set
+	// ParentHarnessID is the parent session's harness_id, read from the
+	// parent row. Empty when there is no parent. It differs from
+	// HarnessID exactly when the parent ran under another harness (a
+	// claude session that launched a codex child).
+	ParentHarnessID   string
 	StartedAt         time.Time
 	LastSeenAt        time.Time
 	EndedAt           *time.Time // nil when session is still live

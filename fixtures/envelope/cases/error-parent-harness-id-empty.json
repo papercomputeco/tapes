@@ -1,0 +1,29 @@
+{
+  "name": "error-parent-harness-id-empty",
+  "category": "error",
+  "harness": "codex",
+  "description": "A malformed producer sends an empty x-tapes-parent-harness-id beside a parent session id. The reader omits it, so the parent resolves in the child's harness.",
+  "direction": "decode",
+  "headers": {
+    "x-tapes-harness-id": "codex",
+    "x-tapes-harness-session-id": "55555555-5555-4555-8555-555555555555",
+    "x-tapes-parent-harness-session-id": "33333333-3333-4333-8333-333333333333",
+    "x-tapes-parent-harness-id": "",
+    "x-paper-auth-org-id": "00000000-0000-4000-8000-000000000001",
+    "x-paper-auth-subject": "user_synthetic_fixture_subject"
+  },
+  "envelope": {
+    "org_id": "00000000-0000-4000-8000-000000000001",
+    "auth_subject": "user_synthetic_fixture_subject",
+    "harness_id": "codex",
+    "harness_session_id": "55555555-5555-4555-8555-555555555555",
+    "parent_harness_session_id": "33333333-3333-4333-8333-333333333333"
+  },
+  "error": {
+    "field": "parent_harness_id",
+    "rule": "an empty parent-harness header is omitted by the reader, not normalised to unknown; the reject-empty rule guards the JSON body path, not headers",
+    "disposition": "drop-field"
+  },
+  "grounding": "The reader only sets parent_harness_id when the header is non-empty, so an empty one drops out and the parent falls back to the child's harness namespace.",
+  "notes": "Unlike x-tapes-harness-id, an empty parent harness is not substituted with \"unknown\": an unknown parent harness names no session anyone can resolve."
+}

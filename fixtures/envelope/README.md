@@ -36,7 +36,7 @@ Each `cases/*.json` file is one object:
 |---------------|----------|---------|
 | `name`        | yes | stable case id (matches the filename) |
 | `category`    | yes | `valid` \| `percent-encoding` \| `budget` \| `unknown` \| `error` |
-| `harness`     | yes | `claude` \| `codex` \| `pi` \| `unknown` |
+| `harness`     | yes | `claude` \| `codex` \| `hermes` \| `pi` \| `unknown` (the set of harnesses the corpus has a case for — not a closed list the parser enforces) |
 | `description` | yes | one line on what the case pins |
 | `direction`   | yes | `roundtrip` \| `decode` \| `encode` — which conversions this case is authoritative for (see below) |
 | `headers`     | yes | the on-wire header set: lower-cased header name → raw ASCII value, exactly as an HTTP/2 intermediary would carry it |
@@ -66,6 +66,7 @@ Each `cases/*.json` file is one object:
 | `x-tapes-cwd`                          | `cwd`                       | producer percent-encodes UTF-8; **reader percent-decodes**, then applies the control-byte guard |
 | `x-tapes-session-name`                 | `name`                      | producer percent-encodes UTF-8 (capped 256 raw bytes); **reader percent-decodes**, then applies the control-byte guard |
 | `x-tapes-parent-harness-session-id`    | `parent_harness_session_id` | verbatim; **an empty header is dropped by the reader** (omit it) |
+| `x-tapes-parent-harness-id`            | `parent_harness_id`         | verbatim, same rule as `harness_id` but **an empty header is dropped**, never normalised to `"unknown"`; absent means the parent shares `harness_id` |
 | `x-tapes-harness-metadata`             | `harness_metadata`          | **base64url(no-pad) of a JSON value**, raw ≤ 4 KiB; reader retains any valid JSON, validation requires an **object** |
 | `x-paper-auth-org-id`                  | `org_id`                    | server-trusted (set from a validated JWT claim); UUID or empty |
 | `x-paper-auth-subject`                 | `auth_subject`              | server-trusted (set from a validated JWT claim) |
@@ -113,7 +114,13 @@ these are the spots that are easy to get wrong:
   `error-metadata-not-object` is `reject-400`, not a silent drop. Metadata that isn't
   valid base64url *is* dropped (`error-metadata-invalid-base64`). An empty parent header
   is dropped by the reader (`error-parent-empty` → `drop-field`); the reject-empty rule
-  only guards an explicit empty in a JSON ingest body.
+  only guards an explicit empty in a JSON ingest body. The same holds for an empty
+  parent-harness header (`error-parent-harness-id-empty`): it drops out instead of
+  becoming `"unknown"`, so the parent resolves in the child's own harness.
+- **A parent may live in another harness.** `parent_harness_id` names the parent's
+  harness beside `parent_harness_session_id` (`codex-with-cross-harness-parent`: a codex
+  child launched from a claude session). When it is absent the parent is assumed to share
+  the child's `harness_id`, which is every envelope written before the header existed.
 
 ## Consuming
 

@@ -769,6 +769,7 @@ func buildSessionEnvelope(st *streamState) *DispatchedSessionEnvelope {
 		Cwd:                    st.session.Cwd,
 		Name:                   st.session.Name,
 		ParentHarnessSessionID: st.session.ParentHarnessSessionID,
+		ParentHarnessID:        st.session.ParentHarnessID,
 		HarnessMetadata:        st.session.HarnessMetadata,
 	}
 }

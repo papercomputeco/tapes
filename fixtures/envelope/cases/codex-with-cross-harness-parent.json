@@ -1,0 +1,27 @@
+{
+  "name": "codex-with-cross-harness-parent",
+  "category": "valid",
+  "harness": "codex",
+  "description": "A codex child launched from a claude session: parent_harness_id names the parent's harness beside its session id.",
+  "direction": "roundtrip",
+  "headers": {
+    "x-tapes-harness-id": "codex",
+    "x-paper-auth-org-id": "00000000-0000-4000-8000-000000000001",
+    "x-paper-auth-subject": "user_synthetic_fixture_subject",
+    "x-tapes-harness-session-id": "55555555-5555-4555-8555-555555555555",
+    "x-tapes-cwd": "/Users/matt/code",
+    "x-tapes-parent-harness-session-id": "33333333-3333-4333-8333-333333333333",
+    "x-tapes-parent-harness-id": "claude"
+  },
+  "envelope": {
+    "org_id": "00000000-0000-4000-8000-000000000001",
+    "auth_subject": "user_synthetic_fixture_subject",
+    "harness_id": "codex",
+    "harness_session_id": "55555555-5555-4555-8555-555555555555",
+    "cwd": "/Users/matt/code",
+    "parent_harness_session_id": "33333333-3333-4333-8333-333333333333",
+    "parent_harness_id": "claude"
+  },
+  "grounding": "A parent in another harness is named by (parent_harness_id, parent_harness_session_id); both are carried verbatim.",
+  "notes": "Without x-tapes-parent-harness-id the parent is assumed to share the child's harness (claude-with-parent)."
+}

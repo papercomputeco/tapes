@@ -110,6 +110,16 @@ const (
 	// id, when known. Same id-space as TapesHarnessSessionID.
 	TapesParentHarnessSessionID = "x-tapes-parent-harness-session-id"
 
+	// TapesParentHarnessID is the fork parent's harness id, when the
+	// parent ran under a different harness than this request (a claude
+	// session that launched a codex child). Optional: when absent the
+	// parent is assumed to share TapesHarnessID. Same id-space as
+	// TapesHarnessID, and parsed by the same rule — verbatim, with no
+	// closed list — except that an empty value is dropped rather than
+	// normalised to "unknown", because an unknown parent harness is not
+	// a lineage anyone can resolve.
+	TapesParentHarnessID = "x-tapes-parent-harness-id"
+
 	// TapesHarnessMetadata is a base64url-encoded JSON object with
 	// harness-specific metadata. The parser accepts whatever arrived
 	// (size-wise) and surfaces malformed payloads as a non-fatal

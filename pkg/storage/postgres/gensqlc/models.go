@@ -53,6 +53,7 @@ type RawTurnAttributionCorrection struct {
 	ParentHarnessSessionID pgtype.Text
 	Reason                 string
 	CreatedAt              pgtype.Timestamptz
+	ParentHarnessID        pgtype.Text
 }
 
 type Session struct {

@@ -367,6 +367,7 @@ type DispatchedSessionEnvelope struct {
 	Cwd                    string         `json:"cwd,omitempty"`
 	Name                   string         `json:"name,omitempty"`
 	ParentHarnessSessionID string         `json:"parent_harness_session_id,omitempty"`
+	ParentHarnessID        string         `json:"parent_harness_id,omitempty"`
 	HarnessMetadata        map[string]any `json:"harness_metadata,omitempty"`
 }
 

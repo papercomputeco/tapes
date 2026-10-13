@@ -32,6 +32,8 @@ and `raw-turns` print the document as it is, so all four compose with `jq`. `--a
 The `<session-id>` these take is the Tapes session id from `sessions list`. It
 is not the harness session id `tapesctl start` prints when it exits.
 
+A session started by another session carries `parent_session_id` (the parent's Tapes session id) and `parent_harness_id` (the parent's harness). The two harnesses differ when one harness launched the other, such as a Codex session started from a Claude session.
+
 Session responses include `display_title`, the label clients should render. It
 prefers a user rename, then a generated title, then the first human prompt
 preview before falling back to harness identity. Prompt previews omit a leading

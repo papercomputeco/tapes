@@ -222,6 +222,8 @@ change to it is one every capture adapter discovers in production.
 
 A `200` is a completed repair. A `202` means the correction committed and is effective, but the synchronous projection rebuild did not finish: `projections_pending` names the stale sessions, which the derive worker converges on its own — the repair is recorded, so do not retry it.
 
+A repair is a complete replacement attribution. Its optional `parent_harness_id` names the parent's harness beside `parent_harness_session_id`, and requires it; when omitted, the parent resolves in the repaired `harness_id`, even if the captured envelope named another parent harness.
+
 `source_cleanup_pending` is independent of the status code and can accompany either. It discloses an emptied source-session row the cleanup step failed to delete: cosmetic, anchoring no effective turns, and — unlike `projections_pending` — retried by nothing. It does not resolve on its own.
 
 ## Private ingest API
@@ -231,6 +233,18 @@ The private ingest API defaults to `:8082` and serves its separate contract at `
 - `POST /v1/ingest` — append one completed conversation turn;
 - `POST /v1/ingest/transcript` — append one harness transcript file or spawn-anchor row;
 - `GET /ping` — health.
+
+### Session envelope and fork lineage
+
+A `POST /v1/ingest` turn carries an optional `session` envelope: the harness identity (`harness_id`, `harness_session_id`, `harness_version`, `cwd`, `name`, `harness_metadata`) plus the caller's `org_id` and `auth_subject`. Capture adapters build it from the `X-Tapes-*` request headers; the header-to-field mapping and its edge cases are pinned by the language-neutral corpus in `fixtures/envelope/`.
+
+`harness_id` is an open set (`claude`, `codex`, `pi`, `hermes`, …) stored verbatim; a missing or empty one is `unknown`.
+
+A session launched by another session names its parent with `parent_harness_session_id` (header `X-Tapes-Parent-Harness-Session-Id`). The parent may run under a different harness than the child — a Claude session that launches a Codex one — and `parent_harness_id` (header `X-Tapes-Parent-Harness-Id`) names that harness. Ingest resolves the parent by `(org_id, parent_harness_id, parent_harness_session_id)`; when `parent_harness_id` is absent it uses the child's own `harness_id`, so a producer that never sends it keeps same-harness lineage. Send both for a cross-harness parent: without `parent_harness_id`, the parent is looked up in the child's harness and the link misses.
+
+The parent's first turn does not have to arrive first. A child that names an unseen parent creates a placeholder session under the parent's harness, and the parent's own first turn fills that row in place, so the child's `parent_session_id` stays correct either way.
+
+Both fields must be omitted rather than sent empty in a JSON body (`400`). An empty header is dropped by the reader instead, and an empty `X-Tapes-Parent-Harness-Id` never becomes `unknown`. A `parent_harness_id` without a `parent_harness_session_id` names no session and is ignored.
 
 A transcript payload is the main session transcript, one subagent's transcript, or a Codex spawn-anchor row (a `sub_agent_activity` rollout record). `agent_id` and `tool_use_id` carry the subagent fork edge the deriver reconciles against the wire capture. The optional `kind` field qualifies Codex anchor rows: absent or empty means spawn evidence; `"interacted"` marks a re-entry record (`send_message`, `followup_task`) that is stored for future rendering and deliberately ignored by derivation. Rows deduplicate on a structured hash of harness ID, harness session ID, tagged main-vs-agent identity, lifecycle kind, and `records` content. Re-uploading unchanged content is therefore a no-op while a grown transcript appends a new version; the deriver reads the latest version per tagged (main or agent, lifecycle kind), so an agent literally named `main` cannot shadow the main file and an interacted row never supersedes a spawn anchor. Empty and `started` remain the same spawn lifecycle for compatibility with older uploaders.
 

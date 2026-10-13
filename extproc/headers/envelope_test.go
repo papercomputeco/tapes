@@ -142,6 +142,94 @@ func TestParseSessionEnvelope_EmptyHarnessIDDefaultsToUnknown(t *testing.T) {
 	}
 }
 
+// TestParseSessionEnvelope_ParentHarness pins the parent-lineage pair. The
+// parent harness id is carried verbatim, like the harness id, with no closed
+// list of harnesses; unlike the harness id an empty value is dropped rather
+// than normalised to "unknown", because absent means "the parent shares the
+// child's harness" and "unknown" would name a namespace no parent lives in.
+func TestParseSessionEnvelope_ParentHarness(t *testing.T) {
+	cases := []struct {
+		name              string
+		hdrs              map[string]string
+		wantHarness       string
+		wantParentSession string
+		wantParentHarness string
+	}{
+		{
+			name: "cross-harness parent: codex child of a claude session",
+			hdrs: map[string]string{
+				TapesHarnessID:              "codex",
+				TapesHarnessSessionID:       "child-sid",
+				TapesParentHarnessSessionID: "parent-sid",
+				TapesParentHarnessID:        "claude",
+			},
+			wantHarness: "codex", wantParentSession: "parent-sid", wantParentHarness: "claude",
+		},
+		{
+			name: "same-harness parent without the header stays as today",
+			hdrs: map[string]string{
+				TapesHarnessID:              "claude",
+				TapesHarnessSessionID:       "child-sid",
+				TapesParentHarnessSessionID: "parent-sid",
+			},
+			wantHarness: "claude", wantParentSession: "parent-sid",
+		},
+		{
+			name: "empty parent harness is dropped, not normalised to unknown",
+			hdrs: map[string]string{
+				TapesHarnessID:              "codex",
+				TapesHarnessSessionID:       "child-sid",
+				TapesParentHarnessSessionID: "parent-sid",
+				TapesParentHarnessID:        "",
+			},
+			wantHarness: "codex", wantParentSession: "parent-sid",
+		},
+		{
+			name: "a harness outside the known set is carried verbatim",
+			hdrs: map[string]string{
+				TapesHarnessID:              "hermes",
+				TapesHarnessSessionID:       "child-sid",
+				TapesParentHarnessSessionID: "parent-sid",
+				TapesParentHarnessID:        "hermes",
+			},
+			wantHarness: "hermes", wantParentSession: "parent-sid", wantParentHarness: "hermes",
+		},
+		{
+			name: "parent harness alone is carried; ingest ignores it for linkage",
+			hdrs: map[string]string{
+				TapesHarnessID:        "codex",
+				TapesHarnessSessionID: "child-sid",
+				TapesParentHarnessID:  "claude",
+			},
+			wantHarness: "codex", wantParentHarness: "claude",
+		},
+		{
+			name: "parent harness alone flips Present on and defaults harness to unknown",
+			hdrs: map[string]string{
+				"X-Tapes-Parent-Harness-Id": "claude",
+			},
+			wantHarness: "unknown", wantParentHarness: "claude",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ParseSessionEnvelope(mkEnvelopeHeaders(tc.hdrs))
+			if !got.Present {
+				t.Fatalf("Present must be true when any envelope header is set")
+			}
+			if got.HarnessID != tc.wantHarness {
+				t.Errorf("HarnessID: got %q, want %q", got.HarnessID, tc.wantHarness)
+			}
+			if got.ParentHarnessSessionID != tc.wantParentSession {
+				t.Errorf("ParentHarnessSessionID: got %q, want %q", got.ParentHarnessSessionID, tc.wantParentSession)
+			}
+			if got.ParentHarnessID != tc.wantParentHarness {
+				t.Errorf("ParentHarnessID: got %q, want %q", got.ParentHarnessID, tc.wantParentHarness)
+			}
+		})
+	}
+}
+
 func TestParseSessionEnvelope_MalformedMetadataIsNonFatal(t *testing.T) {
 	// Bytes that aren't valid base64url → metadata drops out, malformed
 	// flag set, the rest of the envelope still extracts.

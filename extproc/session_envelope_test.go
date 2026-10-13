@@ -187,6 +187,42 @@ var _ = Describe("Session envelope", func() {
 			Expect(s.HarnessMetadata).To(HaveKeyWithValue("kind", "interactive"))
 		})
 
+		It("forwards the parent's harness id beside its session id for a cross-harness parent", func() {
+			_, captured, _ := runWithRequestHeaders(map[string]string{
+				"x-tapes-harness-id":                "codex",
+				"x-tapes-harness-session-id":        "019a0000-0000-7000-8000-00000000c0de",
+				"x-tapes-parent-harness-session-id": "db822441-baa9-4083-b5c4-e1bdcedd7d3f",
+				"x-tapes-parent-harness-id":         "claude",
+				"x-paper-auth-org-id":               "0193c5e8-1111-7777-aaaa-bbbbbbbbbbbb",
+				"x-paper-auth-subject":              "user_01HZJK3FG",
+			})
+
+			var env struct {
+				Session map[string]any `json:"session"`
+			}
+			Expect(json.Unmarshal(captured, &env)).To(Succeed())
+			Expect(env.Session).To(HaveKeyWithValue("harness_id", "codex"))
+			Expect(env.Session).To(HaveKeyWithValue("parent_harness_session_id", "db822441-baa9-4083-b5c4-e1bdcedd7d3f"))
+			Expect(env.Session).To(HaveKeyWithValue("parent_harness_id", "claude"))
+		})
+
+		It("omits parent_harness_id when the header is absent, keeping same-harness lineage", func() {
+			_, captured, _ := runWithRequestHeaders(map[string]string{
+				"x-tapes-harness-id":                "claude",
+				"x-tapes-harness-session-id":        "db822441-baa9-4083-b5c4-e1bdcedd7d3f",
+				"x-tapes-parent-harness-session-id": "580620c8-0074-4bc4-85a2-90caa8e7f498",
+				"x-paper-auth-org-id":               "0193c5e8-1111-7777-aaaa-bbbbbbbbbbbb",
+				"x-paper-auth-subject":              "user_01HZJK3FG",
+			})
+
+			var env struct {
+				Session map[string]any `json:"session"`
+			}
+			Expect(json.Unmarshal(captured, &env)).To(Succeed())
+			Expect(env.Session).To(HaveKey("parent_harness_session_id"))
+			Expect(env.Session).NotTo(HaveKey("parent_harness_id"))
+		})
+
 		It("attaches the session block when only the pre-existing x-tapes-agent-name is present", func() {
 			// x-tapes-agent-name shares the envelope prefix. The
 			// open-prefix presence rule says: any x-tapes-* header on

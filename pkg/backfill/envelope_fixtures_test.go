@@ -118,6 +118,13 @@ var _ = Describe("envelope fixture corpus (reader oracle)", func() {
 			default:
 				Fail("parent_harness_session_id presence mismatch")
 			}
+			switch {
+			case actual.ParentHarnessID == nil && expected.ParentHarnessID == nil:
+			case actual.ParentHarnessID != nil && expected.ParentHarnessID != nil:
+				Expect(*actual.ParentHarnessID).To(Equal(*expected.ParentHarnessID), "parent_harness_id")
+			default:
+				Fail("parent_harness_id presence mismatch")
+			}
 
 			Expect(jsonEqual(actual.HarnessMetadata, expected.HarnessMetadata)).To(BeTrue(),
 				"harness_metadata: got %s want %s", actual.HarnessMetadata, expected.HarnessMetadata)
