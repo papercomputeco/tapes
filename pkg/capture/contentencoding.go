@@ -2,9 +2,10 @@ package capture
 
 // Decoding a captured body's Content-Encoding.
 //
-// This is the ingest-side half of a contract whose other half lives in the
-// extproc capture adapter (telemetry/tapes-extproc, decodeBodyWithStats). The
-// two must agree, and for a long time they did not: extproc decoded zstd,
+// This is the ingest-side half of a contract whose other half is the extproc
+// capture adapter (extproc/ in this repository, which now calls
+// DecodeContentEncoding itself). The two must agree, and for a long time they
+// did not: extproc decoded zstd,
 // stacked encodings and truncated-but-salvageable streams, while ingest
 // handled a single identity-or-gzip layer. The asymmetry was not a latent
 // bug — it was load-bearing. extproc interlocks its raw-only lane against
