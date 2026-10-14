@@ -14,6 +14,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/capture/fixtures"
 	"github.com/papercomputeco/tapes/pkg/derive"
 	"github.com/papercomputeco/tapes/pkg/llm/provider/openai"
+	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
@@ -54,6 +55,70 @@ var _ = Describe("Chat Completions tool round trip", func() {
 			}
 		}
 		Expect(found).To(BeTrue())
+	})
+})
+
+var _ = Describe("Chat Completions tool-less turns", func() {
+	const (
+		request  = `{"model":"poc-cheap","messages":[{"role":"user","content":"Say hello in five words."}]}`
+		response = `{"object":"chat.completion","model":"poc-cheap","choices":[{"index":0,"message":{"role":"assistant","content":"Hello there, how are you?"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":7,"total_tokens":19}}`
+		auxReq   = `{"model":"poc-cheap","messages":[{"role":"user","content":"Name this conversation: Say hello in five words."}]}`
+		auxResp  = `{"object":"chat.completion","model":"poc-cheap","choices":[{"index":0,"message":{"role":"assistant","content":"Five Word Greeting"},"finish_reason":"stop"}]}`
+	)
+	key := derive.SessionKey{HarnessID: "hermes", HarnessSessionID: "chat-plain"}
+
+	derived := func(envelopes ...string) *derive.SpanSet {
+		reqs, resps := []string{request, auxReq}, []string{response, auxResp}
+		dv, err := derive.NewDeriver("chat-plain")
+		Expect(err).NotTo(HaveOccurred())
+		for i, env := range envelopes {
+			reduced, err := capture.NewOpenAIReducer().Reduce(context.Background(), strings.NewReader(reqs[i]), strings.NewReader(resps[i]), "application/json")
+			Expect(err).NotTo(HaveOccurred())
+			raw, err := json.Marshal(reduced)
+			Expect(err).NotTo(HaveOccurred())
+			rec := &storage.RawTurnRecord{
+				ID: int64(i + 1), Provider: "openai", Source: storage.RawTurnSourceWire,
+				HarnessID: key.HarnessID, HarnessSessionID: key.HarnessSessionID,
+				RawRequest: []byte(reqs[i]), Response: raw,
+				ReceivedAt: time.Unix(100+int64(i), 0),
+			}
+			if env != "" {
+				rec.SessionEnvelope = json.RawMessage(env)
+			} else {
+				rec.HarnessID, rec.HarnessSessionID = "unknown", "0123456789abcdef"
+			}
+			dv.AddTurn(rec)
+		}
+		return derive.EmitSpans(dv.Finish())
+	}
+
+	It("derives an enveloped chat turn as the spine with a completed status", func() {
+		spans := derived(`{"harness_id":"hermes","harness_session_id":"chat-plain"}`)
+		Expect(spans.Report.CallKinds).To(Equal(map[string]int{derive.KindMain: 1}))
+		Expect(spans.Turns).To(HaveLen(1))
+		var llmSpans int
+		for _, span := range spans.Turns[0].Spans {
+			if span.Kind == derive.SpanKindLLM {
+				llmSpans++
+				Expect(span.CallKind).To(Equal(derive.KindMain))
+			}
+		}
+		Expect(llmSpans).To(Equal(1))
+		Expect(spans.Status[key].DerivedStatus).To(Equal(sessions.StatusCompleted))
+	})
+
+	It("keeps an aux-tagged call off the spine", func() {
+		spans := derived(
+			`{"harness_id":"hermes","harness_session_id":"chat-plain"}`,
+			`{"harness_id":"hermes","harness_session_id":"chat-plain","harness_metadata":{"aux_task":"title_generation"}}`,
+		)
+		Expect(spans.Report.CallKinds).To(Equal(map[string]int{derive.KindMain: 1, derive.KindTitleGen: 1}))
+		Expect(spans.Status[key].DerivedStatus).To(Equal(sessions.StatusCompleted))
+	})
+
+	It("leaves an un-enveloped tool-less call unknown", func() {
+		spans := derived("")
+		Expect(spans.Report.CallKinds).To(Equal(map[string]int{derive.KindUnknown: 1}))
 	})
 })
 

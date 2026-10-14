@@ -467,5 +467,6 @@ func buildTurnChain(job Job, project string) []*merkle.Node {
 		AgentName: job.AgentName,
 		ThreadID:  job.ThreadID,
 		Project:   project,
+		Session:   job.Session,
 	}, job.Req, job.Resp)
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/llm/provider/openai"
 	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/sessions"
 )
 
 // TurnChain materializes the ordered (root → leaf) chain of nodes for a
@@ -22,8 +23,9 @@ import (
 // assistant response node. ParentHash linkage is set via merkle.NewNode
 // so every node's hash is stable before any I/O.
 //
-// Every node is stamped with the call's classified kind (ClassifyCall)
-// and the request-envelope parameters — both as non-hashed metadata. On
+// Every node is stamped with the call's classified kind
+// (ClassifyEnvelopedCall) and the request-envelope parameters — both as
+// non-hashed metadata. On
 // insert, nodes already present from an earlier call keep that call's
 // stamp (ON CONFLICT DO NOTHING), so each stored node carries the
 // classification of the call that first captured it.
@@ -42,11 +44,16 @@ type CallContext struct {
 	AgentName string
 	ThreadID  string
 	Project   string
+
+	// Session is the call's session envelope, when the capture path has
+	// one. It is a classification fallback only (ClassifyEnvelopedCall);
+	// nil classifies from the payload alone.
+	Session *sessions.IngestEnvelope
 }
 
 func TurnChain(call CallContext, req *llm.ChatRequest, resp *llm.ChatResponse) []*merkle.Node {
 	return turnChain(call, req, resp, chainOptions{
-		kind:             ClassifyCall(req, resp),
+		kind:             ClassifyEnvelopedCall(req, resp, call.Session),
 		classifyInjected: true,
 		request:          req.Params(),
 	})
