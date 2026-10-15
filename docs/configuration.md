@@ -171,8 +171,8 @@ cap is enabled; a replica sitting at its cap is one whose gauge reads
 ### Idle split
 
 A turn whose session envelope names no harness session id — harness
-`unknown`, a bare proxied call, or a fallback harness stamped without a session
-id — is grouped by its conversation: the first message of the request, which
+`unknown`, a bare proxied call, a turn ingested with no session envelope at
+all, or a fallback harness stamped without a session id — is grouped by its conversation: the first message of the request, which
 every turn of that conversation re-sends. That keeps a task's turns together,
 but a bot that keeps one ever-growing history never starts a new conversation,
 so it would accumulate one unbounded session. `sessions.idle_gap` bounds it: a

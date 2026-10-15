@@ -88,14 +88,15 @@ type Job struct {
 	ResponseBytes int
 
 	// Session is the optional session-tracking envelope attached to
-	// the turn. When non-nil and the driver supports session-aware
-	// ingest (Postgres), the worker UPSERTs the turn's `sessions` row
-	// and folds its derived_status so the deriver can resolve the
-	// session and attach its spans. When nil OR when the driver does
-	// not implement that capability (e.g. inmemory), no sessions row is
-	// written — this keeps unit tests working without a Postgres
-	// backend. The local proxy always attaches an envelope so its
-	// captured turns surface in the deck.
+	// the turn. When the driver supports session-aware ingest
+	// (Postgres), the worker UPSERTs the turn's `sessions` row and folds
+	// its derived_status so the deriver can resolve the session and
+	// attach its spans. A nil envelope still gets a sessions row when
+	// the turn was keyed anyway — its raw turn was written under a
+	// synthetic key here, or SessionKey carries one — so a capture that
+	// arrived with no session block surfaces like any other. When the
+	// turn has neither, or the driver does not implement that capability
+	// (e.g. inmemory), no sessions row is written.
 	Session *sessions.IngestEnvelope
 
 	// SessionKey is the harness_session_id the enqueuing path already
@@ -437,11 +438,18 @@ func (p *Pool) persistRawTurn(ctx context.Context, job Job, chain []*merkle.Node
 func (p *Pool) ingestSession(ctx context.Context, job Job, session *sessions.IngestEnvelope, sessionKey string, chain []*merkle.Node) {
 	log := tapeslogger.RequestLoggerFromContext(ctx)
 	ingester, ok := p.config.Driver.(storage.SessionIngester)
-	if !ok || job.Session == nil {
+	if !ok {
 		return
 	}
 	if session == nil {
 		session, sessionKey = job.Session, job.SessionKey
+	}
+	// A turn with neither an envelope nor a resolved key has no session
+	// identity to upsert. One that carried no envelope but whose raw turn
+	// was keyed (synthetic) still gets its sessions row, so the deriver can
+	// attach its spans.
+	if session == nil && sessionKey == "" {
+		return
 	}
 
 	if _, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{

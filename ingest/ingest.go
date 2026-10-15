@@ -869,13 +869,19 @@ func (s *Server) persistRawTurn(ctx context.Context, turn *TurnPayload, raw rawE
 		rec.OrgID = turn.Session.OrgID
 		rec.HarnessID = turn.Session.HarnessIDOrUnknown()
 		rec.HarnessSessionID = turn.Session.HarnessSessionID
-		if turn.Session.NeedsSyntheticHarnessSessionID() {
-			// Keyed by its conversation root (and idle split), as the
-			// sessions row is; "" leaves the turn unattributed, as before,
-			// when its request does not parse.
-			sessionKey = s.syntheticSessionKey(ctx, turn, raw.Meta)
-			rec.HarnessSessionID = sessionKey
-		}
+	}
+	// A capture that arrived with no session block at all (the producer saw
+	// no session headers) is synthetic too: without a key it would land with
+	// no derive mark and no sessions row, and never surface. It is keyed
+	// under the "unknown" harness, exactly as the local proxy keys a turn
+	// that carries an empty envelope, so both capture paths agree.
+	if turn.Session.NeedsSyntheticHarnessSessionID() {
+		rec.HarnessID = turn.Session.HarnessIDOrUnknown()
+		// Keyed by its conversation root (and idle split), as the sessions
+		// row is; "" leaves the turn unattributed, as before, when its
+		// request does not parse.
+		sessionKey = s.syntheticSessionKey(ctx, turn, raw.Meta)
+		rec.HarnessSessionID = sessionKey
 	}
 	if _, err := s.rawStore.PutRawTurn(ctx, rec); err != nil {
 		s.logger.Error("raw turn persist failed",

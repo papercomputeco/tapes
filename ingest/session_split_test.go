@@ -106,6 +106,24 @@ var _ = Describe("Ingest synthetic session idle split", func() {
 		Expect(driver.IngestCalls()[0].SessionKey).To(Equal(want))
 	})
 
+	It("keys a turn that arrived with no session block like an envelope-less local capture", func() {
+		post("req-bare-1", nil)
+
+		Eventually(driver.IngestCalls).WithTimeout(2 * time.Second).Should(HaveLen(1))
+		Expect(driver.Assigns()).To(HaveLen(1))
+		assign := driver.Assigns()[0]
+		Expect(assign.HarnessID).To(Equal(sessions.HarnessIDUnknown))
+		Expect(assign.Conversation).To(HaveLen(sessions.SyntheticHarnessSessionIDPrefixLen))
+
+		want := assign.Conversation + "-split"
+		raw := driver.RawTurns()[0]
+		Expect(raw.HarnessID).To(Equal(sessions.HarnessIDUnknown))
+		Expect(raw.HarnessSessionID).To(Equal(want),
+			"a keyed raw turn is marked for derive")
+		Expect(driver.IngestCalls()[0].SessionKey).To(Equal(want),
+			"the sessions row is created under the same key")
+	})
+
 	It("leaves a harness-provided session id alone", func() {
 		post("req-claude-1", &sessions.IngestEnvelope{HarnessID: "claude", HarnessSessionID: "hs-provided"})
 

@@ -173,7 +173,37 @@ var _ = Describe("Worker pool capture", func() {
 			Expect(raws[0].HarnessID).To(Equal(sessions.HarnessIDUnknown))
 			Expect(raws[0].HarnessSessionID).NotTo(BeEmpty())
 
-			// No envelope -> no sessions row is upserted.
+			// The sessions row is keyed exactly as the raw turn, so the
+			// deriver resolves it instead of leaving the turn orphaned.
+			calls := driver.IngestCalls()
+			Expect(calls).To(HaveLen(1))
+			Expect(calls[0].SessionKey).To(Equal(raws[0].HarnessSessionID))
+			Expect(calls[0].Session.HarnessIDOrUnknown()).To(Equal(sessions.HarnessIDUnknown))
+		})
+
+		It("upserts the session for an envelope-less job keyed by its enqueuer", func() {
+			driver := newCaptureDriver()
+			wp := newCaptureTestPool(driver)
+
+			// The ingest path writes the raw turn itself and hands the
+			// worker only the key it resolved.
+			job := sampleCaptureJob(nil, nil)
+			job.SessionKey = "0123456789abcdef"
+			wp.Enqueue(job)
+			wp.Close()
+
+			calls := driver.IngestCalls()
+			Expect(calls).To(HaveLen(1))
+			Expect(calls[0].Session).To(BeNil())
+			Expect(calls[0].SessionKey).To(Equal("0123456789abcdef"))
+		})
+
+		It("upserts nothing for a job with neither an envelope nor a key", func() {
+			driver := newCaptureDriver()
+			wp := newCaptureTestPool(driver)
+			wp.Enqueue(sampleCaptureJob(nil, nil))
+			wp.Close()
+
 			Expect(driver.IngestCalls()).To(BeEmpty())
 		})
 
