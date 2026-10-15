@@ -133,3 +133,37 @@ var _ = Describe("AssignSyntheticSplit", func() {
 		Expect(groups(keys)).To(HaveKeyWithValue(conversation, ConsistOf(at(0), at(600), at(6000))))
 	})
 })
+
+var _ = Describe("ValidateIdleGap", func() {
+	It("accepts a disabled gap and any gap of at least a second", func() {
+		Expect(sessions.ValidateIdleGap(0)).To(Succeed())
+		Expect(sessions.ValidateIdleGap(-time.Minute)).To(Succeed())
+		Expect(sessions.ValidateIdleGap(sessions.MinIdleGap)).To(Succeed())
+		Expect(sessions.ValidateIdleGap(sessions.DefaultIdleGap)).To(Succeed())
+	})
+
+	It("rejects a positive gap below a second", func() {
+		err := sessions.ValidateIdleGap(500 * time.Millisecond)
+		Expect(err).To(MatchError(ContainSubstring("below the minimum of 1s")))
+	})
+
+	// Split ids name their start at second resolution. At the minimum gap,
+	// any arrival order of turns spaced just over the gap apart — the
+	// densest that still opens a split per turn — must give every split
+	// its own id, or two splits would merge under one key.
+	It("gives every split a distinct id at the minimum gap", func() {
+		const conversation = "be436c07b169c409"
+		base := time.Date(2026, 10, 13, 17, 0, 0, 999_000_000, time.UTC)
+		const n = 40
+		turns := make([]time.Time, 0, n)
+		for i := range n {
+			turns = append(turns, base.Add(time.Duration(i)*(sessions.MinIdleGap+time.Millisecond)))
+		}
+		rng := rand.New(rand.NewPCG(7, 11))
+		for range 25 {
+			shuffled := append([]time.Time(nil), turns...)
+			rng.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
+			Expect(groups(assignAll(conversation, sessions.MinIdleGap, shuffled))).To(HaveLen(len(turns)))
+		}
+	})
+})

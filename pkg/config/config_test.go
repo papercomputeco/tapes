@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -31,6 +32,16 @@ var _ = Describe("Configer config", func() {
 	})
 
 	Describe("LoadConfig", func() {
+		It("rejects a file with a sub-second sessions.idle_gap", func() {
+			Expect(os.WriteFile(filepath.Join(tmpDir, "config.toml"),
+				[]byte("[sessions]\n  idle_gap = \"100ms\"\n"), 0o600)).To(Succeed())
+			c, err := config.NewConfiger(tmpDir)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = c.LoadConfig()
+			Expect(err).To(MatchError(ContainSubstring("below the minimum of 1s")))
+		})
+
 		It("returns default config when no config file exists", func() {
 			c, err := config.NewConfiger(tmpDir)
 			Expect(err).NotTo(HaveOccurred())
@@ -168,6 +179,15 @@ provider = "openai"
 	})
 
 	Describe("SaveConfig", func() {
+		It("rejects a sub-second sessions.idle_gap", func() {
+			c, err := config.NewConfiger(tmpDir)
+			Expect(err).NotTo(HaveOccurred())
+
+			cfg := config.NewDefaultConfig()
+			cfg.Sessions.IdleGap = 250 * time.Millisecond
+			Expect(c.SaveConfig(cfg)).To(MatchError(ContainSubstring("below the minimum of 1s")))
+		})
+
 		It("persists config to disk", func() {
 			cfg := &config.Config{
 				Version: config.CurrentV,
@@ -238,6 +258,16 @@ provider = "openai"
 			cfg, err := c.LoadConfig()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cfg.Proxy.Provider).To(Equal("anthropic"))
+		})
+
+		It("rejects a sub-second sessions.idle_gap and saves nothing", func() {
+			c, err := config.NewConfiger(tmpDir)
+			Expect(err).NotTo(HaveOccurred())
+
+			err = c.SetConfigValue("sessions.idle_gap", "500ms")
+			Expect(err).To(MatchError(ContainSubstring("below the minimum of 1s")))
+			_, err = os.Stat(filepath.Join(tmpDir, "config.toml"))
+			Expect(os.IsNotExist(err)).To(BeTrue())
 		})
 
 		It("returns error for unknown key", func() {

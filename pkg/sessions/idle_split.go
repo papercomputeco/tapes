@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -10,6 +11,23 @@ import (
 // replying to one ever-growing conversation gets a session per burst of
 // activity rather than one session forever.
 const DefaultIdleGap = 30 * time.Minute
+
+// MinIdleGap is the smallest idle gap that enables splitting. A split's id
+// names its start at second resolution, and a new split only ever opens
+// more than one gap away from every existing split's start, so a gap of
+// at least a second guarantees no two splits of a conversation share an
+// id. Below it, two splits opened within the same second would collide
+// and silently merge.
+const MinIdleGap = time.Second
+
+// ValidateIdleGap rejects an idle gap that is positive but below
+// MinIdleGap. Zero (or less) disables splitting and is always valid.
+func ValidateIdleGap(gap time.Duration) error {
+	if gap > 0 && gap < MinIdleGap {
+		return fmt.Errorf("sessions.idle_gap %s is below the minimum of %s (use 0 to disable splitting)", gap, MinIdleGap)
+	}
+	return nil
+}
 
 // syntheticSplitIDLayout renders a split's start instant into its id:
 // UTC, second resolution, no separators that would need escaping in a

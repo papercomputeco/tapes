@@ -81,6 +81,11 @@ var _ = Describe("Worker pool synthetic session idle split", func() {
 		Expect(driver.RawTurns()[0].HarnessSessionID).To(Equal("harness-abc"))
 	})
 
+	It("refuses a sub-second idle gap", func() {
+		_, err := NewPool(&Config{Driver: newCaptureDriver(), Logger: tapeslogger.NewNoop(), SessionIdleGap: 500 * time.Millisecond})
+		Expect(err).To(MatchError(ContainSubstring("below the minimum of 1s")))
+	})
+
 	It("keeps the bare conversation key when the split is disabled", func() {
 		driver := &splitCaptureDriver{captureDriver: newCaptureDriver()}
 		wp := newPool(driver, 0)

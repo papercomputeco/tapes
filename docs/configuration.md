@@ -184,7 +184,10 @@ a new session.
 | `sessions.idle_gap` | `--session-idle-gap` | `--session-idle-gap` | `30m` |
 
 It is a duration string (`45m`, `2h`); `0` turns the split off, so such a
-conversation stays one session however long it runs. A session id the harness
+conversation stays one session however long it runs. A gap must otherwise be
+at least `1s`: a split's id names its start to the second, so a shorter gap
+could open two splits with the same id. A shorter value is rejected when the
+config is loaded or set, and when a capture process starts. A session id the harness
 supplies is never split, at any gap. Every process that captures — the proxy
 and the ingest server — must run with the same value, since each places the
 turns it receives. Changing it affects turns captured afterwards; turns already

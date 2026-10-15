@@ -175,6 +175,12 @@ func NewPool(c *Config) (*Pool, error) {
 		return nil, fmt.Errorf("NumWorkers %d exceeds max int", c.NumWorkers)
 	}
 
+	// Every capture path (the proxy and the ingest server) builds its pool
+	// here, so this is the one place the gap is checked whatever set it.
+	if err := sessions.ValidateIdleGap(c.SessionIdleGap); err != nil {
+		return nil, err
+	}
+
 	wp := &Pool{
 		config:     c,
 		queue:      make(chan Job, c.QueueSize),
