@@ -8,6 +8,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/papercomputeco/tapes/pkg/derive"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
@@ -51,6 +52,23 @@ var _ = Describe("Worker pool synthetic session idle split", func() {
 		calls := driver.IngestCalls()
 		Expect(calls).To(HaveLen(1))
 		Expect(calls[0].SessionKey).To(Equal(want))
+	})
+
+	It("places the turn by its capture time, not the time the worker runs", func() {
+		driver := &splitCaptureDriver{captureDriver: newCaptureDriver()}
+		wp := newPool(driver, 30*time.Minute)
+		capturedAt := time.Date(2026, 10, 13, 9, 0, 0, 123456000, time.UTC)
+		job := sampleCaptureJob(&sessions.IngestEnvelope{}, rawBody)
+		job.CapturedAt = capturedAt
+		wp.Enqueue(job)
+		wp.Close()
+
+		Expect(driver.assigns).To(HaveLen(1))
+		Expect(driver.assigns[0].CapturedAt).To(BeTemporally("==", capturedAt))
+		raws := driver.RawTurns()
+		Expect(raws).To(HaveLen(1))
+		Expect(derive.CapturedAt(&raws[0])).To(BeTemporally("==", capturedAt),
+			"the raw turn is dated by the instant the split compared")
 	})
 
 	It("never splits a harness-provided session id", func() {

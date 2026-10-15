@@ -381,8 +381,9 @@ func (p *Proxy) handleNonStreamingProxy(c fiber.Ctx, path, method, upstreamURL s
 				// large turns applies backpressure instead of exhausting the
 				// proxy. Omitting the weight (the earlier bug) let proxy
 				// captures bypass the budget the ingest path already respects.
-				Weight:  captureWeight(len(body), len(respBody)),
-				Session: localCaptureSession(),
+				Weight:     captureWeight(len(body), len(respBody)),
+				Session:    localCaptureSession(),
+				CapturedAt: startTime,
 			})
 		}
 	}
@@ -541,8 +542,9 @@ func (p *Proxy) handleSSEStreamViaCapture(r capture.Reducer, httpResp *http.Resp
 		// queue byte budget (see the non-streaming path). This path keeps no
 		// raw response buffer, so the reduced form is measured via
 		// responseWeight.
-		Weight:  captureWeight(len(rawRequest), responseWeight(resp)),
-		Session: localCaptureSession(),
+		Weight:     captureWeight(len(rawRequest), responseWeight(resp)),
+		Session:    localCaptureSession(),
+		CapturedAt: startTime,
 	})
 }
 
@@ -752,6 +754,7 @@ func (p *Proxy) enqueueStreamedResponse(allChunks [][]byte, fullContent string, 
 				ResponseBytes: responseBytes,
 				Weight:        captureWeight(len(rawRequest), respBytes),
 				Session:       localCaptureSession(),
+				CapturedAt:    startTime,
 			})
 		}
 	}

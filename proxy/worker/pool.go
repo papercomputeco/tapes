@@ -87,6 +87,14 @@ type Job struct {
 	RequestBytes  int
 	ResponseBytes int
 
+	// CapturedAt is when the request reached the capture layer — the
+	// turn's start. It dates the raw turn (meta ts_request, the instant
+	// the deriver dates the turn's spans by) and is the instant the idle
+	// split compares, so neither queueing nor the length of the response
+	// moves a turn across a split boundary. Zero falls back to the time
+	// the worker processes the job.
+	CapturedAt time.Time
+
 	// Session is the optional session-tracking envelope attached to
 	// the turn. When the driver supports session-aware ingest
 	// (Postgres), the worker UPSERTs the turn's `sessions` row and folds
@@ -302,9 +310,10 @@ func (p *Pool) processJob(job Job) {
 
 // rawTurnMeta is the minimal capture-side meta block the proxy stamps
 // onto a raw turn. The deriver reads thread_id for sub-thread
-// attribution; ts_request is omitted because single-process local
-// capture inserts the row at ~capture time, so the deriver's
-// received_at fallback is accurate.
+// attribution and ts_request for the turn's start: the instant the
+// request reached the proxy, which the idle split also compares. The row
+// is inserted only after the response completes and the job drains, so
+// its received_at would date the turn late by both.
 //
 // request_bytes and response_bytes are the keys the raw-turn wire log
 // (GET /v1/sessions/{id}/raw_turns) reads a row's sizes from. They are
@@ -316,6 +325,7 @@ type rawTurnMeta struct {
 	ThreadID          string `json:"thread_id,omitempty"`
 	RequestID         string `json:"request_id,omitempty"`
 	UpstreamRequestID string `json:"upstream_request_id,omitempty"`
+	TsRequest         string `json:"ts_request,omitempty"`
 	RequestBytes      int    `json:"request_bytes,omitempty"`
 	ResponseBytes     int    `json:"response_bytes,omitempty"`
 }
@@ -354,12 +364,16 @@ func (p *Pool) persistRawTurn(ctx context.Context, job Job, chain []*merkle.Node
 		requestID = head.Hash
 	}
 
-	// Local capture writes the row at ~capture time, so "now" is the
-	// capture instant the split rule compares.
+	capturedAt := job.CapturedAt
+	if capturedAt.IsZero() {
+		capturedAt = time.Now()
+	}
+	capturedAt = capturedAt.UTC()
+
 	envelope, harnessSessionID, err := storage.ResolveSessionKey(ctx, p.config.Driver, job.Session, storage.SyntheticTurn{
 		RootHash:   root.Hash,
 		RequestID:  requestID,
-		CapturedAt: time.Now(),
+		CapturedAt: capturedAt,
 		IdleGap:    p.config.SessionIdleGap,
 	})
 	switch {
@@ -385,6 +399,7 @@ func (p *Pool) persistRawTurn(ctx context.Context, job Job, chain []*merkle.Node
 		ThreadID:          job.ThreadID,
 		RequestID:         job.RequestID,
 		UpstreamRequestID: job.UpstreamRequestID,
+		TsRequest:         capturedAt.Format(time.RFC3339Nano),
 		RequestBytes:      job.RequestBytes,
 		ResponseBytes:     job.ResponseBytes,
 	})

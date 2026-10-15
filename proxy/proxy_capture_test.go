@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/papercomputeco/tapes/ingest"
+	"github.com/papercomputeco/tapes/pkg/derive"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 )
 
@@ -275,5 +277,88 @@ var _ = Describe("Anthropic non-streaming proxy (capture-backed)", func() {
 		meta := decodeCaptureMeta(raws[0].Meta)
 		Expect(meta.RequestBytes).To(Equal(len(reqBody)))
 		Expect(meta.ResponseBytes).To(Equal(len(upstreamBody)))
+	})
+})
+
+// A turn is dated by when its request reached the proxy, not by when the
+// worker got to it: the response's length and the queue's depth must not
+// move a turn across an idle-split boundary, nor shift its spans. Each
+// enqueue site carries the instant separately, so both are covered.
+var _ = Describe("Proxy capture time", func() {
+	const upstreamDelay = 300 * time.Millisecond
+
+	var (
+		p        *Proxy
+		driver   *captureDriver
+		upstream *httptest.Server
+	)
+
+	AfterEach(func() {
+		if p != nil {
+			p.Close()
+		}
+		if upstream != nil {
+			upstream.Close()
+		}
+	})
+
+	BeforeEach(func() {
+		upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			time.Sleep(upstreamDelay)
+			if strings.Contains(string(body), `"stream":true`) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprint(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_x\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-3-5-sonnet-20241022\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":7,\"output_tokens\":1}}}\n\n")
+				fmt.Fprint(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
+				fmt.Fprint(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n")
+				fmt.Fprint(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
+				fmt.Fprint(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":1}}\n\n")
+				fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"id":"msg_x","type":"message","role":"assistant",`+
+				`"content":[{"type":"text","text":"Hello"}],`+
+				`"model":"claude-3-5-sonnet-20241022","stop_reason":"end_turn","stop_sequence":null,`+
+				`"usage":{"input_tokens":7,"output_tokens":1}}`)
+		}))
+		p, driver = newAnthropicTestProxy(upstream.URL)
+	})
+
+	capture := func(stream bool) (time.Time, time.Time) {
+		reqBody := fmt.Sprintf(`{"model":"claude-3-5-sonnet-20241022","max_tokens":64,"stream":%t,"messages":[{"role":"user","content":"hi"}]}`, stream)
+		before := time.Now()
+		resp, err := p.server.Test(httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(reqBody)), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})
+		Expect(err).NotTo(HaveOccurred())
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		_, err = io.ReadAll(resp.Body)
+		Expect(err).NotTo(HaveOccurred())
+
+		p.Close()
+		p = nil
+
+		raws := driver.RawTurns()
+		Expect(raws).To(HaveLen(1))
+		meta := decodeCaptureMeta(raws[0].Meta)
+		ts, err := time.Parse(time.RFC3339Nano, meta.TsRequest)
+		Expect(err).NotTo(HaveOccurred(), "the proxy stamps ts_request")
+		Expect(derive.CapturedAt(&raws[0])).To(BeTemporally("==", ts),
+			"the deriver dates the turn by the same instant")
+		return before, ts
+	}
+
+	It("stamps a non-streamed turn with its request's arrival", func() {
+		before, ts := capture(false)
+		Expect(ts).To(BeTemporally(">=", before.Truncate(time.Microsecond)))
+		Expect(ts).To(BeTemporally("<", before.Add(upstreamDelay/2)),
+			"not the response's completion or the worker's processing time")
+	})
+
+	It("stamps a streamed turn with its request's arrival", func() {
+		before, ts := capture(true)
+		Expect(ts).To(BeTemporally(">=", before.Truncate(time.Microsecond)))
+		Expect(ts).To(BeTemporally("<", before.Add(upstreamDelay/2)),
+			"not the stream's end or the worker's processing time")
 	})
 })
