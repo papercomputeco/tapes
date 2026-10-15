@@ -232,7 +232,13 @@ The private ingest API defaults to `:8082` and serves its separate contract at `
 
 - `POST /v1/ingest` — append one completed conversation turn;
 - `POST /v1/ingest/transcript` — append one harness transcript file or spawn-anchor row;
-- `GET /ping` — health.
+- `GET /ping` — health, and the server's capabilities.
+
+`GET /ping` answers `{"status":"ok","capabilities":[…]}`. Each capability names an optional envelope behaviour this server implements, so a capture adapter can check before it sends a field whose meaning an older server would not share: ingest ignores a field it does not know rather than refusing it. A server that predates the list omits `capabilities`; treat that, and a failed probe, as none.
+
+| Capability | Meaning |
+| --- | --- |
+| `parent_harness_id` | A fork parent resolves under the envelope's `parent_harness_id`. Without it, the field is ignored and the parent is looked up in the child's harness. |
 
 ### Session envelope and fork lineage
 
@@ -240,7 +246,7 @@ A `POST /v1/ingest` turn carries an optional `session` envelope: the harness ide
 
 `harness_id` is an open set (`claude`, `codex`, `pi`, `hermes`, …) stored verbatim; a missing or empty one is `unknown`.
 
-A session launched by another session names its parent with `parent_harness_session_id` (header `X-Tapes-Parent-Harness-Session-Id`). The parent may run under a different harness than the child — a Claude session that launches a Codex one — and `parent_harness_id` (header `X-Tapes-Parent-Harness-Id`) names that harness. Ingest resolves the parent by `(org_id, parent_harness_id, parent_harness_session_id)`; when `parent_harness_id` is absent it uses the child's own `harness_id`, so a producer that never sends it keeps same-harness lineage. Send both for a cross-harness parent: without `parent_harness_id`, the parent is looked up in the child's harness and the link misses.
+A session launched by another session names its parent with `parent_harness_session_id` (header `X-Tapes-Parent-Harness-Session-Id`). The parent may run under a different harness than the child — a Claude session that launches a Codex one — and `parent_harness_id` (header `X-Tapes-Parent-Harness-Id`) names that harness. Ingest resolves the parent by `(org_id, parent_harness_id, parent_harness_session_id)`; when `parent_harness_id` is absent it uses the child's own `harness_id`, so a producer that never sends it keeps same-harness lineage. Send both for a cross-harness parent: without `parent_harness_id`, the parent is looked up in the child's harness and the link misses. A server that does not advertise the `parent_harness_id` capability behaves that way whatever the adapter sends, so an adapter talking to one should leave a cross-harness parent off the row rather than create a placeholder in the wrong harness.
 
 The parent's first turn does not have to arrive first. A child that names an unseen parent creates a placeholder session under the parent's harness, and the parent's own first turn fills that row in place, so the child's `parent_session_id` stays correct either way.
 

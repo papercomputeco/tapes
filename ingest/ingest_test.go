@@ -114,6 +114,25 @@ var _ = Describe("Ingest Server", func() {
 			body, _ := io.ReadAll(resp.Body)
 			Expect(string(body)).To(ContainSubstring("ok"))
 		})
+
+		It("advertises that a fork parent resolves under parent_harness_id", func() {
+			// A capture adapter reads this list to decide whether to send a
+			// cross-harness parent at all: a server without the entry ignores
+			// the field and would mint a placeholder in the child's harness.
+			resp, err := client.Get(baseURL + "/ping")
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			var got struct {
+				Status       string   `json:"status"`
+				Capabilities []string `json:"capabilities"`
+			}
+			Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+			Expect(got.Status).To(Equal("ok"))
+			Expect(got.Capabilities).To(Equal([]string{"parent_harness_id"}))
+			Expect(got.Capabilities).To(ContainElement(ingest.CapabilityParentHarnessID))
+		})
 	})
 
 	Describe("GET /metrics", func() {

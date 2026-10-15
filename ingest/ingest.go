@@ -358,7 +358,7 @@ func (s *Server) Close() error {
 }
 
 func (s *Server) handlePing(c fiber.Ctx) error {
-	return c.JSON(pingResponse{Status: "ok"})
+	return c.JSON(pingResponse{Status: "ok", Capabilities: Capabilities()})
 }
 
 // decodeEnvelopeField typed-decodes one dual-view sub-field from its verbatim
