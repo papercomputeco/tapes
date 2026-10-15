@@ -487,6 +487,40 @@ listen = ":7070"
 			Expect(err).NotTo(HaveOccurred())
 			Expect(loaded).To(Equal(cfg))
 		})
+
+		// A zero duration means "disabled" for these keys, while their
+		// defaults are non-zero; a saved zero must survive the reload rather
+		// than fall back to the default. The TOML encoder's omitempty never
+		// drops a zero number (only omitzero does) — this pins that.
+		It("keeps a zero sessions.idle_gap across save and reload", func() {
+			c, err := config.NewConfiger(tmpDir)
+			Expect(err).NotTo(HaveOccurred())
+
+			cfg := config.NewDefaultConfig()
+			cfg.Sessions.IdleGap = 0
+			cfg.API.ReadDeadline = 0
+			Expect(c.SaveConfig(cfg)).To(Succeed())
+
+			data, err := os.ReadFile(filepath.Join(tmpDir, "config.toml"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(data)).To(ContainSubstring(`idle_gap = "0s"`))
+
+			loaded, err := c.LoadConfig()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(loaded.Sessions.IdleGap).To(BeZero())
+			Expect(loaded.API.ReadDeadline).To(BeZero())
+		})
+
+		It("keeps a zero sessions.idle_gap set through SetConfigValue", func() {
+			c, err := config.NewConfiger(tmpDir)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(c.SetConfigValue("sessions.idle_gap", "0")).To(Succeed())
+
+			loaded, err := c.LoadConfig()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(loaded.Sessions.IdleGap).To(BeZero())
+		})
 	})
 })
 
