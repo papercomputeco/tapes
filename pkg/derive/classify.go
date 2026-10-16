@@ -41,6 +41,14 @@ const (
 	// harness's own word that the call is off the conversation spine.
 	KindHarnessAux = "offshoot:harness-aux"
 
+	// KindProgressLabel is the few-word "what am I doing" label the
+	// harness asks a running subagent for, so the parent UI can show
+	// its progress. KindAwaySummary is the short recap it requests when
+	// the user returns to an idle session. Both are forks of the live
+	// conversation, so their envelope matches a main call exactly.
+	KindProgressLabel = "offshoot:progress-label"
+	KindAwaySummary   = "offshoot:away-summary"
+
 	// Injected context — whole messages the harness prepends inside
 	// otherwise-normal calls. They drift between turns (server lists
 	// change, modes toggle), so they are kept OFF the main chain as
@@ -103,8 +111,19 @@ func ClassifyCall(req *llm.ChatRequest, resp *llm.ChatResponse) string {
 	// the START of the last message is the only discriminator. The
 	// prefix match keeps a main turn that merely QUOTES the marker
 	// (e.g. grepping harness internals) from misclassifying.
-	if strings.HasPrefix(strings.TrimSpace(lastText(req)), "[SUGGESTION MODE") {
+	last := strings.TrimSpace(lastText(req))
+	if strings.HasPrefix(last, "[SUGGESTION MODE") {
 		return KindSuggestion
+	}
+
+	// Progress labels and away summaries fork the conversation the same
+	// way, so they are told apart by the same kind of prefix match on
+	// the instruction the harness appends.
+	if strings.HasPrefix(last, "Describe your most recent action in 3-5 words") {
+		return KindProgressLabel
+	}
+	if strings.HasPrefix(last, "The user stepped away and is coming back.") {
+		return KindAwaySummary
 	}
 
 	// Title / plan-name generation: tool-less calls whose system
