@@ -320,6 +320,7 @@ var _ = Describe("GET /v1/sessions/:id/transcript", func() {
 		Entry("unknown role", pagedSessionID, "?role=system"),
 		Entry("non-boolean subagents", pagedSessionID, "?subagents=maybe"),
 		Entry("zero limit", pagedSessionID, "?limit=0"),
+		Entry("negative limit", pagedSessionID, "?limit=-1"),
 		Entry("garbage cursor", pagedSessionID, "?cursor=%%%"),
 		Entry("cursor for another session", pagedSessionID, "?cursor="+encodeCursor(transcriptPageCursor{
 			Session: "11111111-2222-4333-8444-555555555555", TraceID: "trc-b",
@@ -361,5 +362,35 @@ var _ = Describe("GET /v1/sessions/:id/transcript", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(missing.IsError).To(BeTrue(), "an unknown session is a tool error")
+
+		negative, err := session.CallTool(ctx, &mcpsdk.CallToolParams{
+			Name:      "transcript",
+			Arguments: map[string]any{"session_id": pagedSessionID, "limit": -1},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(negative.IsError).To(BeTrue(), "a negative limit is rejected as it is on HTTP")
+	})
+
+	It("bounds an MCP transcript call by its own timeout", func(ctx SpecContext) {
+		driver := newTranscriptModel()
+		seen := make(chan bool, 1)
+		driver.onListTraceSummaries = func(c context.Context) {
+			_, ok := c.Deadline()
+			seen <- ok
+		}
+		guarded := newPagedServer(driver)
+		httpServer := httptest.NewServer(guarded.mcpServer.Handler())
+		DeferCleanup(httpServer.Close)
+		session, err := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test", Version: "1"}, nil).
+			Connect(ctx, &mcpsdk.StreamableClientTransport{Endpoint: httpServer.URL}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(session.Close)
+
+		_, err = session.CallTool(ctx, &mcpsdk.CallToolParams{
+			Name:      "transcript",
+			Arguments: map[string]any{"session_id": pagedSessionID},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(seen).To(Receive(BeTrue()), "the builder runs under a deadline")
 	})
 })
