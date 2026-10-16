@@ -62,4 +62,24 @@ var _ = Describe("Driver.ListSubjects [postgres]", func() {
 		Expect(subjects).To(HaveLen(1))
 		Expect(subjects[0].Subject).To(Equal("local:alice"))
 	})
+
+	It("matches q as literal text, not a LIKE pattern", func() {
+		seedFor("user_01", "sess-underscore")
+		seedFor("userX01", "sess-x")
+		seedFor("50%off", "sess-percent")
+		seedFor(`dom\user`, "sess-backslash")
+
+		ids := func(q string) []string {
+			subjects, err := driver.ListSubjects(ctx, orgID, q, 10)
+			Expect(err).NotTo(HaveOccurred())
+			out := make([]string, 0, len(subjects))
+			for _, s := range subjects {
+				out = append(out, s.Subject)
+			}
+			return out
+		}
+		Expect(ids("user_01")).To(ConsistOf("user_01"))
+		Expect(ids("%")).To(ConsistOf("50%off"))
+		Expect(ids(`\`)).To(ConsistOf(`dom\user`))
+	})
 })
