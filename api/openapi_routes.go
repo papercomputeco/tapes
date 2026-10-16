@@ -25,6 +25,7 @@ func (s *Server) mountV1(router *oasfiber.Router) {
 	s.mountHealth(router)
 	s.mountSessions(router)
 	s.mountTraces(router)
+	s.mountSubjects(router)
 	s.mountAdmin(router)
 	s.mountMCP(router)
 }
@@ -297,6 +298,24 @@ func (s *Server) mountTraces(router *oasfiber.Router) {
 			JSONResponse(404, "Trace not found", s.errorSchema()).
 			JSONResponse(500, "Failed to load trace", s.errorSchema()).
 			JSONResponse(501, "Traces not supported by this backend", s.errorSchema()))
+}
+
+func (s *Server) mountSubjects(router *oasfiber.Router) {
+	router.Get("/v1/subjects", s.handleListSubjects,
+		oasfiber.Doc("listSubjects").
+			Summary("List the subjects that have captured sessions").
+			Description("Returns one row per distinct auth_subject on captured sessions, most "+
+				"recently active first, with its session count. The values are what the "+
+				"auth_subject filter on /v1/sessions and on search accept.").
+			Tag("sessions").
+			QueryParam("q", oas.String(),
+				oas.ParamDescription("Keep subjects whose id contains this (case-insensitive)")).
+			QueryParam("limit", oas.Integer(oas.Minimum(1)),
+				oas.ParamDescription("Maximum number of subjects to return (default 50, max 200)")).
+			JSONResponse(200, "The subjects", s.schema(SubjectListResponse{})).
+			JSONResponse(400, "Invalid query parameters", s.errorSchema()).
+			JSONResponse(500, "Failed to list subjects", s.errorSchema()).
+			JSONResponse(501, "Subjects not supported by this backend", s.errorSchema()))
 }
 
 func (s *Server) mountAdmin(router *oasfiber.Router) {

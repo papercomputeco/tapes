@@ -67,9 +67,9 @@ type SessionRecord struct {
 	KindCounts    json.RawMessage
 	Preview       string // first user turn text, truncated; empty when unavailable
 	PreviewIsJSON bool   // full prompt was valid JSON before preview truncation
-	// AuthSubject is the gateway-stamped JWT subject (the WorkOS user id)
-	// captured at ingest. Empty for rows captured before the edge began
-	// stamping the x-paper-auth-subject header.
+	// AuthSubject is the subject a trusted gateway vouched for at ingest
+	// (TAPES_TRUSTED_SUBJECT_HEADER), or the capture client's own claim
+	// when no gateway stamps one. Empty when neither supplied it.
 	AuthSubject string
 	// SortVal is the canonical ::text form of this row's active sort column,
 	// populated by ListSessionRecords so the API can mint an exact next cursor.
@@ -218,4 +218,11 @@ func ParseSortDirection(raw string) (SortDirection, bool) {
 func SessionSortColumn(f SessionSortField) (SortColumn, bool) {
 	c, ok := sessionSortColumn[f]
 	return c, ok
+}
+
+// Subject is one auth_subject seen on captured sessions.
+type Subject struct {
+	Subject      string
+	SessionCount int64
+	LastSeenAt   time.Time
 }

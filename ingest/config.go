@@ -22,4 +22,13 @@ type Config struct {
 	// after the conversation's previous turn. Zero disables the split; a
 	// harness-provided session id is never split.
 	SessionIdleGap time.Duration
+
+	// SubjectHeader names the server-trusted header a gateway stamps with
+	// the caller's subject on transcript pushes. Off when empty, and then
+	// the payload's own identity fields stand. The wire-capture path reads
+	// the same header in tapes-extproc, configured by the same variable.
+	SubjectHeader string
 }
+
+// EnvTrustedSubjectHeader names the trusted subject header.
+const EnvTrustedSubjectHeader = "TAPES_TRUSTED_SUBJECT_HEADER"

@@ -92,17 +92,18 @@ func (d *rawStoreDriver) lastRecord() storage.RawTurnRecord {
 }
 
 func newTranscriptTestServer() (*ingest.Server, *rawStoreDriver, string) {
+	return newTranscriptTestServerWith(ingest.Config{SubjectHeader: "x-auth-subject"})
+}
+
+// newTranscriptTestServerWith starts a server with cfg's identity header
+// settings; the listen address and project are fixed for the test.
+func newTranscriptTestServerWith(cfg ingest.Config) (*ingest.Server, *rawStoreDriver, string) {
 	logger := tapeslogger.NewNoop()
 	driver := newRawStoreDriver()
 
-	s, err := ingest.New(
-		ingest.Config{
-			ListenAddr: ":0",
-			Project:    "test-project",
-		},
-		driver,
-		logger,
-	)
+	cfg.ListenAddr = ":0"
+	cfg.Project = "test-project"
+	s, err := ingest.New(cfg, driver, logger)
 	Expect(err).NotTo(HaveOccurred())
 
 	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
@@ -183,8 +184,8 @@ var _ = Describe("POST /v1/ingest/transcript", func() {
 		// the deployment — an org header (which nothing legitimate ever
 		// stamped) must not store rows the nil-scoped read side would miss.
 		resp := post(transcriptBody(payloadOrg, "user_payload"), map[string]string{
-			ingest.HeaderPaperAuthOrgID:   gatewayOrg,
-			ingest.HeaderPaperAuthSubject: "user_gateway",
+			ingest.HeaderPaperAuthOrgID: gatewayOrg,
+			"x-auth-subject":            "user_gateway",
 		})
 		defer resp.Body.Close()
 		Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
@@ -196,6 +197,20 @@ var _ = Describe("POST /v1/ingest/transcript", func() {
 		Expect(json.Unmarshal(rec.SessionEnvelope, &envelope)).To(Succeed())
 		Expect(envelope.OrgID).To(BeEmpty())
 		Expect(envelope.AuthSubject).To(Equal("user_gateway"))
+	})
+
+	It("trusts no gateway header when none is configured", func() {
+		Expect(server.Close()).To(Succeed())
+		server, driver, baseURL = newTranscriptTestServerWith(ingest.Config{})
+		resp := post(transcriptBody(payloadOrg, "user_payload"), map[string]string{
+			"x-auth-subject": "user_gateway",
+		})
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
+
+		var envelope sessions.IngestEnvelope
+		Expect(json.Unmarshal(driver.lastRecord().SessionEnvelope, &envelope)).To(Succeed())
+		Expect(envelope.AuthSubject).To(Equal("user_payload"))
 	})
 
 	It("keeps the payload subject when no gateway subject arrives", func() {

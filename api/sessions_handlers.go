@@ -641,7 +641,7 @@ func (s *Server) handleListSessions(c fiber.Ctx) error {
 	orgID := singleTenantOrgID
 	// auth_subject is a caller-supplied filter, not an identity claim: it
 	// narrows results within this tenant and grants nothing. The verified
-	// subject is stamped at ingest from the JWT (x-paper-auth-subject) and
+	// subject is stamped at ingest from the trusted subject header and
 	// is what gets stored; this only chooses which of those rows to show.
 	opts.AuthSubject = c.Query("auth_subject")
 	// The claimed filters (empty when no claimed param was supplied) ride

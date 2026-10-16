@@ -28,6 +28,13 @@ import (
 // fakeStream / observer helpers are exercised verbatim.
 func runWithRequestHeaders(reqHeaders map[string]string) (*observer, []byte, []*extprocv3.ProcessingResponse) {
 	GinkgoHelper()
+	return runWithConfig(Config{MaxInflight: 4, SubjectHeader: "x-auth-subject"}, reqHeaders)
+}
+
+// runWithConfig is runWithRequestHeaders with a caller-supplied Config;
+// IngestURL is always pointed at the fake ingest.
+func runWithConfig(cfg Config, reqHeaders map[string]string) (*observer, []byte, []*extprocv3.ProcessingResponse) {
+	GinkgoHelper()
 
 	var ingestBody atomic.Value
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -37,10 +44,8 @@ func runWithRequestHeaders(reqHeaders map[string]string) (*observer, []byte, []*
 	}))
 	DeferCleanup(srv.Close)
 
-	proc, err := NewProcessor(Config{
-		IngestURL:   srv.URL,
-		MaxInflight: 4,
-	})
+	cfg.IngestURL = srv.URL
+	proc, err := NewProcessor(cfg)
 	Expect(err).NotTo(HaveOccurred())
 
 	obs := newObserver()
@@ -165,7 +170,7 @@ var _ = Describe("Session envelope", func() {
 				"x-tapes-parent-harness-session-id": "580620c8-0074-4bc4-85a2-90caa8e7f498",
 				"x-tapes-harness-metadata":          base64.RawURLEncoding.EncodeToString(meta),
 				"x-paper-auth-org-id":               "0193c5e8-1111-7777-aaaa-bbbbbbbbbbbb",
-				"x-paper-auth-subject":              "user_01HZJK3FG",
+				"x-auth-subject":                    "user_01HZJK3FG",
 			})
 
 			var env struct {
@@ -231,9 +236,9 @@ var _ = Describe("Session envelope", func() {
 			// strip symmetric (both gated by the same prefix) and
 			// forward-compatible with future envelope additions.
 			_, captured, _ := runWithRequestHeaders(map[string]string{
-				"x-tapes-agent-name":   "claude-code",
-				"x-paper-auth-org-id":  "org",
-				"x-paper-auth-subject": "sub",
+				"x-tapes-agent-name":  "claude-code",
+				"x-paper-auth-org-id": "org",
+				"x-auth-subject":      "sub",
 			})
 
 			var env struct {
@@ -253,8 +258,8 @@ var _ = Describe("Session envelope", func() {
 			// own must not synthesize a session block; the X-Tapes-*
 			// namespace is the trigger.
 			_, captured, _ := runWithRequestHeaders(map[string]string{
-				"x-paper-auth-org-id":  "org",
-				"x-paper-auth-subject": "sub",
+				"x-paper-auth-org-id": "org",
+				"x-auth-subject":      "sub",
 			})
 
 			// Decode permissively into a map so the test asserts on
@@ -273,9 +278,9 @@ var _ = Describe("Session envelope", func() {
 			// harness_session_id. The session block must still be
 			// emitted so tapes-ingest sees the envelope.
 			_, captured, _ := runWithRequestHeaders(map[string]string{
-				"x-tapes-harness-id":   "unknown",
-				"x-paper-auth-org-id":  "org-xyz",
-				"x-paper-auth-subject": "sub-xyz",
+				"x-tapes-harness-id":  "unknown",
+				"x-paper-auth-org-id": "org-xyz",
+				"x-auth-subject":      "sub-xyz",
 			})
 
 			var env struct {
@@ -326,9 +331,9 @@ var _ = Describe("Session envelope", func() {
 
 		It("emits an org_id/auth_subject pair on the session block when JWT-derived headers are present", func() {
 			_, captured, _ := runWithRequestHeaders(map[string]string{
-				"x-tapes-harness-id":   "claude",
-				"x-paper-auth-org-id":  "org-trusted",
-				"x-paper-auth-subject": "auth0|user",
+				"x-tapes-harness-id":  "claude",
+				"x-paper-auth-org-id": "org-trusted",
+				"x-auth-subject":      "auth0|user",
 			})
 			var env struct {
 				Session *DispatchedSessionEnvelope `json:"session"`
@@ -362,5 +367,34 @@ var _ = Describe("Session envelope", func() {
 			}
 			Expect(found).To(BeTrue(), "test must observe a ResponseHeaders response")
 		})
+	})
+})
+
+var _ = Describe("Trusted subject header", func() {
+	type sessionBody struct {
+		Session *DispatchedSessionEnvelope `json:"session"`
+	}
+
+	It("reads the subject only from the header a deployment configured", func() {
+		_, captured, _ := runWithConfig(Config{MaxInflight: 4, SubjectHeader: "x-auth-sub"},
+			map[string]string{
+				"x-tapes-harness-id": "claude",
+				"x-auth-subject":     "ignored",
+				"x-auth-sub":         "alice",
+			})
+		var env sessionBody
+		Expect(json.Unmarshal(captured, &env)).To(Succeed())
+		Expect(env.Session.AuthSubject).To(Equal("alice"))
+	})
+
+	It("trusts no header when none is configured", func() {
+		_, captured, _ := runWithConfig(Config{MaxInflight: 4}, map[string]string{
+			"x-tapes-harness-id":   "claude",
+			"x-auth-subject":       "alice",
+			"x-paper-auth-subject": "alice",
+		})
+		var env sessionBody
+		Expect(json.Unmarshal(captured, &env)).To(Succeed())
+		Expect(env.Session.AuthSubject).To(BeEmpty())
 	})
 })

@@ -63,9 +63,6 @@ var (
 const (
 	// HeaderPaperAuthOrgID carries the verified org claim.
 	HeaderPaperAuthOrgID = "x-paper-auth-org-id"
-
-	// HeaderPaperAuthSubject carries the verified `sub` claim.
-	HeaderPaperAuthSubject = "x-paper-auth-subject"
 )
 
 // TurnPayload is the ingest request body for a single completed conversation turn.
@@ -536,7 +533,7 @@ func (s *Server) handleTranscriptIngest(c fiber.Ctx) error {
 			Error: fmt.Sprintf("%s: %s", ErrEnvelope, err),
 		})
 	}
-	resolveGatewayIdentity(c, payload.Session)
+	s.resolveGatewayIdentity(c, payload.Session)
 	if err := payload.Session.Validate(); err != nil {
 		s.metrics.ObserveWrite(transcriptWriteProvider, ResultRejectEnv, bodySize)
 		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{
@@ -664,7 +661,7 @@ func transcriptRequestID(payload *TranscriptPayload) string {
 // session envelope at capture time). The override runs BEFORE envelope
 // validation so a malformed gateway-supplied org rejects loudly at the
 // HTTP boundary instead of corrupting attribution downstream.
-func resolveGatewayIdentity(c fiber.Ctx, session *sessions.IngestEnvelope) {
+func (s *Server) resolveGatewayIdentity(c fiber.Ctx, session *sessions.IngestEnvelope) {
 	if session == nil {
 		return
 	}
@@ -674,9 +671,18 @@ func resolveGatewayIdentity(c fiber.Ctx, session *sessions.IngestEnvelope) {
 	// the columns go. (In practice nothing ever stamped the org header: the
 	// edge strips it from clients and mints only the subject.)
 	session.OrgID = ""
-	if sub := c.Get(HeaderPaperAuthSubject); sub != "" {
+	if sub := optionalHeader(c, s.config.SubjectHeader); sub != "" {
 		session.AuthSubject = sub
 	}
+}
+
+// optionalHeader reads a configured optional header; an unconfigured
+// (empty) name reads nothing.
+func optionalHeader(c fiber.Ctx, name string) string {
+	if name == "" {
+		return ""
+	}
+	return c.Get(name)
 }
 
 // persistRawTurn appends one captured turn to the immutable raw layer.

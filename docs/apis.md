@@ -16,6 +16,7 @@ The default read API listens on `:8081`. It serves health, derived data, operato
 | Health and contract | `GET /ping`, `GET /openapi`, `GET /swagger`, `GET /metrics` |
 | Browser UI | `GET /`, served only with `--api-web-ui` |
 | Sessions | `/v1/sessions`, `/v1/sessions/{id}`, `/v1/sessions/{id}/traces`, `/v1/sessions/{id}/transcript`, `/v1/sessions/{id}/raw_turns` |
+| Subjects | `GET /v1/subjects` |
 | Traces and spans | `/v1/traces`, `/v1/traces/{trace_id}`, `/v1/traces/{trace_id}/spans/{span_id}` |
 | Aggregates | `GET /v1/stats` |
 | MCP | `/v1/mcp` |
@@ -271,6 +272,21 @@ Consumers of these contracts live outside this repository, which is why the
 ingest surface in particular is sealed rather than merely tested: an unannounced
 change to it is one every capture adapter discovers in production.
 
+### Subjects
+
+Every captured session carries an `auth_subject`: an opaque id for whoever the
+capture belongs to — the subject a trusted gateway vouched for (see
+[trusted identity headers](#trusted-identity-headers)), or the capture
+client's own claim, such as `tapesctl start --auth-subject` (default
+`local:<user>`). tapes stores only the id; mapping it to a person, if a
+deployment wants that, is the job of whatever fronts tapes.
+
+- `GET /v1/subjects?q=&limit=` lists one row per distinct `auth_subject` on
+  captured sessions, most recently active first: `{"items": [{"subject",
+  "session_count", "last_seen_at"}]}`. `q` keeps ids that contain it.
+- `GET /v1/sessions?auth_subject=<id>` narrows the session list to one subject
+  (exact match).
+
 ### Attribution repair
 
 `POST /v1/admin/raw-turns/attribution-repair` records an audited, append-only attribution correction for exactly one raw turn — selected by `raw_turn_id` or `paper_proxy_request_id` — without modifying `raw_turns`, then synchronously re-derives the previous and effective sessions.
@@ -320,6 +336,17 @@ tapes serve ingest --postgres "$TAPES_STORAGE_POSTGRES_DSN"
 ```
 
 Request bodies are capped at roughly 14.67 MiB. A POST over the limit is rejected with `413` and the surface's standard JSON error envelope (`{"error": "..."}`), the same shape as every other rejection, so capture adapters can parse all failures uniformly. Each body-limit rejection is counted in `tapes_ingest_writes_total{provider="unknown",status="reject_oversize"}` (the body is never parsed, so the provider is unknown) and logged with the declared content length, the configured limit, and the request path.
+
+### Trusted identity headers
+
+The gateway, not the client, vouches for who a capture belongs to. Set
+`TAPES_TRUSTED_SUBJECT_HEADER` to the header your gateway stamps with the
+verified subject, on both `tapes serve ingest` (transcript pushes) and
+`tapes-extproc` (wire capture); its value is stored as `auth_subject`. It is
+unset by default: a standalone install with no gateway in front trusts no
+header and keeps the identity the capture client reported. Clients must not be
+able to send the configured header themselves; stripping it at the edge is the
+gateway's job.
 
 The ingest server appends to immutable `raw_turns`; it does not provide the read API. Treat it as a private trusted write surface, not as a public application endpoint. Authentication, network policy, and gateway grants are deployment responsibilities.
 
