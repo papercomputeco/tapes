@@ -78,10 +78,9 @@ Useful supported keys include:
 
 ### The internal listener
 
-The API server can run a second listener carrying the operator surfaces that
-must not be reachable through a gateway: the asynchronous
-[derive runs](./apis.md#derive-runs), and `GET /internal/readiness/evidence`.
-Evidence reports what this process loaded and what
+The API server can run a second listener carrying `GET
+/internal/readiness/evidence` and, when `TAPES_ADMIN_LISTENER=internal`, the
+`/v1/admin/` operator routes. Evidence reports what this process loaded and what
 admitting that configuration produced: the instance's identity, a digest of the
 cassette source list in effect, and each source's admission result with its
 manifest and OpenAPI digests. It publishes no configuration value and no
@@ -103,8 +102,9 @@ reachable. Expose this one as a container port and keep it off the Service.
 | --- | --- |
 | `TAPES_INTERNAL_LISTEN` | Internal listener address. Unset, no listener runs. Use `:8092`. |
 | `TAPES_INTERNAL_TOKEN` | Bearer token every request must present. |
+| `TAPES_ADMIN_LISTENER` | Which listener serves the `/v1/admin/` routes: `api` (default) or `internal`. `internal` requires `TAPES_INTERNAL_LISTEN`. See [where the admin routes are served](./apis.md#where-the-admin-routes-are-served). |
 
-Both are read from the environment only — never from `config.toml` and never
+All three are read from the environment only — never from `config.toml` and never
 from a flag, because a token in a config file outlives the process that needed
 it and one in a flag is readable from the host's process table. Setting
 `TAPES_INTERNAL_LISTEN` without `TAPES_INTERNAL_TOKEN` fails startup rather

@@ -11,6 +11,8 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/derive"
 	"github.com/papercomputeco/tapes/pkg/llm"
+	oas "github.com/papercomputeco/tapes/pkg/tapesoapi"
+	"github.com/papercomputeco/tapes/pkg/tapesoapi/oasfiber"
 )
 
 // Asynchronous derive runs.
@@ -23,11 +25,8 @@ import (
 // happens in the background, records each session as it finishes, and resumes
 // from the first unfinished session in whichever process picks it up next.
 //
-// These routes live on the internal listener, not the API listener, for the
-// same reason the evidence endpoint does: a gateway that rewrites a public path
-// prefix onto the API listener's root would make them publicly reachable, and
-// the API process performs no authorization of its own. The internal listener
-// requires its bearer token on every request.
+// Like every /v1/admin/ route these are served by the listener the deployment
+// chose for admin routes (see admin_listener.go).
 const (
 	// DeriveRunsPath creates (POST) and lists (GET) derive runs.
 	DeriveRunsPath = "/v1/admin/derive/runs"
@@ -70,12 +69,62 @@ type deriveRunList struct {
 	Runs []derive.Run `json:"runs"`
 }
 
-// mountDeriveRuns registers the derive-run routes on the internal listener.
-func (s *Server) mountDeriveRuns(app *fiber.App) {
-	app.Post(DeriveRunsPath, s.handleStartDeriveRun)
-	app.Get(DeriveRunsPath, s.handleListDeriveRuns)
-	app.Post(deriveRunCancelPath, s.handleCancelDeriveRun)
-	app.Get(deriveRunPath, s.handleGetDeriveRun)
+// mountDeriveRuns registers and describes the derive-run routes.
+func (s *Server) mountDeriveRuns(router *oasfiber.Router) {
+	runID := func(doc *oasfiber.DocBuilder) *oasfiber.DocBuilder {
+		return doc.PathParam("id", oas.String(), oas.ParamDescription("Derive run id (UUID)"))
+	}
+
+	router.Post(DeriveRunsPath, s.handleStartDeriveRun,
+		oasfiber.Doc("startDeriveRun").
+			Summary("Start an asynchronous derive run (operator)").
+			Description("Snapshots the set of persisted sessions and re-derives each of them in the "+
+				"background, recording progress per session so a run interrupted by a restart "+
+				"resumes at its first unfinished session. At most one run is active at a time: "+
+				"starting another while one is active returns that run with 200 instead of 202. "+
+				"Poll it at the Location returned.").
+			Tag("admin").
+			OptionalJSONBody("Run options", s.schema(deriveRunRequest{})).
+			JSONResponse(202, "Run created", s.schema(derive.Run{})).
+			JSONResponse(200, "A run is already active; this is it", s.schema(derive.Run{})).
+			JSONResponse(400, "Invalid payload", s.errorSchema()).
+			JSONResponse(500, "Run could not be created", s.errorSchema()).
+			JSONResponse(501, "Driver does not support derive runs", s.errorSchema()))
+
+	router.Get(DeriveRunsPath, s.handleListDeriveRuns,
+		oasfiber.Doc("listDeriveRuns").
+			Summary("List derive runs (operator)").
+			Description("Returns the most recent derive runs, newest first.").
+			Tag("admin").
+			QueryParam("limit", oas.Integer(oas.Minimum(1), oas.Maximum(maxDeriveRunListLimit)),
+				oas.ParamDescription("Maximum number of runs (default 20, max 200)")).
+			JSONResponse(200, "Recent runs", s.schema(deriveRunList{})).
+			JSONResponse(400, "Malformed limit", s.errorSchema()).
+			JSONResponse(500, "Runs could not be listed", s.errorSchema()).
+			JSONResponse(501, "Driver does not support derive runs", s.errorSchema()))
+
+	router.Post(deriveRunCancelPath, s.handleCancelDeriveRun,
+		runID(oasfiber.Doc("cancelDeriveRun").
+			Summary("Cancel a derive run (operator)").
+			Description("Stops an active run after the session in progress. Sessions already "+
+				"re-derived stay re-derived. Canceling a run that is no longer active returns it "+
+				"unchanged.").
+			Tag("admin")).
+			JSONResponse(200, "The run after the cancel", s.schema(derive.Run{})).
+			JSONResponse(404, "Run not found", s.errorSchema()).
+			JSONResponse(500, "Run could not be canceled", s.errorSchema()).
+			JSONResponse(501, "Driver does not support derive runs", s.errorSchema()))
+
+	router.Get(deriveRunPath, s.handleGetDeriveRun,
+		runID(oasfiber.Doc("getDeriveRun").
+			Summary("Read a derive run (operator)").
+			Description("Reports a run's state and progress: sessions done, total, and failed, the "+
+				"aggregated derive report, and a sample of per-session errors.").
+			Tag("admin")).
+			JSONResponse(200, "The run", s.schema(derive.Run{})).
+			JSONResponse(404, "Run not found", s.errorSchema()).
+			JSONResponse(500, "Run could not be read", s.errorSchema()).
+			JSONResponse(501, "Driver does not support derive runs", s.errorSchema()))
 }
 
 func (s *Server) deriveRuns(c fiber.Ctx) (deriveRunStore, bool) {

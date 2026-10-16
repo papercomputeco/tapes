@@ -48,6 +48,10 @@ type Server struct {
 	// does not become a different pod partway through its life.
 	instance EvidenceInstance
 
+	// adminApp carries the /v1/admin/ routes when they are served by the
+	// internal listener; nil when the API listener serves them.
+	adminApp *fiber.App
+
 	// deriveRunWake wakes the derive-run supervisor when a run is created on
 	// this process, so it starts at once rather than on the next poll.
 	deriveRunWake chan struct{}
@@ -214,6 +218,20 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 	// openapi_routes.go preserves that order.
 	router := oasfiber.Wrap(app, s.openapi, oasfiber.WithUndocumented(oasfiber.Fail))
 	s.mountV1(router)
+
+	// The admin routes register into the same parser wherever they are
+	// served, so the published contract does not depend on the deployment's
+	// choice of port. On the internal listener they live on an app of their
+	// own, which that listener mounts behind its bearer check.
+	adminRouter := router
+	if config.AdminListener == AdminListenerInternal {
+		s.adminApp = fiber.New()
+		adminRouter = oasfiber.Wrap(s.adminApp, s.openapi, oasfiber.WithUndocumented(oasfiber.Fail))
+	}
+	s.mountAdmin(adminRouter)
+	if err := adminRouter.Err(); err != nil {
+		return nil, err
+	}
 
 	// API reference UI. Always mounted — the viewer JS comes from a CDN
 	// at view time, so the binary cost is negligible.

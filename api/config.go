@@ -29,6 +29,12 @@ type Config struct {
 	// advertises as current. Empty means DefaultContractVersions().
 	ContractVersions []cassette.ContractVersion
 
+	// AdminListener chooses which listener serves the /v1/admin/ routes.
+	// Empty means AdminListenerAPI. With AdminListenerInternal they are served
+	// only by the internal listener, so one must be built for them to be
+	// reachable at all. See admin_listener.go.
+	AdminListener AdminListener
+
 	// ReadDeadline bounds every request: its context is cancelled once the
 	// deadline elapses, so storage aborts and a stream still writing is cut
 	// rather than left running for a client that has already given up.

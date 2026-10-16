@@ -179,7 +179,14 @@ func (stack *Stack) Run(ctx context.Context) error {
 		"provider", stack.ProviderType,
 	)
 
+	internalConfig := internallisten.Config()
+	adminListener, err := internallisten.AdminListener(internalConfig)
+	if err != nil {
+		return err
+	}
+
 	apiServer, err := api.NewServer(api.Config{ //nolint:contextcheck // Fiber owns request contexts.
+		AdminListener:      adminListener,
 		ListenAddr:         stack.APIListen,
 		EnableWebUI:        stack.APIWebUI,
 		ContractVersions:   stack.ContractVersions,
@@ -198,16 +205,16 @@ func (stack *Stack) Run(ctx context.Context) error {
 	// Built before anything starts listening: a listener that was asked for
 	// and cannot be built safely must stop startup, not surface later as a
 	// deployment that looks healthy while answering evidence to anyone.
-	internalServer, err := internallisten.New(apiServer, internallisten.Config(), stack.Logger)
+	internalServer, err := internallisten.New(apiServer, internalConfig, stack.Logger)
 	if err != nil {
 		return err
 	}
 	if internalServer != nil {
 		defer func() { _ = internalServer.Shutdown() }()
-		// Derive runs are created on the internal listener, so the process
-		// serving it is the one that executes and resumes them.
-		apiServer.StartDeriveRunSupervisor(ctx, api.DefaultDeriveRunPoll)
 	}
+	// Derive runs execute in whichever API process is up to it, wherever their
+	// routes are served; the run's lock keeps one executor per run.
+	apiServer.StartDeriveRunSupervisor(ctx, api.DefaultDeriveRunPoll)
 
 	// contextcheck is right that this chain drops `ctx`: the ingest server's
 	// capture workers persist each turn under context.Background()

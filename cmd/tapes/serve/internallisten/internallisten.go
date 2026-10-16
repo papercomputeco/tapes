@@ -16,6 +16,7 @@
 package internallisten
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -52,4 +53,22 @@ func New(server *api.Server, config api.InternalConfig, log *slog.Logger) (*api.
 	}
 
 	return server.NewInternalServer(config)
+}
+
+// AdminListener reads which listener serves the /v1/admin/ routes from the
+// environment, and refuses a choice the configuration cannot honor: moving the
+// admin routes to an internal listener that is not configured would leave them
+// served by nothing, which is a deployment that looks healthy while every
+// operator call 404s.
+func AdminListener(config api.InternalConfig) (api.AdminListener, error) {
+	listener, err := api.ParseAdminListener(os.Getenv(api.EnvAdminListener))
+	if err != nil {
+		return "", err
+	}
+	if listener == api.AdminListenerInternal && config.ListenAddr == "" {
+		return "", fmt.Errorf("%s=%s requires the internal listener; set %s (and %s)",
+			api.EnvAdminListener, api.AdminListenerInternal, api.EnvInternalListen, api.EnvInternalToken)
+	}
+
+	return listener, nil
 }

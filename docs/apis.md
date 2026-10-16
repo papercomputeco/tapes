@@ -19,7 +19,7 @@ The default read API listens on `:8081`. It serves health, derived data, operato
 | Traces and spans | `/v1/traces`, `/v1/traces/{trace_id}`, `/v1/traces/{trace_id}/spans/{span_id}` |
 | Aggregates | `GET /v1/stats` |
 | MCP | `/v1/mcp` |
-| Operator actions | `/v1/admin/derive/run`, `/v1/admin/seed/demo`, `/v1/admin/raw-turns/attribution-repair` (asynchronous derive runs are on the [internal listener](#derive-runs)) |
+| Operator actions | `/v1/admin/derive/run`, `/v1/admin/derive/runs` ([derive runs](#derive-runs)), `/v1/admin/seed/demo`, `/v1/admin/raw-turns/attribution-repair` — on this listener by default, or only on the [internal listener](#internal-listener) with `TAPES_ADMIN_LISTENER=internal` |
 | Cassettes | `GET /v1/cassettes`, `GET /v1/cassettes/{name}/openapi.json`, `/v1/cassettes/{name}`, `/v1/cassettes/{name}/*` |
 
 `GET /metrics` is Prometheus exposition, deliberately outside any auth group and not described in the contract. `GET /` is HTML, not API surface, and is not described either.
@@ -275,21 +275,37 @@ The capture proxy defaults to `:8080`. It exposes provider-compatible request pa
 ## Internal listener
 
 Optional, off unless `TAPES_INTERNAL_LISTEN` names an address, and documented
-to use `:8092`. It carries two operator surfaces: `GET
-/internal/readiness/evidence`, which reports what this process loaded and what
-admitting that configuration produced — instance identity, a digest of the
-cassette source list in effect, and each source's admission result — and the
-asynchronous [derive runs](#derive-runs). Neither is part of the read API's
-sealed contract or appears in its OpenAPI document, deliberately: a deployment
-that puts a gateway in front of the read API may rewrite a public path prefix
-onto its root, which would make any path added there publicly reachable. Expose
-this as a container port and keep it off the Service. Every request must
-present `TAPES_INTERNAL_TOKEN` as a bearer token. See
+to use `:8092`. It always carries `GET /internal/readiness/evidence`, which
+reports what this process loaded and what admitting that configuration
+produced — instance identity, a digest of the cassette source list in effect,
+and each source's admission result. That endpoint is not part of the read API's
+sealed contract and does not appear in its OpenAPI document, deliberately: a
+deployment that puts a gateway in front of the read API may rewrite a public
+path prefix onto its root, which would make any path added there publicly
+reachable. Expose this as a container port and keep it off the Service. Every
+request must present `TAPES_INTERNAL_TOKEN` as a bearer token. See
 [Configuration](./configuration.md).
+
+### Where the admin routes are served
+
+The `/v1/admin/` routes are operator writes, and the API process performs no
+authorization of its own. `TAPES_ADMIN_LISTENER` picks the listener that serves
+them:
+
+| Value | Admin routes are served |
+| --- | --- |
+| `api` (default) | on the read API listener, as they always have been |
+| `internal` | only on the internal listener, behind its bearer token; the read API answers `404` for them |
+
+Choose `internal` when the read API is reachable by anyone the operator does
+not trust with those writes — behind a gateway, for example. Startup fails if
+`internal` is chosen without `TAPES_INTERNAL_LISTEN`. Either way the routes
+stay described in the read API's OpenAPI document and its seal: the setting
+moves the port that serves them, not the contract.
 
 ### Derive runs
 
-`POST /v1/admin/derive/run` on the read API re-derives the whole store inside
+`POST /v1/admin/derive/run` re-derives the whole store inside
 one request, so the work lasts exactly as long as the connection carrying it. A
 gateway timeout, a client that sleeps, or a replica rolling loses it, and on a
 large store it runs for hours (a measured rate is roughly half a second per raw
@@ -304,8 +320,8 @@ turn). A derive run is the same re-derive as a durable background job:
 
 Starting a run snapshots the set of sessions it covers into the database and
 returns at once; sessions captured afterwards are derived by the derive worker
-as usual. The run then executes in the background on the process that serves
-the internal listener, and records each session as it finishes. If that
+as usual. The run then executes in the background on an API server process, and
+records each session as it finishes. If that
 process stops — a restart, a roll, a crash — the run stays `running`, and the
 next process to poll for it (every 30 seconds, on every replica) resumes it at
 the first unfinished session. Only one process executes a run at a time; the

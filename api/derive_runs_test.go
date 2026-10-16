@@ -16,6 +16,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/derive"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
+	"github.com/papercomputeco/tapes/pkg/storage"
 	"github.com/papercomputeco/tapes/pkg/storage/inmemory"
 )
 
@@ -125,7 +126,7 @@ func (s *deriveRunStub) executedRuns() []string {
 
 var _ deriveRunStore = (*deriveRunStub)(nil)
 
-var _ = Describe("derive runs on the internal listener", func() {
+var _ = Describe("derive runs, with admin routes on the internal listener", func() {
 	const token = "derive-run-token"
 
 	var (
@@ -134,14 +135,9 @@ var _ = Describe("derive runs on the internal listener", func() {
 		internal *InternalServer
 	)
 
-	build := func(driver any) {
+	build := func(driver storage.Driver) {
 		var err error
-		switch d := driver.(type) {
-		case *deriveRunStub:
-			server, err = NewServer(Config{ListenAddr: ":0"}, d, tapeslogger.NewNoop())
-		case *inmemory.Driver:
-			server, err = NewServer(Config{ListenAddr: ":0"}, d, tapeslogger.NewNoop())
-		}
+		server, err = NewServer(Config{ListenAddr: ":0", AdminListener: AdminListenerInternal}, driver, tapeslogger.NewNoop())
 		Expect(err).NotTo(HaveOccurred())
 		internal, err = server.NewInternalServer(InternalConfig{ListenAddr: DefaultInternalListen, Token: token})
 		Expect(err).NotTo(HaveOccurred())
@@ -230,12 +226,39 @@ var _ = Describe("derive runs on the internal listener", func() {
 		Expect(stub.runs).To(BeEmpty())
 	})
 
-	// The gateway rewrites a public prefix onto the API listener's root, so
-	// a route there is a route anyone with gateway access can call.
 	It("is not served on the API listener", func() {
 		response, _ := call(server.app, http.MethodPost, DeriveRunsPath, "", true)
 		Expect(response.StatusCode).To(Equal(http.StatusNotFound))
 		Expect(stub.runs).To(BeEmpty())
+	})
+
+	DescribeTable("moves every admin route off the API listener",
+		func(method, path string) {
+			response, _ := call(server.app, method, path, "", true)
+			Expect(response.StatusCode).To(Equal(http.StatusNotFound))
+			response, _ = call(internal.app, method, path, "", false)
+			Expect(response.StatusCode).To(Equal(http.StatusUnauthorized))
+			response, _ = call(internal.app, method, path, "", true)
+			Expect(response.StatusCode).NotTo(BeElementOf(http.StatusNotFound, http.StatusUnauthorized),
+				"served on the internal listener to a caller with the token")
+		},
+		Entry("seed", http.MethodPost, "/v1/admin/seed/demo"),
+		Entry("synchronous derive run", http.MethodPost, "/v1/admin/derive/run"),
+		Entry("attribution repair", http.MethodPost, "/v1/admin/raw-turns/attribution-repair"),
+		Entry("derive runs", http.MethodGet, DeriveRunsPath),
+	)
+
+	It("publishes the same contract as a server with admin on the API listener", func(ctx SpecContext) {
+		document, err := server.openapi.Compile(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(document.Paths()).To(ContainElements("/v1/admin/derive/runs", "/v1/admin/seed/demo"))
+
+		defaults, err := NewServer(Config{ListenAddr: ":0"}, stub, tapeslogger.NewNoop())
+		Expect(err).NotTo(HaveOccurred())
+		reference, err := defaults.openapi.Compile(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(document.Fingerprint()).To(Equal(reference.Fingerprint()),
+			"the knob moves the port, not the contract")
 	})
 
 	It("answers 501 when the driver cannot host runs", func() {
@@ -281,5 +304,60 @@ var _ = Describe("derive runs on the internal listener", func() {
 		server.StartDeriveRunSupervisor(runCtx, 10*time.Millisecond)
 
 		Consistently(stub.executedRuns).WithTimeout(100 * time.Millisecond).Should(BeEmpty())
+	})
+})
+
+var _ = Describe("derive runs, with admin routes on the API listener (the default)", func() {
+	const token = "derive-run-token"
+
+	var (
+		stub     *deriveRunStub
+		server   *Server
+		internal *InternalServer
+	)
+
+	BeforeEach(func() {
+		stub = &deriveRunStub{Driver: inmemory.NewDriver()}
+		var err error
+		server, err = NewServer(Config{ListenAddr: ":0"}, stub, tapeslogger.NewNoop())
+		Expect(err).NotTo(HaveOccurred())
+		internal, err = server.NewInternalServer(InternalConfig{ListenAddr: DefaultInternalListen, Token: token})
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	request := func(app *fiber.App, method, path string) int {
+		req := httptest.NewRequest(method, path, nil)
+		req.Header.Set(fiber.HeaderAuthorization, "Bearer "+token)
+		response, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(response.Body.Close)
+		return response.StatusCode
+	}
+
+	It("serves derive runs on the API listener", func() {
+		Expect(request(server.app, http.MethodPost, DeriveRunsPath)).To(Equal(http.StatusAccepted))
+		Expect(request(server.app, http.MethodGet, DeriveRunsPath)).To(Equal(http.StatusOK))
+	})
+
+	It("does not also serve them on the internal listener", func() {
+		Expect(request(internal.app, http.MethodPost, DeriveRunsPath)).To(Equal(http.StatusNotFound))
+		Expect(stub.runs).To(BeEmpty())
+	})
+})
+
+var _ = Describe("ParseAdminListener", func() {
+	DescribeTable("accepts the two listeners and defaults to the API",
+		func(value string, want AdminListener) {
+			Expect(ParseAdminListener(value)).To(Equal(want))
+		},
+		Entry("unset", "", AdminListenerAPI),
+		Entry("api", "api", AdminListenerAPI),
+		Entry("internal", "internal", AdminListenerInternal),
+		Entry("any case, padded", " Internal ", AdminListenerInternal),
+	)
+
+	It("refuses anything else", func() {
+		_, err := ParseAdminListener("public")
+		Expect(err).To(MatchError(ContainSubstring(EnvAdminListener)))
 	})
 })

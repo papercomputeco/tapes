@@ -134,7 +134,14 @@ func (c *apiCommander) run(ctx context.Context) error {
 	}
 	defer driver.Close()
 
+	internalConfig := internallisten.Config()
+	adminListener, err := internallisten.AdminListener(internalConfig)
+	if err != nil {
+		return err
+	}
+
 	apiConfig := api.Config{
+		AdminListener:      adminListener,
 		ListenAddr:         c.listen,
 		EnableWebUI:        c.webUI,
 		ReadDeadline:       c.readDeadline,
@@ -155,7 +162,11 @@ func (c *apiCommander) run(ctx context.Context) error {
 		server.StartCassetteSpecRefresh(ctx, c.cassetteRefresh)
 	}
 
-	internalServer, err := internallisten.New(server, internallisten.Config(), c.logger)
+	// Derive runs execute in whichever API process is up to it, wherever their
+	// routes are served; the run's lock keeps one executor per run.
+	server.StartDeriveRunSupervisor(ctx, api.DefaultDeriveRunPoll)
+
+	internalServer, err := internallisten.New(server, internalConfig, c.logger)
 	if err != nil {
 		return err
 	}
@@ -172,9 +183,6 @@ func (c *apiCommander) run(ctx context.Context) error {
 	go func() { errChan <- server.Run() }()
 	if internalServer != nil {
 		defer func() { _ = internalServer.Shutdown() }()
-		// Derive runs are created on the internal listener, so the process
-		// serving it is the one that executes and resumes them.
-		server.StartDeriveRunSupervisor(ctx, api.DefaultDeriveRunPoll)
 		go func() {
 			if err := internalServer.Run(); err != nil {
 				errChan <- fmt.Errorf("internal listener error: %w", err)

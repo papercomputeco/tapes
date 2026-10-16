@@ -68,3 +68,38 @@ var _ = Describe("the internal listener's configuration", func() {
 		Expect(internal).NotTo(BeNil())
 	})
 })
+
+var _ = Describe("the admin listener choice", func() {
+	It("defaults to the API listener", func() {
+		GinkgoT().Setenv(api.EnvAdminListener, "")
+		GinkgoT().Setenv(api.EnvInternalListen, "")
+
+		Expect(internallisten.AdminListener(internallisten.Config())).To(Equal(api.AdminListenerAPI))
+	})
+
+	It("moves to the internal listener when one is configured", func() {
+		GinkgoT().Setenv(api.EnvAdminListener, "internal")
+		GinkgoT().Setenv(api.EnvInternalListen, api.DefaultInternalListen)
+		GinkgoT().Setenv(api.EnvInternalToken, "a-token")
+
+		Expect(internallisten.AdminListener(internallisten.Config())).To(Equal(api.AdminListenerInternal))
+	})
+
+	It("refuses to start with admin routes on an internal listener that is not configured", func() {
+		GinkgoT().Setenv(api.EnvAdminListener, "internal")
+		GinkgoT().Setenv(api.EnvInternalListen, "")
+
+		_, err := internallisten.AdminListener(internallisten.Config())
+		Expect(err).To(MatchError(And(
+			ContainSubstring(api.EnvAdminListener),
+			ContainSubstring(api.EnvInternalListen),
+		)))
+	})
+
+	It("refuses an unknown value", func() {
+		GinkgoT().Setenv(api.EnvAdminListener, "public")
+
+		_, err := internallisten.AdminListener(internallisten.Config())
+		Expect(err).To(HaveOccurred())
+	})
+})
