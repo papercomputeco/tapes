@@ -15,6 +15,15 @@ which commit changed it.
   (or `POST /v1/admin/derive/run`) to apply them to sessions already captured;
   the re-derive also prunes the reclassified calls from search results and
   from main-token accounting.
+- **The trusted subject header is now opt-in, with no default.** `tapes serve
+  ingest` and `tapes-extproc` used to read the caller's subject from a
+  hard-wired `x-paper-auth-subject` header. They now read only the header named
+  by `TAPES_TRUSTED_SUBJECT_HEADER`, and trust none when it is unset. A
+  deployment whose gateway stamps that header must set
+  `TAPES_TRUSTED_SUBJECT_HEADER=x-paper-auth-subject` on **both** processes
+  before upgrading; otherwise new captures keep the identity the capture client
+  reported instead of the one the gateway vouched for. Sessions already stored
+  are unaffected. See [Configuration](./docs/configuration.md#trusted-subject-header).
 
 ### Added
 
@@ -29,6 +38,17 @@ which commit changed it.
 - The MCP endpoint (`/v1/mcp`) gains a core `transcript` tool that returns the
   same JSON as one transcript page. See [MCP](./docs/mcp.md).
 
+
+- `GET /v1/subjects?q=&limit=` lists each distinct `auth_subject` on captured
+  sessions with its `session_count` and `last_seen_at`, most recently active
+  first, as `{"items": [...]}`. `q` keeps ids containing the substring. tapes
+  stores only the opaque id; mapping it to a person is left to whatever fronts
+  tapes. Pair it with the existing exact `GET /v1/sessions?auth_subject=<id>`.
+  See [APIs](./docs/apis.md#subjects).
+
+- `TAPES_TRUSTED_SUBJECT_HEADER` configures the trusted subject header on
+  ingest and `tapes-extproc` (see *Upgrading*).
+
 ### Changed
 
 - Two forked side calls the harness makes against the live conversation are no
@@ -40,3 +60,7 @@ which commit changed it.
   span instead of being normalized to `main`, so the summarize instruction and
   the summary no longer land on the subagent's spine. Such a call still never
   starts a session-level compaction seam.
+
+### Removed
+
+- The built-in `x-paper-auth-subject` trusted header default (see *Upgrading*).
