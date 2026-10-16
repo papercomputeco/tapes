@@ -16,11 +16,11 @@ which commit changed it.
   the re-derive also prunes the reclassified calls from search results and
   from main-token accounting.
 - **The trusted subject header is now opt-in, with no default.** `tapes serve
-  ingest` and `tapes-extproc` used to read the caller's subject from a
-  hard-wired `x-paper-auth-subject` header. They now read only the header named
-  by `TAPES_TRUSTED_SUBJECT_HEADER`, and trust none when it is unset. A
-  deployment whose gateway stamps that header must set
-  `TAPES_TRUSTED_SUBJECT_HEADER=x-paper-auth-subject` on **both** processes
+  ingest` and `tapes-extproc` used to read the caller's subject from one
+  built-in header name. They now read only the header named by
+  `TAPES_TRUSTED_SUBJECT_HEADER`, and trust none when it is unset. A deployment
+  whose gateway stamps a subject header must set
+  `TAPES_TRUSTED_SUBJECT_HEADER` to that header's name on **both** processes
   before upgrading; otherwise new captures keep the identity the capture client
   reported instead of the one the gateway vouched for. Sessions already stored
   are unaffected. See [Configuration](./docs/configuration.md#trusted-subject-header).
@@ -63,4 +63,4 @@ which commit changed it.
 
 ### Removed
 
-- The built-in `x-paper-auth-subject` trusted header default (see *Upgrading*).
+- The built-in trusted subject header name (see *Upgrading*).

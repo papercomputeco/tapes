@@ -389,9 +389,8 @@ var _ = Describe("Trusted subject header", func() {
 
 	It("trusts no header when none is configured", func() {
 		_, captured, _ := runWithConfig(Config{MaxInflight: 4}, map[string]string{
-			"x-tapes-harness-id":   "claude",
-			"x-auth-subject":       "alice",
-			"x-paper-auth-subject": "alice",
+			"x-tapes-harness-id": "claude",
+			"x-auth-subject":     "alice",
 		})
 		var env sessionBody
 		Expect(json.Unmarshal(captured, &env)).To(Succeed())
