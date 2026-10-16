@@ -137,6 +137,41 @@ func (s *Server) mountSessions(router *oasfiber.Router) {
 			JSONResponse(500, "Failed to load session", s.errorSchema()).
 			JSONResponse(501, "Span traces not supported by this backend", s.errorSchema()))
 
+	router.Get("/v1/sessions/:id/transcript", s.handleGetSessionTranscript,
+		oasfiber.Doc("getSessionTranscript").
+			Summary("Get a session's transcript").
+			Description("Returns the session as one readable conversation: user and assistant rows "+
+				"in turn order, then span order within a turn. Only conversation llm calls "+
+				"(call_kind main) contribute; harness side-calls and injected context are left "+
+				"out. User rows carry the user's text with harness tags such as <system-reminder> "+
+				"stripped, and the tool results handed back to the model in tool_results; "+
+				"assistant rows carry the reply text and the tool calls it made. The root thread "+
+				"only unless subagents=true. The response is one page of at most `limit` rows, "+
+				"closed early once the page passes its byte budget; `next_cursor` continues the "+
+				"walk and its absence, not the page's length, means no further row matches.").
+			Tag("sessions").
+			PathParam("id", oas.String(), oas.ParamDescription("Session id (UUID)")).
+			QueryParam("role", oas.String(oas.Enum("user", "assistant", "all")),
+				oas.ParamDescription("Keep only user rows with user text, only assistant rows, or all "+
+					"rows (default all)")).
+			QueryParam("q", oas.String(),
+				oas.ParamDescription("Keep only rows whose text contains this substring "+
+					"(case-insensitive)")).
+			QueryParam("subagents", oas.Boolean(),
+				oas.ParamDescription("Include subagent threads (default false: the root thread only)")).
+			QueryParam("limit", oas.Integer(oas.Minimum(1)),
+				oas.ParamDescription("Maximum number of rows in the page (default 200, max 1000); a "+
+					"page may close short of it on its byte budget")).
+			QueryParam("cursor", oas.String(),
+				oas.ParamDescription("Opaque pagination cursor returned as next_cursor by a previous "+
+					"page of the same session")).
+			JSONResponse(200, "One page of the session's transcript", s.schema(TranscriptResponse{})).
+			JSONResponse(400, "Missing or malformed id, role, subagents, limit, or cursor, or a "+
+				"cursor minted for another session", s.errorSchema()).
+			JSONResponse(404, "Session not found", s.errorSchema()).
+			JSONResponse(500, "Failed to load transcript", s.errorSchema()).
+			JSONResponse(501, "Span traces not supported by this backend", s.errorSchema()))
+
 	router.Get("/v1/sessions/:id/raw_turns", s.handleListSessionRawTurns,
 		oasfiber.Doc("listRawTurns").
 			Summary("List a session's raw capture log (operator)").
@@ -328,7 +363,7 @@ func (s *Server) mountMCP(router *oasfiber.Router) {
 			Summary("Invoke the streamable MCP endpoint").
 			Description("Sends a JSON-RPC 2.0 request to the stateless Model Context Protocol "+
 				"endpoint mounted at /v1/mcp.\n\nTypical calls include initialize, tools/list, and "+
-				"tools/call. The server exposes the tools advertised by installed cassettes.").
+				"tools/call. The server exposes core read tools (transcript) and the tools advertised by installed cassettes.").
 			Tag("mcp").
 			JSONBody("JSON-RPC 2.0 request", s.schema(MCPRequest{})).
 			JSONResponse(200, "JSON-RPC 2.0 response", s.schema(MCPResponse{})).

@@ -16,6 +16,19 @@ which commit changed it.
   the re-derive also prunes the reclassified calls from search results and
   from main-token accounting.
 
+### Added
+
+- `GET /v1/sessions/{id}/transcript` serves a session as one readable
+  conversation: rows of `user` and `assistant` text with tool calls and tool
+  results attached and harness tags stripped from user text. Filter with
+  `role=user|assistant|all`, `q` (case-insensitive substring), and
+  `subagents=true` to include subagent threads (root thread only by default);
+  page with `limit` (default 200, max 1000) and `cursor`. See
+  [APIs](./docs/apis.md#session-transcripts).
+
+- The MCP endpoint (`/v1/mcp`) gains a core `transcript` tool that returns the
+  same JSON as one transcript page. See [MCP](./docs/mcp.md).
+
 ### Changed
 
 - Two forked side calls the harness makes against the live conversation are no

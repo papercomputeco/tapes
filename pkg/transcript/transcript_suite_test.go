@@ -1,4 +1,4 @@
-package deck
+package transcript_test
 
 import (
 	"testing"
@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func TestDeck(t *testing.T) {
+func TestTranscript(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Deck Suite")
+	RunSpecs(t, "Transcript Suite")
 }
