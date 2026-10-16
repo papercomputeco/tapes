@@ -150,3 +150,10 @@ func (d *Driver) RawTurnsForDeriveForTest(ctx context.Context, orgID pgtype.UUID
 	}
 	return recs, nil
 }
+
+// DeriveRunLockClass is the first key of a derive run's advisory lock.
+const DeriveRunLockClass = deriveRunLockClass
+
+// DeriveRunLockKey is the second key of a derive run's advisory lock, so a
+// test can hold it from another connection.
+func DeriveRunLockKey(id string) int32 { return deriveRunLockKey(id) }

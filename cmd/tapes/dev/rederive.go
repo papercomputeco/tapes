@@ -30,7 +30,11 @@ function of raw_turns, pruning anything no longer present — but as a
 direct database call rather than an HTTP request. Prefer this over the
 admin endpoint for large corpora: a full re-derive can run for minutes,
 longer than an HTTP client or port-forward will hold an idle connection,
-whereas this streams a report to stdout when it finishes.
+whereas this streams a report to stdout when it finishes. Where the
+API server runs an internal listener, a derive run
+(POST /v1/admin/derive/runs on that listener) is the better lever still:
+it runs in the background, records progress per session, and resumes
+after a restart.
 
 The sessions identity row is ingest-written and skipped here (a session
 whose identity never landed is not resurrected); everything else — the

@@ -408,7 +408,7 @@ type InternalConfig struct {
 }
 
 // InternalServer is the operator-facing listener carrying the evidence
-// endpoint and nothing else.
+// endpoint and the asynchronous derive runs, and nothing else.
 //
 // It is a separate server rather than a route group because the separation is
 // the security property: the API listener sits behind a gateway that rewrites
@@ -446,6 +446,7 @@ func (s *Server) NewInternalServer(config InternalConfig) (*InternalServer, erro
 	// something an unauthenticated caller should be able to enumerate.
 	app.Use(requireBearer(config.Token))
 	app.Get(InternalEvidencePath, s.handleReadinessEvidence)
+	s.mountDeriveRuns(app)
 
 	return &InternalServer{app: app, addr: config.ListenAddr, logger: s.logger}, nil
 }

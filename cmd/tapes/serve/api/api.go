@@ -172,6 +172,9 @@ func (c *apiCommander) run(ctx context.Context) error {
 	go func() { errChan <- server.Run() }()
 	if internalServer != nil {
 		defer func() { _ = internalServer.Shutdown() }()
+		// Derive runs are created on the internal listener, so the process
+		// serving it is the one that executes and resumes them.
+		server.StartDeriveRunSupervisor(ctx, api.DefaultDeriveRunPoll)
 		go func() {
 			if err := internalServer.Run(); err != nil {
 				errChan <- fmt.Errorf("internal listener error: %w", err)

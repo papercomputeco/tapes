@@ -78,8 +78,10 @@ Useful supported keys include:
 
 ### The internal listener
 
-The API server can run a second listener carrying one endpoint, `GET
-/internal/readiness/evidence`. It reports what this process loaded and what
+The API server can run a second listener carrying the operator surfaces that
+must not be reachable through a gateway: the asynchronous
+[derive runs](./apis.md#derive-runs), and `GET /internal/readiness/evidence`.
+Evidence reports what this process loaded and what
 admitting that configuration produced: the instance's identity, a digest of the
 cassette source list in effect, and each source's admission result with its
 manifest and OpenAPI digests. It publishes no configuration value and no

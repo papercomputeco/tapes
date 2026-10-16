@@ -16,6 +16,31 @@ type DeriveQueue struct {
 	FirstDirtiedAt   pgtype.Timestamptz
 }
 
+type DeriveRun struct {
+	ID             pgtype.UUID
+	Project        string
+	State          string
+	SessionsTotal  int32
+	SessionsDone   int32
+	SessionsFailed int32
+	Report         []byte
+	Errors         []byte
+	Worker         string
+	CreatedAt      pgtype.Timestamptz
+	StartedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+}
+
+type DeriveRunSession struct {
+	RunID            pgtype.UUID
+	OrgID            pgtype.UUID
+	HarnessID        string
+	HarnessSessionID string
+	FinishedAt       pgtype.Timestamptz
+	Error            pgtype.Text
+}
+
 type DerivedProjectionSchema struct {
 	CompatibilityDate pgtype.Date
 	SpanTurnsTable    string

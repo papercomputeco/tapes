@@ -19,7 +19,7 @@ The default read API listens on `:8081`. It serves health, derived data, operato
 | Traces and spans | `/v1/traces`, `/v1/traces/{trace_id}`, `/v1/traces/{trace_id}/spans/{span_id}` |
 | Aggregates | `GET /v1/stats` |
 | MCP | `/v1/mcp` |
-| Operator actions | `/v1/admin/derive/run`, `/v1/admin/seed/demo`, `/v1/admin/raw-turns/attribution-repair` |
+| Operator actions | `/v1/admin/derive/run`, `/v1/admin/seed/demo`, `/v1/admin/raw-turns/attribution-repair` (asynchronous derive runs are on the [internal listener](#derive-runs)) |
 | Cassettes | `GET /v1/cassettes`, `GET /v1/cassettes/{name}/openapi.json`, `/v1/cassettes/{name}`, `/v1/cassettes/{name}/*` |
 
 `GET /metrics` is Prometheus exposition, deliberately outside any auth group and not described in the contract. `GET /` is HTML, not API surface, and is not described either.
@@ -275,16 +275,58 @@ The capture proxy defaults to `:8080`. It exposes provider-compatible request pa
 ## Internal listener
 
 Optional, off unless `TAPES_INTERNAL_LISTEN` names an address, and documented
-to use `:8092`. It carries exactly one endpoint, `GET
+to use `:8092`. It carries two operator surfaces: `GET
 /internal/readiness/evidence`, which reports what this process loaded and what
 admitting that configuration produced — instance identity, a digest of the
-cassette source list in effect, and each source's admission result. It is not
-part of the read API's sealed contract and does not appear in its OpenAPI
-document, deliberately: a deployment that puts a gateway in front of the read
-API may rewrite a public path prefix onto its root, which would make any path
-added there publicly reachable. Expose this as a container port and keep it off
-the Service. Every request must present `TAPES_INTERNAL_TOKEN` as a bearer
-token. See [Configuration](./configuration.md).
+cassette source list in effect, and each source's admission result — and the
+asynchronous [derive runs](#derive-runs). Neither is part of the read API's
+sealed contract or appears in its OpenAPI document, deliberately: a deployment
+that puts a gateway in front of the read API may rewrite a public path prefix
+onto its root, which would make any path added there publicly reachable. Expose
+this as a container port and keep it off the Service. Every request must
+present `TAPES_INTERNAL_TOKEN` as a bearer token. See
+[Configuration](./configuration.md).
+
+### Derive runs
+
+`POST /v1/admin/derive/run` on the read API re-derives the whole store inside
+one request, so the work lasts exactly as long as the connection carrying it. A
+gateway timeout, a client that sleeps, or a replica rolling loses it, and on a
+large store it runs for hours (a measured rate is roughly half a second per raw
+turn). A derive run is the same re-derive as a durable background job:
+
+| Route | Purpose |
+| --- | --- |
+| `POST /v1/admin/derive/runs` | Start a run. Optional body `{"project": "..."}`. `202` with the new run, or `200` with the run already active — there is at most one, so a repeated start is an idempotent "make sure one is going". `Location` names the run either way. |
+| `GET /v1/admin/derive/runs/{id}` | The run's state and progress. |
+| `GET /v1/admin/derive/runs?limit=N` | The most recent runs, newest first (default 20, max 200). |
+| `POST /v1/admin/derive/runs/{id}/cancel` | Stop an active run. The executor stops after the session in progress. |
+
+Starting a run snapshots the set of sessions it covers into the database and
+returns at once; sessions captured afterwards are derived by the derive worker
+as usual. The run then executes in the background on the process that serves
+the internal listener, and records each session as it finishes. If that
+process stops — a restart, a roll, a crash — the run stays `running`, and the
+next process to poll for it (every 30 seconds, on every replica) resumes it at
+the first unfinished session. Only one process executes a run at a time; the
+others see it held and leave it alone.
+
+A run body reports:
+
+| Field | Meaning |
+| --- | --- |
+| `state` | `pending` (created, not yet picked up), `running`, `completed`, or `canceled` |
+| `sessions_total`, `sessions_done`, `sessions_failed` | Progress. `sessions_done` counts failed sessions too. |
+| `report` | The aggregated derive report, the same shape `POST /v1/admin/derive/run` returns per org |
+| `errors` | Up to 20 sampled per-session failures, `harness/session: message` |
+| `worker`, `updated_at` | Which process last advanced the run, and when. A `running` run whose `updated_at` stops moving has lost its executor and is waiting to be resumed. |
+| `created_at`, `started_at`, `finished_at` | Lifecycle timestamps |
+
+A session that fails to derive is recorded and skipped rather than stopping the
+run, so `completed` does not mean every session succeeded; check
+`sessions_failed`. A session interrupted mid-derive is re-derived on resume;
+the derive is idempotent, so the only effect is that session counting twice in
+`report`.
 
 ## CORS and exposure
 

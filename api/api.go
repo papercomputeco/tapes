@@ -48,6 +48,10 @@ type Server struct {
 	// does not become a different pod partway through its life.
 	instance EvidenceInstance
 
+	// deriveRunWake wakes the derive-run supervisor when a run is created on
+	// this process, so it starts at once rather than on the next poll.
+	deriveRunWake chan struct{}
+
 	// loadedMutex guards loaded, which SetCassetteSources may replace at any
 	// point in this server's life — the source list is not fixed at
 	// construction, and a reader of the loaded identity runs concurrently
@@ -133,6 +137,7 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 		contracts:      contracts,
 		openapi:        openapi,
 		instance:       instanceIdentity(),
+		deriveRunWake:  make(chan struct{}, 1),
 	}
 
 	// Correlation is the outermost request middleware so every downstream log,

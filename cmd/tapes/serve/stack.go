@@ -204,6 +204,9 @@ func (stack *Stack) Run(ctx context.Context) error {
 	}
 	if internalServer != nil {
 		defer func() { _ = internalServer.Shutdown() }()
+		// Derive runs are created on the internal listener, so the process
+		// serving it is the one that executes and resumes them.
+		apiServer.StartDeriveRunSupervisor(ctx, api.DefaultDeriveRunPoll)
 	}
 
 	// contextcheck is right that this chain drops `ctx`: the ingest server's
