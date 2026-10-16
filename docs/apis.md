@@ -141,7 +141,9 @@ whichever comes first. `next_cursor` is present only when another row
 matching the filters exists, so its absence — not a short page — marks the
 end. The server reads spans one at a time while it walks, so memory stays
 bounded by one page regardless of session size; a narrow `q` may read much
-further than the rows it returns. An unknown session is a `404`. The same
+further than the rows it returns. Each read takes a payload-read slot, like
+the trace page (`payload=preview` does not exempt it). An unknown session is a
+`404`. The same
 page is available to MCP clients as the core `transcript` tool (see
 [MCP](./mcp.md)).
 

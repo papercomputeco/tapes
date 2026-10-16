@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -18,6 +19,12 @@ type transcriptToolArgs struct {
 	Limit     int    `json:"limit,omitempty" jsonschema:"Maximum rows in the page (default 200, max 1000)"`
 	Cursor    string `json:"cursor,omitempty" jsonschema:"next_cursor from a previous call for the same session"`
 }
+
+// transcriptToolTimeout bounds one `transcript` tool call. The MCP route
+// is exempt from the read deadline so cassette tool calls can run under
+// their own 30-second limit; this core tool takes the same limit for
+// itself rather than running unbounded.
+const transcriptToolTimeout = 30 * time.Second
 
 // registerTranscriptTool adds the core `transcript` read tool. It runs
 // the same builder as the HTTP route, so the two return the same page for
@@ -34,6 +41,8 @@ func (s *Server) registerTranscriptTool(server *mcpsdk.Server) {
 			"follow next_cursor. Same result as GET /v1/sessions/{id}/transcript.",
 		Annotations: &mcpsdk.ToolAnnotations{ReadOnlyHint: readOnly, IdempotentHint: true},
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, args transcriptToolArgs) (*mcpsdk.CallToolResult, any, error) {
+		ctx, cancel := context.WithTimeout(ctx, transcriptToolTimeout)
+		defer cancel()
 		resp, err := s.buildTranscript(ctx, transcriptQuery(args))
 		if err != nil {
 			var te *transcriptError

@@ -197,8 +197,13 @@ func (s *Server) buildTranscript(ctx context.Context, q transcriptQuery) (*Trans
 	if err != nil {
 		return nil, transcriptFail(fiber.StatusBadRequest, err.Error())
 	}
+	// Zero is an omitted limit (the MCP tool's argument is optional); a
+	// negative one is a bad request on every transport, as it is on HTTP.
 	limit := q.Limit
-	if limit <= 0 {
+	if limit < 0 {
+		return nil, transcriptFail(fiber.StatusBadRequest, "limit must be a positive integer")
+	}
+	if limit == 0 {
 		limit = defaultTranscriptLimit
 	}
 	limit = min(limit, maxTranscriptLimit)

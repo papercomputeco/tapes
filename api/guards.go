@@ -55,11 +55,13 @@ import (
 // payloadRoutePrefixes are the routes whose responses can carry span
 // payloads, as Fiber prefix (Use) patterns; on them only full-payload
 // reads take a slot. `/v1/traces/:trace_id` covers
-// the span drill-in beneath it by prefix, which is why the list has two
-// entries for three routes — and why the span route is never capped twice.
+// the span drill-in beneath it by prefix, which is why the list has three
+// entries for four routes — and why the span route is never capped twice.
 // `/v1/traces` itself (the summary list) is payload-free and outside it.
+// The transcript reads full span payloads to build its rows.
 var payloadRoutePrefixes = []string{
 	"/v1/sessions/:id/traces",
+	"/v1/sessions/:id/transcript",
 	"/v1/traces/:trace_id",
 }
 
@@ -89,6 +91,11 @@ const sessionRoutePrefix = "/v1/sessions/"
 // so a payload=preview flag on it changes nothing and must not skip the
 // cap.
 const spanRouteSegment = "/spans/"
+
+// transcriptRouteSuffix marks the session transcript. It has no preview
+// mode either: every row is built from full span payloads, so a
+// payload=preview flag must not skip the cap.
+const transcriptRouteSuffix = "/transcript"
 
 // deadlineExempt reports whether the request is outside the deadline's
 // remit: the MCP mount and anything beneath it, the admin jobs, and session
@@ -197,9 +204,11 @@ func (g *readGuards) payloadMiddleware() fiber.Handler {
 		// payload ones, so it is not the work the cap exists to bound: it
 		// passes uncounted, and the console's batched preview scans never
 		// contend with the one full read an expanded turn needs. The span
-		// drill-in has no preview mode, so the flag buys it nothing.
+		// drill-in and the transcript have no preview mode, so the flag
+		// buys them nothing.
 		if payloadModeFromQuery(c.Query("payload")) == PayloadPreview &&
-			!strings.Contains(c.Path(), spanRouteSegment) {
+			!strings.Contains(c.Path(), spanRouteSegment) &&
+			!strings.HasSuffix(c.Path(), transcriptRouteSuffix) {
 			return c.Next()
 		}
 		if g.slots != nil {
