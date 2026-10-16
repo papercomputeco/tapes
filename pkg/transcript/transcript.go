@@ -70,6 +70,9 @@ type Row struct {
 	// ToolCalls are the tools the assistant asked for, on assistant rows.
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 	// ToolResults are the results handed back to the model, on user rows.
+	// An assistant row carries the inline results of server-side tools
+	// (web_search_tool_result and the like), which arrive in the reply
+	// itself rather than in a later request.
 	ToolResults []ToolResult `json:"tool_results,omitempty"`
 }
 
@@ -199,10 +202,11 @@ func (w *Walker) Feed(sp storage.SpanRecord) []Emitted {
 	assistant := Row{
 		Seq: sp.Seq, TraceID: sp.TraceID, SpanID: sp.SpanID, ThreadID: sp.ThreadID,
 		StartedAt: sp.StartedAt, Role: RoleAssistant,
-		Text:      AssistantText(output),
-		ToolCalls: toolCalls(output),
+		Text:        AssistantText(output),
+		ToolCalls:   toolCalls(output),
+		ToolResults: serverToolResults(output),
 	}
-	if assistant.Text != "" || len(assistant.ToolCalls) > 0 {
+	if assistant.Text != "" || len(assistant.ToolCalls) > 0 || len(assistant.ToolResults) > 0 {
 		out = append(out, Emitted{Row: assistant, Next: Position{After: key}})
 	}
 	return out
@@ -272,6 +276,30 @@ func toolResults(raw json.RawMessage) []ToolResult {
 			continue
 		}
 		results = append(results, ToolResult{ToolUseID: b.ToolResultID, Text: b.ToolOutput, IsError: b.IsError})
+	}
+	return results
+}
+
+// serverToolResults reads the inline result blocks a server-side tool
+// returns in the reply itself (web_search_tool_result, and any other
+// `*_tool_result` block linked to its server_tool_use). The payload is
+// kept as its captured JSON text; a result whose payload is an error
+// object (`"type": "..._error"`) is marked as an error.
+func serverToolResults(blocks []llm.ContentBlock) []ToolResult {
+	var results []ToolResult
+	for _, b := range blocks {
+		if b.Type == blockToolResult || !strings.HasSuffix(b.Type, "_"+blockToolResult) || b.ToolResultID == "" {
+			continue
+		}
+		text := b.ToolOutput
+		if text == "" && len(b.Content) > 0 {
+			text = string(b.Content)
+		}
+		var shape struct {
+			Type string `json:"type"`
+		}
+		isErr := b.IsError || (json.Unmarshal(b.Content, &shape) == nil && strings.HasSuffix(shape.Type, "_error"))
+		results = append(results, ToolResult{ToolUseID: b.ToolResultID, Text: text, IsError: isErr})
 	}
 	return results
 }

@@ -57,6 +57,29 @@ var _ = Describe("Walker", func() {
 		Expect(rows[3].Row.Text).To(Equal("Fixed"))
 	})
 
+	It("keeps a server tool's inline result on the assistant row", func() {
+		search := span(1, "llm", "main", "", "llm_ws", blocks(text("What changed in Go 1.30?")),
+			blocks(
+				llm.ContentBlock{Type: "server_tool_use", ToolUseID: "srv_1", ToolName: "web_search",
+					ToolInput: map[string]any{"query": "Go 1.30 release notes"}},
+				llm.ContentBlock{Type: "web_search_tool_result", ToolResultID: "srv_1",
+					Content: json.RawMessage(`[{"type":"web_search_result","url":"https://go.dev/doc/go1.30"}]`)},
+				llm.ContentBlock{Type: "server_tool_use", ToolUseID: "srv_2", ToolName: "web_search"},
+				llm.ContentBlock{Type: "web_search_tool_result", ToolResultID: "srv_2",
+					Content: json.RawMessage(`{"type":"web_search_tool_result_error","error_code":"unavailable"}`)},
+				text("Go 1.30 adds…"),
+			))
+		rows := feedAll(transcript.NewWalker(transcript.Options{}, transcript.Position{}), search)
+		Expect(rows).To(HaveLen(2))
+		assistant := rows[1].Row
+		Expect(assistant.Role).To(Equal(transcript.RoleAssistant))
+		Expect(assistant.ToolCalls).To(HaveLen(2))
+		Expect(assistant.ToolResults).To(Equal([]transcript.ToolResult{
+			{ToolUseID: "srv_1", Text: `[{"type":"web_search_result","url":"https://go.dev/doc/go1.30"}]`},
+			{ToolUseID: "srv_2", Text: `{"type":"web_search_tool_result_error","error_code":"unavailable"}`, IsError: true},
+		}))
+	})
+
 	It("mints positions that resume without repeating or skipping a row", func() {
 		all := feedAll(transcript.NewWalker(transcript.Options{}, transcript.Position{}), llmCall, tool, event, next)
 		spans := []storage.SpanRecord{llmCall, tool, event, next}
