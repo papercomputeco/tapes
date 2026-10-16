@@ -24,12 +24,15 @@ import (
 
 // Server is the API server for managing and querying the Tapes system
 type Server struct {
-	config         Config
-	driver         storage.Driver
-	logger         *slog.Logger
-	app            *fiber.App
-	metrics        *Metrics
-	mcpServer      *mcp.Server
+	config    Config
+	driver    storage.Driver
+	logger    *slog.Logger
+	app       *fiber.App
+	metrics   *Metrics
+	mcpServer *mcp.Server
+	// guards holds the read deadline and the payload-read slots; the MCP
+	// transcript tool takes a slot through it like the HTTP payload routes.
+	guards         *readGuards
 	cassetteClient *http.Client
 
 	// cassettes is the fleet this server publishes, and cassetteSpecs is the
@@ -145,6 +148,7 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 	// sees as c.Context() carries the request logger and the deadline both.
 	// Anything registered before this line would run outside the deadline.
 	guards := newReadGuards(config.ReadDeadline, config.PayloadConcurrency, s.metrics.Registry())
+	s.guards = guards
 	if config.ReadDeadline > 0 {
 		app.Use(guards.deadlineMiddleware())
 	}

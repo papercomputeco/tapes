@@ -41,6 +41,16 @@ func (s *Server) registerTranscriptTool(server *mcpsdk.Server) {
 			"follow next_cursor. Same result as GET /v1/sessions/{id}/transcript.",
 		Annotations: &mcpsdk.ToolAnnotations{ReadOnlyHint: readOnly, IdempotentHint: true},
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, args transcriptToolArgs) (*mcpsdk.CallToolResult, any, error) {
+		// The tool reads full span payloads, so it takes a payload slot like
+		// the HTTP route does; a shed call is a tool error the client can
+		// retry, not a queued read.
+		if s.guards != nil {
+			held, ok := s.guards.acquirePayload()
+			if !ok {
+				return nil, nil, fmt.Errorf("transcript: 503: %s; retry shortly", errTooManyPayloadReads)
+			}
+			defer held.giveBack()
+		}
 		ctx, cancel := context.WithTimeout(ctx, transcriptToolTimeout)
 		defer cancel()
 		resp, err := s.buildTranscript(ctx, transcriptQuery(args))

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"
@@ -229,6 +230,36 @@ var _ = Describe("read guards", func() {
 			got := get(server, path)
 			Expect(got.status).To(Equal(http.StatusServiceUnavailable), "%s: %s", path, got.body)
 		}
+	})
+
+	It("sheds an MCP transcript call when every payload slot is held", func(ctx SpecContext) {
+		driver := newParkedSpanModel()
+		server := newGuardedServer(driver, Config{PayloadConcurrency: 4})
+		held := holdSlots(server, 4)
+		DeferCleanup(func() {
+			close(driver.release)
+			for range 4 {
+				Eventually(held).Should(Receive())
+			}
+		})
+
+		httpServer := httptest.NewServer(server.mcpServer.Handler())
+		DeferCleanup(httpServer.Close)
+		session, err := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test", Version: "1"}, nil).
+			Connect(ctx, &mcpsdk.StreamableClientTransport{Endpoint: httpServer.URL}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(session.Close)
+
+		result, err := session.CallTool(ctx, &mcpsdk.CallToolParams{
+			Name:      "transcript",
+			Arguments: map[string]any{"session_id": "0f0e0d0c-0b0a-4908-8706-050403020100"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.IsError).To(BeTrue())
+		encoded, err := json.Marshal(result.Content)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(encoded)).To(ContainSubstring(errTooManyPayloadReads))
+		Expect(payloadInflight(server)).To(Equal(4.0), "a shed call holds nothing")
 	})
 
 	It("does not apply the deadline to admin jobs", func() {

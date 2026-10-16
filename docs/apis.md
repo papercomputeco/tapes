@@ -122,7 +122,8 @@ call and an `assistant` row for the reply. Harness side-calls (permission
 checks, title generation, suggestions) and injected context are left out.
 User text has harness tags such as `<system-reminder>` stripped — the same
 projection the trace header's `user_prompt` uses, without its truncation.
-Assistant text is the reply's text blocks; thinking is not included. Tool
+Assistant text is the reply's text blocks; thinking is not included. Server-side tools (web search) return their results inline in the reply, so
+those ride on the assistant row's `tool_results`. Tool
 results never land in `text`: a run of tool spans becomes one `user` row
 whose `tool_results` hold them, which is where they sit on the wire. A
 row's `seq`, `trace_id`, and `span_id` locate it in the trace view; a

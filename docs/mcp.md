@@ -19,7 +19,7 @@ Core serves one read tool of its own beside the cassette tools:
 
 | Tool | What it does |
 | --- | --- |
-| `transcript` | One page of a session's transcript. Arguments: `session_id` (required), `role` (`user`, `assistant`, `all`), `q`, `subagents`, `limit`, `cursor`. Returns the same JSON as `GET /v1/sessions/{id}/transcript`, as structured content and as JSON text. Each call is bounded at 30 seconds, like a cassette tool call. |
+| `transcript` | One page of a session's transcript. Arguments: `session_id` (required), `role` (`user`, `assistant`, `all`), `q`, `subagents`, `limit`, `cursor`. Returns the same JSON as `GET /v1/sessions/{id}/transcript`, as structured content and as JSON text. Each call is bounded at 30 seconds, like a cassette tool call, and takes a payload-read slot like the HTTP route; a call shed while every slot is held is a tool error to retry. |
 
 It runs the same code as the HTTP route, so an agent reading a session
 through MCP sees exactly what a CLI or the console does. An unknown session

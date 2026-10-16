@@ -198,6 +198,31 @@ func (g *readGuards) deadlineMiddleware() fiber.Handler {
 // at once rather than queueing reads behind the ones already hogging the
 // heap, which is the failure the cap exists to prevent. The in-flight gauge
 // tracks payload reads whether or not the cap is enabled.
+// errTooManyPayloadReads is what a shed payload read is told, on HTTP and
+// on the MCP transcript tool alike.
+const errTooManyPayloadReads = "too many concurrent payload reads"
+
+// acquirePayload takes one payload slot without waiting, counting the read
+// in the inflight gauge. ok is false when every slot is held; the returned
+// lease gives the slot back exactly once. With the cap disabled every read
+// is admitted and still counted.
+func (g *readGuards) acquirePayload() (*lease, bool) {
+	if g.slots != nil {
+		select {
+		case g.slots <- struct{}{}:
+		default:
+			return nil, false
+		}
+	}
+	g.inflight.Inc()
+	return &lease{give: func() {
+		g.inflight.Dec()
+		if g.slots != nil {
+			<-g.slots
+		}
+	}}, true
+}
+
 func (g *readGuards) payloadMiddleware() fiber.Handler {
 	return func(c fiber.Ctx) error {
 		// A preview read selects the stored preview columns and never the
@@ -211,22 +236,12 @@ func (g *readGuards) payloadMiddleware() fiber.Handler {
 			!strings.HasSuffix(c.Path(), transcriptRouteSuffix) {
 			return c.Next()
 		}
-		if g.slots != nil {
-			select {
-			case g.slots <- struct{}{}:
-			default:
-				c.Set(fiber.HeaderRetryAfter, "1")
-				return c.Status(fiber.StatusServiceUnavailable).
-					JSON(llm.ErrorResponse{Error: "too many concurrent payload reads"})
-			}
+		held, ok := g.acquirePayload()
+		if !ok {
+			c.Set(fiber.HeaderRetryAfter, "1")
+			return c.Status(fiber.StatusServiceUnavailable).
+				JSON(llm.ErrorResponse{Error: errTooManyPayloadReads})
 		}
-		g.inflight.Inc()
-		held := &lease{give: func() {
-			g.inflight.Dec()
-			if g.slots != nil {
-				<-g.slots
-			}
-		}}
 		c.Locals(payloadLeaseKey{}, held)
 
 		err := c.Next()
