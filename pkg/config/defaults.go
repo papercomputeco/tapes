@@ -1,6 +1,10 @@
 package config
 
-import "time"
+import (
+	"time"
+
+	"github.com/papercomputeco/tapes/pkg/sessions"
+)
 
 const (
 	defaultProvider     = "ollama"
@@ -41,6 +45,9 @@ func NewDefaultConfig() *Config {
 		},
 		Ingest: IngestConfig{
 			Listen: defaultIngestListen,
+		},
+		Sessions: SessionsConfig{
+			IdleGap: sessions.DefaultIdleGap,
 		},
 		Client: ClientConfig{
 			ProxyTarget: defaultClientProxyTarget,

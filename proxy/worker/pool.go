@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/papercomputeco/tapes/pkg/derive"
 	"github.com/papercomputeco/tapes/pkg/llm"
@@ -86,16 +87,31 @@ type Job struct {
 	RequestBytes  int
 	ResponseBytes int
 
+	// CapturedAt is when the request reached the capture layer — the
+	// turn's start. It dates the raw turn (meta ts_request, the instant
+	// the deriver dates the turn's spans by) and is the instant the idle
+	// split compares, so neither queueing nor the length of the response
+	// moves a turn across a split boundary. Zero falls back to the time
+	// the worker processes the job.
+	CapturedAt time.Time
+
 	// Session is the optional session-tracking envelope attached to
-	// the turn. When non-nil and the driver supports session-aware
-	// ingest (Postgres), the worker UPSERTs the turn's `sessions` row
-	// and folds its derived_status so the deriver can resolve the
-	// session and attach its spans. When nil OR when the driver does
-	// not implement that capability (e.g. inmemory), no sessions row is
-	// written — this keeps unit tests working without a Postgres
-	// backend. The local proxy always attaches an envelope so its
-	// captured turns surface in the deck.
+	// the turn. When the driver supports session-aware ingest
+	// (Postgres), the worker UPSERTs the turn's `sessions` row and folds
+	// its derived_status so the deriver can resolve the session and
+	// attach its spans. A nil envelope still gets a sessions row when
+	// the turn was keyed anyway — its raw turn was written under a
+	// synthetic key here, or SessionKey carries one — so a capture that
+	// arrived with no session block surfaces like any other. When the
+	// turn has neither, or the driver does not implement that capability
+	// (e.g. inmemory), no sessions row is written.
 	Session *sessions.IngestEnvelope
+
+	// SessionKey is the harness_session_id the enqueuing path already
+	// resolved and keyed the turn's raw row by (ingest resolves a
+	// synthetic turn's idle split when it writes the raw turn). When set,
+	// the sessions row is keyed by it; empty leaves the envelope rules.
+	SessionKey string
 }
 
 // Config is the configuration options for the worker pool.
@@ -117,6 +133,11 @@ type Config struct {
 
 	// Project is the git repository or project name to tag on stored nodes.
 	Project string
+
+	// SessionIdleGap is the idle gap after which a synthetic (root-derived)
+	// session is split into a new one; zero disables the split. A
+	// harness-provided session id is never split.
+	SessionIdleGap time.Duration
 
 	// Logger is the provided logger
 	Logger *slog.Logger
@@ -152,6 +173,12 @@ func NewPool(c *Config) (*Pool, error) {
 
 	if c.NumWorkers > uint(math.MaxInt) {
 		return nil, fmt.Errorf("NumWorkers %d exceeds max int", c.NumWorkers)
+	}
+
+	// Every capture path (the proxy and the ingest server) builds its pool
+	// here, so this is the one place the gap is checked whatever set it.
+	if err := sessions.ValidateIdleGap(c.SessionIdleGap); err != nil {
+		return nil, err
 	}
 
 	wp := &Pool{
@@ -283,15 +310,27 @@ func (p *Pool) processJob(job Job) {
 		return
 	}
 
-	p.persistRawTurn(ctx, job, chain)
-	p.ingestSession(ctx, job, chain)
+	session, sessionKey := p.persistRawTurn(ctx, job, chain)
+	// The raw turn's key is known only now, and it can change the call's
+	// classification (derive.ClassifyKeyedCall): a call keyed by a
+	// synthetic conversation key is the spine. Rebuild with it so the
+	// sessions row folds from the same kinds re-derive will assign to the
+	// stored row. Hashes do not depend on the kind, so the key — derived
+	// from the first chain's root — is unchanged.
+	if sessionKey != "" && sessionKey != job.SessionKey && job.Session.NeedsSyntheticHarnessSessionID() {
+		keyed := job
+		keyed.SessionKey = sessionKey
+		chain = buildTurnChain(keyed, p.config.Project)
+	}
+	p.ingestSession(ctx, job, session, sessionKey, chain)
 }
 
 // rawTurnMeta is the minimal capture-side meta block the proxy stamps
 // onto a raw turn. The deriver reads thread_id for sub-thread
-// attribution; ts_request is omitted because single-process local
-// capture inserts the row at ~capture time, so the deriver's
-// received_at fallback is accurate.
+// attribution and ts_request for the turn's start: the instant the
+// request reached the proxy, which the idle split also compares. The row
+// is inserted only after the response completes and the job drains, so
+// its received_at would date the turn late by both.
 //
 // request_bytes and response_bytes are the keys the raw-turn wire log
 // (GET /v1/sessions/{id}/raw_turns) reads a row's sizes from. They are
@@ -303,6 +342,7 @@ type rawTurnMeta struct {
 	ThreadID          string `json:"thread_id,omitempty"`
 	RequestID         string `json:"request_id,omitempty"`
 	UpstreamRequestID string `json:"upstream_request_id,omitempty"`
+	TsRequest         string `json:"ts_request,omitempty"`
 	RequestBytes      int    `json:"request_bytes,omitempty"`
 	ResponseBytes     int    `json:"response_bytes,omitempty"`
 }
@@ -316,58 +356,83 @@ type rawTurnMeta struct {
 // A bare proxied call carries no session envelope, so the turn is
 // attributed a synthetic harness_session_id from its Merkle root hash
 // (the same scheme the node ingest path uses) — stable across a
-// conversation's turns, so they group into one derivable session.
+// conversation's turns, so they group into one derivable session — and
+// split into a new session after SessionIdleGap of inactivity.
+//
+// It returns the envelope and harness_session_id the turn was keyed by, for
+// ingestSession to key the sessions row identically; nil and "" when no raw
+// turn was written, in which case ingestSession falls back to the job's own
+// envelope.
 //
 // Failures are logged, never propagated: a raw-layer outage must not
 // take down capture.
-func (p *Pool) persistRawTurn(ctx context.Context, job Job, chain []*merkle.Node) {
+func (p *Pool) persistRawTurn(ctx context.Context, job Job, chain []*merkle.Node) (*sessions.IngestEnvelope, string) {
 	log := tapeslogger.RequestLoggerFromContext(ctx)
 	rawStore, ok := p.config.Driver.(storage.RawTurnStore)
 	if !ok || len(job.RawRequest) == 0 {
-		return
+		return nil, ""
 	}
 
 	root := chain[0]
 	head := chain[len(chain)-1]
 
-	envelope, harnessSessionID, err := sessions.ResolveHarnessSessionID(job.Session, root.Hash)
-	if err != nil {
+	requestID := job.RequestID
+	if requestID == "" {
+		requestID = head.Hash
+	}
+
+	capturedAt := job.CapturedAt
+	if capturedAt.IsZero() {
+		capturedAt = time.Now()
+	}
+	capturedAt = capturedAt.UTC()
+
+	envelope, harnessSessionID, err := storage.ResolveSessionKey(ctx, p.config.Driver, job.Session, storage.SyntheticTurn{
+		RootHash:   root.Hash,
+		RequestID:  requestID,
+		CapturedAt: capturedAt,
+		IdleGap:    p.config.SessionIdleGap,
+	})
+	switch {
+	case err != nil && harnessSessionID == "":
 		log.Error("raw turn skipped: resolve harness_session_id",
 			"provider", job.Provider, "error", err)
-		return
+		return nil, ""
+	case err != nil:
+		// The idle split could not be assigned; keep the turn under its
+		// conversation key rather than dropping it.
+		log.Error("synthetic session split failed",
+			"provider", job.Provider, "harness_session_id", harnessSessionID, "error", err)
 	}
 
 	response, err := json.Marshal(job.Resp)
 	if err != nil {
 		log.Error("raw turn skipped: marshal response",
 			"provider", job.Provider, "error", err)
-		return
+		return nil, ""
 	}
 
 	meta, err := json.Marshal(rawTurnMeta{
 		ThreadID:          job.ThreadID,
 		RequestID:         job.RequestID,
 		UpstreamRequestID: job.UpstreamRequestID,
+		TsRequest:         capturedAt.Format(time.RFC3339Nano),
 		RequestBytes:      job.RequestBytes,
 		ResponseBytes:     job.ResponseBytes,
 	})
 	if err != nil {
 		log.Error("raw turn skipped: marshal meta",
 			"provider", job.Provider, "error", err)
-		return
+		return nil, ""
 	}
 
 	sessionJSON, err := json.Marshal(envelope)
 	if err != nil {
 		log.Error("raw turn skipped: marshal session envelope",
 			"provider", job.Provider, "error", err)
-		return
+		return nil, ""
 	}
 
-	requestID := job.RequestID
-	if requestID == "" {
-		requestID = head.Hash
-	}
 	if _, err := rawStore.PutRawTurn(ctx, storage.RawTurnRecord{
 		OrgID:            envelope.OrgID,
 		Source:           storage.RawTurnSourceWire,
@@ -390,6 +455,7 @@ func (p *Pool) persistRawTurn(ctx context.Context, job Job, chain []*merkle.Node
 			"error", err,
 		)
 	}
+	return envelope, harnessSessionID
 }
 
 // ingestSession ensures the turn's sessions row exists (and folds its
@@ -401,15 +467,26 @@ func (p *Pool) persistRawTurn(ctx context.Context, job Job, chain []*merkle.Node
 //
 // Drivers without the SessionIngester capability (the in-memory test
 // driver) have no sessions surface, so this is a no-op for them.
-func (p *Pool) ingestSession(ctx context.Context, job Job, chain []*merkle.Node) {
+func (p *Pool) ingestSession(ctx context.Context, job Job, session *sessions.IngestEnvelope, sessionKey string, chain []*merkle.Node) {
 	log := tapeslogger.RequestLoggerFromContext(ctx)
 	ingester, ok := p.config.Driver.(storage.SessionIngester)
-	if !ok || job.Session == nil {
+	if !ok {
+		return
+	}
+	if session == nil {
+		session, sessionKey = job.Session, job.SessionKey
+	}
+	// A turn with neither an envelope nor a resolved key has no session
+	// identity to upsert. One that carried no envelope but whose raw turn
+	// was keyed (synthetic) still gets its sessions row, so the deriver can
+	// attach its spans.
+	if session == nil && sessionKey == "" {
 		return
 	}
 
 	if _, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
-		Session:      job.Session,
+		Session:      session,
+		SessionKey:   sessionKey,
 		Nodes:        chain,
 		DerivedTitle: derive.SessionTitle(chain[len(chain)-1].Kind, job.Resp),
 	}); err != nil {
@@ -426,9 +503,11 @@ func (p *Pool) ingestSession(ctx context.Context, job Job, chain []*merkle.Node)
 // raw-turn store; this wrapper just adapts a worker Job.
 func buildTurnChain(job Job, project string) []*merkle.Node {
 	return derive.TurnChain(derive.CallContext{
-		Provider:  job.Provider,
-		AgentName: job.AgentName,
-		ThreadID:  job.ThreadID,
-		Project:   project,
+		Provider:   job.Provider,
+		AgentName:  job.AgentName,
+		ThreadID:   job.ThreadID,
+		Project:    project,
+		Session:    job.Session,
+		SessionKey: job.SessionKey,
 	}, job.Req, job.Resp)
 }

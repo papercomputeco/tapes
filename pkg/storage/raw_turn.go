@@ -131,6 +131,10 @@ type RawTurnAttribution struct {
 	HarnessSessionID       string  `json:"harness_session_id"`
 	ThreadID               string  `json:"thread_id"`
 	ParentHarnessSessionID *string `json:"parent_harness_session_id,omitempty"`
+	// ParentHarnessID names the parent's harness when it differs from
+	// HarnessID. Absent means the parent resolves in HarnessID. Only
+	// meaningful beside ParentHarnessSessionID.
+	ParentHarnessID *string `json:"parent_harness_id,omitempty"`
 }
 
 // RawTurnAttributionRepairRequest selects exactly one raw row and supplies a
@@ -144,7 +148,11 @@ type RawTurnAttributionRepairRequest struct {
 	HarnessSessionID       string  `json:"harness_session_id"`
 	ThreadID               string  `json:"thread_id"`
 	ParentHarnessSessionID *string `json:"parent_harness_session_id,omitempty"`
-	Reason                 string  `json:"reason"`
+	// ParentHarnessID names the parent's harness when it differs from
+	// HarnessID; it requires ParentHarnessSessionID. Omitted means the
+	// parent resolves in HarnessID.
+	ParentHarnessID *string `json:"parent_harness_id,omitempty"`
+	Reason          string  `json:"reason"`
 }
 
 // RepairPendingSession names one harness session whose projection rebuild

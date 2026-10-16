@@ -123,7 +123,9 @@ func (s *Server) mountRoutes(router *oasfiber.Router) {
 		oasfiber.Doc("ingestPing").
 			Summary("Liveness probe").
 			Description("Reports that the ingest server is up. Does not check the database — a 200 "+
-				"here means the process is serving, not that a write would succeed.").
+				"here means the process is serving, not that a write would succeed."+
+				"\n\nAlso lists the optional envelope behaviours this server implements as "+
+				"capabilities. A server that predates the list omits it; read that as none.").
 			Tag("health").
 			JSONResponse(200, "The server is serving", s.schema(pingResponse{})))
 

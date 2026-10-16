@@ -53,6 +53,7 @@ type RawTurnAttributionCorrection struct {
 	ParentHarnessSessionID pgtype.Text
 	Reason                 string
 	CreatedAt              pgtype.Timestamptz
+	ParentHarnessID        pgtype.Text
 }
 
 type Session struct {
@@ -154,6 +155,15 @@ type Spans20260615 struct {
 	Fidelity      string
 	InputPreview  []byte
 	OutputPreview []byte
+}
+
+type SyntheticSessionSplit struct {
+	OrgID            pgtype.UUID
+	HarnessID        string
+	HarnessSessionID string
+	ConversationKey  string
+	FirstCapturedAt  pgtype.Timestamptz
+	LastCapturedAt   pgtype.Timestamptz
 }
 
 // v1 contract view over the sessions table.

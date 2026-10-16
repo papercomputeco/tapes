@@ -1,0 +1,43 @@
+{
+  "id": "chatcmpl-FIXTURE0000000000000000000000001",
+  "object": "chat.completion",
+  "created": 1767225700,
+  "model": "Qwen/Qwen3-32B",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Let me compute that.",
+        "refusal": null,
+        "annotations": null,
+        "audio": null,
+        "function_call": null,
+        "tool_calls": [
+          {
+            "id": "chatcmpl-tool-FIXTURE00000000000000000001",
+            "type": "function",
+            "function": {
+              "name": "calculator",
+              "arguments": "{\"expression\": \"sqrt(1764)\"}"
+            }
+          }
+        ],
+        "reasoning": "The user asked for the square root of 1764.\nI'll use the calculator tool to be exact."
+      },
+      "logprobs": null,
+      "finish_reason": "tool_calls",
+      "stop_reason": null
+    }
+  ],
+  "service_tier": null,
+  "system_fingerprint": null,
+  "usage": {
+    "prompt_tokens": 198,
+    "total_tokens": 277,
+    "completion_tokens": 79,
+    "prompt_tokens_details": null
+  },
+  "prompt_logprobs": null,
+  "kv_transfer_params": null
+}

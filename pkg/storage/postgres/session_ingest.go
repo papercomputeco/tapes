@@ -55,7 +55,7 @@ func (d *Driver) IngestTurn(ctx context.Context, req storage.IngestTurnRequest) 
 	// silently keying turns onto the wrong synthetic session (the old
 	// persisted-node path validated the whole chain; identity-only ingest
 	// needs only this root check, and only on the synthetic path).
-	if req.Session == nil || req.Session.HarnessSessionID == "" {
+	if req.SessionKey == "" && (req.Session == nil || req.Session.HarnessSessionID == "") {
 		if ph := req.Nodes[0].ParentHash; ph != nil && *ph != "" {
 			return storage.IngestTurnResult{}, fmt.Errorf("ingest turn: nodes[0] must be the conversation root when no harness_session_id is supplied, got ParentHash=%q", *ph)
 		}
@@ -74,6 +74,9 @@ func (d *Driver) IngestTurn(ctx context.Context, req storage.IngestTurnRequest) 
 	envelope, harnessSessionID, err := resolveHarnessSessionID(req.Session, req.Nodes[0])
 	if err != nil {
 		return storage.IngestTurnResult{}, fmt.Errorf("resolve harness_session_id: %w", err)
+	}
+	if req.SessionKey != "" {
+		harnessSessionID = req.SessionKey
 	}
 
 	orgID, err := orgIDFromEnvelope(envelope)
@@ -160,21 +163,24 @@ func resolveHarnessSessionID(envelope *sessions.IngestEnvelope, root *merkle.Nod
 // the FK can be set immediately. Returns an invalid pgtype.UUID when
 // no parent hint is set.
 //
-// The parent is resolved within the *child's* harness namespace: both
-// the natural-key lookup and the placeholder use
-// envelope.HarnessIDOrUnknown(). This assumes parent and child share a
-// harness_id, which holds because a parent_harness_session_id is only
-// meaningful inside the harness that emitted it — a harness names its
-// fork-parent using an id drawn from its own session space. Cross-
-// harness fork lineage is intentionally not representable: the envelope
-// carries no parent harness_id, and dropping harness_id from the lookup
-// would be unsafe since harness_session_id is unique only within a
-// harness (an unscoped match could FK to the wrong parent). The one
-// degenerate case is a parent whose own first turn later lands under a
-// different harness_id than the child reported: its natural key won't
-// match this placeholder, so a second row is created and the child's
-// parent_session_id is left pointing at the orphan. Supporting that
-// would require a parent harness_id on the envelope; out of scope here.
+// The parent is resolved within the *parent's* harness namespace:
+// envelope.ParentHarnessIDOrChild(), which is the envelope's explicit
+// ParentHarnessID when the producer named one and the child's own
+// harness_id otherwise. The lookup can never drop harness_id, because
+// harness_session_id is unique only within a harness and an unscoped
+// match could FK to the wrong parent; naming the parent's harness is
+// what makes a cross-harness parent (a claude session that launched a
+// codex child) resolvable at all. The placeholder is inserted under the
+// same namespace, so when the parent's own first turn lands later its
+// natural key matches the placeholder and UpsertSession backfills it in
+// place rather than minting a second row.
+//
+// The residual degenerate case is a producer that omits ParentHarnessID
+// for a parent that really ran under another harness: the lookup falls
+// back to the child's harness, misses, and placeholder-inserts there, so
+// the parent's real first turn creates a second row and the child points
+// at the orphan. Only the producer can prevent that, by sending the
+// parent harness id.
 func resolveParentSessionID(
 	ctx context.Context,
 	qtx *gensqlc.Queries,
@@ -190,9 +196,11 @@ func resolveParentSessionID(
 	// ""), so a non-nil pointer here is guaranteed non-empty.
 	parentKey := *envelope.ParentHarnessSessionID
 
+	parentHarnessID := envelope.ParentHarnessIDOrChild()
+
 	parent, err := qtx.GetSessionByNaturalKey(ctx, gensqlc.GetSessionByNaturalKeyParams{
 		OrgID:            orgID,
-		HarnessID:        envelope.HarnessIDOrUnknown(),
+		HarnessID:        parentHarnessID,
 		HarnessSessionID: parentKey,
 	})
 	if err == nil {
@@ -210,7 +218,7 @@ func resolveParentSessionID(
 		ID:               placeholderID,
 		OrgID:            orgID,
 		AuthSubject:      envelope.AuthSubject,
-		HarnessID:        envelope.HarnessIDOrUnknown(),
+		HarnessID:        parentHarnessID,
 		HarnessSessionID: parentKey,
 		Now:              now,
 	})

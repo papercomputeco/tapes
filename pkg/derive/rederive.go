@@ -8,6 +8,7 @@ import (
 	"github.com/papercomputeco/tapes/pkg/llm"
 	"github.com/papercomputeco/tapes/pkg/llm/provider"
 	"github.com/papercomputeco/tapes/pkg/merkle"
+	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
@@ -38,13 +39,29 @@ func rederiveChain(providers map[string]provider.Provider, rec *storage.RawTurnR
 		return nil, true, nil
 	}
 	chain = TurnChain(CallContext{
-		Provider:  rec.Provider,
-		AgentName: rec.AgentName,
-		ThreadID:  threadIDFromMeta(rec.Meta),
-		Project:   project,
+		Provider:   rec.Provider,
+		AgentName:  rec.AgentName,
+		ThreadID:   threadIDFromMeta(rec.Meta),
+		Project:    project,
+		Session:    sessionEnvelope(rec.SessionEnvelope),
+		SessionKey: rec.HarnessSessionID,
 	}, req, &resp)
 	if len(chain) == 0 {
 		return nil, false, errors.New("empty chain")
 	}
 	return chain, false, nil
+}
+
+// sessionEnvelope decodes a raw turn's verbatim session envelope, or
+// returns nil when the row has none or it does not decode — the call
+// then classifies from its payload alone.
+func sessionEnvelope(raw json.RawMessage) *sessions.IngestEnvelope {
+	if len(raw) == 0 {
+		return nil
+	}
+	var env sessions.IngestEnvelope
+	if json.Unmarshal(raw, &env) != nil {
+		return nil
+	}
+	return &env
 }

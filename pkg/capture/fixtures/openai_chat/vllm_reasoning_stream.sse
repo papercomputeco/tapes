@@ -1,0 +1,26 @@
+data: {"id":"chatcmpl-FIXTURE0000000000000000000000002","object":"chat.completion.chunk","created":1767225701,"model":"Qwen/Qwen3-32B","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-FIXTURE0000000000000000000000002","object":"chat.completion.chunk","created":1767225701,"model":"Qwen/Qwen3-32B","choices":[{"index":0,"delta":{"reasoning":"The user asked for"},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-FIXTURE0000000000000000000000002","object":"chat.completion.chunk","created":1767225701,"model":"Qwen/Qwen3-32B","choices":[{"index":0,"delta":{"reasoning":" the square root of 1764."},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-FIXTURE0000000000000000000000002","object":"chat.completion.chunk","created":1767225701,"model":"Qwen/Qwen3-32B","choices":[{"index":0,"delta":{"reasoning":"\nI'll use the calculator"},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-FIXTURE0000000000000000000000002","object":"chat.completion.chunk","created":1767225701,"model":"Qwen/Qwen3-32B","choices":[{"index":0,"delta":{"reasoning":" tool to be exact."},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-FIXTURE0000000000000000000000002","object":"chat.completion.chunk","created":1767225701,"model":"Qwen/Qwen3-32B","choices":[{"index":0,"delta":{"content":"Let me"},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-FIXTURE0000000000000000000000002","object":"chat.completion.chunk","created":1767225701,"model":"Qwen/Qwen3-32B","choices":[{"index":0,"delta":{"content":" compute that."},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-FIXTURE0000000000000000000000002","object":"chat.completion.chunk","created":1767225701,"model":"Qwen/Qwen3-32B","choices":[{"index":0,"delta":{"tool_calls":[{"id":"chatcmpl-tool-FIXTURE00000000000000000001","type":"function","index":0,"function":{"name":"calculator","arguments":""}}]},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-FIXTURE0000000000000000000000002","object":"chat.completion.chunk","created":1767225701,"model":"Qwen/Qwen3-32B","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"expression\": "}}]},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-FIXTURE0000000000000000000000002","object":"chat.completion.chunk","created":1767225701,"model":"Qwen/Qwen3-32B","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"sqrt(1764)\"}"}}]},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-FIXTURE0000000000000000000000002","object":"chat.completion.chunk","created":1767225701,"model":"Qwen/Qwen3-32B","choices":[{"index":0,"delta":{"content":""},"logprobs":null,"finish_reason":"tool_calls"}]}
+
+data: {"id":"chatcmpl-FIXTURE0000000000000000000000002","object":"chat.completion.chunk","created":1767225701,"model":"Qwen/Qwen3-32B","choices":[],"usage":{"prompt_tokens":198,"total_tokens":277,"completion_tokens":79,"prompt_tokens_details":null}}
+
+data: [DONE]
+

@@ -429,6 +429,9 @@ func sessionEnvelopeFromHeaders(header func(string) string) *sessions.IngestEnve
 	if parent := header("x-tapes-parent-harness-session-id"); parent != "" {
 		env.ParentHarnessSessionID = &parent
 	}
+	if parentHarness := header("x-tapes-parent-harness-id"); parentHarness != "" {
+		env.ParentHarnessID = &parentHarness
+	}
 	if metaB64 := header("x-tapes-harness-metadata"); metaB64 != "" {
 		if decoded, err := base64.RawURLEncoding.DecodeString(metaB64); err == nil && json.Valid(decoded) {
 			env.HarnessMetadata = decoded

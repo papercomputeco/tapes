@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
+	"github.com/papercomputeco/tapes/pkg/sessions"
 )
 
 // Node kinds — the design doc's §2g taxonomy. A "session" on the wire
@@ -33,6 +34,12 @@ const (
 	KindWebSummary  = "offshoot:web-summary"
 	KindProbe       = "offshoot:probe"
 	KindCompaction  = "offshoot:compaction"
+
+	// KindHarnessAux is a side call the harness itself tagged as
+	// auxiliary in its session envelope (harness_metadata.aux_task)
+	// for a task with no more specific offshoot kind. The tag is the
+	// harness's own word that the call is off the conversation spine.
+	KindHarnessAux = "offshoot:harness-aux"
 
 	// Injected context — whole messages the harness prepends inside
 	// otherwise-normal calls. They drift between turns (server lists
@@ -182,6 +189,92 @@ func ClassifyCall(req *llm.ChatRequest, resp *llm.ChatResponse) string {
 	}
 
 	return KindUnknown
+}
+
+// auxTaskKinds maps a harness-declared auxiliary task
+// (harness_metadata.aux_task) to the offshoot kind it already
+// corresponds to. Tasks absent here classify as KindHarnessAux.
+var auxTaskKinds = map[string]string{
+	"title_generation": KindTitleGen,
+}
+
+// ClassifyEnvelopedCall classifies a call with its session envelope as
+// a fallback signal. Every cataloged tell in ClassifyCall wins; the
+// envelope only resolves what the payload alone cannot:
+//
+//   - A call the harness tagged auxiliary (harness_metadata.aux_task)
+//     is a side call, never the spine: it maps to its offshoot kind
+//     when ClassifyCall would otherwise say main or unknown.
+//   - An untagged call that matches no tell but arrives inside a named
+//     harness session (known harness_id and harness_session_id) is the
+//     conversation spine. Tool-less chat turns carry no tool or
+//     streaming tell, yet the harness attributed them to its session
+//     and did not mark them auxiliary.
+//
+// A nil envelope, or one without a harness session, leaves
+// ClassifyCall's verdict untouched here; ClassifyKeyedCall resolves such
+// a call when tapes keyed its raw turn itself.
+func ClassifyEnvelopedCall(req *llm.ChatRequest, resp *llm.ChatResponse, env *sessions.IngestEnvelope) string {
+	kind := ClassifyCall(req, resp)
+	if req == nil || env == nil || (kind != KindUnknown && kind != KindMain) {
+		return kind
+	}
+	if task := envelopeAuxTask(env); task != "" {
+		if mapped, ok := auxTaskKinds[task]; ok {
+			return mapped
+		}
+		return KindHarnessAux
+	}
+	if kind == KindUnknown && !env.NeedsSyntheticHarnessSessionID() {
+		return KindMain
+	}
+	return kind
+}
+
+// ClassifyKeyedCall is ClassifyEnvelopedCall for a call whose raw turn
+// tapes keyed itself. A call whose envelope names no harness session —
+// none at all, the unknown harness, or a harness without a session id —
+// is filed under a synthetic key: its conversation root, or an idle split
+// of it. Every turn under such a key re-sends the same first message, so
+// the key is evidence the payload alone does not carry that the call is a
+// conversation, exactly as a harness session id is for an enveloped call.
+// So the same fallback applies: a call matching no cataloged tell is the
+// spine, unless the envelope's harness_metadata tags it auxiliary (the
+// same mapping ClassifyEnvelopedCall uses).
+//
+// sessionKey is the harness_session_id the raw turn is filed under, ""
+// when the capture path keyed it by nothing. A call with no key, every
+// cataloged tell, and every call whose envelope names its own harness
+// session classify exactly as ClassifyEnvelopedCall does.
+func ClassifyKeyedCall(req *llm.ChatRequest, resp *llm.ChatResponse, env *sessions.IngestEnvelope, sessionKey string) string {
+	kind := ClassifyEnvelopedCall(req, resp, env)
+	if kind != KindUnknown || req == nil || sessionKey == "" || !env.NeedsSyntheticHarnessSessionID() {
+		return kind
+	}
+	if env != nil {
+		if task := envelopeAuxTask(env); task != "" {
+			if mapped, ok := auxTaskKinds[task]; ok {
+				return mapped
+			}
+			return KindHarnessAux
+		}
+	}
+	return KindMain
+}
+
+// envelopeAuxTask returns the auxiliary task a harness tagged this call
+// with, or "" when the envelope's harness_metadata carries none.
+func envelopeAuxTask(env *sessions.IngestEnvelope) string {
+	if len(env.HarnessMetadata) == 0 {
+		return ""
+	}
+	var meta struct {
+		AuxTask string `json:"aux_task"`
+	}
+	if json.Unmarshal(env.HarnessMetadata, &meta) != nil {
+		return ""
+	}
+	return strings.TrimSpace(meta.AuxTask)
 }
 
 // responsesToolRoutingEnabled reports whether a Responses API request

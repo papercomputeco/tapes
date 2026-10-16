@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -24,6 +25,7 @@ type proxyCommander struct {
 	providerType string
 	postgresDSN  string
 	project      string
+	idleGap      time.Duration
 
 	logger *slog.Logger
 }
@@ -37,6 +39,7 @@ var proxyFlags = config.FlagSet{
 	config.FlagProvider:              {Name: "provider", ViperKey: "proxy.provider", Description: "LLM provider type (anthropic, openai, ollama)"},
 	config.FlagPostgres:              {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
 	config.FlagProject:               {Name: "project", ViperKey: "proxy.project", Description: "Project name to tag sessions (default: auto-detect from git)"},
+	config.FlagSessionIdleGap:        {Name: "session-idle-gap", ViperKey: "sessions.idle_gap", Description: "Idle gap after which a conversation captured without a harness session id starts a new session (0 disables)"},
 }
 
 const proxyLongDesc string = `Run the proxy server.
@@ -71,6 +74,7 @@ func NewProxyCmd() *cobra.Command {
 				config.FlagProvider,
 				config.FlagPostgres,
 				config.FlagProject,
+				config.FlagSessionIdleGap,
 			})
 
 			cmder.listen = v.GetString("proxy.listen")
@@ -78,6 +82,7 @@ func NewProxyCmd() *cobra.Command {
 			cmder.providerType = v.GetString("proxy.provider")
 			cmder.project = v.GetString("proxy.project")
 			cmder.postgresDSN = v.GetString("storage.postgres_dsn")
+			cmder.idleGap = v.GetDuration("sessions.idle_gap")
 
 			if cmder.project == "" {
 				cmder.project = git.RepoName(cmd.Context())
@@ -97,6 +102,7 @@ func NewProxyCmd() *cobra.Command {
 	config.AddStringFlag(cmd, cmder.flags, config.FlagProvider, &cmder.providerType)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagProject, &cmder.project)
 	config.AddStringFlag(cmd, cmder.flags, config.FlagPostgres, &cmder.postgresDSN)
+	config.AddDurationFlag(cmd, cmder.flags, config.FlagSessionIdleGap, &cmder.idleGap)
 
 	return cmd
 }
@@ -109,10 +115,11 @@ func (c *proxyCommander) run() error {
 	defer driver.Close()
 
 	proxyConfig := proxy.Config{
-		ListenAddr:   c.listen,
-		UpstreamURL:  c.upstream,
-		ProviderType: c.providerType,
-		Project:      c.project,
+		ListenAddr:     c.listen,
+		UpstreamURL:    c.upstream,
+		ProviderType:   c.providerType,
+		Project:        c.project,
+		SessionIdleGap: c.idleGap,
 	}
 
 	p, err := proxy.New(proxyConfig, driver, c.logger)

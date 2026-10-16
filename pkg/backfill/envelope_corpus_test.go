@@ -78,6 +78,7 @@ type corpusEnvelope struct {
 	Cwd                    string          `json:"cwd"`
 	Name                   string          `json:"name"`
 	ParentHarnessSessionID string          `json:"parent_harness_session_id"`
+	ParentHarnessID        string          `json:"parent_harness_id"`
 	HarnessMetadata        json.RawMessage `json:"harness_metadata"`
 }
 
@@ -246,7 +247,7 @@ var _ = Describe("envelope fixture corpus (parity gate)", func() {
 		// on the first — a schema sweep is much more useful whole.
 		It("declares the required fields with legal values", func() {
 			categories := map[string]bool{"valid": true, "percent-encoding": true, "budget": true, "unknown": true, "error": true}
-			harnesses := map[string]bool{"claude": true, "codex": true, "pi": true, "unknown": true}
+			harnesses := map[string]bool{"claude": true, "codex": true, "hermes": true, "pi": true, "unknown": true}
 			directions := map[string]bool{"roundtrip": true, "decode": true, "encode": true}
 			dispositions := map[string]bool{"reject-400": true, "drop-field": true}
 
@@ -419,6 +420,22 @@ var _ = Describe("envelope fixture corpus (parity gate)", func() {
 				},
 			},
 			{
+				what: "an empty parent-harness header being dropped rather than normalised",
+				why:  "unlike harness_id, a missing parent harness means 'the child's harness', not 'unknown'; spelling it unknown would resolve the parent in a namespace no session lives in",
+				holds: func(c corpusCase) bool {
+					raw, ok := c.Headers["x-tapes-parent-harness-id"]
+					return ok && raw == "" && c.Envelope.ParentHarnessID == "" && c.Envelope.ParentHarnessSessionID != ""
+				},
+			},
+			{
+				what: "a parent in a different harness than the child",
+				why:  "the parent's harness travels beside its session id, or a cross-harness child links to a placeholder in its own namespace",
+				holds: func(c corpusCase) bool {
+					return c.Envelope.ParentHarnessSessionID != "" && c.Envelope.ParentHarnessID != "" &&
+						c.Envelope.ParentHarnessID != c.Envelope.HarnessID
+				},
+			},
+			{
 				what: "a non-UUID org_id being rejected",
 				why:  "org_id is server-trusted, so a malformed one means the gateway is wrong and must not be stored",
 				holds: func(c corpusCase) bool {
@@ -470,7 +487,7 @@ var _ = Describe("envelope fixture corpus (parity gate)", func() {
 			for _, c := range cases {
 				seen[c.Harness] = true
 			}
-			for _, h := range []string{"claude", "codex", "pi", "unknown"} {
+			for _, h := range []string{"claude", "codex", "hermes", "pi", "unknown"} {
 				Expect(seen).To(HaveKey(h), "no case for harness %q", h)
 			}
 		})

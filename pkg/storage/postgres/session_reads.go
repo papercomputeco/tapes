@@ -192,11 +192,62 @@ func (d *Driver) ListSessionRecords(
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("list session records: %w", err)
 	}
-	d.attachPreviews(ctx, out)
+	d.attachSessionDecorations(ctx, out)
 	return out, nil
 }
 
 const sessionPreviewMaxRunes = 120
+
+// attachSessionDecorations fills the per-record fields every session read
+// carries but the sessions row alone cannot supply: the preview and the
+// parent's harness id. Both are batched over the whole page, one query each.
+func (d *Driver) attachSessionDecorations(ctx context.Context, records []storage.SessionRecord) {
+	d.attachPreviews(ctx, records)
+	d.attachParentHarnessIDs(ctx, records)
+}
+
+// attachParentHarnessIDs populates ParentHarnessID on each record that has a
+// parent, from one batched lookup of the parent rows. The child row stores
+// only the parent's sessions.id; the parent's harness_id lives on the parent
+// row, and naming it on the child is what lets a reader tell a cross-harness
+// parent (a claude session that launched a codex child) from a same-harness
+// fork without a second request. Best-effort like previews: a failed lookup
+// is logged and parent_session_id is still served, so the read never fails
+// over it.
+func (d *Driver) attachParentHarnessIDs(ctx context.Context, records []storage.SessionRecord) {
+	var parentIDs []string
+	for i := range records {
+		if records[i].ParentSessionID != "" {
+			parentIDs = append(parentIDs, records[i].ParentSessionID)
+		}
+	}
+	if len(parentIDs) == 0 {
+		return
+	}
+	rows, err := d.conn.Query(ctx,
+		`SELECT id::text, harness_id FROM sessions WHERE id = ANY($1::uuid[])`, parentIDs)
+	if err != nil {
+		slog.WarnContext(ctx, "attach session parent harness ids", "error", err)
+		return
+	}
+	defer rows.Close()
+	harnessByID := make(map[string]string, len(parentIDs))
+	for rows.Next() {
+		var id, harnessID string
+		if err := rows.Scan(&id, &harnessID); err != nil {
+			slog.WarnContext(ctx, "attach session parent harness ids: scan", "error", err)
+			return
+		}
+		harnessByID[id] = harnessID
+	}
+	if err := rows.Err(); err != nil {
+		slog.WarnContext(ctx, "attach session parent harness ids", "error", err)
+		return
+	}
+	for i := range records {
+		records[i].ParentHarnessID = harnessByID[records[i].ParentSessionID]
+	}
+}
 
 // attachPreviews populates Preview on each record in place from a single
 // batched preview query. It owns the best-effort policy for session reads:
@@ -342,7 +393,7 @@ func (d *Driver) GetSessionRecord(ctx context.Context, orgID, id string) (*stora
 	// detail endpoint's rollup.preview is always null and the console's
 	// sessionDisplayName degrades to an id slice on the detail page.
 	recs := []storage.SessionRecord{s}
-	d.attachPreviews(ctx, recs)
+	d.attachSessionDecorations(ctx, recs)
 	return &recs[0], nil
 }
 
@@ -408,7 +459,7 @@ func (d *Driver) GetSessionRecordByHarness(
 		return nil, fmt.Errorf("get session record by harness: %w", err)
 	}
 	recs := []storage.SessionRecord{sessionRecordFromRow(row)}
-	d.attachPreviews(ctx, recs)
+	d.attachSessionDecorations(ctx, recs)
 	return &recs[0], nil
 }
 
@@ -439,7 +490,7 @@ func (d *Driver) ListSessionRecordsByHarnessSessionID(
 	for i, row := range rows {
 		recs[i] = sessionRecordFromRow(row)
 	}
-	d.attachPreviews(ctx, recs)
+	d.attachSessionDecorations(ctx, recs)
 	return recs, nil
 }
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/papercomputeco/tapes/pkg/derive"
 	"github.com/papercomputeco/tapes/pkg/llm"
+	"github.com/papercomputeco/tapes/pkg/sessions"
 	"github.com/papercomputeco/tapes/pkg/storage"
 )
 
@@ -160,6 +161,79 @@ Be concise, structured, and focused on helping the next LLM seamlessly continue 
 		}
 		Expect(derive.ClassifyCall(req, assistantText("???"))).To(Equal(derive.KindUnknown))
 	})
+})
+
+var _ = Describe("ClassifyEnvelopedCall", func() {
+	chatTurn := func() *llm.ChatRequest {
+		return &llm.ChatRequest{
+			Extra:    map[string]any{"endpoint": "chat_completions"},
+			Messages: []llm.Message{textMsg("user", "Say hello in five words.")},
+		}
+	}
+	session := &sessions.IngestEnvelope{HarnessID: "hermes", HarnessSessionID: "sess-1"}
+	withMeta := func(meta string) *sessions.IngestEnvelope {
+		env := *session
+		env.HarnessMetadata = json.RawMessage(meta)
+		return &env
+	}
+
+	DescribeTable("resolves only what the payload alone cannot",
+		func(req *llm.ChatRequest, resp *llm.ChatResponse, env *sessions.IngestEnvelope, want string) {
+			Expect(derive.ClassifyEnvelopedCall(req, resp, env)).To(Equal(want))
+		},
+		Entry("tool-less chat turn in a harness session is the spine",
+			chatTurn(), assistantText("Hello there, nice to meet!"), session, derive.KindMain),
+		Entry("tool-less chat turn without an envelope stays unknown",
+			chatTurn(), assistantText("Hello there, nice to meet!"), nil, derive.KindUnknown),
+		Entry("unknown harness keeps unknown",
+			chatTurn(), assistantText("hi"), &sessions.IngestEnvelope{HarnessID: "unknown", HarnessSessionID: "sess-1"}, derive.KindUnknown),
+		Entry("harness without a session id keeps unknown",
+			chatTurn(), assistantText("hi"), &sessions.IngestEnvelope{HarnessID: "hermes"}, derive.KindUnknown),
+		Entry("aux title_generation tag maps to title-gen",
+			chatTurn(), assistantText("Friendly Greeting"), withMeta(`{"aux_task":"title_generation"}`), derive.KindTitleGen),
+		Entry("other aux tags map to the harness-aux offshoot",
+			chatTurn(), assistantText("summary"), withMeta(`{"aux_task":"compression"}`), derive.KindHarnessAux),
+		Entry("aux tag keeps a tool-shaped call off the spine",
+			&llm.ChatRequest{Stream: new(true), Tools: []json.RawMessage{json.RawMessage(`{"name":"Bash"}`)}, Messages: []llm.Message{textMsg("user", "x")}},
+			assistantText("y"), withMeta(`{"aux_task":"web_extract"}`), derive.KindHarnessAux),
+		Entry("unrelated harness metadata does not mark a call aux",
+			chatTurn(), assistantText("hi"), withMeta(`{"source":"cli"}`), derive.KindMain),
+		Entry("malformed harness metadata is ignored",
+			chatTurn(), assistantText("hi"), withMeta(`not json`), derive.KindMain),
+		Entry("a cataloged tell wins over the envelope",
+			&llm.ChatRequest{MaxTokens: new(1), Messages: []llm.Message{textMsg("user", "quota")}},
+			assistantText("x"), withMeta(`{"aux_task":"title_generation"}`), derive.KindProbe),
+		Entry("a cataloged title-gen tell is unchanged in a harness session",
+			&llm.ChatRequest{System: `Respond with {"title": ...}`, Messages: []llm.Message{textMsg("user", "x")}},
+			assistantText(`{"title": "T"}`), session, derive.KindTitleGen),
+		Entry("a nil request stays unknown",
+			nil, nil, session, derive.KindUnknown),
+	)
+})
+
+var _ = Describe("ClassifyKeyedCall", func() {
+	chatTurn := &llm.ChatRequest{
+		Extra:    map[string]any{"endpoint": "chat_completions"},
+		Messages: []llm.Message{textMsg("user", "Say hello in five words.")},
+	}
+	reply := assistantText("Hello there, nice to meet!")
+	aux := &sessions.IngestEnvelope{HarnessID: "unknown", HarnessMetadata: json.RawMessage(`{"aux_task":"title_generation"}`)}
+
+	DescribeTable("treats a key tapes minted as a conversation",
+		func(req *llm.ChatRequest, env *sessions.IngestEnvelope, key, want string) {
+			Expect(derive.ClassifyKeyedCall(req, reply, env, key)).To(Equal(want))
+		},
+		Entry("no envelope, synthetic key: the spine", chatTurn, nil, "3d0e994121d8add1", derive.KindMain),
+		Entry("unknown harness, idle-split key: the spine",
+			chatTurn, &sessions.IngestEnvelope{HarnessID: "unknown"}, "3d0e994121d8add1-20261015T232847Z", derive.KindMain),
+		Entry("harness without a session id, synthetic key: the spine",
+			chatTurn, &sessions.IngestEnvelope{HarnessID: "hermes"}, "3d0e994121d8add1", derive.KindMain),
+		Entry("aux-tagged keyed call stays a side call", chatTurn, aux, "3d0e994121d8add1", derive.KindTitleGen),
+		Entry("no key at all stays unknown", chatTurn, nil, "", derive.KindUnknown),
+		Entry("a cataloged tell wins",
+			&llm.ChatRequest{MaxTokens: new(1), Messages: []llm.Message{textMsg("user", "quota")}}, nil, "3d0e994121d8add1", derive.KindProbe),
+		Entry("a nil request stays unknown", nil, nil, "3d0e994121d8add1", derive.KindUnknown),
+	)
 })
 
 var _ = Describe("ClassifyInjected", func() {

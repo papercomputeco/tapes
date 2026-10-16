@@ -75,6 +75,28 @@ var _ = Describe("raw-turn attribution repair admin endpoint", func() {
 		Expect(stub.req).To(Equal(storage.RawTurnAttributionRepairRequest{}))
 	})
 
+	It("threads a cross-harness parent to storage, and allows a parent id shared with the child across harnesses", func() {
+		stub := &attributionRepairStub{Driver: inmemory.NewDriver(), result: storage.RawTurnAttributionRepairResult{Recorded: true}}
+		resp := request(newServer(stub), `{"raw_turn_id":1,"harness_id":"codex","harness_session_id":"child","parent_harness_session_id":"child","parent_harness_id":"claude","reason":"evidence"}`)
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		Expect(stub.req.ParentHarnessSessionID).To(HaveValue(Equal("child")))
+		Expect(stub.req.ParentHarnessID).To(HaveValue(Equal("claude")))
+	})
+
+	It("rejects an empty or session-less parent_harness_id before calling storage", func() {
+		for _, body := range []string{
+			`{"raw_turn_id":1,"harness_id":"codex","harness_session_id":"child","parent_harness_session_id":"p","parent_harness_id":"","reason":"evidence"}`,
+			`{"raw_turn_id":1,"harness_id":"codex","harness_session_id":"child","parent_harness_id":"claude","reason":"evidence"}`,
+		} {
+			stub := &attributionRepairStub{Driver: inmemory.NewDriver()}
+			resp := request(newServer(stub), body)
+			resp.Body.Close()
+			Expect(resp.StatusCode).To(Equal(http.StatusBadRequest), body)
+			Expect(stub.req).To(Equal(storage.RawTurnAttributionRepairRequest{}))
+		}
+	})
+
 	It("maps missing and ambiguous correlations", func() {
 		stub := &attributionRepairStub{Driver: inmemory.NewDriver(), err: storage.ErrRawTurnNotFound}
 		resp := request(newServer(stub), `{"raw_turn_id":1,"harness_id":"codex","harness_session_id":"child","reason":"evidence"}`)

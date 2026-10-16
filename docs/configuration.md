@@ -62,6 +62,7 @@ Useful supported keys include:
 | `api.read_deadline` | Deadline on every read API request; `0` disables (see [Read guards](#read-guards)) | `20s` |
 | `api.payload_concurrency` | Concurrent full-payload reads per replica; `0` disables (see [Read guards](#read-guards)) | `4` |
 | `ingest.listen` | Private ingest listen address | `:8082` |
+| `sessions.idle_gap` | Idle gap that starts a new session for a conversation captured without a harness session id; `0` disables (see [Idle split](#idle-split)) | `30m` |
 | `client.proxy_target` | Proxy URL used by clients | `http://localhost:8080` |
 | `client.api_target` | API URL used by clients | `http://localhost:8081` |
 | `vector_store.target` | pgvector PostgreSQL DSN | primary PostgreSQL DSN when unset |
@@ -167,6 +168,33 @@ many payload reads the replica is serving at the moment, whether or not the
 cap is enabled; a replica sitting at its cap is one whose gauge reads
 `api.payload_concurrency`.
 
+### Idle split
+
+A turn whose session envelope names no harness session id — harness
+`unknown`, a bare proxied call, a turn ingested with no session envelope at
+all, or a fallback harness stamped without a session id — is grouped by its conversation: the first message of the request, which
+every turn of that conversation re-sends. That keeps a task's turns together,
+but a bot that keeps one ever-growing history never starts a new conversation,
+so it would accumulate one unbounded session. `sessions.idle_gap` bounds it: a
+turn captured more than the gap after the conversation's previous turn starts
+a new session.
+
+| Setting | `tapes serve` | `tapes serve proxy` / `tapes serve ingest` | Default |
+| --- | --- | --- | --- |
+| `sessions.idle_gap` | `--session-idle-gap` | `--session-idle-gap` | `30m` |
+
+It is a duration string (`45m`, `2h`); `0` turns the split off, so such a
+conversation stays one session however long it runs. A gap must otherwise be
+at least `1s`: a split's id names its start to the second, so a shorter gap
+could open two splits with the same id. A shorter value is rejected when the
+config is loaded or set, and when a capture process starts. A session id the harness
+supplies is never split, at any gap. Every process that captures — the proxy
+and the ingest server — must run with the same value, since each places the
+turns it receives. Changing it affects turns captured afterwards; turns already
+stored keep the session they were placed in. See
+[Sessions without a harness session id](./data.md#sessions-without-a-harness-session-id)
+for how turns are placed.
+
 ### Memory in a container
 
 `tapes serve api` and `tapes serve derive-worker` each set a soft heap limit
@@ -209,6 +237,9 @@ listen = ":8080"
 listen = ":8081"
 read_deadline = "20s"
 payload_concurrency = 4
+
+[sessions]
+idle_gap = "30m"
 
 [client]
 proxy_target = "http://localhost:8080"

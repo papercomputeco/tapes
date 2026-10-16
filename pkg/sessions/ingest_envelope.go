@@ -37,11 +37,16 @@ const HarnessIDUnknown = "unknown"
 //     HarnessID == "unknown"), ingest derives a synthetic id from
 //     the captured turn's Merkle root prefix.
 //   - ParentHarnessSessionID: fork-lineage hint, resolved server-side
-//     to the parent's `sessions.id` within this envelope's harness
-//     namespace. Parent and child are assumed to share a harness_id;
-//     cross-harness forks are not supported (the envelope carries no
-//     parent harness_id). When the parent's first turn hasn't landed
-//     yet, ingest placeholder-inserts the parent so the FK can be set.
+//     to the parent's `sessions.id` within the parent's harness
+//     namespace (see ParentHarnessIDOrChild). When the parent's first
+//     turn hasn't landed yet, ingest placeholder-inserts the parent so
+//     the FK can be set.
+//   - ParentHarnessID: the parent session's harness_id, set when the
+//     parent ran under a different harness than this envelope's (a
+//     claude session that launched a codex child). Absent means the
+//     parent shares HarnessID. Verbatim, no closed list — the same rule
+//     as HarnessID — and meaningful only beside ParentHarnessSessionID;
+//     on its own it names no session and is ignored for linkage.
 //   - HarnessMetadata: arbitrary JSON object merged into the
 //     `sessions.harness_metadata` column last-write-wins per key.
 type IngestEnvelope struct {
@@ -53,6 +58,7 @@ type IngestEnvelope struct {
 	Cwd                    string          `json:"cwd,omitempty"`
 	Name                   string          `json:"name,omitempty"`
 	ParentHarnessSessionID *string         `json:"parent_harness_session_id,omitempty"`
+	ParentHarnessID        *string         `json:"parent_harness_id,omitempty"`
 	HarnessMetadata        json.RawMessage `json:"harness_metadata,omitempty"`
 }
 
@@ -65,6 +71,18 @@ func (e *IngestEnvelope) HarnessIDOrUnknown() string {
 		return HarnessIDUnknown
 	}
 	return e.HarnessID
+}
+
+// ParentHarnessIDOrChild returns the harness namespace the fork parent
+// resolves in: the explicit ParentHarnessID when the envelope carries
+// one, otherwise the child's own (normalized) harness_id — the
+// same-harness assumption every envelope made before a parent harness
+// could be named.
+func (e *IngestEnvelope) ParentHarnessIDOrChild() string {
+	if e != nil && e.ParentHarnessID != nil && *e.ParentHarnessID != "" {
+		return *e.ParentHarnessID
+	}
+	return e.HarnessIDOrUnknown()
 }
 
 // Validate enforces wire-boundary invariants that the decoder cannot
@@ -84,6 +102,10 @@ func (e *IngestEnvelope) HarnessIDOrUnknown() string {
 //     ambiguous between "absent" and "this session has no parent",
 //     which the ingest path would silently coerce to absent. Force
 //     the caller to omit the field instead.
+//   - ParentHarnessID present but pointing at "", for the same reason.
+//     A ParentHarnessID without a ParentHarnessSessionID is accepted:
+//     it names no session, so it is ignored for linkage rather than
+//     costing the turn a 400.
 //   - HarnessMetadata that does not decode to a JSON object. The
 //     Postgres `||` JSONB operator on sessions.harness_metadata is
 //     defined as merge-objects; arrays concatenate and scalars
@@ -99,6 +121,9 @@ func (e *IngestEnvelope) Validate() error {
 	}
 	if e.ParentHarnessSessionID != nil && *e.ParentHarnessSessionID == "" {
 		return errors.New("parent_harness_session_id is present but empty; omit the field instead")
+	}
+	if e.ParentHarnessID != nil && *e.ParentHarnessID == "" {
+		return errors.New("parent_harness_id is present but empty; omit the field instead")
 	}
 	if len(e.HarnessMetadata) > 0 {
 		var probe map[string]any
@@ -145,7 +170,9 @@ const SyntheticHarnessSessionIDPrefixLen = 16
 // SyntheticHarnessSessionIDPrefixLen hex characters. Because every turn
 // in a conversation re-sends the full history, the root (first message)
 // hash is stable across the conversation, so all of a conversation's
-// turns map to the same synthetic id. Returns "" when rootHash is empty.
+// turns map to the same synthetic id — the conversation key, which
+// AssignSyntheticSplit splits into a session per burst of activity.
+// Returns "" when rootHash is empty.
 func SyntheticHarnessSessionID(rootHash string) string {
 	if rootHash == "" {
 		return ""

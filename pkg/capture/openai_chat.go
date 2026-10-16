@@ -37,12 +37,42 @@ type chatTool struct {
 }
 
 type chatMessage struct {
-	Role         string          `json:"role"`
-	Content      string          `json:"content"`
-	Refusal      string          `json:"refusal"`
-	ToolCalls    []chatTool      `json:"tool_calls"`
-	FunctionCall *chatFunction   `json:"function_call,omitempty"`
-	Audio        json.RawMessage `json:"audio,omitempty"`
+	Role    string `json:"role"`
+	Content string `json:"content"`
+	// ReasoningContent and Reasoning are the non-standard fields
+	// OpenAI-compatible reasoning models use for the model's reasoning trace:
+	// reasoning_content (DeepSeek, vLLM/SGLang reasoning parsers) and its
+	// successor reasoning (newer vLLM, OpenRouter). omitempty keeps
+	// Extra["choices"] byte-identical for providers that send neither.
+	ReasoningContent string          `json:"reasoning_content,omitempty"`
+	Reasoning        lenientString   `json:"reasoning,omitempty"`
+	Refusal          string          `json:"refusal"`
+	ToolCalls        []chatTool      `json:"tool_calls"`
+	FunctionCall     *chatFunction   `json:"function_call,omitempty"`
+	Audio            json.RawMessage `json:"audio,omitempty"`
+}
+
+// reasoningText returns the message's reasoning trace. Servers migrating
+// between the two field names send both with the same text, so
+// reasoning_content wins rather than the trace being counted twice.
+func (m chatMessage) reasoningText() string {
+	if m.ReasoningContent != "" {
+		return m.ReasoningContent
+	}
+	return string(m.Reasoning)
+}
+
+// lenientString decodes a JSON string and treats any other value as empty.
+// "reasoning" is not part of the Chat Completions schema, so a provider
+// putting a non-string there must not fail the whole reduction.
+type lenientString string
+
+func (s *lenientString) UnmarshalJSON(data []byte) error {
+	var v string
+	if json.Unmarshal(data, &v) == nil {
+		*s = lenientString(v)
+	}
+	return nil
 }
 
 type chatChoice struct {
@@ -163,6 +193,13 @@ func (r *openAIChatReducer) stream(ctx context.Context, body io.Reader) (*llm.Ch
 			if delta.Delta.Role != "" {
 				c.Message.Role = delta.Delta.Role
 			}
+			// Accumulate under the field each delta used, preferring
+			// reasoning_content when a delta carries both.
+			if delta.Delta.ReasoningContent != "" {
+				c.Message.ReasoningContent += delta.Delta.ReasoningContent
+			} else {
+				c.Message.Reasoning += delta.Delta.Reasoning
+			}
 			c.Message.Content += delta.Delta.Content
 			c.Message.Refusal += delta.Delta.Refusal
 			if delta.Delta.FunctionCall != nil {
@@ -252,6 +289,11 @@ func chatResponse(env chatEnvelope, problem string) *llm.ChatResponse {
 		resp.StopReason = first.FinishReason
 		if first.Message.Role != "" {
 			resp.Message.Role = first.Message.Role
+		}
+		// Reasoning precedes the answer it produced, matching Anthropic
+		// thinking blocks so downstream projection treats both alike.
+		if reasoning := first.Message.reasoningText(); reasoning != "" {
+			resp.Message.Content = append(resp.Message.Content, llm.ContentBlock{Type: "thinking", Thinking: reasoning})
 		}
 		if first.Message.Content != "" {
 			resp.Message.Content = append(resp.Message.Content, llm.ContentBlock{Type: "text", Text: first.Message.Content})

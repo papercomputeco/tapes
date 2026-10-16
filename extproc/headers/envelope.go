@@ -41,6 +41,7 @@ type SessionEnvelope struct {
 	Cwd                      string
 	Name                     string
 	ParentHarnessSessionID   string
+	ParentHarnessID          string
 	HarnessMetadata          map[string]any
 	HarnessMetadataMalformed bool
 }
@@ -82,6 +83,10 @@ func ParseSessionEnvelope(hdrs *extprocv3.HttpHeaders) SessionEnvelope {
 	out.HarnessSessionID = Get(hdrs, TapesHarnessSessionID)
 	out.HarnessVersion = Get(hdrs, TapesHarnessVersion)
 	out.ParentHarnessSessionID = Get(hdrs, TapesParentHarnessSessionID)
+	// Verbatim like the parent session id; empty is "absent" (no
+	// "unknown" substitution), so a child without a cross-harness parent
+	// dispatches no parent_harness_id at all.
+	out.ParentHarnessID = Get(hdrs, TapesParentHarnessID)
 
 	if raw := Get(hdrs, TapesCwd); raw != "" {
 		out.Cwd = decodeEnvelopeHeaderValue("cwd", raw)

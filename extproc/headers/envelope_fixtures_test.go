@@ -45,6 +45,7 @@ type fixtureEnvelope struct {
 	Cwd                    string          `json:"cwd"`
 	Name                   string          `json:"name"`
 	ParentHarnessSessionID string          `json:"parent_harness_session_id"`
+	ParentHarnessID        string          `json:"parent_harness_id"`
 	HarnessMetadata        json.RawMessage `json:"harness_metadata"`
 }
 
@@ -265,6 +266,12 @@ func TestEnvelopeFixtureCorpus(t *testing.T) {
 			if got.ParentHarnessSessionID != want.ParentHarnessSessionID {
 				t.Errorf("parent_harness_session_id: got %q, want %q",
 					got.ParentHarnessSessionID, want.ParentHarnessSessionID)
+			}
+			// Same rule for the parent's harness: an empty header is absent,
+			// never "unknown".
+			if got.ParentHarnessID != want.ParentHarnessID {
+				t.Errorf("parent_harness_id: got %q, want %q",
+					got.ParentHarnessID, want.ParentHarnessID)
 			}
 
 			// --- cwd ---

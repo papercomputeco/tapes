@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/papercomputeco/tapes/pkg/dotdir"
+	"github.com/papercomputeco/tapes/pkg/sessions"
 )
 
 const (
@@ -71,6 +72,7 @@ func ValidConfigKeys() []string {
 		"api.read_deadline",
 		"api.payload_concurrency",
 		"ingest.listen",
+		"sessions.idle_gap",
 		"client.proxy_target",
 		"client.api_target",
 		"opencode.provider",
@@ -157,6 +159,9 @@ func (c *Configer) LoadConfig() (*Config, error) {
 	if err := validateLoggingConfig(merged.Logging); err != nil {
 		return nil, err
 	}
+	if err := sessions.ValidateIdleGap(merged.Sessions.IdleGap); err != nil {
+		return nil, fmt.Errorf("invalid sessions config: %w", err)
+	}
 
 	return merged, nil
 }
@@ -172,6 +177,9 @@ func (c *Configer) SaveConfig(cfg *Config) error {
 	}
 	if err := validateLoggingConfig(cfg.Logging); err != nil {
 		return err
+	}
+	if err := sessions.ValidateIdleGap(cfg.Sessions.IdleGap); err != nil {
+		return fmt.Errorf("invalid sessions config: %w", err)
 	}
 
 	var buf bytes.Buffer

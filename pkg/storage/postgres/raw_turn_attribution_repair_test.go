@@ -395,6 +395,100 @@ var _ = Describe("raw-turn attribution repair", func() {
 		Expect(spanTurnsForHarnessSession(ctx, driver, orgID, harnessID, sourceID)).To(Equal(1))
 	})
 
+	It("carries a cross-harness parent through a repair, and an omitted parent_harness_id resolves in the repaired harness", func() {
+		const (
+			childHarness  = "codex"
+			parentHarness = "claude"
+			childID       = "codex-child"
+			parentID      = "claude-parent"
+		)
+		parentRowID := newTestOrgID()
+		_, err := driver.DB().Exec(ctx, `
+			INSERT INTO sessions (id, org_id, auth_subject, harness_id, harness_session_id, started_at, last_seen_at)
+			VALUES ($1, $2, 'user-test', $3, $4, NOW(), NOW())`,
+			parentRowID, orgID, parentHarness, parentID)
+		Expect(err).NotTo(HaveOccurred())
+
+		inserted, err := driver.PutRawTurn(ctx, storage.RawTurnRecord{
+			OrgID: orgID, Source: storage.RawTurnSourceWire, Provider: "openai", AgentName: "codex",
+			HarnessID: childHarness, HarnessSessionID: childID, RequestID: "repair-cross-harness",
+			RawRequest: json.RawMessage(
+				`{"model":"claude-test","max_tokens":4096,"messages":[{"role":"user","content":"cross harness"}]}`),
+			Response: json.RawMessage(
+				`{"model":"claude-test","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]},"stop_reason":"end_turn"}`),
+			Meta: json.RawMessage(`{"thread_id":"wrong-thread"}`),
+			SessionEnvelope: json.RawMessage(fmt.Sprintf(
+				`{"org_id":%q,"auth_subject":"user-test","harness_id":%q,"harness_session_id":%q,"parent_harness_session_id":%q,"parent_harness_id":%q}`,
+				orgID, childHarness, childID, parentID, parentHarness)),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(inserted).To(BeTrue())
+		rawTurnID := rawTurnIDForRequest(ctx, driver, orgID, "repair-cross-harness")
+
+		childParent := func() (string, string) {
+			var h, sid string
+			Expect(driver.DB().QueryRow(ctx, `
+				SELECT parent.harness_id, parent.harness_session_id
+				FROM sessions child
+				JOIN sessions parent ON parent.id = child.parent_session_id
+				WHERE child.org_id = $1 AND child.harness_id = $2 AND child.harness_session_id = $3`,
+				orgID, childHarness, childID).Scan(&h, &sid)).To(Succeed())
+			return h, sid
+		}
+
+		// A thread-only repair that keeps the cross-harness parent.
+		result, err := driver.RepairRawTurnAttribution(ctx, "", storage.RawTurnAttributionRepairRequest{
+			OrgID: orgID, RawTurnID: rawTurnID, HarnessID: childHarness, HarnessSessionID: childID,
+			ThreadID: "right-thread", ParentHarnessSessionID: new(parentID), ParentHarnessID: new(parentHarness),
+			Reason: "thread evidence",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Recorded).To(BeTrue())
+		Expect(result.Previous.ParentHarnessID).To(HaveValue(Equal(parentHarness)),
+			"the raw envelope's parent harness is part of the previous attribution")
+		Expect(result.Effective.ParentHarnessID).To(HaveValue(Equal(parentHarness)))
+		h, sid := childParent()
+		Expect([]string{h, sid}).To(Equal([]string{parentHarness, parentID}))
+
+		rows, err := driver.ListRawTurns(ctx, 0, 10)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rows).To(HaveLen(1))
+		var effective sessions.IngestEnvelope
+		Expect(json.Unmarshal(rows[0].SessionEnvelope, &effective)).To(Succeed())
+		Expect(effective.ParentHarnessID).To(HaveValue(Equal(parentHarness)))
+
+		// Repeating it is a no-op: parent harness participates in sameness.
+		result, err = driver.RepairRawTurnAttribution(ctx, "", storage.RawTurnAttributionRepairRequest{
+			OrgID: orgID, RawTurnID: rawTurnID, HarnessID: childHarness, HarnessSessionID: childID,
+			ThreadID: "right-thread", ParentHarnessSessionID: new(parentID), ParentHarnessID: new(parentHarness),
+			Reason: "thread evidence",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Recorded).To(BeFalse())
+
+		// A correction is a complete replacement: omitting parent_harness_id
+		// resolves the parent in the repaired harness, and the raw envelope's
+		// parent harness no longer applies.
+		result, err = driver.RepairRawTurnAttribution(ctx, "", storage.RawTurnAttributionRepairRequest{
+			OrgID: orgID, RawTurnID: rawTurnID, HarnessID: childHarness, HarnessSessionID: childID,
+			ThreadID: "right-thread", ParentHarnessSessionID: new(parentID),
+			Reason: "parent is a codex session after all",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Recorded).To(BeTrue())
+		Expect(result.Previous.ParentHarnessID).To(HaveValue(Equal(parentHarness)))
+		Expect(result.Effective.ParentHarnessID).To(BeNil())
+		h, sid = childParent()
+		Expect([]string{h, sid}).To(Equal([]string{childHarness, parentID}))
+
+		rows, err = driver.ListRawTurns(ctx, 0, 10)
+		Expect(err).NotTo(HaveOccurred())
+		effective = sessions.IngestEnvelope{}
+		Expect(json.Unmarshal(rows[0].SessionEnvelope, &effective)).To(Succeed())
+		Expect(effective.ParentHarnessSessionID).To(HaveValue(Equal(parentID)))
+		Expect(effective.ParentHarnessID).To(BeNil(), "the raw parent harness must not outlive a correction that omits it")
+	})
+
 	It("rejects missing rows and invalid replacement fields without writing an audit record", func() {
 		_, err := driver.RepairRawTurnAttribution(ctx, "", storage.RawTurnAttributionRepairRequest{
 			OrgID: orgID, RawTurnID: 999, HarnessID: "codex", HarnessSessionID: "child", Reason: "evidence",
@@ -413,6 +507,25 @@ var _ = Describe("raw-turn attribution repair", func() {
 			ParentHarnessSessionID: &self, Reason: "invalid lineage",
 		})
 		Expect(err).To(MatchError(ContainSubstring("cannot parent itself")))
+
+		_, err = driver.RepairRawTurnAttribution(ctx, "", storage.RawTurnAttributionRepairRequest{
+			OrgID: orgID, RawTurnID: 999, HarnessID: "codex", HarnessSessionID: "child",
+			ParentHarnessID: new("claude"), Reason: "parent harness alone",
+		})
+		Expect(err).To(MatchError(ContainSubstring("requires parent_harness_session_id")))
+
+		_, err = driver.RepairRawTurnAttribution(ctx, "", storage.RawTurnAttributionRepairRequest{
+			OrgID: orgID, RawTurnID: 999, HarnessID: "codex", HarnessSessionID: "child",
+			ParentHarnessSessionID: new("parent"), ParentHarnessID: new(""), Reason: "empty parent harness",
+		})
+		Expect(err).To(MatchError(ContainSubstring("parent_harness_id must be omitted")))
+
+		// The same session id under another harness is a different session.
+		_, err = driver.RepairRawTurnAttribution(ctx, "", storage.RawTurnAttributionRepairRequest{
+			OrgID: orgID, RawTurnID: 999, HarnessID: "codex", HarnessSessionID: self,
+			ParentHarnessSessionID: &self, ParentHarnessID: new("claude"), Reason: "cross-harness lineage",
+		})
+		Expect(err).To(MatchError(storage.ErrRawTurnNotFound))
 
 		var corrections int
 		Expect(driver.DB().QueryRow(ctx, "SELECT COUNT(*) FROM raw_turn_attribution_corrections").Scan(&corrections)).To(Succeed())

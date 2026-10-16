@@ -819,6 +819,26 @@ var _ = Describe("sort and direction params on GET /v1/sessions", func() {
 	})
 })
 
+var _ = Describe("sessionItemFromStorage parent lineage", func() {
+	It("exposes the parent's harness beside its session id", func() {
+		item := sessionItemFromStorage(storage.SessionRecord{
+			ID: "child", HarnessID: "codex", ParentSessionID: "parent", ParentHarnessID: "claude",
+		}, time.Now())
+		Expect(item.ParentSessionID).To(Equal("parent"))
+		Expect(item.ParentHarnessID).To(Equal("claude"))
+
+		b, err := json.Marshal(item)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(b)).To(ContainSubstring(`"parent_harness_id":"claude"`))
+	})
+
+	It("omits parent_harness_id for a session with no parent", func() {
+		b, err := json.Marshal(sessionItemFromStorage(storage.SessionRecord{ID: "root", HarnessID: "claude"}, time.Now()))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(b)).NotTo(ContainSubstring("parent_harness_id"))
+	})
+})
+
 var _ = Describe("sessionItemFromStorage liveness", func() {
 	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
 	recent := now.Add(-30 * time.Second) // inside the 5m window

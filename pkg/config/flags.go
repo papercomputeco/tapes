@@ -59,6 +59,10 @@ const (
 
 	FlagIngestListen = "ingest-listen"
 
+	// FlagSessionIdleGap is sessions.idle_gap, spelled the same on every
+	// command that captures (serve, serve proxy, serve ingest).
+	FlagSessionIdleGap = "session-idle-gap"
+
 	// Standalone subcommand variants use "listen" as the flag name
 	// but bind to different viper keys depending on the service.
 	FlagProxyListenStandalone  = "proxy-listen-standalone"

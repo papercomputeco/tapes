@@ -184,7 +184,14 @@ func validateAttributionRepair(req storage.RawTurnAttributionRepairRequest) erro
 	if req.ParentHarnessSessionID != nil && *req.ParentHarnessSessionID == "" {
 		return errors.New("parent_harness_session_id must be omitted instead of empty")
 	}
-	if req.ParentHarnessSessionID != nil && *req.ParentHarnessSessionID == req.HarnessSessionID {
+	if req.ParentHarnessID != nil && *req.ParentHarnessID == "" {
+		return errors.New("parent_harness_id must be omitted instead of empty")
+	}
+	if req.ParentHarnessID != nil && req.ParentHarnessSessionID == nil {
+		return errors.New("parent_harness_id requires parent_harness_session_id")
+	}
+	if req.ParentHarnessSessionID != nil && *req.ParentHarnessSessionID == req.HarnessSessionID &&
+		(req.ParentHarnessID == nil || *req.ParentHarnessID == req.HarnessID) {
 		return errors.New("a session cannot parent itself")
 	}
 	if strings.TrimSpace(req.Reason) == "" {
@@ -284,6 +291,7 @@ func (d *Driver) recordAttributionRepair(
 		RawTurnID: rawTurnID, HarnessID: req.HarnessID,
 		HarnessSessionID: req.HarnessSessionID, ThreadID: req.ThreadID,
 		ParentHarnessSessionID: cloneStringPointer(req.ParentHarnessSessionID),
+		ParentHarnessID:        cloneStringPointer(req.ParentHarnessID),
 	}
 	recorded := !sameAttribution(previous, effective)
 
@@ -297,6 +305,11 @@ func (d *Driver) recordAttributionRepair(
 	envelope.HarnessID = req.HarnessID
 	envelope.HarnessSessionID = req.HarnessSessionID
 	envelope.ParentHarnessSessionID = cloneStringPointer(req.ParentHarnessSessionID)
+	// A correction replaces the whole attribution, so the raw envelope's
+	// parent harness never outlives it: an omitted ParentHarnessID means
+	// the parent resolves in the corrected harness, as the derive-side
+	// envelope composition in queries/raw_turns.sql also reads it.
+	envelope.ParentHarnessID = cloneStringPointer(req.ParentHarnessID)
 	capturedAt := current.ReceivedAt
 	parentID, err := resolveParentSessionID(ctx, qtx, &envelope, orgID, capturedAt)
 	if err != nil {
@@ -327,7 +340,8 @@ func (d *Driver) recordAttributionRepair(
 		if err := qtx.InsertRawTurnAttributionCorrection(ctx, gensqlc.InsertRawTurnAttributionCorrectionParams{
 			OrgID: orgID, RawTurnID: rawTurnID, HarnessID: req.HarnessID,
 			HarnessSessionID: req.HarnessSessionID, ThreadID: req.ThreadID,
-			ParentHarnessSessionID: textFromPointer(req.ParentHarnessSessionID), Reason: req.Reason,
+			ParentHarnessSessionID: textFromPointer(req.ParentHarnessSessionID),
+			ParentHarnessID:        textFromPointer(req.ParentHarnessID), Reason: req.Reason,
 		}); err != nil {
 			return zero, false, fmt.Errorf("append raw-turn attribution correction: %w", err)
 		}
@@ -346,20 +360,26 @@ func (d *Driver) recordAttributionRepair(
 }
 
 func attributionFromRow(row gensqlc.GetRawTurnAttributionForUpdateRow) storage.RawTurnAttribution {
-	parent := row.RawParentHarnessSessionID
+	parent, parentHarness := row.RawParentHarnessSessionID, row.RawParentHarnessID
 	if row.HasCorrection {
-		parent = row.CorrectedParentHarnessSessionID
+		parent, parentHarness = row.CorrectedParentHarnessSessionID, row.CorrectedParentHarnessID
+	}
+	if parent == "" {
+		// A parent harness without a parent session names nothing.
+		parentHarness = ""
 	}
 	return storage.RawTurnAttribution{
 		RawTurnID: row.ID, HarnessID: row.HarnessID,
 		HarnessSessionID: row.HarnessSessionID, ThreadID: row.ThreadID,
 		ParentHarnessSessionID: pointerFromString(parent),
+		ParentHarnessID:        pointerFromString(parentHarness),
 	}
 }
 
 func sameAttribution(a, b storage.RawTurnAttribution) bool {
 	return a.HarnessID == b.HarnessID && a.HarnessSessionID == b.HarnessSessionID &&
-		a.ThreadID == b.ThreadID && pointerValue(a.ParentHarnessSessionID) == pointerValue(b.ParentHarnessSessionID)
+		a.ThreadID == b.ThreadID && pointerValue(a.ParentHarnessSessionID) == pointerValue(b.ParentHarnessSessionID) &&
+		pointerValue(a.ParentHarnessID) == pointerValue(b.ParentHarnessID)
 }
 
 func pointerValue(v *string) string {

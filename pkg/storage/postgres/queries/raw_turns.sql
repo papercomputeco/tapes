@@ -31,22 +31,30 @@ SELECT r.id, r.org_id, r.source, r.provider, r.agent_name,
         END)::jsonb AS meta,
        (CASE WHEN c.id IS NULL THEN r.session_envelope
              WHEN c.parent_harness_session_id IS NULL THEN
-                  (COALESCE(r.session_envelope, '{}'::jsonb) - 'parent_harness_session_id') ||
+                  (COALESCE(r.session_envelope, '{}'::jsonb) - 'parent_harness_session_id' - 'parent_harness_id') ||
                   jsonb_build_object(
                       'harness_id', c.harness_id,
                       'harness_session_id', c.harness_session_id
                   )
-             ELSE COALESCE(r.session_envelope, '{}'::jsonb) || jsonb_build_object(
+             WHEN c.parent_harness_id IS NULL THEN
+                  (COALESCE(r.session_envelope, '{}'::jsonb) - 'parent_harness_id') ||
+                  jsonb_build_object(
                       'harness_id', c.harness_id,
                       'harness_session_id', c.harness_session_id,
                       'parent_harness_session_id', c.parent_harness_session_id
+                  )
+             ELSE COALESCE(r.session_envelope, '{}'::jsonb) || jsonb_build_object(
+                      'harness_id', c.harness_id,
+                      'harness_session_id', c.harness_session_id,
+                      'parent_harness_session_id', c.parent_harness_session_id,
+                      'parent_harness_id', c.parent_harness_id
                   )
         END)::jsonb AS session_envelope,
        r.received_at,
        r.raw_response, r.raw_response_encoding, r.raw_response_dropped
 FROM raw_turns r
 LEFT JOIN LATERAL (
-    SELECT id, harness_id, harness_session_id, thread_id, parent_harness_session_id
+    SELECT id, harness_id, harness_session_id, thread_id, parent_harness_session_id, parent_harness_id
     FROM raw_turn_attribution_corrections
     WHERE org_id = r.org_id AND raw_turn_id = r.id
     ORDER BY id DESC LIMIT 1
@@ -66,22 +74,30 @@ SELECT r.id, r.org_id, r.source, r.provider, r.agent_name,
         END)::jsonb AS meta,
        (CASE WHEN c.id IS NULL THEN r.session_envelope
              WHEN c.parent_harness_session_id IS NULL THEN
-                  (COALESCE(r.session_envelope, '{}'::jsonb) - 'parent_harness_session_id') ||
+                  (COALESCE(r.session_envelope, '{}'::jsonb) - 'parent_harness_session_id' - 'parent_harness_id') ||
                   jsonb_build_object(
                       'harness_id', c.harness_id,
                       'harness_session_id', c.harness_session_id
                   )
-             ELSE COALESCE(r.session_envelope, '{}'::jsonb) || jsonb_build_object(
+             WHEN c.parent_harness_id IS NULL THEN
+                  (COALESCE(r.session_envelope, '{}'::jsonb) - 'parent_harness_id') ||
+                  jsonb_build_object(
                       'harness_id', c.harness_id,
                       'harness_session_id', c.harness_session_id,
                       'parent_harness_session_id', c.parent_harness_session_id
+                  )
+             ELSE COALESCE(r.session_envelope, '{}'::jsonb) || jsonb_build_object(
+                      'harness_id', c.harness_id,
+                      'harness_session_id', c.harness_session_id,
+                      'parent_harness_session_id', c.parent_harness_session_id,
+                      'parent_harness_id', c.parent_harness_id
                   )
         END)::jsonb AS session_envelope,
        r.received_at,
        r.raw_response, r.raw_response_encoding, r.raw_response_dropped
 FROM raw_turns r
 LEFT JOIN LATERAL (
-    SELECT id, harness_id, harness_session_id, thread_id, parent_harness_session_id
+    SELECT id, harness_id, harness_session_id, thread_id, parent_harness_session_id, parent_harness_id
     FROM raw_turn_attribution_corrections
     WHERE org_id = r.org_id AND raw_turn_id = r.id
     ORDER BY id DESC LIMIT 1
@@ -179,10 +195,12 @@ SELECT r.id, r.org_id, r.session_envelope, r.received_at,
        COALESCE(c.thread_id, r.meta->>'thread_id', '') AS thread_id,
        (c.id IS NOT NULL)::boolean AS has_correction,
        COALESCE(c.parent_harness_session_id, '') AS corrected_parent_harness_session_id,
-       COALESCE(r.session_envelope->>'parent_harness_session_id', '')::text AS raw_parent_harness_session_id
+       COALESCE(r.session_envelope->>'parent_harness_session_id', '')::text AS raw_parent_harness_session_id,
+       COALESCE(c.parent_harness_id, '') AS corrected_parent_harness_id,
+       COALESCE(r.session_envelope->>'parent_harness_id', '')::text AS raw_parent_harness_id
 FROM raw_turns r
 LEFT JOIN LATERAL (
-    SELECT id, harness_id, harness_session_id, thread_id, parent_harness_session_id
+    SELECT id, harness_id, harness_session_id, thread_id, parent_harness_session_id, parent_harness_id
     FROM raw_turn_attribution_corrections
     WHERE org_id = r.org_id AND raw_turn_id = r.id
     ORDER BY id DESC LIMIT 1
@@ -193,9 +211,9 @@ FOR UPDATE OF r;
 -- name: InsertRawTurnAttributionCorrection :exec
 INSERT INTO raw_turn_attribution_corrections (
     org_id, raw_turn_id, harness_id, harness_session_id, thread_id,
-    parent_harness_session_id, reason
+    parent_harness_session_id, parent_harness_id, reason
 ) VALUES (
     sqlc.arg(org_id), sqlc.arg(raw_turn_id), sqlc.arg(harness_id),
     sqlc.arg(harness_session_id), sqlc.arg(thread_id),
-    sqlc.narg(parent_harness_session_id), sqlc.arg(reason)
+    sqlc.narg(parent_harness_session_id), sqlc.narg(parent_harness_id), sqlc.arg(reason)
 );

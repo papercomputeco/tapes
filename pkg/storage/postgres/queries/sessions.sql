@@ -361,3 +361,58 @@ WHERE id = sqlc.arg(id) AND org_id = sqlc.arg(org_id);
 UPDATE sessions
 SET parent_session_id = sqlc.narg(parent_session_id)
 WHERE id = sqlc.arg(id);
+
+-- name: ListSyntheticSessionSplits :many
+-- Every idle split of one synthetic conversation. The set is small — one
+-- row per idle period the conversation has had — and the assignment rule
+-- needs all of it to know whether the conversation has any split yet.
+SELECT harness_session_id, first_captured_at, last_captured_at
+FROM synthetic_session_splits
+WHERE org_id = sqlc.arg(org_id)
+  AND harness_id = sqlc.arg(harness_id)
+  AND conversation_key = sqlc.arg(conversation_key)
+ORDER BY first_captured_at, harness_session_id;
+
+-- name: UpsertSyntheticSessionSplit :exec
+-- Record a turn's assignment: create the split, or widen its range to
+-- cover the turn. LEAST/GREATEST keep a retried or out-of-order write
+-- idempotent.
+INSERT INTO synthetic_session_splits (
+    org_id, harness_id, harness_session_id, conversation_key,
+    first_captured_at, last_captured_at
+) VALUES (
+    sqlc.arg(org_id), sqlc.arg(harness_id), sqlc.arg(harness_session_id),
+    sqlc.arg(conversation_key), sqlc.arg(first_captured_at), sqlc.arg(last_captured_at)
+)
+ON CONFLICT (org_id, harness_id, harness_session_id) DO UPDATE
+SET first_captured_at = LEAST(synthetic_session_splits.first_captured_at, EXCLUDED.first_captured_at),
+    last_captured_at  = GREATEST(synthetic_session_splits.last_captured_at, EXCLUDED.last_captured_at);
+
+-- name: GetSyntheticSessionSeed :one
+-- The pre-split identity of a synthetic conversation: the session keyed by
+-- the bare conversation key, written before idle splitting tracked ranges.
+-- Its started_at/last_seen_at seed the conversation's first split so the
+-- first turn after an idle gap opens a new session rather than extending
+-- the old one forever.
+SELECT started_at, last_seen_at
+FROM sessions
+WHERE org_id = sqlc.arg(org_id)
+  AND harness_id = sqlc.arg(harness_id)
+  AND harness_session_id = sqlc.arg(conversation_key);
+
+-- name: GetRawTurnSessionKeyByRequestID :one
+-- The effective session key of an already-captured turn, so a retried or
+-- re-ingested turn keeps the session it was first assigned.
+SELECT COALESCE(c.harness_id, r.harness_id)::text AS harness_id,
+       COALESCE(c.harness_session_id, r.harness_session_id)::text AS harness_session_id
+FROM raw_turns r
+LEFT JOIN LATERAL (
+    SELECT harness_id, harness_session_id
+    FROM raw_turn_attribution_corrections
+    WHERE org_id = r.org_id AND raw_turn_id = r.id
+    ORDER BY id DESC LIMIT 1
+) c ON TRUE
+WHERE r.org_id = sqlc.arg(org_id)
+  AND r.request_id = sqlc.arg(request_id)
+  AND r.request_id <> ''
+LIMIT 1;

@@ -1,0 +1,22 @@
+{
+  "name": "hermes-session",
+  "category": "valid",
+  "harness": "hermes",
+  "description": "Hermes envelope with a session id and cwd; harness ids are an open set carried verbatim.",
+  "direction": "roundtrip",
+  "headers": {
+    "x-tapes-harness-id": "hermes",
+    "x-paper-auth-org-id": "00000000-0000-4000-8000-000000000001",
+    "x-paper-auth-subject": "user_synthetic_fixture_subject",
+    "x-tapes-harness-session-id": "66666666-6666-4666-8666-666666666666",
+    "x-tapes-cwd": "/Users/matt/code"
+  },
+  "envelope": {
+    "org_id": "00000000-0000-4000-8000-000000000001",
+    "auth_subject": "user_synthetic_fixture_subject",
+    "harness_id": "hermes",
+    "harness_session_id": "66666666-6666-4666-8666-666666666666",
+    "cwd": "/Users/matt/code"
+  },
+  "grounding": "A harness id is not drawn from a closed list: a newly onboarded harness is stored as sent, not rejected or folded to unknown."
+}

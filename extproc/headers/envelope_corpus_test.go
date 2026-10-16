@@ -104,7 +104,7 @@ func loadCorpusCasesFull(t *testing.T) []corpusCaseFull {
 // oracle assert less than it appears to, quietly.
 func TestCorpusSchema(t *testing.T) {
 	categories := map[string]bool{"valid": true, "percent-encoding": true, "budget": true, "unknown": true, "error": true}
-	harnesses := map[string]bool{"claude": true, "codex": true, "pi": true, "unknown": true}
+	harnesses := map[string]bool{"claude": true, "codex": true, "hermes": true, "pi": true, "unknown": true}
 	directions := map[string]bool{"roundtrip": true, "decode": true, "encode": true}
 	dispositions := map[string]bool{"reject-400": true, "drop-field": true}
 
@@ -271,6 +271,22 @@ func TestCorpusCoverage(t *testing.T) {
 			why:  "unparseable metadata must not cost the rest of the envelope",
 			holds: func(c corpusCaseFull) bool {
 				return c.Error != nil && c.Error.Field == "harness_metadata" && c.Error.Disposition == "drop-field"
+			},
+		},
+		{
+			what: "an empty parent-harness header being dropped rather than normalised",
+			why:  "a missing parent harness means the child's harness; spelling it unknown would resolve the parent where no session lives",
+			holds: func(c corpusCaseFull) bool {
+				raw, ok := c.Headers["x-tapes-parent-harness-id"]
+				return ok && raw == "" && c.Envelope.ParentHarnessID == "" && c.Envelope.ParentHarnessSessionID != ""
+			},
+		},
+		{
+			what: "a parent in a different harness than the child",
+			why:  "the parent's harness travels beside its session id, or ingest resolves a cross-harness parent in the child's namespace",
+			holds: func(c corpusCaseFull) bool {
+				return c.Envelope.ParentHarnessSessionID != "" && c.Envelope.ParentHarnessID != "" &&
+					c.Envelope.ParentHarnessID != c.Envelope.HarnessID
 			},
 		},
 	}

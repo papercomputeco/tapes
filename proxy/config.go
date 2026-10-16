@@ -1,5 +1,7 @@
 package proxy
 
+import "time"
+
 // Config is the proxy server configuration.
 type Config struct {
 	// ListenAddr is the address to listen on (e.g., ":8080")
@@ -26,6 +28,12 @@ type Config struct {
 	// default. Exposed so the byte budget can be tuned (and exercised in
 	// tests) rather than hard-wired to the default.
 	QueueByteBudget int64
+
+	// SessionIdleGap splits a synthetic session — a conversation captured
+	// with no harness session id, keyed by its root — into a new session
+	// when a turn is captured more than this long after the conversation's
+	// previous turn. Zero disables the split. See sessions.AssignSyntheticSplit.
+	SessionIdleGap time.Duration
 }
 
 // AgentRoute defines proxy routing for a specific agent.

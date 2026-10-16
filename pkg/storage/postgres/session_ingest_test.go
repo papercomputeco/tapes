@@ -246,6 +246,148 @@ var _ = Describe("Driver.IngestTurn", func() {
 		Expect(childParentID.Bytes).To(Equal(parentRowID.Bytes))
 	})
 
+	Context("when the parent ran under a different harness", func() {
+		// sessionRowID reads one session's id by its full natural key, so a
+		// harness_session_id shared across harnesses cannot mask a wrong match.
+		sessionRowID := func(orgID, harnessID, harnessSessionID string) pgtype.UUID {
+			var id pgtype.UUID
+			Expect(driver.(*postgres.Driver).DB().QueryRow(ctx,
+				`SELECT id FROM sessions WHERE org_id = $1 AND harness_id = $2 AND harness_session_id = $3`,
+				mustUUID(orgID), harnessID, harnessSessionID).Scan(&id)).To(Succeed())
+			return id
+		}
+		parentOf := func(sessionID string) pgtype.UUID {
+			var id pgtype.UUID
+			Expect(driver.(*postgres.Driver).DB().QueryRow(ctx,
+				`SELECT parent_session_id FROM sessions WHERE id = $1`, mustUUID(sessionID)).Scan(&id)).To(Succeed())
+			return id
+		}
+		countByKey := func(orgID, harnessSessionID string) int {
+			var n int
+			Expect(driver.(*postgres.Driver).DB().QueryRow(ctx,
+				`SELECT COUNT(*) FROM sessions WHERE org_id = $1 AND harness_session_id = $2`,
+				mustUUID(orgID), harnessSessionID).Scan(&n)).To(Succeed())
+			return n
+		}
+
+		It("links a codex child to its claude parent by (parent_harness_id, parent_harness_session_id)", func() {
+			orgID := newTestOrgID()
+			parentKey := "claude-parent"
+			_, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
+				Session: &sessions.IngestEnvelope{OrgID: orgID, AuthSubject: "s", HarnessID: "claude", HarnessSessionID: parentKey},
+				Nodes:   sessionFixture("claude parent turn"),
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			childRes, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
+				Session: &sessions.IngestEnvelope{
+					OrgID: orgID, AuthSubject: "s", HarnessID: "codex", HarnessSessionID: "codex-child",
+					ParentHarnessSessionID: new(parentKey), ParentHarnessID: new("claude"),
+				},
+				Nodes: sessionFixture("codex child turn"),
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(parentOf(childRes.SessionID)).To(Equal(sessionRowID(orgID, "claude", parentKey)))
+			Expect(countByKey(orgID, parentKey)).To(Equal(1),
+				"no placeholder may be minted in the child's harness for a parent that lives in another")
+
+			// The read model names the parent's harness on every session read.
+			child, err := driver.(*postgres.Driver).GetSessionRecord(ctx, orgID, childRes.SessionID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(child.ParentHarnessID).To(Equal("claude"))
+			byHarness, err := driver.(*postgres.Driver).GetSessionRecordByHarness(ctx, orgID, "codex", "codex-child")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(byHarness.ParentHarnessID).To(Equal("claude"))
+			listed, err := driver.(*postgres.Driver).ListSessionRecords(ctx, orgID, storage.SessionListOpts{Limit: 10})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(listed).To(ContainElement(SatisfyAll(
+				HaveField("HarnessSessionID", "codex-child"), HaveField("ParentHarnessID", "claude"))))
+			Expect(listed).To(ContainElement(SatisfyAll(
+				HaveField("HarnessSessionID", parentKey), HaveField("ParentHarnessID", ""))))
+		})
+
+		It("placeholder-inserts the parent under its own harness when the child arrives first, and the parent's first turn fills it in place", func() {
+			orgID := newTestOrgID()
+			parentKey := "claude-parent-late"
+			childRes, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
+				Session: &sessions.IngestEnvelope{
+					OrgID: orgID, AuthSubject: "s", HarnessID: "codex", HarnessSessionID: "codex-child-early",
+					ParentHarnessSessionID: new(parentKey), ParentHarnessID: new("claude"),
+				},
+				Nodes: sessionFixture("codex child first"),
+			})
+			Expect(err).NotTo(HaveOccurred())
+			placeholder := sessionRowID(orgID, "claude", parentKey)
+			Expect(parentOf(childRes.SessionID)).To(Equal(placeholder))
+
+			parentRes, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
+				Session: &sessions.IngestEnvelope{
+					OrgID: orgID, AuthSubject: "s", HarnessID: "claude", HarnessSessionID: parentKey,
+					Cwd: "/work",
+				},
+				Nodes: sessionFixture("claude parent arrives"),
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mustUUID(parentRes.SessionID)).To(Equal(placeholder),
+				"the parent's real first turn must land on the placeholder, not mint a second row")
+			Expect(countByKey(orgID, parentKey)).To(Equal(1))
+			Expect(parentOf(childRes.SessionID)).To(Equal(placeholder))
+
+			var cwd pgtype.Text
+			Expect(driver.(*postgres.Driver).DB().QueryRow(ctx, `SELECT cwd FROM sessions WHERE id = $1`,
+				placeholder).Scan(&cwd)).To(Succeed())
+			Expect(cwd.String).To(Equal("/work"), "the parent's identity fields backfill the placeholder")
+		})
+
+		It("keeps today's same-harness resolution when parent_harness_id is absent, even if another harness holds the same id", func() {
+			orgID := newTestOrgID()
+			sharedKey := "shared-session-key"
+			for _, h := range []string{"claude", "codex"} {
+				_, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
+					Session: &sessions.IngestEnvelope{OrgID: orgID, AuthSubject: "s", HarnessID: h, HarnessSessionID: sharedKey},
+					Nodes:   sessionFixture(h + " holder of the shared key"),
+				})
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			sameHarness, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
+				Session: &sessions.IngestEnvelope{
+					OrgID: orgID, AuthSubject: "s", HarnessID: "codex", HarnessSessionID: "codex-fork",
+					ParentHarnessSessionID: new(sharedKey),
+				},
+				Nodes: sessionFixture("same-harness fork"),
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(parentOf(sameHarness.SessionID)).To(Equal(sessionRowID(orgID, "codex", sharedKey)))
+
+			crossHarness, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
+				Session: &sessions.IngestEnvelope{
+					OrgID: orgID, AuthSubject: "s", HarnessID: "codex", HarnessSessionID: "codex-launched",
+					ParentHarnessSessionID: new(sharedKey), ParentHarnessID: new("claude"),
+				},
+				Nodes: sessionFixture("cross-harness launch"),
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(parentOf(crossHarness.SessionID)).To(Equal(sessionRowID(orgID, "claude", sharedKey)))
+		})
+
+		It("ignores a parent_harness_id that arrives without a parent session id", func() {
+			orgID := newTestOrgID()
+			res, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{
+				Session: &sessions.IngestEnvelope{
+					OrgID: orgID, AuthSubject: "s", HarnessID: "hermes", HarnessSessionID: "hermes-root",
+					ParentHarnessID: new("claude"),
+				},
+				Nodes: sessionFixture("hermes root"),
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(parentOf(res.SessionID).Valid).To(BeFalse())
+			Expect(sessionRowID(orgID, "hermes", "hermes-root").Valid).To(BeTrue(),
+				"an unlisted harness id is stored as sent")
+		})
+	})
+
 	It("derives a synthetic harness_session_id from the root hash when the envelope is nil", func() {
 		nodes := sessionFixture("synthetic")
 		res, err := ingester.IngestTurn(ctx, storage.IngestTurnRequest{

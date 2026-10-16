@@ -145,7 +145,14 @@ func validateRawTurnAttributionRepairRequest(req storage.RawTurnAttributionRepai
 	if req.ParentHarnessSessionID != nil && *req.ParentHarnessSessionID == "" {
 		return errors.New("parent_harness_session_id must be omitted instead of empty")
 	}
-	if req.ParentHarnessSessionID != nil && *req.ParentHarnessSessionID == req.HarnessSessionID {
+	if req.ParentHarnessID != nil && *req.ParentHarnessID == "" {
+		return errors.New("parent_harness_id must be omitted instead of empty")
+	}
+	if req.ParentHarnessID != nil && req.ParentHarnessSessionID == nil {
+		return errors.New("parent_harness_id requires parent_harness_session_id")
+	}
+	if req.ParentHarnessSessionID != nil && *req.ParentHarnessSessionID == req.HarnessSessionID &&
+		(req.ParentHarnessID == nil || *req.ParentHarnessID == req.HarnessID) {
 		return errors.New("a session cannot parent itself")
 	}
 	if strings.TrimSpace(req.Reason) == "" {
