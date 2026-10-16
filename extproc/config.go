@@ -41,6 +41,10 @@ type Config struct {
 	// Zero value is RawResponseOff, so a Config built by a test or an
 	// older caller keeps the historical wire shape.
 	RawResponseMode RawResponseMode
+	// SubjectHeader names the server-trusted header a gateway stamps with
+	// the caller's subject. Off when empty: without a gateway vouching for
+	// the caller there is no trusted identity to read.
+	SubjectHeader string
 }
 
 // ConfigFromEnv reads configuration from environment variables.
@@ -65,6 +69,7 @@ func ConfigFromEnv() Config {
 		GRPCMaxRecvBytes:   int(envIntOrDefault("TAPES_GRPC_MAX_RECV_BYTES", defaultGRPCMaxRecvBytes)),
 		DispatchByteBudget: envIntOrDefault("TAPES_DISPATCH_BYTE_BUDGET", defaultDispatchByteBudget),
 		RawResponseMode:    rawMode,
+		SubjectHeader:      os.Getenv("TAPES_TRUSTED_SUBJECT_HEADER"),
 	}
 	return cfg
 }

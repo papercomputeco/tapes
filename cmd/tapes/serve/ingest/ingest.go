@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -111,6 +112,7 @@ func (c *ingestCommander) run() error {
 		ListenAddr:     c.listen,
 		Project:        c.project,
 		SessionIdleGap: c.idleGap,
+		SubjectHeader:  os.Getenv(ingest.EnvTrustedSubjectHeader),
 	}
 
 	s, err := ingest.New(cfg, driver, c.logger)

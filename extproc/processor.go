@@ -71,8 +71,11 @@ type Processor struct {
 	providerMap map[string]string
 	dispatcher  *Dispatcher
 	metrics     *Metrics
-	maxInflight int
-	reducers    map[string]capture.Reducer
+
+	// subjectHeader is the configured trusted subject header (see Config).
+	subjectHeader string
+	maxInflight   int
+	reducers      map[string]capture.Reducer
 
 	// rawResponseMode selects the response half of the dispatch envelope.
 	// Zero value is RawResponseOff, so a Processor built from a bare
@@ -149,6 +152,7 @@ func NewProcessor(cfg Config) (*Processor, error) {
 	dispatcher.SetObserver(metrics.AsObserver())
 
 	return &Processor{
+		subjectHeader:   cfg.SubjectHeader,
 		ingestURL:       cfg.IngestURL,
 		providerMap:     providerMap,
 		dispatcher:      dispatcher,
@@ -161,6 +165,15 @@ func NewProcessor(cfg Config) (*Processor, error) {
 			capture.ProviderOpenAI + "/" + endpointChatCompletions: capture.NewOpenAIChatCompletionsReducer(),
 		},
 	}, nil
+}
+
+// optionalHeader reads a configured optional header; an unconfigured
+// (empty) name reads nothing.
+func (p *Processor) optionalHeader(hdrs *extprocv3.HttpHeaders, name string) string {
+	if name == "" {
+		return ""
+	}
+	return headers.Get(hdrs, name)
 }
 
 // Metrics exposes the Prometheus registry so the cmd wiring can mount
@@ -334,7 +347,7 @@ func (p *Processor) onRequestHeaders(st *streamState, hdrs *extprocv3.HttpHeader
 	// values removed describe the same request.
 	st.session = headers.ParseSessionEnvelope(hdrs)
 	st.orgID = headers.Get(hdrs, headers.PaperAuthOrgID)
-	st.authSubject = headers.Get(hdrs, headers.PaperAuthSubject)
+	st.authSubject = p.optionalHeader(hdrs, p.subjectHeader)
 
 	// The headers phase is the only callback guaranteed for every
 	// request — bodies over the gRPC recv limit never reach

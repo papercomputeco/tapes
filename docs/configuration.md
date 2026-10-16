@@ -121,6 +121,33 @@ simply absent when unset. In Kubernetes these come from the downward API:
 | `TAPES_REPLICA_SET` | owning ReplicaSet name, when the deployment can supply it |
 | `TAPES_IMAGE_DIGEST` | the running image's digest |
 
+### Trusted subject header
+
+Every captured session carries an `auth_subject`, an opaque id for whoever the
+capture belongs to. By default it is the identity the capture client reported
+(for example `tapesctl start --auth-subject`, default `local:<user>`). When a
+gateway in front of tapes authenticates callers, it can vouch for the subject
+instead by stamping a header, and tapes stores that header's value as the
+`auth_subject`, overriding whatever the client claimed.
+
+| Variable | Read by | Purpose |
+| --- | --- | --- |
+| `TAPES_TRUSTED_SUBJECT_HEADER` | `tapes serve ingest` (transcript pushes) and `tapes-extproc` (wire capture) | Name of the header carrying the verified subject. Unset, no header is trusted. |
+
+It is opt-in. Unset, which is the default, tapes trusts no header at all: a
+standalone install has nobody vouching for callers, so a header a client sent
+would be a claim, not a fact. Set it to the same value on both processes, or a
+transcript push and the wire capture of the same session can disagree about
+who owns it.
+
+Setting it is only safe when clients cannot send that header themselves.
+Stripping it from inbound requests at the edge, before the gateway stamps its
+own value, is the gateway's job; tapes cannot tell a stamped header from a
+forged one. Like the internal listener's variables it is read from the
+environment only, and only by the two gateway-side processes: the all-in-one
+`tapes serve` stack is the standalone shape and never trusts a header. See [Trusted identity headers](./apis.md#trusted-identity-headers)
+and [Subjects](./apis.md#subjects) for how the id is served.
+
 ### Read guards
 
 The read API runs every request under a deadline and caps how many
