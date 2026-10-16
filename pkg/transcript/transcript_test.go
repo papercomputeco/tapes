@@ -60,13 +60,19 @@ var _ = Describe("Walker", func() {
 	It("keeps a server tool's inline result on the assistant row", func() {
 		search := span(1, "llm", "main", "", "llm_ws", blocks(text("What changed in Go 1.30?")),
 			blocks(
-				llm.ContentBlock{Type: "server_tool_use", ToolUseID: "srv_1", ToolName: "web_search",
-					ToolInput: map[string]any{"query": "Go 1.30 release notes"}},
-				llm.ContentBlock{Type: "web_search_tool_result", ToolResultID: "srv_1",
-					Content: json.RawMessage(`[{"type":"web_search_result","url":"https://go.dev/doc/go1.30"}]`)},
+				llm.ContentBlock{
+					Type: "server_tool_use", ToolUseID: "srv_1", ToolName: "web_search",
+					ToolInput: map[string]any{"query": "Go 1.30 release notes"},
+				},
+				llm.ContentBlock{
+					Type: "web_search_tool_result", ToolResultID: "srv_1",
+					Content: json.RawMessage(`[{"type":"web_search_result","url":"https://go.dev/doc/go1.30"}]`),
+				},
 				llm.ContentBlock{Type: "server_tool_use", ToolUseID: "srv_2", ToolName: "web_search"},
-				llm.ContentBlock{Type: "web_search_tool_result", ToolResultID: "srv_2",
-					Content: json.RawMessage(`{"type":"web_search_tool_result_error","error_code":"unavailable"}`)},
+				llm.ContentBlock{
+					Type: "web_search_tool_result", ToolResultID: "srv_2",
+					Content: json.RawMessage(`{"type":"web_search_tool_result_error","error_code":"unavailable"}`),
+				},
 				text("Go 1.30 adds…"),
 			))
 		rows := feedAll(transcript.NewWalker(transcript.Options{}, transcript.Position{}), search)
