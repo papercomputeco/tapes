@@ -13,6 +13,20 @@ http://localhost:8081/v1/mcp
 
 Configure that URL as a **streamable HTTP** server in an MCP client. The transport supports `POST` for JSON-RPC invocation, `GET` for the stream, and `DELETE` for session termination semantics.
 
+## Core tools
+
+Core serves one read tool of its own beside the cassette tools:
+
+| Tool | What it does |
+| --- | --- |
+| `transcript` | One page of a session's transcript. Arguments: `session_id` (required), `role` (`user`, `assistant`, `all`), `q`, `subagents`, `limit`, `cursor`. Returns the same JSON as `GET /v1/sessions/{id}/transcript`, as structured content and as JSON text. |
+
+It runs the same code as the HTTP route, so an agent reading a session
+through MCP sees exactly what a CLI or the console does. An unknown session
+or a malformed argument is a tool error carrying the HTTP status the route
+would have returned. See [APIs](./apis.md#session-transcripts) for the row
+shape and filters.
+
 ## Cassette tools
 
 The MCP server aggregates tools advertised by installed cassettes. A cassette
@@ -35,8 +49,7 @@ need to reconnect or issue `tools/list` again.
 
 Semantic search over spans is a cassette tool: the search cassette
 advertises `search.search`, which appears here like any other
-cassette-advertised tool once that cassette is installed. Core registers no
-tools of its own.
+cassette-advertised tool once that cassette is installed.
 
 ## Enable it locally
 
@@ -54,6 +67,6 @@ tapesctl seed --api-url http://localhost:8081
 
 ## Scope
 
-Cassette tools can expose whatever behavior their admitted POST
+The core tools are read-only. Cassette tools can expose whatever behavior their admitted POST
 operation implements; MCP annotations are descriptive hints and do not replace
 gateway or cassette authorization.

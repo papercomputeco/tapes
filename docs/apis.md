@@ -15,7 +15,7 @@ The default read API listens on `:8081`. It serves health, derived data, operato
 | --- | --- |
 | Health and contract | `GET /ping`, `GET /openapi`, `GET /swagger`, `GET /metrics` |
 | Browser UI | `GET /`, served only with `--api-web-ui` |
-| Sessions | `/v1/sessions`, `/v1/sessions/{id}`, `/v1/sessions/{id}/traces`, `/v1/sessions/{id}/raw_turns` |
+| Sessions | `/v1/sessions`, `/v1/sessions/{id}`, `/v1/sessions/{id}/traces`, `/v1/sessions/{id}/transcript`, `/v1/sessions/{id}/raw_turns` |
 | Traces and spans | `/v1/traces`, `/v1/traces/{trace_id}`, `/v1/traces/{trace_id}/spans/{span_id}` |
 | Aggregates | `GET /v1/stats` |
 | MCP | `/v1/mcp` |
@@ -30,6 +30,8 @@ The authoritative parameters, schemas, and methods are compiled from route regis
 - session and trace/span paths use UUID IDs;
 - session content is read through traces and spans, and the composite
   session view is paged and streamed (see below);
+- a readable conversation is served at `/v1/sessions/{id}/transcript`
+  (see below);
 - semantic search is served by the search cassette (`/v1/cassettes/search/spans`);
 - raw turns remain available at `/v1/sessions/{id}/raw_turns`, paged the
   same way (see below).
@@ -89,6 +91,59 @@ the trace's length. A page that holds the whole trace is byte-identical to
 the document the endpoint used to return whole, so clients that parse the
 body as one document keep working; they only need to follow `next_cursor`
 where they previously assumed one response was everything.
+
+### Session transcripts
+
+`GET /v1/sessions/{id}/transcript` reads a session as one conversation,
+classified on the server so every client renders the same thing:
+
+```json
+{
+  "session_id": "0f0e…",
+  "items": [
+    {"seq": 2, "trace_id": "trc_…", "span_id": "llm_…", "started_at": "…",
+     "role": "user", "text": "Fix the failing test"},
+    {"seq": 2, "trace_id": "trc_…", "span_id": "llm_…", "started_at": "…",
+     "role": "assistant", "text": "Looking at it now.",
+     "tool_calls": [{"id": "toolu_1", "name": "Bash", "input": {"command": "make test"}}]},
+    {"seq": 3, "trace_id": "trc_…", "span_id": "toolu_1", "started_at": "…",
+     "role": "user", "text": "",
+     "tool_results": [{"tool_use_id": "toolu_1", "text": "FAIL …", "is_error": true}]}
+  ],
+  "next_cursor": "…"
+}
+```
+
+Rows come from the span projection in turn order, then `seq` within a
+turn. Only conversation llm calls (`call_kind` `main`, or empty on older
+rows) contribute: each yields a `user` row for the content new to that
+call and an `assistant` row for the reply. Harness side-calls (permission
+checks, title generation, suggestions) and injected context are left out.
+User text has harness tags such as `<system-reminder>` stripped — the same
+projection the trace header's `user_prompt` uses, without its truncation.
+Assistant text is the reply's text blocks; thinking is not included. Tool
+results never land in `text`: a run of tool spans becomes one `user` row
+whose `tool_results` hold them, which is where they sit on the wire. A
+row's `seq`, `trace_id`, and `span_id` locate it in the trace view; a
+tool-results row points at its first tool span. `thread_id` appears only
+on subagent rows.
+
+| Parameter | Meaning |
+| --- | --- |
+| `role` | `user`, `assistant`, or `all` (default). `user` keeps only rows with user text, so tool-result-only rows drop out. |
+| `q` | Keep rows whose `text` contains this substring, case-insensitively. |
+| `subagents` | `true` includes subagent threads; the default is the root thread only. |
+| `limit` | Rows per page, default 200, maximum 1000 (clamped; non-positive is a `400`). |
+| `cursor` | The previous page's `next_cursor`; opaque and bound to the session. |
+
+A page closes at `limit` rows or once its rows pass roughly 8 MiB,
+whichever comes first. `next_cursor` is present only when another row
+matching the filters exists, so its absence — not a short page — marks the
+end. The server reads spans one at a time while it walks, so memory stays
+bounded by one page regardless of session size; a narrow `q` may read much
+further than the rows it returns. An unknown session is a `404`. The same
+page is available to MCP clients as the core `transcript` tool (see
+[MCP](./mcp.md)).
 
 ### Span payload modes
 
