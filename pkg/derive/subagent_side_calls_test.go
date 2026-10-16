@@ -63,10 +63,16 @@ var _ = Describe("subagent side calls", func() {
 		spans := derive.EmitSpans(dv.Finish())
 
 		kinds := map[string]string{}
+		parents := map[string]string{}
+		agentSpan := ""
 		for _, turn := range spans.Turns {
 			for _, s := range turn.Spans {
+				if s.Kind == derive.SpanKindAgent && s.ThreadID == "a1" {
+					agentSpan = s.SpanID
+				}
 				if s.Kind == derive.SpanKindLLM {
 					kinds[s.SpanID] = s.CallKind
+					parents[s.SpanID] = s.ParentSpanID
 					if s.CallKind != derive.KindMain {
 						Expect(s.ThreadID).To(Equal("a1"), "side call %s left its subagent", s.CallKind)
 					}
@@ -76,6 +82,13 @@ var _ = Describe("subagent side calls", func() {
 		Expect(kinds).To(HaveKeyWithValue("llm_req-3", derive.KindCompaction))
 		Expect(kinds).To(HaveKeyWithValue("llm_req-4", derive.KindProgressLabel))
 		Expect(kinds).To(HaveKeyWithValue("llm_req-2", derive.KindMain))
+
+		// Every subagent call, side calls included, sits under the
+		// subagent's agent span rather than the host trace's root.
+		Expect(agentSpan).NotTo(BeEmpty())
+		for _, id := range []string{"llm_req-2", "llm_req-3", "llm_req-4"} {
+			Expect(parents).To(HaveKeyWithValue(id, agentSpan), "%s is not under the subagent", id)
+		}
 
 		// A subagent compaction is not a session seam.
 		Expect(spans.Report.LinkKinds[derive.LinkCompactionSeam]).To(BeZero())

@@ -305,6 +305,15 @@ func EmitSpans(set *DerivedSet) *SpanSet {
 			// ClassifyCall types from the request/response alone and does
 			// not see thread_id; this is the first stage that does.
 			threadCalls = append(threadCalls, src)
+		case (src.Kind == KindProgressLabel || src.Kind == KindAwaySummary) && src.ThreadID != "":
+			// A subagent's progress label (or recap) forks the subagent's
+			// own conversation and has no tool anchor, so the shadow path
+			// would drop it at the host trace's root — possibly a later
+			// trace than the subagent's work. Placed as a thread call it
+			// stays under the subagent's agent span, in the subagent's
+			// host trace, and keeps its offshoot kind (spanCallKind), so
+			// it is still off the spine.
+			threadCalls = append(threadCalls, src)
 		case src.Kind == KindMain && src.ThreadID == "":
 			em.mainCall(src)
 		case src.Kind == KindMain:

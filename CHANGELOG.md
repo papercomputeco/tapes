@@ -35,7 +35,8 @@ which commit changed it.
   longer typed `main`: the few-word progress label requested from a running
   subagent is now `offshoot:progress-label`, and the recap requested when a
   user returns to an idle session is now `offshoot:away-summary`. They leave
-  the conversation spine, search, and main-token accounting.
+  the conversation spine, search, and main-token accounting; a subagent's
+  label stays under that subagent's agent span.
 - A subagent compacting its own context now keeps `offshoot:compaction` on its
   span instead of being normalized to `main`, so the summarize instruction and
   the summary no longer land on the subagent's spine. Such a call still never
