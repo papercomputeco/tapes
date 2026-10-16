@@ -68,6 +68,40 @@ var _ = Describe("ClassifyCall", func() {
 		Expect(derive.ClassifyCall(req, assistantText("found it"))).To(Equal(derive.KindMain))
 	})
 
+	It("classifies forked side calls despite main-shaped params", func() {
+		// Progress labels and away summaries fork the live conversation,
+		// so they carry its full tool set, streaming and cache prefix;
+		// only the appended instruction tells them apart.
+		forked := func(instruction string) *llm.ChatRequest {
+			return &llm.ChatRequest{
+				Stream:    new(true),
+				MaxTokens: new(64000),
+				Tools:     []json.RawMessage{json.RawMessage(`{"name":"Bash"}`)},
+				Messages: []llm.Message{
+					textMsg("user", "real conversation history"),
+					textMsg("user", instruction),
+				},
+			}
+		}
+		label := forked("Describe your most recent action in 3-5 words using present tense (-ing). Name the file or function, not the branch. Do not use tools.")
+		Expect(derive.ClassifyCall(label, assistantText("Reading classify.go"))).To(Equal(derive.KindProgressLabel))
+
+		recap := forked("The user stepped away and is coming back. Recap in under 40 words, 1-2 plain sentences, no markdown.")
+		Expect(derive.ClassifyCall(recap, assistantText("Fixing the classifier; next, run the tests."))).To(Equal(derive.KindAwaySummary))
+	})
+
+	It("does not classify a main turn that merely quotes a side-call instruction", func() {
+		req := &llm.ChatRequest{
+			Stream:    new(true),
+			MaxTokens: new(64000),
+			Tools:     []json.RawMessage{json.RawMessage(`{"name":"Bash"}`)},
+			Messages: []llm.Message{
+				textMsg("user", `search hits start with "Describe your most recent action in 3-5 words" — why?`),
+			},
+		}
+		Expect(derive.ClassifyCall(req, assistantText("they are progress labels"))).To(Equal(derive.KindMain))
+	})
+
 	It("classifies title-gen by the system contract", func() {
 		req := &llm.ChatRequest{
 			System:    `Generate a title. Good: {"title": "Fix Login Button"} Bad (refusal): {"title": "I can't access that URL"}`,

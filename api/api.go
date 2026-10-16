@@ -12,6 +12,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/compress"
 	"github.com/gofiber/fiber/v3/middleware/recover"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/papercomputeco/tapes/api/cassetterunner"
 	"github.com/papercomputeco/tapes/api/mcp"
@@ -23,12 +24,15 @@ import (
 
 // Server is the API server for managing and querying the Tapes system
 type Server struct {
-	config         Config
-	driver         storage.Driver
-	logger         *slog.Logger
-	app            *fiber.App
-	metrics        *Metrics
-	mcpServer      *mcp.Server
+	config    Config
+	driver    storage.Driver
+	logger    *slog.Logger
+	app       *fiber.App
+	metrics   *Metrics
+	mcpServer *mcp.Server
+	// guards holds the read deadline and the payload-read slots; the MCP
+	// transcript tool takes a slot through it like the HTTP payload routes.
+	guards         *readGuards
 	cassetteClient *http.Client
 
 	// cassettes is the fleet this server publishes, and cassetteSpecs is the
@@ -153,6 +157,7 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 	// sees as c.Context() carries the request logger and the deadline both.
 	// Anything registered before this line would run outside the deadline.
 	guards := newReadGuards(config.ReadDeadline, config.PayloadConcurrency, s.metrics.Registry())
+	s.guards = guards
 	if config.ReadDeadline > 0 {
 		app.Use(guards.deadlineMiddleware())
 	}
@@ -188,12 +193,13 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 	}
 
 	// The MCP server reads cassette tools from the live registry on each
-	// stateless request; every tool it exposes is cassette-advertised.
+	// stateless request, beside the read tools core serves itself.
 	s.logger.Debug("creating mcp server")
 	mcpServer, err := mcp.NewServer(mcp.Config{
 		Cassettes: s.cassettes,
 		Client:    cassetteClient,
 		Logger:    log,
+		CoreTools: []func(*mcpsdk.Server){s.registerTranscriptTool},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create MCP server: %w", err)

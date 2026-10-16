@@ -297,15 +297,22 @@ func EmitSpans(set *DerivedSet) *SpanSet {
 		}
 		switch {
 		case src.Kind == KindCompaction && src.ThreadID != "":
-			// #27 structural guard: a compaction is a main-thread session
-			// event — the harness summarizes the user's conversation, not
-			// a subagent's. A subagent call classified compaction is a
-			// false positive (the classifier's response tell tripped on a
-			// subagent that READ classify.go and quoted the summary
-			// header), so route it as the ordinary thread call it is and
-			// never arm a seam from it. ClassifyCall types from the
-			// request/response alone and does not see thread_id; this is
-			// the first stage that does.
+			// #27 structural guard: a compaction seam is a main-thread
+			// session event. A subagent's call typed compaction — a real
+			// compaction of the subagent's own context, or the #27 false
+			// positive where a subagent quoted the summary template — is
+			// placed as an ordinary thread call and never arms a seam.
+			// ClassifyCall types from the request/response alone and does
+			// not see thread_id; this is the first stage that does.
+			threadCalls = append(threadCalls, src)
+		case (src.Kind == KindProgressLabel || src.Kind == KindAwaySummary) && src.ThreadID != "":
+			// A subagent's progress label (or recap) forks the subagent's
+			// own conversation and has no tool anchor, so the shadow path
+			// would drop it at the host trace's root — possibly a later
+			// trace than the subagent's work. Placed as a thread call it
+			// stays under the subagent's agent span, in the subagent's
+			// host trace, and keeps its offshoot kind (spanCallKind), so
+			// it is still off the spine.
 			threadCalls = append(threadCalls, src)
 		case src.Kind == KindMain && src.ThreadID == "":
 			em.mainCall(src)
@@ -998,16 +1005,14 @@ func responsePreview(turn *SpanTurn) string {
 	return ""
 }
 
-// spanCallKind is the call kind an llm span carries. It is src.Kind
-// verbatim except for the #27 structural guard: a compaction is a
-// main-thread session event, so a subagent call (ThreadID != "") can
-// never be one. Such a call is routed as an ordinary thread call by
-// EmitSpans; here its kind is normalized to main so its span never
-// reads as a compaction either.
+// spanCallKind is the call kind an llm span carries: src.Kind verbatim.
+// A subagent compaction keeps its kind even though EmitSpans places it
+// as a thread call. Subagents do compact their own context, and typing
+// those calls main put the summarize instruction and the summary into
+// the conversation spine, where search indexes it. The #27 false
+// positive no longer reaches this point: the response tell now needs
+// the full summary structure, not a quoted header.
 func spanCallKind(src *SpanSource) string {
-	if src.Kind == KindCompaction && src.ThreadID != "" {
-		return KindMain
-	}
 	return src.Kind
 }
 

@@ -20,6 +20,11 @@ type Config struct {
 	Client *http.Client
 
 	Logger *slog.Logger
+
+	// CoreTools registers the read tools core serves itself, ahead of the
+	// cassette tools, on every per-request server. Each entry adds its
+	// tools to the server it is handed.
+	CoreTools []func(server *mcpsdk.Server)
 }
 
 type Server struct {
@@ -51,6 +56,10 @@ func (s *Server) serverForRequest(request *http.Request) *mcpsdk.Server {
 			},
 		},
 	)
+
+	for _, register := range s.config.CoreTools {
+		register(server)
+	}
 
 	if s.config.Cassettes == nil {
 		return server

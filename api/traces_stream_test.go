@@ -48,6 +48,9 @@ type pagedSpanModel struct {
 	// It receives the resumption cursor so a paged walk can start where
 	// the previous page stopped.
 	iterate func(ctx context.Context, traceID string, after storage.SpanCursor) iter.Seq2[storage.SpanRecord, error]
+	// onListTraceSummaries, when set, sees the context each trace-list
+	// read runs under.
+	onListTraceSummaries func(ctx context.Context)
 }
 
 func (d *pagedSpanModel) GetSessionRecord(_ context.Context, _, id string) (*storage.SessionRecord, error) {
@@ -58,7 +61,10 @@ func (d *pagedSpanModel) GetSessionRecord(_ context.Context, _, id string) (*sto
 	return &sess, nil
 }
 
-func (d *pagedSpanModel) ListTraceSummaries(_ context.Context, sessionID string) ([]storage.TraceSummaryRecord, error) {
+func (d *pagedSpanModel) ListTraceSummaries(ctx context.Context, sessionID string) ([]storage.TraceSummaryRecord, error) {
+	if d.onListTraceSummaries != nil {
+		d.onListTraceSummaries(ctx)
+	}
 	if sessionID != d.session.ID {
 		return nil, nil
 	}

@@ -56,7 +56,7 @@ func (s *Server) handleStats(c fiber.Ctx) error {
 	}
 	// auth_subject is a caller-supplied filter, not an identity claim: it
 	// narrows the totals within this tenant and grants nothing. The verified
-	// subject is stamped at ingest from the JWT (x-paper-auth-subject); this
+	// subject is stamped at ingest from the trusted subject header; this
 	// only chooses which of those rows to add up. Same parameter, same
 	// meaning, as the /v1/sessions filter — a personal surface that scopes
 	// its rows and its totals passes the one value to both.
