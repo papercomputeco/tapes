@@ -8,6 +8,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/papercomputeco/tapes/pkg/derive"
 	"github.com/papercomputeco/tapes/pkg/llm"
 	tapeslogger "github.com/papercomputeco/tapes/pkg/logger"
 	"github.com/papercomputeco/tapes/pkg/sessions"
@@ -179,6 +180,15 @@ var _ = Describe("Worker pool capture", func() {
 			Expect(calls).To(HaveLen(1))
 			Expect(calls[0].SessionKey).To(Equal(raws[0].HarnessSessionID))
 			Expect(calls[0].Session.HarnessIDOrUnknown()).To(Equal(sessions.HarnessIDUnknown))
+
+			// A tool-less call under a key tapes minted is the spine, and
+			// the sessions row folds from the same kind re-derive assigns
+			// the stored row — the two paths must not disagree.
+			live := calls[0].Nodes[len(calls[0].Nodes)-1].Kind
+			Expect(live).To(Equal(derive.KindMain))
+			set, err := derive.BuildDerivedSet(raws, "")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(set.Nodes[len(set.Nodes)-1].Node.Kind).To(Equal(live))
 		})
 
 		It("upserts the session for an envelope-less job keyed by its enqueuer", func() {
@@ -196,6 +206,7 @@ var _ = Describe("Worker pool capture", func() {
 			Expect(calls).To(HaveLen(1))
 			Expect(calls[0].Session).To(BeNil())
 			Expect(calls[0].SessionKey).To(Equal("0123456789abcdef"))
+			Expect(calls[0].Nodes[len(calls[0].Nodes)-1].Kind).To(Equal(derive.KindMain))
 		})
 
 		It("upserts nothing for a job with neither an envelope nor a key", func() {

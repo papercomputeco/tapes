@@ -212,7 +212,8 @@ var auxTaskKinds = map[string]string{
 //     and did not mark them auxiliary.
 //
 // A nil envelope, or one without a harness session, leaves
-// ClassifyCall's verdict untouched.
+// ClassifyCall's verdict untouched here; ClassifyKeyedCall resolves such
+// a call when tapes keyed its raw turn itself.
 func ClassifyEnvelopedCall(req *llm.ChatRequest, resp *llm.ChatResponse, env *sessions.IngestEnvelope) string {
 	kind := ClassifyCall(req, resp)
 	if req == nil || env == nil || (kind != KindUnknown && kind != KindMain) {
@@ -228,6 +229,37 @@ func ClassifyEnvelopedCall(req *llm.ChatRequest, resp *llm.ChatResponse, env *se
 		return KindMain
 	}
 	return kind
+}
+
+// ClassifyKeyedCall is ClassifyEnvelopedCall for a call whose raw turn
+// tapes keyed itself. A call whose envelope names no harness session —
+// none at all, the unknown harness, or a harness without a session id —
+// is filed under a synthetic key: its conversation root, or an idle split
+// of it. Every turn under such a key re-sends the same first message, so
+// the key is evidence the payload alone does not carry that the call is a
+// conversation, exactly as a harness session id is for an enveloped call.
+// So the same fallback applies: a call matching no cataloged tell is the
+// spine, unless the envelope's harness_metadata tags it auxiliary (the
+// same mapping ClassifyEnvelopedCall uses).
+//
+// sessionKey is the harness_session_id the raw turn is filed under, ""
+// when the capture path keyed it by nothing. A call with no key, every
+// cataloged tell, and every call whose envelope names its own harness
+// session classify exactly as ClassifyEnvelopedCall does.
+func ClassifyKeyedCall(req *llm.ChatRequest, resp *llm.ChatResponse, env *sessions.IngestEnvelope, sessionKey string) string {
+	kind := ClassifyEnvelopedCall(req, resp, env)
+	if kind != KindUnknown || req == nil || sessionKey == "" || !env.NeedsSyntheticHarnessSessionID() {
+		return kind
+	}
+	if env != nil {
+		if task := envelopeAuxTask(env); task != "" {
+			if mapped, ok := auxTaskKinds[task]; ok {
+				return mapped
+			}
+			return KindHarnessAux
+		}
+	}
+	return KindMain
 }
 
 // envelopeAuxTask returns the auxiliary task a harness tagged this call

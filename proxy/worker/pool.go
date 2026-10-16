@@ -311,6 +311,17 @@ func (p *Pool) processJob(job Job) {
 	}
 
 	session, sessionKey := p.persistRawTurn(ctx, job, chain)
+	// The raw turn's key is known only now, and it can change the call's
+	// classification (derive.ClassifyKeyedCall): a call keyed by a
+	// synthetic conversation key is the spine. Rebuild with it so the
+	// sessions row folds from the same kinds re-derive will assign to the
+	// stored row. Hashes do not depend on the kind, so the key — derived
+	// from the first chain's root — is unchanged.
+	if sessionKey != "" && sessionKey != job.SessionKey && job.Session.NeedsSyntheticHarnessSessionID() {
+		keyed := job
+		keyed.SessionKey = sessionKey
+		chain = buildTurnChain(keyed, p.config.Project)
+	}
 	p.ingestSession(ctx, job, session, sessionKey, chain)
 }
 
@@ -492,10 +503,11 @@ func (p *Pool) ingestSession(ctx context.Context, job Job, session *sessions.Ing
 // raw-turn store; this wrapper just adapts a worker Job.
 func buildTurnChain(job Job, project string) []*merkle.Node {
 	return derive.TurnChain(derive.CallContext{
-		Provider:  job.Provider,
-		AgentName: job.AgentName,
-		ThreadID:  job.ThreadID,
-		Project:   project,
-		Session:   job.Session,
+		Provider:   job.Provider,
+		AgentName:  job.AgentName,
+		ThreadID:   job.ThreadID,
+		Project:    project,
+		Session:    job.Session,
+		SessionKey: job.SessionKey,
 	}, job.Req, job.Resp)
 }

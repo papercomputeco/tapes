@@ -116,8 +116,74 @@ var _ = Describe("Chat Completions tool-less turns", func() {
 		Expect(spans.Status[key].DerivedStatus).To(Equal(sessions.StatusCompleted))
 	})
 
-	It("leaves an un-enveloped tool-less call unknown", func() {
+	It("derives a header-less call tapes keyed itself as the spine", func() {
 		spans := derived("")
+		Expect(spans.Report.CallKinds).To(Equal(map[string]int{derive.KindMain: 1}))
+	})
+})
+
+var _ = Describe("Header-less tool-less conversations", func() {
+	const (
+		firstReq   = `{"model":"poc-cheap","messages":[{"role":"user","content":"Say hello in five words."}]}`
+		firstResp  = `{"object":"chat.completion","model":"poc-cheap","choices":[{"index":0,"message":{"role":"assistant","content":"Hello there, how are you?"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":7,"total_tokens":19}}`
+		secondReq  = `{"model":"poc-cheap","messages":[{"role":"user","content":"Say hello in five words."},{"role":"assistant","content":"Hello there, how are you?"},{"role":"user","content":"Now say goodbye."}]}`
+		secondResp = `{"object":"chat.completion","model":"poc-cheap","choices":[{"index":0,"message":{"role":"assistant","content":"Goodbye, take care now."},"finish_reason":"stop"}],"usage":{"prompt_tokens":30,"completion_tokens":6,"total_tokens":36}}`
+	)
+	// The key ingest and the local proxy mint for a turn whose envelope
+	// names no harness session: the unknown harness and a root-hash prefix.
+	key := derive.SessionKey{HarnessID: "unknown", HarnessSessionID: "3d0e994121d8add1"}
+
+	type call struct{ req, resp, envelope, sessionID string }
+	derived := func(calls ...call) *derive.SpanSet {
+		dv, err := derive.NewDeriver("header-less")
+		Expect(err).NotTo(HaveOccurred())
+		for i, c := range calls {
+			reduced, err := capture.NewOpenAIReducer().Reduce(context.Background(), strings.NewReader(c.req), strings.NewReader(c.resp), "application/json")
+			Expect(err).NotTo(HaveOccurred())
+			raw, err := json.Marshal(reduced)
+			Expect(err).NotTo(HaveOccurred())
+			rec := &storage.RawTurnRecord{
+				ID: int64(i + 1), Provider: "openai", Source: storage.RawTurnSourceWire,
+				HarnessID: key.HarnessID, HarnessSessionID: c.sessionID,
+				RawRequest: []byte(c.req), Response: raw,
+				ReceivedAt: time.Unix(100+int64(i), 0),
+			}
+			if c.envelope != "" {
+				rec.SessionEnvelope = json.RawMessage(c.envelope)
+			}
+			dv.AddTurn(rec)
+		}
+		return derive.EmitSpans(dv.Finish())
+	}
+
+	It("derives each prompt of a keyed conversation as its own completed spine turn", func() {
+		spans := derived(
+			call{firstReq, firstResp, "", key.HarnessSessionID},
+			call{secondReq, secondResp, "", key.HarnessSessionID},
+		)
+		Expect(spans.Report.CallKinds).To(Equal(map[string]int{derive.KindMain: 2}))
+		// Two genuine prompts, two traces: the session's turn_count.
+		Expect(spans.Turns).To(HaveLen(2))
+		Expect(spans.Turns[0].Synthetic).To(BeEmpty())
+		Expect(spans.Turns[0].UserPrompt).To(Equal("Say hello in five words."))
+		Expect(spans.Turns[0].ResponsePreview).To(Equal("Hello there, how are you?"))
+		Expect(spans.Turns[1].UserPrompt).To(Equal("Now say goodbye."))
+		Expect(spans.Turns[1].ResponsePreview).To(Equal("Goodbye, take care now."))
+		Expect(spans.Status[key].DerivedStatus).To(Equal(sessions.StatusCompleted))
+		Expect(spans.KindCounts[key]).To(Equal(map[string]int{derive.KindMain: 2}))
+	})
+
+	It("keeps an aux-tagged call off the spine of a keyed conversation", func() {
+		spans := derived(
+			call{firstReq, firstResp, `{"harness_id":"unknown"}`, key.HarnessSessionID},
+			call{secondReq, secondResp, `{"harness_id":"unknown","harness_metadata":{"aux_task":"compression"}}`, key.HarnessSessionID},
+		)
+		Expect(spans.Report.CallKinds).To(Equal(map[string]int{derive.KindMain: 1, derive.KindHarnessAux: 1}))
+		Expect(spans.Status[key].DerivedStatus).To(Equal(sessions.StatusCompleted))
+	})
+
+	It("leaves a call keyed by nothing unknown", func() {
+		spans := derived(call{firstReq, firstResp, "", ""})
 		Expect(spans.Report.CallKinds).To(Equal(map[string]int{derive.KindUnknown: 1}))
 	})
 })
@@ -207,12 +273,14 @@ var _ = Describe("Chat Completions reasoning_content", func() {
 		Entry("reasoning_content", "reasoning_content"),
 	)
 
-	It("keeps one trace when the client strips reasoning from history", func() {
+	It("keeps each call's reasoning when the client strips it from history", func() {
 		// deepseek-reasoner clients drop reasoning_content between user
 		// turns. Each reasoned response then hangs off the spine as its own
 		// leaf (the history copy without reasoning hashes apart, as an
-		// Anthropic client dropping thinking would), but the trace keeps
-		// one LLM span per call, each showing its reasoning.
+		// Anthropic client dropping thinking would), and each user prompt
+		// opens its own trace with one LLM span showing its reasoning. The
+		// rows carry a session key and no envelope, so the tool-less calls
+		// are the spine (derive.ClassifyKeyedCall).
 		requests := []string{
 			`{"model":"deepseek-reasoner","messages":[{"role":"user","content":"q1"}]}`,
 			`{"model":"deepseek-reasoner","messages":[{"role":"user","content":"q1"},{"role":"assistant","content":"a1"},{"role":"user","content":"q2"}]}`,
@@ -236,7 +304,7 @@ var _ = Describe("Chat Completions reasoning_content", func() {
 			})
 		}
 		spans := derive.EmitSpans(dv.Finish())
-		Expect(spans.Report.Traces).To(Equal(1))
+		Expect(spans.Report.Traces).To(Equal(2))
 		Expect(spans.Report.SpanKinds[derive.SpanKindLLM]).To(Equal(2))
 		var thoughts []string
 		for _, turn := range spans.Turns {

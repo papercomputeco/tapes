@@ -39,11 +39,12 @@ func rederiveChain(providers map[string]provider.Provider, rec *storage.RawTurnR
 		return nil, true, nil
 	}
 	chain = TurnChain(CallContext{
-		Provider:  rec.Provider,
-		AgentName: rec.AgentName,
-		ThreadID:  threadIDFromMeta(rec.Meta),
-		Project:   project,
-		Session:   sessionEnvelope(rec.SessionEnvelope),
+		Provider:   rec.Provider,
+		AgentName:  rec.AgentName,
+		ThreadID:   threadIDFromMeta(rec.Meta),
+		Project:    project,
+		Session:    sessionEnvelope(rec.SessionEnvelope),
+		SessionKey: rec.HarnessSessionID,
 	}, req, &resp)
 	if len(chain) == 0 {
 		return nil, false, errors.New("empty chain")

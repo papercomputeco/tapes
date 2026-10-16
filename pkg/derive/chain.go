@@ -49,11 +49,21 @@ type CallContext struct {
 	// one. It is a classification fallback only (ClassifyEnvelopedCall);
 	// nil classifies from the payload alone.
 	Session *sessions.IngestEnvelope
+
+	// SessionKey is the harness_session_id the call's raw turn is filed
+	// under, when the capture path has resolved one. Where the envelope
+	// names no harness session of its own, that key is one tapes minted
+	// (a conversation-root key or one of its idle splits), and it is the
+	// classification signal ClassifyKeyedCall reads. Every path that
+	// builds a call's chain must pass the same key — live capture once
+	// it has keyed the raw turn, re-derive from the stored row — or the
+	// two classify the same call differently.
+	SessionKey string
 }
 
 func TurnChain(call CallContext, req *llm.ChatRequest, resp *llm.ChatResponse) []*merkle.Node {
 	return turnChain(call, req, resp, chainOptions{
-		kind:             ClassifyEnvelopedCall(req, resp, call.Session),
+		kind:             ClassifyKeyedCall(req, resp, call.Session, call.SessionKey),
 		classifyInjected: true,
 		request:          req.Params(),
 	})

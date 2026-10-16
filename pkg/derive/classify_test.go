@@ -211,6 +211,31 @@ var _ = Describe("ClassifyEnvelopedCall", func() {
 	)
 })
 
+var _ = Describe("ClassifyKeyedCall", func() {
+	chatTurn := &llm.ChatRequest{
+		Extra:    map[string]any{"endpoint": "chat_completions"},
+		Messages: []llm.Message{textMsg("user", "Say hello in five words.")},
+	}
+	reply := assistantText("Hello there, nice to meet!")
+	aux := &sessions.IngestEnvelope{HarnessID: "unknown", HarnessMetadata: json.RawMessage(`{"aux_task":"title_generation"}`)}
+
+	DescribeTable("treats a key tapes minted as a conversation",
+		func(req *llm.ChatRequest, env *sessions.IngestEnvelope, key, want string) {
+			Expect(derive.ClassifyKeyedCall(req, reply, env, key)).To(Equal(want))
+		},
+		Entry("no envelope, synthetic key: the spine", chatTurn, nil, "3d0e994121d8add1", derive.KindMain),
+		Entry("unknown harness, idle-split key: the spine",
+			chatTurn, &sessions.IngestEnvelope{HarnessID: "unknown"}, "3d0e994121d8add1-20261015T232847Z", derive.KindMain),
+		Entry("harness without a session id, synthetic key: the spine",
+			chatTurn, &sessions.IngestEnvelope{HarnessID: "hermes"}, "3d0e994121d8add1", derive.KindMain),
+		Entry("aux-tagged keyed call stays a side call", chatTurn, aux, "3d0e994121d8add1", derive.KindTitleGen),
+		Entry("no key at all stays unknown", chatTurn, nil, "", derive.KindUnknown),
+		Entry("a cataloged tell wins",
+			&llm.ChatRequest{MaxTokens: new(1), Messages: []llm.Message{textMsg("user", "quota")}}, nil, "3d0e994121d8add1", derive.KindProbe),
+		Entry("a nil request stays unknown", nil, nil, "3d0e994121d8add1", derive.KindUnknown),
+	)
+})
+
 var _ = Describe("ClassifyInjected", func() {
 	It("marks whole injected blocks", func() {
 		Expect(derive.ClassifyInjected(textMsg("user", "# MCP Server Instructions\n…"))).To(Equal(derive.KindInjectedMCPInstructions))
