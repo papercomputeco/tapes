@@ -137,7 +137,7 @@
         button.className = 'session' + (item.id === state.currentID ? ' active' : '');
         button.innerHTML = '<strong>' + esc(sessionLabel(item)) + '</strong>' +
           '<code>' + esc(shortID(item.id)) + '</code>' +
-          '<span class="muted">' + esc([item.model, item.derived_status, item.turn_count + ' turns'].filter(Boolean).join(' · ')) + '</span>';
+          '<span class="muted">' + esc([item.model, item.derived_status, item.turn_count != null ? item.turn_count + ' turns' : null].filter(Boolean).join(' · ')) + '</span>';
         button.addEventListener('click', function () { loadSession(item.id); });
         list.appendChild(button);
       });
