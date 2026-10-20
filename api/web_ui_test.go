@@ -52,6 +52,31 @@ var _ = Describe("minimal web UI", func() {
 		Expect(string(raw)).NotTo(ContainSubstring("<script src="))
 	})
 
+	It("reads the derived session and trace fields from where the API nests them", func() {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
+		Expect(err).NotTo(HaveOccurred())
+		resp, err := server.app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		raw, err := io.ReadAll(resp.Body)
+		Expect(err).NotTo(HaveOccurred())
+		html := string(raw)
+
+		// SessionItem carries status, model, turn_count, preview and spend
+		// under `rollup`; TraceItem carries tokens under `usage`. Reading
+		// the pre-rollup flat names rendered "undefined turns".
+		Expect(html).To(ContainSubstring("rollup.turn_count"))
+		Expect(html).To(ContainSubstring("rollup.status"))
+		Expect(html).To(ContainSubstring("rollup.model"))
+		Expect(html).To(ContainSubstring("item.display_title"))
+		Expect(html).To(ContainSubstring("usage.input_tokens"))
+		for _, retired := range []string{
+			"item.turn_count", "item.model", "item.preview",
+			"derived_status", "total_cost_usd", "total_input_tokens", "total_output_tokens",
+		} {
+			Expect(html).NotTo(ContainSubstring(retired))
+		}
+	})
+
 	It("does not catch all unknown routes", func() {
 		for _, path := range []string{"/graph", "/not-the-ui"} {
 			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)

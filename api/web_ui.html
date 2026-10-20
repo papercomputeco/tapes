@@ -105,7 +105,11 @@
       return data;
     }
     function sessionLabel(item) {
-      return item.name || item.preview || (item.harness_id ? item.harness_id + ' session' : shortID(item.id));
+      var rollup = item.rollup || {};
+      return item.display_title || item.name || rollup.preview || (item.harness_id ? item.harness_id + ' session' : shortID(item.id));
+    }
+    function turnsLabel(count) {
+      return typeof count === 'number' ? count + (count === 1 ? ' turn' : ' turns') : '';
     }
 
     async function loadStats() {
@@ -133,11 +137,12 @@
       }
       list.innerHTML = '';
       state.sessions.forEach(function (item) {
+        var rollup = item.rollup || {};
         var button = document.createElement('button');
         button.className = 'session' + (item.id === state.currentID ? ' active' : '');
         button.innerHTML = '<strong>' + esc(sessionLabel(item)) + '</strong>' +
           '<code>' + esc(shortID(item.id)) + '</code>' +
-          '<span class="muted">' + esc([item.model, item.derived_status, item.turn_count + ' turns'].filter(Boolean).join(' · ')) + '</span>';
+          '<span class="muted">' + esc([rollup.model, rollup.status, turnsLabel(rollup.turn_count)].filter(Boolean).join(' · ')) + '</span>';
         button.addEventListener('click', function () { loadSession(item.id); });
         list.appendChild(button);
       });
@@ -162,13 +167,14 @@
 
     function renderSession(data) {
       var session = data.session || {};
+      var rollup = session.rollup || {};
       var traces = data.traces || [];
       byID('detail-meta').textContent =
         'session ' + shortID(session.id) +
         ' • ' + (session.harness_id || 'unknown harness') +
         ' • ' + traces.length + ' turns' +
-        ' • ' + (session.derived_status || 'unknown') +
-        ' • $' + Number(session.total_cost_usd || 0).toFixed(4);
+        ' • ' + (rollup.status || 'unknown') +
+        ' • $' + Number((rollup.usage || {}).cost_usd || 0).toFixed(4);
 
       var list = byID('traces');
       if (!traces.length) {
@@ -179,6 +185,7 @@
       list.innerHTML = '';
       traces.forEach(function (detail, i) {
         var trace = detail.trace || {};
+        var usage = trace.usage || {};
         var button = document.createElement('button');
         button.className = 'trace';
         button.innerHTML =
@@ -186,7 +193,7 @@
           '<span class="response">' + esc((trace.response_preview || '').slice(0, 160)) + '</span>' +
           '<span class="muted">#' + (i + 1) + ' · ' + esc(trace.status || '') +
             ' · ' + (trace.span_count || 0) + ' spans · ' +
-            (trace.total_input_tokens || 0) + ' in / ' + (trace.total_output_tokens || 0) + ' out</span>';
+            (usage.input_tokens || 0) + ' in / ' + (usage.output_tokens || 0) + ' out</span>';
         button.addEventListener('click', function () {
           list.querySelectorAll('.trace.active').forEach(function (el) { el.classList.remove('active'); });
           button.classList.add('active');
