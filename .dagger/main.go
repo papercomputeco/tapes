@@ -38,7 +38,7 @@ func New(
 // It is the shared foundation for tests, builds, and linting.
 func (t *Tapes) goContainer() *dagger.Container {
 	return dag.Container().
-		From("golang:1.26-bookworm").
+		From("golang:1.27-bookworm").
 		WithEnvVariable("CGO_ENABLED", "0").
 		WithEnvVariable("GOEXPERIMENT", "jsonv2").
 		WithEnvVariable("PATH", "/go/bin:$PATH", dagger.ContainerWithEnvVariableOpts{Expand: true}).

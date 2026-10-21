@@ -9,7 +9,7 @@ The repository's supported workflow is Make-based. Run `make help` before invoki
 
 ## Prerequisites
 
-- Go 1.26 or newer;
+- Go 1.27 or newer;
 - Docker for Dagger checks and the pinned PostgreSQL test service;
 - Nix with flakes (recommended) or equivalent pinned tools;
 - PostgreSQL with pgvector and pg_duckdb for runtime and DB-backed tests;
