@@ -240,6 +240,66 @@ var _ = Describe("Derive runs (postgres)", func() {
 		Expect(done.State).To(Equal(derive.RunCompleted))
 	})
 
+	It("stops when the run lock's connection is lost, leaving the run to resume", func() {
+		seedSession("a", 1)
+		seedSession("b", 1)
+		run, _, err := driver.StartDeriveRun(ctx, "")
+		Expect(err).NotTo(HaveOccurred())
+
+		other, err := postgres.NewDriver(ctx, testPostgresDSN)
+		Expect(err).NotTo(HaveOccurred())
+		defer other.Close()
+		// Hold the first session's lock so the executor waits inside it
+		// while the run lock's connection is killed.
+		release, err := other.AcquireDeriveSessionLock(ctx, orgID, harnessID, "a")
+		Expect(err).NotTo(HaveOccurred())
+
+		type result struct {
+			run derive.Run
+			err error
+		}
+		results := make(chan result, 1)
+		go func() {
+			defer GinkgoRecover()
+			done, err := driver.ExecuteDeriveRun(ctx, run.ID, "w")
+			results <- result{done, err}
+		}()
+
+		// Wait until the executor is queued on the session lock, past its
+		// check of the run lock's connection for the first session.
+		Eventually(func() (int, error) {
+			var waiting int
+			err := other.DB().QueryRow(ctx,
+				"SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objsubid = 1 AND NOT granted").Scan(&waiting)
+			return waiting, err
+		}).Should(Equal(1))
+
+		var pid int32
+		Eventually(func() error {
+			return other.DB().QueryRow(ctx,
+				"SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND objsubid = 2 AND granted AND classid::bigint = $1",
+				int64(postgres.DeriveRunLockClass)).Scan(&pid)
+		}).Should(Succeed())
+		_, err = other.DB().Exec(ctx, "SELECT pg_terminate_backend($1)", pid)
+		Expect(err).NotTo(HaveOccurred())
+		release()
+
+		var got result
+		Eventually(results).Should(Receive(&got))
+		Expect(got.err).To(MatchError(ContainSubstring("lock connection lost")))
+		Expect(finishedSessions(run.ID)).To(Equal(1), "the session already underway finished; the next was not started")
+
+		current, err := driver.GetDeriveRun(ctx, run.ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(current.State).To(Equal(derive.RunRunning))
+
+		done, err := driver.ExecuteDeriveRun(ctx, run.ID, "w")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(done.State).To(Equal(derive.RunCompleted))
+		Expect(done.SessionsFailed).To(Equal(0))
+		Expect(finishedSessions(run.ID)).To(Equal(2))
+	})
+
 	It("reports an unknown run as not found", func() {
 		_, err := driver.GetDeriveRun(ctx, newTestOrgID())
 		Expect(err).To(MatchError(derive.ErrRunNotFound))

@@ -40,7 +40,8 @@ type Run struct {
 	// ID identifies the run.
 	ID string `json:"id"`
 
-	// Project restricts the derive to one project; empty means all.
+	// Project is recorded on the nodes the run derives; empty records none.
+	// It does not narrow which sessions the run covers.
 	Project string `json:"project,omitempty"`
 
 	// State is the run's lifecycle state.

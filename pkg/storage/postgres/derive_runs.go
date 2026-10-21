@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"io"
+	"net"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -177,9 +180,16 @@ func (d *Driver) CancelDeriveRun(ctx context.Context, id string) (derive.Run, er
 // up by the next caller.
 //
 // A session whose derive fails is recorded as finished with its error and the
-// run moves on: one bad session must not hold a whole-store run hostage. Any
-// other error — the database itself failing, or ctx ending — returns with the
-// run still running, to be resumed from its first unfinished session.
+// run moves on: one bad session must not hold a whole-store run hostage. A
+// failure that says nothing about the session — the database or its
+// connection failing, the session lock not being taken, ctx ending — instead
+// returns with the session unfinished and the run still running, to be
+// resumed from its first unfinished session. So does losing the run lock's
+// connection, which would let another process take the run.
+//
+// It holds two pool connections at once while a session derives, the run
+// lock's and the session lock's, so the pool must allow at least two beyond
+// the derive's own queries.
 //
 // worker names this process on the run record.
 func (d *Driver) ExecuteDeriveRun(ctx context.Context, id, worker string) (derive.Run, error) {
@@ -247,11 +257,22 @@ func (d *Driver) ExecuteDeriveRun(ctx context.Context, id, worker string) (deriv
 			break
 		}
 		for _, key := range page {
+			// The run lock lives on lockConn. If that connection has gone,
+			// the lock went with it and another process may already hold
+			// the run, so stop rather than execute alongside it.
+			if _, err := lockConn.Exec(ctx, "SELECT 1"); err != nil {
+				return derive.Run{}, fmt.Errorf("derive run lock connection lost: %w", err)
+			}
 			orgID := uuidString(key.OrgID)
 			sessionReport, deriveErr := d.RederiveSessionLocked(ctx, project, orgID, key.HarnessID, key.HarnessSessionID)
 			if ctx.Err() != nil {
 				// Interrupted mid-session: leave it unfinished for the resume.
 				return derive.Run{}, ctx.Err()
+			}
+			if deriveErr != nil && isTransientDeriveRunError(deriveErr) {
+				// Nothing is known about the session yet: leave it
+				// unfinished so the resume retries it.
+				return derive.Run{}, fmt.Errorf("derive run session %s/%s: %w", key.HarnessID, key.HarnessSessionID, deriveErr)
 			}
 			var sessionErr pgtype.Text
 			if deriveErr != nil {
@@ -361,4 +382,34 @@ func optionalTime(ts pgtype.Timestamptz) *time.Time {
 	}
 	t := ts.Time
 	return &t
+}
+
+// isTransientDeriveRunError reports whether a session's derive failed for a
+// reason outside the session — the database, its connection, the session lock,
+// or ctx — so the session should be retried rather than recorded as failed.
+func isTransientDeriveRunError(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, errDeriveSessionLock) ||
+		errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	var connectErr *pgconn.ConnectError
+	if errors.As(err, &connectErr) || pgconn.Timeout(err) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		// 08 connection exception, 40 transaction rollback (serialization,
+		// deadlock), 53 insufficient resources, 57 operator intervention.
+		for _, class := range []string{"08", "40", "53", "57"} {
+			if strings.HasPrefix(pgErr.Code, class) {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -397,7 +397,7 @@ turn). A derive run is the same re-derive as a durable background job:
 
 | Route | Purpose |
 | --- | --- |
-| `POST /v1/admin/derive/runs` | Start a run. Optional body `{"project": "..."}`. `202` with the new run, or `200` with the run already active — there is at most one, so a repeated start is an idempotent "make sure one is going". `Location` names the run either way. |
+| `POST /v1/admin/derive/runs` | Start a run over every session. Optional body `{"project": "..."}` names the project recorded on the derived nodes; it does not narrow the run. `202` with the new run, or `200` with the run already active — there is at most one, so a repeated start is an idempotent "make sure one is going". `Location` names the run either way. |
 | `GET /v1/admin/derive/runs/{id}` | The run's state and progress. |
 | `GET /v1/admin/derive/runs?limit=N` | The most recent runs, newest first (default 20, max 200). |
 | `POST /v1/admin/derive/runs/{id}/cancel` | Stop an active run. The executor stops after the session in progress. |

@@ -232,6 +232,10 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 	adminRouter := router
 	if config.AdminListener == AdminListenerInternal {
 		s.adminApp = fiber.New()
+		// The same request metrics as the API listener, with recovery
+		// inside them so a panicking handler is still counted.
+		s.adminApp.Use(s.metrics.Middleware())
+		s.adminApp.Use(recover.New())
 		adminRouter = oasfiber.Wrap(s.adminApp, s.openapi, oasfiber.WithUndocumented(oasfiber.Fail))
 	}
 	s.mountAdmin(adminRouter)

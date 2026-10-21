@@ -60,7 +60,8 @@ type deriveRunStore interface {
 
 // deriveRunRequest is the optional body of a create.
 type deriveRunRequest struct {
-	// Project restricts the run to one project; empty means all.
+	// Project is recorded on the nodes the run derives; empty records none.
+	// It does not narrow which sessions the run covers.
 	Project string `json:"project,omitempty"`
 }
 
