@@ -192,6 +192,11 @@ var _ = Describe("derive runs, with admin routes on the internal listener", func
 		Expect(counterValue(server.metrics.Registry(), DeriveRunsPath, http.MethodPost, "202")).To(Equal(1.0))
 	})
 
+	It("answers admin requests with a request id on the internal listener", func() {
+		response, _ := call(internal.app, http.MethodPost, DeriveRunsPath, "", true)
+		Expect(response.Header.Get("X-Request-Id")).NotTo(BeEmpty())
+	})
+
 	It("reads, lists, and cancels runs", func() {
 		_, raw := call(internal.app, http.MethodPost, DeriveRunsPath, "", true)
 		id := decodeRun(raw).ID

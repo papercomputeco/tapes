@@ -66,8 +66,8 @@ which commit changed it.
   `api` (the default, unchanged) or `internal`, which serves them only on the
   token-guarded internal listener and answers `404` for them on the API
   listener, so operator actions sit beside the readiness evidence and the API
-  listener carries reads only. Admin requests keep their request metrics on
-  either listener. See
+  listener carries reads only. Admin requests keep their request IDs and
+  metrics on either listener. See
   [Configuration](./docs/configuration.md#the-internal-listener).
 
 ### Changed

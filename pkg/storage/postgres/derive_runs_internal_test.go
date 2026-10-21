@@ -27,7 +27,15 @@ var _ = Describe("isTransientDeriveRunError", func() {
 		Entry("deadlock", &pgconn.PgError{Code: "40P01"}, true),
 		Entry("out of resources", &pgconn.PgError{Code: "53300"}, true),
 		Entry("admin shutdown", &pgconn.PgError{Code: "57P01"}, true),
+		Entry("never reached the server", safeToRetryError{}, true),
 		Entry("constraint violation", &pgconn.PgError{Code: "23505"}, false),
 		Entry("malformed session content", errors.New("parse transcript: not a record array"), false),
 	)
 })
+
+// safeToRetryError stands in for pgconn's unexported errors that report a
+// request which never reached the server, such as a closed or busy connection.
+type safeToRetryError struct{}
+
+func (safeToRetryError) Error() string     { return "conn closed" }
+func (safeToRetryError) SafeToRetry() bool { return true }

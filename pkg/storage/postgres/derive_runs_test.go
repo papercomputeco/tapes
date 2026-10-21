@@ -240,7 +240,7 @@ var _ = Describe("Derive runs (postgres)", func() {
 		Expect(done.State).To(Equal(derive.RunCompleted))
 	})
 
-	It("stops when the run lock's connection is lost, leaving the run to resume", func() {
+	It("records nothing after losing the run lock mid-session, leaving the run to resume", func() {
 		seedSession("a", 1)
 		seedSession("b", 1)
 		run, _, err := driver.StartDeriveRun(ctx, "")
@@ -249,8 +249,10 @@ var _ = Describe("Derive runs (postgres)", func() {
 		other, err := postgres.NewDriver(ctx, testPostgresDSN)
 		Expect(err).NotTo(HaveOccurred())
 		defer other.Close()
-		// Hold the first session's lock so the executor waits inside it
-		// while the run lock's connection is killed.
+		// Hold the first session's lock so the executor is mid-session,
+		// past its check of the run lock, when that lock's connection is
+		// killed. Its derive of the session then completes, and the finish
+		// that would record it must fail with the lock.
 		release, err := other.AcquireDeriveSessionLock(ctx, orgID, harnessID, "a")
 		Expect(err).NotTo(HaveOccurred())
 
@@ -286,8 +288,8 @@ var _ = Describe("Derive runs (postgres)", func() {
 
 		var got result
 		Eventually(results).Should(Receive(&got))
-		Expect(got.err).To(MatchError(ContainSubstring("lock connection lost")))
-		Expect(finishedSessions(run.ID)).To(Equal(1), "the session already underway finished; the next was not started")
+		Expect(got.err).To(MatchError(ContainSubstring("finish derive run session")))
+		Expect(finishedSessions(run.ID)).To(Equal(0), "the executor that lost the lock recorded nothing")
 
 		current, err := driver.GetDeriveRun(ctx, run.ID)
 		Expect(err).NotTo(HaveOccurred())
@@ -297,6 +299,8 @@ var _ = Describe("Derive runs (postgres)", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(done.State).To(Equal(derive.RunCompleted))
 		Expect(done.SessionsFailed).To(Equal(0))
+		Expect(done.SessionsDone).To(Equal(2))
+		Expect(done.SessionsTotal).To(Equal(2))
 		Expect(finishedSessions(run.ID)).To(Equal(2))
 	})
 

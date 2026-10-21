@@ -218,7 +218,14 @@ func (d *Driver) ExecuteDeriveRun(ctx context.Context, id, worker string) (deriv
 		_, _ = lockConn.Exec(context.Background(), "SELECT pg_advisory_unlock($1, $2)", deriveRunLockClass, lockKey)
 	}()
 
-	row, err := d.q.MarkDeriveRunRunning(ctx, gensqlc.MarkDeriveRunRunningParams{ID: runID, Worker: worker})
+	// Every write to the run record goes through the lock's own connection.
+	// If that connection has gone, the lock went with it and another process
+	// may hold the run; the write then fails and this executor stops, rather
+	// than recording progress alongside the new holder. A write that succeeds
+	// was made while the lock was still held.
+	lq := gensqlc.New(lockConn)
+
+	row, err := lq.MarkDeriveRunRunning(ctx, gensqlc.MarkDeriveRunRunningParams{ID: runID, Worker: worker})
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Not active (completed or canceled since it was listed), or gone.
 		return d.GetDeriveRun(ctx, id)
@@ -257,9 +264,8 @@ func (d *Driver) ExecuteDeriveRun(ctx context.Context, id, worker string) (deriv
 			break
 		}
 		for _, key := range page {
-			// The run lock lives on lockConn. If that connection has gone,
-			// the lock went with it and another process may already hold
-			// the run, so stop rather than execute alongside it.
+			// Check the lock before spending a derive on a session; the
+			// finish below is what makes a lost lock safe.
 			if _, err := lockConn.Exec(ctx, "SELECT 1"); err != nil {
 				return derive.Run{}, fmt.Errorf("derive run lock connection lost: %w", err)
 			}
@@ -293,7 +299,7 @@ func (d *Driver) ExecuteDeriveRun(ctx context.Context, id, worker string) (deriv
 			if err != nil {
 				return derive.Run{}, fmt.Errorf("encode derive run errors: %w", err)
 			}
-			state, err := d.q.FinishDeriveRunSession(ctx, gensqlc.FinishDeriveRunSessionParams{
+			state, err := lq.FinishDeriveRunSession(ctx, gensqlc.FinishDeriveRunSessionParams{
 				Error:            sessionErr,
 				Report:           reportJSON,
 				Errors:           errorsJSON,
@@ -317,7 +323,7 @@ func (d *Driver) ExecuteDeriveRun(ctx context.Context, id, worker string) (deriv
 		after.AfterHarnessSessionID = last.HarnessSessionID
 	}
 
-	if _, err := d.q.CompleteDeriveRun(ctx, runID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := lq.CompleteDeriveRun(ctx, runID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return derive.Run{}, fmt.Errorf("complete derive run: %w", err)
 	}
 	return d.GetDeriveRun(ctx, id)
@@ -395,6 +401,11 @@ func isTransientDeriveRunError(err error) bool {
 	}
 	var connectErr *pgconn.ConnectError
 	if errors.As(err, &connectErr) || pgconn.Timeout(err) {
+		return true
+	}
+	// pgx marks a failure that never reached the server (a closed or busy
+	// connection, a failed write before the query was sent) as safe to retry.
+	if pgconn.SafeToRetry(err) {
 		return true
 	}
 	var netErr net.Error
