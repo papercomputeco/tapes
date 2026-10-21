@@ -163,3 +163,15 @@ builds it with a plain `CREATE INDEX`, which on a very large table blocks
 writes for the length of the build; an operator who would rather not pay that
 at deploy time can build it first by hand with `CREATE INDEX CONCURRENTLY`
 under the same name, and the migration's `IF NOT EXISTS` then skips it.
+
+## Trace key indexes
+
+Cassettes read spans and span turns through the `tapes_v1` views by their
+org-free identity, a span as `(trace_id, span_id)` and a turn as `trace_id`,
+and never name `org_id`. Every other index on those tables leads with
+`org_id`, so `spans_20260615_trace_span_idx` and
+`span_turns_20260615_trace_idx` are the only ones such a lookup can use;
+without them each join from a cassette scans the whole projection. The search
+cassette's nearest-neighbour query is the reader that depends on them. They are
+built the same way as the page order index, with the same option to build them
+first by hand with `CREATE INDEX CONCURRENTLY`.
