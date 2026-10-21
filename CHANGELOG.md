@@ -65,8 +65,8 @@ which commit changed it.
 - `TAPES_ADMIN_LISTENER` chooses where the `/v1/admin/` routes are served:
   `api` (the default, unchanged) or `internal`, which serves them only on the
   token-guarded internal listener and answers `404` for them on the API
-  listener. Set `internal` on any deployment where something other than the
-  operator can reach the API listener. See
+  listener, so operator actions sit beside the readiness evidence and the API
+  listener carries reads only. See
   [Configuration](./docs/configuration.md#the-internal-listener).
 
 ### Changed

@@ -9,14 +9,11 @@ import (
 // /v1/admin/: the demo seed, the synchronous derive run, attribution repair,
 // and the asynchronous derive runs.
 //
-// The routes are writes that run for as long as the corpus takes, and the API
-// process performs no authorization of its own. On a deployment where the API
-// listener is only reachable by its operator that is fine, and it is the
-// default. A deployment that puts a gateway in front of the API listener — one
-// that rewrites a public path prefix onto its root, say — makes every route
-// there reachable by whoever the gateway admits; such a deployment moves the
-// admin routes to the internal listener, which requires its bearer token on
-// every request.
+// The routes are operator actions — writes that run for as long as the corpus
+// takes — rather than part of the read surface. By default they share the API
+// listener, as they always have. A deployment that wants the API listener to
+// carry reads only moves them to the internal listener, beside the readiness
+// evidence, where every request must present its bearer token.
 //
 // The routes are described in the read API's OpenAPI document either way: the
 // knob decides which port serves them, not what they are.

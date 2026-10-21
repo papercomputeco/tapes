@@ -373,17 +373,16 @@ request must present `TAPES_INTERNAL_TOKEN` as a bearer token. See
 
 ### Where the admin routes are served
 
-The `/v1/admin/` routes are operator writes, and the API process performs no
-authorization of its own. `TAPES_ADMIN_LISTENER` picks the listener that serves
-them:
+The `/v1/admin/` routes are operator actions rather than part of the read
+surface. `TAPES_ADMIN_LISTENER` picks the listener that serves them:
 
 | Value | Admin routes are served |
 | --- | --- |
 | `api` (default) | on the read API listener, as they always have been |
 | `internal` | only on the internal listener, behind its bearer token; the read API answers `404` for them |
 
-Choose `internal` when the read API is reachable by anyone the operator does
-not trust with those writes — behind a gateway, for example. Startup fails if
+Choose `internal` to keep operator actions off the read API listener, so only
+callers holding `TAPES_INTERNAL_TOKEN` can run them. Startup fails if
 `internal` is chosen without `TAPES_INTERNAL_LISTEN`. Either way the routes
 stay described in the read API's OpenAPI document and its seal: the setting
 moves the port that serves them, not the contract.
