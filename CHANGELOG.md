@@ -24,7 +24,7 @@ which commit changed it.
   before upgrading; otherwise new captures keep the identity the capture client
   reported instead of the one the gateway vouched for. Sessions already stored
   are unaffected. See [Configuration](./docs/configuration.md#trusted-subject-header).
-- **Derive runs add two tables.** Migration `1781590000` creates
+- **Derive runs add two tables.** Migration `1781600000` creates
   `derive_runs` and `derive_run_sessions`; it applies with the other
   migrations at startup.
 
