@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "configHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "recipe": "recipe-a-r1",
+  "configurationId": "rc_a",
+  "configurationRevision": "rev_1",
+  "shape": "dragon",
+  "decision": "sensitive",
+  "destinationId": "dest-b",
+  "backendName": "private",
+  "backendGeneration": "bg_b",
+  "model": "model-b",
+  "backend": "provider-b",
+  "protocol": "openai.chat.v1"
+}

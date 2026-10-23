@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "receiptId": "receipt-8845a90a14d56c72ef1fe4bcad4d88d1",
+  "attemptId": "attempt-57c0e930908f53ae70117a9c68a48ab0",
+  "requestId": "request-01",
+  "gatewayId": "gateway-01",
+  "selection": {
+    "version": 1,
+    "configHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "decision": "dragon",
+    "destinationId": "dst-model-host-a-v1",
+    "model": "provider-model",
+    "backend": "selected-host-a",
+    "protocol": "openai.chat.v1"
+  },
+  "backendId": "resolved-host-a",
+  "model": "provider-model",
+  "settings": {
+    "temperature": {"state": "forwarded", "value": 0.25, "provenance": "final-forwarded-body"},
+    "top_p": {"state": "omitted-provider-default", "provenance": "final-forwarded-body"},
+    "stream": {"state": "forwarded", "value": true, "provenance": "final-forwarded-body"}
+  },
+  "outcome": "dispatched",
+  "terminalOwner": "downstream-stream-adapter"
+}

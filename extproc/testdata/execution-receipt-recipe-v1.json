@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "receiptId": "receipt-normalized",
+  "attemptId": "attempt-normalized",
+  "requestId": "request-recipe",
+  "gatewayId": "gateway-a",
+  "selection": {
+    "version": 1,
+    "configHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "recipe": "recipe-a-r1",
+    "configurationId": "rc_a",
+    "configurationRevision": "rev_1",
+    "shape": "dragon",
+    "decision": "sensitive",
+    "destinationId": "dest-b",
+    "backendName": "private",
+    "backendGeneration": "bg_b",
+    "model": "model-b",
+    "backend": "provider-b",
+    "protocol": "openai.chat.v1"
+  },
+  "backendId": "provider-b",
+  "model": "final-model",
+  "settings": {
+    "temperature": {
+      "state": "forwarded",
+      "provenance": "final-forwarded-body",
+      "value": 0.25
+    },
+    "top_p": {
+      "state": "omitted-provider-default",
+      "provenance": "final-forwarded-body"
+    },
+    "max_tokens": {
+      "state": "omitted-provider-default",
+      "provenance": "final-forwarded-body"
+    },
+    "max_completion_tokens": {
+      "state": "forwarded",
+      "provenance": "final-forwarded-body",
+      "value": 100
+    },
+    "max_output_tokens": {
+      "state": "omitted-provider-default",
+      "provenance": "final-forwarded-body"
+    },
+    "stream": {
+      "state": "forwarded",
+      "provenance": "final-forwarded-body",
+      "value": true
+    },
+    "reasoning_effort": {
+      "state": "omitted-provider-default",
+      "provenance": "final-forwarded-body"
+    },
+    "reasoning.effort": {
+      "state": "forwarded",
+      "provenance": "final-forwarded-body",
+      "value": "high"
+    },
+    "thinking.budget_tokens": {
+      "state": "omitted-provider-default",
+      "provenance": "final-forwarded-body"
+    },
+    "thinking.type": {
+      "state": "omitted-provider-default",
+      "provenance": "final-forwarded-body"
+    }
+  },
+  "outcome": "dispatched",
+  "terminalOwner": "downstream-stream-adapter"
+}
