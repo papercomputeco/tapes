@@ -22,6 +22,8 @@ const (
 
 // Config holds configuration for the tapes-extproc adapter.
 type Config struct {
+	// FinalDispatchReceipts enables receipts only for a verified post-transform filter chain.
+	FinalDispatchReceipts bool
 	// IngestURL is the base URL for the tapes ingest server.
 	IngestURL string
 	// ListenAddr is the gRPC TCP listen address.
@@ -61,15 +63,16 @@ func ConfigFromEnv() Config {
 	}
 
 	cfg := Config{
-		IngestURL:          envOrDefault("TAPES_INGEST_URL", "http://tapes-ingest:8090"),
-		ListenAddr:         envOrDefault("TAPES_LISTEN_ADDR", "0.0.0.0:50051"),
-		MetricsAddr:        envOrDefault("TAPES_METRICS_ADDR", "0.0.0.0:9090"),
-		ProviderMapFile:    envOrDefault("TAPES_PROVIDER_MAP_FILE", ""),
-		MaxInflight:        int(envIntOrDefault("TAPES_MAX_INFLIGHT_DISPATCHES", defaultMaxInflight)),
-		GRPCMaxRecvBytes:   int(envIntOrDefault("TAPES_GRPC_MAX_RECV_BYTES", defaultGRPCMaxRecvBytes)),
-		DispatchByteBudget: envIntOrDefault("TAPES_DISPATCH_BYTE_BUDGET", defaultDispatchByteBudget),
-		RawResponseMode:    rawMode,
-		SubjectHeader:      os.Getenv("TAPES_TRUSTED_SUBJECT_HEADER"),
+		FinalDispatchReceipts: os.Getenv("TAPES_FINAL_DISPATCH_RECEIPTS") == labelTrue,
+		IngestURL:             envOrDefault("TAPES_INGEST_URL", "http://tapes-ingest:8090"),
+		ListenAddr:            envOrDefault("TAPES_LISTEN_ADDR", "0.0.0.0:50051"),
+		MetricsAddr:           envOrDefault("TAPES_METRICS_ADDR", "0.0.0.0:9090"),
+		ProviderMapFile:       envOrDefault("TAPES_PROVIDER_MAP_FILE", ""),
+		MaxInflight:           int(envIntOrDefault("TAPES_MAX_INFLIGHT_DISPATCHES", defaultMaxInflight)),
+		GRPCMaxRecvBytes:      int(envIntOrDefault("TAPES_GRPC_MAX_RECV_BYTES", defaultGRPCMaxRecvBytes)),
+		DispatchByteBudget:    envIntOrDefault("TAPES_DISPATCH_BYTE_BUDGET", defaultDispatchByteBudget),
+		RawResponseMode:       rawMode,
+		SubjectHeader:         os.Getenv("TAPES_TRUSTED_SUBJECT_HEADER"),
 	}
 	return cfg
 }

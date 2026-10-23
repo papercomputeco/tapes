@@ -1,0 +1,118 @@
+{
+  "type": "object",
+  "required": [
+    "version",
+    "receiptId",
+    "attemptId",
+    "requestId",
+    "gatewayId",
+    "selection",
+    "settings",
+    "outcome",
+    "terminalOwner"
+  ],
+  "properties": {
+    "attemptId": {
+      "type": "string"
+    },
+    "backendId": {
+      "type": "string"
+    },
+    "failureStage": {
+      "type": "string"
+    },
+    "gatewayId": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "outcome": {
+      "type": "string"
+    },
+    "receiptId": {
+      "type": "string"
+    },
+    "requestId": {
+      "type": "string"
+    },
+    "selection": {
+      "type": "object",
+      "required": [
+        "version",
+        "configHash",
+        "decision",
+        "destinationId"
+      ],
+      "properties": {
+        "backend": {
+          "type": "string"
+        },
+        "configHash": {
+          "type": "string"
+        },
+        "decision": {
+          "type": "string"
+        },
+        "destinationId": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        },
+        "shape": {
+          "type": "string"
+        },
+        "recipe": {
+          "type": "string"
+        },
+        "configurationId": {
+          "type": "string"
+        },
+        "configurationRevision": {
+          "type": "string"
+        },
+        "backendName": {
+          "type": "string"
+        },
+        "backendGeneration": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "state",
+          "provenance"
+        ],
+        "properties": {
+          "provenance": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "value": true
+        },
+        "additionalProperties": false
+      }
+    },
+    "terminalOwner": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer"
+    }
+  },
+  "additionalProperties": false
+}

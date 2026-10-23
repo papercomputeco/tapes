@@ -65,6 +65,7 @@ func processRequestHeadersResponse(removeKeys []string) *extprocv3.ProcessingRes
 // (counter above LargeTurnThreshold) track the distribution so cluster
 // sizing can be adjusted from real data.
 type Processor struct {
+	finalDispatchReceipts bool
 	extprocv3.UnimplementedExternalProcessorServer
 
 	ingestURL   string
@@ -86,6 +87,8 @@ type Processor struct {
 // streamState holds all per-stream bookkeeping the processor gathers as the
 // five ext_proc phases march through. One instance per Process RPC.
 type streamState struct {
+	receipt                *ExecutionReceiptV1
+	dispatchMetadataSource string
 	provider               string
 	agentName              string
 	threadID               string
@@ -152,13 +155,14 @@ func NewProcessor(cfg Config) (*Processor, error) {
 	dispatcher.SetObserver(metrics.AsObserver())
 
 	return &Processor{
-		subjectHeader:   cfg.SubjectHeader,
-		ingestURL:       cfg.IngestURL,
-		providerMap:     providerMap,
-		dispatcher:      dispatcher,
-		metrics:         metrics,
-		maxInflight:     cfg.MaxInflight,
-		rawResponseMode: cfg.RawResponseMode,
+		finalDispatchReceipts: cfg.FinalDispatchReceipts,
+		subjectHeader:         cfg.SubjectHeader,
+		ingestURL:             cfg.IngestURL,
+		providerMap:           providerMap,
+		dispatcher:            dispatcher,
+		metrics:               metrics,
+		maxInflight:           cfg.MaxInflight,
+		rawResponseMode:       cfg.RawResponseMode,
 		reducers: map[string]capture.Reducer{
 			capture.ProviderAnthropic + "/" + endpointMessages:     capture.NewAnthropicReducer(),
 			capture.ProviderOpenAI + "/" + endpointResponses:       capture.NewOpenAIResponsesReducer(),
@@ -264,6 +268,7 @@ func (p *Processor) Process(stream extprocv3.ExternalProcessor_ProcessServer) er
 		switch v := msg.Request.(type) {
 		case *extprocv3.ProcessingRequest_RequestHeaders:
 			p.onRequestHeaders(st, v.RequestHeaders)
+			st.observeDispatchMetadata(msg.GetMetadataContext())
 			// Strip the X-Tapes-* envelope from the request before
 			// Envoy forwards it upstream to the LLM provider — these
 			// headers are internal to capture and must not leak.
@@ -271,19 +276,24 @@ func (p *Processor) Process(stream extprocv3.ExternalProcessor_ProcessServer) er
 			// to the envelope are also stripped without a code
 			// change here.
 			resp = processRequestHeadersResponse(
-				headers.EnvelopeHeaderKeysFromRequest(v.RequestHeaders),
+				append(headers.EnvelopeHeaderKeysFromRequest(v.RequestHeaders), receiptRequestStripKeys(p, v.RequestHeaders)...),
 			)
 
 		case *extprocv3.ProcessingRequest_RequestBody:
+			st.observeDispatchMetadata(msg.GetMetadataContext())
 			resp = p.onRequestBody(st, v.RequestBody)
 
 		case *extprocv3.ProcessingRequest_ResponseHeaders:
+			// AI Gateway's upstream ext_proc filter publishes the actual backend
+			// after downstream request processing. It is available on encode.
+			st.observeDispatchMetadata(msg.GetMetadataContext())
+			st.observeFinalDispatch()
 			st.statusCode = headers.StatusCode(v.ResponseHeaders)
 			st.contentType = headers.Get(v.ResponseHeaders, headers.ContentType)
 			st.contentEncoding = headers.Get(v.ResponseHeaders, headers.ContentEncoding)
 			resp = &extprocv3.ProcessingResponse{
 				Response: &extprocv3.ProcessingResponse_ResponseHeaders{
-					ResponseHeaders: &extprocv3.HeadersResponse{},
+					ResponseHeaders: p.executionReceiptResponse(st, v.ResponseHeaders),
 				},
 			}
 
@@ -348,6 +358,7 @@ func (p *Processor) onRequestHeaders(st *streamState, hdrs *extprocv3.HttpHeader
 	st.session = headers.ParseSessionEnvelope(hdrs)
 	st.orgID = headers.Get(hdrs, headers.PaperAuthOrgID)
 	st.authSubject = p.optionalHeader(hdrs, p.subjectHeader)
+	p.startExecutionReceipt(st, hdrs)
 
 	// The headers phase is the only callback guaranteed for every
 	// request — bodies over the gRPC recv limit never reach
@@ -409,6 +420,7 @@ func (p *Processor) onRequestBody(st *streamState, body *extprocv3.HttpBody) *ex
 				st.modelFamily = meta.ModelFamily
 			}
 		}
+		st.observeFinalDispatch()
 		// Flip the response body to FULL_DUPLEX_STREAMED when a reducer could
 		// consume this turn. An over-budget request can't be parsed for
 		// stream:true, so assume streaming there: the response must never be
