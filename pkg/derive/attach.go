@@ -2,6 +2,7 @@ package derive
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/papercomputeco/tapes/pkg/llm"
@@ -222,8 +223,8 @@ func judgedAction(req *llm.ChatRequest) string {
 			return normalizeAction(line)
 		}
 	}
-	for i := len(lines) - 1; i >= 0; i-- {
-		if line := strings.TrimSpace(lines[i]); line != "" {
+	for _, line := range slices.Backward(lines) {
+		if line := strings.TrimSpace(line); line != "" {
 			return normalizeAction(line)
 		}
 	}

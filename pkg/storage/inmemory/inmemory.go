@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -135,8 +136,7 @@ func (s *Driver) AncestryChain(ctx context.Context, hash string) (*storage.Chain
 		}
 		parent, err := s.Get(ctx, *node.ParentHash)
 		if err != nil {
-			var notFound storage.NotFoundError
-			if errors.As(err, &notFound) {
+			if _, ok := errors.AsType[storage.NotFoundError](err); ok {
 				chain.Incomplete = true
 				chain.MissingParent = *node.ParentHash
 				return chain, nil
@@ -163,8 +163,7 @@ func (s *Driver) AncestryChains(ctx context.Context, hashes []string) (map[strin
 		seen[h] = struct{}{}
 		chain, err := s.AncestryChain(ctx, h)
 		if err != nil {
-			var notFound storage.NotFoundError
-			if errors.As(err, &notFound) {
+			if _, ok := errors.AsType[storage.NotFoundError](err); ok {
 				continue
 			}
 			return nil, err
@@ -187,9 +186,9 @@ func (s *Driver) LoadDag(ctx context.Context, hash string) (*merkle.Dag, error) 
 		return nil, storage.NotFoundError{Hash: hash}
 	}
 
-	for i := len(ancestry) - 1; i >= 0; i-- {
-		if _, err := dag.AddNode(ancestry[i]); err != nil {
-			return nil, fmt.Errorf("adding ancestor node %s: %w", ancestry[i].Hash, err)
+	for _, a := range slices.Backward(ancestry) {
+		if _, err := dag.AddNode(a); err != nil {
+			return nil, fmt.Errorf("adding ancestor node %s: %w", a.Hash, err)
 		}
 	}
 

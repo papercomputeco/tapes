@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/gofiber/fiber/v3"
-	"github.com/gofiber/fiber/v3/middleware/recover"
+	recoverer "github.com/gofiber/fiber/v3/middleware/recover"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"
@@ -31,7 +31,7 @@ func newTestApp() (*Metrics, *fiber.App) {
 	m := NewMetrics()
 	app := fiber.New()
 	app.Use(m.Middleware())
-	app.Use(recover.New())
+	app.Use(recoverer.New())
 	return m, app
 }
 

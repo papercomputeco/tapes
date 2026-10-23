@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
-	"github.com/gofiber/fiber/v3/middleware/recover"
+	recoverer "github.com/gofiber/fiber/v3/middleware/recover"
 	"github.com/google/uuid"
 
 	"github.com/papercomputeco/tapes/api/cassetterunner"
@@ -439,7 +439,7 @@ func (s *Server) NewInternalServer(config InternalConfig) (*InternalServer, erro
 	app := fiber.New()
 	// Recovery is outermost so a panic assembling evidence cannot take down a
 	// process that is otherwise serving its tenant perfectly well.
-	app.Use(recover.New())
+	app.Use(recoverer.New())
 	// Authentication is registered with Use rather than on the route, so
 	// every path on this listener — including the ones that do not exist —
 	// answers 401 before it answers 404. What is mounted here is not

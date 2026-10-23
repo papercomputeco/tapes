@@ -264,7 +264,7 @@ func (r *openAIChatReducer) stream(ctx context.Context, body io.Reader) (*llm.Ch
 func chatResponse(env chatEnvelope, problem string) *llm.ChatResponse {
 	sort.Slice(env.Choices, func(i, j int) bool { return env.Choices[i].Index < env.Choices[j].Index })
 	resp := &llm.ChatResponse{
-		Model: env.Model, Message: llm.Message{Role: "assistant"},
+		Model: env.Model, Message: llm.Message{Role: roleAssistant},
 		Extra: map[string]any{"id": env.ID, "object": env.Object},
 	}
 	if env.Created > 0 {
@@ -296,10 +296,10 @@ func chatResponse(env chatEnvelope, problem string) *llm.ChatResponse {
 			resp.Message.Content = append(resp.Message.Content, llm.ContentBlock{Type: "thinking", Thinking: reasoning})
 		}
 		if first.Message.Content != "" {
-			resp.Message.Content = append(resp.Message.Content, llm.ContentBlock{Type: "text", Text: first.Message.Content})
+			resp.Message.Content = append(resp.Message.Content, llm.ContentBlock{Type: blockTypeText, Text: first.Message.Content})
 		}
 		if first.Message.Refusal != "" {
-			resp.Message.Content = append(resp.Message.Content, llm.ContentBlock{Type: "refusal", Text: first.Message.Refusal})
+			resp.Message.Content = append(resp.Message.Content, llm.ContentBlock{Type: blockTypeRefusal, Text: first.Message.Refusal})
 		}
 		for _, tool := range first.Message.ToolCalls {
 			if tool.Type != "" && tool.Type != "function" {

@@ -90,8 +90,7 @@ func publishedViewProbe(driver storage.Driver) func(ctx context.Context, view, v
 			// storage types leaking into cassetterunner. Grammar failures
 			// above stay definitive: a malformed declaration cannot heal on
 			// retry, and retention would hide it forever.
-			var transient *storage.TransientProbeError
-			if errors.As(err, &transient) {
+			if _, ok := errors.AsType[*storage.TransientProbeError](err); ok {
 				return &cassetterunner.TransientProbeError{Err: err}
 			}
 

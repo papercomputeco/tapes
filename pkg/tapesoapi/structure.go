@@ -62,7 +62,7 @@ var componentName = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 // scheme missing its own required field is unusable by a client, which is worse
 // than absent: the client generates an auth path that cannot work.
 var securitySchemeTypes = map[string][]string{
-	"apiKey":        {"name", "in"},
+	"apiKey":        {fieldName, "in"},
 	"http":          {"scheme"},
 	"oauth2":        {"flows"},
 	"openIdConnect": {"openIdConnectUrl"},
@@ -431,7 +431,7 @@ func (s *structure) securityScheme(name string, scheme *SecurityScheme) {
 		s.reportf("securitySchemes/%s uses mutualTLS, which is 3.1-only", name)
 	}
 	present := map[string]bool{
-		"name":             scheme.Name != "",
+		fieldName:          scheme.Name != "",
 		"in":               scheme.In != "",
 		"scheme":           scheme.Scheme != "",
 		"flows":            len(scheme.Flows) > 0,

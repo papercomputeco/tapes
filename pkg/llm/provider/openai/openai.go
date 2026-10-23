@@ -8,6 +8,14 @@ import (
 	"github.com/papercomputeco/tapes/pkg/llm"
 )
 
+const (
+	blockTypeText       = "text"
+	blockTypeToolUse    = "tool_use"
+	blockTypeToolResult = "tool_result"
+	roleAssistant       = "assistant"
+	roleTool            = "tool"
+)
+
 // Provider implements the Provider interface for OpenAI's Chat Completions API.
 type Provider struct{}
 
@@ -40,7 +48,7 @@ func (o *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 
 		switch content := msg.Content.(type) {
 		case string:
-			converted.Content = []llm.ContentBlock{{Type: "text", Text: content}}
+			converted.Content = []llm.ContentBlock{{Type: blockTypeText, Text: content}}
 		case []any:
 			// Multimodal content (e.g., vision)
 			for _, item := range content {
@@ -78,7 +86,7 @@ func (o *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 			var input map[string]any
 			if err := json.Unmarshal([]byte(tc.Function.Arguments), &input); err == nil {
 				converted.Content = append(converted.Content, llm.ContentBlock{
-					Type:      "tool_use",
+					Type:      blockTypeToolUse,
 					ToolUseID: tc.ID,
 					ToolName:  tc.Function.Name,
 					ToolInput: input,
@@ -87,13 +95,13 @@ func (o *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 		}
 
 		// Handle tool results
-		if msg.Role == "tool" && msg.ToolCallID != "" {
+		if msg.Role == roleTool && msg.ToolCallID != "" {
 			text := ""
 			if s, ok := msg.Content.(string); ok {
 				text = s
 			}
 			converted.Content = []llm.ContentBlock{{
-				Type:         "tool_result",
+				Type:         blockTypeToolResult,
 				ToolResultID: msg.ToolCallID,
 				ToolOutput:   text,
 			}}
@@ -167,7 +175,7 @@ func (o *Provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 	var content []llm.ContentBlock
 	switch c := msg.Content.(type) {
 	case string:
-		content = []llm.ContentBlock{{Type: "text", Text: c}}
+		content = []llm.ContentBlock{{Type: blockTypeText, Text: c}}
 	case []any:
 		for _, item := range c {
 			if part, ok := item.(map[string]any); ok {
@@ -194,7 +202,7 @@ func (o *Provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 		var input map[string]any
 		if err := json.Unmarshal([]byte(tc.Function.Arguments), &input); err == nil {
 			content = append(content, llm.ContentBlock{
-				Type:      "tool_use",
+				Type:      blockTypeToolUse,
 				ToolUseID: tc.ID,
 				ToolName:  tc.Function.Name,
 				ToolInput: input,

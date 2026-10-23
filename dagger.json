@@ -1,6 +1,6 @@
 {
   "name": "tapes",
-  "engineVersion": "v0.21.8",
+  "engineVersion": "v0.21.10",
   "sdk": {
     "source": "go"
   },
@@ -8,7 +8,7 @@
     {
       "name": "golangcilint",
       "source": "github.com/papercomputeco/daggerverse/golangcilint@main",
-      "pin": "8646f8127d0bb464437e12f0a5d83d72edc211d8"
+      "pin": "61f6f5e3faf2fb8bd7e130caf61c901a869cf713"
     }
   ],
   "source": ".dagger"

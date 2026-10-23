@@ -30,9 +30,10 @@ func RunDeriveQueueSpecs(label string, makeDriver DriverFactory) bool {
 		)
 
 		const (
-			harnessID = "claude-code"
-			sessionA  = "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-			sessionB  = "22222222-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+			harnessID         = "claude-code"
+			providerAnthropic = "anthropic"
+			sessionA          = "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+			sessionB          = "22222222-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 		)
 
 		mark := func(session string) {
@@ -182,7 +183,7 @@ func RunDeriveQueueSpecs(label string, makeDriver DriverFactory) bool {
 			rawRecord := func(requestID, session string) storage.RawTurnRecord {
 				return storage.RawTurnRecord{
 					Source:           storage.RawTurnSourceWire,
-					Provider:         "anthropic",
+					Provider:         providerAnthropic,
 					HarnessID:        harnessID,
 					HarnessSessionID: session,
 					RequestID:        requestID,
@@ -225,7 +226,7 @@ func RunDeriveQueueSpecs(label string, makeDriver DriverFactory) bool {
 			ginkgo.It("re-enqueues raw-layer sessions whose marks were lost", func() {
 				_, err := raw.PutRawTurn(ctx, storage.RawTurnRecord{
 					Source:           storage.RawTurnSourceWire,
-					Provider:         "anthropic",
+					Provider:         providerAnthropic,
 					HarnessID:        harnessID,
 					HarnessSessionID: sessionA,
 					RequestID:        "req-sweep-a",
@@ -248,7 +249,7 @@ func RunDeriveQueueSpecs(label string, makeDriver DriverFactory) bool {
 			ginkgo.It("bounds the sweep to sessions active since the cutoff", func() {
 				_, err := raw.PutRawTurn(ctx, storage.RawTurnRecord{
 					Source:           storage.RawTurnSourceWire,
-					Provider:         "anthropic",
+					Provider:         providerAnthropic,
 					HarnessID:        harnessID,
 					HarnessSessionID: sessionA,
 					RequestID:        "req-sweep-bound",
@@ -281,7 +282,7 @@ func RunDeriveQueueSpecs(label string, makeDriver DriverFactory) bool {
 				// sees the session) and marks it dirty.
 				_, err := raw.PutRawTurn(ctx, storage.RawTurnRecord{
 					Source:           storage.RawTurnSourceWire,
-					Provider:         "anthropic",
+					Provider:         providerAnthropic,
 					HarnessID:        harnessID,
 					HarnessSessionID: sessionA,
 					RequestID:        "req-sweep-window",

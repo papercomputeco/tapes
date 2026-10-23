@@ -11,7 +11,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/compress"
-	"github.com/gofiber/fiber/v3/middleware/recover"
+	recoverer "github.com/gofiber/fiber/v3/middleware/recover"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/papercomputeco/tapes/api/cassetterunner"
@@ -162,7 +162,7 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 	// an error returned to the metrics middleware — which then derives
 	// the right status via the err (see Middleware in metrics.go).
 	app.Use(s.metrics.Middleware())
-	app.Use(recover.New())
+	app.Use(recoverer.New())
 	// Trace payloads are large JSON (a full session detail measured
 	// 2.65MB raw, ~80KB gzipped) and every read crosses a network leg
 	// that honors Accept-Encoding — the console's server functions

@@ -40,7 +40,7 @@ var apiFlags = config.FlagSet{
 	config.FlagAPIWebUI:              {Name: "web-ui", ViperKey: "api.web_ui", Description: "Enable the minimal browser UI at /"},
 	config.FlagAPIReadDeadline:       {Name: "read-deadline", ViperKey: "api.read_deadline", Description: "Deadline for each read request; storage is cancelled and a stream is cut when it elapses (0 disables)"},
 	config.FlagAPIPayloadConcurrency: {Name: "payload-concurrency", ViperKey: "api.payload_concurrency", Description: "Maximum concurrent payload-bearing reads per replica; further reads get 503 with Retry-After (0 disables)"},
-	config.FlagPostgres:              {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
+	config.FlagPostgres:              {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user@host:5432/db)"},
 	config.FlagCassettes:             {Name: "cassettes", ViperKey: "cassettes", Description: "Full cassette OpenAPI URLs (comma-separated or repeated)"},
 }
 

@@ -152,8 +152,7 @@ func validateSchemaBytes(contract *tapesoapi.CompiledDoc, raw []byte) ([]string,
 
 	// One line per disagreement, so a file with four drifted fields reports
 	// four places rather than one paragraph.
-	var instanceErr *tapesoapi.InstanceError
-	if errors.As(verr, &instanceErr) {
+	if instanceErr, ok := errors.AsType[*tapesoapi.InstanceError](verr); ok {
 		violations := make([]string, 0, len(instanceErr.Violations))
 		for _, violation := range instanceErr.Violations {
 			violations = append(violations, violation.String())

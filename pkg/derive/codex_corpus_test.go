@@ -3,6 +3,7 @@ package derive_test
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"sort"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -287,8 +288,8 @@ var _ = Describe("codex corpus (delta — depth-2 nesting)", func() {
 		// The production path (and deriveCodexRows) re-sorts by capture
 		// time, so the projection must be byte-identical.
 		reversed := make([]storage.RawTurnRecord, 0, len(wire))
-		for i := len(wire) - 1; i >= 0; i-- {
-			reversed = append(reversed, wire[i])
+		for _, w := range slices.Backward(wire) {
+			reversed = append(reversed, w)
 		}
 		setA, _, spansA := deriveCodexRows(wire, transcripts)
 		setB, _, spansB := deriveCodexRows(reversed, transcripts)

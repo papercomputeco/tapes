@@ -23,7 +23,7 @@ func module(files map[string]string) string {
 	GinkgoHelper()
 
 	root := GinkgoT().TempDir()
-	files["go.mod"] = "module example.com/demo\n\ngo 1.26\n"
+	files["go.mod"] = "module example.com/demo\n\ngo 1.27\n"
 	for name, content := range files {
 		path := filepath.Join(root, name)
 		Expect(os.MkdirAll(filepath.Dir(path), 0o755)).To(Succeed())
@@ -130,7 +130,7 @@ type Kind struct{}
 
 	It("does not index a nested module under this module's path", func() {
 		root := module(map[string]string{
-			"example/go.mod":  "module example.com/nested\n\ngo 1.26\n",
+			"example/go.mod":  "module example.com/nested\n\ngo 1.27\n",
 			"example/main.go": "package main\n\n// Nested belongs to another module.\ntype Nested struct{}\n",
 		})
 

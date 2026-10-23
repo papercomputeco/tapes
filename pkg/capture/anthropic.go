@@ -17,10 +17,18 @@ import (
 // key the Anthropic reducer in their dispatch maps.
 const ProviderAnthropic = "anthropic"
 
+const (
+	roleAssistant = "assistant"
+	messageType   = "message"
+	errorType     = "error"
+	fieldType     = "type"
+)
+
 // Anthropic content-block type strings, used for both the one-shot JSON path
 // and the streaming state machine.
 const (
 	blockTypeText                = "text"
+	blockTypeRefusal             = "refusal"
 	blockTypeToolUse             = "tool_use"
 	blockTypeThinking            = "thinking"
 	blockTypeServerToolUse       = "server_tool_use"
@@ -120,12 +128,12 @@ func (r *anthropicReducer) reduceOneShot(body io.Reader) (*llm.ChatResponse, err
 
 	role := resp.Role
 	if role == "" {
-		role = "assistant"
+		role = roleAssistant
 	}
 
 	extra := map[string]any{
-		"id":   resp.ID,
-		"type": defaultString(resp.Type, "message"),
+		"id":      resp.ID,
+		fieldType: defaultString(resp.Type, messageType),
 	}
 
 	return &llm.ChatResponse{
@@ -212,7 +220,7 @@ func dispatchStreamEvent(state *turnState, ev *sse.Event) error {
 		return state.onMessageDelta(data)
 	case "message_stop":
 		return state.onMessageStop(data)
-	case "error":
+	case errorType:
 		return state.onError(data)
 	case "ping", "":
 		// ping keep-alive or unlabelled frames are safe to skip.

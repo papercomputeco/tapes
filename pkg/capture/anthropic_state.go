@@ -211,7 +211,7 @@ func (s *turnState) recordToolInputError(toolID, raw, errMsg string) {
 	s.toolInputErrors = append(s.toolInputErrors, map[string]any{
 		"tool_use_id": toolID,
 		"raw":         raw,
-		"error":       errMsg,
+		errorType:     errMsg,
 	})
 }
 
@@ -239,13 +239,13 @@ func (s *turnState) onMessageStop(_ []byte) error {
 
 func (s *turnState) onError(data []byte) error {
 	var ev anthropicErrorEvent
-	if err := unmarshalStrict(data, &ev, "error"); err != nil {
+	if err := unmarshalStrict(data, &ev, errorType); err != nil {
 		return err
 	}
 	s.errorType = ev.Error.Type
 	s.errorMessage = ev.Error.Message
 	if s.stopReason == "" {
-		s.stopReason = "error"
+		s.stopReason = errorType
 	}
 	return nil
 }
@@ -286,8 +286,8 @@ func (s *turnState) finalize() *llm.ChatResponse {
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 
 	extra := map[string]any{
-		"id":   s.id,
-		"type": "message",
+		"id":      s.id,
+		fieldType: messageType,
 	}
 	if s.stopSequence != nil {
 		extra["stop_sequence"] = *s.stopSequence
@@ -296,8 +296,8 @@ func (s *turnState) finalize() *llm.ChatResponse {
 		extra["tool_input_parse_errors"] = s.toolInputErrors
 	}
 	if s.errorType != "" {
-		extra["error"] = map[string]any{
-			"type":    s.errorType,
+		extra[errorType] = map[string]any{
+			fieldType: s.errorType,
 			"message": s.errorMessage,
 		}
 	}
@@ -311,7 +311,7 @@ func (s *turnState) finalize() *llm.ChatResponse {
 	return &llm.ChatResponse{
 		Model: s.model,
 		Message: llm.Message{
-			Role:    defaultString(s.role, "assistant"),
+			Role:    defaultString(s.role, roleAssistant),
 			Content: content,
 		},
 		Done:       s.seenMessageStop,

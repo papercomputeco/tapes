@@ -593,9 +593,9 @@ func (p *Processor) dispatchTurn(ctx context.Context, st *streamState) {
 			p.metrics.ObserveReducerEmpty(st.provider, st.contentType, st.statusCode)
 		}
 		attrs := []any{
-			"provider", st.provider,
+			fieldProvider, st.provider,
 			"request_id", st.requestID,
-			"reason", reason,
+			fieldReason, reason,
 			"content_type", st.contentType,
 			"content_encoding", st.contentEncoding,
 			"upstream_status", st.statusCode,

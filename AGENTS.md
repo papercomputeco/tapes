@@ -79,7 +79,7 @@ CLI surface notes for agents:
 - The deck TUI has been **removed with no CLI replacement** — the console owns
   the ROI/session-browsing surface.
 
-**Language:** Go 1.26+
+**Language:** Go 1.27+
 **Go Module:** `github.com/papercomputeco/tapes`
 
 ### Project Structure

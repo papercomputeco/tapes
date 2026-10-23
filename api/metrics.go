@@ -185,8 +185,7 @@ func resolveStatus(c fiber.Ctx, err error) int {
 	if err == nil {
 		return c.Response().StatusCode()
 	}
-	var e *fiber.Error
-	if errors.As(err, &e) {
+	if e, ok := errors.AsType[*fiber.Error](err); ok {
 		return e.Code
 	}
 	return fiber.StatusInternalServerError

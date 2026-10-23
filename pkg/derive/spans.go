@@ -39,9 +39,16 @@ const (
 	SpanKindEvent = "event"
 )
 
+const (
+	spanStatusError = "error"
+	spanIOInput     = "input"
+	spanIOOutput    = "output"
+)
+
 // Content-block discriminators the emitter switches on (pkg/llm
 // ContentBlock.Type values and message roles).
 const (
+	messageType        = "message"
 	roleUser           = "user"
 	roleTool           = "tool"
 	roleSystem         = "system"
@@ -415,8 +422,8 @@ func (em *spanEmitter) threadCall(src *SpanSource) {
 		if task != nil {
 			agent.ParentSpanID = task.SpanID
 			em.link(turn, &SpanLink{
-				FromTraceID: turn.TraceID, FromSpanID: agent.SpanID, FromIO: "output",
-				ToTraceID: turn.TraceID, ToSpanID: task.SpanID, ToIO: "output",
+				FromTraceID: turn.TraceID, FromSpanID: agent.SpanID, FromIO: spanIOOutput,
+				ToTraceID: turn.TraceID, ToSpanID: task.SpanID, ToIO: spanIOOutput,
 				Kind: LinkRejoin,
 			})
 		} else {
@@ -468,7 +475,7 @@ func (em *spanEmitter) shadowCall(src *SpanSource) {
 	em.addSpan(turn, span)
 	if tool != nil {
 		em.link(turn, &SpanLink{
-			FromTraceID: turn.TraceID, FromSpanID: span.SpanID, FromIO: "output",
+			FromTraceID: turn.TraceID, FromSpanID: span.SpanID, FromIO: spanIOOutput,
 			ToTraceID: em.toolTurn[anchor].TraceID, ToSpanID: tool.SpanID, ToIO: "verdict",
 			Kind: LinkVerdict,
 		})
@@ -530,8 +537,8 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 	em.addSpan(turn, span)
 	for _, ts := range feeds {
 		em.link(turn, &SpanLink{
-			FromTraceID: em.toolTurn[toolKey(src.Session, toolID(ts))].TraceID, FromSpanID: ts.SpanID, FromIO: "output",
-			ToTraceID: turn.TraceID, ToSpanID: span.SpanID, ToIO: "input",
+			FromTraceID: em.toolTurn[toolKey(src.Session, toolID(ts))].TraceID, FromSpanID: ts.SpanID, FromIO: spanIOOutput,
+			ToTraceID: turn.TraceID, ToSpanID: span.SpanID, ToIO: spanIOInput,
 			Kind: LinkFeeds,
 		})
 	}
@@ -546,8 +553,8 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 			// branch siblings re-emit the same tool_use: the first
 			// emitter owns the span, later ones only link to it.
 			em.link(turn, &SpanLink{
-				FromTraceID: turn.TraceID, FromSpanID: span.SpanID, FromIO: "output",
-				ToTraceID: em.toolTurn[tk].TraceID, ToSpanID: existing.SpanID, ToIO: "input",
+				FromTraceID: turn.TraceID, FromSpanID: span.SpanID, FromIO: spanIOOutput,
+				ToTraceID: em.toolTurn[tk].TraceID, ToSpanID: existing.SpanID, ToIO: spanIOInput,
 				Kind: LinkEmits,
 			})
 			continue
@@ -571,8 +578,8 @@ func (em *spanEmitter) emitConversation(src *SpanSource, turn *SpanTurn, parent 
 		// to tk today, but preserving the alias makes that invariant explicit.
 		em.toolTurn[toolKey(src.Session, ts.SpanID)] = turn
 		em.link(turn, &SpanLink{
-			FromTraceID: turn.TraceID, FromSpanID: span.SpanID, FromIO: "output",
-			ToTraceID: turn.TraceID, ToSpanID: ts.SpanID, ToIO: "input",
+			FromTraceID: turn.TraceID, FromSpanID: span.SpanID, FromIO: spanIOOutput,
+			ToTraceID: turn.TraceID, ToSpanID: ts.SpanID, ToIO: spanIOInput,
 			Kind: LinkEmits,
 		})
 	}
@@ -680,7 +687,7 @@ func (em *spanEmitter) fillToolResult(session SessionKey, b *llm.ContentBlock, a
 	}
 	ts.Output = []llm.ContentBlock{*b}
 	if b.IsError {
-		ts.Status = "error"
+		ts.Status = spanStatusError
 	}
 	if d := at.Sub(ts.StartedAt); d > 0 {
 		ts.DurationNS = d.Nanoseconds()
@@ -718,8 +725,8 @@ func (em *spanEmitter) openTrace(src *SpanSource, prompt *DerivedNode) *SpanTurn
 		// seam closes on the opening llm span, which is emitted right
 		// after openTrace returns; link to its deterministic id now.
 		em.link(turn, &SpanLink{
-			FromTraceID: s.turn.TraceID, FromSpanID: s.span.SpanID, FromIO: "output",
-			ToTraceID: turn.TraceID, ToSpanID: "llm_" + callIdentity(src), ToIO: "input",
+			FromTraceID: s.turn.TraceID, FromSpanID: s.span.SpanID, FromIO: spanIOOutput,
+			ToTraceID: turn.TraceID, ToSpanID: "llm_" + callIdentity(src), ToIO: spanIOInput,
 			Kind: LinkCompactionSeam,
 		})
 		delete(em.seam, src.Session)

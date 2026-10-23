@@ -158,6 +158,8 @@ func (c SortColumn) Col() string { return c.col }
 // numeric, timestamptz, text) — likewise allowlist-sourced and SQL-safe.
 func (c SortColumn) Cast() string { return c.cast }
 
+const sortCastBigint = "bigint"
+
 // sessionSortColumn maps each sort field to its physical column and the
 // Postgres type the cursor value is cast back to. Membership here is the
 // allowlist — any field not in this map is rejected before it reaches SQL,
@@ -178,10 +180,10 @@ func (c SortColumn) Cast() string { return c.cast }
 var sessionSortColumn = map[SessionSortField]SortColumn{
 	SortLastActive:    {col: "last_seen_at", cast: "timestamptz"},
 	SortStartedAt:     {col: "started_at", cast: "timestamptz"},
-	SortTurnCount:     {col: "turn_count", cast: "bigint"},
+	SortTurnCount:     {col: "turn_count", cast: sortCastBigint},
 	SortTotalCost:     {col: "total_cost_usd", cast: "numeric"},
-	SortTotalTokens:   {col: "total_tokens", cast: "bigint"},
-	SortDurationNs:    {col: "duration_ns", cast: "bigint"},
+	SortTotalTokens:   {col: "total_tokens", cast: sortCastBigint},
+	SortDurationNs:    {col: "duration_ns", cast: sortCastBigint},
 	SortDerivedStatus: {col: "derived_status", cast: "text"},
 	SortAuthSubject:   {col: "auth_subject", cast: "text"},
 }

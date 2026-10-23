@@ -29,7 +29,7 @@ WHERE org_id = $1
   AND ($2 = '' OR strpos(lower(auth_subject), lower($2)) > 0)
 GROUP BY auth_subject
 ORDER BY max(last_seen_at) DESC, auth_subject
-LIMIT $3`, oid, strings.TrimSpace(q), int32(limit)) //nolint:gosec // limit bounded by the API handler
+LIMIT $3`, oid, strings.TrimSpace(q), int32(limit))
 	if err != nil {
 		return nil, fmt.Errorf("list subjects: %w", err)
 	}

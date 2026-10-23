@@ -108,11 +108,8 @@ func ParseColorMode(value string) (ColorMode, error) {
 
 // New creates a logger from these settings plus any sink-specific options.
 func (s Settings) New(opts ...Option) *slog.Logger {
-	base := []Option{
-		WithLevel(s.Level),
-		WithFormat(s.Format),
-		WithColor(s.Color),
-	}
+	base := make([]Option, 0, 3+len(opts))
+	base = append(base, WithLevel(s.Level), WithFormat(s.Format), WithColor(s.Color))
 	return New(append(base, opts...)...)
 }
 

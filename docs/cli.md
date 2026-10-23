@@ -30,7 +30,9 @@ The common local command is:
 tapes serve
 ```
 
-It accepts provider/upstream, PostgreSQL, listening, and project flags. Useful examples:
+It accepts provider/upstream, PostgreSQL, listening, and project flags. PostgreSQL URL examples omit passwords; use a `.pgpass` file when password authentication is required rather than putting credentials in command-line arguments.
+
+Useful examples:
 
 ```bash
 tapes serve --provider anthropic --upstream https://api.anthropic.com
@@ -99,7 +101,7 @@ or locally against a forwarded database, with `--json` for machine consumption:
 
 ```bash
 tapes raw equivalence \
-  --postgres "postgres://user:pass@127.0.0.1:15432/tapes" \
+  --postgres "postgres://user@127.0.0.1:15432/tapes" \
   --since 24h --json
 ```
 
@@ -128,7 +130,7 @@ The deriver stores a bounded preview of every span's input and output beside the
 
 ```bash
 tapes backfill previews \
-  --postgres "postgres://user:pass@127.0.0.1:15432/tapes" \
+  --postgres "postgres://user@127.0.0.1:15432/tapes" \
   --batch 500 --pause 200ms
 ```
 

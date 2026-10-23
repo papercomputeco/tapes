@@ -19,7 +19,7 @@ type rederiveCommander struct {
 }
 
 var rederiveFlags = config.FlagSet{
-	config.FlagPostgres: {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
+	config.FlagPostgres: {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user@host:5432/db)"},
 }
 
 const rederiveLongDesc string = `Rebuild the derived projection from the raw-turn layer.
@@ -39,7 +39,7 @@ verdict, capture source) — is rebuilt. Idempotent and re-runnable: the
 lever that makes classifier/projection iteration cheap.
 
 Reports are keyed per org. Example:
-  tapes dev rederive --postgres "postgres://user:pass@127.0.0.1:15432/tapes"`
+  tapes dev rederive --postgres "postgres://user@127.0.0.1:15432/tapes"`
 
 func newRederiveCmd() *cobra.Command {
 	cmder := &rederiveCommander{flags: rederiveFlags}

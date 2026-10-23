@@ -34,7 +34,7 @@ type dumpCorpusCommander struct {
 }
 
 var dumpCorpusFlags = config.FlagSet{
-	config.FlagPostgres: {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
+	config.FlagPostgres: {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user@host:5432/db)"},
 }
 
 const dumpCorpusLongDesc string = `Export raw_turns from a database into corpus files.

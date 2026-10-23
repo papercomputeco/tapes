@@ -167,16 +167,14 @@ func newPagedSpanModel(traceCount, spansPerTrace int) *pagedSpanModel {
 			count = 0
 		}
 		d.turns = append(d.turns, storage.TraceSummaryRecord{
-			SpanTurnRecord: storage.SpanTurnRecord{
-				TraceID:    traceID,
-				SessionID:  pagedSessionID,
-				UserPrompt: fmt.Sprintf("prompt %d <&>", i),
-				Status:     "completed",
-				Source:     "wire",
-				StartedAt:  startedAt,
-				DurationNS: int64(time.Second),
-			},
-			SpanCount: count,
+			TraceID:    traceID,
+			SessionID:  pagedSessionID,
+			UserPrompt: fmt.Sprintf("prompt %d <&>", i),
+			Status:     "completed",
+			Source:     "wire",
+			StartedAt:  startedAt,
+			DurationNS: int64(time.Second),
+			SpanCount:  count,
 		})
 		for j := range count {
 			d.spans[traceID] = append(d.spans[traceID], fixtureSpan(traceID, j, startedAt, fmt.Sprintf("result %d/%d", i, j)))

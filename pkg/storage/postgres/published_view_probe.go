@@ -58,8 +58,7 @@ func (d *Driver) ProbePublishedView(
 // transient so callers retain their prior arming state instead of treating
 // a blip as a refusal.
 func classifyProbeError(err error) error {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
+	if _, ok := errors.AsType[*pgconn.PgError](err); ok {
 		return err
 	}
 
