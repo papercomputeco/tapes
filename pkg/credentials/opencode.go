@@ -23,7 +23,7 @@ func ReadOpenCodeAuthFile() ([]byte, string) {
 	}
 
 	authPath := filepath.Join(dataDir, "opencode", "auth.json")
-	data, err := os.ReadFile(authPath)
+	data, err := os.ReadFile(authPath) // #nosec G703 -- The local user's environment selects their credential directory; no remote input.
 	if err != nil {
 		return nil, ""
 	}

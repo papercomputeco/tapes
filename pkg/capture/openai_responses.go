@@ -169,12 +169,12 @@ func (r *openaiResponsesReducer) reduceStream(ctx context.Context, body io.Reade
 func partialResponse(created *responsesObject, items []json.RawMessage, text, reason string) *llm.ChatResponse {
 	content := responsesOutputContent(items)
 	if len(content) == 0 && text != "" {
-		content = append(content, llm.ContentBlock{Type: "text", Text: text})
+		content = append(content, llm.ContentBlock{Type: blockTypeText, Text: text})
 	}
 
 	resp := &llm.ChatResponse{
 		Message: llm.Message{
-			Role:    "assistant",
+			Role:    roleAssistant,
 			Content: content,
 		},
 		Extra: map[string]any{"partial": true, "reducer_error": reason},
@@ -249,13 +249,13 @@ func responsesOutputContent(output []json.RawMessage) []llm.ContentBlock {
 		}
 
 		switch item.Type {
-		case "message":
+		case messageType:
 			for _, part := range item.Content {
 				switch part.Type {
 				case "output_text":
-					content = append(content, llm.ContentBlock{Type: "text", Text: part.Text})
-				case "refusal":
-					content = append(content, llm.ContentBlock{Type: "refusal", Text: part.Refusal})
+					content = append(content, llm.ContentBlock{Type: blockTypeText, Text: part.Text})
+				case blockTypeRefusal:
+					content = append(content, llm.ContentBlock{Type: blockTypeRefusal, Text: part.Refusal})
 				default:
 					content = append(content, llm.ContentBlock{Type: part.Type, Text: part.Text})
 				}
@@ -305,7 +305,7 @@ func responsesObjectToChat(resp *responsesObject) *llm.ChatResponse {
 	out := &llm.ChatResponse{
 		Model: resp.Model,
 		Message: llm.Message{
-			Role:    "assistant",
+			Role:    roleAssistant,
 			Content: content,
 		},
 		Done:       true,

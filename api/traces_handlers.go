@@ -224,19 +224,19 @@ const ProjectionSchema = "2026-06-15"
 func (s *Server) handleGetSessionTraces(c fiber.Ctx) error {
 	sessions, ok := s.driver.(sessionsReader)
 	if !ok {
-		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: errSessionsUnsupported})
 	}
 	reader, ok := s.driver.(spanModelReader)
 	if !ok {
-		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "span traces not supported by this backend"})
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: errSpanTracesUnsupported})
 	}
 
 	id := c.Params("id")
 	if id == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id parameter required"})
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: errIDRequired})
 	}
 	if _, err := uuid.Parse(id); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id must be a valid UUID"})
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: errInvalidID})
 	}
 
 	limit, err := parseTracesLimit(c.Query("limit"))
@@ -261,10 +261,10 @@ func (s *Server) handleGetSessionTraces(c fiber.Ctx) error {
 	sess, err := sessions.GetSessionRecord(c.Context(), orgID, id)
 	if err != nil {
 		s.logger.Error("get session for traces", "id", id, "error", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session"})
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: errLoadSession})
 	}
 	if sess == nil {
-		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
+		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: errSessionNotFound})
 	}
 
 	// Everything that can still turn into an error response is loaded

@@ -42,7 +42,7 @@ type deriveWorkerCommander struct {
 
 // deriveWorkerFlags defines the flags for the derive-worker subcommand.
 var deriveWorkerFlags = config.FlagSet{
-	config.FlagPostgres:                  {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
+	config.FlagPostgres:                  {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user@host:5432/db)"},
 	config.FlagProject:                   {Name: "project", ViperKey: "proxy.project", Description: "Project name to tag sessions (default: auto-detect from git)"},
 	config.FlagDeriveWorkerPoll:          {Name: "poll-interval", ViperKey: "derive_worker.poll_interval", Description: "How often to poll the dirty-session queue (Go duration, default 5s)"},
 	config.FlagDeriveWorkerDebounce:      {Name: "debounce", ViperKey: "derive_worker.debounce", Description: "How long a session's dirty mark must be quiet before deriving (Go duration, default 20s)"},

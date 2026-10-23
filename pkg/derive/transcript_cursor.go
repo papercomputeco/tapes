@@ -229,7 +229,7 @@ func projectCursorTranscriptFile(project string, file *TranscriptFile, stats *Tr
 				continue
 			}
 			node := merkle.NewNode(merkle.Bucket{
-				Type: "message", Role: roleTool, Content: message.message.Content,
+				Type: messageType, Role: roleTool, Content: message.message.Content,
 				Provider: storage.RawTurnSourceTranscript, AgentName: harnessCursor,
 			}, parent, merkle.NodeOptions{Project: project})
 			node.Kind = KindMain

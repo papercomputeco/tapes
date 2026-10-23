@@ -91,7 +91,7 @@ func formatToolUse(block llm.ContentBlock) string {
 			first = false
 			sb.WriteString(key)
 			sb.WriteString(": ")
-			sb.WriteString(fmt.Sprintf("%v", value))
+			fmt.Fprintf(&sb, "%v", value)
 		}
 		sb.WriteString(")")
 	}

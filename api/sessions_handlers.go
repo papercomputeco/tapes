@@ -67,6 +67,16 @@ type publishedFilterMatcher interface {
 // list claims params here.
 const sessionsSurface = "sessions"
 
+const (
+	errSessionsUnsupported   = "sessions not supported by this backend"
+	errSpanTracesUnsupported = "span traces not supported by this backend"
+	errListSessions          = "failed to list sessions"
+	errIDRequired            = "id parameter required"
+	errInvalidID             = "id must be a valid UUID"
+	errLoadSession           = "failed to load session"
+	errSessionNotFound       = "session not found"
+)
+
 // claimableSurfacePaths anchors each claimable surface to the core route
 // whose documented query params are reserved against publishes claims. Only
 // the anchoring is stated here — the reserved param set itself derives from
@@ -545,7 +555,7 @@ func decodeSessionsCursor(token string) (sessionsCursor, error) {
 func (s *Server) handleListSessions(c fiber.Ctx) error {
 	reader, ok := s.driver.(sessionsReader)
 	if !ok {
-		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: errSessionsUnsupported})
 	}
 
 	// Claimed filter params are consulted before anything else parses, from
@@ -557,7 +567,7 @@ func (s *Server) handleListSessions(c fiber.Ctx) error {
 	claimedFilters, filterSet, err := s.claimedPublishedFilters(c)
 	if err != nil {
 		s.logger.Error("prepare claimed filter", "error", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: errListSessions})
 	}
 
 	// The harness natural-key filter is an exact-match lookup that bypasses
@@ -653,7 +663,7 @@ func (s *Server) handleListSessions(c fiber.Ctx) error {
 	sessions, err := reader.ListSessionRecords(c.Context(), orgID, opts)
 	if err != nil {
 		s.logger.Error("list sessions", "error", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: errListSessions})
 	}
 
 	var nextCursor string
@@ -769,12 +779,12 @@ func (s *Server) listSessionsByHarness(c fiber.Ctx, reader sessionsReader, claim
 		recs, err := reader.ListSessionRecordsByHarnessSessionID(c.Context(), orgID, harnessSessionID)
 		if err != nil {
 			s.logger.Error("list sessions by harness session id", "error", err)
-			return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
+			return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: errListSessions})
 		}
 		recs, err = keepMatching(recs)
 		if err != nil {
 			s.logger.Error("apply claimed filter to harness lookup", "error", err)
-			return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
+			return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: errListSessions})
 		}
 		for _, rec := range recs {
 			items = append(items, sessionItemFromStorage(rec, time.Now()))
@@ -785,13 +795,13 @@ func (s *Server) listSessionsByHarness(c fiber.Ctx, reader sessionsReader, claim
 	sess, err := reader.GetSessionRecordByHarness(c.Context(), orgID, harnessID, harnessSessionID)
 	if err != nil {
 		s.logger.Error("get session by harness", "error", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: errListSessions})
 	}
 	if sess != nil {
 		matched, err := keepMatching([]storage.SessionRecord{*sess})
 		if err != nil {
 			s.logger.Error("apply claimed filter to harness lookup", "error", err)
-			return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to list sessions"})
+			return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: errListSessions})
 		}
 		for _, rec := range matched {
 			items = append(items, sessionItemFromStorage(rec, time.Now()))
@@ -804,27 +814,27 @@ func (s *Server) listSessionsByHarness(c fiber.Ctx, reader sessionsReader, claim
 func (s *Server) handleGetSession(c fiber.Ctx) error {
 	reader, ok := s.driver.(sessionsReader)
 	if !ok {
-		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: errSessionsUnsupported})
 	}
 
 	id := c.Params("id")
 	if id == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id parameter required"})
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: errIDRequired})
 	}
 	if _, err := uuid.Parse(id); err != nil {
 		// A session id is a UUID; a malformed one is a client error, not a
 		// storage failure. (The swagger annotation documents 400 here.)
-		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id must be a valid UUID"})
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: errInvalidID})
 	}
 
 	orgID := singleTenantOrgID
 	sess, err := reader.GetSessionRecord(c.Context(), orgID, id)
 	if err != nil {
 		s.logger.Error("get session", "id", id, "error", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session"})
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: errLoadSession})
 	}
 	if sess == nil {
-		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
+		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: errSessionNotFound})
 	}
 
 	return c.JSON(SessionDetailResponse{
@@ -836,17 +846,17 @@ func (s *Server) handleGetSession(c fiber.Ctx) error {
 func (s *Server) handleDeleteSession(c fiber.Ctx) error {
 	writer, ok := s.driver.(sessionsWriter)
 	if !ok {
-		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: errSessionsUnsupported})
 	}
 
 	id := c.Params("id")
 	if id == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id parameter required"})
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: errIDRequired})
 	}
 	if _, err := uuid.Parse(id); err != nil {
 		// A session id is a UUID; a malformed one is a client error, not a
 		// storage miss — mirrors handleGetSession's 400.
-		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id must be a valid UUID"})
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: errInvalidID})
 	}
 
 	orgID := singleTenantOrgID
@@ -856,7 +866,7 @@ func (s *Server) handleDeleteSession(c fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to delete session"})
 	}
 	if !deleted {
-		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
+		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: errSessionNotFound})
 	}
 	return c.SendStatus(fiber.StatusNoContent)
 }
@@ -887,15 +897,15 @@ var _ = sessionUpdateRequest{}
 func (s *Server) handleUpdateSession(c fiber.Ctx) error {
 	reader, ok := s.driver.(sessionsReader)
 	if !ok {
-		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: errSessionsUnsupported})
 	}
 
 	id := c.Params("id")
 	if id == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id parameter required"})
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: errIDRequired})
 	}
 	if _, err := uuid.Parse(id); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id must be a valid UUID"})
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: errInvalidID})
 	}
 
 	// Decode into raw messages first so an absent "display_name" key (nothing
@@ -937,7 +947,7 @@ func (s *Server) handleUpdateSession(c fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to update session"})
 	}
 	if rowsAffected == 0 {
-		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
+		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: errSessionNotFound})
 	}
 
 	sess, err := reader.GetSessionRecord(c.Context(), orgID, id)
@@ -946,7 +956,7 @@ func (s *Server) handleUpdateSession(c fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to update session"})
 	}
 	if sess == nil {
-		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
+		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: errSessionNotFound})
 	}
 
 	return c.JSON(SessionDetailResponse{

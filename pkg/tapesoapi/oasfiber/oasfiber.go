@@ -389,8 +389,8 @@ func callerLocation() string {
 // trimToModule shortens an absolute build path to a repo-relative one, so the
 // location a compiled contract reports does not leak the machine that built it.
 func trimToModule(file string) string {
-	if idx := strings.LastIndex(file, "/tapes/"); idx >= 0 {
-		return file[idx+len("/tapes/"):]
+	if _, after, ok := strings.CutLast(file, "/tapes/"); ok {
+		return after
 	}
 
 	return path.Base(path.Dir(file)) + "/" + path.Base(file)

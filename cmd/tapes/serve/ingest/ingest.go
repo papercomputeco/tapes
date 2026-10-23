@@ -34,7 +34,7 @@ type ingestCommander struct {
 // --ingest-listen/-i, and omits proxy/api-specific flags.
 var ingestFlags = config.FlagSet{
 	config.FlagIngestListenStandalone: {Name: "listen", Shorthand: "l", ViperKey: "ingest.listen", Description: "Address for ingest server to listen on"},
-	config.FlagPostgres:               {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
+	config.FlagPostgres:               {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user@host:5432/db)"},
 	config.FlagProject:                {Name: "project", ViperKey: "proxy.project", Description: "Project name to tag sessions (default: auto-detect from git)"},
 	config.FlagSessionIdleGap:         {Name: "session-idle-gap", ViperKey: "sessions.idle_gap", Description: "Idle gap after which a conversation captured without a harness session id starts a new session (0 disables)"},
 }

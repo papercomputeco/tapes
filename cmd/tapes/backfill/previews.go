@@ -23,7 +23,7 @@ type previewsCommander struct {
 }
 
 var previewsFlags = config.FlagSet{
-	config.FlagPostgres: {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)"},
+	config.FlagPostgres: {Name: "postgres", ViperKey: "storage.postgres_dsn", Description: "PostgreSQL connection string (e.g., postgres://user@host:5432/db)"},
 }
 
 const previewsLongDesc string = `Fill stored span previews on rows derived before previews existed.
@@ -44,7 +44,7 @@ where it stopped and a completed job is a no-op.
 
 Example:
   tapes backfill previews \
-    --postgres "postgres://user:pass@127.0.0.1:15432/tapes" \
+    --postgres "postgres://user@127.0.0.1:15432/tapes" \
     --batch 500 --pause 200ms`
 
 func newPreviewsCmd() *cobra.Command {

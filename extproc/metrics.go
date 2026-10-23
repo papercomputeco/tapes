@@ -36,6 +36,12 @@ const DefaultLargeTurnThreshold = 4 * 1024 * 1024
 // bucket-for-bucket in PromQL. Do not fork per-histogram copies.
 var bodySizeBuckets = prometheus.ExponentialBucketsRange(256, 64*1024*1024, 14)
 
+const (
+	fieldProvider = "provider"
+	fieldOutcome  = "outcome"
+	fieldReason   = "reason"
+)
+
 // Recurring label values. These are wire-visible: they appear verbatim in the
 // Prometheus label set and in the dispatched envelope, so every dashboard,
 // alert and downstream consumer reads these exact strings. Naming them keeps
@@ -107,35 +113,35 @@ func NewMetrics() *Metrics {
 				Name: "tapes_extproc_turns_captured_total",
 				Help: "Completed turns successfully dispatched to tapes-ingest.",
 			},
-			[]string{"provider"},
+			[]string{fieldProvider},
 		),
 		terminal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "tapes_extproc_turns_terminal_total",
 				Help: "Terminal extproc turn outcomes by bounded request/upstream dimensions. Raw request IDs, paths, and model names are intentionally excluded from labels and emitted only in structured logs.",
 			},
-			[]string{"provider", "outcome", "reason", "endpoint", "stream", "model_family", "upstream_status_class"},
+			[]string{fieldProvider, fieldOutcome, fieldReason, "endpoint", "stream", "model_family", "upstream_status_class"},
 		),
 		largeTurns: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "tapes_extproc_turns_large_total",
 				Help: "Turns whose response body exceeded the large-turn threshold. These are captured and dispatched normally — the counter is observability for cluster sizing, not a rejection signal.",
 			},
-			[]string{"provider"},
+			[]string{fieldProvider},
 		),
 		dropped: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "tapes_extproc_turns_dropped_total",
 				Help: "Turns dropped before landing in tapes, by provider and reason.",
 			},
-			[]string{"provider", "reason"},
+			[]string{fieldProvider, fieldReason},
 		),
 		reducerEmpty: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "tapes_extproc_reducer_empty_total",
 				Help: "Turns whose reducer output would fail tapes ingest's validateReducedResponse — empty Content, missing Role, or a block with no Type. Labelled by upstream content-type and HTTP status so a dashboard can see whether the empty cases concentrate on a particular upstream shape (e.g. JSON error envelopes vs. truncated event-streams).",
 			},
-			[]string{"provider", "content_type", "upstream_status"},
+			[]string{fieldProvider, "content_type", "upstream_status"},
 		),
 		responseDecoded: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
@@ -149,28 +155,28 @@ func NewMetrics() *Metrics {
 				Name: "tapes_extproc_response_decode_salvaged_total",
 				Help: "Response decode attempts that recovered decoded bytes from a truncated compressed body. message_stop_seen indicates whether the decoded SSE body included Anthropic's terminal message_stop event.",
 			},
-			[]string{"provider", "encoding", "message_stop_seen"},
+			[]string{fieldProvider, "encoding", "message_stop_seen"},
 		),
 		rawAttached: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "tapes_extproc_raw_response_attached_total",
 				Help: "Turns dispatched carrying verbatim upstream response bytes. shape=dual keeps the adapter's reduction alongside the bytes; shape=raw_only leaves the reduction to ingest.",
 			},
-			[]string{"provider", "shape"},
+			[]string{fieldProvider, "shape"},
 		),
 		rawSkipped: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "tapes_extproc_raw_response_skipped_total",
 				Help: "Turns where the configured mode wanted verbatim bytes but they were withheld. These rows land fidelity:reduced, so a rising rate means the raw lane is quietly not covering all traffic.",
 			},
-			[]string{"provider", "reason"},
+			[]string{fieldProvider, fieldReason},
 		),
 		rawFallback: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "tapes_extproc_raw_response_fallback_total",
 				Help: "Raw-only turns that kept the adapter's reduction because ingest could not have produced one from the bytes (encoding it cannot decode, or content salvaged from a truncated body).",
 			},
-			[]string{"provider", "reason"},
+			[]string{fieldProvider, fieldReason},
 		),
 		sseChunks: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
@@ -178,7 +184,7 @@ func NewMetrics() *Metrics {
 				Help:    "Number of SSE chunks per streamed turn.",
 				Buckets: []float64{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024},
 			},
-			[]string{"provider"},
+			[]string{fieldProvider},
 		),
 		turnDuration: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
@@ -190,7 +196,7 @@ func NewMetrics() *Metrics {
 				// tail to 300s. See PCC-577.
 				Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30, 45, 60, 90, 120, 180, 300},
 			},
-			[]string{"provider"},
+			[]string{fieldProvider},
 		),
 		terminalDuration: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
@@ -202,7 +208,7 @@ func NewMetrics() *Metrics {
 				// turn_duration_seconds. See PCC-577.
 				Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30, 45, 60, 90, 120, 180, 300},
 			},
-			[]string{"provider", "outcome", "reason"},
+			[]string{fieldProvider, fieldOutcome, fieldReason},
 		),
 		bodyBytes: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
@@ -210,7 +216,7 @@ func NewMetrics() *Metrics {
 				Help:    "Accumulated body size at EndOfStream, by provider and side.",
 				Buckets: bodySizeBuckets,
 			},
-			[]string{"provider", "side"},
+			[]string{fieldProvider, "side"},
 		),
 		bodyBytesByOutcome: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
@@ -218,7 +224,7 @@ func NewMetrics() *Metrics {
 				Help:    "Accumulated request/response body size by terminal outcome. Use this to compare failed and captured turn sizes without relying on success-only body_bytes.",
 				Buckets: bodySizeBuckets,
 			},
-			[]string{"provider", "side", "outcome", "reason"},
+			[]string{fieldProvider, "side", fieldOutcome, fieldReason},
 		),
 		dispatchSeconds: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
@@ -226,7 +232,7 @@ func NewMetrics() *Metrics {
 				Help:    "Latency of the HTTP POST to tapes-ingest.",
 				Buckets: prometheus.DefBuckets,
 			},
-			[]string{"provider"},
+			[]string{fieldProvider},
 		),
 		inflight: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "tapes_extproc_inflight_dispatches",
@@ -238,14 +244,14 @@ func NewMetrics() *Metrics {
 				Help:    "Request Content-Length as observed at the request-headers phase, before any body message can be rejected at the gRPC recv boundary — so >4 MiB requests that never survive the body phase are still sized here. Absent or unparseable Content-Length is never observed (not even as 0); those requests are counted in tapes_extproc_request_content_length_unknown_total instead.",
 				Buckets: bodySizeBuckets,
 			},
-			[]string{"provider"},
+			[]string{fieldProvider},
 		),
 		requestContentLengthUnknown: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "tapes_extproc_request_content_length_unknown_total",
 				Help: "Requests whose Content-Length header was absent or unparseable at the request-headers phase (e.g. chunked/streaming clients). These requests make no observation in tapes_extproc_request_content_length_bytes, so this counter measures exactly the population that histogram cannot see.",
 			},
-			[]string{"provider"},
+			[]string{fieldProvider},
 		),
 		buildInfo: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{

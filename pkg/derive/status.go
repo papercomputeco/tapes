@@ -33,7 +33,7 @@ func FoldSessionStatus(tools []*Span, terminal *Span) SessionStatus {
 		if len(ts.Output) > 0 {
 			st.ToolResultCount++
 		}
-		if ts.Status == "error" {
+		if ts.Status == spanStatusError {
 			st.ToolErrorCount++
 		}
 		if !st.HasGitActivity && sessions.BlocksHaveGitActivity(ts.Input) {

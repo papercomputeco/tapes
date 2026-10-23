@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -245,16 +246,16 @@ func (d *Driver) acquireRepairSessionLocks(
 	for _, key := range ordered {
 		release, err := d.AcquireDeriveSessionLock(ctx, orgID, key.harnessID, key.harnessSessionID)
 		if err != nil {
-			for i := len(releases) - 1; i >= 0; i-- {
-				releases[i]()
+			for _, release := range slices.Backward(releases) {
+				release()
 			}
 			return nil, fmt.Errorf("acquire repair session lock %s/%s: %w", key.harnessID, key.harnessSessionID, err)
 		}
 		releases = append(releases, release)
 	}
 	return func() {
-		for i := len(releases) - 1; i >= 0; i-- {
-			releases[i]()
+		for _, release := range slices.Backward(releases) {
+			release()
 		}
 	}, nil
 }

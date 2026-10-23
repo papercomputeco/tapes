@@ -9,6 +9,8 @@ import (
 	"github.com/papercomputeco/tapes/pkg/llm"
 )
 
+const blockTypeText = "text"
+
 // Provider implements the Provider interface for Anthropic's Claude API.
 type Provider struct{}
 
@@ -38,7 +40,7 @@ func (p *Provider) ParseRequest(payload []byte) (*llm.ChatRequest, error) {
 
 		switch content := msg.Content.(type) {
 		case string:
-			converted.Content = []llm.ContentBlock{{Type: "text", Text: content}}
+			converted.Content = []llm.ContentBlock{{Type: blockTypeText, Text: content}}
 		case []any:
 			// Parse as array of content blocks
 			for _, item := range content {
@@ -174,7 +176,7 @@ func parseAnthropicSystem(system any) string {
 			}
 			blockType, _ := block["type"].(string)
 			text, _ := block["text"].(string)
-			if blockType == "text" && text != "" {
+			if blockType == blockTypeText && text != "" {
 				if builder.Len() > 0 {
 					builder.WriteString("\n")
 				}
@@ -198,7 +200,7 @@ func (p *Provider) ParseResponse(payload []byte) (*llm.ChatResponse, error) {
 	for _, block := range resp.Content {
 		cb := llm.ContentBlock{Type: block.Type}
 		switch block.Type {
-		case "text":
+		case blockTypeText:
 			cb.Text = block.Text
 		case "tool_use":
 			cb.ToolUseID = block.ID

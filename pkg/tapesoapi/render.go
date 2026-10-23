@@ -6,6 +6,11 @@ import (
 	"strings"
 )
 
+const (
+	fieldName = "name"
+	fieldRef  = "$ref"
+)
+
 // render turns the merged IR into the generic tree that is marshalled to
 // JSON or YAML.
 //
@@ -86,7 +91,7 @@ func (r renderer) info(info *Info) map[string]any {
 	setString(out, "termsOfService", info.TermsOfService)
 	if info.Contact != nil {
 		contact := map[string]any{}
-		setString(contact, "name", info.Contact.Name)
+		setString(contact, fieldName, info.Contact.Name)
 		setString(contact, "url", info.Contact.URL)
 		setString(contact, "email", info.Contact.Email)
 		if len(contact) > 0 {
@@ -94,7 +99,7 @@ func (r renderer) info(info *Info) map[string]any {
 		}
 	}
 	if info.License != nil {
-		license := map[string]any{"name": info.License.Name}
+		license := map[string]any{fieldName: info.License.Name}
 		setString(license, "url", info.License.URL)
 		// identifier is 3.1-only and is mutually exclusive with url there.
 		if r.target == V31 && info.License.Identifier != "" {
@@ -128,7 +133,7 @@ func (r renderer) server(server Server) map[string]any {
 }
 
 func (r renderer) tag(tag Tag) map[string]any {
-	out := map[string]any{"name": tag.Name}
+	out := map[string]any{fieldName: tag.Name}
 	setString(out, "description", tag.Description)
 	if tag.ExternalDocs != nil {
 		out["externalDocs"] = r.externalDocs(tag.ExternalDocs)
@@ -147,7 +152,7 @@ func (r renderer) externalDocs(docs *ExternalDocs) map[string]any {
 func (r renderer) pathItem(item *PathItem) (map[string]any, error) {
 	out := map[string]any{}
 	if item.Ref != "" {
-		out["$ref"] = item.Ref
+		out[fieldRef] = item.Ref
 
 		return out, nil
 	}
@@ -259,9 +264,9 @@ func (r renderer) parameters(parameters []*Parameter) ([]any, error) {
 
 func (r renderer) parameter(parameter *Parameter) (map[string]any, error) {
 	if parameter.Ref != "" {
-		return map[string]any{"$ref": parameter.Ref}, nil
+		return map[string]any{fieldRef: parameter.Ref}, nil
 	}
-	out := map[string]any{"name": parameter.Name, "in": string(parameter.In)}
+	out := map[string]any{fieldName: parameter.Name, "in": string(parameter.In)}
 	setString(out, "description", parameter.Description)
 	if parameter.Required {
 		out["required"] = true
@@ -290,7 +295,7 @@ func (r renderer) parameter(parameter *Parameter) (map[string]any, error) {
 
 func (r renderer) requestBody(body *RequestBody) (map[string]any, error) {
 	if body.Ref != "" {
-		return map[string]any{"$ref": body.Ref}, nil
+		return map[string]any{fieldRef: body.Ref}, nil
 	}
 	out := map[string]any{}
 	setString(out, "description", body.Description)
@@ -309,7 +314,7 @@ func (r renderer) requestBody(body *RequestBody) (map[string]any, error) {
 
 func (r renderer) response(response *Response) (map[string]any, error) {
 	if response.Ref != "" {
-		return map[string]any{"$ref": response.Ref}, nil
+		return map[string]any{fieldRef: response.Ref}, nil
 	}
 	description := response.Description
 	if description == "" {
@@ -344,7 +349,7 @@ func (r renderer) response(response *Response) (map[string]any, error) {
 
 func (r renderer) header(header *Header) (map[string]any, error) {
 	if header.Ref != "" {
-		return map[string]any{"$ref": header.Ref}, nil
+		return map[string]any{fieldRef: header.Ref}, nil
 	}
 	out := map[string]any{}
 	setString(out, "description", header.Description)
@@ -475,7 +480,7 @@ func (r renderer) components(components *Components) (map[string]any, error) {
 			scheme := components.SecuritySchemes[name]
 			value := map[string]any{"type": scheme.Type}
 			setString(value, "description", scheme.Description)
-			setString(value, "name", scheme.Name)
+			setString(value, fieldName, scheme.Name)
 			setString(value, "in", scheme.In)
 			setString(value, "scheme", scheme.Scheme)
 			setString(value, "bearerFormat", scheme.BearerFormat)

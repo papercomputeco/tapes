@@ -55,8 +55,7 @@ func (s *Server) registerTranscriptTool(server *mcpsdk.Server) {
 		defer cancel()
 		resp, err := s.buildTranscript(ctx, transcriptQuery(args))
 		if err != nil {
-			var te *transcriptError
-			if errors.As(err, &te) {
+			if te, ok := errors.AsType[*transcriptError](err); ok {
 				return nil, nil, fmt.Errorf("transcript: %d: %s", te.status, te.msg)
 			}
 			return nil, nil, fmt.Errorf("transcript: %w", err)

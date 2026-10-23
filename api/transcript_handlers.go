@@ -166,8 +166,7 @@ func (s *Server) handleGetSessionTranscript(c fiber.Ctx) error {
 
 	resp, err := s.buildTranscript(c.Context(), q)
 	if err != nil {
-		var te *transcriptError
-		if errors.As(err, &te) {
+		if te, ok := errors.AsType[*transcriptError](err); ok {
 			return c.Status(te.status).JSON(llm.ErrorResponse{Error: te.msg})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load transcript"})

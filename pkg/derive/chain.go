@@ -92,7 +92,7 @@ func turnChain(call CallContext, req *llm.ChatRequest, resp *llm.ChatResponse, o
 
 	for i, msg := range req.Messages {
 		bucket := merkle.Bucket{
-			Type:      "message",
+			Type:      messageType,
 			Role:      msg.Role,
 			Content:   msg.Content,
 			Model:     req.Model,
@@ -140,7 +140,7 @@ func turnChain(call CallContext, req *llm.ChatRequest, resp *llm.ChatResponse, o
 	}
 
 	responseBucket := merkle.Bucket{
-		Type:      "message",
+		Type:      messageType,
 		Role:      resp.Message.Role,
 		Content:   responseContent,
 		Model:     resp.Model,

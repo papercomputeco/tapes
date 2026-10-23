@@ -43,12 +43,14 @@ cannot: per-field prose, read from the doc comments in a checkout.
 Nothing in this repository reads the output. A contract file is a copy of what
 the server already states exactly, and a copy can be stale.`
 
+const surfaceAPI = "api"
+
 // surfaces are the contracts tapes publishes, keyed by the name this command
 // takes. They are separate documents because they are separate servers with
 // different trust models — see the header of ingest/openapi.go.
 var surfaces = map[string]func(context.Context, tapesoapi.TypeDocs) (*tapesoapi.CompiledDoc, error){
-	"api":    api.CompileOpenAPI,
-	"ingest": ingest.CompileOpenAPI,
+	surfaceAPI: api.CompileOpenAPI,
+	"ingest":   ingest.CompileOpenAPI,
 }
 
 type openAPICommander struct {
@@ -64,7 +66,7 @@ func newOpenAPICmd() *cobra.Command {
 		Short:     "Compile a published OpenAPI contract, with field prose from the source",
 		Long:      openAPILongDesc,
 		Args:      cobra.MaximumNArgs(1),
-		ValidArgs: []string{"api", "ingest"},
+		ValidArgs: []string{surfaceAPI, "ingest"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 
@@ -80,7 +82,7 @@ func newOpenAPICmd() *cobra.Command {
 }
 
 func (c *openAPICommander) run(cmd *cobra.Command, args []string) error {
-	surface := "api"
+	surface := surfaceAPI
 	if len(args) == 1 {
 		surface = args[0]
 	}
@@ -154,7 +156,6 @@ var formats = map[string]func(*tapesoapi.CompiledDoc) ([]byte, error){
 	// A trailing newline on the JSON: the document goes to a terminal as often
 	// as to a file, and JSON() ends mid-line by design so a caller embedding it
 	// does not have to strip one.
-	//nolint:unparam // the signature is shared with the YAML renderer, which can fail
 	"json": func(compiled *tapesoapi.CompiledDoc) ([]byte, error) {
 		return append(compiled.JSON(), '\n'), nil
 	},

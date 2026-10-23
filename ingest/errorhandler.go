@@ -27,8 +27,7 @@ func newBodyLimitErrorHandler(log *slog.Logger, metrics *Metrics) fiber.ErrorHan
 			// produce "Not Found" instead of the framework's normal
 			// "Cannot METHOD /path" response, so preserve that response here.
 			if !c.Matched() && (errors.Is(err, fiber.ErrNotFound) || errors.Is(err, fiber.ErrMethodNotAllowed)) {
-				var fiberErr *fiber.Error
-				if errors.As(err, &fiberErr) {
+				if fiberErr, ok := errors.AsType[*fiber.Error](err); ok {
 					return c.Status(fiberErr.Code).SendString(fmt.Sprintf("Cannot %s %s", c.Method(), c.Path()))
 				}
 			}

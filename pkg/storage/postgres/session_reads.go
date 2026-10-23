@@ -76,7 +76,7 @@ func (d *Driver) ListSessionRecords(
 	// Values bind as pgx named args (@name). The dynamic ORDER BY forces a
 	// hand-built query, but every caller value is still a named, bound parameter
 	// — never interpolated — and pgx rewrites each @name to a positional $N.
-	named := pgx.NamedArgs{"org_id": oid, "lim": int32(limit)} //nolint:gosec // limit bounded by the API handler
+	named := pgx.NamedArgs{"org_id": oid, "lim": int32(limit)}
 	where := []string{"org_id = @org_id"}
 
 	// Window on activity: a session is in-window when it has a turn (trace)

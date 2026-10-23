@@ -452,7 +452,7 @@ func walkAnyRefs(node any, visit func(string) string) {
 	switch typed := node.(type) {
 	case map[string]any:
 		for key, value := range typed {
-			if key == "$ref" {
+			if key == fieldRef {
 				if ref, ok := value.(string); ok {
 					typed[key] = visit(ref)
 

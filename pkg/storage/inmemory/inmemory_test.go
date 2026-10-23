@@ -42,14 +42,14 @@ var _ = Describe("AncestryChain cycle guard [inmemory]", func() {
 
 	makeCyclicPair := func(hashA, hashB string) (*merkle.Node, *merkle.Node) {
 		return &merkle.Node{
-				Hash:       hashA,
-				ParentHash: &hashB,
-				Bucket:     minimalBucket(),
-			}, &merkle.Node{
-				Hash:       hashB,
-				ParentHash: &hashA,
-				Bucket:     minimalBucket(),
-			}
+			Hash:       hashA,
+			ParentHash: &hashB,
+			Bucket:     minimalBucket(),
+		}, &merkle.Node{
+			Hash:       hashB,
+			ParentHash: &hashA,
+			Bucket:     minimalBucket(),
+		}
 	}
 
 	It("stops a two-node cycle instead of looping forever", func() {

@@ -23,7 +23,7 @@ func (r renderer) schema(schema *Schema) (map[string]any, error) {
 		return map[string]any{}, nil
 	}
 	if schema.Ref != "" {
-		return map[string]any{"$ref": schema.Ref}, nil
+		return map[string]any{fieldRef: schema.Ref}, nil
 	}
 
 	out := map[string]any{}

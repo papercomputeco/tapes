@@ -389,8 +389,7 @@ func (runner *Runner) armClaims(ctx context.Context) {
 
 				continue
 			}
-			var transient *TransientProbeError
-			if errors.As(err, &transient) {
+			if _, ok := errors.AsType[*TransientProbeError](err); ok {
 				// No verdict, so no state may move: an armed claim stays
 				// armed rather than silently unfiltering over a blip, and an
 				// un-armed claim keeps its definitive recorded reason rather

@@ -245,7 +245,8 @@ var _ = Describe("Idle-split capture", func() {
 		bot := &sessions.IngestEnvelope{HarnessID: "hermes"}
 		morning := []string{"morning one"}
 		first := capture(bot, root, "req-1", morning, t0)
-		history := []string{"morning one", "morning two"}
+		history := make([]string, 2, 3)
+		history[0], history[1] = "morning one", "morning two"
 		capture(bot, root, "req-2", history, t0.Add(5*time.Minute))
 		second := capture(bot, root, "req-3", append(history, "evening one"), t0.Add(8*time.Hour))
 		// A retry of an earlier turn after the conversation moved on.

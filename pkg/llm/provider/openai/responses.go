@@ -170,15 +170,15 @@ func responsesItemToMessage(raw json.RawMessage) (llm.Message, bool) {
 
 	case item.Type == "function_call":
 		return llm.Message{
-			Role:    "assistant",
+			Role:    roleAssistant,
 			Content: []llm.ContentBlock{functionCallBlock(item, raw)},
 		}, true
 
 	case item.Type == "function_call_output":
 		return llm.Message{
-			Role: "tool",
+			Role: roleTool,
 			Content: []llm.ContentBlock{{
-				Type:         "tool_result",
+				Type:         blockTypeToolResult,
 				ToolResultID: item.CallID,
 				ToolOutput:   rawToText(item.Output),
 			}},
@@ -186,25 +186,25 @@ func responsesItemToMessage(raw json.RawMessage) (llm.Message, bool) {
 
 	case item.Type == itemCustomToolCall:
 		return llm.Message{
-			Role:    "assistant",
+			Role:    roleAssistant,
 			Content: []llm.ContentBlock{customToolCallBlock(item)},
 		}, true
 
 	case item.Type == itemCustomToolCallOutput:
 		return llm.Message{
-			Role:    "tool",
+			Role:    roleTool,
 			Content: []llm.ContentBlock{customToolCallOutputBlock(item)},
 		}, true
 
 	case item.Type == "reasoning":
 		return llm.Message{
-			Role:    "assistant",
+			Role:    roleAssistant,
 			Content: []llm.ContentBlock{reasoningBlock(item)},
 		}, true
 
 	default:
 		return llm.Message{
-			Role:    "assistant",
+			Role:    roleAssistant,
 			Content: []llm.ContentBlock{{Type: item.Type, Content: raw}},
 		}, true
 	}
@@ -219,19 +219,19 @@ func responsesContentBlocks(raw json.RawMessage) []llm.ContentBlock {
 
 	var text string
 	if err := json.Unmarshal(raw, &text); err == nil {
-		return []llm.ContentBlock{{Type: "text", Text: text}}
+		return []llm.ContentBlock{{Type: blockTypeText, Text: text}}
 	}
 
 	var parts []responsesContentPart
 	if err := json.Unmarshal(raw, &parts); err != nil {
-		return []llm.ContentBlock{{Type: "text", Content: raw}}
+		return []llm.ContentBlock{{Type: blockTypeText, Content: raw}}
 	}
 
 	blocks := make([]llm.ContentBlock, 0, len(parts))
 	for _, part := range parts {
 		switch part.Type {
 		case "input_text", "output_text", "summary_text":
-			blocks = append(blocks, llm.ContentBlock{Type: "text", Text: part.Text})
+			blocks = append(blocks, llm.ContentBlock{Type: blockTypeText, Text: part.Text})
 		case "refusal":
 			blocks = append(blocks, llm.ContentBlock{Type: "refusal", Text: part.Refusal})
 		case "input_image":
@@ -248,7 +248,7 @@ func responsesContentBlocks(raw json.RawMessage) []llm.ContentBlock {
 // as an object the raw item is preserved on Content so nothing is lost.
 func functionCallBlock(item responsesItem, raw json.RawMessage) llm.ContentBlock {
 	cb := llm.ContentBlock{
-		Type:      "tool_use",
+		Type:      blockTypeToolUse,
 		ToolUseID: item.CallID,
 		ToolName:  item.Name,
 	}
@@ -271,7 +271,7 @@ func functionCallBlock(item responsesItem, raw json.RawMessage) llm.ContentBlock
 // carries id/status) and its request-echo map to identical blocks.
 func customToolCallBlock(item responsesItem) llm.ContentBlock {
 	cb := llm.ContentBlock{
-		Type:      "tool_use",
+		Type:      blockTypeToolUse,
 		ToolUseID: item.CallID,
 		ToolName:  item.Name,
 	}
@@ -287,7 +287,7 @@ func customToolCallBlock(item responsesItem) llm.ContentBlock {
 // joined so the result reads as the text the model saw.
 func customToolCallOutputBlock(item responsesItem) llm.ContentBlock {
 	return llm.ContentBlock{
-		Type:         "tool_result",
+		Type:         blockTypeToolResult,
 		ToolResultID: item.CallID,
 		ToolOutput:   customToolOutputText(item.Output),
 	}

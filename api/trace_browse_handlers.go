@@ -107,11 +107,11 @@ func traceItemFromTurn(turn storage.SpanTurnRecord, spanCount int) TraceItem {
 func (s *Server) handleListTraceSummaries(c fiber.Ctx) error {
 	sessions, ok := s.driver.(sessionsReader)
 	if !ok {
-		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: errSessionsUnsupported})
 	}
 	reader, ok := s.driver.(spanModelReader)
 	if !ok {
-		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "span traces not supported by this backend"})
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: errSpanTracesUnsupported})
 	}
 	sessionID := c.Query("session_id")
 	if sessionID == "" {
@@ -124,10 +124,10 @@ func (s *Server) handleListTraceSummaries(c fiber.Ctx) error {
 	sess, err := sessions.GetSessionRecord(c.Context(), orgID, sessionID)
 	if err != nil {
 		s.logger.Error("get session for trace summaries", "session_id", sessionID, "error", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session"})
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: errLoadSession})
 	}
 	if sess == nil {
-		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
+		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: errSessionNotFound})
 	}
 	rows, err := reader.ListTraceSummaries(c.Context(), sessionID)
 	if err != nil {
@@ -159,7 +159,7 @@ func parseTraceSpansLimit(raw string) (int, error) {
 func (s *Server) handleGetTrace(c fiber.Ctx) error {
 	reader, ok := s.driver.(spanModelReader)
 	if !ok {
-		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "span traces not supported by this backend"})
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: errSpanTracesUnsupported})
 	}
 	traceID := c.Params("trace_id")
 
@@ -264,7 +264,7 @@ type StandaloneTraceDetail struct {
 func (s *Server) handleGetSpan(c fiber.Ctx) error {
 	reader, ok := s.driver.(spanModelReader)
 	if !ok {
-		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "span traces not supported by this backend"})
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: errSpanTracesUnsupported})
 	}
 	traceID, spanID := c.Params("trace_id"), c.Params("span_id")
 	rec, err := reader.GetSpanRecord(c.Context(), singleTenantOrgID, traceID, spanID)
@@ -283,7 +283,7 @@ func (s *Server) handleGetSpan(c fiber.Ctx) error {
 func (s *Server) handleListSessionRawTurns(c fiber.Ctx) error {
 	sessions, ok := s.driver.(sessionsReader)
 	if !ok {
-		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: "sessions not supported by this backend"})
+		return c.Status(fiber.StatusNotImplemented).JSON(llm.ErrorResponse{Error: errSessionsUnsupported})
 	}
 	reader, ok := s.driver.(spanModelReader)
 	if !ok {
@@ -291,7 +291,7 @@ func (s *Server) handleListSessionRawTurns(c fiber.Ctx) error {
 	}
 	id := c.Params("id")
 	if _, err := uuid.Parse(id); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: "id must be a valid UUID"})
+		return c.Status(fiber.StatusBadRequest).JSON(llm.ErrorResponse{Error: errInvalidID})
 	}
 	limit, err := parseLimit(c.Query("limit"), defaultRawTurnsLimit, maxRawTurnsLimit)
 	if err != nil {
@@ -314,10 +314,10 @@ func (s *Server) handleListSessionRawTurns(c fiber.Ctx) error {
 	sess, err := sessions.GetSessionRecord(c.Context(), orgID, id)
 	if err != nil {
 		s.logger.Error("get session for raw turns", "id", id, "error", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: "failed to load session"})
+		return c.Status(fiber.StatusInternalServerError).JSON(llm.ErrorResponse{Error: errLoadSession})
 	}
 	if sess == nil {
-		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: "session not found"})
+		return c.Status(fiber.StatusNotFound).JSON(llm.ErrorResponse{Error: errSessionNotFound})
 	}
 	// One row past the page tells whether a next page exists without a
 	// second count query; it is trimmed before rendering.

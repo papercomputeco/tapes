@@ -33,7 +33,7 @@ var equivalenceFlags = config.FlagSet{
 	config.FlagPostgres: {
 		Name:        "postgres",
 		ViperKey:    "storage.postgres_dsn",
-		Description: "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/db)",
+		Description: "PostgreSQL connection string (e.g., postgres://user@host:5432/db)",
 	},
 }
 
@@ -74,7 +74,7 @@ Run it against a tenant's database from inside the cluster:
 or locally against a forwarded database:
 
   tapes raw equivalence \
-    --postgres "postgres://user:pass@127.0.0.1:15432/tapes" \
+    --postgres "postgres://user@127.0.0.1:15432/tapes" \
     --since 24h --json`
 
 func newEquivalenceCmd() *cobra.Command {

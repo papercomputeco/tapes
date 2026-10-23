@@ -13,6 +13,8 @@ import (
 // show up as the anomaly it is.
 const providerUnknown = "unknown"
 
+const labelProvider = "provider"
+
 // Metrics enumerates the Prometheus counters and histograms emitted by the
 // ingest server. Metric names are fixed so dashboards and alerts reference
 // stable identifiers.
@@ -39,7 +41,7 @@ func NewMetrics() *Metrics {
 				Name: "tapes_ingest_writes_total",
 				Help: "Total ingest write attempts by provider and outcome status.",
 			},
-			[]string{"provider", "status"},
+			[]string{labelProvider, "status"},
 		),
 		dagSeconds: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
@@ -47,7 +49,7 @@ func NewMetrics() *Metrics {
 				Help:    "Latency of ingest-to-worker enqueue by provider.",
 				Buckets: prometheus.DefBuckets,
 			},
-			[]string{"provider"},
+			[]string{labelProvider},
 		),
 		queueDepth: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "tapes_ingest_worker_queue_depth",
@@ -59,14 +61,14 @@ func NewMetrics() *Metrics {
 				Help:    "Size of accepted ingest envelopes by provider.",
 				Buckets: prometheus.ExponentialBucketsRange(256, 64*1024*1024, 14),
 			},
-			[]string{"provider"},
+			[]string{labelProvider},
 		),
 		rawOnlyStamps: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "tapes_ingest_rawonly_stamp_total",
 				Help: "Capture-side fields restored onto a server-side raw-only reduction, by provider, field, and whether the envelope supplied the value or ingest fell back. A rising fallback rate means raw-only rows are landing without a capture-side duration or with an ingest-clock timestamp.",
 			},
-			[]string{"provider", "field", "source"},
+			[]string{labelProvider, "field", "source"},
 		),
 	}
 	reg.MustRegister(m.writes, m.dagSeconds, m.queueDepth, m.bytesHistory, m.rawOnlyStamps)

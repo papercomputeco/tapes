@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/papercomputeco/tapes/pkg/dotdir"
+	"github.com/papercomputeco/tapes/pkg/llm/provider"
 	"github.com/papercomputeco/tapes/pkg/sessions"
 )
 
@@ -270,54 +271,54 @@ func (c *Configer) GetConfigValue(key string) (string, error) {
 // Returns an error if the preset name is not recognized.
 func PresetConfig(name string) (*Config, error) {
 	switch strings.ToLower(name) {
-	case "openai":
+	case provider.OpenAI:
 		return &Config{
 			Version: CurrentV,
 			Proxy: ProxyConfig{
-				Provider: "openai",
+				Provider: provider.OpenAI,
 				Upstream: "https://api.openai.com",
-				Listen:   ":8080",
+				Listen:   defaultProxyListen,
 			},
 			API: APIConfig{
-				Listen: ":8081",
+				Listen: defaultAPIListen,
 			},
 			Client: ClientConfig{
-				ProxyTarget: "http://localhost:8080",
-				APITarget:   "http://localhost:8081",
+				ProxyTarget: defaultClientProxyTarget,
+				APITarget:   defaultClientAPITarget,
 			},
 		}, nil
 
-	case "anthropic":
+	case provider.Anthropic:
 		return &Config{
 			Version: CurrentV,
 			Proxy: ProxyConfig{
-				Provider: "anthropic",
+				Provider: provider.Anthropic,
 				Upstream: "https://api.anthropic.com",
-				Listen:   ":8080",
+				Listen:   defaultProxyListen,
 			},
 			API: APIConfig{
-				Listen: ":8081",
+				Listen: defaultAPIListen,
 			},
 			Client: ClientConfig{
-				ProxyTarget: "http://localhost:8080",
-				APITarget:   "http://localhost:8081",
+				ProxyTarget: defaultClientProxyTarget,
+				APITarget:   defaultClientAPITarget,
 			},
 		}, nil
 
-	case "ollama":
+	case provider.Ollama:
 		return &Config{
 			Version: CurrentV,
 			Proxy: ProxyConfig{
-				Provider: "ollama",
+				Provider: provider.Ollama,
 				Upstream: "http://localhost:11434",
-				Listen:   ":8080",
+				Listen:   defaultProxyListen,
 			},
 			API: APIConfig{
-				Listen: ":8081",
+				Listen: defaultAPIListen,
 			},
 			Client: ClientConfig{
-				ProxyTarget: "http://localhost:8080",
-				APITarget:   "http://localhost:8081",
+				ProxyTarget: defaultClientProxyTarget,
+				APITarget:   defaultClientAPITarget,
 			},
 		}, nil
 
@@ -328,7 +329,7 @@ func PresetConfig(name string) (*Config, error) {
 
 // ValidPresetNames returns the list of recognized preset names.
 func ValidPresetNames() []string {
-	return []string{"openai", "anthropic", "ollama"}
+	return []string{provider.OpenAI, provider.Anthropic, provider.Ollama}
 }
 
 // ParseConfigTOML parses raw TOML bytes into a Config.

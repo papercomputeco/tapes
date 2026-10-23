@@ -61,8 +61,8 @@ func newTranscriptModel() *pagedSpanModel {
 	t0 := fixtureEpoch
 	t1 := fixtureEpoch.Add(time.Hour)
 	d.turns = []storage.TraceSummaryRecord{
-		{SpanTurnRecord: storage.SpanTurnRecord{TraceID: first, SessionID: pagedSessionID, StartedAt: t0}, SpanCount: 10},
-		{SpanTurnRecord: storage.SpanTurnRecord{TraceID: second, SessionID: pagedSessionID, StartedAt: t1}, SpanCount: 2},
+		{TraceID: first, SessionID: pagedSessionID, StartedAt: t0, SpanCount: 10},
+		{TraceID: second, SessionID: pagedSessionID, StartedAt: t1, SpanCount: 2},
 	}
 	d.spans = map[string][]storage.SpanRecord{
 		first: {
@@ -108,7 +108,7 @@ func rowSummary(r transcript.Row) string {
 	s += sSb103.String()
 	var sSb106 strings.Builder
 	for _, res := range r.ToolResults {
-		sSb106.WriteString(fmt.Sprintf(" result(%s,%t)", res.ToolUseID, res.IsError))
+		fmt.Fprintf(&sSb106, " result(%s,%t)", res.ToolUseID, res.IsError)
 	}
 	s += sSb106.String()
 	return s

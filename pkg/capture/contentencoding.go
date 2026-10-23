@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/andybalholm/brotli"
@@ -92,8 +93,8 @@ func DecodeContentEncoding(body []byte, encoding string) ([]byte, DecodeStats, e
 	layers := splitContentEncoding(ce)
 	current := body
 	var stats DecodeStats
-	for i := len(layers) - 1; i >= 0; i-- {
-		decoded, layerStats, err := decodeOneLayer(current, layers[i])
+	for _, layer := range slices.Backward(layers) {
+		decoded, layerStats, err := decodeOneLayer(current, layer)
 		if err != nil {
 			// Name the full header as well as the failing token: with
 			// stacked encodings the token alone does not say which
