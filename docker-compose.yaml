@@ -83,21 +83,34 @@ services:
       postgres:
         condition: service_healthy
 
+  envoy:
+    image: docker.io/envoyproxy/envoy:v1.37.0
+    user: "101:101"
+    command: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "warn"]
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./compose/envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro,Z
+    # No dependency on capture/storage health: forwarding must survive outages.
+
+  tapes-extproc:
+    build:
+      dockerfile: Dockerfile.extproc
+    environment:
+      TAPES_INGEST_URL: http://tapes-ingest:8082
+    # gRPC :50051 and metrics/health :9090 are private to the Compose network.
+
   tapes:
     build:
       dockerfile: Dockerfile
     command: >-
-      serve
-      --provider ollama
-      --upstream http://ollama:11434
+      serve api
+      --listen 0.0.0.0:8081
       --postgres postgres://tapes:tapes@postgres:5432/tapes?sslmode=disable
       --cassettes http://skills:9998/openapi,http://search:9998/openapi,http://export:9998/openapi
       --cassette-refresh 10s
-      --log-level=debug
     ports:
-      - "127.0.0.1:8080:8080"
       - "127.0.0.1:8081:8081"
-      - "127.0.0.1:8082:8082"
     volumes:
       - tapes-data:/data
     networks:
@@ -113,8 +126,29 @@ services:
         condition: service_started
       export:
         condition: service_started
-      ollama:
-        condition: service_started
+
+  tapes-ingest:
+    build:
+      dockerfile: Dockerfile
+    command: >-
+      serve ingest
+      --listen 0.0.0.0:8082
+      --postgres postgres://tapes:tapes@postgres:5432/tapes?sslmode=disable
+    ports:
+      - "127.0.0.1:8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  tapes-derive-worker:
+    build:
+      dockerfile: Dockerfile
+    command: >-
+      serve derive-worker
+      --postgres postgres://tapes:tapes@postgres:5432/tapes?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   postgres-data:

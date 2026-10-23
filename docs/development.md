@@ -28,6 +28,22 @@ With direnv, `direnv allow` activates the same shell automatically.
 
 ## Build and run
 
+The default containerized POC uses stock Envoy for Anthropic/OpenAI forwarding
+and `tapes-extproc` for capture; no Go proxy runs:
+
+```bash
+make validate-envoy
+make up
+# In another terminal, when finished:
+make down
+```
+
+See [local Compose setup](./installation.md#run-the-complete-docker-compose-stack)
+for credentials, base URLs, required session headers, diagnostics, and the
+no-credentials `make smoke-envoy` integration check. `make down` preserves data.
+
+For a standalone server binary (the legacy `serve` orchestration is unchanged):
+
 ```bash
 make build-local
 ./build/tapes local up
