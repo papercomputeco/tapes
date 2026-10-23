@@ -52,6 +52,14 @@ type Server struct {
 	// does not become a different pod partway through its life.
 	instance EvidenceInstance
 
+	// adminApp carries the /v1/admin/ routes when they are served by the
+	// internal listener; nil when the API listener serves them.
+	adminApp *fiber.App
+
+	// deriveRunWake wakes the derive-run supervisor when a run is created on
+	// this process, so it starts at once rather than on the next poll.
+	deriveRunWake chan struct{}
+
 	// loadedMutex guards loaded, which SetCassetteSources may replace at any
 	// point in this server's life — the source list is not fixed at
 	// construction, and a reader of the loaded identity runs concurrently
@@ -137,6 +145,7 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 		contracts:      contracts,
 		openapi:        openapi,
 		instance:       instanceIdentity(),
+		deriveRunWake:  make(chan struct{}, 1),
 	}
 
 	// Correlation is the outermost request middleware so every downstream log,
@@ -215,6 +224,27 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 	// openapi_routes.go preserves that order.
 	router := oasfiber.Wrap(app, s.openapi, oasfiber.WithUndocumented(oasfiber.Fail))
 	s.mountV1(router)
+
+	// The admin routes register into the same parser wherever they are
+	// served, so the published contract does not depend on the deployment's
+	// choice of port. On the internal listener they live on an app of their
+	// own, which that listener mounts behind its bearer check.
+	adminRouter := router
+	if config.AdminListener == AdminListenerInternal {
+		s.adminApp = fiber.New()
+		// The same correlation and request metrics as the API listener,
+		// in the same order, with recovery inside them so a panicking
+		// handler is still counted. The read deadline is left out, as it
+		// exempts these routes on the API listener too.
+		s.adminApp.Use(requestIDMiddleware(log))
+		s.adminApp.Use(s.metrics.Middleware())
+		s.adminApp.Use(recover.New())
+		adminRouter = oasfiber.Wrap(s.adminApp, s.openapi, oasfiber.WithUndocumented(oasfiber.Fail))
+	}
+	s.mountAdmin(adminRouter)
+	if err := adminRouter.Err(); err != nil {
+		return nil, err
+	}
 
 	// API reference UI. Always mounted — the viewer JS comes from a CDN
 	// at view time, so the binary cost is negligible.

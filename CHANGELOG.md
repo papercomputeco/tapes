@@ -24,6 +24,9 @@ which commit changed it.
   before upgrading; otherwise new captures keep the identity the capture client
   reported instead of the one the gateway vouched for. Sessions already stored
   are unaffected. See [Configuration](./docs/configuration.md#trusted-subject-header).
+- **Derive runs add two tables.** Migration `1781600000` creates
+  `derive_runs` and `derive_run_sessions`; it applies with the other
+  migrations at startup.
 
 ### Added
 
@@ -48,6 +51,24 @@ which commit changed it.
 
 - `TAPES_TRUSTED_SUBJECT_HEADER` configures the trusted subject header on
   ingest and `tapes-extproc` (see *Upgrading*).
+
+- Derive runs: `POST /v1/admin/derive/runs` starts a whole-store re-derive as a
+  background job and returns `202` with the run; `GET
+  /v1/admin/derive/runs/{id}` reports its state and progress, `GET
+  /v1/admin/derive/runs` lists recent runs, and `POST .../{id}/cancel` stops
+  one. Progress is recorded per session, so a run interrupted by a restart or a
+  database failure resumes at its first unfinished session, and at most one run
+  is active at a time. Prefer it to the synchronous `POST /v1/admin/derive/run`, which lasts
+  only as long as the request carrying it. Postgres only. See
+  [APIs](./docs/apis.md#derive-runs).
+
+- `TAPES_ADMIN_LISTENER` chooses where the `/v1/admin/` routes are served:
+  `api` (the default, unchanged) or `internal`, which serves them only on the
+  token-guarded internal listener and answers `404` for them on the API
+  listener, so operator actions sit beside the readiness evidence and the API
+  listener carries reads only. Admin requests keep their request IDs and
+  metrics on either listener. See
+  [Configuration](./docs/configuration.md#the-internal-listener).
 
 ### Changed
 

@@ -310,11 +310,15 @@ func (d *Driver) RederiveSessionLocked(ctx context.Context, project, orgID, harn
 	}
 	release, err := d.AcquireDeriveSessionLock(ctx, orgID, harnessID, harnessSessionID)
 	if err != nil {
-		return nil, fmt.Errorf("acquire derive lock %s/%s: %w", harnessID, harnessSessionID, err)
+		return nil, fmt.Errorf("%w %s/%s: %w", errDeriveSessionLock, harnessID, harnessSessionID, err)
 	}
 	defer release()
 	return d.RederiveSession(ctx, project, orgID, harnessID, harnessSessionID)
 }
+
+// errDeriveSessionLock marks a RederiveSessionLocked failure to take the
+// session's derive lock, which says nothing about the session itself.
+var errDeriveSessionLock = errors.New("acquire derive lock")
 
 func orgDisplayKey(org string) string {
 	if org == "" || org == "00000000-0000-0000-0000-000000000000" {

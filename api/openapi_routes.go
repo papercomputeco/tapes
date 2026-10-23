@@ -26,7 +26,6 @@ func (s *Server) mountV1(router *oasfiber.Router) {
 	s.mountSessions(router)
 	s.mountTraces(router)
 	s.mountSubjects(router)
-	s.mountAdmin(router)
 	s.mountMCP(router)
 }
 
@@ -346,6 +345,8 @@ func (s *Server) mountAdmin(router *oasfiber.Router) {
 			JSONResponse(200, "Per-org derive reports", s.schema(deriveRunResponse{})).
 			JSONResponse(500, "Derive failed", s.errorSchema()).
 			JSONResponse(501, "Driver does not host the raw-turn layer", s.errorSchema()))
+
+	s.mountDeriveRuns(router)
 
 	router.Post("/v1/admin/raw-turns/attribution-repair", s.handleRawTurnAttributionRepair,
 		oasfiber.Doc("repairRawTurnAttribution").
