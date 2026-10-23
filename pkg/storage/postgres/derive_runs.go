@@ -408,12 +408,10 @@ func isTransientDeriveRunError(err error) bool {
 	if pgconn.SafeToRetry(err) {
 		return true
 	}
-	var netErr net.Error
-	if errors.As(err, &netErr) {
+	if _, ok := errors.AsType[net.Error](err); ok {
 		return true
 	}
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		// 08 connection exception, 40 transaction rollback (serialization,
 		// deadlock), 53 insufficient resources, 57 operator intervention.
 		for _, class := range []string{"08", "40", "53", "57"} {
