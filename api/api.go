@@ -238,7 +238,7 @@ func newServer(config Config, driver storage.Driver, log *slog.Logger, docs tape
 		// exempts these routes on the API listener too.
 		s.adminApp.Use(requestIDMiddleware(log))
 		s.adminApp.Use(s.metrics.Middleware())
-		s.adminApp.Use(recover.New())
+		s.adminApp.Use(recoverer.New())
 		adminRouter = oasfiber.Wrap(s.adminApp, s.openapi, oasfiber.WithUndocumented(oasfiber.Fail))
 	}
 	s.mountAdmin(adminRouter)
