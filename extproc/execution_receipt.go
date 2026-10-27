@@ -16,8 +16,9 @@ const (
 )
 
 const (
-	settingForwarded             = "forwarded"
-	finalForwardedBodyProvenance = "final-forwarded-body"
+	settingOmittedProviderDefault = "omitted-provider-default"
+	settingForwarded              = "forwarded"
+	finalForwardedBodyProvenance  = "final-forwarded-body"
 )
 
 // SelectionMetadataV1 is the generic router's request-leased selection. Backend
@@ -158,7 +159,7 @@ func forwardedSettings(body []byte) (string, map[string]ReceiptSetting) {
 	}
 	settings := make(map[string]ReceiptSetting)
 	number := func(path string, raw json.RawMessage, maximum float64, integral bool) {
-		setting := ReceiptSetting{State: "omitted-provider-default", Provenance: finalForwardedBodyProvenance}
+		setting := ReceiptSetting{State: settingOmittedProviderDefault, Provenance: finalForwardedBodyProvenance}
 		if len(raw) != 0 {
 			var value float64
 			if json.Unmarshal(raw, &value) == nil && value >= 0 && value <= maximum && (!integral || math.Trunc(value) == value) && string(raw) != "null" {
@@ -175,7 +176,7 @@ func forwardedSettings(body []byte) (string, map[string]ReceiptSetting) {
 		number(key, request[key], 1e9, true)
 	}
 	var stream bool
-	streamState := ReceiptSetting{State: "omitted-provider-default", Provenance: finalForwardedBodyProvenance}
+	streamState := ReceiptSetting{State: settingOmittedProviderDefault, Provenance: finalForwardedBodyProvenance}
 	if raw := request["stream"]; len(raw) > 0 {
 		if json.Unmarshal(raw, &stream) == nil && string(raw) != "null" {
 			streamState.State, streamState.Value = settingForwarded, stream
@@ -185,7 +186,7 @@ func forwardedSettings(body []byte) (string, map[string]ReceiptSetting) {
 	}
 	settings["stream"] = streamState
 	effort := func(key string, raw json.RawMessage) {
-		setting := ReceiptSetting{State: "omitted-provider-default", Provenance: finalForwardedBodyProvenance}
+		setting := ReceiptSetting{State: settingOmittedProviderDefault, Provenance: finalForwardedBodyProvenance}
 		if len(raw) != 0 {
 			var value string
 			_ = json.Unmarshal(raw, &value)
@@ -204,7 +205,7 @@ func forwardedSettings(body []byte) (string, map[string]ReceiptSetting) {
 	thinkingErr := json.Unmarshal(request["thinking"], &thinking)
 	effort("reasoning.effort", reasoning["effort"])
 	number("thinking.budget_tokens", thinking["budget_tokens"], 1e9, true)
-	kind := ReceiptSetting{State: "omitted-provider-default", Provenance: finalForwardedBodyProvenance}
+	kind := ReceiptSetting{State: settingOmittedProviderDefault, Provenance: finalForwardedBodyProvenance}
 	if raw := thinking["type"]; len(raw) > 0 {
 		var value string
 		_ = json.Unmarshal(raw, &value)
