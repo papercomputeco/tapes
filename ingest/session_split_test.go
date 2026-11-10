@@ -42,12 +42,6 @@ func (d *splitDriver) Assigns() []storage.SyntheticSessionRequest {
 	return append([]storage.SyntheticSessionRequest(nil), d.assigns...)
 }
 
-func (d *splitDriver) IngestCalls() []storage.IngestTurnRequest {
-	d.captureDriver.mu.Lock()
-	defer d.captureDriver.mu.Unlock()
-	return append([]storage.IngestTurnRequest(nil), d.ingestCalls...)
-}
-
 var _ = Describe("Ingest synthetic session idle split", func() {
 	var (
 		driver  *splitDriver

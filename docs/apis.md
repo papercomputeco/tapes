@@ -344,10 +344,12 @@ Request bodies are capped at roughly 14.67 MiB. A POST over the limit is rejecte
 
 The gateway, not the client, vouches for who a capture belongs to. Set
 `TAPES_TRUSTED_SUBJECT_HEADER` to the header your gateway stamps with the
-verified subject, on both `tapes serve ingest` (transcript pushes) and
+verified subject, on both `tapes serve ingest` (wire and transcript pushes) and
 `tapes-extproc` (wire capture); its value is stored as `auth_subject`. It is
 unset by default: a standalone install with no gateway in front trusts no
-header and keeps the identity the capture client reported. Clients must not be
+header and keeps the identity the capture client reported. When the configured
+header arrives, it replaces whatever subject the payload claimed, so the two
+ingest routes cannot disagree about who owns a session. Clients must not be
 able to send the configured header themselves; stripping it at the edge is the
 gateway's job.
 

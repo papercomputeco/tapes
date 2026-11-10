@@ -409,13 +409,13 @@ func (s *Server) handleIngest(c fiber.Ctx) error {
 		return rejectEnvelope("envelope", err)
 	}
 
-	if payload.Session != nil {
-		// This deployment is single-tenant: writes take the same sentinel
-		// reads scope to, so a client asserting an org in the envelope
-		// cannot store rows the read side will never surface. The field
-		// stays in the wire contract until the org_id columns go.
-		payload.Session.OrgID = ""
-	}
+	// Identity is settled by the deployment and, when configured, by the
+	// gateway that vouches for the caller — the same rule the transcript
+	// push applies. This deployment is single-tenant, so the org takes the
+	// sentinel reads scope to and a client asserting one cannot store rows
+	// the read side will never surface. The field stays in the wire
+	// contract until the org_id columns go.
+	s.resolveGatewayIdentity(c, payload.Session)
 
 	if err := payload.Session.Validate(); err != nil {
 		return rejectEnvelope("session", err)
@@ -651,16 +651,19 @@ func transcriptRequestID(payload *TranscriptPayload) string {
 }
 
 // resolveGatewayIdentity overrides the envelope's identity fields with
-// the server-trusted gateway headers when present. The transcript
-// client (paperd) cannot fill org_id itself — it holds a WorkOS org id,
-// not the platform org UUID the store keys on — so the payload value is
-// only trusted for direct in-cluster / override callers such as
-// `tapes backfill transcripts`. Anything arriving through the gateway
-// gets its identity from the edge-verified JWT, exactly like the
-// wire-capture path (tapes-extproc reads the same headers into the
-// session envelope at capture time). The override runs BEFORE envelope
-// validation so a malformed gateway-supplied org rejects loudly at the
-// HTTP boundary instead of corrupting attribution downstream.
+// the server-trusted gateway headers when present. Both ingest paths call
+// it, so neither can store a subject the other would reject. The
+// transcript client (paperd) cannot fill org_id itself — it holds a
+// WorkOS org id, not the platform org UUID the store keys on — so the
+// payload value is only trusted for direct in-cluster / override callers
+// such as `tapes backfill transcripts`. Anything arriving through the
+// gateway gets its identity from the edge-verified JWT, exactly like the
+// wire-capture path (tapes-extproc reads the same header into the session
+// envelope at capture time, so for its traffic this is a no-op; it
+// matters for any other producer reaching ingest through the gateway,
+// whose payload subject is a claim, not a fact). The override runs BEFORE
+// envelope validation so a malformed gateway-supplied org rejects loudly
+// at the HTTP boundary instead of corrupting attribution downstream.
 func (s *Server) resolveGatewayIdentity(c fiber.Ctx, session *sessions.IngestEnvelope) {
 	if session == nil {
 		return

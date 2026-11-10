@@ -64,16 +64,17 @@ func newTestServer() (*ingest.Server, *captureDriver, string) {
 }
 
 func newTestServerWithLogger(logger *slog.Logger) (*ingest.Server, *captureDriver, string) {
+	return newTestServerWithConfig(ingest.Config{}, logger)
+}
+
+// newTestServerWithConfig starts a server with cfg's identity settings; the
+// listen address and project are fixed for the test.
+func newTestServerWithConfig(cfg ingest.Config, logger *slog.Logger) (*ingest.Server, *captureDriver, string) {
 	driver := newCaptureDriver()
 
-	s, err := ingest.New(
-		ingest.Config{
-			ListenAddr: ":0",
-			Project:    "test-project",
-		},
-		driver,
-		logger,
-	)
+	cfg.ListenAddr = ":0"
+	cfg.Project = "test-project"
+	s, err := ingest.New(cfg, driver, logger)
 	Expect(err).NotTo(HaveOccurred())
 
 	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
@@ -492,5 +493,109 @@ var _ = Describe("Ingest Server", func() {
 			Expect(string(rec.Meta)).To(Equal(string(mustJSON(meta))))
 			Expect(string(rec.SessionEnvelope)).To(Equal(string(mustJSON(session))))
 		})
+	})
+})
+
+var _ = Describe("POST /v1/ingest trusted subject header", func() {
+	const (
+		payloadSubject = "user_payload"
+		gatewaySubject = "user_gateway"
+		trustedHeader  = "x-auth-subject"
+	)
+
+	var (
+		server  *ingest.Server
+		driver  *captureDriver
+		baseURL string
+		client  *http.Client
+	)
+
+	BeforeEach(func() {
+		server, driver, baseURL = newTestServerWithConfig(
+			ingest.Config{SubjectHeader: trustedHeader}, tapeslogger.NewNoop())
+		client = &http.Client{Timeout: 5 * time.Second}
+	})
+
+	AfterEach(func() {
+		Expect(server.Close()).To(Succeed())
+	})
+
+	turnBody := func(authSubject string) []byte {
+		payload := ingest.TurnPayload{
+			Provider:  "ollama",
+			AgentName: "test-agent",
+			Session: &sessions.IngestEnvelope{
+				AuthSubject:      authSubject,
+				HarnessID:        "claude-code",
+				HarnessSessionID: "b6e7c3f2-0000-4000-8000-0000000000b7",
+			},
+			RawRequest: mustJSON(ollamaRequest{
+				Model:    "llama3",
+				Messages: []ollamaMessage{{Role: "user", Content: "Hello"}},
+			}),
+			Response: reducedResponse("llama3", "Hi", nil),
+		}
+		body, err := json.Marshal(payload)
+		Expect(err).NotTo(HaveOccurred())
+		return body
+	}
+
+	post := func(body []byte, headers map[string]string) *http.Response {
+		req, err := http.NewRequest(http.MethodPost, baseURL+"/v1/ingest", bytes.NewReader(body))
+		Expect(err).NotTo(HaveOccurred())
+		req.Header.Set("Content-Type", "application/json")
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		resp, err := client.Do(req)
+		Expect(err).NotTo(HaveOccurred())
+		return resp
+	}
+
+	// ingestSession returns the resolved envelope the sessions row is
+	// written from; the raw envelope is stored verbatim and does not carry
+	// the server-side override.
+	ingestSession := func() *sessions.IngestEnvelope {
+		Eventually(driver.IngestCalls).
+			WithTimeout(2 * time.Second).WithPolling(25 * time.Millisecond).
+			Should(HaveLen(1))
+		call := driver.IngestCalls()[0]
+		Expect(call.Session).NotTo(BeNil())
+		return call.Session
+	}
+
+	It("overrides a claimed subject with the gateway header", func() {
+		// The wire path must not trust a client-supplied auth_subject any
+		// more than the transcript path does: the edge-verified subject
+		// wins, exactly as it does for a transcript push.
+		resp := post(turnBody(payloadSubject), map[string]string{trustedHeader: gatewaySubject})
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
+
+		session := ingestSession()
+		Expect(session.AuthSubject).To(Equal(gatewaySubject))
+		Expect(session.OrgID).To(BeEmpty(),
+			"the deployment settles the org, header or not")
+	})
+
+	It("keeps the payload subject when no gateway subject arrives", func() {
+		// tapes-extproc already resolved the subject into the envelope at
+		// capture time; a dispatch without the header must not erase it.
+		resp := post(turnBody(payloadSubject), nil)
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
+
+		Expect(ingestSession().AuthSubject).To(Equal(payloadSubject))
+	})
+
+	It("trusts no header when none is configured", func() {
+		Expect(server.Close()).To(Succeed())
+		server, driver, baseURL = newTestServerWithConfig(ingest.Config{}, tapeslogger.NewNoop())
+
+		resp := post(turnBody(payloadSubject), map[string]string{trustedHeader: gatewaySubject})
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(http.StatusAccepted))
+
+		Expect(ingestSession().AuthSubject).To(Equal(payloadSubject))
 	})
 })

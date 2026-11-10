@@ -134,7 +134,7 @@ instead by stamping a header, and tapes stores that header's value as the
 
 | Variable | Read by | Purpose |
 | --- | --- | --- |
-| `TAPES_TRUSTED_SUBJECT_HEADER` | `tapes serve ingest` (transcript pushes) and `tapes-extproc` (wire capture) | Name of the header carrying the verified subject. Unset, no header is trusted. |
+| `TAPES_TRUSTED_SUBJECT_HEADER` | `tapes serve ingest` (wire and transcript pushes) and `tapes-extproc` (wire capture) | Name of the header carrying the verified subject. Unset, no header is trusted. |
 
 It is opt-in. Unset, which is the default, tapes trusts no header at all: a
 standalone install has nobody vouching for callers, so a header a client sent

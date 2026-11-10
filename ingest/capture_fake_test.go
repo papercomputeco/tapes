@@ -78,6 +78,14 @@ func (d *captureDriver) RawTurns() []storage.RawTurnRecord {
 	return out
 }
 
+// IngestCalls returns a copy of every sessions-layer ingest request the
+// server issued.
+func (d *captureDriver) IngestCalls() []storage.IngestTurnRequest {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]storage.IngestTurnRequest(nil), d.ingestCalls...)
+}
+
 // CountRaw returns the number of captured raw turns.
 func (d *captureDriver) CountRaw() int {
 	d.mu.Lock()

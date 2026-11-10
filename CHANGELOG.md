@@ -86,3 +86,15 @@ which commit changed it.
 ### Removed
 
 - The built-in trusted subject header name (see *Upgrading*).
+
+### Fixed
+
+- `POST /v1/ingest` now resolves identity the same way `POST
+  /v1/ingest/transcript` does: when the configured trusted subject header
+  (`TAPES_TRUSTED_SUBJECT_HEADER`) arrives, its value replaces the
+  `auth_subject` the payload claimed. Previously the wire path ignored the
+  header, so a producer that trusted the gateway stored the subject it sent
+  and `auth_subject` filters on `/v1/sessions` and `/v1/stats` missed those
+  rows. With no header, or no header configured, the payload's subject still
+  stands - `tapes-extproc` traffic already carries the gateway's subject in
+  its envelope, and an unconfigured standalone install trusts nobody.

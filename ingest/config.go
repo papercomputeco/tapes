@@ -24,9 +24,10 @@ type Config struct {
 	SessionIdleGap time.Duration
 
 	// SubjectHeader names the server-trusted header a gateway stamps with
-	// the caller's subject on transcript pushes. Off when empty, and then
-	// the payload's own identity fields stand. The wire-capture path reads
-	// the same header in tapes-extproc, configured by the same variable.
+	// the caller's subject on capture pushes, wire and transcript alike.
+	// Off when empty, and then the payload's own identity fields stand.
+	// tapes-extproc reads the same header on the wire-capture path,
+	// configured by the same variable.
 	SubjectHeader string
 }
 
